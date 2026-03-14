@@ -1,9 +1,19 @@
 'use client';
 
+import { Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 
-export default function SignInPage() {
+const ERROR_MESSAGES: Record<string, string> = {
+  bu_only: 'Only @bu.edu accounts are allowed.',
+  oauth_failed: 'Sign-in failed. Please try again.',
+  not_configured: 'Auth is not configured. Contact support.',
+};
+
+function SignInInner() {
   const { userId, userName, userReady, setActiveUser } = useUser();
+  const params = useSearchParams();
+  const error = params.get('error');
   const isSignedIn = userReady && userId.startsWith('guser_');
 
   const handleSignOut = () => {
@@ -43,6 +53,12 @@ export default function SignInPage() {
             Sapling
           </h1>
         </div>
+
+        {error && (
+          <p style={{ margin: 0, fontSize: '13px', color: '#dc2626', background: 'rgba(220,38,38,0.06)', border: '1px solid rgba(220,38,38,0.2)', borderRadius: '6px', padding: '8px 14px' }}>
+            {ERROR_MESSAGES[error] ?? 'Something went wrong.'}
+          </p>
+        )}
 
         {isSignedIn ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', width: '100%' }}>
@@ -104,6 +120,14 @@ export default function SignInPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense>
+      <SignInInner />
+    </Suspense>
   );
 }
 

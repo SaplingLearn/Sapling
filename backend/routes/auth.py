@@ -79,6 +79,9 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
     except Exception:
         return RedirectResponse(f"{FRONTEND_URL}/signin?error=oauth_failed")
 
+    if not email.endswith("@bu.edu"):
+        return RedirectResponse(f"{FRONTEND_URL}/signin?error=bu_only")
+
     # Upsert user
     existing = table("users").select("id,name", filters={"google_id": f"eq.{google_id}"})
     if existing:
