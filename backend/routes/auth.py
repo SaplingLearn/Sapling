@@ -1,9 +1,9 @@
 """
 backend/routes/auth.py
 
-Google Sign-In OAuth flow.
+Unified Google OAuth flow — grants identity + calendar access in one consent.
 GET /api/auth/google          → redirects to Google consent screen
-GET /api/auth/google/callback → exchanges code, upserts user, redirects to frontend
+GET /api/auth/google/callback → exchanges code, upserts user + oauth_tokens, redirects to frontend
 """
 
 import uuid
@@ -12,9 +12,10 @@ from fastapi import APIRouter, Query
 from fastapi.responses import RedirectResponse
 
 from config import (
-    GOOGLE_CLIENT_ID_SIGN_IN,
-    GOOGLE_CLIENT_SECRET_SIGN_IN,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
     GOOGLE_AUTH_REDIRECT_URI,
+    AUTH_SCOPES,
     FRONTEND_URL,
 )
 from db.connection import table
@@ -27,18 +28,12 @@ except ImportError:
 
 router = APIRouter()
 
-AUTH_SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-]
-
 
 def _client_config() -> dict:
     return {
         "web": {
-            "client_id": GOOGLE_CLIENT_ID_SIGN_IN,
-            "client_secret": GOOGLE_CLIENT_SECRET_SIGN_IN,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
             "redirect_uris": [GOOGLE_AUTH_REDIRECT_URI],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
@@ -48,11 +43,14 @@ def _client_config() -> dict:
 
 @router.get("/google")
 def google_login():
-    if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID_SIGN_IN:
+    if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
         return RedirectResponse(f"{FRONTEND_URL}/signin?error=not_configured")
     flow = Flow.from_client_config(_client_config(), scopes=AUTH_SCOPES)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
-    auth_url, _ = flow.authorization_url(prompt="select_account", access_type="offline")
+    auth_url, _ = flow.authorization_url(
+        prompt="consent",
+        access_type="offline",
+    )
     return RedirectResponse(auth_url)
 
 
@@ -67,7 +65,6 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         flow.fetch_token(code=code)
         creds = flow.credentials
 
-        # Fetch Google profile
         import httpx
         resp = httpx.get(
             "https://www.googleapis.com/oauth2/v2/userinfo",
@@ -79,20 +76,18 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         name = profile.get("name", "")
         email = profile.get("email", "")
         avatar_url = profile.get("picture", "")
-    except Exception as e:
+    except Exception:
         return RedirectResponse(f"{FRONTEND_URL}/signin?error=oauth_failed")
 
-    # Look up existing user by google_id
+    # Upsert user
     existing = table("users").select("id,name", filters={"google_id": f"eq.{google_id}"})
     if existing:
         user_id = existing[0]["id"]
-        # Keep name in sync in case they changed it on Google
         table("users").update(
             {"name": name, "avatar_url": avatar_url},
             filters={"id": f"eq.{user_id}"},
         )
     else:
-        # New user — create a row
         user_id = f"guser_{uuid.uuid4().hex[:12]}"
         table("users").insert([{
             "id": user_id,
@@ -102,6 +97,18 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
             "avatar_url": avatar_url,
             "auth_provider": "google",
         }])
+
+    # Store calendar tokens so sync/import/export work immediately after sign-in
+    if creds.token:
+        table("oauth_tokens").upsert(
+            {
+                "user_id": user_id,
+                "access_token": creds.token,
+                "refresh_token": creds.refresh_token or "",
+                "expires_at": creds.expiry.isoformat() if creds.expiry else "",
+            },
+            on_conflict="user_id",
+        )
 
     redirect = (
         f"{FRONTEND_URL}/signin/callback"

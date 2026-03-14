@@ -1,6 +1,16 @@
 'use client';
 
+import { useUser } from '@/context/UserContext';
+
 export default function SignInPage() {
+  const { userId, userName, userReady, setActiveUser } = useUser();
+  const isSignedIn = userReady && userId.startsWith('guser_');
+
+  const handleSignOut = () => {
+    setActiveUser('', '');
+    localStorage.removeItem('sapling_user');
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -19,6 +29,7 @@ export default function SignInPage() {
         alignItems: 'center',
         gap: '32px',
         boxShadow: 'var(--shadow-md)',
+        minWidth: '320px',
       }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: '36px', marginBottom: '8px' }}>🌱</div>
@@ -33,25 +44,64 @@ export default function SignInPage() {
           </h1>
         </div>
 
-        <a href="http://localhost:5000/api/auth/google" style={{ textDecoration: 'none' }}>
-          <button style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            padding: '12px 24px',
-            background: '#fff',
-            border: '1px solid var(--border-mid)',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontSize: '15px',
-            fontWeight: 500,
-            color: 'var(--text-primary)',
-            boxShadow: 'var(--shadow-sm)',
-          }}>
-            <GoogleIcon />
-            Sign in with Google
-          </button>
-        </a>
+        {isSignedIn ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', width: '100%' }}>
+            <p style={{ fontSize: '14px', color: 'var(--text-secondary)', margin: 0 }}>
+              Signed in as <strong>{userName}</strong>
+            </p>
+            <a href="/" style={{ textDecoration: 'none', width: '100%' }}>
+              <button style={{
+                width: '100%',
+                padding: '10px 24px',
+                background: 'var(--accent)',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 500,
+                color: '#fff',
+              }}>
+                Go to Dashboard
+              </button>
+            </a>
+            <button
+              onClick={handleSignOut}
+              style={{
+                width: '100%',
+                padding: '10px 24px',
+                background: 'transparent',
+                border: '1px solid var(--border-mid)',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: 500,
+                color: 'var(--text-muted)',
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+        ) : (
+          <a href="http://localhost:5000/api/auth/google" style={{ textDecoration: 'none' }}>
+            <button style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '12px 24px',
+              background: '#fff',
+              border: '1px solid var(--border-mid)',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontSize: '15px',
+              fontWeight: 500,
+              color: 'var(--text-primary)',
+              boxShadow: 'var(--shadow-sm)',
+            }}>
+              <GoogleIcon />
+              Sign in with Google
+            </button>
+          </a>
+        )}
       </div>
     </div>
   );
