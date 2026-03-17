@@ -202,10 +202,16 @@ export const getSchoolStudents = () =>
 // ── Documents ─────────────────────────────────────────────────────────────────
 
 export const getDocuments = (userId: string) =>
-  fetchJSON<{ documents: any[] }>(`/api/documents/${userId}`);
+  fetchJSON<{ documents: any[] }>(`/api/documents/user/${userId}`);
 
-export const deleteDocument = (documentId: string) =>
-  fetchJSON<{ deleted: boolean }>(`/api/documents/${documentId}`, { method: 'DELETE' });
+export const deleteDocument = (documentId: string, userId?: string) =>
+  fetchJSON<{ deleted: boolean }>(`/api/documents/doc/${documentId}${userId ? `?user_id=${encodeURIComponent(userId)}` : ''}`, { method: 'DELETE' });
+
+export const updateDocument = (documentId: string, data: { category?: string; user_id?: string }) =>
+  fetchJSON<any>(`/api/documents/doc/${documentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
 
 export const uploadDocument = (formData: FormData): Promise<any> =>
   fetch(`${API_URL}/api/documents/upload`, { method: 'POST', body: formData }).then(async r => {

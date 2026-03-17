@@ -33,6 +33,7 @@ import {
   disconnectGoogleCalendar,
   getDocuments,
   deleteDocument,
+  updateDocument,
   uploadDocument,
 } from '@/lib/api';
 
@@ -319,10 +320,10 @@ describe('disconnectGoogleCalendar', () => {
 // ── Documents ─────────────────────────────────────────────────────────────────
 
 describe('getDocuments', () => {
-  it('GET /api/documents/:userId', async () => {
+  it('GET /api/documents/user/:userId', async () => {
     mockFetch({ documents: [] });
     await getDocuments('user_andres');
-    expect(lastCall()[0]).toBe('/api/documents/user_andres');
+    expect(lastCall()[0]).toBe('/api/documents/user/user_andres');
   });
 
   it('returns documents array from response', async () => {
@@ -334,17 +335,35 @@ describe('getDocuments', () => {
 });
 
 describe('deleteDocument', () => {
-  it('DELETE /api/documents/:documentId', async () => {
+  it('DELETE /api/documents/doc/:documentId', async () => {
     mockFetch({ deleted: true });
     await deleteDocument('doc-uuid-123');
     const [url, opts] = lastCall();
-    expect(url).toBe('/api/documents/doc-uuid-123');
+    expect(url).toBe('/api/documents/doc/doc-uuid-123');
     expect(opts?.method).toBe('DELETE');
+  });
+
+  it('includes user_id query param when provided', async () => {
+    mockFetch({ deleted: true });
+    await deleteDocument('doc-uuid-123', 'user_andres');
+    const [url] = lastCall();
+    expect(url).toBe('/api/documents/doc/doc-uuid-123?user_id=user_andres');
   });
 
   it('throws on server error', async () => {
     mockFetch('Not found', false, 404);
     await expect(deleteDocument('bad-id')).rejects.toThrow();
+  });
+});
+
+describe('updateDocument', () => {
+  it('PATCH /api/documents/doc/:documentId with body', async () => {
+    mockFetch({ id: 'd1', category: 'slides' });
+    await updateDocument('d1', { category: 'slides', user_id: 'u1' });
+    const [url, opts] = lastCall();
+    expect(url).toBe('/api/documents/doc/d1');
+    expect(opts?.method).toBe('PATCH');
+    expect(JSON.parse(opts?.body as string)).toEqual({ category: 'slides', user_id: 'u1' });
   });
 });
 

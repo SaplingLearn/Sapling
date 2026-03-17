@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo, useRef, DragEvent } from 'react';
-import { getCourses, addCourse, getDocuments, uploadDocument, deleteDocument } from '@/lib/api';
+import { getCourses, addCourse, getDocuments, uploadDocument, deleteDocument, updateDocument } from '@/lib/api';
 import CustomSelect from '@/components/CustomSelect';
 import { getCourseColor, PRESET_COURSE_COLORS } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
@@ -89,7 +89,7 @@ export default function LibraryPage() {
     if (!panelDoc) return;
     setDeleting(true);
     try {
-      await deleteDocument(panelDoc.id);
+      await deleteDocument(panelDoc.id, userId);
       setDocs(prev => prev.filter(d => d.id !== panelDoc.id));
       closePanel();
     } catch (e) {
@@ -179,8 +179,16 @@ export default function LibraryPage() {
   }
 
   // ── Save (close + refresh) ──────────────────────────────────────────────────
-  function handleSave() {
+  async function handleSave() {
     if (result) {
+      // Persist category change to backend if the user changed it
+      if (resultCategory !== result.category) {
+        try {
+          await updateDocument(result.id, { category: resultCategory, user_id: userId });
+        } catch (e) {
+          console.error('Failed to update category:', e);
+        }
+      }
       setDocs(prev => [{ ...result, category: resultCategory }, ...prev.filter(d => d.id !== result.id)]);
     }
     closeModal();
@@ -188,10 +196,15 @@ export default function LibraryPage() {
 
   // ── Re-analyze ──────────────────────────────────────────────────────────────
   async function handleReanalyze() {
+    const previousId = result?.id;
     setResult(null);
     setUploadStep('processing');
     setUploadError('');
     try {
+      // Delete the previous document to avoid duplicates
+      if (previousId) {
+        await deleteDocument(previousId, userId).catch(() => {});
+      }
       const fd = new FormData();
       fd.append('file', pickedFile!);
       fd.append('course_id', selectedCourseId);
