@@ -87,6 +87,12 @@ export const getSessions = (userId: string, limit = 10) =>
     }[];
   }>(`/api/learn/sessions/${userId}?limit=${limit}`);
 
+export const switchMode = (sessionId: string, userId: string, newMode: string) =>
+  fetchJSON<{ reply: string }>('/api/learn/mode-switch', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId, user_id: userId, new_mode: newMode }),
+  });
+
 export const resumeSession = (sessionId: string) =>
   fetchJSON<{
     session: { id: string; topic: string; mode: string; started_at: string; ended_at: string | null };

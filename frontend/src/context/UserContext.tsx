@@ -10,25 +10,33 @@ interface UserOption {
 interface UserContextValue {
   userId: string;
   userName: string;
+  avatarUrl: string;
   users: UserOption[];
   /** True once localStorage has been read — gates all data fetches so they
    *  never fire with the hardcoded default user before we know the real one. */
   userReady: boolean;
-  setActiveUser: (id: string, name: string) => void;
+  isAuthenticated: boolean;
+  setActiveUser: (id: string, name: string, avatar?: string) => void;
+  signOut: () => void;
 }
 
 const UserContext = createContext<UserContextValue>({
-  userId: 'user_andres',
-  userName: 'Andres Lopez',
+  userId: '',
+  userName: '',
+  avatarUrl: '',
   users: [],
   userReady: false,
+  isAuthenticated: false,
   setActiveUser: () => {},
+  signOut: () => {},
 });
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
-  const [userId, setUserId] = useState('user_andres');
-  const [userName, setUserName] = useState('Andres Lopez');
+  const [userId, setUserId] = useState('');
+  const [userName, setUserName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
   const [users, setUsers] = useState<UserOption[]>([]);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   // Becomes true after localStorage is read — prevents pages from fetching
   // data with the hardcoded default before the real saved user is known.
   const [userReady, setUserReady] = useState(false);
@@ -38,9 +46,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem('sapling_user');
     if (saved) {
       try {
-        const { id, name } = JSON.parse(saved);
+        const { id, name, avatar } = JSON.parse(saved);
         setUserId(id);
         setUserName(name);
+        if (avatar) setAvatarUrl(avatar);
+        setIsAuthenticated(true);
       } catch {}
     }
     setUserReady(true);
@@ -64,15 +74,25 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, []);
 
-  const setActiveUser = (id: string, name: string) => {
+  const setActiveUser = (id: string, name: string, avatar?: string) => {
     setUserId(id);
     setUserName(name);
-    localStorage.setItem('sapling_user', JSON.stringify({ id, name }));
+    if (avatar) setAvatarUrl(avatar);
+    setIsAuthenticated(true);
+    localStorage.setItem('sapling_user', JSON.stringify({ id, name, avatar: avatar || '' }));
+  };
+
+  const signOut = () => {
+    setUserId('');
+    setUserName('');
+    setAvatarUrl('');
+    setIsAuthenticated(false);
+    localStorage.removeItem('sapling_user');
   };
 
   const value = useMemo(
-    () => ({ userId, userName, users, userReady, setActiveUser }),
-    [userId, userName, users, userReady]
+    () => ({ userId, userName, avatarUrl, users, userReady, isAuthenticated, setActiveUser, signOut }),
+    [userId, userName, avatarUrl, users, userReady, isAuthenticated]
   );
 
   return (

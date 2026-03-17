@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState, useTransition, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
-import CustomSelect from '@/components/CustomSelect';
 import { getRecommendations } from '@/lib/api';
 
 const LINKS = [
@@ -18,9 +17,29 @@ const LINKS = [
 export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { userId, userName, users, setActiveUser } = useUser();
+  const { userId, userName, avatarUrl, isAuthenticated, signOut } = useUser();
   const [suggesting, setSuggesting] = useState(false);
   const [, startTransition] = useTransition();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Redirect unauthenticated users to signin
+  useEffect(() => {
+    if (!isAuthenticated && pathname !== '/signin' && pathname !== '/signin/callback') {
+      router.push('/signin');
+    }
+  }, [isAuthenticated, pathname, router]);
 
   const handleSuggest = async () => {
     setSuggesting(true);
@@ -40,6 +59,12 @@ export default function Navbar() {
     } finally {
       setSuggesting(false);
     }
+  };
+
+  const handleSignOut = () => {
+    setMenuOpen(false);
+    signOut();
+    router.push('/signin');
   };
 
   return (
@@ -125,19 +150,94 @@ export default function Navbar() {
         >
           What should I study next?
         </button>
-        <CustomSelect
-          value={userId}
-          onChange={val => {
-            const u = users.find(u => u.id === val);
-            if (u) setActiveUser(u.id, u.name);
-          }}
-          options={
-            users.length === 0
-              ? [{ value: userId, label: userName }]
-              : users.map(u => ({ value: u.id, label: u.name }))
-          }
-          style={{ minWidth: '130px' }}
-        />
+
+        {/* User avatar/name dropdown */}
+        <div ref={menuRef} style={{ position: 'relative' }}>
+          <button
+            onClick={() => setMenuOpen(o => !o)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '4px 10px',
+              background: 'transparent',
+              border: '1px solid rgba(107,114,128,0.18)',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+              color: '#374151',
+            }}
+          >
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt=""
+                style={{ width: '24px', height: '24px', borderRadius: '50%' }}
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div style={{
+                width: '24px',
+                height: '24px',
+                borderRadius: '50%',
+                background: 'rgba(26,92,42,0.12)',
+                color: '#1a5c2a',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '12px',
+                fontWeight: 600,
+              }}>
+                {userName?.charAt(0)?.toUpperCase() || '?'}
+              </div>
+            )}
+            <span style={{ fontWeight: 500 }}>{userName || 'User'}</span>
+          </button>
+
+          {menuOpen && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: '4px',
+              background: '#ffffff',
+              border: '1px solid rgba(107,114,128,0.15)',
+              borderRadius: '8px',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
+              minWidth: '160px',
+              zIndex: 100,
+              overflow: 'hidden',
+            }}>
+              <div style={{
+                padding: '10px 14px',
+                borderBottom: '1px solid rgba(107,114,128,0.1)',
+                fontSize: '12px',
+                color: '#9ca3af',
+              }}>
+                Signed in as <strong style={{ color: '#374151' }}>{userName}</strong>
+              </div>
+              <button
+                onClick={handleSignOut}
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  background: 'none',
+                  border: 'none',
+                  textAlign: 'left',
+                  fontSize: '13px',
+                  color: '#dc2626',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+              >
+                Sign out
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </nav>
   );
