@@ -60,11 +60,34 @@ def extract_text_from_pdf_ocr(
     return _clean_text("\n\n".join(chunks)), page_count
 
 
+def extract_text_from_docx(file_bytes: bytes) -> str:
+    """Extract plain text from a DOCX file using mammoth."""
+    import mammoth
+    result = mammoth.extract_raw_text(io.BytesIO(file_bytes))
+    return _clean_text(result.value)
+
+
+def extract_text_from_pptx(file_bytes: bytes) -> str:
+    """Extract plain text from a PPTX file using python-pptx."""
+    from pptx import Presentation
+    prs = Presentation(io.BytesIO(file_bytes))
+    chunks = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    line = " ".join(run.text for run in para.runs).strip()
+                    if line:
+                        chunks.append(line)
+    return _clean_text("\n".join(chunks))
+
+
 def extract_text_from_file(file_bytes: bytes, filename: str, content_type: str) -> str:
-    """Extract raw text from a PDF, plain-text, or image file."""
-    if content_type == "text/plain" or filename.lower().endswith(".txt"):
+    """Extract raw text from a PDF, DOCX, PPTX, plain-text, or image file."""
+    lower = filename.lower()
+    if content_type == "text/plain" or lower.endswith(".txt"):
         return _clean_text(file_bytes.decode("utf-8", errors="replace"))
-    if content_type == "application/pdf" or filename.lower().endswith(".pdf"):
+    if content_type == "application/pdf" or lower.endswith(".pdf"):
         try:
             text, _ = extract_text_from_pdf_native(file_bytes)
             if len(text) >= 50:
@@ -73,5 +96,13 @@ def extract_text_from_file(file_bytes: bytes, filename: str, content_type: str) 
             pass
         text, _ = extract_text_from_pdf_ocr(file_bytes)
         return text
+    if lower.endswith(".docx") or content_type in (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ):
+        return extract_text_from_docx(file_bytes)
+    if lower.endswith(".pptx") or content_type in (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ):
+        return extract_text_from_pptx(file_bytes)
     else:
         return extract_text_from_image_bytes(file_bytes)

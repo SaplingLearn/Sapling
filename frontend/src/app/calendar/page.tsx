@@ -16,6 +16,8 @@ import {
 } from '@/lib/api';
 import { useUser } from '@/context/UserContext';
 
+const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
+
 type CalendarView = 'month' | 'week' | 'day';
 
 const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -404,8 +406,8 @@ function CalendarInner() {
   };
 
   return (
-    <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: '28px' }}>
-      <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', margin: 0 }}>Calendar</h1>
+    <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '32px', display: 'flex', flexDirection: 'column', gap: '28px', fontFamily: UI_FONT }}>
+      <h1 style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontSize: '32px', fontWeight: 700, color: '#111827', margin: 0, letterSpacing: '-0.02em' }}>Calendar</h1>
 
       {/* Calendar grid — full width, prominent */}
       <div className="panel-in panel-in-1">
