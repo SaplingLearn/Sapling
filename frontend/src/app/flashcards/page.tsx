@@ -139,23 +139,67 @@ export default function FlashcardsPage() {
         </div>
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px 24px', gap: '24px' }}>
+          <style>{`
+            .flip-card { perspective: 1200px; }
+            .flip-card-inner {
+              position: relative;
+              width: 100%;
+              height: 100%;
+              transition: transform 0.55s cubic-bezier(0.4, 0.2, 0.2, 1);
+              transform-style: preserve-3d;
+            }
+            .flip-card-inner.flipped { transform: rotateY(180deg); }
+            .flip-card-front, .flip-card-back {
+              position: absolute;
+              inset: 0;
+              backface-visibility: hidden;
+              -webkit-backface-visibility: hidden;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              padding: 40px;
+              border-radius: 16px;
+              border: 1px solid rgba(107,114,128,0.15);
+              box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+              gap: 16px;
+              cursor: pointer;
+              user-select: none;
+            }
+            .flip-card-front { background: #ffffff; }
+            .flip-card-back {
+              background: #f0fdf4;
+              transform: rotateY(180deg);
+              border-color: rgba(26,92,42,0.2);
+            }
+          `}</style>
+
           <div
+            className="flip-card"
             onClick={() => setFlipped(f => !f)}
-            style={{
-              width: '100%', maxWidth: '600px', minHeight: '280px',
-              background: '#ffffff', border: '1px solid rgba(107,114,128,0.15)',
-              borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.08)',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              padding: '40px', cursor: 'pointer', userSelect: 'none', gap: '16px',
-            }}
+            style={{ width: '100%', maxWidth: '600px', minHeight: '280px', position: 'relative' }}
           >
-            <span style={{ fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              {flipped ? 'Answer' : 'Question'}
-            </span>
-            <p style={{ fontSize: '20px', fontWeight: 500, color: '#111827', textAlign: 'center', lineHeight: 1.6, margin: 0 }}>
-              {flipped ? currentCard.back : currentCard.front}
-            </p>
-            {!flipped && <span style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px' }}>tap to reveal</span>}
+            <div className={`flip-card-inner${flipped ? ' flipped' : ''}`} style={{ minHeight: '280px' }}>
+              {/* Front */}
+              <div className="flip-card-front">
+                <span style={{ fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                  Question
+                </span>
+                <p style={{ fontSize: '20px', fontWeight: 500, color: '#111827', textAlign: 'center', lineHeight: 1.6, margin: 0 }}>
+                  {currentCard.front}
+                </p>
+                <span style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px' }}>tap to reveal</span>
+              </div>
+              {/* Back */}
+              <div className="flip-card-back">
+                <span style={{ fontSize: '11px', fontWeight: 500, color: '#1a5c2a', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                  Answer
+                </span>
+                <p style={{ fontSize: '20px', fontWeight: 500, color: '#111827', textAlign: 'center', lineHeight: 1.6, margin: 0 }}>
+                  {currentCard.back}
+                </p>
+              </div>
+            </div>
           </div>
 
           {flipped && (
