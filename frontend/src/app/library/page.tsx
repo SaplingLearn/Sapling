@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef, DragEvent } from 'react';
 import { getCourses, addCourse, getDocuments, uploadDocument, deleteDocument } from '@/lib/api';
+import CustomSelect from '@/components/CustomSelect';
 import { getCourseColor, PRESET_COURSE_COLORS } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
 
@@ -549,14 +550,13 @@ export default function LibraryPage() {
                       + Add course
                     </button>
                   </div>
-                  <select
+                  <CustomSelect
                     value={selectedCourseId}
-                    onChange={e => setSelectedCourseId(e.target.value)}
-                    style={{ width: '100%', padding: '8px 10px', border: '1px solid rgba(107,114,128,0.25)', borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit', color: selectedCourseId ? '#111827' : '#9ca3af', outline: 'none', background: '#fff' }}
-                  >
-                    <option value="" disabled>Select a course…</option>
-                    {courses.map(c => <option key={c.id} value={c.id}>{c.course_name}</option>)}
-                  </select>
+                    onChange={setSelectedCourseId}
+                    placeholder="Select a course…"
+                    options={courses.map(c => ({ value: c.id, label: c.course_name }))}
+                    style={{ width: '100%', display: 'block' }}
+                  />
 
                   {/* Inline add-course form */}
                   {showAddCourse && (
@@ -637,15 +637,12 @@ export default function LibraryPage() {
                   {/* Category — editable */}
                   <div>
                     <p style={{ fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 5px' }}>Category</p>
-                    <select
+                    <CustomSelect
                       value={resultCategory}
-                      onChange={e => setResultCategory(e.target.value)}
-                      style={{ width: '100%', padding: '6px 10px', border: '1px solid rgba(107,114,128,0.25)', borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit', color: '#111827', outline: 'none', background: '#fff' }}
-                    >
-                      {UPLOAD_CATEGORIES.map(cat => (
-                        <option key={cat} value={cat}>{CATEGORY_LABELS[cat]}</option>
-                      ))}
-                    </select>
+                      onChange={setResultCategory}
+                      options={UPLOAD_CATEGORIES.map(cat => ({ value: cat, label: CATEGORY_LABELS[cat] }))}
+                      style={{ width: '100%', display: 'block' }}
+                    />
                   </div>
 
                   {/* Summary */}
