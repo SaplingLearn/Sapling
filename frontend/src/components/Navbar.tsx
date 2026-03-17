@@ -17,7 +17,7 @@ const LINKS = [
 export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { userId, userName, avatarUrl, isAuthenticated, signOut } = useUser();
+  const { userId, userName, avatarUrl, userReady, isAuthenticated, signOut } = useUser();
   const [suggesting, setSuggesting] = useState(false);
   const [, startTransition] = useTransition();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -36,10 +36,10 @@ export default function Navbar() {
 
   // Redirect unauthenticated users to signin
   useEffect(() => {
-    if (!isAuthenticated && pathname !== '/signin' && pathname !== '/signin/callback') {
+    if (userReady && !isAuthenticated && pathname !== '/signin' && pathname !== '/signin/callback') {
       router.push('/signin');
     }
-  }, [isAuthenticated, pathname, router]);
+  }, [userReady, isAuthenticated, pathname, router]);
 
   const handleSuggest = async () => {
     setSuggesting(true);

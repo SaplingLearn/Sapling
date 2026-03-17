@@ -43,6 +43,7 @@ function LearnInner() {
 
   const [topic, setTopic] = useState(topicParam);
   const [selectedCourse, setSelectedCourse] = useState('');
+  const [prefillInput, setPrefillInput] = useState('');
   const [recentSessions, setRecentSessions] = useState<{ id: string; topic: string; mode: string; started_at: string; is_active: boolean }[]>([]);
   const [useSharedContext, setUseSharedContext] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
@@ -192,6 +193,7 @@ function LearnInner() {
     if (sessionId) {
       try {
         const res = await switchMode(sessionId, USER_ID, newMode);
+        setPrefillInput(`Continue in ${newMode} mode on ${topic || 'this topic'}...`);
         setMessages(prev => [...prev, {
           id: `msg_${Date.now()}`,
           role: 'assistant',
@@ -351,6 +353,7 @@ function LearnInner() {
                 onEndSession={handleEndSession}
                 loading={chatLoading || sessionLoading}
                 mode={mode}
+                prefillInput={prefillInput}
               />
             </>
           )}
