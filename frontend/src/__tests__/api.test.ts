@@ -31,6 +31,9 @@ import {
   exportToGoogleCalendar,
   importGoogleEvents,
   disconnectGoogleCalendar,
+  getDocuments,
+  deleteDocument,
+  uploadDocument,
 } from '@/lib/api';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -310,5 +313,82 @@ describe('disconnectGoogleCalendar', () => {
     const [url, opts] = lastCall();
     expect(url).toBe('/api/calendar/disconnect/user_andres');
     expect(opts?.method).toBe('DELETE');
+  });
+});
+
+// ── Documents ─────────────────────────────────────────────────────────────────
+
+describe('getDocuments', () => {
+  it('GET /api/documents/:userId', async () => {
+    mockFetch({ documents: [] });
+    await getDocuments('user_andres');
+    expect(lastCall()[0]).toBe('/api/documents/user_andres');
+  });
+
+  it('returns documents array from response', async () => {
+    const docs = [{ id: 'd1', file_name: 'notes.pdf', category: 'lecture_notes' }];
+    mockFetch({ documents: docs });
+    const result = await getDocuments('user_andres');
+    expect(result.documents).toEqual(docs);
+  });
+});
+
+describe('deleteDocument', () => {
+  it('DELETE /api/documents/:documentId', async () => {
+    mockFetch({ deleted: true });
+    await deleteDocument('doc-uuid-123');
+    const [url, opts] = lastCall();
+    expect(url).toBe('/api/documents/doc-uuid-123');
+    expect(opts?.method).toBe('DELETE');
+  });
+
+  it('throws on server error', async () => {
+    mockFetch('Not found', false, 404);
+    await expect(deleteDocument('bad-id')).rejects.toThrow();
+  });
+});
+
+describe('uploadDocument', () => {
+  it('POST /api/documents/upload with FormData', async () => {
+    const mockDoc = { id: 'd1', file_name: 'notes.pdf', category: 'lecture_notes' };
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(mockDoc),
+    }) as jest.Mock;
+
+    const fd = new FormData();
+    fd.append('file', new Blob(['content'], { type: 'application/pdf' }), 'notes.pdf');
+    fd.append('course_id', 'c1');
+    fd.append('user_id', 'user_andres');
+
+    const result = await uploadDocument(fd);
+    const [url, opts] = lastCall();
+    expect(url).toBe('/api/documents/upload');
+    expect(opts?.method).toBe('POST');
+    expect(opts?.body).toBe(fd);
+    expect(result.id).toBe('d1');
+  });
+
+  it('throws when server returns non-OK status', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: () => Promise.resolve('Unsupported file type'),
+    }) as jest.Mock;
+
+    const fd = new FormData();
+    await expect(uploadDocument(fd)).rejects.toThrow('Unsupported file type');
+  });
+
+  it('throws with HTTP status when body is empty', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 413,
+      text: () => Promise.resolve(''),
+    }) as jest.Mock;
+
+    const fd = new FormData();
+    await expect(uploadDocument(fd)).rejects.toThrow('HTTP 413');
   });
 });

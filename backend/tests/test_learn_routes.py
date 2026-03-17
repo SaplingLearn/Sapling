@@ -165,3 +165,96 @@ class TestResumeSession:
         assert r.status_code == 200
         assert r.json()["session"]["topic"] == "Loops"
         assert len(r.json()["messages"]) == 1
+
+
+# ── POST /api/learn/mode-switch ───────────────────────────────────────────────
+
+class TestModeSwitch:
+    def _make_table_factory(self, user_name: str, topic: str):
+        """Return a table() side-effect that answers users and sessions queries."""
+        def factory(name):
+            mock = MagicMock()
+            if name == "users":
+                mock.select.return_value = [{"name": user_name}]
+            elif name == "sessions":
+                mock.select.return_value = [{"topic": topic}]
+            else:
+                mock.select.return_value = []
+            return mock
+        return factory
+
+    def test_returns_200_with_reply(self):
+        factory = self._make_table_factory("Andres Garcia", "Recursion")
+        with patch("routes.learn.table", side_effect=factory):
+            r = client.post(
+                "/api/learn/mode-switch",
+                json={"session_id": "s1", "user_id": "u1", "new_mode": "expository"},
+            )
+        assert r.status_code == 200
+        assert "reply" in r.json()
+
+    def test_reply_uses_first_name_only(self):
+        """Message must greet with first name only, not full name."""
+        factory = self._make_table_factory("Andres Garcia", "Recursion")
+        with patch("routes.learn.table", side_effect=factory):
+            r = client.post(
+                "/api/learn/mode-switch",
+                json={"session_id": "s1", "user_id": "u1", "new_mode": "socratic"},
+            )
+        reply = r.json()["reply"]
+        assert "Andres" in reply
+        assert "Garcia" not in reply
+
+    def test_reply_contains_mode_display_name(self):
+        factory = self._make_table_factory("Maria", "Sorting algorithms")
+        with patch("routes.learn.table", side_effect=factory):
+            r = client.post(
+                "/api/learn/mode-switch",
+                json={"session_id": "s1", "user_id": "u1", "new_mode": "expository"},
+            )
+        reply = r.json()["reply"]
+        assert "Expository" in reply
+
+    def test_reply_contains_current_topic(self):
+        factory = self._make_table_factory("Jake", "Binary Search Trees")
+        with patch("routes.learn.table", side_effect=factory):
+            r = client.post(
+                "/api/learn/mode-switch",
+                json={"session_id": "s1", "user_id": "u1", "new_mode": "teachback"},
+            )
+        reply = r.json()["reply"]
+        assert "Binary Search Trees" in reply
+
+    def test_reply_has_no_em_dash(self):
+        factory = self._make_table_factory("Sam", "Graphs")
+        with patch("routes.learn.table", side_effect=factory):
+            r = client.post(
+                "/api/learn/mode-switch",
+                json={"session_id": "s1", "user_id": "u1", "new_mode": "socratic"},
+            )
+        reply = r.json()["reply"]
+        assert "\u2014" not in reply  # em-dash
+        assert "\u2013" not in reply  # en-dash (extra guard)
+
+    def test_reply_has_no_markdown_bold(self):
+        factory = self._make_table_factory("Sam", "Graphs")
+        with patch("routes.learn.table", side_effect=factory):
+            r = client.post(
+                "/api/learn/mode-switch",
+                json={"session_id": "s1", "user_id": "u1", "new_mode": "socratic"},
+            )
+        reply = r.json()["reply"]
+        assert "**" not in reply
+
+    def test_message_is_saved_to_db(self):
+        factory = self._make_table_factory("Lea", "Linked Lists")
+        with patch("routes.learn.table", side_effect=factory) as t:
+            client.post(
+                "/api/learn/mode-switch",
+                json={"session_id": "s1", "user_id": "u1", "new_mode": "teachback"},
+            )
+            # save_message calls table("messages").insert(...)
+            insert_calls = [
+                call for call in t.call_args_list if call.args and call.args[0] == "messages"
+            ]
+        assert len(insert_calls) >= 1
