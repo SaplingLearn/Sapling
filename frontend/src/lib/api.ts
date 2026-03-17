@@ -218,3 +218,27 @@ export const uploadDocument = (formData: FormData): Promise<any> =>
     if (!r.ok) { const e = await r.text(); throw new Error(e || `HTTP ${r.status}`); }
     return r.json();
   });
+
+// ── Flashcards ────────────────────────────────────────────────────────────────
+
+export const generateFlashcards = (userId: string, topic: string, count = 5, sessionId?: string) =>
+  fetchJSON<{ flashcards: any[]; context_used?: { documents_found: number; weak_concepts_found: number } }>('/api/flashcards/generate', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, topic, count, ...(sessionId ? { session_id: sessionId } : {}) }),
+  });
+
+export const getFlashcards = (userId: string, topic?: string) =>
+  fetchJSON<{ flashcards: any[] }>(
+    `/api/flashcards/user/${userId}${topic ? `?topic=${encodeURIComponent(topic)}` : ''}`
+  );
+
+export const rateFlashcard = (userId: string, cardId: string, rating: number) =>
+  fetchJSON<{ ok: boolean }>('/api/flashcards/rate', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, card_id: cardId, rating }),
+  });
+
+export const deleteFlashcard = (userId: string, cardId: string) =>
+  fetchJSON<{ ok: boolean }>(`/api/flashcards/${cardId}?user_id=${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  });

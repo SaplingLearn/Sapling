@@ -160,3 +160,33 @@ CREATE TABLE IF NOT EXISTS course_context (
     student_count INTEGER DEFAULT 0,
     updated_at    TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS flashcards (
+    id               TEXT PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES users(id),
+    topic            TEXT NOT NULL,
+    front            TEXT NOT NULL,
+    back             TEXT NOT NULL,
+    times_reviewed   INTEGER DEFAULT 0,
+    last_rating      INTEGER,
+    last_reviewed_at TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_flashcards_user_topic ON flashcards(user_id, topic);
+
+CREATE TABLE public.flashcards (
+  id text NOT NULL,
+  user_id text NOT NULL,
+  topic text NOT NULL,
+  front text NOT NULL,
+  back text NOT NULL,
+  times_reviewed integer DEFAULT 0,
+  last_rating integer,
+  last_reviewed_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT flashcards_pkey PRIMARY KEY (id),
+  CONSTRAINT flashcards_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_flashcards_user_topic ON public.flashcards(user_id, topic);
