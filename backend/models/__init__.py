@@ -104,3 +104,11 @@ class ExportBody(BaseModel):
     # Prevents accidental exports under the wrong account.
     user_id: str
     assignment_ids: list[str]
+
+
+# ── Learn (mode switch) ─────────────────────────────────────────────────────
+
+class ModeSwitchBody(BaseModel):
+    session_id: str
+    user_id: str = "user_andres"
+    new_mode: str

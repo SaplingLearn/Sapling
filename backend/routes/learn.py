@@ -6,13 +6,19 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 
 from db.connection import table
-from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody
+from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody
 from services.gemini_service import call_gemini, extract_graph_update
 from services.graph_service import get_graph, apply_graph_update
 
 router = APIRouter()
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
+
+MODE_DISPLAY_NAMES = {
+    "socratic": "Socratic (question-based)",
+    "expository": "Expository (direct explanation)",
+    "teachback": "Teach-back (you explain to me)",
+}
 
 
 def _load_prompt(name: str) -> str:
@@ -327,3 +333,17 @@ def action(body: ActionBody):
     save_message(body.session_id, "assistant", reply, graph_update)
     apply_graph_update(body.user_id, graph_update)
     return {"reply": reply, "graph_update": graph_update}
+
+
+@router.post("/mode-switch")
+def mode_switch(body: ModeSwitchBody):
+    student_name = get_user_name(body.user_id).split()[0]
+    topic = _get_session_topic(body.session_id)
+    mode_label = MODE_DISPLAY_NAMES.get(body.new_mode, body.new_mode)
+
+    reply = (
+        f"Got it, {student_name}! Switching to {mode_label} mode. "
+        f"We'll continue with {topic}, let's keep going!"
+    )
+    save_message(body.session_id, "assistant", reply)
+    return {"reply": reply}
