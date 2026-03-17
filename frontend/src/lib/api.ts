@@ -198,3 +198,17 @@ export const findSchoolMatches = (userId: string) =>
 
 export const getSchoolStudents = () =>
   fetchJSON<{ students: any[] }>('/api/social/students');
+
+// ── Documents ─────────────────────────────────────────────────────────────────
+
+export const getDocuments = (userId: string) =>
+  fetchJSON<{ documents: any[] }>(`/api/documents/${userId}`);
+
+export const deleteDocument = (documentId: string) =>
+  fetchJSON<{ deleted: boolean }>(`/api/documents/${documentId}`, { method: 'DELETE' });
+
+export const uploadDocument = (formData: FormData): Promise<any> =>
+  fetch(`${API_URL}/api/documents/upload`, { method: 'POST', body: formData }).then(async r => {
+    if (!r.ok) { const e = await r.text(); throw new Error(e || `HTTP ${r.status}`); }
+    return r.json();
+  });

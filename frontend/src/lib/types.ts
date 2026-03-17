@@ -147,3 +147,16 @@ export interface Recommendation {
   concept_name: string;
   reason: string;
 }
+
+export interface Document {
+  id: string;
+  user_id: string;
+  course_id: string;
+  file_name: string;
+  category: 'syllabus' | 'lecture_notes' | 'slides' | 'reading' | 'assignment' | 'study_guide' | 'other';
+  summary: string | null;
+  key_takeaways: string[] | null;
+  flashcards: { question: string; answer: string }[] | null;
+  created_at: string;
+  processed_at: string | null;
+}

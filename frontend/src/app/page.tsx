@@ -407,11 +407,16 @@ function DashboardInner() {
 
           {loading ? (
             <div style={{ fontSize: '13px', color: '#9ca3af', paddingTop: '8px' }}>Loading…</div>
-          ) : courses.length === 0 ? (
+          ) : courseList.length === 0 ? (
             <div style={{ fontSize: '13px', color: '#9ca3af', paddingTop: '8px' }}>No courses yet</div>
           ) : (
-            courses.map(({ subject, avgMastery }) => {
-              const c = getCourseColor(subject, courseColorMap[subject]);
+            courseList.map(course => {
+              const subject = course.course_name;
+              const c = getCourseColor(subject, course.color);
+              const conceptNodes = nodes.filter(n => n.subject === subject && !n.is_subject_root && n.mastery_tier !== 'subject_root');
+              const avgMastery = conceptNodes.length > 0
+                ? conceptNodes.reduce((s, n) => s + n.mastery_score, 0) / conceptNodes.length
+                : 0;
               const pct = Math.round(avgMastery * 100);
 
               // 5 soonest upcoming assignments for this course (case-insensitive match)
