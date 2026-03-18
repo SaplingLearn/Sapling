@@ -3,10 +3,8 @@
 import { useEffect, useState, useRef, useMemo, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
-import UploadZone from '@/components/UploadZone';
-import AssignmentTable from '@/components/AssignmentTable';
 import { GraphNode, GraphStats, Recommendation, Assignment } from '@/lib/types';
-import { getGraph, getRecommendations, getUpcomingAssignments, extractSyllabus, saveAssignments, getCourses, addCourse, deleteCourse, updateCourseColor } from '@/lib/api';
+import { getGraph, getRecommendations, getUpcomingAssignments, getCourses, addCourse, deleteCourse, updateCourseColor } from '@/lib/api';
 import { getMasteryColor, getMasteryLabel, formatDueDate, formatRelativeTime, getCourseColor, PRESET_COURSE_COLORS, RAINBOW_COLORS } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
 import Link from 'next/link';
@@ -97,17 +95,6 @@ function DashboardInner() {
   const [editingColorFor, setEditingColorFor] = useState<string | null>(null);
   const [colorHexInput, setColorHexInput] = useState('');
 
-  // Upload panel state
-  const [showUpload, setShowUpload] = useState(false);
-  const [uploadFilename, setUploadFilename] = useState('');
-  const [uploadLoading, setUploadLoading] = useState(false);
-  const [uploadWarnings, setUploadWarnings] = useState<string[]>([]);
-  const [extractedAssignments, setExtractedAssignments] = useState<Assignment[]>([]);
-  const [fileProcessed, setFileProcessed] = useState(false);
-  const [rawText, setRawText] = useState('');
-  const [rawTextVisible, setRawTextVisible] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   // Mon–Sun dates for the current week (computed once on mount)
   const weekInfo = useMemo(() => {
@@ -251,68 +238,6 @@ function DashboardInner() {
     router.push(`/learn?topic=${encodeURIComponent(node.concept_name)}`);
   }, [router]);
 
-  const handleFile = async (file: File) => {
-    setUploadFilename(file.name);
-    setUploadLoading(true);
-    setUploadWarnings([]);
-    setExtractedAssignments([]);
-    setFileProcessed(false);
-    setRawText('');
-    setRawTextVisible(false);
-    try {
-      const form = new FormData();
-      form.append('file', file);
-      const res = await extractSyllabus(form);
-      const mapped: Assignment[] = (res.assignments ?? []).map((a: any, i: number) => ({
-        id: `extracted_${i}_${Date.now()}`,
-        title: a.title ?? '',
-        course_name: a.course_name ?? '',
-        due_date: a.due_date ?? '',
-        assignment_type: a.assignment_type ?? 'other',
-        notes: a.notes ?? null,
-        google_event_id: null,
-      }));
-      setExtractedAssignments(mapped);
-      setUploadWarnings(res.warnings ?? []);
-      setRawText(res.raw_text ?? '');
-      setFileProcessed(true);
-    } catch (e: any) {
-      setUploadWarnings([e.message || 'Extraction failed']);
-    } finally {
-      setUploadLoading(false);
-    }
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await saveAssignments(userId, extractedAssignments);
-      setAllAssignments(prev => {
-        const ids = new Set(prev.map(a => a.id));
-        return [...prev, ...extractedAssignments.filter(a => !ids.has(a.id))];
-      });
-      setSaved(true);
-      setTimeout(() => {
-        setSaved(false);
-        closeUpload();
-      }, 1500);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const closeUpload = () => {
-    setShowUpload(false);
-    setUploadFilename('');
-    setUploadLoading(false);
-    setUploadWarnings([]);
-    setExtractedAssignments([]);
-    setFileProcessed(false);
-    setRawText('');
-    setRawTextVisible(false);
-  };
 
   const handleAddCourse = async () => {
     const name = newCourseName.trim();
@@ -621,8 +546,8 @@ function DashboardInner() {
               >
                 Start Learning
               </Link>
-              <button
-                onClick={() => setShowUpload(true)}
+              <Link
+                href="/library"
                 style={{
                   padding: '8px 22px',
                   background: '#ffffff',
@@ -634,10 +559,12 @@ function DashboardInner() {
                   cursor: 'pointer',
                   fontFamily: UI_FONT,
                   letterSpacing: '0.5px',
+                  textDecoration: 'none',
+                  display: 'inline-block',
                 }}
               >
                 Upload Assignments
-              </button>
+              </Link>
               <button
                 onClick={() => setShowCourses(true)}
                 style={{
@@ -958,149 +885,7 @@ function DashboardInner() {
         </div>
       </div>
 
-      {/* ── Upload Assignments Modal ────────────────────────────────────────── */}
-      {showUpload && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.45)',
-            zIndex: 100,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px',
-          }}
-          onClick={e => { if (e.target === e.currentTarget) closeUpload(); }}
-        >
-          <div
-            style={{
-              background: '#ffffff',
-              borderRadius: '12px',
-              padding: '28px',
-              width: '780px',
-              maxWidth: '95vw',
-              maxHeight: '88vh',
-              overflowY: 'auto',
-              position: 'relative',
-              border: '1px solid rgba(107,114,128,0.15)',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
-            }}
-          >
-            <button
-              onClick={closeUpload}
-              style={{
-                position: 'absolute',
-                top: '16px',
-                right: '16px',
-                background: 'none',
-                border: 'none',
-                fontSize: '18px',
-                cursor: 'pointer',
-                color: '#6b7280',
-                lineHeight: 1,
-                padding: '4px 6px',
-                fontFamily: 'inherit',
-                borderRadius: '4px',
-              }}
-            >
-              ✕
-            </button>
 
-            <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>
-              Upload Assignments
-            </h2>
-            <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px' }}>
-              Upload a syllabus PDF to automatically extract assignment deadlines and names. Edit before saving.
-            </p>
-
-            <div style={{ marginBottom: '16px' }}>
-              <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-                Syllabus File
-              </p>
-              <UploadZone onFile={handleFile} loading={uploadLoading} filename={uploadFilename} />
-              {uploadWarnings.map((w, i) => (
-                <p key={i} style={{ color: '#f97316', fontSize: '12px', marginTop: '6px' }}>{w}</p>
-              ))}
-            </div>
-
-            {fileProcessed && (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    {extractedAssignments.length > 0
-                      ? `Detected ${extractedAssignments.length} assignment${extractedAssignments.length !== 1 ? 's' : ''} — edit before saving`
-                      : 'No assignments detected — add rows manually'}
-                  </p>
-                  <button
-                    onClick={handleSave}
-                    disabled={saving || extractedAssignments.length === 0}
-                    style={{
-                      padding: '6px 16px',
-                      background: saved ? '#16a34a' : extractedAssignments.length === 0 ? '#f5f5f5' : '#1a5c2a',
-                      color: extractedAssignments.length === 0 ? '#9ca3af' : '#ffffff',
-                      border: 'none',
-                      borderRadius: '6px',
-                      fontSize: '13px',
-                      fontWeight: 600,
-                      cursor: extractedAssignments.length === 0 ? 'default' : 'pointer',
-                      fontFamily: 'inherit',
-                      transition: 'background 0.2s',
-                    }}
-                  >
-                    {saved ? 'Saved!' : saving ? 'Saving...' : 'Save to Calendar'}
-                  </button>
-                </div>
-
-                <AssignmentTable assignments={extractedAssignments} onChange={setExtractedAssignments} />
-
-                {rawText && (
-                  <div style={{ marginTop: '12px', border: '1px solid rgba(107,114,128,0.15)', borderRadius: '6px', overflow: 'hidden' }}>
-                    <button
-                      onClick={() => setRawTextVisible(v => !v)}
-                      style={{
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '8px 12px',
-                        background: '#f8faf8',
-                        border: 'none',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                        color: '#6b7280',
-                        fontWeight: 500,
-                        textAlign: 'left',
-                        fontFamily: 'inherit',
-                      }}
-                    >
-                      <span>Raw OCR text (reference while editing)</span>
-                      <span>{rawTextVisible ? '▲' : '▼'}</span>
-                    </button>
-                    {rawTextVisible && (
-                      <pre style={{
-                        margin: 0,
-                        padding: '12px',
-                        fontSize: '11px',
-                        lineHeight: 1.6,
-                        color: '#374151',
-                        background: '#f5f9f5',
-                        overflowX: 'auto',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                        maxHeight: '240px',
-                        overflowY: 'auto',
-                      }}>
-                        {rawText}
-                      </pre>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
       {/* ── Courses Modal ───────────────────────────────────────────────────── */}
       {showCourses && (
         <div

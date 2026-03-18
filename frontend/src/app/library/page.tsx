@@ -272,7 +272,7 @@ export default function LibraryPage() {
   });
 
   return (
-    <div style={{ padding: '32px', maxWidth: '1100px', margin: '0 auto', fontFamily: UI_FONT }}>
+    <div className="animate-fade-in" style={{ padding: '32px', maxWidth: '1100px', margin: '0 auto', fontFamily: UI_FONT }}>
 
       {/* Header */}
       <div className="panel-in panel-in-2" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '28px' }}>
