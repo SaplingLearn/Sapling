@@ -558,6 +558,11 @@ export default function LandingPage() {
             <a href="#" className="text-gray-500 hover:text-gray-900 text-sm transition-colors">Privacy</a>
           </div>
         </div>
+        <div className="max-w-7xl mx-auto mt-8 pt-6 border-t border-gray-200/60 text-center">
+          <p className="text-xs text-gray-400 font-light tracking-wide">
+            © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
+          </p>
+        </div>
       </footer>
 
       {/* ═══ Onboarding Modal ═══ */}
