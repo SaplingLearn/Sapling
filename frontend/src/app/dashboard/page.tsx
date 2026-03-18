@@ -57,8 +57,8 @@ function DashboardInner() {
   // Suggested concept from Navbar "What should I learn next?" button
   const suggestConcept = searchParams.get('suggest') ?? '';
   const containerRef = useRef<HTMLDivElement>(null);
-  const hasDimensionsRef = useRef(false);
   const [graphDimensions, setGraphDimensions] = useState({ width: 0, height: 0 });
+  const hasDimensionsRef = useRef(false);
 
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [edges, setEdges] = useState<any[]>([]);
@@ -233,13 +233,11 @@ function DashboardInner() {
       if (!entry) return;
       const { width, height } = entry.contentRect;
       if (!hasDimensionsRef.current) {
-        // First measurement: apply immediately so KnowledgeGraph mounts with real dimensions
         hasDimensionsRef.current = true;
         setGraphDimensions({ width, height });
       } else {
-        // Subsequent changes (panel animations): debounce to avoid thrashing
         clearTimeout(timer);
-        timer = setTimeout(() => setGraphDimensions({ width, height }), 200);
+        timer = setTimeout(() => setGraphDimensions({ width, height }), 250);
       }
     });
     obs.observe(el);
@@ -753,8 +751,8 @@ function DashboardInner() {
             )}
           </div>
 
-          {/* Upcoming assignments strip */}
-          <div style={{ ...GLASS, padding: '14px 16px', fontFamily: UI_FONT }}>
+          {/* Upcoming assignments strip — fixed height so it never causes the KG container above to resize */}
+          <div style={{ ...GLASS, padding: '14px 16px', fontFamily: UI_FONT, height: '160px', flexShrink: 0, overflowY: 'auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
               <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 Upcoming

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, Suspense, useMemo } from 'react';
+import { useEffect, useState, useRef, Suspense, useMemo, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import ChatPanel from '@/components/ChatPanel';
@@ -37,8 +37,9 @@ function LearnInner() {
   const [chatLoading, setChatLoading] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [summary, setSummary] = useState<SessionSummaryType | null>(null);
-  const [graphDimensions, setGraphDimensions] = useState({ width: 500, height: 500 });
+  const [graphDimensions, setGraphDimensions] = useState({ width: 0, height: 0 });
   const graphContainerRef = useRef<HTMLDivElement>(null);
+  const hasDimensionsRef = useRef(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
 
   const [topic, setTopic] = useState(topicParam);
@@ -93,12 +94,21 @@ function LearnInner() {
   useEffect(() => {
     const el = graphContainerRef.current;
     if (!el) return;
+    let timer: ReturnType<typeof setTimeout>;
     const obs = new ResizeObserver(entries => {
       const r = entries[0];
-      if (r) setGraphDimensions({ width: r.contentRect.width, height: r.contentRect.height });
+      if (!r) return;
+      const { width, height } = r.contentRect;
+      if (!hasDimensionsRef.current) {
+        hasDimensionsRef.current = true;
+        setGraphDimensions({ width, height });
+      } else {
+        clearTimeout(timer);
+        timer = setTimeout(() => setGraphDimensions({ width, height }), 200);
+      }
     });
     obs.observe(el);
-    return () => obs.disconnect();
+    return () => { obs.disconnect(); clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
@@ -234,6 +244,16 @@ function LearnInner() {
     }
   };
 
+  // Stable node-click handler — ref keeps latest mode/beginSession without invalidating the
+  // D3 useEffect dep array on every render (onNodeClick is a dep in KnowledgeGraph).
+  const nodeClickPayloadRef = useRef<{ mode: TeachingMode; beginSession: typeof beginSession }>({ mode, beginSession });
+  nodeClickPayloadRef.current = { mode, beginSession };
+  const handleNodeClick = useCallback((n: GraphNode) => {
+    const { mode: m, beginSession: bs } = nodeClickPayloadRef.current;
+    setTopic(n.concept_name);
+    bs(n.concept_name, m);
+  }, []);
+
   const topicNode = nodes.find(n => n.concept_name.toLowerCase() === topic.toLowerCase());
 
   // Pre-select the suggested/topic concept when the quiz panel opens
@@ -361,16 +381,18 @@ function LearnInner() {
 
         <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
           <div ref={graphContainerRef} style={{ flex: 1 }}>
-            <KnowledgeGraph
-              nodes={nodes}
-              edges={filteredEdges}
-              width={graphDimensions.width}
-              height={graphDimensions.height}
-              animate
-              interactive
-              highlightId={suggestNode?.id ?? topicNode?.id}
-              onNodeClick={n => { setTopic(n.concept_name); beginSession(n.concept_name, mode); }}
-            />
+            {graphDimensions.width > 0 && (
+              <KnowledgeGraph
+                nodes={nodes}
+                edges={filteredEdges}
+                width={graphDimensions.width}
+                height={graphDimensions.height}
+                animate
+                interactive
+                highlightId={suggestNode?.id ?? topicNode?.id}
+                onNodeClick={handleNodeClick}
+              />
+            )}
           </div>
           <div style={{ position: 'absolute', bottom: '12px', right: '12px' }}>
             <Link href="/tree" style={{ fontSize: '12px', color: '#475569', textDecoration: 'none' }}>
