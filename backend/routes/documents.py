@@ -157,4 +157,13 @@ async def upload_document(
         "processed_at": now,
     }
     inserted = table("documents").insert(row)
+
+    # Invalidate any cached study guides for this user+course so they regenerate fresh
+    try:
+        table("study_guides").delete(
+            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
+        )
+    except Exception:
+        logger.exception("Failed to invalidate study guides cache for user=%s course=%s", user_id, course_id)
+
     return inserted[0] if inserted else row
