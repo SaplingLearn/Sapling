@@ -96,6 +96,7 @@ function KnowledgeGraph({
   );
 
   useEffect(() => {
+    console.log('[KG] main effect fired', { width, height, nodeIdsKey: nodeIdsKey.slice(0, 40), edgeIdsKey: edgeIdsKey.slice(0, 40), animate, interactive, onNodeClick: !!onNodeClick });
     if (!svgRef.current || !width || !height) return;
 
     const svg = d3.select(svgRef.current);
