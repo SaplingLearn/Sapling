@@ -262,14 +262,14 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
   return (
     <div style={{ border: '1px solid rgba(107,114,128,0.15)', borderRadius: '10px', overflow: 'hidden', background: '#ffffff' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid rgba(107,114,128,0.1)', background: '#f0f5f0' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid rgba(107,114,128,0.1)', background: '#f0f5f0', gap: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button onClick={() => navigate(-1)} style={{ background: 'none', border: '1px solid rgba(107,114,128,0.18)', borderRadius: '5px', cursor: 'pointer', color: '#6b7280', fontSize: '14px', padding: '4px 10px', lineHeight: 1 }}>←</button>
           <button onClick={() => setCurrent(new Date())} style={{ fontSize: '11px', color: '#4b5563', background: '#f8faf8', border: '1px solid rgba(107,114,128,0.18)', borderRadius: '5px', cursor: 'pointer', padding: '4px 10px', fontWeight: 500 }}>Today</button>
           <button onClick={() => navigate(1)} style={{ background: 'none', border: '1px solid rgba(107,114,128,0.18)', borderRadius: '5px', cursor: 'pointer', color: '#6b7280', fontSize: '14px', padding: '4px 10px', lineHeight: 1 }}>→</button>
-          <span style={{ fontSize: '15px', fontWeight: 600, color: '#111827', marginLeft: '10px' }}>{headerLabel()}</span>
         </div>
-        <div style={{ display: 'flex', gap: '4px' }}>
+        <span style={{ fontSize: '15px', fontWeight: 600, color: '#111827', textAlign: 'center', whiteSpace: 'nowrap' }}>{headerLabel()}</span>
+        <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
           {(['day', 'week', 'month'] as CalendarView[]).map(v => (
             <button key={v} onClick={() => setView(v)} style={viewBtnStyle(v)}>
               {v.charAt(0).toUpperCase() + v.slice(1)}
