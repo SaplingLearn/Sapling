@@ -93,6 +93,9 @@ export const switchMode = (sessionId: string, userId: string, newMode: string) =
     body: JSON.stringify({ session_id: sessionId, user_id: userId, new_mode: newMode }),
   });
 
+export const deleteSession = (sessionId: string) =>
+  fetchJSON<{ deleted: boolean }>(`/api/learn/sessions/${sessionId}`, { method: 'DELETE' });
+
 export const resumeSession = (sessionId: string) =>
   fetchJSON<{
     session: { id: string; topic: string; mode: string; started_at: string; ended_at: string | null };

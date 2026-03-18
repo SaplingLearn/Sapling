@@ -16,9 +16,10 @@ interface Props {
   style?: React.CSSProperties;
   compact?: boolean;
   openUpward?: boolean;
+  onDelete?: (value: string) => void;
 }
 
-export default function CustomSelect({ value, onChange, options, placeholder, style, compact, openUpward }: Props) {
+export default function CustomSelect({ value, onChange, options, placeholder, style, compact, openUpward, onDelete }: Props) {
   const [open, setOpen] = useState(false);
   const [dropRect, setDropRect] = useState<DOMRect | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -78,39 +79,62 @@ export default function CustomSelect({ value, onChange, options, placeholder, st
             }}
           >
             {options.map(opt => (
-              <button
-                key={opt.value}
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => { onChange(opt.value); setOpen(false); }}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  padding: compact ? '6px 10px' : '8px 12px',
-                  background: opt.value === value ? 'rgba(26,92,42,0.08)' : 'transparent',
-                  color: opt.value === value ? '#1a5c2a' : '#374151',
-                  fontSize,
-                  cursor: 'pointer',
-                  border: 'none',
-                  textAlign: 'left',
-                  fontFamily: 'inherit',
-                  whiteSpace: 'nowrap',
-                  transition: 'background 0.12s, color 0.12s',
-                }}
-                onMouseEnter={e => {
-                  if (opt.value !== value) {
-                    (e.currentTarget as HTMLButtonElement).style.background = 'rgba(26,92,42,0.05)';
-                    (e.currentTarget as HTMLButtonElement).style.color = '#111827';
-                  }
-                }}
-                onMouseLeave={e => {
-                  if (opt.value !== value) {
-                    (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-                    (e.currentTarget as HTMLButtonElement).style.color = '#374151';
-                  }
-                }}
-              >
-                {opt.label}
-              </button>
+              <div key={opt.value} style={{ display: 'flex', alignItems: 'center' }}>
+                <button
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => { onChange(opt.value); setOpen(false); }}
+                  style={{
+                    flex: 1,
+                    padding: compact ? '6px 10px' : '8px 12px',
+                    background: opt.value === value ? 'rgba(26,92,42,0.08)' : 'transparent',
+                    color: opt.value === value ? '#1a5c2a' : '#374151',
+                    fontSize,
+                    cursor: 'pointer',
+                    border: 'none',
+                    textAlign: 'left',
+                    fontFamily: 'inherit',
+                    whiteSpace: 'nowrap',
+                    transition: 'background 0.12s, color 0.12s',
+                  }}
+                  onMouseEnter={e => {
+                    if (opt.value !== value) {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(26,92,42,0.05)';
+                      (e.currentTarget as HTMLButtonElement).style.color = '#111827';
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (opt.value !== value) {
+                      (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                      (e.currentTarget as HTMLButtonElement).style.color = '#374151';
+                    }
+                  }}
+                >
+                  {opt.label}
+                </button>
+                {onDelete && (
+                  <button
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={e => { e.stopPropagation(); onDelete(opt.value); }}
+                    title="Delete session"
+                    style={{
+                      flexShrink: 0,
+                      padding: compact ? '6px 8px' : '8px 10px',
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#9ca3af',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      lineHeight: 1,
+                      transition: 'color 0.12s',
+                    }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#dc2626'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#9ca3af'; }}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             ))}
           </div>,
           document.body

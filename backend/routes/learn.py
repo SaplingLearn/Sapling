@@ -302,6 +302,13 @@ def list_sessions(user_id: str, limit: int = 10):
     return {"sessions": result}
 
 
+@router.delete("/sessions/{session_id}")
+def delete_session(session_id: str):
+    table("messages").delete({"session_id": f"eq.{session_id}"})
+    table("sessions").delete({"id": f"eq.{session_id}"})
+    return {"deleted": True}
+
+
 @router.get("/sessions/{session_id}/resume")
 def resume_session(session_id: str):
     session_rows = table("sessions").select(

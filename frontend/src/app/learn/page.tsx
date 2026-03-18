@@ -8,7 +8,7 @@ import ModeSelector from '@/components/ModeSelector';
 import QuizPanel from '@/components/QuizPanel';
 import SessionSummary from '@/components/SessionSummary';
 import { GraphNode, GraphEdge, ChatMessage, TeachingMode, SessionSummary as SessionSummaryType } from '@/lib/types';
-import { startSession, sendChat, sendAction, endSession, getGraph, getSessions, resumeSession, switchMode } from '@/lib/api';
+import { startSession, sendChat, sendAction, endSession, getGraph, getSessions, resumeSession, switchMode, deleteSession } from '@/lib/api';
 import Link from 'next/link';
 import { getMasteryLabel } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
@@ -88,7 +88,7 @@ function LearnInner() {
       setNodes(data.nodes);
       setEdges(data.edges);
     }).catch(console.error);
-    getSessions(USER_ID, 10).then(data => setRecentSessions(data.sessions)).catch(console.error);
+    getSessions(USER_ID, 10).then(data => setRecentSessions(data.sessions.filter(s => s.message_count > 0))).catch(console.error);
   }, [USER_ID, userReady]);
 
   useEffect(() => {
@@ -161,6 +161,9 @@ function LearnInner() {
         timestamp: new Date().toISOString(),
       }]);
       getGraph(USER_ID).then(data => { setNodes(data.nodes); setEdges(data.edges); }).catch(console.error);
+      if (messages.filter(m => m.role === 'user').length === 0) {
+        getSessions(USER_ID, 10).then(data => setRecentSessions(data.sessions.filter(s => s.message_count > 0))).catch(console.error);
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -221,6 +224,15 @@ function LearnInner() {
     setSelectedCourse(course);
     setTopic(course);
     beginSession(course, mode);
+  };
+
+  const handleDeleteSession = async (sid: string) => {
+    try {
+      await deleteSession(sid);
+      setRecentSessions(prev => prev.filter(s => s.id !== sid));
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleResumeSession = async (sid: string) => {
@@ -300,6 +312,7 @@ function LearnInner() {
               const date = new Date(s.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
               return { value: s.id, label: `${s.topic} · ${s.mode} · ${date}${s.is_active ? ' ●' : ''}` };
             })}
+            onDelete={handleDeleteSession}
             style={{ minWidth: '200px' }}
           />
         )}
