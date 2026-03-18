@@ -87,12 +87,16 @@ export default function LandingPage() {
     }
 
     const clusters = [
-      { x: 200, y: -100, z: 100 }, { x: -250, y: 150, z: -50 },
-      { x: 0, y: -200, z: -200 }, { x: 300, y: 200, z: 150 },
-      { x: -150, y: -250, z: 200 }, { x: 100, y: 300, z: -100 },
+      { x: -600, y: -250, z: 80 },  { x: -350, y: -100, z: -120 },
+      { x: -100, y: -300, z: 200 }, { x: 150, y: -150, z: -80 },
+      { x: 400, y: -250, z: 150 },  { x: 600, y: -100, z: -50 },
+      { x: -500, y: 100, z: -150 }, { x: -200, y: 200, z: 100 },
+      { x: 50, y: 150, z: -200 },   { x: 300, y: 250, z: 120 },
+      { x: 550, y: 150, z: -100 },  { x: -400, y: 350, z: 60 },
+      { x: 0, y: 0, z: 0 },         { x: 200, y: -50, z: -150 },
     ];
-    const spread = 180;
-    const nodes = Array.from({ length: 130 }, () => {
+    const spread = 280;
+    const nodes = Array.from({ length: 220 }, () => {
       const cl = clusters[Math.floor(Math.random() * clusters.length)];
       return {
         ox: cl.x + (Math.random() - 0.5) * spread,
@@ -298,6 +302,32 @@ export default function LandingPage() {
     <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), 'Inter', sans-serif", color: '#111827', background: '#E9EFED' }}>
       <div className="landing-ambient-glow" />
 
+      {/* ═══ Initial load intro overlay ═══ */}
+      <div
+        className="landing-intro-overlay"
+        style={{
+          opacity: heroMounted ? 0 : 1,
+          pointerEvents: heroMounted ? 'none' as const : 'auto' as const,
+        }}
+      >
+        <div className="landing-intro-orbit">
+          <div className="landing-intro-orbit-ring">
+            <div className="landing-intro-orbit-node landing-intro-orbit-node--green" />
+            <div className="landing-intro-orbit-node landing-intro-orbit-node--amber" />
+            <div className="landing-intro-orbit-node landing-intro-orbit-node--blue" />
+            <div className="landing-intro-orbit-node landing-intro-orbit-node--purple" />
+          </div>
+          <div className="text-center">
+            <div className="font-playfair text-3xl sm:text-4xl font-semibold bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent">
+              Sapling
+            </div>
+            <div className="mt-2 text-xs sm:text-sm font-jetbrains tracking-[0.2em] uppercase text-gray-500">
+              Growing your knowledge
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* ═══ Navbar ═══ */}
       <nav
         ref={navRef}
@@ -331,7 +361,7 @@ export default function LandingPage() {
         <div ref={floatingCardsRef} className="absolute inset-0 z-10 hidden lg:block pointer-events-none">
           <div
             className="floating-card absolute w-48 liquid-glass rounded-2xl p-4"
-            style={{ position: 'absolute', top: '20%', left: '15%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 0.8s' }}
+            style={{ position: 'absolute', top: '28%', left: '18%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 0.8s' }}
             data-base-rot="-6" data-float-delay="0" data-float-dur="5000"
           >
             <span className="font-jetbrains text-xs text-[#3B82F6] font-medium block mb-3">CS 101</span>
@@ -341,9 +371,31 @@ export default function LandingPage() {
             <span className="text-xs text-gray-400 block">55% mastered</span>
           </div>
 
+          {/* Card D: Progress summary under legend */}
+          <div
+            className="floating-card absolute w-52 liquid-glass rounded-2xl p-4"
+            style={{ position: 'absolute', top: '52%', right: '18%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.4s' }}
+            data-base-rot="2" data-float-delay="1600" data-float-dur="5200"
+          >
+            <div className="flex flex-col gap-2 text-left">
+              <div className="flex items-center justify-between text-xs text-gray-500">
+                <span>Total nodes</span>
+                <span className="font-jetbrains text-gray-700">2,413</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-gray-500">
+                <span>Mastered</span>
+                <span className="font-jetbrains text-[#1B6C42]">68%</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-gray-500">
+                <span>On track</span>
+                <span className="font-jetbrains text-[#D97706]">24%</span>
+              </div>
+            </div>
+          </div>
+
           <div
             className="floating-card absolute w-52 liquid-glass rounded-2xl p-5"
-            style={{ position: 'absolute', top: '30%', right: '15%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
+            style={{ position: 'absolute', top: '24%', right: '18%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
             data-base-rot="4" data-float-delay="1000" data-float-dur="6000"
           >
             <div className="flex flex-col gap-3">
@@ -356,8 +408,8 @@ export default function LandingPage() {
 
           <div
             className="floating-card absolute w-44 liquid-glass rounded-2xl p-4 flex flex-col gap-2"
-            style={{ position: 'absolute', bottom: '25%', left: '10%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.2s' }}
-            data-base-rot="3" data-float-delay="500" data-float-dur="4500"
+            style={{ position: 'absolute', bottom: '34%', left: '24%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.2s' }}
+            data-base-rot="-6" data-float-delay="500" data-float-dur="4500"
           >
             <div className="bg-gray-50/60 border border-gray-100/50 rounded-xl py-2 flex items-center justify-center gap-2">
               <PenSquare className="text-gray-400 w-4 h-4" strokeWidth={1.5} />
@@ -387,7 +439,7 @@ export default function LandingPage() {
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 300ms',
-          }} className="font-playfair text-7xl sm:text-8xl md:text-9xl lg:text-[clamp(8rem,12vw,11rem)] font-semibold leading-[1.15] tracking-tight mt-8 bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient py-2">
+          }} className="font-playfair text-5xl sm:text-7xl md:text-8xl lg:text-[10rem] font-semibold leading-[1.15] tracking-tight mt-8 pb-4 bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient">
             <span>{heroText1 || '\u00A0'}</span>
           </h1>
 
