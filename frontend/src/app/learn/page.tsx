@@ -106,7 +106,10 @@ function LearnInner() {
         setGraphDimensions({ width, height });
       } else {
         clearTimeout(timer);
-        timer = setTimeout(() => setGraphDimensions({ width, height }), 200);
+        timer = setTimeout(() => setGraphDimensions(prev => {
+          if (Math.abs(prev.width - width) < 5 && Math.abs(prev.height - height) < 5) return prev;
+          return { width, height };
+        }), 200);
       }
     });
     obs.observe(el);

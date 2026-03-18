@@ -237,7 +237,10 @@ function DashboardInner() {
         setGraphDimensions({ width, height });
       } else {
         clearTimeout(timer);
-        timer = setTimeout(() => setGraphDimensions({ width, height }), 250);
+        timer = setTimeout(() => setGraphDimensions(prev => {
+          if (Math.abs(prev.width - width) < 5 && Math.abs(prev.height - height) < 5) return prev;
+          return { width, height };
+        }), 250);
       }
     });
     obs.observe(el);
@@ -564,8 +567,9 @@ function DashboardInner() {
                 color: '#111827',
                 margin: 0,
                 letterSpacing: '-0.03em',
-                minHeight: '60px',
+                height: '110px',
                 lineHeight: '1.1',
+                overflow: 'hidden',
               }}
             >
               {displayedGreeting}
