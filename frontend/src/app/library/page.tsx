@@ -272,7 +272,7 @@ export default function LibraryPage() {
   });
 
   return (
-    <div className="animate-fade-in" style={{ padding: '32px', maxWidth: '1100px', margin: '0 auto', fontFamily: UI_FONT }}>
+    <div style={{ padding: '32px', maxWidth: '1100px', margin: '0 auto', fontFamily: UI_FONT }}>
 
       {/* Header */}
       <div className="panel-in panel-in-2" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '28px' }}>
@@ -376,7 +376,7 @@ export default function LibraryPage() {
       {panelDoc && (
         <div
           onClick={e => { if (e.target === e.currentTarget) closePanel(); }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 80, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '40px 20px', overflowY: 'auto' }}
         >
           <div style={{
             background: '#fff', borderRadius: '12px', width: '620px', maxWidth: '95vw',
@@ -384,53 +384,47 @@ export default function LibraryPage() {
             border: '1px solid rgba(107,114,128,0.15)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
             fontFamily: UI_FONT, display: 'flex', flexDirection: 'column',
           }}>
-            {/* Modal header */}
-            <div style={{ padding: '24px 24px 16px', position: 'sticky', top: 0, background: '#fff', zIndex: 1, borderBottom: '1px solid rgba(107,114,128,0.1)' }}>
+            {/* Header */}
+            <div style={{ padding: '20px 20px 14px', borderBottom: '1px solid rgba(107,114,128,0.1)', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
-                <p style={{ fontSize: '16px', fontWeight: 700, color: '#111827', margin: 0, wordBreak: 'break-word', lineHeight: 1.35, flex: 1 }}>
-                  {panelDoc.file_name}
-                </p>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {(() => {
+                    const catColor = CATEGORY_COLORS[panelDoc.category] ?? CATEGORY_COLORS.other;
+                    return (
+                      <span style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '2px 8px', borderRadius: '4px', background: catColor.bg, color: catColor.text, border: `1px solid ${catColor.border}` }}>
+                        {CATEGORY_LABELS[panelDoc.category] ?? panelDoc.category}
+                      </span>
+                    );
+                  })()}
+                  {(() => {
+                    const course = courseById[panelDoc.course_id];
+                    if (!course) return null;
+                    const cc = getCourseColor(course.course_name, course.color);
+                    return (
+                      <span style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '2px 8px', borderRadius: '4px', background: cc.bg, color: cc.text, border: `1px solid ${cc.border}` }}>
+                        {course.course_name}
+                      </span>
+                    );
+                  })()}
+                </div>
                 <button onClick={closePanel} style={{ background: 'none', border: 'none', fontSize: '18px', color: '#6b7280', cursor: 'pointer', lineHeight: 1, padding: '2px 4px', flexShrink: 0 }}>✕</button>
               </div>
-              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' }}>
-                {(() => {
-                  const catColor = CATEGORY_COLORS[panelDoc.category] ?? CATEGORY_COLORS.other;
-                  return (
-                    <span style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '2px 8px', borderRadius: '4px', background: catColor.bg, color: catColor.text, border: `1px solid ${catColor.border}` }}>
-                      {CATEGORY_LABELS[panelDoc.category] ?? panelDoc.category}
-                    </span>
-                  );
-                })()}
-                {(() => {
-                  const course = courseById[panelDoc.course_id];
-                  if (!course) return null;
-                  const cc = getCourseColor(course.course_name, course.color);
-                  return (
-                    <span style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '2px 8px', borderRadius: '4px', background: cc.bg, color: cc.text, border: `1px solid ${cc.border}` }}>
-                      {course.course_name}
-                    </span>
-                  );
-                })()}
-              </div>
-              <p style={{ fontSize: '11px', color: '#9ca3af', margin: '8px 0 0' }}>{formatDate(panelDoc.created_at)}</p>
+              <p style={{ fontSize: '11px', color: '#9ca3af', margin: '10px 0 0' }}>{formatDate(panelDoc.created_at)}</p>
             </div>
 
-            {/* Modal body */}
-            <div style={{ padding: '24px', flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
-
-              {/* Summary */}
+            {/* Body */}
+            <div style={{ padding: '20px', flex: 1, display: 'flex', flexDirection: 'column', gap: '22px' }}>
               {panelDoc.summary && (
                 <div>
-                  <p style={{ fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.07em', margin: '0 0 8px' }}>Summary</p>
+                  <p style={{ fontSize: '10px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0 0 8px' }}>Summary</p>
                   <p style={{ fontSize: '13px', color: '#374151', margin: 0, lineHeight: 1.65 }}>{panelDoc.summary}</p>
                 </div>
               )}
 
-              {/* Key Takeaways */}
               {panelDoc.key_takeaways && panelDoc.key_takeaways.length > 0 && (
                 <div>
-                  <p style={{ fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.07em', margin: '0 0 8px' }}>Key Takeaways</p>
-                  <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <p style={{ fontSize: '10px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0 0 8px' }}>Key Takeaways</p>
+                  <ul style={{ margin: 0, paddingLeft: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     {panelDoc.key_takeaways.map((t, i) => (
                       <li key={i} style={{ fontSize: '13px', color: '#374151', lineHeight: 1.55 }}>{t}</li>
                     ))}
@@ -438,19 +432,18 @@ export default function LibraryPage() {
                 </div>
               )}
 
-              {/* Flashcards */}
               {panelDoc.flashcards && panelDoc.flashcards.length > 0 && (
                 <div>
-                  <p style={{ fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.07em', margin: '0 0 10px' }}>Flashcards</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <p style={{ fontSize: '10px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0 0 10px' }}>Flashcards</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {panelDoc.flashcards.map((fc, i) => {
                       const revealed = revealedCards.has(i);
                       return (
                         <div key={i} style={{ border: '1px solid rgba(107,114,128,0.15)', borderRadius: '8px', overflow: 'hidden' }}>
-                          <div style={{ padding: '11px 14px', background: '#f8faf8' }}>
+                          <div style={{ padding: '10px 14px', background: '#f8faf8' }}>
                             <p style={{ fontSize: '13px', fontWeight: 500, color: '#111827', margin: 0, lineHeight: 1.4 }}>{fc.question}</p>
                           </div>
-                          <div style={{ padding: '10px 14px', borderTop: '1px solid rgba(107,114,128,0.1)' }}>
+                          <div style={{ padding: '9px 14px', borderTop: '1px solid rgba(107,114,128,0.1)' }}>
                             {revealed ? (
                               <p style={{ fontSize: '13px', color: '#374151', margin: 0, lineHeight: 1.5 }}>{fc.answer}</p>
                             ) : (
@@ -471,33 +464,23 @@ export default function LibraryPage() {
             </div>
 
             {/* Delete footer */}
-            <div style={{ padding: '16px 20px', borderTop: '1px solid rgba(107,114,128,0.1)', background: '#fff' }}>
+            <div style={{ padding: '14px 20px', borderTop: '1px solid rgba(107,114,128,0.1)', flexShrink: 0 }}>
               {confirmDelete ? (
                 <div>
                   <p style={{ fontSize: '13px', color: '#374151', margin: '0 0 10px', fontWeight: 500 }}>
                     Are you sure? This cannot be undone.
                   </p>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      onClick={() => setConfirmDelete(false)}
-                      style={{ flex: 1, padding: '8px', background: '#fff', color: '#374151', border: '1px solid rgba(107,114,128,0.25)', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit' }}
-                    >
+                    <button onClick={() => setConfirmDelete(false)} style={{ flex: 1, padding: '8px', background: '#fff', color: '#374151', border: '1px solid rgba(107,114,128,0.25)', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit' }}>
                       Cancel
                     </button>
-                    <button
-                      onClick={handleDelete}
-                      disabled={deleting}
-                      style={{ flex: 1, padding: '8px', background: deleting ? '#f3f4f6' : '#dc2626', color: deleting ? '#9ca3af' : '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: deleting ? 'default' : 'pointer', fontFamily: 'inherit' }}
-                    >
+                    <button onClick={handleDelete} disabled={deleting} style={{ flex: 1, padding: '8px', background: deleting ? '#f3f4f6' : '#dc2626', color: deleting ? '#9ca3af' : '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: deleting ? 'default' : 'pointer', fontFamily: 'inherit' }}>
                       {deleting ? 'Deleting…' : 'Delete'}
                     </button>
                   </div>
                 </div>
               ) : (
-                <button
-                  onClick={() => setConfirmDelete(true)}
-                  style={{ width: '100%', padding: '8px', background: 'none', color: '#b91c1c', border: '1px solid rgba(220,38,38,0.25)', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit' }}
-                >
+                <button onClick={() => setConfirmDelete(true)} style={{ width: '100%', padding: '8px', background: 'none', color: '#b91c1c', border: '1px solid rgba(220,38,38,0.25)', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit' }}>
                   Delete document
                 </button>
               )}

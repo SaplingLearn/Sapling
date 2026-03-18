@@ -58,7 +58,8 @@ def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False) -> str:
         try:
             config = types.GenerateContentConfig(
                 temperature=0.7,
-                max_output_tokens=16384,
+                max_output_tokens=8192,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
                 **({"response_mime_type": "application/json"} if json_mode else {}),
             )
             response = _client.models.generate_content(
