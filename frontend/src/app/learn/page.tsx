@@ -16,6 +16,18 @@ import CustomSelect from '@/components/CustomSelect';
 import SharedContextToggle from '@/components/SharedContextToggle';
 import AIDisclaimerChip from '@/components/AIDisclaimerChip';
 
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 function LearnInner() {
   const { userId: USER_ID, userReady } = useUser();
   const searchParams = useSearchParams();
@@ -52,6 +64,9 @@ function LearnInner() {
     const saved = localStorage.getItem('sapling_shared_ctx');
     return saved === null ? true : saved === 'true';
   });
+  const [mobileView, setMobileView] = useState<'chat' | 'graph'>('chat');
+
+  const isMobile = useIsMobile();
 
   const toggleSharedContext = () => {
     setUseSharedContext(prev => {
@@ -286,11 +301,13 @@ function LearnInner() {
       <div className="panel-in panel-in-1" style={{
         background: '#f0f5f0',
         borderBottom: '1px solid rgba(107,114,128,0.12)',
-        padding: '0 20px',
-        height: '52px',
+        padding: isMobile ? '8px 10px' : '0 20px',
+        height: isMobile ? 'auto' : '52px',
+        minHeight: isMobile ? '48px' : undefined,
         display: 'flex',
         alignItems: 'center',
-        gap: '16px',
+        gap: isMobile ? '8px' : '16px',
+        flexWrap: isMobile ? 'wrap' : undefined,
         flexShrink: 0,
         position: 'relative',
         zIndex: 20,
@@ -299,16 +316,18 @@ function LearnInner() {
           ←
         </Link>
 
-        <CustomSelect
-          value={selectedCourse}
-          onChange={handleSelectCourse}
-          placeholder="Select a course…"
-          options={courses.map(c => ({ value: c, label: c }))}
-          style={{ minWidth: '160px' }}
-        />
+        {!isMobile && (
+          <CustomSelect
+            value={selectedCourse}
+            onChange={handleSelectCourse}
+            placeholder="Select a course…"
+            options={courses.map(c => ({ value: c, label: c }))}
+            style={{ minWidth: '160px' }}
+          />
+        )}
 
         {/* Resume past session */}
-        {recentSessions.length > 0 && (
+        {!isMobile && recentSessions.length > 0 && (
           <CustomSelect
             value=""
             onChange={sid => handleResumeSession(sid)}
@@ -322,7 +341,7 @@ function LearnInner() {
           />
         )}
 
-        {topic && (
+        {!isMobile && topic && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {topic !== selectedCourse && <span style={{ fontSize: '13px', color: '#6b7280' }}>→</span>}
             <span style={{ fontSize: '14px', fontWeight: 500, color: '#111827' }}>
@@ -339,8 +358,12 @@ function LearnInner() {
         {sessionLoading && <span style={{ fontSize: '13px', color: '#6b7280' }}>Starting…</span>}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginLeft: 'auto' }}>
-          <AIDisclaimerChip />
-          <SharedContextToggle enabled={useSharedContext} onToggle={toggleSharedContext} />
+          {!isMobile && (
+            <>
+              <AIDisclaimerChip />
+              <SharedContextToggle enabled={useSharedContext} onToggle={toggleSharedContext} />
+            </>
+          )}
 
           <ModeSelector
             mode={mode}
@@ -353,8 +376,14 @@ function LearnInner() {
       </div>
 
       {/* Main split */}
-      <div className="panel-in panel-in-2" style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        <div style={{ flex: 1, borderRight: '1px solid rgba(107,114,128,0.12)', overflow: 'hidden' }}>
+      <div className="panel-in panel-in-2" style={{ flex: 1, display: 'flex', flexDirection: isMobile ? 'column' : undefined, overflow: 'hidden' }}>
+        {isMobile && (
+          <div style={{ display: 'flex', borderBottom: '1px solid rgba(107,114,128,0.12)', flexShrink: 0 }}>
+            <button onClick={() => setMobileView('chat')} style={{ flex: 1, padding: '8px', fontSize: '13px', fontWeight: mobileView === 'chat' ? 600 : 400, color: mobileView === 'chat' ? '#1a5c2a' : '#6b7280', background: mobileView === 'chat' ? 'rgba(26,92,42,0.06)' : 'transparent', border: 'none', borderBottom: mobileView === 'chat' ? '2px solid #1a5c2a' : '2px solid transparent', cursor: 'pointer' }}>Chat</button>
+            <button onClick={() => setMobileView('graph')} style={{ flex: 1, padding: '8px', fontSize: '13px', fontWeight: mobileView === 'graph' ? 600 : 400, color: mobileView === 'graph' ? '#1a5c2a' : '#6b7280', background: mobileView === 'graph' ? 'rgba(26,92,42,0.06)' : 'transparent', border: 'none', borderBottom: mobileView === 'graph' ? '2px solid #1a5c2a' : '2px solid transparent', cursor: 'pointer' }}>Graph</button>
+          </div>
+        )}
+        <div style={{ flex: 1, borderRight: isMobile ? undefined : '1px solid rgba(107,114,128,0.12)', overflow: 'hidden', display: isMobile && mobileView !== 'chat' ? 'none' : undefined, height: isMobile ? '100%' : undefined }}>
           {quizMode ? (
             <div style={{ height: '100%', overflow: 'hidden' }}>
               <QuizPanel
@@ -397,7 +426,7 @@ function LearnInner() {
           )}
         </div>
 
-        <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, position: 'relative', display: isMobile && mobileView !== 'graph' ? 'none' : 'flex', flexDirection: 'column', height: isMobile ? '100%' : undefined }}>
           <div ref={graphContainerRef} style={{ flex: 1 }}>
             {graphDimensions.width > 0 && graphReady && (
               <KnowledgeGraph
@@ -433,8 +462,9 @@ function LearnInner() {
               display: 'flex',
               flexDirection: 'column',
               gap: '10px',
-              minWidth: '300px',
-              maxWidth: '400px',
+              minWidth: isMobile ? '0' : '300px',
+              maxWidth: isMobile ? 'calc(100% - 16px)' : '400px',
+              width: isMobile ? 'calc(100% - 16px)' : undefined,
               fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
             }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
