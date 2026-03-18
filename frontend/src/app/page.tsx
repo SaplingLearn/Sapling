@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!<>-_\\/[]{}=+*^?#_";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
 export default function LandingPage() {
   const router = useRouter();
@@ -286,7 +287,7 @@ export default function LandingPage() {
 
   function openModal(mode: 'signin' | 'signup') { setModalMode(mode); setModalStep(1); setModalOpen(true); }
   function closeModal() { setModalOpen(false); }
-  function handleGoogleContinue() { if (modalMode === 'signin') closeModal(); else setModalStep(2); }
+  function handleGoogleContinue() { window.location.href = `${API_URL}/api/auth/google`; }
   function handleEmailContinue() { if (modalMode === 'signin') closeModal(); else setModalStep(2); }
   function addClass() { const v = classInput.trim(); if (v) { setClassChips(prev => [...prev, v]); setClassInput(''); } }
   function addSuggested(name: string) { setClassChips(prev => [...prev, name]); }
