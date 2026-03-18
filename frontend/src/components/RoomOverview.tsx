@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import KnowledgeGraph from './KnowledgeGraph';
+import CustomSelect from './CustomSelect';
 import { RoomMember } from '@/lib/types';
 import { filterCrossSubjectEdges } from '@/lib/graphUtils';
 
@@ -150,17 +151,13 @@ export default function RoomOverview({ room, members, aiSummary, myUserId, sugge
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
             <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-dim)', margin: 0 }}>Compare with</p>
-            <select
+            <CustomSelect
               value={compareWith}
-              onChange={e => setCompareWith(e.target.value)}
-              className="input"
-              style={{ padding: '2px 6px', fontSize: '12px' }}
-            >
-              <option value="">Select member</option>
-              {otherMembers.map(m => (
-                <option key={m.user_id} value={m.user_id}>{m.name}</option>
-              ))}
-            </select>
+              onChange={setCompareWith}
+              options={otherMembers.map(m => ({ value: m.user_id, label: m.name }))}
+              placeholder="Select member"
+              compact
+            />
           </div>
           <div className="panel" style={{ overflow: 'hidden' }}>
             {partnerMember ? (
