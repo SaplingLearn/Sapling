@@ -7,7 +7,7 @@ import { useUser } from '@/context/UserContext';
 import { getRecommendations } from '@/lib/api';
 
 const LINKS = [
-  { href: '/', label: 'Dashboard' },
+  { href: '/dashboard', label: 'Dashboard' },
   { href: '/learn', label: 'Learn' },
   { href: '/flashcards', label: 'Flashcards' },
   { href: '/library', label: 'Library' },
@@ -36,12 +36,15 @@ export default function Navbar() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Redirect unauthenticated users to signin
+  const isLandingPage = pathname === '/';
+
   useEffect(() => {
-    if (userReady && !isAuthenticated && pathname !== '/signin' && pathname !== '/signin/callback') {
+    if (userReady && !isAuthenticated && pathname !== '/' && pathname !== '/signin' && pathname !== '/signin/callback') {
       router.push('/signin');
     }
   }, [userReady, isAuthenticated, pathname, router]);
+
+  if (isLandingPage) return null;
 
   const handleSuggest = async () => {
     setSuggesting(true);
@@ -86,7 +89,7 @@ export default function Navbar() {
         zIndex: 50,
       }}
     >
-      <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
+      <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
         <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '32px', height: '32px' }} />
         <span style={{
           fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
@@ -102,7 +105,7 @@ export default function Navbar() {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
         {LINKS.map(link => {
-          const active = pathname === link.href || (link.href !== '/' && pathname.startsWith(link.href));
+          const active = pathname === link.href || (link.href !== '/dashboard' && pathname.startsWith(link.href));
           return (
             <Link
               key={link.href}
