@@ -32,6 +32,7 @@ function LearnInner() {
 
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [edges, setEdges] = useState<GraphEdge[]>([]);
+  const [graphReady, setGraphReady] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
@@ -87,6 +88,7 @@ function LearnInner() {
     getGraph(USER_ID).then(data => {
       setNodes(data.nodes);
       setEdges(data.edges);
+      setGraphReady(true);
     }).catch(console.error);
     getSessions(USER_ID, 10).then(data => setRecentSessions(data.sessions.filter(s => s.message_count > 0))).catch(console.error);
   }, [USER_ID, userReady]);
@@ -394,7 +396,7 @@ function LearnInner() {
 
         <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
           <div ref={graphContainerRef} style={{ flex: 1 }}>
-            {graphDimensions.width > 0 && (
+            {graphDimensions.width > 0 && graphReady && (
               <KnowledgeGraph
                 nodes={nodes}
                 edges={filteredEdges}
