@@ -9,10 +9,11 @@ services:
       FRONTEND_URL: http://localhost:3000
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:5000
     ports:
       - "3000:3000"
-    environment:
-      BACKEND_URL: http://backend:5000
     depends_on:
       - backend

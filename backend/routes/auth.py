@@ -7,6 +7,8 @@ Restricts sign-in to @bu.edu email accounts only.
 
 import json
 import base64
+import hashlib
+import secrets
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query
@@ -58,18 +60,29 @@ def _decode_state(state: str) -> dict:
         return {}
 
 
+def _generate_pkce_pair():
+    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b'=').decode()
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode()).digest()
+    ).rstrip(b'=').decode()
+    return code_verifier, code_challenge
+
+
 @router.get("/google")
 def google_login():
     """Redirect to Google consent screen with identity + calendar scopes."""
     if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=400, detail="Google OAuth not configured")
 
+    code_verifier, code_challenge = _generate_pkce_pair()
     flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
     auth_url, _ = flow.authorization_url(
         prompt="consent",
         access_type="offline",
-        state=_encode_state({"action": "signin"}),
+        state=_encode_state({"action": "signin", "cv": code_verifier}),
+        code_challenge=code_challenge,
+        code_challenge_method="S256",
     )
     return RedirectResponse(auth_url)
 
@@ -80,9 +93,12 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
     if not GOOGLE_AVAILABLE:
         return RedirectResponse(f"{FRONTEND_URL}/signin?error=google_not_configured")
 
+    state_data = _decode_state(state) if state else {}
+    code_verifier = state_data.get("cv")
+
     flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
-    flow.fetch_token(code=code)
+    flow.fetch_token(code=code, code_verifier=code_verifier)
     creds = flow.credentials
 
     # Fetch user info from Google
