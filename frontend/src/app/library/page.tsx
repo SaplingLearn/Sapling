@@ -41,6 +41,18 @@ const CATEGORY_COLORS: Record<string, { bg: string; text: string; border: string
 const CATEGORY_ORDER: Category[] = ['all', 'syllabus', 'lecture_notes', 'slides', 'reading', 'assignment', 'study_guide', 'other'];
 const UPLOAD_CATEGORIES = CATEGORY_ORDER.filter(c => c !== 'all') as Exclude<Category, 'all'>[];
 
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 const MAX_BYTES = 15 * 1024 * 1024;
 const ALLOWED_EXTS = ['.pdf', '.docx', '.pptx'];
 
@@ -58,6 +70,7 @@ interface Doc {
 
 export default function LibraryPage() {
   const { userId, userReady } = useUser();
+  const isMobile = useIsMobile();
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -272,14 +285,14 @@ export default function LibraryPage() {
   });
 
   return (
-    <div style={{ padding: '32px', maxWidth: '1100px', margin: '0 auto', fontFamily: UI_FONT }}>
+    <div style={{ padding: isMobile ? '12px' : '32px', maxWidth: '1100px', margin: '0 auto', fontFamily: UI_FONT }}>
 
       {/* Header */}
-      <div className="panel-in panel-in-2" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '28px' }}>
+      <div className="panel-in panel-in-2" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '28px', flexDirection: isMobile ? 'column' as const : 'row' as const, gap: isMobile ? '12px' : undefined }}>
         <div>
           <h1 style={{
             fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
-            fontSize: '32px', fontWeight: 700, color: '#111827', margin: 0, letterSpacing: '-0.02em',
+            fontSize: isMobile ? '22px' : '32px', fontWeight: 700, color: '#111827', margin: 0, letterSpacing: '-0.02em',
           }}>Library</h1>
           <p style={{ fontSize: '14px', color: '#6b7280', margin: '4px 0 0' }}>Your uploaded course documents.</p>
         </div>
@@ -336,7 +349,7 @@ export default function LibraryPage() {
           <p style={{ fontSize: '13px', color: '#d1d5db', margin: '6px 0 0' }}>Try selecting a different course or category.</p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '14px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? '240px' : '280px'}, 1fr))`, gap: '14px' }}>
           {filtered.map(doc => {
             const course = courseById[doc.course_id];
             const courseColor = course ? getCourseColor(course.course_name, course.color) : null;
