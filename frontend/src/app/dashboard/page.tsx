@@ -567,8 +567,9 @@ function DashboardInner() {
                 color: '#111827',
                 margin: 0,
                 letterSpacing: '-0.03em',
-                height: '110px',
+                minHeight: '60px',
                 lineHeight: '1.1',
+                whiteSpace: 'nowrap',
                 overflow: 'hidden',
               }}
             >
