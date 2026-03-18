@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 
 from db.connection import table
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody
-from services.gemini_service import call_gemini, extract_graph_update
+from services.gemini_service import call_gemini_multiturn, extract_graph_update
 from services.graph_service import get_graph, apply_graph_update
 
 router = APIRouter()
@@ -39,19 +39,16 @@ def _resolve_course(topic: str, user_id: str) -> str:
     """Return the subject/course the topic belongs to, or '' if unknown."""
     if not topic:
         return ""
-    # Is the topic itself a subject name?
     subject_match = table("graph_nodes").select(
         "subject", filters={"user_id": f"eq.{user_id}", "subject": f"eq.{topic}"}, limit=1
     )
     if subject_match:
         return topic
-    # Is the topic a concept name? Get its subject.
     concept_match = table("graph_nodes").select(
         "subject", filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{topic}"}, limit=1
     )
     if concept_match:
         return concept_match[0].get("subject") or ""
-    # Is the topic itself a registered course name (even if it has no nodes yet)?
     course_match = table("courses").select(
         "course_name", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{topic}"}, limit=1
     )
@@ -65,6 +62,26 @@ def _get_session_topic(session_id: str) -> str:
     return rows[0]["topic"] if rows else ""
 
 
+def _get_course_documents(user_id: str, course_name: str) -> list:
+    """Fetch uploaded document summaries and key takeaways for a user's course."""
+    if not course_name:
+        return []
+    try:
+        course_rows = table("courses").select(
+            "id", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{course_name}"}, limit=1
+        )
+        if not course_rows:
+            return []
+        course_id = course_rows[0]["id"]
+        docs = table("documents").select(
+            "file_name,category,summary,key_takeaways",
+            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+        )
+        return docs or []
+    except Exception:
+        return []
+
+
 def build_system_prompt(
     mode: str,
     student_name: str,
@@ -72,6 +89,7 @@ def build_system_prompt(
     last_summary: str = "",
     course_name: str = "",
     use_shared_context: bool = True,
+    documents: list | None = None,
 ) -> str:
     from services.course_context_service import get_course_context
 
@@ -80,6 +98,22 @@ def build_system_prompt(
     preamble = preamble.replace("{last_session_summary}", last_summary or "None")
 
     parts = [preamble]
+
+    # Ground the tutor in the student's actual uploaded course materials
+    if documents:
+        doc_blocks = []
+        for doc in documents:
+            lines = [f"[{(doc.get('category') or 'document').upper()}] {doc.get('file_name', '')}"]
+            if doc.get("summary"):
+                lines.append(f"Summary: {doc['summary']}")
+            if doc.get("key_takeaways") and isinstance(doc["key_takeaways"], list):
+                lines.append("Key points:\n" + "\n".join(f"- {t}" for t in doc["key_takeaways"]))
+            doc_blocks.append("\n".join(lines))
+        if doc_blocks:
+            parts.append(
+                "COURSE MATERIALS (ground your explanations and examples in these):\n\n"
+                + "\n\n---\n\n".join(doc_blocks)
+            )
 
     if use_shared_context and course_name:
         ctx = get_course_context(course_name)
@@ -102,14 +136,6 @@ def get_conversation_history(session_id: str) -> list:
         order="created_at.asc",
     )
     return [{"role": r["role"], "content": r["content"]} for r in rows]
-
-
-def format_history_for_prompt(history: list) -> str:
-    parts = []
-    for msg in history:
-        role = "Student" if msg["role"] == "user" else "Sapling"
-        parts.append(f"{role}: {msg['content']}")
-    return "\n\n".join(parts)
 
 
 def save_message(session_id: str, role: str, content: str, graph_update: dict = None):
@@ -141,18 +167,19 @@ def start_session(body: StartSessionBody):
     student_name = get_user_name(body.user_id)
     graph_data = get_graph(body.user_id)
     course_name = _resolve_course(body.topic, body.user_id)
+    documents = _get_course_documents(body.user_id, course_name)
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
         course_name=course_name, use_shared_context=body.use_shared_context,
+        documents=documents,
     )
-    full_prompt = (
-        f"{system_prompt}\n\n"
+    user_message = (
         f"Student wants to learn about: {body.topic}\n\n"
         "Begin the session with a warm greeting and your first question or explanation."
     )
 
     try:
-        raw = call_gemini(full_prompt)
+        raw = call_gemini_multiturn(system_prompt, [], user_message)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
@@ -173,23 +200,19 @@ def chat(body: ChatBody):
 
     student_name = get_user_name(body.user_id)
     graph_data = get_graph(body.user_id)
-    history = get_conversation_history(body.session_id)
-    history_text = format_history_for_prompt(history[:-1])
+    # Exclude the just-saved user message so history is prior turns only
+    history = get_conversation_history(body.session_id)[:-1]
     topic = _get_session_topic(body.session_id)
     course_name = _resolve_course(topic, body.user_id)
+    documents = _get_course_documents(body.user_id, course_name)
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
         course_name=course_name, use_shared_context=body.use_shared_context,
-    )
-
-    full_prompt = (
-        f"{system_prompt}\n\n"
-        f"CONVERSATION SO FAR:\n{history_text}\n\n"
-        f"Student: {body.message}\n\nSapling:"
+        documents=documents,
     )
 
     try:
-        raw = call_gemini(full_prompt)
+        raw = call_gemini_multiturn(system_prompt, history, body.message)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
@@ -310,22 +333,18 @@ def action(body: ActionBody):
     student_name = get_user_name(body.user_id)
     graph_data = get_graph(body.user_id)
     history = get_conversation_history(body.session_id)
-    history_text = format_history_for_prompt(history)
     topic = _get_session_topic(body.session_id)
     course_name = _resolve_course(topic, body.user_id)
+    documents = _get_course_documents(body.user_id, course_name)
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
         course_name=course_name, use_shared_context=body.use_shared_context,
+        documents=documents,
     )
-
-    full_prompt = (
-        f"{system_prompt}\n\n"
-        f"CONVERSATION SO FAR:\n{history_text}\n\n"
-        f"[ACTION: {action_prompts.get(body.action_type, '')}]\n\nSapling:"
-    )
+    action_message = f"[ACTION: {action_prompts.get(body.action_type, '')}]"
 
     try:
-        raw = call_gemini(full_prompt)
+        raw = call_gemini_multiturn(system_prompt, history, action_message)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
