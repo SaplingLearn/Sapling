@@ -69,6 +69,18 @@ export function getCourseColor(subject: string, overrideHex?: string | null): Co
 /** The 12 preset fill colours exposed so the colour picker can list them. */
 export const PRESET_COURSE_COLORS = COURSE_COLOR_PALETTE.map(c => c.fill);
 
+/** Colour picker swatches — matte palette in rainbow order (ROYGBIV). */
+export const RAINBOW_COLORS = [
+  '#dc2626', // red
+  '#ea580c', // orange
+  '#d97706', // amber
+  '#65a30d', // lime
+  '#0d9488', // teal
+  '#2563eb', // blue
+  '#6366f1', // indigo
+  '#7c3aed', // violet
+];
+
 // ── Mastery colours (still used in detail panels / tooltips) ─────────────────
 // Forest green / light theme palette
 export const MASTERY_COLORS: Record<string, string> = {

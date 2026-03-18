@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 from config import get_mastery_tier
 from db.connection import table
@@ -14,6 +14,28 @@ def ensure_user_exists(user_id: str) -> None:
             table("users").insert({"id": user_id, "name": name, "streak_count": 0})
         except Exception:
             pass  # already exists (race condition) — safe to ignore
+
+
+def update_streak(user_id: str) -> None:
+    """Increment streak if first study activity today, reset to 1 if gap > 1 day."""
+    today = date.today().isoformat()
+    rows = table("users").select("streak_count,last_active_date", filters={"id": f"eq.{user_id}"})
+    if not rows:
+        return
+    row = rows[0]
+    last = row.get("last_active_date")
+    streak = row.get("streak_count") or 0
+
+    if last == today:
+        return  # already counted today
+
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    new_streak = streak + 1 if last == yesterday else 1
+
+    table("users").update(
+        {"streak_count": new_streak, "last_active_date": today},
+        filters={"id": f"eq.{user_id}"},
+    )
 
 
 def get_graph(user_id: str) -> dict:
@@ -224,6 +246,8 @@ def apply_graph_update(user_id: str, graph_update: dict) -> list:
             subj = row.get("subject", "")
             if subj and subj != "General":
                 touched_subjects.add(subj)
+    if mastery_changes:
+        update_streak(user_id)
 
     for new_edge in graph_update.get("new_edges", []):
         src_name = new_edge.get("source", "")

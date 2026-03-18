@@ -245,7 +245,7 @@ export default function FlashcardsPage() {
       <div style={{ flex: 1, overflow: 'auto', display: 'flex' }}>
 
         {/* Left panel */}
-        <div style={{
+        <div className="panel-in panel-in-2" style={{
           width: '320px', flexShrink: 0, borderRight: '1px solid rgba(107,114,128,0.12)',
           padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: '20px', background: '#f9fafb',
         }}>
@@ -342,7 +342,7 @@ export default function FlashcardsPage() {
         </div>
 
         {/* Right panel — card grid */}
-        <div style={{ flex: 1, padding: '24px', overflow: 'auto' }}>
+        <div className="panel-in panel-in-3" style={{ flex: 1, padding: '24px', overflow: 'auto' }}>
           {topics.length > 1 && (
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
               {['', ...topics].map(t => (
