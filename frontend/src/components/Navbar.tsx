@@ -9,6 +9,7 @@ import { getRecommendations } from '@/lib/api';
 const LINKS = [
   { href: '/', label: 'Dashboard' },
   { href: '/learn', label: 'Learn' },
+  { href: '/flashcards', label: 'Flashcards' },
   { href: '/library', label: 'Library' },
   { href: '/calendar', label: 'Calendar' },
   { href: '/social', label: 'Social' },

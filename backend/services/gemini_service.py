@@ -17,7 +17,6 @@ _MODEL = "gemini-2.5-flash"
 def _strip_backtick_fencing(text: str) -> str:
     """Extract JSON content, handling backtick fences anywhere in the text."""
     text = text.strip()
-    # If there's a fenced block anywhere, extract its contents
     match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
     if match:
         return match.group(1).strip()
@@ -27,13 +26,11 @@ def _strip_backtick_fencing(text: str) -> str:
 def _extract_json(text: str) -> str:
     """Find the first complete JSON object or array in text."""
     text = _strip_backtick_fencing(text)
-    # Try as-is first
     try:
         json.loads(text)
         return text
     except json.JSONDecodeError:
         pass
-    # Walk forward to find start of JSON
     for start_char in ('{', '['):
         idx = text.find(start_char)
         if idx == -1:
@@ -52,10 +49,11 @@ def _extract_json(text: str) -> str:
                         return candidate
                     except json.JSONDecodeError:
                         break
-    return text  # give up, let json.loads raise
+    return text
 
 
 def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False) -> str:
+    """Single-turn call to Gemini with a plain string prompt."""
     for attempt in range(retries + 1):
         try:
             config = types.GenerateContentConfig(
@@ -79,12 +77,51 @@ def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False) -> str:
             raise
 
 
+def call_gemini_multiturn(system_prompt: str, history: list[dict], user_message: str, retries: int = 1) -> str:
+    """
+    Multi-turn call to Gemini using native chat history.
+
+    history: list of {"role": "user"|"model", "content": "..."} dicts
+             from the DB (role "assistant" is remapped to "model").
+    Returns the assistant reply as a plain string.
+    """
+    # Gemini expects role to be "user" or "model" (not "assistant")
+    def _normalise_role(role: str) -> str:
+        return "model" if role == "assistant" else role
+
+    gemini_history = [
+        types.Content(
+            role=_normalise_role(msg["role"]),
+            parts=[types.Part(text=msg["content"])],
+        )
+        for msg in history
+    ]
+
+    for attempt in range(retries + 1):
+        try:
+            config = types.GenerateContentConfig(
+                temperature=0.7,
+                max_output_tokens=16384,
+                system_instruction=system_prompt,
+            )
+            chat = _client.chats.create(model=_MODEL, config=config, history=gemini_history)
+            response = chat.send_message(user_message)
+            if not response.text:
+                raise ValueError("Gemini returned empty response (content may have been filtered)")
+            return response.text
+        except Exception as e:
+            err_str = str(e)
+            if attempt < retries and ("429" in err_str or "500" in err_str):
+                time.sleep(2)
+                continue
+            raise
+
+
 def call_gemini_json(prompt: str):
     raw = call_gemini(prompt, json_mode=True)
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        # Fallback: try to extract and clean JSON from the response
         cleaned = _extract_json(raw)
         try:
             return json.loads(cleaned)
@@ -118,3 +155,93 @@ def extract_graph_update(response_text: str) -> tuple:
         conversational = response_text
 
     return conversational.strip(), graph_update
+
+
+def generate_flashcards(
+    topic: str,
+    count: int = 5,
+    context: str = "",
+    documents: list[dict] | None = None,
+    weak_concepts: list[str] | None = None,
+) -> list[dict]:
+    """
+    Ask Gemini to generate flashcards grounded in the student's actual course material.
+
+    Args:
+        topic:          The course or concept name.
+        count:          Number of cards to generate.
+        context:        Optional free-text context (e.g. session summary).
+        documents:      List of document dicts from the DB, each with keys:
+                        file_name, category, summary, key_takeaways, flashcards.
+        weak_concepts:  List of concept names the student has low mastery on,
+                        so Gemini can weight those more heavily.
+    """
+    # ── Build document context block ──────────────────────────────────────────
+    doc_blocks = []
+    if documents:
+        for doc in documents:
+            parts = [f"[{doc.get('category', 'document').upper()}] {doc.get('file_name', '')}"]
+            if doc.get("summary"):
+                parts.append(f"Summary: {doc['summary']}")
+            if doc.get("key_takeaways"):
+                takeaways = doc["key_takeaways"]
+                if isinstance(takeaways, list):
+                    parts.append("Key points:\n" + "\n".join(f"- {t}" for t in takeaways))
+            if doc.get("flashcards"):
+                fcs = doc["flashcards"]
+                if isinstance(fcs, list) and fcs:
+                    qa_lines = []
+                    for fc in fcs[:10]:  # cap to avoid token blowout
+                        q = fc.get("question") or fc.get("front", "")
+                        a = fc.get("answer") or fc.get("back", "")
+                        if q and a:
+                            qa_lines.append(f"  Q: {q}\n  A: {a}")
+                    if qa_lines:
+                        parts.append("Existing Q&A pairs from this document:\n" + "\n".join(qa_lines))
+            doc_blocks.append("\n".join(parts))
+
+    doc_context = ""
+    if doc_blocks:
+        doc_context = (
+            "\n\nCOURSE MATERIAL (use this as the primary source for flashcard content):\n"
+            + "\n\n---\n\n".join(doc_blocks)
+        )
+
+    # ── Weak concept focus block ──────────────────────────────────────────────
+    weak_block = ""
+    if weak_concepts:
+        weak_block = (
+            f"\n\nThe student has LOW MASTERY on these concepts — prioritize them: "
+            + ", ".join(weak_concepts)
+        )
+
+    # ── Free-text context (e.g. session summary) ──────────────────────────────
+    extra_block = f"\n\nAdditional context:\n{context}" if context else ""
+
+    prompt = f"""You are an expert tutor creating study flashcards for a student.
+
+Course/Topic: "{topic}"{doc_context}{weak_block}{extra_block}
+
+Generate exactly {count} flashcards.
+
+Rules:
+- Base card content on the course material provided above, not generic knowledge.
+- Each card must have a clear FRONT (question or term) and a BACK (answer or definition).
+- Vary difficulty: include recall, conceptual, and application questions.
+- Prioritize concepts the student has low mastery on if listed above.
+- Be specific — avoid vague or trivially obvious cards.
+- Do NOT repeat questions already listed in the existing Q&A pairs above.
+
+Respond ONLY with a valid JSON array, no markdown fences, no extra text:
+[{{"front": "...", "back": "..."}}, ...]"""
+
+    raw = call_gemini(prompt, json_mode=True)
+    try:
+        cards = json.loads(raw)
+    except json.JSONDecodeError:
+        cleaned = _extract_json(raw)
+        cards = json.loads(cleaned)
+
+    if not isinstance(cards, list):
+        raise ValueError("Gemini did not return a JSON array for flashcards")
+    return [{"front": str(c.get("front", "")), "back": str(c.get("back", ""))} for c in cards]
