@@ -168,7 +168,23 @@ function KnowledgeGraph({
       });
     }
 
-    // ── Nodes ──────────────────────────────────────────────────────────────
+    // ── Labels (rendered before nodes so circles appear on top) ───────────
+    const labelGroup = container.append('g').attr('class', 'labels');
+    const labelSel = labelGroup
+      .selectAll<SVGTextElement, SimNode>('text')
+      .data(simNodes, d => d.id)
+      .enter()
+      .append('text')
+      .text(d => d.concept_name)
+      .attr('text-anchor', 'middle')
+      .attr('font-size', d => d.is_subject_root ? '13px' : '11px')
+      .attr('font-weight', d => d.is_subject_root ? '600' : '400')
+      .attr('font-family', "'DM Sans', Inter, system-ui, sans-serif")
+      .attr('fill', d => d.is_subject_root ? getCourseColor(d.subject, courseColorMap[d.subject]).text : '#374151')
+      .attr('pointer-events', 'none')
+      .style('user-select', 'none');
+
+    // ── Nodes (appended after labels so circles render on top of text) ─────
     const nodeGroup = container.append('g').attr('class', 'nodes');
     const nodeSel = nodeGroup
       .selectAll<SVGGElement, SimNode>('g')
@@ -222,18 +238,6 @@ function KnowledgeGraph({
         }
       });
     }
-
-    // Labels
-    nodeSel.append('text')
-      .text(d => d.concept_name)
-      .attr('text-anchor', 'middle')
-      .attr('dy', d => d.is_subject_root ? getSimRadius(d) + 17 : getSimRadius(d) + 15)
-      .attr('font-size', d => d.is_subject_root ? '13px' : '11px')
-      .attr('font-weight', d => d.is_subject_root ? '600' : '400')
-      .attr('font-family', "'DM Sans', Inter, system-ui, sans-serif")
-      .attr('fill', d => d.is_subject_root ? getCourseColor(d.subject, courseColorMap[d.subject]).text : '#374151')
-      .attr('pointer-events', 'none')
-      .style('user-select', 'none');
 
     // ── Interactions ───────────────────────────────────────────────────────
     if (interactive && tooltipRef.current) {
@@ -311,6 +315,11 @@ function KnowledgeGraph({
       nodeSel.attr('transform', d => {
         const o = driftOffset.get(d.id) ?? { dx: 0, dy: 0 };
         return `translate(${(d.x ?? 0) + o.dx},${(d.y ?? 0) + o.dy})`;
+      });
+      labelSel.attr('transform', d => {
+        const o = driftOffset.get(d.id) ?? { dx: 0, dy: 0 };
+        const yOff = d.is_subject_root ? getSimRadius(d) + 17 : getSimRadius(d) + 15;
+        return `translate(${(d.x ?? 0) + o.dx},${(d.y ?? 0) + o.dy + yOff})`;
       });
     };
 

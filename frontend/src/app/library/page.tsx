@@ -275,7 +275,7 @@ export default function LibraryPage() {
     <div style={{ padding: '32px', maxWidth: '1100px', margin: '0 auto', fontFamily: UI_FONT }}>
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '28px' }}>
+      <div className="panel-in panel-in-1" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '28px' }}>
         <div>
           <h1 style={{
             fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
@@ -296,7 +296,7 @@ export default function LibraryPage() {
       </div>
 
       {/* Filters */}
-      <div style={{ ...GLASS, padding: '16px 20px', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div className="panel-in panel-in-2" style={{ ...GLASS, padding: '16px 20px', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.07em', minWidth: '60px' }}>Course</span>
           <button style={pillStyle(activeCourse === 'all')} onClick={() => setActiveCourse('all')}>All</button>
@@ -322,6 +322,7 @@ export default function LibraryPage() {
       </div>
 
       {/* Grid */}
+      <div className="panel-in panel-in-3">
       {loading ? (
         <p style={{ fontSize: '14px', color: '#9ca3af', paddingTop: '20px' }}>Loading…</p>
       ) : docs.length === 0 ? (
@@ -369,6 +370,7 @@ export default function LibraryPage() {
           })}
         </div>
       )}
+      </div>{/* end panel-in-3 */}
 
       {/* ── Detail Modal ───────────────────────────────────────────────────── */}
       {panelDoc && (

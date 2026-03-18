@@ -7,7 +7,7 @@ import UploadZone from '@/components/UploadZone';
 import AssignmentTable from '@/components/AssignmentTable';
 import { GraphNode, GraphStats, Recommendation, Assignment } from '@/lib/types';
 import { getGraph, getRecommendations, getUpcomingAssignments, extractSyllabus, saveAssignments, getCourses, addCourse, deleteCourse, updateCourseColor } from '@/lib/api';
-import { getMasteryColor, getMasteryLabel, formatDueDate, formatRelativeTime, getCourseColor, PRESET_COURSE_COLORS } from '@/lib/graphUtils';
+import { getMasteryColor, getMasteryLabel, formatDueDate, formatRelativeTime, getCourseColor, PRESET_COURSE_COLORS, RAINBOW_COLORS } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
 import Link from 'next/link';
 
@@ -1199,21 +1199,21 @@ function DashboardInner() {
                       {/* Inline color picker (animated via maxHeight) */}
                       <div style={{
                         overflow: 'hidden',
-                        maxHeight: isEditingColor ? '120px' : '0px',
+                        maxHeight: isEditingColor ? '180px' : '0px',
                         transition: 'max-height 0.25s ease',
                       }}>
                         <div style={{ padding: '0 13px 12px', borderTop: `1px solid ${color.border}` }}>
                           {/* Preset swatches */}
                           <p style={{ fontSize: '10px', color: '#6b7280', marginTop: '10px', marginBottom: '7px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                            Preset colours
+                            Colours
                           </p>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
-                            {PRESET_COURSE_COLORS.map(hex => (
+                            {RAINBOW_COLORS.map(hex => (
                               <button
                                 key={hex}
                                 onClick={() => handleColorChange(c.course_name, hex)}
                                 style={{
-                                  width: '20px', height: '20px', borderRadius: '50%', background: hex,
+                                  width: '22px', height: '22px', borderRadius: '50%', background: hex,
                                   border: (c.color ?? '') === hex ? '2.5px solid #111827' : '2px solid rgba(0,0,0,0.1)',
                                   cursor: 'pointer', padding: 0,
                                   boxShadow: (c.color ?? '') === hex ? '0 0 0 1px #fff inset' : 'none',
@@ -1221,13 +1221,20 @@ function DashboardInner() {
                               />
                             ))}
                           </div>
-                          {/* Hex input */}
+                          {/* Color wheel + hex input */}
+                          <p style={{ fontSize: '10px', color: '#6b7280', marginBottom: '7px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Custom colour
+                          </p>
                           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                            <div style={{
-                              width: '14px', height: '14px', borderRadius: '3px', flexShrink: 0,
-                              background: /^#[0-9a-fA-F]{6}$/.test(colorHexInput) ? colorHexInput : '#e5e7eb',
-                              border: '1px solid rgba(0,0,0,0.15)',
-                            }} />
+                            <input
+                              type="color"
+                              value={/^#[0-9a-fA-F]{6}$/.test(colorHexInput) ? colorHexInput : (c.color ?? '#2563eb')}
+                              onChange={e => setColorHexInput(e.target.value)}
+                              style={{
+                                width: '32px', height: '28px', border: '1px solid rgba(107,114,128,0.25)',
+                                borderRadius: '4px', cursor: 'pointer', padding: '1px', background: 'none',
+                              }}
+                            />
                             <input
                               value={colorHexInput}
                               onChange={e => setColorHexInput(e.target.value)}
