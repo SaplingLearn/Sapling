@@ -2,6 +2,9 @@
 
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import { ChatMessage, TeachingMode } from '@/lib/types';
 
 interface Props {
@@ -77,6 +80,8 @@ export default function ChatPanel({ messages, onSend, onAction, onEndSession, lo
             }}>
               {msg.role === 'user' ? msg.content : (
                 <ReactMarkdown
+                  remarkPlugins={[remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
                   components={{
                     p: ({ children }) => <p style={{ margin: 0, marginBottom: '6px' }}>{children}</p>,
                     ul: ({ children }) => <ul style={{ margin: '0 0 8px 0', paddingLeft: '20px' }}>{children}</ul>,
