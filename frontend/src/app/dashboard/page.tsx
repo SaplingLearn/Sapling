@@ -595,7 +595,7 @@ function DashboardInner() {
                 fontStyle: 'italic',
                 opacity: greetingDone ? 1 : 0,
                 transition: 'opacity 0.7s ease',
-                height: '44px',
+                height: '22px',
                 overflow: 'hidden',
                 fontFamily: UI_FONT,
               }}
