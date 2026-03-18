@@ -15,9 +15,10 @@ interface Props {
   placeholder?: string;
   style?: React.CSSProperties;
   compact?: boolean;
+  openUpward?: boolean;
 }
 
-export default function CustomSelect({ value, onChange, options, placeholder, style, compact }: Props) {
+export default function CustomSelect({ value, onChange, options, placeholder, style, compact, openUpward }: Props) {
   const [open, setOpen] = useState(false);
   const [dropRect, setDropRect] = useState<DOMRect | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -26,6 +27,7 @@ export default function CustomSelect({ value, onChange, options, placeholder, st
   const selected = options.find(o => o.value === value);
 
   const handleToggle = () => {
+    if (options.length === 0) return;
     if (!open && triggerRef.current) {
       setDropRect(triggerRef.current.getBoundingClientRect());
     }
@@ -62,13 +64,15 @@ export default function CustomSelect({ value, onChange, options, placeholder, st
             ref={dropRef}
             style={{
               position: 'fixed',
-              top: dropRect.bottom + 4,
+              ...(openUpward
+                ? { bottom: window.innerHeight - dropRect.top + 4, maxHeight: dropRect.top - 12 }
+                : { top: dropRect.bottom + 4, maxHeight: window.innerHeight - dropRect.bottom - 8 }),
               left: dropRect.left,
               minWidth: Math.max(dropRect.width, compact ? 120 : 140),
               background: '#ffffff',
               border: '1px solid rgba(107,114,128,0.18)',
               borderRadius: '10px',
-              overflow: 'hidden',
+              overflowY: 'auto',
               zIndex: 9999,
               boxShadow: '0 8px 24px rgba(0,0,0,0.1), 0 0 0 1px rgba(107,114,128,0.08)',
             }}
@@ -140,18 +144,20 @@ export default function CustomSelect({ value, onChange, options, placeholder, st
         <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
           {selected?.label ?? placeholder ?? ''}
         </span>
-        <span
-          style={{
-            fontSize: '8px',
-            color: '#9ca3af',
-            transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 0.2s ease',
-            display: 'inline-block',
-            flexShrink: 0,
-          }}
-        >
-          ▼
-        </span>
+        {options.length > 0 && (
+          <span
+            style={{
+              fontSize: '8px',
+              color: '#9ca3af',
+              transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+              transition: 'transform 0.2s ease',
+              display: 'inline-block',
+              flexShrink: 0,
+            }}
+          >
+            ▼
+          </span>
+        )}
       </button>
       {dropdown}
     </div>

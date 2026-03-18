@@ -14,6 +14,7 @@ const LINKS = [
   { href: '/calendar', label: 'Calendar' },
   { href: '/social', label: 'Social' },
   { href: '/tree', label: 'Tree' },
+  { href: '/study', label: 'Study' },
 ];
 
 export default function Navbar() {
