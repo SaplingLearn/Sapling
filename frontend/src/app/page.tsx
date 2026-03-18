@@ -68,7 +68,7 @@ export default function LandingPage() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d', { alpha: true });
+    const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
     let width = 0, height = 0;
@@ -89,12 +89,9 @@ export default function LandingPage() {
       { x: 200, y: -100, z: 100 }, { x: -250, y: 150, z: -50 },
       { x: 0, y: -200, z: -200 }, { x: 300, y: 200, z: 150 },
       { x: -150, y: -250, z: 200 }, { x: 100, y: 300, z: -100 },
-      { x: -400, y: 0, z: 50 }, { x: 400, y: -50, z: -150 },
-      { x: 0, y: 400, z: 100 }, { x: -300, y: -350, z: -100 },
-      { x: 350, y: 350, z: -200 }, { x: -100, y: 500, z: 150 },
     ];
-    const spread = 300;
-    const nodes = Array.from({ length: 260 }, () => {
+    const spread = 180;
+    const nodes = Array.from({ length: 130 }, () => {
       const cl = clusters[Math.floor(Math.random() * clusters.length)];
       return {
         ox: cl.x + (Math.random() - 0.5) * spread,
@@ -118,7 +115,8 @@ export default function LandingPage() {
 
     function draw() {
       if (!ctx) return;
-      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = '#E9EFED';
+      ctx.fillRect(0, 0, width, height);
       rotAngle += 0.0008;
       const fl = 1000, cx = width / 2, cy = height / 2, t = Date.now() * 0.001;
       const mx = mouseRef.current.x, my = mouseRef.current.y;
@@ -130,7 +128,7 @@ export default function LandingPage() {
         x -= mx * (z + fl) * 0.02;
         const y2 = ny - my * (z + fl) * 0.02;
         const sc = fl / (fl + z);
-        return { x: x * sc + cx, y: y2 * sc + cy, z, sc, n };
+        return { x: x * sc + cx, y: y2 * sc + cy - parallaxYRef.current, z, sc, n };
       }).sort((a, b) => b.z - a.z);
 
       ctx.globalCompositeOperation = 'source-over';
@@ -326,11 +324,9 @@ export default function LandingPage() {
         </div>
       </nav>
 
-      {/* ═══ Full-page canvas background ═══ */}
-      <canvas ref={canvasRef} className="fixed inset-0 z-0 w-full h-full pointer-events-none" />
-
       {/* ═══ Hero Section ═══ */}
       <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
+        <canvas ref={canvasRef} className="absolute inset-0 z-0 w-full h-full pointer-events-auto opacity-100" />
 
         {/* Floating Glass Accent Cards */}
         <div ref={floatingCardsRef} className="absolute inset-0 z-10 hidden lg:block pointer-events-none">
@@ -426,7 +422,7 @@ export default function LandingPage() {
       </section>
 
       {/* ═══ Features Section ═══ */}
-      <section id="features" className="relative py-32 z-10">
+      <section id="features" className="relative py-32 bg-[#E9EFED] z-10">
         <div className="landing-ambient-blobs" aria-hidden="true"><div className="landing-blob-extra" /></div>
         <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-gray-300 to-transparent" />
         <div className="max-w-6xl mx-auto px-6 lg:px-8 relative z-[1]">
@@ -468,7 +464,7 @@ export default function LandingPage() {
       </section>
 
       {/* ═══ How It Works (Sticky Scroll Cinema) ═══ */}
-      <section ref={stickyRef} id="how-it-works" className="relative" style={{ height: '300vh' }}>
+      <section ref={stickyRef} id="how-it-works" className="relative bg-[#E9EFED]" style={{ height: '300vh' }}>
         <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden">
           <div
             ref={stepNumRef}
@@ -532,7 +528,7 @@ export default function LandingPage() {
       </section>
 
       {/* ═══ Final CTA ═══ */}
-      <section className="py-32 relative text-center z-10 overflow-hidden">
+      <section className="py-32 relative text-center z-10 overflow-hidden bg-[#E9EFED]">
         <div className="landing-ambient-blobs" aria-hidden="true"><div className="landing-blob-extra" /></div>
         <div className="relative z-10 max-w-3xl mx-auto px-6 landing-fade-up">
           <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-gray-900 tracking-tight leading-[1.05]">
@@ -549,7 +545,7 @@ export default function LandingPage() {
       </section>
 
       {/* ═══ Footer ═══ */}
-      <footer className="border-t border-gray-200 py-12 px-8 relative z-10">
+      <footer className="border-t border-gray-200 bg-[#E9EFED] py-12 px-8 relative z-10">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-2 text-gray-500">
             <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22V12M12 12L5 5M12 12L19 5" /></svg>
