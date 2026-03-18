@@ -591,7 +591,7 @@ function DashboardInner() {
               style={{
                 fontSize: '15px',
                 color: '#6b7280',
-                marginTop: '5px',
+                marginTop: '10px',
                 fontStyle: 'italic',
                 opacity: greetingDone ? 1 : 0,
                 transition: 'opacity 0.7s ease',
@@ -603,7 +603,7 @@ function DashboardInner() {
               {quote}
             </p>
 
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '12px' }}>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '10px' }}>
               <Link
                 href="/learn"
                 style={{
