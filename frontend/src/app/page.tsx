@@ -543,40 +543,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ═══ Stats Bar ═══ */}
-      <section className="relative z-10">
-        <div className="landing-ambient-blobs" aria-hidden="true" />
-        <div className="liquid-glass border-y border-white/40 py-16 relative z-[1]">
-          <div className="max-w-6xl mx-auto px-6 lg:px-8">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-10 md:gap-16 text-center">
-              <div className="landing-stat-fade-up">
-                <div className="font-jetbrains text-4xl md:text-5xl font-semibold text-[#1B6C42] mb-2">
-                  <span className="counter" data-target="10000">0</span>+
-                </div>
-                <div className="font-inter text-xs text-gray-500 tracking-wider uppercase font-medium">Students</div>
-              </div>
-              <div className="landing-stat-fade-up">
-                <div className="font-jetbrains text-4xl md:text-5xl font-semibold text-[#1B6C42] mb-2">
-                  <span className="counter" data-target="500">0</span>K+
-                </div>
-                <div className="font-inter text-xs text-gray-500 tracking-wider uppercase font-medium">Concepts Mapped</div>
-              </div>
-              <div className="landing-stat-fade-up">
-                <div className="font-jetbrains text-4xl md:text-5xl font-semibold text-[#1B6C42] mb-2">
-                  <span className="counter" data-target="50">0</span>+
-                </div>
-                <div className="font-inter text-xs text-gray-500 tracking-wider uppercase font-medium">Universities</div>
-              </div>
-              <div className="landing-stat-fade-up">
-                <div className="font-jetbrains text-4xl md:text-5xl font-semibold text-[#1B6C42] mb-2">
-                  <span className="counter-float" data-target="4.9">0.0</span>★
-                </div>
-                <div className="font-inter text-xs text-gray-500 tracking-wider uppercase font-medium">Average Rating</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
 
       {/* ═══ Final CTA ═══ */}
       <section className="py-32 relative text-center z-10 overflow-hidden bg-[#E9EFED]">
