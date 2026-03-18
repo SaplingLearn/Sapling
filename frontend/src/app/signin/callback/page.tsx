@@ -18,7 +18,7 @@ function CallbackInner() {
       setActiveUser(userId, name, avatar || '');
       router.replace('/');
     } else {
-      router.replace('/signin?error=missing_params');
+      router.replace('/');
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

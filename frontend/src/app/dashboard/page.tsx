@@ -140,22 +140,6 @@ function DashboardInner() {
     return set;
   }, [nodes, weekInfo]);
 
-  // Derive course list from graph nodes — one entry per unique subject, preserving discovery order
-  const courses = useMemo(() => {
-    const subjectMap = new Map<string, GraphNode[]>();
-    for (const n of nodes) {
-      if (!n.subject || n.is_subject_root || n.mastery_tier === 'subject_root') continue;
-      if (!subjectMap.has(n.subject)) subjectMap.set(n.subject, []);
-      subjectMap.get(n.subject)!.push(n);
-    }
-    return Array.from(subjectMap.entries()).map(([subject, courseNodes]) => {
-      const avgMastery =
-        courseNodes.length > 0
-          ? courseNodes.reduce((s, n) => s + n.mastery_score, 0) / courseNodes.length
-          : 0;
-      return { subject, avgMastery, nodeCount: courseNodes.length };
-    });
-  }, [nodes]);
 
   // Filter out edges that cross subject boundaries so each course cluster stays separate.
   // Subject-root edges (subject_root__*) are always kept; only same-subject concept edges are kept.
@@ -178,7 +162,7 @@ function DashboardInner() {
   );
 
   useEffect(() => {
-    if (!userReady) return; // wait until localStorage user is resolved
+    if (!userReady || !userId) return;
     async function load() {
       try {
         const [graphData, recData, assignData, courseData] = await Promise.all([

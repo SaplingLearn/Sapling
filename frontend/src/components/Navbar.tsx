@@ -39,8 +39,8 @@ export default function Navbar() {
   const isLandingPage = pathname === '/';
 
   useEffect(() => {
-    if (userReady && !isAuthenticated && pathname !== '/' && pathname !== '/signin' && pathname !== '/signin/callback') {
-      router.push('/signin');
+    if (userReady && !isAuthenticated && pathname !== '/' && pathname !== '/signin/callback') {
+      router.push('/');
     }
   }, [userReady, isAuthenticated, pathname, router]);
 
@@ -69,7 +69,7 @@ export default function Navbar() {
   const handleSignOut = () => {
     setMenuOpen(false);
     signOut();
-    router.push('/signin');
+    router.push('/');
   };
 
   return (

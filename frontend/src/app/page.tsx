@@ -301,7 +301,7 @@ export default function LandingPage() {
       {/* ═══ Navbar ═══ */}
       <nav
         ref={navRef}
-        className="fixed top-0 w-full z-50 backdrop-blur-xl border-b border-gray-200/60 px-8 py-4"
+        className="fixed top-0 w-full z-50 backdrop-blur-xl border-b border-gray-200/60 px-6 py-4"
         style={{
           background: 'rgba(233,239,237,0.8)',
           opacity: heroMounted ? 1 : 0,
@@ -309,12 +309,10 @@ export default function LandingPage() {
           transition: 'all 800ms cubic-bezier(0.22,1,0.36,1)',
         }}
       >
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+        <div className="max-w-[88%] mx-auto flex items-center justify-between w-full">
           <div className="flex items-center gap-2 cursor-pointer group" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            <svg viewBox="0 0 24 24" className="w-6 h-6 landing-animate-pulse-slow" fill="none" stroke="#1B6C42" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 22V12M12 12L5 5M12 12L19 5" />
-            </svg>
-            <span className="font-playfair text-xl font-semibold tracking-tight text-gray-900">Sapling</span>
+            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '32px', height: '32px' }} />
+            <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: '#1a5c2a', letterSpacing: '-0.02em' }}>Sapling</span>
           </div>
           <div className="flex items-center">
             <button onClick={() => openModal('signin')} className="text-gray-500 hover:text-gray-900 font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
@@ -465,7 +463,7 @@ export default function LandingPage() {
       </section>
 
       {/* ═══ How It Works (Sticky Scroll Cinema) ═══ */}
-      <section ref={stickyRef} id="how-it-works" className="relative bg-[#E9EFED]" style={{ height: '300vh' }}>
+      <section ref={stickyRef} id="how-it-works" className="relative bg-[#E9EFED]" style={{ height: '510vh' }}>
         <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden">
           <div
             ref={stepNumRef}
@@ -548,9 +546,9 @@ export default function LandingPage() {
       {/* ═══ Footer ═══ */}
       <footer className="border-t border-gray-200 bg-[#E9EFED] py-12 px-8 relative z-10">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-2 text-gray-500">
-            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22V12M12 12L5 5M12 12L19 5" /></svg>
-            <span className="text-sm font-light tracking-wide">Sapling · © 2026</span>
+          <div className="flex items-center gap-2">
+            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '20px', height: '20px' }} />
+            <span className="text-sm font-light tracking-wide text-gray-500">Sapling · © 2026</span>
           </div>
           <div className="flex flex-wrap justify-center gap-6">
             <a href="#" className="text-gray-500 hover:text-gray-900 text-sm transition-colors">About</a>
