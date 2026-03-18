@@ -122,7 +122,7 @@ export default function CustomSelect({ value, onChange, options, placeholder, st
                       background: 'transparent',
                       border: 'none',
                       color: '#9ca3af',
-                      fontSize: '12px',
+                      fontSize: '16px',
                       cursor: 'pointer',
                       fontFamily: 'inherit',
                       lineHeight: 1,
