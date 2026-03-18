@@ -9,7 +9,7 @@ from config import get_mastery_tier
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from services.gemini_service import call_gemini_json
-from services.graph_service import get_graph
+from services.graph_service import get_graph, update_streak
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 
 router = APIRouter()
@@ -144,6 +144,8 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks):
         },
         filters={"id": f"eq.{body.quiz_id}"},
     )
+
+    update_streak(user_id)
 
     node2_rows = table("graph_nodes").select(
         "concept_name", filters={"id": f"eq.{concept_node_id}"}
