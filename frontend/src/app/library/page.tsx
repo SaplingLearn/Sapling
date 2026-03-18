@@ -399,6 +399,12 @@ export default function LibraryPage() {
           }}>
             {/* Header */}
             <div style={{ padding: '20px 20px 14px', borderBottom: '1px solid rgba(107,114,128,0.1)', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', marginBottom: '10px' }}>
+                <p style={{ fontSize: '16px', fontWeight: 700, color: '#111827', margin: 0, wordBreak: 'break-word', lineHeight: 1.35, flex: 1 }}>
+                  {panelDoc.file_name}
+                </p>
+                <button onClick={closePanel} style={{ background: 'none', border: 'none', fontSize: '18px', color: '#6b7280', cursor: 'pointer', lineHeight: 1, padding: '2px 4px', flexShrink: 0 }}>✕</button>
+              </div>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                   {(() => {
@@ -420,7 +426,6 @@ export default function LibraryPage() {
                     );
                   })()}
                 </div>
-                <button onClick={closePanel} style={{ background: 'none', border: 'none', fontSize: '18px', color: '#6b7280', cursor: 'pointer', lineHeight: 1, padding: '2px 4px', flexShrink: 0 }}>✕</button>
               </div>
               <p style={{ fontSize: '11px', color: '#9ca3af', margin: '10px 0 0' }}>{formatDate(panelDoc.created_at)}</p>
             </div>
