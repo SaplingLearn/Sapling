@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Spectral, DM_Sans } from 'next/font/google';
+import { Spectral, DM_Sans, Inter, Playfair_Display, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { UserProvider } from '@/context/UserContext';
 import Navbar from '@/components/Navbar';
@@ -19,6 +19,24 @@ const dmSans = DM_Sans({
   display: 'swap',
 });
 
+const inter = Inter({
+  subsets: ['latin'],
+  variable: '--font-inter',
+  display: 'swap',
+});
+
+const playfairDisplay = Playfair_Display({
+  subsets: ['latin'],
+  variable: '--font-playfair',
+  display: 'swap',
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-jetbrains',
+  display: 'swap',
+});
+
 export const metadata: Metadata = {
   title: 'Sapling',
   description: 'Learn through conversation. Watch your knowledge grow.',
@@ -30,7 +48,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${spectral.variable} ${dmSans.variable}`}>
+    <html lang="en" className={`${spectral.variable} ${dmSans.variable} ${inter.variable} ${playfairDisplay.variable} ${jetbrainsMono.variable}`}>
       <body>
         <SpaceBackground />
         <UserProvider>
