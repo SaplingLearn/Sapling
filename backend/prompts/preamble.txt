@@ -19,10 +19,10 @@ The graph update format:
     { "concept_name": "string", "subject": "string", "initial_mastery": 0.0 }
   ],
   "updated_nodes": [
-    { "concept_name": "string", "mastery_delta": -0.1, "reason": "string" }
+    { "concept_name": "string", "mastery_delta": -0.1, "reason": "string", "event_type": "confusion" }
   ],
   "new_edges": [
-    { "source": "concept_name", "target": "concept_name", "strength": 0.5 }
+    { "source": "concept_name", "target": "concept_name", "strength": 0.5, "relationship_type": "prerequisite" }
   ],
   "recommended_next": ["concept_name"]
 }
@@ -31,7 +31,10 @@ The graph update format:
 Graph update rules:
 - Add new_nodes only for concepts meaningfully discussed, not just mentioned in passing
 - mastery_delta per exchange: +0.05 partial understanding, +0.10 clear demonstration, -0.05 confusion, -0.10 fundamental misunderstanding
+- event_type must be one of: "correct" (clear demonstration), "partial" (partial understanding), "confusion" (student is confused), "misconception" (fundamental misunderstanding)
 - Create edges when a connection between concepts is made or demonstrated
+- relationship_type must be one of: "prerequisite" (source must be mastered before target), "builds_on" (target extends or deepens source), "related" (connected but no strict ordering)
+- Do not move a student to a concept if it has a "prerequisite" edge from a source with mastery < 0.4 — address the prerequisite first
 - recommended_next: 1-3 concepts based on gaps or natural next steps
 - If mastery > 0.8, suggest moving on
 - If mastery < 0.3, simplify and try different approaches

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useCallback, memo } from 'react';
+import { useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import * as d3 from 'd3';
 import { GraphNode, GraphEdge } from '@/lib/types';
 import { getMasteryColor, getNodeRadius, getCourseColor } from '@/lib/graphUtils';
@@ -67,6 +67,17 @@ function KnowledgeGraph({
   const tooltipRef = useRef<HTMLDivElement>(null);
   const prevNodesRef = useRef<GraphNode[]>([]);
   const prevEdgesRef = useRef<GraphEdge[]>([]);
+
+  // Always-current refs so event handler closures never go stale after mastery updates
+  const nodesRef = useRef<GraphNode[]>(nodes);
+  const courseColorMapRef = useRef<Record<string, string>>(courseColorMap);
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+  useEffect(() => { courseColorMapRef.current = courseColorMap; }, [courseColorMap]);
+
+  // Topology keys — only change when the set of IDs changes, not on mastery/color updates.
+  // This prevents the simulation from restarting on every data refresh.
+  const nodeIdsKey = useMemo(() => nodes.map(n => n.id).join('|'), [nodes]);
+  const edgeIdsKey = useMemo(() => edges.map(e => e.id).join('|'), [edges]);
 
   const getComparisonOutlineColor = useCallback(
     (node: GraphNode): string | null => {
@@ -180,7 +191,7 @@ function KnowledgeGraph({
       .attr('font-size', d => d.is_subject_root ? '13px' : '11px')
       .attr('font-weight', d => d.is_subject_root ? '600' : '400')
       .attr('font-family', "'DM Sans', Inter, system-ui, sans-serif")
-      .attr('fill', d => d.is_subject_root ? getCourseColor(d.subject, courseColorMap[d.subject]).text : '#374151')
+      .attr('fill', d => d.is_subject_root ? getCourseColor(d.subject, courseColorMapRef.current[d.subject]).text : '#374151')
       .attr('pointer-events', 'none')
       .style('user-select', 'none');
 
@@ -212,9 +223,9 @@ function KnowledgeGraph({
     const circles = nodeSel.append('circle')
       .attr('class', 'main-circle')
       .attr('r', d => getSimRadius(d))
-      .attr('fill', d => getCourseColor(d.subject, courseColorMap[d.subject]).fill)
+      .attr('fill', d => getCourseColor(d.subject, courseColorMapRef.current[d.subject]).fill)
       .attr('fill-opacity', d => masteryOpacity(d.mastery_tier))
-      .attr('stroke', d => getCourseColor(d.subject, courseColorMap[d.subject]).fill)
+      .attr('stroke', d => getCourseColor(d.subject, courseColorMapRef.current[d.subject]).fill)
       .attr('stroke-opacity', d => d.is_subject_root ? 0.7 : 0.4)
       .attr('stroke-width', d => d.is_subject_root ? 2.5 : 1.5);
 
@@ -245,13 +256,13 @@ function KnowledgeGraph({
 
       nodeSel
         .on('mouseover', function(event, d) {
-          const sourceNode = nodes.find(n => n.id === d.id);
+          const sourceNode = nodesRef.current.find(n => n.id === d.id);
           if (!sourceNode || !tooltip) return;
           const mastery = Math.round(sourceNode.mastery_score * 100);
           const lastStudied = sourceNode.last_studied_at
             ? new Date(sourceNode.last_studied_at).toLocaleDateString()
             : 'Never';
-          const cc = getCourseColor(sourceNode.subject, courseColorMap[sourceNode.subject]);
+          const cc = getCourseColor(sourceNode.subject, courseColorMapRef.current[sourceNode.subject]);
           tooltip.innerHTML = `
             <div style="font-weight:600;color:#111827;margin-bottom:4px">${sourceNode.concept_name}</div>
             <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px">
@@ -282,7 +293,7 @@ function KnowledgeGraph({
             .attr('stroke-width', (d as SimNode).is_subject_root ? 2.5 : 1.5);
         })
         .on('click', (_, d) => {
-          const sourceNode = nodes.find(n => n.id === d.id);
+          const sourceNode = nodesRef.current.find(n => n.id === d.id);
           if (sourceNode && onNodeClick) onNodeClick(sourceNode);
         });
     }
@@ -345,7 +356,31 @@ function KnowledgeGraph({
       sim.stop();
       cancelAnimationFrame(rafId);
     };
-  }, [nodes, edges, width, height, animate, interactive, onNodeClick, getComparisonOutlineColor, courseColorMap]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeIdsKey, edgeIdsKey, width, height, animate, interactive, onNodeClick, getComparisonOutlineColor]);
+  // courseColorMap intentionally omitted — handled by the visual update effect below
+
+  // ── VISUAL UPDATE EFFECT ────────────────────────────────────────────────────
+  // Updates mastery opacity and course colors in-place without touching the
+  // simulation or resetting node positions.
+  useEffect(() => {
+    if (!svgRef.current) return;
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    const svg = d3.select(svgRef.current);
+    svg.selectAll<SVGCircleElement, SimNode>('.main-circle')
+      .attr('fill', d => {
+        const subj = nodeMap.get(d.id)?.subject ?? d.subject;
+        return getCourseColor(subj, courseColorMap[subj]).fill;
+      })
+      .attr('fill-opacity', d => masteryOpacity(nodeMap.get(d.id)?.mastery_tier ?? d.mastery_tier))
+      .attr('stroke', d => {
+        const subj = nodeMap.get(d.id)?.subject ?? d.subject;
+        return getCourseColor(subj, courseColorMap[subj]).fill;
+      });
+    svg.selectAll<SVGTextElement, SimNode>('text')
+      .filter(d => !!d.is_subject_root)
+      .attr('fill', d => getCourseColor(d.subject, courseColorMap[d.subject]).text);
+  }, [nodes, courseColorMap]);
 
   // Separate lightweight effect: only add/remove the highlight ring.
   // Runs independently so changing highlightId never restarts the simulation.
