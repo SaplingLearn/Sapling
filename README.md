@@ -21,8 +21,11 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 * **Live Knowledge Graph** — Your understanding is visualized as a growing node graph. Mastery scores update dynamically after every session and quiz.
 * **Three Teaching Modes** — Socratic (guided reasoning), Expository (direct explanation), and TeachBack (you explain, Sapling corrects).
 * **Adaptive Quizzes** — AI-generated quizzes targeting your weakest concepts, with difficulty scaling based on your performance.
+* **Flashcards** — Generate AI flashcards per course, study by topic with spaced-repetition ratings (Easy / Hard / Forgot), and track review history.
+* **Study Guide** — Generate a Gemini-powered exam study guide from your uploaded course materials. Guides are cached per exam and can be regenerated at any time.
 * **Class Intelligence** — Aggregates anonymized class-wide patterns to surface common misconceptions and weak areas, personalizing your sessions.
 * **Calendar & Syllabus Tracking** — Paste your syllabus and Sapling extracts assignments, deadlines, and topics automatically.
+* **Document Library** — Upload PDFs and notes; Sapling extracts summaries, key takeaways, and flashcard topics to enrich your knowledge graph and study guides.
 * **Study Rooms** — Invite classmates, compare knowledge graphs, and track relative mastery across your group.
 
 ## Tech Stack
@@ -53,19 +56,53 @@ npm run dev                # → http://localhost:3000
 
 ## API Endpoints
 
-- `POST` `/api/learn/start` — Start a tutoring session
+**Learn**
+- `POST` `/api/learn/start-session` — Start a tutoring session
 - `POST` `/api/learn/chat` — Send a chat message
-- `POST` `/api/quiz/generate` — Generate an adaptive quiz
+- `POST` `/api/learn/action` — Send a structured action (e.g. quiz, recap)
+- `POST` `/api/learn/end-session` — End a session
+- `GET`  `/api/learn/sessions/{user_id}` — List past sessions
+
+**Graph**
 - `GET`  `/api/graph/{user_id}` — Fetch the user's knowledge graph
-- `POST` `/api/graph/update` — Update mastery scores from a session
-- `GET`  `/api/calendar/{user_id}` — Fetch calendar events
+- `GET`  `/api/graph/{user_id}/recommendations` — Get next-concept recommendations
+- `GET`  `/api/graph/{user_id}/courses` — List courses
+
+**Quiz**
+- `POST` `/api/quiz/generate` — Generate an adaptive quiz
+- `POST` `/api/quiz/submit` — Submit answers and update mastery
+
+**Flashcards**
+- `POST` `/api/flashcards/generate` — Generate flashcards for a topic
+- `GET`  `/api/flashcards/user/{user_id}` — Fetch a user's flashcards
+- `POST` `/api/flashcards/rate` — Rate a card (Easy / Hard / Forgot)
+- `DELETE` `/api/flashcards/{card_id}` — Delete a card
+
+**Study Guide**
+- `GET`  `/api/study-guide/{user_id}/guide` — Get (or generate) a study guide for an exam
+- `GET`  `/api/study-guide/{user_id}/cached` — List all cached study guides
+- `GET`  `/api/study-guide/{user_id}/courses` — List courses for guide generation
+- `GET`  `/api/study-guide/{user_id}/exams` — List exam-type assignments
+- `POST` `/api/study-guide/regenerate` — Invalidate cache and regenerate a guide
+
+**Calendar**
 - `POST` `/api/calendar/extract` — Extract assignments from a syllabus
-- `GET`  `/api/social/rooms` — List study rooms
+- `GET`  `/api/calendar/upcoming/{user_id}` — Fetch upcoming assignments
+- `POST` `/api/calendar/save` — Save extracted assignments
+
+**Documents**
+- `POST` `/api/documents/upload` — Upload and process a document
+- `GET`  `/api/documents/user/{user_id}` — List a user's documents
+- `DELETE` `/api/documents/doc/{doc_id}` — Delete a document
+
+**Social**
+- `POST` `/api/social/rooms/create` — Create a study room
 - `POST` `/api/social/rooms/join` — Join a study room by invite code
+- `GET`  `/api/social/rooms/{user_id}` — List a user's rooms
 
 ## Environment Variables
 
-All variables live in `backend/.env`.
+**`backend/.env`**
 
 | Variable | Required | Description |
 |---|---|---|
@@ -74,8 +111,14 @@ All variables live in `backend/.env`.
 | `SUPABASE_SERVICE_KEY` | ✅ | Supabase service role key |
 | `PORT` | — | Backend port (default `5000`) |
 | `FRONTEND_URL` | — | Allowed CORS origin (default `http://localhost:3000`) |
-| `GOOGLE_CLIENT_ID` | — | For Google Calendar OAuth (optional) |
-| `GOOGLE_CLIENT_SECRET` | — | For Google Calendar OAuth (optional) |
+| `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (for sign-in and Calendar) |
+| `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
+
+**`frontend/.env.local`**
+
+| Variable | Required | Description |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | ✅ | Backend base URL (e.g. `http://localhost:5000`) |
 
 ## License
 
