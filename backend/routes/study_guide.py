@@ -100,6 +100,36 @@ def _generate_and_insert(user_id: str, course_id: str, exam_id: str) -> dict:
     return {"content": content, "generated_at": now}
 
 
+@router.get("/{user_id}/cached")
+def get_cached_guides(user_id: str):
+    guides = table("study_guides").select(
+        "id,course_id,exam_id,generated_at,content",
+        filters={"user_id": f"eq.{user_id}"},
+        order="generated_at.desc",
+    )
+    # Enrich with course_name
+    course_ids = list({g["course_id"] for g in guides})
+    course_map: dict[str, str] = {}
+    for cid in course_ids:
+        rows = table("courses").select("id,course_name", filters={"id": f"eq.{cid}"}, limit=1)
+        if rows:
+            course_map[cid] = rows[0]["course_name"]
+
+    result = []
+    for g in guides:
+        content = g.get("content") or {}
+        result.append({
+            "id": g["id"],
+            "course_id": g["course_id"],
+            "exam_id": g["exam_id"],
+            "course_name": course_map.get(g["course_id"], ""),
+            "exam_title": content.get("exam", ""),
+            "overview": content.get("overview", ""),
+            "generated_at": g["generated_at"],
+        })
+    return {"guides": result}
+
+
 @router.get("/{user_id}/courses")
 def get_courses(user_id: str):
     courses = table("courses").select(

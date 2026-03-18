@@ -9,12 +9,11 @@ import { getRecommendations } from '@/lib/api';
 const LINKS = [
   { href: '/', label: 'Dashboard' },
   { href: '/learn', label: 'Learn' },
-  { href: '/flashcards', label: 'Flashcards' },
+  { href: '/study', label: 'Study' },
   { href: '/library', label: 'Library' },
   { href: '/calendar', label: 'Calendar' },
   { href: '/social', label: 'Social' },
   { href: '/tree', label: 'Tree' },
-  { href: '/study', label: 'Study' },
 ];
 
 export default function Navbar() {
