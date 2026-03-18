@@ -118,7 +118,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks):
     total = len(questions)
 
     node_rows = table("graph_nodes").select(
-        "mastery_score,times_studied",
+        "mastery_score,times_studied,mastery_events",
         filters={"id": f"eq.{concept_node_id}"},
     )
     mastery_before = node_rows[0]["mastery_score"] if node_rows else 0.0
@@ -126,12 +126,30 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks):
     new_tier = get_mastery_tier(mastery_after)
     times_studied = (node_rows[0]["times_studied"] if node_rows else 0) + 1
 
+    score_ratio = score / total if total > 0 else 0.0
+    if score_ratio >= 0.7:
+        event_type = "correct"
+    elif score_ratio >= 0.4:
+        event_type = "partial"
+    else:
+        event_type = "confusion"
+
+    existing_events = (node_rows[0].get("mastery_events") or []) if node_rows else []
+    quiz_event = {
+        "ts": datetime.utcnow().isoformat(),
+        "delta": round(mastery_after - mastery_before, 4),
+        "reason": f"Quiz: {score}/{total} correct",
+        "event_type": event_type,
+    }
+    updated_events = (existing_events + [quiz_event])[-20:]
+
     table("graph_nodes").update(
         {
             "mastery_score": mastery_after,
             "mastery_tier": new_tier,
             "times_studied": times_studied,
             "last_studied_at": datetime.utcnow().isoformat(),
+            "mastery_events": updated_events,
         },
         filters={"id": f"eq.{concept_node_id}"},
     )

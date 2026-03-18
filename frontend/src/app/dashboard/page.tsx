@@ -57,7 +57,8 @@ function DashboardInner() {
   // Suggested concept from Navbar "What should I learn next?" button
   const suggestConcept = searchParams.get('suggest') ?? '';
   const containerRef = useRef<HTMLDivElement>(null);
-  const [graphDimensions, setGraphDimensions] = useState({ width: 600, height: 400 });
+  const hasDimensionsRef = useRef(false);
+  const [graphDimensions, setGraphDimensions] = useState({ width: 0, height: 0 });
 
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [edges, setEdges] = useState<any[]>([]);
@@ -226,12 +227,23 @@ function DashboardInner() {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    let timer: ReturnType<typeof setTimeout>;
     const obs = new ResizeObserver(entries => {
       const entry = entries[0];
-      if (entry) setGraphDimensions({ width: entry.contentRect.width, height: entry.contentRect.height });
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (!hasDimensionsRef.current) {
+        // First measurement: apply immediately so KnowledgeGraph mounts with real dimensions
+        hasDimensionsRef.current = true;
+        setGraphDimensions({ width, height });
+      } else {
+        // Subsequent changes (panel animations): debounce to avoid thrashing
+        clearTimeout(timer);
+        timer = setTimeout(() => setGraphDimensions({ width, height }), 200);
+      }
     });
     obs.observe(el);
-    return () => obs.disconnect();
+    return () => { obs.disconnect(); clearTimeout(timer); };
   }, []);
 
   const handleNodeClick = useCallback((node: GraphNode) => {
@@ -652,7 +664,7 @@ function DashboardInner() {
               position: 'relative',
             }}
           >
-            {loading ? (
+            {loading || graphDimensions.width === 0 ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#9ca3af', fontSize: '14px' }}>
                 Loading graph…
               </div>

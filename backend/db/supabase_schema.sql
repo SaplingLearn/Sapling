@@ -29,18 +29,24 @@ CREATE TABLE IF NOT EXISTS graph_nodes (
     times_studied   INTEGER DEFAULT 0,
     last_studied_at TIMESTAMPTZ,
     subject         TEXT,
-    created_at      TIMESTAMPTZ DEFAULT now()
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    mastery_events  JSONB DEFAULT '[]'  -- array of {ts, delta, reason, event_type} — last 20 events
 );
 
 -- Knowledge graph edges
 CREATE TABLE IF NOT EXISTS graph_edges (
-    id             TEXT PRIMARY KEY,
-    user_id        TEXT NOT NULL,
-    source_node_id TEXT NOT NULL REFERENCES graph_nodes(id),
-    target_node_id TEXT NOT NULL REFERENCES graph_nodes(id),
-    strength       DOUBLE PRECISION DEFAULT 0.5,
-    created_at     TIMESTAMPTZ DEFAULT now()
+    id                TEXT PRIMARY KEY,
+    user_id           TEXT NOT NULL,
+    source_node_id    TEXT NOT NULL REFERENCES graph_nodes(id),
+    target_node_id    TEXT NOT NULL REFERENCES graph_nodes(id),
+    strength          DOUBLE PRECISION DEFAULT 0.5,
+    created_at        TIMESTAMPTZ DEFAULT now(),
+    relationship_type TEXT DEFAULT 'related'  -- 'prerequisite' | 'builds_on' | 'related'
 );
+
+-- Migrations (run these if the table already exists)
+-- ALTER TABLE graph_nodes ADD COLUMN IF NOT EXISTS mastery_events JSONB DEFAULT '[]';
+-- ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS relationship_type TEXT DEFAULT 'related';
 
 -- Courses
 CREATE TABLE IF NOT EXISTS courses (

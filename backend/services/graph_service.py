@@ -38,6 +38,32 @@ def update_streak(user_id: str) -> None:
     )
 
 
+def _compute_velocity(events: list) -> float:
+    """Mastery gained per day over the last 14 days. Returns 0.0 if insufficient data."""
+    if not events:
+        return 0.0
+    cutoff = datetime.utcnow() - timedelta(days=14)
+    recent = []
+    for e in events:
+        try:
+            ts = datetime.fromisoformat(e["ts"].replace("Z", "+00:00")).replace(tzinfo=None)
+            if ts > cutoff:
+                recent.append(e)
+        except Exception:
+            pass
+    if not recent:
+        return 0.0
+    positive_gain = sum(e.get("delta", 0) for e in recent if e.get("delta", 0) > 0)
+    if positive_gain == 0:
+        return 0.0
+    try:
+        first_ts = datetime.fromisoformat(recent[0]["ts"].replace("Z", "+00:00")).replace(tzinfo=None)
+        days = max(1, (datetime.utcnow() - first_ts).days)
+    except Exception:
+        days = 1
+    return round(positive_gain / days, 4)
+
+
 def get_graph(user_id: str) -> dict:
     ensure_user_exists(user_id)
     nodes = table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"})
@@ -49,14 +75,24 @@ def get_graph(user_id: str) -> dict:
             "source": e["source_node_id"],
             "target": e["target_node_id"],
             "strength": e["strength"],
+            "relationship_type": e.get("relationship_type", "related"),
         }
         for e in edges_raw
     ]
+
+    # Enrich each node with learning velocity; trim event history for API response
+    for n in nodes:
+        events = n.get("mastery_events") or []
+        n["learning_velocity"] = _compute_velocity(events)
+        n["mastery_events"] = events[-5:]  # keep last 5 for UI; full history lives in DB
 
     mastered   = sum(1 for n in nodes if n["mastery_tier"] == "mastered")
     learning   = sum(1 for n in nodes if n["mastery_tier"] == "learning")
     struggling = sum(1 for n in nodes if n["mastery_tier"] == "struggling")
     unexplored = sum(1 for n in nodes if n["mastery_tier"] == "unexplored")
+
+    velocities = [n["learning_velocity"] for n in nodes if n["learning_velocity"] > 0]
+    avg_velocity = round(sum(velocities) / len(velocities), 4) if velocities else 0.0
 
     user_rows = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
     streak = user_rows[0]["streak_count"] if user_rows else 0
@@ -74,6 +110,7 @@ def get_graph(user_id: str) -> dict:
         "struggling": struggling,
         "unexplored": unexplored,
         "streak": streak,
+        "avg_learning_velocity": avg_velocity,
     }
 
     subject_map: dict = {}
@@ -103,6 +140,7 @@ def get_graph(user_id: str) -> dict:
                 "source": root_id,
                 "target": n["id"],
                 "strength": 0.7,
+                "relationship_type": "related",
             })
 
     for course_name in user_course_names:
@@ -218,6 +256,7 @@ def apply_graph_update(user_id: str, graph_update: dict) -> list:
                 "mastery_score": init_m,
                 "mastery_tier": get_mastery_tier(init_m),
                 "subject": subject,
+                "mastery_events": [],
             })
         if subject and subject != "General":
             touched_subjects.add(subject)
@@ -226,19 +265,30 @@ def apply_graph_update(user_id: str, graph_update: dict) -> list:
         name = upd.get("concept_name", "")
         delta = float(upd.get("mastery_delta", 0.0))
         rows = table("graph_nodes").select(
-            "id,mastery_score,times_studied,subject",
+            "id,mastery_score,times_studied,subject,mastery_events",
             filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{name}"},
         )
         if rows:
             row = rows[0]
             before = row["mastery_score"]
             after = max(0.0, min(1.0, before + delta))
+
+            existing_events = row.get("mastery_events") or []
+            new_event = {
+                "ts": datetime.utcnow().isoformat(),
+                "delta": delta,
+                "reason": upd.get("reason", ""),
+                "event_type": upd.get("event_type", "interaction"),
+            }
+            updated_events = (existing_events + [new_event])[-20:]
+
             table("graph_nodes").update(
                 {
                     "mastery_score": after,
                     "mastery_tier": get_mastery_tier(after),
                     "times_studied": row["times_studied"] + 1,
                     "last_studied_at": datetime.utcnow().isoformat(),
+                    "mastery_events": updated_events,
                 },
                 filters={"id": f"eq.{row['id']}"},
             )
@@ -253,6 +303,7 @@ def apply_graph_update(user_id: str, graph_update: dict) -> list:
         src_name = new_edge.get("source", "")
         tgt_name = new_edge.get("target", "")
         strength = float(new_edge.get("strength", 0.5))
+        relationship_type = new_edge.get("relationship_type", "related")
         src_rows = table("graph_nodes").select(
             "id", filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{src_name}"}
         )
@@ -277,6 +328,7 @@ def apply_graph_update(user_id: str, graph_update: dict) -> list:
                     "source_node_id": src_id,
                     "target_node_id": tgt_id,
                     "strength": strength,
+                    "relationship_type": relationship_type,
                 })
 
     # Refresh shared course context for every subject touched in this update
