@@ -25,14 +25,17 @@ const MODE_DESCRIPTIONS: Record<TeachingMode, string> = {
 
 export default function ChatPanel({ messages, onSend, onAction, onEndSession, loading, mode, prefillInput }: Props) {
   const [input, setInput] = useState('');
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (prefillInput) setInput(prefillInput);
   }, [prefillInput]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [messages, loading]);
 
   const send = () => {
@@ -60,7 +63,7 @@ export default function ChatPanel({ messages, onSend, onAction, onEndSession, lo
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div ref={messagesContainerRef} style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
         {messages.map(msg => (
           <div key={msg.id} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
             <div style={{
@@ -114,7 +117,6 @@ export default function ChatPanel({ messages, onSend, onAction, onEndSession, lo
             </div>
           </div>
         )}
-        <div ref={bottomRef} />
       </div>
 
       {/* Input area */}
