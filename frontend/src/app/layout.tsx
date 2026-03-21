@@ -1,9 +1,11 @@
 import type { Metadata } from 'next';
 import { Spectral, DM_Sans, Inter, Playfair_Display, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
+import { Suspense } from 'react';
 import { UserProvider } from '@/context/UserContext';
 import Navbar from '@/components/Navbar';
 import SpaceBackground from '@/components/SpaceBackground';
+import FeedbackFlow from '@/components/FeedbackFlow';
 
 const spectral = Spectral({
   subsets: ['latin'],
@@ -55,6 +57,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
             <Navbar />
             <main style={{ flex: 1 }}>{children}</main>
+            <Suspense fallback={null}><FeedbackFlow /></Suspense>
           </div>
         </UserProvider>
       </body>

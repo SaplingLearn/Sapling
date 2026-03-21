@@ -7,6 +7,7 @@ import ChatPanel from '@/components/ChatPanel';
 import ModeSelector from '@/components/ModeSelector';
 import QuizPanel from '@/components/QuizPanel';
 import SessionSummary from '@/components/SessionSummary';
+import SessionFeedbackFlow from '@/components/SessionFeedbackFlow';
 import { GraphNode, GraphEdge, ChatMessage, TeachingMode, SessionSummary as SessionSummaryType } from '@/lib/types';
 import { startSession, sendChat, sendAction, endSession, getGraph, getSessions, resumeSession, switchMode, deleteSession } from '@/lib/api';
 import Link from 'next/link';
@@ -38,6 +39,9 @@ function LearnInner() {
   const [chatLoading, setChatLoading] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [summary, setSummary] = useState<SessionSummaryType | null>(null);
+  const [showSessionFeedback, setShowSessionFeedback] = useState(
+    () => searchParams.get('testFeedback') === 'session'
+  );
   const [graphDimensions, setGraphDimensions] = useState({ width: 0, height: 0 });
   const graphContainerRef = useRef<HTMLDivElement>(null);
   const hasDimensionsRef = useRef(false);
@@ -478,10 +482,16 @@ function LearnInner() {
       {summary && (
         <SessionSummary
           summary={summary}
-          onDashboard={() => router.push('/')}
-          onNewSession={() => { setSummary(null); setSessionId(null); setMessages([]); }}
+          onDashboard={() => { setSummary(null); setShowSessionFeedback(true); router.push('/'); }}
+          onNewSession={() => { setSummary(null); setSessionId(null); setMessages([]); setShowSessionFeedback(true); }}
         />
       )}
+
+      <SessionFeedbackFlow
+        visible={showSessionFeedback}
+        topic={topic}
+        onDismiss={() => setShowSessionFeedback(false)}
+      />
     </div>
   );
 }
