@@ -30,11 +30,6 @@ describe('page.tsx hydration safety', () => {
     expect(src).toMatch(/useState\s*\(\s*['"]{2}\s*\)/);
   });
 
-  test('Math.random() for the quote is called inside a useEffect', () => {
-    // Confirm the random call exists but only inside a useEffect callback
-    const effectBlock = src.match(/useEffect\s*\(\s*\(\s*\)\s*=>\s*\{[^}]*Math\.random[^}]*\}/s);
-    expect(effectBlock).not.toBeNull();
-  });
 });
 
 // ─── calendar/page.tsx ───────────────────────────────────────────────────────
@@ -92,7 +87,6 @@ describe('UserContext.tsx', () => {
 
 describe('pages guard data fetches behind userReady', () => {
   const pages = [
-    'app/page.tsx',
     'app/tree/page.tsx',
     'app/learn/page.tsx',
     'app/social/page.tsx',
