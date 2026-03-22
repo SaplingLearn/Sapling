@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { getRecommendations } from '@/lib/api';
+import ReportIssueFlow from '@/components/ReportIssueFlow';
 
 const LINKS = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -23,6 +24,7 @@ export default function Navbar() {
   const [suggesting, setSuggesting] = useState(false);
   const [, startTransition] = useTransition();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showReportIssue, setShowReportIssue] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close menu when clicking outside
@@ -73,7 +75,7 @@ export default function Navbar() {
   };
 
   return (
-    <nav
+    <>
       style={{
         background: 'rgba(255, 255, 255, 0.92)',
         backdropFilter: 'blur(20px)',
@@ -132,6 +134,27 @@ export default function Navbar() {
       </div>
 
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <button
+          onClick={() => setShowReportIssue(true)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            padding: '5px 11px',
+            background: 'rgba(220,38,38,0.07)',
+            color: '#dc2626',
+            border: '1px solid rgba(220,38,38,0.2)',
+            borderRadius: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Report Issue
+        </button>
+
         <button
           onClick={handleSuggest}
           disabled={suggesting}
@@ -245,5 +268,7 @@ export default function Navbar() {
         </div>
       </div>
     </nav>
+      <ReportIssueFlow visible={showReportIssue} onDismiss={() => setShowReportIssue(false)} />
+    </>
   );
 }
