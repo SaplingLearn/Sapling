@@ -191,12 +191,12 @@ describe('sendAction', () => {
 });
 
 describe('endSession', () => {
-  it('POST /api/learn/end-session with session_id', async () => {
+  it('POST /api/learn/end-session with session_id and user_id', async () => {
     mockFetch({ summary: {} });
-    await endSession('s1');
+    await endSession('s1', 'user_andres');
     const [url, opts] = lastCall();
     expect(url).toBe('/api/learn/end-session');
-    expect(JSON.parse(opts?.body as string)).toEqual({ session_id: 's1' });
+    expect(JSON.parse(opts?.body as string)).toEqual({ session_id: 's1', user_id: 'user_andres' });
   });
 });
 

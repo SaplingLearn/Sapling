@@ -213,7 +213,7 @@ function LearnInner() {
   const handleEndSession = async () => {
     if (!sessionId) return;
     try {
-      const res = await endSession(sessionId);
+      const res = await endSession(sessionId, USER_ID);
       setSummary(res.summary);
     } catch (e) {
       console.error(e);
@@ -248,7 +248,7 @@ function LearnInner() {
 
   const handleDeleteSession = async (sid: string) => {
     try {
-      await deleteSession(sid);
+      await deleteSession(sid, USER_ID);
       setRecentSessions(prev => prev.filter(s => s.id !== sid));
     } catch (e) {
       console.error(e);
