@@ -45,6 +45,7 @@ function LearnInner() {
   const [graphDimensions, setGraphDimensions] = useState({ width: 0, height: 0 });
   const graphContainerRef = useRef<HTMLDivElement>(null);
   const hasDimensionsRef = useRef(false);
+  const pendingNavRef = useRef<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
 
   const [topic, setTopic] = useState(topicParam);
@@ -482,7 +483,7 @@ function LearnInner() {
       {summary && (
         <SessionSummary
           summary={summary}
-          onDashboard={() => { setSummary(null); setShowSessionFeedback(true); router.push('/'); }}
+          onDashboard={() => { setSummary(null); pendingNavRef.current = '/'; setShowSessionFeedback(true); }}
           onNewSession={() => { setSummary(null); setSessionId(null); setMessages([]); setShowSessionFeedback(true); }}
         />
       )}
@@ -491,7 +492,7 @@ function LearnInner() {
         visible={showSessionFeedback}
         topic={topic}
         sessionId={sessionId ?? undefined}
-        onDismiss={() => setShowSessionFeedback(false)}
+        onDismiss={() => { setShowSessionFeedback(false); if (pendingNavRef.current) { router.push(pendingNavRef.current); pendingNavRef.current = null; } }}
       />
     </div>
   );
