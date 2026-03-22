@@ -21,6 +21,7 @@ class ChatBody(BaseModel):
 
 class EndSessionBody(BaseModel):
     session_id: str
+    user_id: str = ""  # Required to discard a lazy (not-yet-persisted) session safely
 
 
 class ActionBody(BaseModel):

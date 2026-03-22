@@ -20,6 +20,16 @@ const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
 
 type CalendarView = 'month' | 'week' | 'day';
 
+/** Short line for syllabus import warnings; full text is in the “View details” modal (#17). */
+function syllabusWarningsSummary(warnings: string[]): string {
+  if (warnings.length === 0) return '';
+  if (warnings.length === 1) {
+    const w = warnings[0];
+    return w.length > 120 ? `${w.slice(0, 117)}…` : w;
+  }
+  return `${warnings.length} issues were reported while importing your syllabus.`;
+}
+
 const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   exam:     { bg: 'rgba(220,38,38,0.08)',   text: '#b91c1c', border: 'rgba(220,38,38,0.2)' },
   project:  { bg: 'rgba(234,88,12,0.08)',   text: '#c2410c', border: 'rgba(234,88,12,0.2)' },
@@ -307,6 +317,7 @@ function CalendarInner() {
   const [extractedAssignments, setExtractedAssignments] = useState<Assignment[]>([]);
   const [fileProcessed, setFileProcessed] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [warningsModalOpen, setWarningsModalOpen] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadFilename, setUploadFilename] = useState('');
   const [saving, setSaving] = useState(false);
@@ -434,10 +445,109 @@ function CalendarInner() {
           Import Syllabus
         </p>
         <UploadZone onFile={handleFile} loading={uploadLoading} filename={uploadFilename} />
-        {warnings.map((w, i) => (
-          <p key={i} style={{ color: '#f97316', fontSize: '12px', marginTop: '6px' }}>{w}</p>
-        ))}
+        {warnings.length > 0 && (
+          <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' }}>
+            <p style={{ color: '#c2410c', fontSize: '13px', fontWeight: 500, margin: 0, flex: '1 1 200px' }}>
+              {syllabusWarningsSummary(warnings)}
+            </p>
+            <button
+              type="button"
+              onClick={() => setWarningsModalOpen(true)}
+              style={{
+                padding: '5px 12px',
+                fontSize: '12px',
+                fontWeight: 600,
+                color: '#c2410c',
+                background: 'rgba(234,88,12,0.08)',
+                border: '1px solid rgba(234,88,12,0.35)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontFamily: UI_FONT,
+              }}
+            >
+              View details
+            </button>
+          </div>
+        )}
       </div>
+
+      {warningsModalOpen && warnings.length > 0 && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="syllabus-warnings-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 120,
+            background: 'rgba(15,23,42,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+          onClick={e => { if (e.target === e.currentTarget) setWarningsModalOpen(false); }}
+        >
+          <div
+            style={{
+              background: '#ffffff',
+              borderRadius: '12px',
+              maxWidth: '520px',
+              width: '100%',
+              maxHeight: 'min(70vh, 480px)',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 24px 64px rgba(0,0,0,0.18)',
+              border: '1px solid rgba(107,114,128,0.18)',
+              fontFamily: UI_FONT,
+            }}
+          >
+            <div style={{ padding: '16px 18px', borderBottom: '1px solid rgba(107,114,128,0.12)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 id="syllabus-warnings-title" style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#111827' }}>
+                Syllabus import details
+              </h2>
+              <button
+                type="button"
+                onClick={() => setWarningsModalOpen(false)}
+                aria-label="Close"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '22px',
+                  lineHeight: 1,
+                  cursor: 'pointer',
+                  color: '#6b7280',
+                  padding: '4px 8px',
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ padding: '14px 18px 18px', overflowY: 'auto', fontSize: '13px', color: '#374151', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+              {warnings.join('\n\n')}
+            </div>
+            <div style={{ padding: '0 18px 16px', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setWarningsModalOpen(false)}
+                style={{
+                  padding: '8px 18px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#fff',
+                  background: '#1a5c2a',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontFamily: UI_FONT,
+                }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {fileProcessed && (
         <div>

@@ -229,7 +229,7 @@ function LearnInner() {
   const handleEndSession = async () => {
     if (!sessionId) return;
     try {
-      const res = await endSession(sessionId);
+      const res = await endSession(sessionId, USER_ID);
       setSummary(res.summary);
 
       const count = parseInt(localStorage.getItem(SESSION_COUNT_KEY) ?? '0', 10) + 1;
@@ -273,7 +273,7 @@ function LearnInner() {
 
   const handleDeleteSession = async (sid: string) => {
     try {
-      await deleteSession(sid);
+      await deleteSession(sid, USER_ID);
       setRecentSessions(prev => prev.filter(s => s.id !== sid));
     } catch (e) {
       console.error(e);

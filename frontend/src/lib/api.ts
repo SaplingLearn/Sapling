@@ -70,10 +70,10 @@ export const sendAction = (sessionId: string, userId: string, actionType: string
     body: JSON.stringify({ session_id: sessionId, user_id: userId, action_type: actionType, mode, use_shared_context: useSharedContext }),
   });
 
-export const endSession = (sessionId: string) =>
+export const endSession = (sessionId: string, userId: string) =>
   fetchJSON<{ summary: any }>('/api/learn/end-session', {
     method: 'POST',
-    body: JSON.stringify({ session_id: sessionId }),
+    body: JSON.stringify({ session_id: sessionId, user_id: userId }),
   });
 
 export const getSessions = (userId: string, limit = 10) =>
@@ -95,8 +95,11 @@ export const switchMode = (sessionId: string, userId: string, newMode: string) =
     body: JSON.stringify({ session_id: sessionId, user_id: userId, new_mode: newMode }),
   });
 
-export const deleteSession = (sessionId: string) =>
-  fetchJSON<{ deleted: boolean }>(`/api/learn/sessions/${sessionId}`, { method: 'DELETE' });
+export const deleteSession = (sessionId: string, userId: string) =>
+  fetchJSON<{ deleted: boolean }>(
+    `/api/learn/sessions/${sessionId}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' }
+  );
 
 export const resumeSession = (sessionId: string) =>
   fetchJSON<{

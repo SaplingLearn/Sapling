@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useMemo, useCallback, Suspense } from 'react';
+import { useEffect, useLayoutEffect, useState, useRef, useMemo, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import { GraphNode, GraphStats, Recommendation, Assignment } from '@/lib/types';
@@ -8,6 +8,7 @@ import { getGraph, getRecommendations, getUpcomingAssignments, getCourses, addCo
 import { getMasteryColor, getMasteryLabel, formatDueDate, formatRelativeTime, getCourseColor, PRESET_COURSE_COLORS, RAINBOW_COLORS } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
 import Link from 'next/link';
+import { Maximize2, Minimize2 } from 'lucide-react';
 
 const STATS_LABELS: Record<string, string> = {
   mastered: 'Mastered',
@@ -68,7 +69,10 @@ function DashboardInner() {
   // Suggested concept from Navbar "What should I learn next?" button
   const suggestConcept = searchParams.get('suggest') ?? '';
   const containerRef = useRef<HTMLDivElement>(null);
+  const fullscreenGraphRef = useRef<HTMLDivElement>(null);
   const [graphDimensions, setGraphDimensions] = useState({ width: 0, height: 0 });
+  const [graphFullscreen, setGraphFullscreen] = useState(false);
+  const [fullscreenGraphDimensions, setFullscreenGraphDimensions] = useState({ width: 0, height: 0 });
   const hasDimensionsRef = useRef(false);
 
   const [nodes, setNodes] = useState<GraphNode[]>([]);
@@ -249,6 +253,31 @@ function DashboardInner() {
     obs.observe(el);
     return () => { obs.disconnect(); clearTimeout(timer); };
   }, []);
+
+  // Fullscreen graph (#24): measure overlay pane; Escape exits
+  useLayoutEffect(() => {
+    if (!graphFullscreen) return;
+    const el = fullscreenGraphRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      const cr = entries[0]?.contentRect;
+      if (cr && cr.width > 0 && cr.height > 0) {
+        setFullscreenGraphDimensions({ width: cr.width, height: cr.height });
+      }
+    });
+    ro.observe(el);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setGraphFullscreen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [graphFullscreen]);
 
   const handleNodeClick = useCallback((node: GraphNode) => {
     router.push(`/learn?topic=${encodeURIComponent(node.concept_name)}`);
@@ -633,6 +662,42 @@ function DashboardInner() {
               position: 'relative',
             }}
           >
+            {!loading && graphDimensions.width > 0 && !isMobile && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFullscreenGraphDimensions({
+                    width: window.innerWidth,
+                    height: Math.max(320, window.innerHeight - 52),
+                  });
+                  setGraphFullscreen(true);
+                }}
+                aria-label="Open knowledge graph fullscreen"
+                title="Fullscreen (Esc to exit)"
+                style={{
+                  position: 'absolute',
+                  top: '10px',
+                  right: '10px',
+                  zIndex: 25,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 11px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: '#374151',
+                  background: 'rgba(255,255,255,0.92)',
+                  border: '1px solid rgba(107,114,128,0.22)',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontFamily: UI_FONT,
+                  boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
+                }}
+              >
+                <Maximize2 size={16} strokeWidth={2} />
+                Fullscreen
+              </button>
+            )}
             {loading || graphDimensions.width === 0 ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#9ca3af', fontSize: '14px' }}>
                 Loading graph…
@@ -722,6 +787,69 @@ function DashboardInner() {
               </div>
             )}
           </div>
+
+          {graphFullscreen && !isMobile && (
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 200,
+                background: '#ffffff',
+                display: 'flex',
+                flexDirection: 'column',
+                fontFamily: UI_FONT,
+              }}
+            >
+              <div
+                style={{
+                  flexShrink: 0,
+                  height: '52px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0 16px',
+                  borderBottom: '1px solid rgba(107,114,128,0.15)',
+                  background: 'rgba(255,255,255,0.96)',
+                }}
+              >
+                <span style={{ fontSize: '14px', fontWeight: 600, color: '#111827' }}>Knowledge graph</span>
+                <button
+                  type="button"
+                  onClick={() => setGraphFullscreen(false)}
+                  aria-label="Exit fullscreen"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 14px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: '#374151',
+                    background: 'rgba(107,114,128,0.08)',
+                    border: '1px solid rgba(107,114,128,0.2)',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontFamily: UI_FONT,
+                  }}
+                >
+                  <Minimize2 size={16} strokeWidth={2} />
+                  Exit
+                </button>
+              </div>
+              <div ref={fullscreenGraphRef} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+                <KnowledgeGraph
+                  nodes={nodes}
+                  edges={filteredEdges}
+                  width={fullscreenGraphDimensions.width}
+                  height={fullscreenGraphDimensions.height}
+                  interactive
+                  highlightId={suggestNode?.id}
+                  onNodeClick={handleNodeClick}
+                  courseColorMap={courseColorMap}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Upcoming assignments strip */}
           <div style={{ ...GLASS, padding: isMobile ? '10px 12px' : '14px 16px', fontFamily: UI_FONT, height: isMobile ? 'auto' : '160px', maxHeight: isMobile ? '200px' : undefined, flexShrink: 0, overflowY: 'auto' }}>
