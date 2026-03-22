@@ -99,6 +99,17 @@ class MatchBody(BaseModel):
     user_id: str = "user_andres"
 
 
+class LeaveRoomBody(BaseModel):
+    user_id: str
+
+
+class SendMessageBody(BaseModel):
+    user_id: str
+    user_name: str
+    text: Optional[str] = None
+    image_url: Optional[str] = None
+
+
 class ExportBody(BaseModel):
     # No default — caller must always supply the real user_id.
     # Prevents accidental exports under the wrong account.
@@ -112,17 +123,6 @@ class ModeSwitchBody(BaseModel):
     session_id: str
     user_id: str = "user_andres"
     new_mode: str
-
-
-class LeaveRoomBody(BaseModel):
-    user_id: str
-
-
-class SendMessageBody(BaseModel):
-    user_id: str
-    user_name: str
-    text: Optional[str] = None
-    image_url: Optional[str] = None
 
 
 # ── Feedback ──────────────────────────────────────────────────────────────────

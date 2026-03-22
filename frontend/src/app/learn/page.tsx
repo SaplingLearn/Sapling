@@ -490,6 +490,7 @@ function LearnInner() {
       <SessionFeedbackFlow
         visible={showSessionFeedback}
         topic={topic}
+        sessionId={sessionId ?? undefined}
         onDismiss={() => setShowSessionFeedback(false)}
       />
     </div>

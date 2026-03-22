@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useUser } from '@/context/UserContext';
+import { submitFeedback } from '@/lib/api';
 
 const STORAGE_KEY = 'sapling_feedback_last_shown';
 const COOLDOWN_DAYS = 7;
@@ -28,6 +30,7 @@ const EMOJIS = [
 export default function FeedbackFlow() {
   const searchParams = useSearchParams();
   const testMode = searchParams.get('testFeedback') === 'global';
+  const { userId } = useUser();
   const [visible, setVisible] = useState(false);
   const [step, setStep] = useState(1);
   const [rating, setRating] = useState<number | null>(null);
@@ -73,6 +76,13 @@ export default function FeedbackFlow() {
   function handleSubmit() {
     setSubmitted(true);
     localStorage.setItem(STORAGE_KEY, String(Date.now()));
+    submitFeedback({
+      user_id: userId,
+      type: 'global',
+      rating: rating!,
+      selected_options: Array.from(checked),
+      comment: comment || undefined,
+    }).catch(() => {});
     setTimeout(() => dismiss(), 1800);
   }
 
