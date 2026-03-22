@@ -45,7 +45,8 @@ class TestCalendarStatus:
 
 class TestSaveAssignments:
     def test_saves_multiple_assignments(self):
-        with patch("routes.calendar.table") as t:
+        with patch("services.calendar_service.table") as t:
+            t.return_value.select.return_value = []
             t.return_value.insert.return_value = []
             body = {
                 "user_id": "user_andres",
@@ -60,13 +61,15 @@ class TestSaveAssignments:
         assert r.json()["saved_count"] == 2
 
     def test_save_empty_list_returns_zero(self):
-        with patch("routes.calendar.table"):
+        with patch("services.calendar_service.table") as t:
+            t.return_value.select.return_value = []
             r = client.post("/api/calendar/save", json={"user_id": "user_andres", "assignments": []})
         assert r.status_code == 200
         assert r.json()["saved_count"] == 0
 
     def test_save_with_optional_fields_omitted(self):
-        with patch("routes.calendar.table") as t:
+        with patch("services.calendar_service.table") as t:
+            t.return_value.select.return_value = []
             t.return_value.insert.return_value = []
             body = {
                 "user_id": "user_andres",
@@ -75,6 +78,40 @@ class TestSaveAssignments:
             r = client.post("/api/calendar/save", json=body)
         assert r.status_code == 200
         assert r.json()["saved_count"] == 1
+
+    def test_save_skips_duplicate_title_and_date(self):
+        with patch("services.calendar_service.table") as t:
+            t.return_value.select.return_value = [
+                {"title": "HW1", "due_date": "2026-03-01"},
+            ]
+            t.return_value.insert.return_value = []
+            body = {
+                "user_id": "user_andres",
+                "assignments": [
+                    {"title": "HW1", "due_date": "2026-03-01", "assignment_type": "homework"},
+                    {"title": "HW2", "due_date": "2026-03-02", "assignment_type": "homework"},
+                ],
+            }
+            r = client.post("/api/calendar/save", json=body)
+        assert r.status_code == 200
+        assert r.json()["saved_count"] == 1
+
+    def test_save_skips_when_iso_datetime_matches_existing_date(self):
+        """#16: same title + same calendar day (ISO date vs datetime) → one row."""
+        with patch("services.calendar_service.table") as t:
+            t.return_value.select.return_value = [
+                {"title": "Final Exam", "due_date": "2026-05-01"},
+            ]
+            t.return_value.insert.return_value = []
+            body = {
+                "user_id": "user_andres",
+                "assignments": [
+                    {"title": "Final Exam", "due_date": "2026-05-01T09:00:00", "assignment_type": "exam"},
+                ],
+            }
+            r = client.post("/api/calendar/save", json=body)
+        assert r.status_code == 200
+        assert r.json()["saved_count"] == 0
 
 
 # ── GET /api/calendar/upcoming/{user_id} ─────────────────────────────────────

@@ -5,9 +5,50 @@ import uuid
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.extraction_service import extract_text_from_file
 from services.gemini_service import call_gemini_json
+from services.assignment_dedupe import assignment_dedupe_key
 from db.connection import table
 
 PROMPT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", "syllabus_extraction.txt")
+
+
+def load_existing_assignment_keys(user_id: str) -> set[tuple[str, str]]:
+    """All (title, due_date) keys for a user, using the same normalization as assignment_dedupe_key."""
+    existing_rows = table("assignments").select(
+        "title,due_date",
+        filters={"user_id": f"eq.{user_id}"},
+    )
+    return {assignment_dedupe_key(r.get("title"), r.get("due_date")) for r in (existing_rows or [])}
+
+
+def insert_new_assignments(user_id: str, assignments: list[dict]) -> int:
+    """
+    Insert assignments that are not already present for this user (#16).
+    Same trimmed title + same calendar day (see assignment_dedupe_key) → skip.
+    Returns number of rows inserted.
+    """
+    existing_keys = load_existing_assignment_keys(user_id)
+    rows = []
+    for a in assignments:
+        title = (a.get("title") or "").strip()
+        due_raw = (a.get("due_date") or "").strip()
+        if not title or not due_raw:
+            continue
+        key = assignment_dedupe_key(title, due_raw)
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        rows.append({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "title": title,
+            "course_name": a.get("course_name") or "",
+            "due_date": key[1],
+            "assignment_type": a.get("assignment_type") or "other",
+            "notes": a.get("notes"),
+        })
+    if rows:
+        table("assignments").insert(rows)
+    return len(rows)
 
 
 def parse_syllabus(extracted_text: str) -> dict:
@@ -19,25 +60,8 @@ def parse_syllabus(extracted_text: str) -> dict:
 
 
 def save_assignments_to_db(user_id: str, assignments: list) -> int:
-    """Write extracted assignment dicts straight to the DB. Returns count saved."""
-    rows = []
-    for a in assignments:
-        title = (a.get("title") or "").strip()
-        due_date = (a.get("due_date") or "").strip()
-        if not title or not due_date:
-            continue
-        rows.append({
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "title": title,
-            "course_name": a.get("course_name") or "",
-            "due_date": due_date,
-            "assignment_type": a.get("assignment_type") or "other",
-            "notes": a.get("notes"),
-        })
-    if rows:
-        table("assignments").insert(rows)
-    return len(rows)
+    """Write extracted assignment dicts to the DB (deduped via insert_new_assignments)."""
+    return insert_new_assignments(user_id, assignments)
 
 
 def extract_assignments_from_file(file_bytes: bytes, filename: str, content_type: str) -> dict:

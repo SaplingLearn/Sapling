@@ -59,7 +59,8 @@ def test_save_to_db(parsed_assignments):
 
     assignments = parsed_assignments
     saved = save_assignments_to_db(TEST_USER, assignments)
-    assert saved == len(assignments), f"Expected {len(assignments)} saved, got {saved}"
+    # Deduped against DB: first run saves all; later runs may save 0 (#16)
+    assert 0 <= saved <= len(assignments), f"Expected at most {len(assignments)} new rows, got {saved}"
 
     after_rows = table("assignments").select(
         "title,due_date,assignment_type",
