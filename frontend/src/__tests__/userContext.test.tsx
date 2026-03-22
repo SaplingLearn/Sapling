@@ -61,10 +61,10 @@ test('restores userId and userName from localStorage on mount', async () => {
   });
 });
 
-test('falls back to default user when localStorage is empty', async () => {
+test('has empty userId when localStorage is empty', async () => {
   render(<UserProvider><DisplayUser /></UserProvider>);
   await waitFor(() => {
-    expect(screen.getByTestId('userId').textContent).toBe('user_andres');
+    expect(screen.getByTestId('userId').textContent).toBe('');
     expect(screen.getByTestId('ready').textContent).toBe('true');
   });
 });

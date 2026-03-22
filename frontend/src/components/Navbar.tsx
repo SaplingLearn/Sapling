@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { getRecommendations } from '@/lib/api';
+import ReportIssueFlow from '@/components/ReportIssueFlow';
 
 const LINKS = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -35,6 +36,7 @@ export default function Navbar() {
   const [suggesting, setSuggesting] = useState(false);
   const [, startTransition] = useTransition();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showReportIssue, setShowReportIssue] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const mobileNavRef = useRef<HTMLDivElement>(null);
@@ -94,7 +96,8 @@ export default function Navbar() {
   };
 
   return (
-    <nav
+    <>
+      <nav
       style={{
         background: 'rgba(255, 255, 255, 0.92)',
         backdropFilter: 'blur(20px)',
@@ -239,7 +242,28 @@ export default function Navbar() {
       )}
 
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
-        {/* Desktop-only suggest button */}
+        <button
+          onClick={() => setShowReportIssue(true)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            padding: '5px 11px',
+            background: 'rgba(220,38,38,0.07)',
+            color: '#dc2626',
+            border: '1px solid rgba(220,38,38,0.2)',
+            borderRadius: '6px',
+            fontSize: '12px',
+            fontWeight: 500,
+            fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Report Issue
+        </button>
+
+        {/* Desktop-only suggest (mobile: hamburger menu) */}
         {!isMobile && (
           <button
             onClick={handleSuggest}
@@ -355,5 +379,7 @@ export default function Navbar() {
         </div>
       </div>
     </nav>
+      <ReportIssueFlow visible={showReportIssue} onDismiss={() => setShowReportIssue(false)} />
+    </>
   );
 }

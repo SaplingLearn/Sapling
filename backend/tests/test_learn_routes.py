@@ -8,45 +8,10 @@ import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
-from routes.learn import format_history_for_prompt, _resolve_course
+from routes.learn import _resolve_course
 from main import app
 
 client = TestClient(app)
-
-
-# ── format_history_for_prompt ─────────────────────────────────────────────────
-
-class TestFormatHistoryForPrompt:
-    def test_empty_history_returns_empty_string(self):
-        assert format_history_for_prompt([]) == ""
-
-    def test_user_message_labeled_student(self):
-        history = [{"role": "user", "content": "What is a loop?"}]
-        result = format_history_for_prompt(history)
-        assert "Student: What is a loop?" in result
-
-    def test_assistant_message_labeled_sapling(self):
-        history = [{"role": "assistant", "content": "A loop repeats code."}]
-        result = format_history_for_prompt(history)
-        assert "Sapling: A loop repeats code." in result
-
-    def test_multi_turn_preserves_order(self):
-        history = [
-            {"role": "user",      "content": "What is recursion?"},
-            {"role": "assistant", "content": "A function calling itself."},
-            {"role": "user",      "content": "Give me an example."},
-        ]
-        result = format_history_for_prompt(history)
-        assert result.index("What is recursion?") < result.index("A function calling itself.")
-        assert result.index("A function calling itself.") < result.index("Give me an example.")
-
-    def test_parts_are_double_newline_separated(self):
-        history = [
-            {"role": "user",      "content": "First"},
-            {"role": "assistant", "content": "Second"},
-        ]
-        result = format_history_for_prompt(history)
-        assert "\n\n" in result
 
 
 # ── _resolve_course ───────────────────────────────────────────────────────────

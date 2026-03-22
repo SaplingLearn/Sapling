@@ -261,18 +261,18 @@ class TestUploadDocument:
     # ── Syllabus auto-extraction ───────────────────────────────────────────────
 
     def test_syllabus_triggers_assignment_extraction(self):
+        assignments = [{"title": "HW 1", "due_date": "2026-04-01"}]
         ai_result = {
             "category": "syllabus",
             "summary": "Course syllabus",
             "key_takeaways": [],
             "flashcards": [],
+            "assignments": assignments,
         }
-        assignments = [{"title": "HW 1", "due_date": "2026-04-01"}]
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value="syllabus text"),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.extract_assignments_from_file", return_value={"assignments": assignments}) as mock_extract,
             patch("routes.documents.save_assignments_to_db") as mock_save,
             patch("routes.documents.table") as t,
         ):
@@ -280,7 +280,6 @@ class TestUploadDocument:
             r = _make_upload(filename="syllabus.pdf")
 
         assert r.status_code == 200
-        mock_extract.assert_called_once()
         mock_save.assert_called_once_with("u1", assignments)
 
     def test_non_syllabus_skips_assignment_extraction(self):
@@ -294,28 +293,29 @@ class TestUploadDocument:
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value="notes text"),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.extract_assignments_from_file") as mock_extract,
+            patch("routes.documents.save_assignments_to_db") as mock_save,
             patch("routes.documents.table") as t,
         ):
             t.return_value.insert.return_value = [{"id": "d7"}]
             r = _make_upload()
 
         assert r.status_code == 200
-        mock_extract.assert_not_called()
+        mock_save.assert_not_called()
 
     def test_syllabus_extraction_failure_does_not_fail_upload(self):
-        """Assignment extraction errors must be swallowed so the upload succeeds."""
+        """Assignment save errors must be swallowed so the upload succeeds."""
         ai_result = {
             "category": "syllabus",
             "summary": "Syllabus",
             "key_takeaways": [],
             "flashcards": [],
+            "assignments": [{"title": "HW 1", "due_date": "2026-04-01"}],
         }
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value="text"),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.extract_assignments_from_file", side_effect=RuntimeError("oops")),
+            patch("routes.documents.save_assignments_to_db", side_effect=RuntimeError("oops")),
             patch("routes.documents.table") as t,
         ):
             t.return_value.insert.return_value = [{"id": "d8"}]

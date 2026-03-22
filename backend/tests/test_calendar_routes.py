@@ -4,8 +4,6 @@ Unit tests for routes/calendar.py
 Helper functions are tested directly; route endpoints are tested via
 FastAPI's TestClient with the DB layer mocked out.
 """
-import base64
-import json
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -13,30 +11,6 @@ from fastapi.testclient import TestClient
 from main import app
 
 client = TestClient(app)
-
-
-# ── _encode_state / _decode_state ─────────────────────────────────────────────
-
-class TestStateEncoding:
-    def test_roundtrip(self):
-        from routes.calendar import _encode_state, _decode_state
-        assert _decode_state(_encode_state("user_andres")) == "user_andres"
-
-    def test_decode_invalid_base64_returns_empty(self):
-        from routes.calendar import _decode_state
-        assert _decode_state("!!!not_base64!!!") == ""
-
-    def test_decode_valid_base64_missing_user_id_returns_empty(self):
-        from routes.calendar import _decode_state
-        payload = base64.urlsafe_b64encode(json.dumps({"other": "key"}).encode()).decode()
-        assert _decode_state(payload) == ""
-
-    def test_encode_produces_url_safe_string(self):
-        from routes.calendar import _encode_state
-        encoded = _encode_state("user_test")
-        # Should not contain characters unsafe for URLs
-        assert "+" not in encoded
-        assert "/" not in encoded
 
 
 # ── GET /api/calendar/status/{user_id} ───────────────────────────────────────

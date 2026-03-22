@@ -547,7 +547,7 @@ function DashboardInner() {
               style={{
                 fontSize: isMobile ? '13px' : '15px',
                 color: '#6b7280',
-                marginTop: '5px',
+                marginTop: '10px',
                 fontStyle: 'italic',
                 opacity: greetingDone ? 1 : 0,
                 transition: 'opacity 0.7s ease',

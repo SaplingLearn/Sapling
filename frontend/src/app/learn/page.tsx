@@ -7,6 +7,7 @@ import ChatPanel from '@/components/ChatPanel';
 import ModeSelector from '@/components/ModeSelector';
 import QuizPanel from '@/components/QuizPanel';
 import SessionSummary from '@/components/SessionSummary';
+import SessionFeedbackFlow from '@/components/SessionFeedbackFlow';
 import { GraphNode, GraphEdge, ChatMessage, TeachingMode, SessionSummary as SessionSummaryType } from '@/lib/types';
 import { startSession, sendChat, sendAction, endSession, getGraph, getSessions, resumeSession, switchMode, deleteSession } from '@/lib/api';
 import Link from 'next/link';
@@ -50,9 +51,17 @@ function LearnInner() {
   const [chatLoading, setChatLoading] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [summary, setSummary] = useState<SessionSummaryType | null>(null);
+  const [showSessionFeedback, setShowSessionFeedback] = useState(
+    () => searchParams.get('testFeedback') === 'session'
+  );
   const [graphDimensions, setGraphDimensions] = useState({ width: 0, height: 0 });
   const graphContainerRef = useRef<HTMLDivElement>(null);
   const hasDimensionsRef = useRef(false);
+  const pendingNavRef = useRef<string | null>(null);
+  const feedbackDueRef = useRef(false);
+
+  const SESSION_COUNT_KEY = 'sapling_session_end_count';
+  const SESSION_FEEDBACK_EVERY_N = 5;
   const [sessionError, setSessionError] = useState<string | null>(null);
 
   const [topic, setTopic] = useState(topicParam);
@@ -96,6 +105,13 @@ function LearnInner() {
       return !srcSubj || !tgtSubj || srcSubj === tgtSubj;
     });
   }, [nodes, edges]);
+
+  // Flag active session for nav-away feedback trigger
+  useEffect(() => {
+    if (messages.length > 0 && sessionId) {
+      localStorage.setItem('sapling_learn_had_session', 'true');
+    }
+  }, [messages.length, sessionId]);
 
   // Load initial graph + recent sessions — re-runs when the active user changes
   useEffect(() => {
@@ -215,6 +231,15 @@ function LearnInner() {
     try {
       const res = await endSession(sessionId);
       setSummary(res.summary);
+
+      const count = parseInt(localStorage.getItem(SESSION_COUNT_KEY) ?? '0', 10) + 1;
+      if (count >= SESSION_FEEDBACK_EVERY_N) {
+        feedbackDueRef.current = true;
+        localStorage.setItem(SESSION_COUNT_KEY, '0');
+      } else {
+        feedbackDueRef.current = false;
+        localStorage.setItem(SESSION_COUNT_KEY, String(count));
+      }
     } catch (e) {
       console.error(e);
     }
@@ -508,10 +533,17 @@ function LearnInner() {
       {summary && (
         <SessionSummary
           summary={summary}
-          onDashboard={() => router.push('/')}
-          onNewSession={() => { setSummary(null); setSessionId(null); setMessages([]); }}
+          onDashboard={() => { setSummary(null); if (feedbackDueRef.current) { pendingNavRef.current = '/dashboard'; setShowSessionFeedback(true); } else { router.push('/dashboard'); } }}
+          onNewSession={() => { setSummary(null); setSessionId(null); setMessages([]); if (feedbackDueRef.current) setShowSessionFeedback(true); }}
         />
       )}
+
+      <SessionFeedbackFlow
+        visible={showSessionFeedback}
+        topic={topic}
+        sessionId={sessionId ?? undefined}
+        onDismiss={() => { setShowSessionFeedback(false); feedbackDueRef.current = false; if (pendingNavRef.current) { router.push(pendingNavRef.current); pendingNavRef.current = null; } }}
+      />
     </div>
   );
 }
