@@ -46,6 +46,12 @@ function LearnInner() {
   const graphContainerRef = useRef<HTMLDivElement>(null);
   const hasDimensionsRef = useRef(false);
   const pendingNavRef = useRef<string | null>(null);
+  const feedbackDueRef = useRef(false);
+
+  const SESSION_COUNT_KEY = 'sapling_session_end_count';
+  const SESSION_FEEDBACK_LAST_KEY = 'sapling_session_feedback_last_shown';
+  const SESSION_FEEDBACK_COOLDOWN_DAYS = 2;
+  const SESSION_FEEDBACK_EVERY_N = 3;
   const [sessionError, setSessionError] = useState<string | null>(null);
 
   const [topic, setTopic] = useState(topicParam);
@@ -205,6 +211,18 @@ function LearnInner() {
     try {
       const res = await endSession(sessionId);
       setSummary(res.summary);
+
+      const count = parseInt(localStorage.getItem(SESSION_COUNT_KEY) ?? '0', 10) + 1;
+      const lastShown = parseInt(localStorage.getItem(SESSION_FEEDBACK_LAST_KEY) ?? '0', 10);
+      const cooldownPassed = Date.now() - lastShown > SESSION_FEEDBACK_COOLDOWN_DAYS * 86_400_000;
+      if (count >= SESSION_FEEDBACK_EVERY_N && cooldownPassed) {
+        feedbackDueRef.current = true;
+        localStorage.setItem(SESSION_COUNT_KEY, '0');
+        localStorage.setItem(SESSION_FEEDBACK_LAST_KEY, String(Date.now()));
+      } else {
+        feedbackDueRef.current = false;
+        localStorage.setItem(SESSION_COUNT_KEY, String(count));
+      }
     } catch (e) {
       console.error(e);
     }
@@ -483,8 +501,8 @@ function LearnInner() {
       {summary && (
         <SessionSummary
           summary={summary}
-          onDashboard={() => { setSummary(null); pendingNavRef.current = '/'; setShowSessionFeedback(true); }}
-          onNewSession={() => { setSummary(null); setSessionId(null); setMessages([]); setShowSessionFeedback(true); }}
+          onDashboard={() => { setSummary(null); if (feedbackDueRef.current) { pendingNavRef.current = '/'; setShowSessionFeedback(true); } else { router.push('/'); } }}
+          onNewSession={() => { setSummary(null); setSessionId(null); setMessages([]); if (feedbackDueRef.current) setShowSessionFeedback(true); }}
         />
       )}
 
@@ -492,7 +510,7 @@ function LearnInner() {
         visible={showSessionFeedback}
         topic={topic}
         sessionId={sessionId ?? undefined}
-        onDismiss={() => { setShowSessionFeedback(false); if (pendingNavRef.current) { router.push(pendingNavRef.current); pendingNavRef.current = null; } }}
+        onDismiss={() => { setShowSessionFeedback(false); feedbackDueRef.current = false; if (pendingNavRef.current) { router.push(pendingNavRef.current); pendingNavRef.current = null; } }}
       />
     </div>
   );
