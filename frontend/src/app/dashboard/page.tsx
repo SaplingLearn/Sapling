@@ -3,10 +3,8 @@
 import { useEffect, useState, useRef, useMemo, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
-import UploadZone from '@/components/UploadZone';
-import AssignmentTable from '@/components/AssignmentTable';
 import { GraphNode, GraphStats, Recommendation, Assignment } from '@/lib/types';
-import { getGraph, getRecommendations, getUpcomingAssignments, extractSyllabus, saveAssignments, getCourses, addCourse, deleteCourse, updateCourseColor } from '@/lib/api';
+import { getGraph, getRecommendations, getUpcomingAssignments, getCourses, addCourse, deleteCourse, updateCourseColor } from '@/lib/api';
 import { getMasteryColor, getMasteryLabel, formatDueDate, formatRelativeTime, getCourseColor, PRESET_COURSE_COLORS, RAINBOW_COLORS } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
 import Link from 'next/link';
@@ -49,10 +47,23 @@ function getTimeGreeting(): string {
   return 'Good Evening';
 }
 
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 function DashboardInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { userId, userName, userReady } = useUser();
+  const isMobile = useIsMobile();
 
   // Suggested concept from Navbar "What should I learn next?" button
   const suggestConcept = searchParams.get('suggest') ?? '';
@@ -67,6 +78,9 @@ function DashboardInner() {
   // All upcoming assignments — used by course panel and upcoming strip
   const [allAssignments, setAllAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Mobile: which sidebar tab is expanded
+  const [mobileSidebarTab, setMobileSidebarTab] = useState<'courses' | 'stats' | null>(null);
 
   // Greeting animation
   const [displayedGreeting, setDisplayedGreeting] = useState('');
@@ -97,17 +111,6 @@ function DashboardInner() {
   const [editingColorFor, setEditingColorFor] = useState<string | null>(null);
   const [colorHexInput, setColorHexInput] = useState('');
 
-  // Upload panel state
-  const [showUpload, setShowUpload] = useState(false);
-  const [uploadFilename, setUploadFilename] = useState('');
-  const [uploadLoading, setUploadLoading] = useState(false);
-  const [uploadWarnings, setUploadWarnings] = useState<string[]>([]);
-  const [extractedAssignments, setExtractedAssignments] = useState<Assignment[]>([]);
-  const [fileProcessed, setFileProcessed] = useState(false);
-  const [rawText, setRawText] = useState('');
-  const [rawTextVisible, setRawTextVisible] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   // Mon–Sun dates for the current week (computed once on mount)
   const weekInfo = useMemo(() => {
@@ -251,68 +254,6 @@ function DashboardInner() {
     router.push(`/learn?topic=${encodeURIComponent(node.concept_name)}`);
   }, [router]);
 
-  const handleFile = async (file: File) => {
-    setUploadFilename(file.name);
-    setUploadLoading(true);
-    setUploadWarnings([]);
-    setExtractedAssignments([]);
-    setFileProcessed(false);
-    setRawText('');
-    setRawTextVisible(false);
-    try {
-      const form = new FormData();
-      form.append('file', file);
-      const res = await extractSyllabus(form);
-      const mapped: Assignment[] = (res.assignments ?? []).map((a: any, i: number) => ({
-        id: `extracted_${i}_${Date.now()}`,
-        title: a.title ?? '',
-        course_name: a.course_name ?? '',
-        due_date: a.due_date ?? '',
-        assignment_type: a.assignment_type ?? 'other',
-        notes: a.notes ?? null,
-        google_event_id: null,
-      }));
-      setExtractedAssignments(mapped);
-      setUploadWarnings(res.warnings ?? []);
-      setRawText(res.raw_text ?? '');
-      setFileProcessed(true);
-    } catch (e: any) {
-      setUploadWarnings([e.message || 'Extraction failed']);
-    } finally {
-      setUploadLoading(false);
-    }
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await saveAssignments(userId, extractedAssignments);
-      setAllAssignments(prev => {
-        const ids = new Set(prev.map(a => a.id));
-        return [...prev, ...extractedAssignments.filter(a => !ids.has(a.id))];
-      });
-      setSaved(true);
-      setTimeout(() => {
-        setSaved(false);
-        closeUpload();
-      }, 1500);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const closeUpload = () => {
-    setShowUpload(false);
-    setUploadFilename('');
-    setUploadLoading(false);
-    setUploadWarnings([]);
-    setExtractedAssignments([]);
-    setFileProcessed(false);
-    setRawText('');
-    setRawTextVisible(false);
-  };
 
   const handleAddCourse = async () => {
     const name = newCourseName.trim();
@@ -375,9 +316,16 @@ function DashboardInner() {
 
   return (
     <>
-      <div style={{ display: 'flex', height: 'calc(100vh - 48px)' }}>
+      <div style={{
+        display: 'flex',
+        flexDirection: isMobile ? 'column' : 'row',
+        height: isMobile ? 'auto' : 'calc(100vh - 48px)',
+        minHeight: isMobile ? 'calc(100vh - 48px)' : undefined,
+        overflow: isMobile ? 'auto' : undefined,
+      }}>
 
         {/* ── Left panel: Course list ─────────────────────────────────────── */}
+        {!isMobile && (
         <div
           className="dash-scroll panel-in panel-in-1"
           style={{
@@ -553,21 +501,29 @@ function DashboardInner() {
             })
           )}
         </div>
+        )}
 
         {/* ── Center: Greeting + Graph + Upcoming ────────────────────────── */}
-        <div className="panel-in panel-in-2" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '20px', gap: '14px', minWidth: 0 }}>
+        <div className="panel-in panel-in-2" style={{
+          flex: isMobile ? 'none' : 1,
+          display: 'flex',
+          flexDirection: 'column',
+          padding: isMobile ? '12px' : '20px',
+          gap: isMobile ? '10px' : '14px',
+          minWidth: 0,
+        }}>
 
           {/* Header: Typed Greeting + Quote + Action Buttons */}
-          <div style={{ textAlign: 'center', paddingTop: '14px', paddingBottom: '10px' }}>
+          <div style={{ textAlign: 'center', paddingTop: isMobile ? '8px' : '14px', paddingBottom: isMobile ? '4px' : '10px' }}>
             <h1
               style={{
                 fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
-                fontSize: '50px',
+                fontSize: isMobile ? '28px' : '50px',
                 fontWeight: 700,
                 color: '#111827',
                 margin: 0,
                 letterSpacing: '-0.03em',
-                minHeight: '60px',
+                minHeight: isMobile ? '36px' : '60px',
                 lineHeight: '1.1',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
@@ -589,7 +545,7 @@ function DashboardInner() {
 
             <p
               style={{
-                fontSize: '15px',
+                fontSize: isMobile ? '13px' : '15px',
                 color: '#6b7280',
                 marginTop: '10px',
                 fontStyle: 'italic',
@@ -603,15 +559,21 @@ function DashboardInner() {
               {quote}
             </p>
 
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '10px' }}>
+            <div style={{
+              display: 'flex',
+              gap: isMobile ? '6px' : '10px',
+              justifyContent: 'center',
+              marginTop: isMobile ? '8px' : '12px',
+              flexWrap: isMobile ? 'wrap' : 'nowrap',
+            }}>
               <Link
                 href="/learn"
                 style={{
-                  padding: '8px 22px',
+                  padding: isMobile ? '7px 14px' : '8px 22px',
                   background: '#1a5c2a',
                   color: '#ffffff',
                   borderRadius: '7px',
-                  fontSize: '13px',
+                  fontSize: isMobile ? '12px' : '13px',
                   fontWeight: 600,
                   textDecoration: 'none',
                   display: 'inline-block',
@@ -621,32 +583,34 @@ function DashboardInner() {
               >
                 Start Learning
               </Link>
-              <button
-                onClick={() => setShowUpload(true)}
+              <Link
+                href="/library"
                 style={{
-                  padding: '8px 22px',
+                  padding: isMobile ? '7px 14px' : '8px 22px',
                   background: '#ffffff',
                   color: '#374151',
                   border: '1px solid rgba(107,114,128,0.28)',
                   borderRadius: '7px',
-                  fontSize: '13px',
+                  fontSize: isMobile ? '12px' : '13px',
                   fontWeight: 500,
                   cursor: 'pointer',
                   fontFamily: UI_FONT,
                   letterSpacing: '0.5px',
+                  textDecoration: 'none',
+                  display: 'inline-block',
                 }}
               >
                 Upload Assignments
-              </button>
+              </Link>
               <button
                 onClick={() => setShowCourses(true)}
                 style={{
-                  padding: '8px 22px',
+                  padding: isMobile ? '7px 14px' : '8px 22px',
                   background: '#ffffff',
                   color: '#374151',
                   border: '1px solid rgba(107,114,128,0.28)',
                   borderRadius: '7px',
-                  fontSize: '13px',
+                  fontSize: isMobile ? '12px' : '13px',
                   fontWeight: 500,
                   cursor: 'pointer',
                   fontFamily: UI_FONT,
@@ -662,7 +626,8 @@ function DashboardInner() {
           <div
             ref={containerRef}
             style={{
-              flex: 1,
+              flex: isMobile ? 'none' : 1,
+              height: isMobile ? '300px' : undefined,
               ...GLASS,
               overflow: 'hidden',
               position: 'relative',
@@ -689,20 +654,21 @@ function DashboardInner() {
             {suggestConcept && suggestNode && (
               <div className="panel-in panel-in-1" style={{
                 position: 'absolute',
-                bottom: '16px',
+                bottom: isMobile ? '8px' : '16px',
                 left: '50%',
                 transform: 'translateX(-50%)',
                 background: '#ffffff',
                 border: '1px solid rgba(26,92,42,0.25)',
                 borderRadius: '10px',
-                padding: '14px 18px',
+                padding: isMobile ? '10px 12px' : '14px 18px',
                 boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
                 zIndex: 20,
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '10px',
-                minWidth: '300px',
-                maxWidth: '420px',
+                minWidth: isMobile ? '0' : '300px',
+                maxWidth: isMobile ? 'calc(100% - 16px)' : '420px',
+                width: isMobile ? 'calc(100% - 16px)' : undefined,
                 fontFamily: UI_FONT,
               }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
@@ -757,8 +723,8 @@ function DashboardInner() {
             )}
           </div>
 
-          {/* Upcoming assignments strip — fixed height so it never causes the KG container above to resize */}
-          <div style={{ ...GLASS, padding: '14px 16px', fontFamily: UI_FONT, height: '160px', flexShrink: 0, overflowY: 'auto' }}>
+          {/* Upcoming assignments strip */}
+          <div style={{ ...GLASS, padding: isMobile ? '10px 12px' : '14px 16px', fontFamily: UI_FONT, height: isMobile ? 'auto' : '160px', maxHeight: isMobile ? '200px' : undefined, flexShrink: 0, overflowY: 'auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
               <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 Upcoming
@@ -774,14 +740,19 @@ function DashboardInner() {
                 {allAssignments.slice(0, 4).map(a => {
                   const c = getCourseColor(a.course_name, courseColorMap[a.course_name]);
                   return (
-                    <div key={a.id} style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
-                      <span style={{ fontSize: '12px', color: '#6b7280', minWidth: '50px' }}>
+                    <div key={a.id} style={{
+                      display: 'flex',
+                      alignItems: isMobile ? 'flex-start' : 'baseline',
+                      gap: isMobile ? '6px' : '10px',
+                      flexWrap: isMobile ? 'wrap' : 'nowrap',
+                    }}>
+                      <span style={{ fontSize: isMobile ? '11px' : '12px', color: '#6b7280', minWidth: isMobile ? '40px' : '50px' }}>
                         {formatDueDate(a.due_date)}
                       </span>
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: c.text, minWidth: '52px' }}>
+                      <span style={{ fontSize: isMobile ? '11px' : '12px', fontWeight: 600, color: c.text, minWidth: isMobile ? '40px' : '52px' }}>
                         {a.course_name}
                       </span>
-                      <span style={{ fontSize: '13px', color: '#374151' }}>{a.title}</span>
+                      <span style={{ fontSize: isMobile ? '12px' : '13px', color: '#374151' }}>{a.title}</span>
                     </div>
                   );
                 })}
@@ -790,8 +761,95 @@ function DashboardInner() {
           </div>
         </div>
 
-        {/* ── Right: Sidebar ──────────────────────────────────────────────── */}
-        <div className="dash-scroll panel-in panel-in-3" style={{ width: '320px', display: 'flex', flexDirection: 'column', gap: '14px', padding: '20px 20px 20px 10px', overflowY: 'auto', fontFamily: UI_FONT }}>
+        {/* ── Mobile: Courses & Stats toggle tabs ─────────────────────────── */}
+        {isMobile && (
+          <div style={{ padding: '0 12px', display: 'flex', gap: '8px', fontFamily: UI_FONT }}>
+            <button
+              onClick={() => setMobileSidebarTab(mobileSidebarTab === 'courses' ? null : 'courses')}
+              style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: '8px',
+                border: '1px solid rgba(107,114,128,0.18)',
+                background: mobileSidebarTab === 'courses' ? 'rgba(26,92,42,0.08)' : '#fff',
+                color: mobileSidebarTab === 'courses' ? '#1a5c2a' : '#6b7280',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              My Courses
+            </button>
+            <button
+              onClick={() => setMobileSidebarTab(mobileSidebarTab === 'stats' ? null : 'stats')}
+              style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: '8px',
+                border: '1px solid rgba(107,114,128,0.18)',
+                background: mobileSidebarTab === 'stats' ? 'rgba(26,92,42,0.08)' : '#fff',
+                color: mobileSidebarTab === 'stats' ? '#1a5c2a' : '#6b7280',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              Stats & More
+            </button>
+          </div>
+        )}
+
+        {/* ── Mobile: Courses panel (collapsible) ─────────────────────────── */}
+        {isMobile && mobileSidebarTab === 'courses' && (
+          <div style={{ padding: '0 12px 8px', fontFamily: UI_FONT, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {loading ? (
+              <div style={{ fontSize: '13px', color: '#9ca3af', paddingTop: '8px' }}>Loading…</div>
+            ) : courseList.length === 0 ? (
+              <div style={{ fontSize: '13px', color: '#9ca3af', paddingTop: '8px' }}>No courses yet</div>
+            ) : (
+              courseList.map(course => {
+                const subject = course.course_name;
+                const c = getCourseColor(subject, course.color);
+                const conceptNodes = nodes.filter(n => n.subject === subject && !n.is_subject_root && n.mastery_tier !== 'subject_root');
+                const avgMastery = conceptNodes.length > 0
+                  ? conceptNodes.reduce((s, n) => s + n.mastery_score, 0) / conceptNodes.length
+                  : 0;
+                const pct = Math.round(avgMastery * 100);
+                return (
+                  <div key={subject} style={{ ...GLASS, padding: '10px 12px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: c.text }}>{subject}</span>
+                    <div style={{ height: '5px', background: 'rgba(107,114,128,0.12)', borderRadius: '3px', marginTop: '6px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: c.fill, borderRadius: '3px', transition: 'width 0.8s cubic-bezier(0.4,0,0.2,1)' }} />
+                    </div>
+                    <span style={{ fontSize: '10px', color: '#9ca3af', display: 'block', marginTop: '3px' }}>{pct}% mastery</span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* ── Right: Sidebar (desktop) / Stats section (mobile) ───────────── */}
+        <div
+          className="dash-scroll panel-in panel-in-3"
+          style={isMobile ? {
+            display: mobileSidebarTab === 'stats' ? 'flex' : 'none',
+            flexDirection: 'column',
+            gap: '10px',
+            padding: '0 12px 12px',
+            fontFamily: UI_FONT,
+          } : {
+            width: '320px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '14px',
+            padding: '20px 20px 20px 10px',
+            overflowY: 'auto',
+            fontFamily: UI_FONT,
+          }}
+        >
 
           {/* User header + streak */}
           <div style={{ ...GLASS, padding: '16px' }}>
@@ -958,149 +1016,7 @@ function DashboardInner() {
         </div>
       </div>
 
-      {/* ── Upload Assignments Modal ────────────────────────────────────────── */}
-      {showUpload && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.45)',
-            zIndex: 100,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px',
-          }}
-          onClick={e => { if (e.target === e.currentTarget) closeUpload(); }}
-        >
-          <div
-            style={{
-              background: '#ffffff',
-              borderRadius: '12px',
-              padding: '28px',
-              width: '780px',
-              maxWidth: '95vw',
-              maxHeight: '88vh',
-              overflowY: 'auto',
-              position: 'relative',
-              border: '1px solid rgba(107,114,128,0.15)',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
-            }}
-          >
-            <button
-              onClick={closeUpload}
-              style={{
-                position: 'absolute',
-                top: '16px',
-                right: '16px',
-                background: 'none',
-                border: 'none',
-                fontSize: '18px',
-                cursor: 'pointer',
-                color: '#6b7280',
-                lineHeight: 1,
-                padding: '4px 6px',
-                fontFamily: 'inherit',
-                borderRadius: '4px',
-              }}
-            >
-              ✕
-            </button>
 
-            <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>
-              Upload Assignments
-            </h2>
-            <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px' }}>
-              Upload a syllabus PDF to automatically extract assignment deadlines and names. Edit before saving.
-            </p>
-
-            <div style={{ marginBottom: '16px' }}>
-              <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-                Syllabus File
-              </p>
-              <UploadZone onFile={handleFile} loading={uploadLoading} filename={uploadFilename} />
-              {uploadWarnings.map((w, i) => (
-                <p key={i} style={{ color: '#f97316', fontSize: '12px', marginTop: '6px' }}>{w}</p>
-              ))}
-            </div>
-
-            {fileProcessed && (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    {extractedAssignments.length > 0
-                      ? `Detected ${extractedAssignments.length} assignment${extractedAssignments.length !== 1 ? 's' : ''} — edit before saving`
-                      : 'No assignments detected — add rows manually'}
-                  </p>
-                  <button
-                    onClick={handleSave}
-                    disabled={saving || extractedAssignments.length === 0}
-                    style={{
-                      padding: '6px 16px',
-                      background: saved ? '#16a34a' : extractedAssignments.length === 0 ? '#f5f5f5' : '#1a5c2a',
-                      color: extractedAssignments.length === 0 ? '#9ca3af' : '#ffffff',
-                      border: 'none',
-                      borderRadius: '6px',
-                      fontSize: '13px',
-                      fontWeight: 600,
-                      cursor: extractedAssignments.length === 0 ? 'default' : 'pointer',
-                      fontFamily: 'inherit',
-                      transition: 'background 0.2s',
-                    }}
-                  >
-                    {saved ? 'Saved!' : saving ? 'Saving...' : 'Save to Calendar'}
-                  </button>
-                </div>
-
-                <AssignmentTable assignments={extractedAssignments} onChange={setExtractedAssignments} />
-
-                {rawText && (
-                  <div style={{ marginTop: '12px', border: '1px solid rgba(107,114,128,0.15)', borderRadius: '6px', overflow: 'hidden' }}>
-                    <button
-                      onClick={() => setRawTextVisible(v => !v)}
-                      style={{
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '8px 12px',
-                        background: '#f8faf8',
-                        border: 'none',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                        color: '#6b7280',
-                        fontWeight: 500,
-                        textAlign: 'left',
-                        fontFamily: 'inherit',
-                      }}
-                    >
-                      <span>Raw OCR text (reference while editing)</span>
-                      <span>{rawTextVisible ? '▲' : '▼'}</span>
-                    </button>
-                    {rawTextVisible && (
-                      <pre style={{
-                        margin: 0,
-                        padding: '12px',
-                        fontSize: '11px',
-                        lineHeight: 1.6,
-                        color: '#374151',
-                        background: '#f5f9f5',
-                        overflowX: 'auto',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                        maxHeight: '240px',
-                        overflowY: 'auto',
-                      }}>
-                        {rawText}
-                      </pre>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
       {/* ── Courses Modal ───────────────────────────────────────────────────── */}
       {showCourses && (
         <div

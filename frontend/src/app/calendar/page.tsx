@@ -29,7 +29,7 @@ const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> 
   other:    { bg: 'rgba(107,114,128,0.08)', text: '#6b7280', border: 'rgba(107,114,128,0.15)' },
 };
 
-function AssignmentChip({ a }: { a: Assignment }) {
+function AssignmentChip({ a, isMobile }: { a: Assignment; isMobile?: boolean }) {
   const c = TYPE_COLORS[a.assignment_type] ?? TYPE_COLORS.other;
   return (
     <div
@@ -37,7 +37,7 @@ function AssignmentChip({ a }: { a: Assignment }) {
       style={{
         background: c.bg,
         color: c.text,
-        fontSize: '11px',
+        fontSize: isMobile ? '10px' : '11px',
         padding: '2px 6px',
         borderRadius: '4px',
         lineHeight: 1.5,
@@ -54,7 +54,20 @@ function AssignmentChip({ a }: { a: Assignment }) {
   );
 }
 
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
+  const isMobile = useIsMobile();
   const [view, setView] = useState<CalendarView>('month');
   // Initialize to null so server and client agree on the first render,
   // then set to the real Date on the client after mount (avoids hydration mismatch).
@@ -123,7 +136,7 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
     const monthIdx = current.getMonth();
     const firstDay = new Date(year, monthIdx, 1).getDay();
     const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
-    const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const DAY_NAMES = isMobile ? ['S', 'M', 'T', 'W', 'T', 'F', 'S'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     return (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
@@ -133,7 +146,7 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
           </div>
         ))}
         {Array.from({ length: firstDay }, (_, i) => (
-          <div key={`empty-${i}`} style={{ minHeight: '130px', borderBottom: '1px solid rgba(107,114,128,0.08)', borderRight: '1px solid rgba(107,114,128,0.08)', background: '#fafcfa' }} />
+          <div key={`empty-${i}`} style={{ minHeight: isMobile ? '60px' : '130px', borderBottom: '1px solid rgba(107,114,128,0.08)', borderRight: '1px solid rgba(107,114,128,0.08)', background: '#fafcfa' }} />
         ))}
         {Array.from({ length: daysInMonth }, (_, i) => {
           const day = i + 1;
@@ -145,7 +158,7 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
               key={day}
               style={{
                 padding: '8px',
-                minHeight: '130px',
+                minHeight: isMobile ? '60px' : '130px',
                 borderBottom: '1px solid rgba(107,114,128,0.08)',
                 borderRight: '1px solid rgba(107,114,128,0.08)',
                 background: isToday ? 'rgba(26,92,42,0.05)' : '#ffffff',
@@ -165,7 +178,7 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
                 </span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                {dayAssignments.slice(0, 3).map(a => <AssignmentChip key={a.id} a={a} />)}
+                {dayAssignments.slice(0, 3).map(a => <AssignmentChip key={a.id} a={a} isMobile={isMobile} />)}
                 {dayAssignments.length > 3 && (
                   <span style={{ fontSize: '10px', color: '#9ca3af', paddingLeft: '4px' }}>+{dayAssignments.length - 3} more</span>
                 )}
@@ -186,7 +199,7 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
       d.setDate(d.getDate() + i);
       return d;
     });
-    const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const DAY_NAMES = isMobile ? ['S', 'M', 'T', 'W', 'T', 'F', 'S'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     return (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
@@ -195,7 +208,7 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
           const isToday = iso === today;
           return (
             <div key={i} style={{ padding: '12px 8px', textAlign: 'center', borderBottom: '2px solid rgba(107,114,128,0.12)', background: isToday ? 'rgba(26,92,42,0.05)' : '#f0f5f0', borderRight: i < 6 ? '1px solid rgba(107,114,128,0.08)' : 'none' }}>
-              <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{DAY_NAMES[i]}</div>
+              <div style={{ fontSize: isMobile ? '10px' : '11px', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{DAY_NAMES[i]}</div>
               <div style={{ width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', background: isToday ? '#1a5c2a' : 'transparent', margin: '6px auto 0' }}>
                 <span style={{ fontSize: '15px', color: isToday ? '#ffffff' : '#111827', fontWeight: isToday ? 700 : 500 }}>
                   {d.getDate()}
@@ -209,8 +222,8 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
           const dayAssignments = byDate[iso] ?? [];
           const isToday = iso === today;
           return (
-            <div key={`body-${i}`} style={{ padding: '8px 6px', minHeight: '280px', borderRight: i < 6 ? '1px solid rgba(107,114,128,0.08)' : 'none', background: isToday ? 'rgba(26,92,42,0.04)' : '#ffffff', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {dayAssignments.map(a => <AssignmentChip key={a.id} a={a} />)}
+            <div key={`body-${i}`} style={{ padding: '8px 6px', minHeight: isMobile ? '100px' : '280px', borderRight: i < 6 ? '1px solid rgba(107,114,128,0.08)' : 'none', background: isToday ? 'rgba(26,92,42,0.04)' : '#ffffff', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {dayAssignments.map(a => <AssignmentChip key={a.id} a={a} isMobile={isMobile} />)}
             </div>
           );
         })}
@@ -262,14 +275,14 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
   return (
     <div style={{ border: '1px solid rgba(107,114,128,0.15)', borderRadius: '10px', overflow: 'hidden', background: '#ffffff' }}>
       {/* Header */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid rgba(107,114,128,0.1)', background: '#f0f5f0', gap: '8px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'auto 1fr auto', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid rgba(107,114,128,0.1)', background: '#f0f5f0', gap: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button onClick={() => navigate(-1)} style={{ background: 'none', border: '1px solid rgba(107,114,128,0.18)', borderRadius: '5px', cursor: 'pointer', color: '#6b7280', fontSize: '14px', padding: '4px 10px', lineHeight: 1 }}>←</button>
           <button onClick={() => setCurrent(new Date())} style={{ fontSize: '11px', color: '#4b5563', background: '#f8faf8', border: '1px solid rgba(107,114,128,0.18)', borderRadius: '5px', cursor: 'pointer', padding: '4px 10px', fontWeight: 500 }}>Today</button>
           <button onClick={() => navigate(1)} style={{ background: 'none', border: '1px solid rgba(107,114,128,0.18)', borderRadius: '5px', cursor: 'pointer', color: '#6b7280', fontSize: '14px', padding: '4px 10px', lineHeight: 1 }}>→</button>
         </div>
         <span style={{ fontSize: '15px', fontWeight: 600, color: '#111827', textAlign: 'center', whiteSpace: 'nowrap' }}>{headerLabel()}</span>
-        <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+        <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
           {(['day', 'week', 'month'] as CalendarView[]).map(v => (
             <button key={v} onClick={() => setView(v)} style={viewBtnStyle(v)}>
               {v.charAt(0).toUpperCase() + v.slice(1)}
@@ -288,6 +301,7 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
 function CalendarInner() {
   const { userId: USER_ID, userReady } = useUser();
   const searchParams = useSearchParams();
+  const isMobile = useIsMobile();
 
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [extractedAssignments, setExtractedAssignments] = useState<Assignment[]>([]);
@@ -406,8 +420,8 @@ function CalendarInner() {
   };
 
   return (
-    <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '32px', display: 'flex', flexDirection: 'column', gap: '28px', fontFamily: UI_FONT }}>
-      <h1 style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontSize: '32px', fontWeight: 700, color: '#111827', margin: 0, letterSpacing: '-0.02em' }}>Calendar</h1>
+    <div style={{ maxWidth: '1100px', margin: '0 auto', padding: isMobile ? '12px' : '32px', display: 'flex', flexDirection: 'column', gap: '28px', fontFamily: UI_FONT }}>
+      <h1 style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontSize: isMobile ? '22px' : '32px', fontWeight: 700, color: '#111827', margin: 0, letterSpacing: '-0.02em' }}>Calendar</h1>
 
       {/* Calendar grid — full width, prominent */}
       <div className="panel-in panel-in-1">

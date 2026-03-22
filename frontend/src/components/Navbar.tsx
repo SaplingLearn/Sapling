@@ -17,6 +17,18 @@ const LINKS = [
   { href: '/tree', label: 'Tree' },
 ];
 
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
@@ -25,18 +37,27 @@ export default function Navbar() {
   const [, startTransition] = useTransition();
   const [menuOpen, setMenuOpen] = useState(false);
   const [showReportIssue, setShowReportIssue] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const mobileNavRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
 
-  // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
       }
+      if (mobileNavRef.current && !mobileNavRef.current.contains(e.target as Node)) {
+        setMobileNavOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
 
   const isLandingPage = pathname === '/';
 
@@ -55,7 +76,6 @@ export default function Navbar() {
       const top = res.recommendations[0];
       if (top) {
         const encoded = encodeURIComponent(top.concept_name);
-        // Calendar has no graph — redirect to Learn; all other pages stay in place
         const base = pathname === '/calendar' ? '/learn' : pathname;
         startTransition(() => {
           router.push(`${base}?suggest=${encoded}`);
@@ -70,6 +90,7 @@ export default function Navbar() {
 
   const handleSignOut = () => {
     setMenuOpen(false);
+    setMobileNavOpen(false);
     signOut();
     router.push('/');
   };
@@ -82,22 +103,105 @@ export default function Navbar() {
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(107, 114, 128, 0.12)',
-        padding: '0 24px',
+        padding: isMobile ? '0 12px' : '0 24px',
         display: 'flex',
         alignItems: 'center',
-        gap: '32px',
+        gap: isMobile ? '8px' : '32px',
         height: '48px',
         position: 'sticky',
         top: 0,
         zIndex: 50,
       }}
     >
+      {/* Hamburger — mobile only */}
+      {isMobile && (
+        <div ref={mobileNavRef} style={{ position: 'relative' }}>
+          <button
+            onClick={() => setMobileNavOpen(o => !o)}
+            aria-label="Navigation menu"
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '6px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+            }}
+          >
+            <span style={{ width: '18px', height: '2px', background: '#374151', borderRadius: '1px', transition: 'transform 0.2s', transform: mobileNavOpen ? 'rotate(45deg) translateY(6px)' : 'none' }} />
+            <span style={{ width: '18px', height: '2px', background: '#374151', borderRadius: '1px', transition: 'opacity 0.2s', opacity: mobileNavOpen ? 0 : 1 }} />
+            <span style={{ width: '18px', height: '2px', background: '#374151', borderRadius: '1px', transition: 'transform 0.2s', transform: mobileNavOpen ? 'rotate(-45deg) translateY(-6px)' : 'none' }} />
+          </button>
+
+          {mobileNavOpen && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              marginTop: '8px',
+              background: '#ffffff',
+              border: '1px solid rgba(107,114,128,0.15)',
+              borderRadius: '10px',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+              minWidth: '200px',
+              zIndex: 100,
+              overflow: 'hidden',
+              padding: '6px 0',
+            }}>
+              {LINKS.map(link => {
+                const active = pathname === link.href || (link.href !== '/dashboard' && pathname.startsWith(link.href));
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    style={{
+                      display: 'block',
+                      padding: '10px 16px',
+                      fontSize: '14px',
+                      color: active ? '#1a5c2a' : '#374151',
+                      fontWeight: active ? 600 : 400,
+                      textDecoration: 'none',
+                      background: active ? 'rgba(26, 92, 42, 0.06)' : 'transparent',
+                      fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+                    }}
+                  >
+                    {link.label}
+                  </Link>
+                );
+              })}
+              <div style={{ borderTop: '1px solid rgba(107,114,128,0.1)', margin: '4px 0' }} />
+              <button
+                onClick={handleSuggest}
+                disabled={suggesting}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  padding: '10px 16px',
+                  background: 'none',
+                  border: 'none',
+                  textAlign: 'left',
+                  fontSize: '13px',
+                  color: '#1a5c2a',
+                  fontWeight: 500,
+                  cursor: suggesting ? 'default' : 'pointer',
+                  opacity: suggesting ? 0.5 : 1,
+                  fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+                }}
+              >
+                ✨ What should I study next?
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
         <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '32px', height: '32px' }} />
         <span style={{
           fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
           fontWeight: 700,
-          fontSize: '20px',
+          fontSize: isMobile ? '17px' : '20px',
           color: '#1a5c2a',
           letterSpacing: '-0.02em',
           textShadow: '0 0 12px rgba(26, 92, 42, 0.2)',
@@ -106,33 +210,36 @@ export default function Navbar() {
         </span>
       </Link>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-        {LINKS.map(link => {
-          const active = pathname === link.href || (link.href !== '/dashboard' && pathname.startsWith(link.href));
-          return (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="nav-link"
-              style={{
-                padding: '4px 12px',
-                fontSize: '13px',
-                color: active ? '#1a5c2a' : '#9ca3af',
-                fontWeight: active ? 600 : 400,
-                textDecoration: 'none',
-                borderRadius: '5px',
-                borderBottom: 'none',
-                background: active ? 'rgba(26, 92, 42, 0.10)' : 'transparent',
-                fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
-                letterSpacing: '0.2px',
-                transition: 'color 0.15s, background 0.15s',
-              }}
-            >
-              {link.label}
-            </Link>
-          );
-        })}
-      </div>
+      {/* Desktop nav links */}
+      {!isMobile && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+          {LINKS.map(link => {
+            const active = pathname === link.href || (link.href !== '/dashboard' && pathname.startsWith(link.href));
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className="nav-link"
+                style={{
+                  padding: '4px 12px',
+                  fontSize: '13px',
+                  color: active ? '#1a5c2a' : '#9ca3af',
+                  fontWeight: active ? 600 : 400,
+                  textDecoration: 'none',
+                  borderRadius: '5px',
+                  borderBottom: 'none',
+                  background: active ? 'rgba(26, 92, 42, 0.10)' : 'transparent',
+                  fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+                  letterSpacing: '0.2px',
+                  transition: 'color 0.15s, background 0.15s',
+                }}
+              >
+                {link.label}
+              </Link>
+            );
+          })}
+        </div>
+      )}
 
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
         <button
@@ -156,29 +263,32 @@ export default function Navbar() {
           Report Issue
         </button>
 
-        <button
-          onClick={handleSuggest}
-          disabled={suggesting}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            padding: '5px 13px',
-            background: 'rgba(26,92,42,0.08)',
-            color: '#1a5c2a',
-            border: '1px solid rgba(26,92,42,0.22)',
-            borderRadius: '6px',
-            fontSize: '12px',
-            fontWeight: 500,
-            fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
-            cursor: suggesting ? 'default' : 'pointer',
-            opacity: suggesting ? 0.5 : 1,
-            transition: 'opacity 0.15s',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          What should I study next?
-        </button>
+        {/* Desktop-only suggest (mobile: hamburger menu) */}
+        {!isMobile && (
+          <button
+            onClick={handleSuggest}
+            disabled={suggesting}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '5px 13px',
+              background: 'rgba(26,92,42,0.08)',
+              color: '#1a5c2a',
+              border: '1px solid rgba(26,92,42,0.22)',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: 500,
+              fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+              cursor: suggesting ? 'default' : 'pointer',
+              opacity: suggesting ? 0.5 : 1,
+              transition: 'opacity 0.15s',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            What should I study next?
+          </button>
+        )}
 
         {/* User avatar/name dropdown */}
         <div ref={menuRef} style={{ position: 'relative' }}>
@@ -187,7 +297,7 @@ export default function Navbar() {
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
+              gap: isMobile ? '4px' : '8px',
               padding: '4px 10px',
               background: 'transparent',
               border: '1px solid rgba(107,114,128,0.18)',
@@ -221,7 +331,7 @@ export default function Navbar() {
                 {userName?.charAt(0)?.toUpperCase() || '?'}
               </div>
             )}
-            <span style={{ fontWeight: 500 }}>{userName || 'User'}</span>
+            {!isMobile && <span style={{ fontWeight: 500 }}>{userName || 'User'}</span>}
           </button>
 
           {menuOpen && (

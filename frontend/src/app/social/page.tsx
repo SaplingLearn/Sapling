@@ -12,6 +12,18 @@ import { Room, RoomActivity, RoomMember, RoomOverviewData, StudyMatch as StudyMa
 import { getUserRooms, getRoomOverview, getRoomActivity, findStudyMatches } from '@/lib/api';
 import { useUser } from '@/context/UserContext';
 
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 type Tab = 'overview' | 'chat' | 'match' | 'activity';
 
 function SocialPageInner() {
@@ -20,6 +32,8 @@ function SocialPageInner() {
   const router = useRouter();
   const suggestConcept = searchParams.get('suggest') ?? '';
 
+  const isMobile = useIsMobile();
+  const [showRooms, setShowRooms] = useState(false);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('overview');
@@ -134,9 +148,10 @@ function SocialPageInner() {
   const memberCount = overviewData?.members?.length ?? null;
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 48px)' }}>
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, height: isMobile ? 'auto' : 'calc(100vh - 48px)', minHeight: isMobile ? 'calc(100vh - 48px)' : undefined }}>
       {/* Left sidebar */}
-      <div className="panel-in panel-in-1" style={{ width: '240px', background: '#f2f7f2', borderRight: '1px solid rgba(107,114,128,0.12)', overflowY: 'auto' }}>
+      {(!isMobile || showRooms) && (
+      <div className="panel-in panel-in-1" style={{ width: isMobile ? '100%' : '240px', maxHeight: isMobile ? '300px' : undefined, background: '#f2f7f2', borderRight: '1px solid rgba(107,114,128,0.12)', overflowY: 'auto' }}>
         <RoomList
           rooms={rooms}
           activeRoomId={schoolView ? null : activeRoomId}
@@ -147,15 +162,31 @@ function SocialPageInner() {
           onSchoolClick={() => setSchoolView(true)}
         />
       </div>
+      )}
+
+      {isMobile && (
+        <button
+          onClick={() => setShowRooms(v => !v)}
+          style={{
+            padding: '8px 16px', fontSize: '13px', fontWeight: 500,
+            color: '#1a5c2a', background: 'rgba(26,92,42,0.06)',
+            border: 'none', borderBottom: '1px solid rgba(107,114,128,0.12)',
+            cursor: 'pointer', width: '100%', textAlign: 'left',
+            fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+          }}
+        >
+          {showRooms ? '▼ Hide Rooms' : '▶ Show Rooms'}
+        </button>
+      )}
 
       {/* Main area */}
-      <div className="panel-in panel-in-2" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className="panel-in panel-in-2" style={{ flex: 1, minHeight: isMobile ? 0 : undefined, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {schoolView ? (
           <SchoolDirectory currentUserId={USER_ID} />
         ) : activeRoomId ? (
           <>
             {/* Tabs */}
-            <div style={{ background: '#f0f5f0', borderBottom: '1px solid rgba(107,114,128,0.12)', padding: '0 24px', display: 'flex', alignItems: 'center' }}>
+            <div style={{ background: '#f0f5f0', borderBottom: '1px solid rgba(107,114,128,0.12)', padding: isMobile ? '0 12px' : '0 24px', display: 'flex', alignItems: 'center' }}>
               <button style={tabStyle('overview')} onClick={() => { setTab('overview'); setShowMembers(false); }}>Overview</button>
               <button style={tabStyle('chat')} onClick={() => { setTab('chat'); setShowMembers(false); }}>Chat</button>
               <button style={tabStyle('match')} onClick={() => { setTab('match'); setShowMembers(false); }}>Study Match</button>
@@ -186,7 +217,11 @@ function SocialPageInner() {
             </div>
 
             {/* Tab content */}
-            <div style={{ flex: 1, overflowY: showMembers || tab !== 'chat' ? 'auto' : 'hidden', padding: !showMembers && tab === 'chat' ? '0' : '24px' }}>
+            <div style={{
+              flex: 1,
+              overflowY: showMembers || tab !== 'chat' ? 'auto' : 'hidden',
+              padding: !showMembers && tab === 'chat' ? '0' : isMobile ? '12px' : '24px',
+            }}>
               {showMembers ? (
                 <RoomMembers
                   roomId={activeRoomId}
