@@ -6,7 +6,7 @@ import { useUser } from '@/context/UserContext';
 import { submitFeedback } from '@/lib/api';
 
 const STORAGE_KEY = 'sapling_feedback_last_shown';
-const COOLDOWN_DAYS = 2;
+const COOLDOWN_DAYS = 3;
 const TRIGGER_DELAY_MS = 45_000; // 45s after page load
 
 const IMPROVEMENT_OPTIONS = [

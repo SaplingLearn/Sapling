@@ -49,7 +49,7 @@ function LearnInner() {
   const feedbackDueRef = useRef(false);
 
   const SESSION_COUNT_KEY = 'sapling_session_end_count';
-  const SESSION_FEEDBACK_EVERY_N = 3;
+  const SESSION_FEEDBACK_EVERY_N = 5;
   const [sessionError, setSessionError] = useState<string | null>(null);
 
   const [topic, setTopic] = useState(topicParam);

@@ -6,7 +6,7 @@ import SessionFeedbackFlow from '@/components/SessionFeedbackFlow';
 
 const FLAG_KEY = 'sapling_learn_had_session';
 const LAST_KEY = 'sapling_session_feedback_nav_last_shown';
-const COOLDOWN_MS = 2 * 86_400_000;
+const COOLDOWN_MS = 3 * 86_400_000;
 
 export default function SessionFeedbackGlobal() {
   const pathname = usePathname();
