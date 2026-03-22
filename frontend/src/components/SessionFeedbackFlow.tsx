@@ -6,7 +6,7 @@ import { submitFeedback } from '@/lib/api';
 
 interface Props {
   visible: boolean;
-  topic: string;
+  topic?: string;
   sessionId?: string;
   onDismiss: () => void;
 }
@@ -110,7 +110,7 @@ export default function SessionFeedbackFlow({ visible, topic, sessionId, onDismi
               Session Feedback
             </p>
             <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, margin: 0 }}>
-              {step === 'rating' && `How was your ${topic ? `"${topic}"` : 'last'} session?`}
+              {step === 'rating' && 'How was your last learn session?'}
               {step === 'detail' && (rating !== null && rating >= 3 ? 'Any areas for improvement?' : 'What fell short?')}
               {step === 'text' && <>Anything else to add?<br /><span style={{ color: 'var(--text)', fontWeight: 700 }}>We will listen to YOU!</span></>}
               {step === 'done' && 'Thanks for the feedback!'}

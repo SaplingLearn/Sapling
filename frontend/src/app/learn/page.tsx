@@ -503,7 +503,7 @@ function LearnInner() {
       {summary && (
         <SessionSummary
           summary={summary}
-          onDashboard={() => { setSummary(null); if (feedbackDueRef.current) { pendingNavRef.current = '/'; setShowSessionFeedback(true); } else { router.push('/'); } }}
+          onDashboard={() => { setSummary(null); if (feedbackDueRef.current) { pendingNavRef.current = '/dashboard'; setShowSessionFeedback(true); } else { router.push('/dashboard'); } }}
           onNewSession={() => { setSummary(null); setSessionId(null); setMessages([]); if (feedbackDueRef.current) setShowSessionFeedback(true); }}
         />
       )}
