@@ -24,7 +24,7 @@ export default function Navbar() {
   const [suggesting, setSuggesting] = useState(false);
   const [, startTransition] = useTransition();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [reportOpen, setReportOpen] = useState(false);
+  const [showReportIssue, setShowReportIssue] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close menu when clicking outside
@@ -76,8 +76,7 @@ export default function Navbar() {
 
   return (
     <>
-    <ReportIssueFlow visible={reportOpen} onDismiss={() => setReportOpen(false)} />
-    <nav
+      <nav
       style={{
         background: 'rgba(255, 255, 255, 0.92)',
         backdropFilter: 'blur(20px)',
@@ -93,24 +92,18 @@ export default function Navbar() {
         zIndex: 50,
       }}
     >
-      <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '2px', textDecoration: 'none' }}>
-        <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '32px', height: '32px', marginTop: '-7px', marginBottom: '-3px', marginLeft: '-2px', marginRight: '-1px', alignSelf: 'center', flexShrink: 0 }} />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', alignItems: 'center' }}>
-          <span style={{
-            fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
-            fontWeight: 700,
-            fontSize: '20px',
-            color: '#1a5c2a',
-            letterSpacing: '-0.02em',
-            textShadow: '0 0 12px rgba(26, 92, 42, 0.2)',
-            lineHeight: 1.1,
-          }}>
-            Sapling
-          </span>
-          <span style={{ fontSize: '9px', fontWeight: 600, color: '#1a5c2a', letterSpacing: '0.08em', textTransform: 'uppercase', opacity: 0.7, lineHeight: 1 }}>
-            Closed Alpha
-          </span>
-        </div>
+      <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
+        <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '32px', height: '32px' }} />
+        <span style={{
+          fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
+          fontWeight: 700,
+          fontSize: '20px',
+          color: '#1a5c2a',
+          letterSpacing: '-0.02em',
+          textShadow: '0 0 12px rgba(26, 92, 42, 0.2)',
+        }}>
+          Sapling
+        </span>
       </Link>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
@@ -143,15 +136,15 @@ export default function Navbar() {
 
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
         <button
-          onClick={() => setReportOpen(true)}
+          onClick={() => setShowReportIssue(true)}
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '6px',
-            padding: '5px 13px',
+            gap: '5px',
+            padding: '5px 11px',
             background: 'rgba(220,38,38,0.07)',
             color: '#dc2626',
-            border: '1px solid rgba(220,38,38,0.22)',
+            border: '1px solid rgba(220,38,38,0.2)',
             borderRadius: '6px',
             fontSize: '12px',
             fontWeight: 500,
@@ -162,6 +155,7 @@ export default function Navbar() {
         >
           Report Issue
         </button>
+
         <button
           onClick={handleSuggest}
           disabled={suggesting}
@@ -275,6 +269,7 @@ export default function Navbar() {
         </div>
       </div>
     </nav>
+      <ReportIssueFlow visible={showReportIssue} onDismiss={() => setShowReportIssue(false)} />
     </>
   );
 }
