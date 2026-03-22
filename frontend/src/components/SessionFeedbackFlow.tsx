@@ -60,7 +60,8 @@ export default function SessionFeedbackFlow({ visible, topic, sessionId, onDismi
   function toggleOption(opt: string) {
     setChecked(prev => {
       const next = new Set(prev);
-      next.has(opt) ? next.delete(opt) : next.add(opt);
+      if (next.has(opt)) next.delete(opt);
+      else next.add(opt);
       return next;
     });
   }

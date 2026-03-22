@@ -8,7 +8,7 @@ import StudyMatch from '@/components/StudyMatch';
 import SchoolDirectory from '@/components/SchoolDirectory';
 import RoomChat from '@/components/RoomChat';
 import RoomMembers from '@/components/RoomMembers';
-import { Room, RoomActivity, StudyMatch as StudyMatchType } from '@/lib/types';
+import { Room, RoomActivity, RoomMember, RoomOverviewData, StudyMatch as StudyMatchType } from '@/lib/types';
 import { getUserRooms, getRoomOverview, getRoomActivity, findStudyMatches } from '@/lib/api';
 import { useUser } from '@/context/UserContext';
 
@@ -26,7 +26,7 @@ function SocialPageInner() {
   const [schoolView, setSchoolView] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
 
-  const [overviewData, setOverviewData] = useState<any>(null);
+  const [overviewData, setOverviewData] = useState<RoomOverviewData | null>(null);
   const [activity, setActivity] = useState<RoomActivity[]>([]);
   const [matches, setMatches] = useState<StudyMatchType[]>([]);
   const [matchLoading, setMatchLoading] = useState(false);
@@ -50,6 +50,8 @@ function SocialPageInner() {
         setActiveRoomId(res.rooms[0].id);
       }
     }).catch(console.error);
+    // Intentionally omit activeRoomId: only seed initial selection when rooms load, not on every room switch
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
   }, [USER_ID, userReady]);
 
   useEffect(() => {
@@ -91,10 +93,14 @@ function SocialPageInner() {
   };
 
   const handleMembersChange = (updatedMembers: { user_id: string; name: string }[]) => {
-    setOverviewData((prev: any) => prev ? {
-      ...prev,
-      members: prev.members.filter((m: any) => updatedMembers.some(u => u.user_id === m.user_id)),
-    } : prev);
+    setOverviewData(prev =>
+      prev
+        ? {
+            ...prev,
+            members: prev.members.filter(m => updatedMembers.some(u => u.user_id === m.user_id)),
+          }
+        : prev
+    );
   };
 
   const formatActivityTime = (iso: string) => {
@@ -119,10 +125,11 @@ function SocialPageInner() {
   });
 
   // Find the suggested node ID from the current user's graph in overviewData
-  const myMemberData = overviewData?.members?.find((m: any) => m.user_id === USER_ID);
-  const suggestNodeId: string | undefined = suggestConcept && myMemberData
-    ? myMemberData.graph.nodes.find((n: any) => n.concept_name === suggestConcept)?.id
-    : undefined;
+  const myMemberData = overviewData?.members?.find((m: RoomMember) => m.user_id === USER_ID);
+  const suggestNodeId: string | undefined =
+    suggestConcept && myMemberData
+      ? myMemberData.graph.nodes.find(n => n.concept_name === suggestConcept)?.id
+      : undefined;
 
   const memberCount = overviewData?.members?.length ?? null;
 
@@ -185,7 +192,7 @@ function SocialPageInner() {
                   roomId={activeRoomId}
                   roomName={overviewData?.room?.name ?? ''}
                   leaderId={overviewData?.room?.created_by ?? ''}
-                  members={overviewData?.members?.map((m: any) => ({ user_id: m.user_id, name: m.name })) ?? []}
+                  members={overviewData?.members?.map(m => ({ user_id: m.user_id, name: m.name })) ?? []}
                   currentUserId={USER_ID}
                   onLeave={handleLeaveRoom}
                   onMembersChange={handleMembersChange}
@@ -213,7 +220,7 @@ function SocialPageInner() {
                     <RoomChat
                       roomId={activeRoomId}
                       userId={USER_ID}
-                      members={overviewData?.members?.map((m: any) => ({ user_id: m.user_id, name: m.name })) ?? []}
+                      members={overviewData?.members?.map(m => ({ user_id: m.user_id, name: m.name })) ?? []}
                     />
                   )}
 

@@ -383,7 +383,7 @@ export default function ReportIssueFlow({ visible, onDismiss }: Props) {
             <div style={{ textAlign: 'center', padding: '8px 0 4px' }}>
               <span style={{ fontSize: '32px' }}>🙏</span>
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '10px', lineHeight: 1.5 }}>
-                Thanks for reporting! We'll look into this and work on a fix.
+                Thanks for reporting! We&apos;ll look into this and work on a fix.
               </p>
             </div>
           )}

@@ -41,7 +41,10 @@ export default function FeedbackFlow() {
   const [closing, setClosing] = useState(false);
 
   useEffect(() => {
-    if (testMode) { setVisible(true); return; }
+    if (testMode) {
+      queueMicrotask(() => setVisible(true));
+      return;
+    }
     const last = localStorage.getItem(STORAGE_KEY);
     if (last) {
       const daysSince = (Date.now() - Number(last)) / (1000 * 60 * 60 * 24);
@@ -68,7 +71,8 @@ export default function FeedbackFlow() {
   function toggleOption(option: string) {
     setChecked(prev => {
       const next = new Set(prev);
-      next.has(option) ? next.delete(option) : next.add(option);
+      if (next.has(option)) next.delete(option);
+      else next.add(option);
       return next;
     });
   }

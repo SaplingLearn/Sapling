@@ -1,3 +1,5 @@
+import type { RoomMessageRow, RoomOverviewData } from '@/lib/types';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
@@ -182,7 +184,7 @@ export const getUserRooms = (userId: string) =>
   fetchJSON<{ rooms: any[] }>(`/api/social/rooms/${userId}`);
 
 export const getRoomOverview = (roomId: string) =>
-  fetchJSON<{ room: any; members: any[]; ai_summary: string }>(`/api/social/rooms/${roomId}/overview`);
+  fetchJSON<RoomOverviewData>(`/api/social/rooms/${roomId}/overview`);
 
 export const getRoomActivity = (roomId: string) =>
   fetchJSON<{ activities: any[] }>(`/api/social/rooms/${roomId}/activity`);
@@ -214,7 +216,7 @@ export const kickMember = (roomId: string, memberId: string, requesterId: string
   });
 
 export const getRoomMessages = (roomId: string) =>
-  fetchJSON<{ messages: any[] }>(`/api/social/rooms/${roomId}/messages`);
+  fetchJSON<{ messages: RoomMessageRow[] }>(`/api/social/rooms/${roomId}/messages`);
 
 export const sendRoomMessage = (roomId: string, userId: string, userName: string, text: string, imageUrl?: string) =>
   fetchJSON<{ message: any }>(`/api/social/rooms/${roomId}/messages`, {

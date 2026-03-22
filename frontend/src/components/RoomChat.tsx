@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getRoomMessages, sendRoomMessage } from '@/lib/api';
+import type { RoomMessageRow } from '@/lib/types';
 import Avatar from '@/components/Avatar';
 
 interface Reaction {
@@ -40,7 +41,7 @@ function formatTime(date: Date) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function dbRowToMessage(row: any): Message {
+function dbRowToMessage(row: RoomMessageRow): Message {
   return {
     id: row.id,
     userId: row.user_id,
@@ -83,7 +84,7 @@ export default function RoomChat({ roomId, userId, members }: Props) {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'room_messages', filter: `room_id=eq.${roomId}` },
         (payload) => {
-          const msg = dbRowToMessage(payload.new);
+          const msg = dbRowToMessage(payload.new as RoomMessageRow);
           // Only add messages from others (own messages are added optimistically)
           if (msg.userId !== userId) {
             setMessages(prev => [...prev, msg]);

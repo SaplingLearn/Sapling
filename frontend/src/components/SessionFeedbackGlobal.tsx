@@ -25,7 +25,7 @@ export default function SessionFeedbackGlobal() {
       if (hadSession && cooldownPassed) {
         localStorage.removeItem(FLAG_KEY);
         localStorage.setItem(LAST_KEY, String(Date.now()));
-        setVisible(true);
+        queueMicrotask(() => setVisible(true));
       }
     }
   }, [pathname]);
