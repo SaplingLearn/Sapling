@@ -210,6 +210,10 @@ export default function RoomChat({ roomId, userId, members }: Props) {
           const mine = isMine(msg);
           const showAvatar = !mine && (i === 0 || messages[i - 1].userId !== msg.userId);
           const showName = !mine && showAvatar;
+          const next = messages[i + 1];
+          const showTimestamp = !next
+            || next.userId !== msg.userId
+            || (next.timestamp.getTime() - msg.timestamp.getTime()) > 5 * 60 * 1000;
 
           return (
             <div
@@ -320,7 +324,9 @@ export default function RoomChat({ roomId, userId, members }: Props) {
                   </div>
                 )}
 
-                <span style={{ fontSize: '10px', color: 'var(--text-dim)' }}>{formatTime(msg.timestamp)}</span>
+                {showTimestamp && (
+                  <span style={{ fontSize: '10px', color: 'var(--text-dim)' }}>{formatTime(msg.timestamp)}</span>
+                )}
               </div>
             </div>
           );

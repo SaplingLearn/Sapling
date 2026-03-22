@@ -27,6 +27,8 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 * **Calendar & Syllabus Tracking** — Paste your syllabus and Sapling extracts assignments, deadlines, and topics automatically.
 * **Document Library** — Upload PDFs and notes; Sapling extracts summaries, key takeaways, and flashcard topics to enrich your knowledge graph and study guides.
 * **Study Rooms** — Invite classmates, compare knowledge graphs, and track relative mastery across your group.
+* **Room Chat** — Real-time text chat with avatars inside each study room.
+* **Feedback & Issue Reporting** — Submit session feedback or report bugs directly from the app via the Navbar.
 
 ## Tech Stack
 
@@ -51,6 +53,7 @@ python3 main.py            # → http://localhost:5000
 ```bash
 cd frontend
 npm install
+echo "NEXT_PUBLIC_API_URL=http://localhost:5000" > .env.local
 npm run dev                # → http://localhost:3000
 ```
 
@@ -99,6 +102,19 @@ npm run dev                # → http://localhost:3000
 - `POST` `/api/social/rooms/create` — Create a study room
 - `POST` `/api/social/rooms/join` — Join a study room by invite code
 - `GET`  `/api/social/rooms/{user_id}` — List a user's rooms
+- `GET`  `/api/social/rooms/{room_id}/overview` — Room overview with AI-generated group summary
+- `GET`  `/api/social/rooms/{room_id}/activity` — Recent activity feed for a room
+- `POST` `/api/social/rooms/{room_id}/match` — Find study partners within a room
+- `POST` `/api/social/rooms/{room_id}/leave` — Leave a room
+- `DELETE` `/api/social/rooms/{room_id}/members/{member_id}` — Kick a member (room leader only)
+- `GET`  `/api/social/rooms/{room_id}/messages` — Fetch room chat messages
+- `POST` `/api/social/rooms/{room_id}/messages` — Send a chat message
+- `POST` `/api/social/school-match` — Find study partners school-wide
+- `GET`  `/api/social/students` — List all students with mastery stats
+
+**Feedback**
+- `POST` `/api/feedback/feedback` — Submit session or general feedback
+- `POST` `/api/feedback/issue-reports` — Submit a bug/issue report
 
 ## Environment Variables
 
