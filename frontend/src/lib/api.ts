@@ -202,6 +202,26 @@ export const findSchoolMatches = (userId: string) =>
 export const getSchoolStudents = () =>
   fetchJSON<{ students: any[] }>('/api/social/students');
 
+export const leaveRoom = (roomId: string, userId: string) =>
+  fetchJSON<{ left: boolean }>(`/api/social/rooms/${roomId}/leave`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+export const kickMember = (roomId: string, memberId: string, requesterId: string) =>
+  fetchJSON<{ kicked: boolean }>(`/api/social/rooms/${roomId}/members/${encodeURIComponent(memberId)}?requester_id=${encodeURIComponent(requesterId)}`, {
+    method: 'DELETE',
+  });
+
+export const getRoomMessages = (roomId: string) =>
+  fetchJSON<{ messages: any[] }>(`/api/social/rooms/${roomId}/messages`);
+
+export const sendRoomMessage = (roomId: string, userId: string, userName: string, text: string, imageUrl?: string) =>
+  fetchJSON<{ message: any }>(`/api/social/rooms/${roomId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, user_name: userName, text: text || null, image_url: imageUrl || null }),
+  });
+
 // ── Documents ─────────────────────────────────────────────────────────────────
 
 export const getDocuments = (userId: string) =>
@@ -245,3 +265,14 @@ export const deleteFlashcard = (userId: string, cardId: string) =>
   fetchJSON<{ ok: boolean }>(`/api/flashcards/${cardId}?user_id=${encodeURIComponent(userId)}`, {
     method: 'DELETE',
   });
+
+// ── Feedback ──────────────────────────────────────────────────────────────────
+
+export const submitFeedback = (data: {
+  user_id: string; type: 'global' | 'session'; rating: number;
+  selected_options: string[]; comment?: string; session_id?: string; topic?: string;
+}) => fetchJSON<{ ok: boolean }>('/api/feedback', { method: 'POST', body: JSON.stringify(data) });
+
+export const submitIssueReport = (data: {
+  user_id: string; topic: string; description: string; screenshot_urls: string[];
+}) => fetchJSON<{ ok: boolean }>('/api/issue-reports', { method: 'POST', body: JSON.stringify(data) });

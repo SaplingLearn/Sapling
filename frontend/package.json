@@ -11,6 +11,7 @@
     "test:watch": "jest --watch"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.99.3",
     "d3": "^7.9.0",
     "katex": "^0.16.40",
     "lucide-react": "^0.577.0",

@@ -1,10 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import { useUser } from '@/context/UserContext';
+import { submitFeedback } from '@/lib/api';
 
 interface Props {
   visible: boolean;
   topic: string;
+  sessionId?: string;
   onDismiss: () => void;
 }
 
@@ -26,7 +29,8 @@ const SESSION_OPTIONS = [
   'Not enough examples',
 ];
 
-export default function SessionFeedbackFlow({ visible, topic, onDismiss }: Props) {
+export default function SessionFeedbackFlow({ visible, topic, sessionId, onDismiss }: Props) {
+  const { userId } = useUser();
   const [step, setStep] = useState<'rating' | 'detail' | 'text' | 'done'>('rating');
   const [hovered, setHovered] = useState<number | null>(null);
   const [rating, setRating] = useState<number | null>(null);
@@ -49,14 +53,8 @@ export default function SessionFeedbackFlow({ visible, topic, onDismiss }: Props
 
   function handleEmojiSelect(index: number) {
     setRating(index);
-    if (index >= 3) {
-      // 4–5 stars: just thank them
-      setTimeout(() => setStep('done'), 300);
-      setTimeout(() => dismiss(), 1800);
-    } else {
-      // 1–3 stars: ask what was wrong
-      setTimeout(() => setStep('detail'), 300);
-    }
+    // All ratings go through detail → text
+    setTimeout(() => setStep('detail'), 300);
   }
 
   function toggleOption(opt: string) {
@@ -69,6 +67,15 @@ export default function SessionFeedbackFlow({ visible, topic, onDismiss }: Props
 
   function handleSubmit() {
     setStep('done');
+    submitFeedback({
+      user_id: userId,
+      type: 'session',
+      rating: rating!,
+      selected_options: Array.from(checked),
+      comment: comment || undefined,
+      session_id: sessionId,
+      topic: topic || undefined,
+    }).catch(() => {});
     setTimeout(() => dismiss(), 1800);
   }
 
@@ -104,8 +111,8 @@ export default function SessionFeedbackFlow({ visible, topic, onDismiss }: Props
             </p>
             <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, margin: 0 }}>
               {step === 'rating' && `How was your ${topic ? `"${topic}"` : 'last'} session?`}
-              {step === 'detail' && 'What fell short?'}
-              {step === 'text' && <>Anything else to add?<br /><span style={{ color: 'var(--text)' }}>We will listen to YOU!</span></>}
+              {step === 'detail' && (rating !== null && rating >= 3 ? 'Any areas for improvement?' : 'What fell short?')}
+              {step === 'text' && <>Anything else to add?<br /><span style={{ color: 'var(--text)', fontWeight: 700 }}>We will listen to YOU!</span></>}
               {step === 'done' && 'Thanks for the feedback!'}
             </h3>
           </div>
