@@ -6,7 +6,7 @@ from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Query
 
 from db.connection import table
-from models import CreateRoomBody, JoinRoomBody, MatchBody
+from models import CreateRoomBody, JoinRoomBody, MatchBody, SendMessageBody, LeaveRoomBody
 from services.graph_service import get_graph
 from services.matching_service import find_study_matches
 from services.gemini_service import call_gemini
@@ -199,6 +199,48 @@ def school_match(body: MatchBody):
         raise HTTPException(status_code=502, detail=f"Matching error: {e}")
 
     return {"matches": matches}
+
+
+@router.post("/rooms/{room_id}/leave")
+def leave_room(room_id: str, body: LeaveRoomBody):
+    table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"})
+    invalidate_summary(room_id)
+    return {"left": True}
+
+
+@router.delete("/rooms/{room_id}/members/{member_id}")
+def kick_member(room_id: str, member_id: str, requester_id: str = Query(...)):
+    room_rows = table("rooms").select("*", filters={"id": f"eq.{room_id}"})
+    if not room_rows:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room_rows[0]["created_by"] != requester_id:
+        raise HTTPException(status_code=403, detail="Only the room leader can kick members")
+    table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{member_id}"})
+    invalidate_summary(room_id)
+    return {"kicked": True}
+
+
+@router.get("/rooms/{room_id}/messages")
+def get_room_messages(room_id: str):
+    rows = table("room_messages").select(
+        "*",
+        filters={"room_id": f"eq.{room_id}"},
+        order="created_at.asc",
+        limit=50,
+    )
+    return {"messages": rows}
+
+
+@router.post("/rooms/{room_id}/messages")
+def send_room_message(room_id: str, body: SendMessageBody):
+    row = table("room_messages").insert({
+        "room_id": room_id,
+        "user_id": body.user_id,
+        "user_name": body.user_name,
+        "text": body.text or None,
+        "image_url": body.image_url or None,
+    })
+    return {"message": row[0] if row else {}}
 
 
 @router.get("/students")
