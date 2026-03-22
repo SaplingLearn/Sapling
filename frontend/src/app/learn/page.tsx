@@ -49,8 +49,6 @@ function LearnInner() {
   const feedbackDueRef = useRef(false);
 
   const SESSION_COUNT_KEY = 'sapling_session_end_count';
-  const SESSION_FEEDBACK_LAST_KEY = 'sapling_session_feedback_last_shown';
-  const SESSION_FEEDBACK_COOLDOWN_DAYS = 2;
   const SESSION_FEEDBACK_EVERY_N = 3;
   const [sessionError, setSessionError] = useState<string | null>(null);
 
@@ -92,6 +90,13 @@ function LearnInner() {
       return !srcSubj || !tgtSubj || srcSubj === tgtSubj;
     });
   }, [nodes, edges]);
+
+  // Flag active session for nav-away feedback trigger
+  useEffect(() => {
+    if (messages.length > 0 && sessionId) {
+      localStorage.setItem('sapling_learn_had_session', 'true');
+    }
+  }, [messages.length, sessionId]);
 
   // Load initial graph + recent sessions — re-runs when the active user changes
   useEffect(() => {
@@ -213,12 +218,9 @@ function LearnInner() {
       setSummary(res.summary);
 
       const count = parseInt(localStorage.getItem(SESSION_COUNT_KEY) ?? '0', 10) + 1;
-      const lastShown = parseInt(localStorage.getItem(SESSION_FEEDBACK_LAST_KEY) ?? '0', 10);
-      const cooldownPassed = Date.now() - lastShown > SESSION_FEEDBACK_COOLDOWN_DAYS * 86_400_000;
-      if (count >= SESSION_FEEDBACK_EVERY_N && cooldownPassed) {
+      if (count >= SESSION_FEEDBACK_EVERY_N) {
         feedbackDueRef.current = true;
         localStorage.setItem(SESSION_COUNT_KEY, '0');
-        localStorage.setItem(SESSION_FEEDBACK_LAST_KEY, String(Date.now()));
       } else {
         feedbackDueRef.current = false;
         localStorage.setItem(SESSION_COUNT_KEY, String(count));

@@ -6,6 +6,7 @@ import { UserProvider } from '@/context/UserContext';
 import Navbar from '@/components/Navbar';
 import SpaceBackground from '@/components/SpaceBackground';
 import FeedbackFlow from '@/components/FeedbackFlow';
+import SessionFeedbackGlobal from '@/components/SessionFeedbackGlobal';
 
 const spectral = Spectral({
   subsets: ['latin'],
@@ -58,6 +59,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Navbar />
             <main style={{ flex: 1 }}>{children}</main>
             <Suspense fallback={null}><FeedbackFlow /></Suspense>
+            <Suspense fallback={null}><SessionFeedbackGlobal /></Suspense>
           </div>
         </UserProvider>
       </body>
