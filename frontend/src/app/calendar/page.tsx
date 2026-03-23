@@ -20,14 +20,27 @@ const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
 
 type CalendarView = 'month' | 'week' | 'day';
 
-/** Short line for syllabus import warnings; full text is in the “View details” modal (#17). */
-function syllabusWarningsSummary(warnings: string[]): string {
+/** What to show inline under the upload zone (#17 — short line; full text only in modal). */
+type SyllabusAlertKind = 'none' | 'fatal_upload' | 'soft' | 'save_failed';
+
+function syllabusInlineMessage(warnings: string[], kind: SyllabusAlertKind): string {
   if (warnings.length === 0) return '';
+  // If kind was not set but we still have messages, treat as soft (avoids blank inline + “View details”).
+  const k = kind === 'none' && warnings.length > 0 ? 'soft' : kind;
+  if (k === 'none') return '';
+  if (k === 'fatal_upload') return "We couldn't import your syllabus.";
+  if (k === 'save_failed') return "We couldn't save your assignments.";
   if (warnings.length === 1) {
     const w = warnings[0];
-    return w.length > 120 ? `${w.slice(0, 117)}…` : w;
+    return w.length > 100 ? `${w.slice(0, 97)}…` : w;
   }
-  return `${warnings.length} issues were reported while importing your syllabus.`;
+  return `${warnings.length} notices from your syllabus import.`;
+}
+
+function syllabusModalTitle(kind: SyllabusAlertKind): string {
+  if (kind === 'fatal_upload') return 'Syllabus import error';
+  if (kind === 'save_failed') return 'Save error';
+  return 'Syllabus import details';
 }
 
 const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -317,6 +330,7 @@ function CalendarInner() {
   const [extractedAssignments, setExtractedAssignments] = useState<Assignment[]>([]);
   const [fileProcessed, setFileProcessed] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [syllabusAlertKind, setSyllabusAlertKind] = useState<SyllabusAlertKind>('none');
   const [warningsModalOpen, setWarningsModalOpen] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadFilename, setUploadFilename] = useState('');
@@ -326,6 +340,11 @@ function CalendarInner() {
   const [googleConnected, setGoogleConnected] = useState(false);
   const [googleEvents, setGoogleEvents] = useState<any[]>([]);
   const [importingGoogle, setImportingGoogle] = useState(false);
+
+  /** Orange (notice) vs red (error) — matches syllabusInlineMessage fallback when kind is stale. */
+  const syllabusNoticeStyle =
+    syllabusAlertKind === 'soft' ||
+    (syllabusAlertKind === 'none' && warnings.length > 0);
 
   // Fetch data once when user is ready — does NOT depend on searchParams to
   // prevent repeated fetches every time Next.js reconstructs the search params object
@@ -350,12 +369,23 @@ function CalendarInner() {
     setUploadFilename(file.name);
     setUploadLoading(true);
     setWarnings([]);
+    setSyllabusAlertKind('none');
     setExtractedAssignments([]);
     setFileProcessed(false);
     try {
       const form = new FormData();
       form.append('file', file);
       const res = await extractSyllabus(form, USER_ID);
+      const err = res.error != null ? String(res.error).trim() : '';
+      const fromApi = Array.isArray(res.warnings) ? res.warnings.map((w: unknown) => String(w)) : [];
+      const merged: string[] = [];
+      if (err) merged.push(err);
+      for (const w of fromApi) {
+        if (w && !merged.includes(w)) merged.push(w);
+      }
+      setWarnings(merged);
+      setSyllabusAlertKind(err ? 'fatal_upload' : merged.length > 0 ? 'soft' : 'none');
+
       const mapped: Assignment[] = (res.assignments ?? []).map((a: any, i: number) => ({
         id: `extracted_${i}_${Date.now()}`,
         title: a.title ?? '',
@@ -366,9 +396,9 @@ function CalendarInner() {
         google_event_id: null,
       }));
       setExtractedAssignments(mapped);
-      setWarnings(res.warnings ?? []);
       setFileProcessed(true);
     } catch (e: any) {
+      setSyllabusAlertKind('fatal_upload');
       setWarnings([e.message || 'Extraction failed']);
     } finally {
       setUploadLoading(false);
@@ -383,7 +413,10 @@ function CalendarInner() {
       setAssignments(data.assignments);
       setExtractedAssignments([]);
       setFileProcessed(false);
+      setWarnings([]);
+      setSyllabusAlertKind('none');
     } catch (e: any) {
+      setSyllabusAlertKind('save_failed');
       setWarnings([e.message || 'Save failed']);
     } finally {
       setSaving(false);
@@ -447,8 +480,16 @@ function CalendarInner() {
         <UploadZone onFile={handleFile} loading={uploadLoading} filename={uploadFilename} />
         {warnings.length > 0 && (
           <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' }}>
-            <p style={{ color: '#c2410c', fontSize: '13px', fontWeight: 500, margin: 0, flex: '1 1 200px' }}>
-              {syllabusWarningsSummary(warnings)}
+            <p
+              style={{
+                color: syllabusNoticeStyle ? '#c2410c' : '#b91c1c',
+                fontSize: '13px',
+                fontWeight: 500,
+                margin: 0,
+                flex: '1 1 200px',
+              }}
+            >
+              {syllabusInlineMessage(warnings, syllabusAlertKind)}
             </p>
             <button
               type="button"
@@ -457,9 +498,11 @@ function CalendarInner() {
                 padding: '5px 12px',
                 fontSize: '12px',
                 fontWeight: 600,
-                color: '#c2410c',
-                background: 'rgba(234,88,12,0.08)',
-                border: '1px solid rgba(234,88,12,0.35)',
+                color: syllabusNoticeStyle ? '#c2410c' : '#b91c1c',
+                background: syllabusNoticeStyle ? 'rgba(234,88,12,0.08)' : 'rgba(220,38,38,0.08)',
+                border: syllabusNoticeStyle
+                  ? '1px solid rgba(234,88,12,0.35)'
+                  : '1px solid rgba(220,38,38,0.35)',
                 borderRadius: '6px',
                 cursor: 'pointer',
                 fontFamily: UI_FONT,
@@ -504,7 +547,7 @@ function CalendarInner() {
           >
             <div style={{ padding: '16px 18px', borderBottom: '1px solid rgba(107,114,128,0.12)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 id="syllabus-warnings-title" style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#111827' }}>
-                Syllabus import details
+                {syllabusModalTitle(syllabusAlertKind)}
               </h2>
               <button
                 type="button"
