@@ -89,18 +89,24 @@ export default function Navbar() {
         zIndex: 50,
       }}
     >
-      <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
-        <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '32px', height: '32px' }} />
-        <span style={{
-          fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
-          fontWeight: 700,
-          fontSize: '20px',
-          color: '#1a5c2a',
-          letterSpacing: '-0.02em',
-          textShadow: '0 0 12px rgba(26, 92, 42, 0.2)',
-        }}>
-          Sapling
-        </span>
+      <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '2px', textDecoration: 'none' }}>
+        <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '32px', height: '32px', marginTop: '-7px', marginBottom: '-3px', marginLeft: '-2px', marginRight: '-4px', alignSelf: 'center', flexShrink: 0 }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', alignItems: 'center', textAlign: 'center' }}>
+          <span style={{
+            fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
+            fontWeight: 700,
+            fontSize: '20px',
+            color: '#1a5c2a',
+            letterSpacing: '-0.02em',
+            textShadow: '0 0 12px rgba(26, 92, 42, 0.2)',
+            lineHeight: 1.1,
+          }}>
+            Sapling
+          </span>
+          <span style={{ fontSize: '9px', fontWeight: 600, color: '#1a5c2a', letterSpacing: '0.08em', textTransform: 'uppercase', opacity: 0.7, lineHeight: 1 }}>
+            Closed Alpha
+          </span>
+        </div>
       </Link>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
