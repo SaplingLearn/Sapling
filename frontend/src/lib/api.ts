@@ -258,8 +258,8 @@ export const updateDocument = (documentId: string, data: { category?: string; us
     body: JSON.stringify(data),
   });
 
-export const uploadDocument = (formData: FormData): Promise<any> =>
-  fetch(`${API_URL}/api/documents/upload`, { method: 'POST', body: formData }).then(async r => {
+export const uploadDocument = (formData: FormData, init?: RequestInit): Promise<any> =>
+  fetch(`${API_URL}/api/documents/upload`, { method: 'POST', body: formData, ...init }).then(async r => {
     if (!r.ok) { const e = await r.text(); throw new Error(e || `HTTP ${r.status}`); }
     return r.json();
   });
