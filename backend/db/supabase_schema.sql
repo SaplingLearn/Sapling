@@ -153,13 +153,13 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
 
 -- Room chat messages
 CREATE TABLE IF NOT EXISTS room_messages (
-    id          TEXT PRIMARY KEY,
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     room_id     TEXT NOT NULL REFERENCES rooms(id),
     user_id     TEXT NOT NULL REFERENCES users(id),
     user_name   TEXT NOT NULL,
     text        TEXT,
     image_url   TEXT,
-    reply_to_id TEXT REFERENCES room_messages(id),
+    reply_to_id UUID REFERENCES room_messages(id),
     is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
     edited_at   TIMESTAMPTZ,
     created_at  TIMESTAMPTZ DEFAULT now()
@@ -169,8 +169,8 @@ CREATE INDEX IF NOT EXISTS idx_room_messages_room_id ON room_messages(room_id, c
 
 -- Emoji reactions on room messages
 CREATE TABLE IF NOT EXISTS room_reactions (
-    id          TEXT PRIMARY KEY,
-    message_id  TEXT NOT NULL REFERENCES room_messages(id) ON DELETE CASCADE,
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    message_id  UUID NOT NULL REFERENCES room_messages(id) ON DELETE CASCADE,
     user_id     TEXT NOT NULL REFERENCES users(id),
     emoji       TEXT NOT NULL,
     created_at  TIMESTAMPTZ DEFAULT now(),
@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS room_reactions (
 CREATE INDEX IF NOT EXISTS idx_room_reactions_message_id ON room_reactions(message_id);
 
 -- Migrations (run if tables already exist without these columns):
--- ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS reply_to_id TEXT REFERENCES room_messages(id);
+-- ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS reply_to_id UUID REFERENCES room_messages(id);
 -- ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE;
 -- ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
 

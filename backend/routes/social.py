@@ -322,9 +322,7 @@ def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody):
     if existing:
         table("room_reactions").delete({"id": f"eq.{existing[0]['id']}"})
         return {"added": False}
-    reaction_id = str(uuid.uuid4())
     table("room_reactions").insert({
-        "id": reaction_id,
         "message_id": message_id,
         "user_id": body.user_id,
         "emoji": body.emoji,
