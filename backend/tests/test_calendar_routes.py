@@ -4,8 +4,6 @@ Unit tests for routes/calendar.py
 Helper functions are tested directly; route endpoints are tested via
 FastAPI's TestClient with the DB layer mocked out.
 """
-import base64
-import json
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -13,30 +11,6 @@ from fastapi.testclient import TestClient
 from main import app
 
 client = TestClient(app)
-
-
-# ── _encode_state / _decode_state ─────────────────────────────────────────────
-
-class TestStateEncoding:
-    def test_roundtrip(self):
-        from routes.calendar import _encode_state, _decode_state
-        assert _decode_state(_encode_state("user_andres")) == "user_andres"
-
-    def test_decode_invalid_base64_returns_empty(self):
-        from routes.calendar import _decode_state
-        assert _decode_state("!!!not_base64!!!") == ""
-
-    def test_decode_valid_base64_missing_user_id_returns_empty(self):
-        from routes.calendar import _decode_state
-        payload = base64.urlsafe_b64encode(json.dumps({"other": "key"}).encode()).decode()
-        assert _decode_state(payload) == ""
-
-    def test_encode_produces_url_safe_string(self):
-        from routes.calendar import _encode_state
-        encoded = _encode_state("user_test")
-        # Should not contain characters unsafe for URLs
-        assert "+" not in encoded
-        assert "/" not in encoded
 
 
 # ── GET /api/calendar/status/{user_id} ───────────────────────────────────────
@@ -71,7 +45,8 @@ class TestCalendarStatus:
 
 class TestSaveAssignments:
     def test_saves_multiple_assignments(self):
-        with patch("routes.calendar.table") as t:
+        with patch("services.calendar_service.table") as t:
+            t.return_value.select.return_value = []
             t.return_value.insert.return_value = []
             body = {
                 "user_id": "user_andres",
@@ -86,13 +61,15 @@ class TestSaveAssignments:
         assert r.json()["saved_count"] == 2
 
     def test_save_empty_list_returns_zero(self):
-        with patch("routes.calendar.table"):
+        with patch("services.calendar_service.table") as t:
+            t.return_value.select.return_value = []
             r = client.post("/api/calendar/save", json={"user_id": "user_andres", "assignments": []})
         assert r.status_code == 200
         assert r.json()["saved_count"] == 0
 
     def test_save_with_optional_fields_omitted(self):
-        with patch("routes.calendar.table") as t:
+        with patch("services.calendar_service.table") as t:
+            t.return_value.select.return_value = []
             t.return_value.insert.return_value = []
             body = {
                 "user_id": "user_andres",
@@ -101,6 +78,40 @@ class TestSaveAssignments:
             r = client.post("/api/calendar/save", json=body)
         assert r.status_code == 200
         assert r.json()["saved_count"] == 1
+
+    def test_save_skips_duplicate_title_and_date(self):
+        with patch("services.calendar_service.table") as t:
+            t.return_value.select.return_value = [
+                {"title": "HW1", "due_date": "2026-03-01"},
+            ]
+            t.return_value.insert.return_value = []
+            body = {
+                "user_id": "user_andres",
+                "assignments": [
+                    {"title": "HW1", "due_date": "2026-03-01", "assignment_type": "homework"},
+                    {"title": "HW2", "due_date": "2026-03-02", "assignment_type": "homework"},
+                ],
+            }
+            r = client.post("/api/calendar/save", json=body)
+        assert r.status_code == 200
+        assert r.json()["saved_count"] == 1
+
+    def test_save_skips_when_iso_datetime_matches_existing_date(self):
+        """#16: same title + same calendar day (ISO date vs datetime) → one row."""
+        with patch("services.calendar_service.table") as t:
+            t.return_value.select.return_value = [
+                {"title": "Final Exam", "due_date": "2026-05-01"},
+            ]
+            t.return_value.insert.return_value = []
+            body = {
+                "user_id": "user_andres",
+                "assignments": [
+                    {"title": "Final Exam", "due_date": "2026-05-01T09:00:00", "assignment_type": "exam"},
+                ],
+            }
+            r = client.post("/api/calendar/save", json=body)
+        assert r.status_code == 200
+        assert r.json()["saved_count"] == 0
 
 
 # ── GET /api/calendar/upcoming/{user_id} ─────────────────────────────────────

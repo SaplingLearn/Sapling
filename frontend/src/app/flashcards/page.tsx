@@ -15,8 +15,22 @@ interface Flashcard {
   last_rating: number | null;
 }
 
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 export default function FlashcardsPage() {
   const { userId: USER_ID, userReady } = useUser();
+  const isMobile = useIsMobile();
+  const [mobileTab, setMobileTab] = useState<'generate' | 'cards'>('cards');
 
   const [cards, setCards] = useState<Flashcard[]>([]);
   const [courses, setCourses] = useState<string[]>([]);
@@ -242,12 +256,18 @@ export default function FlashcardsPage() {
         <div style={{ marginLeft: 'auto' }}><AIDisclaimerChip /></div>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', display: 'flex' }}>
+      <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const }}>
+        {isMobile && (
+          <div style={{ display: 'flex', borderBottom: '1px solid rgba(107,114,128,0.12)', flexShrink: 0 }}>
+            <button onClick={() => setMobileTab('cards')} style={{ flex: 1, padding: '8px', fontSize: '13px', fontWeight: mobileTab === 'cards' ? 600 : 400, color: mobileTab === 'cards' ? '#1a5c2a' : '#6b7280', background: mobileTab === 'cards' ? 'rgba(26,92,42,0.06)' : 'transparent', border: 'none', borderBottom: mobileTab === 'cards' ? '2px solid #1a5c2a' : '2px solid transparent', cursor: 'pointer' }}>My Cards</button>
+            <button onClick={() => setMobileTab('generate')} style={{ flex: 1, padding: '8px', fontSize: '13px', fontWeight: mobileTab === 'generate' ? 600 : 400, color: mobileTab === 'generate' ? '#1a5c2a' : '#6b7280', background: mobileTab === 'generate' ? 'rgba(26,92,42,0.06)' : 'transparent', border: 'none', borderBottom: mobileTab === 'generate' ? '2px solid #1a5c2a' : '2px solid transparent', cursor: 'pointer' }}>Generate</button>
+          </div>
+        )}
 
         {/* Left panel */}
         <div className="panel-in panel-in-2" style={{
-          width: '320px', flexShrink: 0, borderRight: '1px solid rgba(107,114,128,0.12)',
-          padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: '20px', background: '#f9fafb',
+          width: isMobile ? '100%' : '320px', flexShrink: 0, borderRight: '1px solid rgba(107,114,128,0.12)',
+          padding: '24px 20px', display: isMobile && mobileTab !== 'generate' ? 'none' : 'flex', flexDirection: 'column', gap: '20px', background: '#f9fafb',
         }}>
           <div>
             <p style={{ fontSize: '13px', fontWeight: 600, color: '#374151', margin: '0 0 12px' }}>Generate flashcards</p>
@@ -342,7 +362,7 @@ export default function FlashcardsPage() {
         </div>
 
         {/* Right panel — card grid */}
-        <div className="panel-in panel-in-3" style={{ flex: 1, padding: '24px', overflow: 'auto' }}>
+        <div className="panel-in panel-in-3" style={{ flex: 1, padding: '24px', overflow: 'auto', display: isMobile && mobileTab !== 'cards' ? 'none' : undefined }}>
           {topics.length > 1 && (
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
               {['', ...topics].map(t => (
@@ -371,7 +391,7 @@ export default function FlashcardsPage() {
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '14px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? '240px' : '280px'}, 1fr))`, gap: '14px' }}>
             {filteredCards.map(card => {
               const rating = ratingMeta(card.last_rating);
               return (

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from db.connection import table
 from services.extraction_service import extract_text_from_file
 from services.gemini_service import call_gemini_json
-from services.calendar_service import extract_assignments_from_file, save_assignments_to_db
+from services.calendar_service import save_assignments_to_db
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,8 @@ def _validate_user(user_id: str) -> None:
         raise HTTPException(status_code=403, detail="Invalid user.")
 
 
-def _classify_and_summarize(filename: str, extracted_text: str) -> dict:
+def _process_document(filename: str, extracted_text: str) -> dict:
+    """Single LLM call: classify, summarize, and extract assignments if syllabus."""
     prompt = (
         f"You are processing a student document titled '{filename}'.\n"
         f"Content: {extracted_text[:12000]}\n"
@@ -50,11 +51,15 @@ def _classify_and_summarize(filename: str, extracted_text: str) -> dict:
         '  "category": one of ["syllabus","lecture_notes","slides","reading","assignment","study_guide","other"],\n'
         '  "summary": "2-3 sentence overview of the document",\n'
         '  "key_takeaways": ["...", "..."],\n'
-        '  "flashcards": [{"question": "...", "answer": "..."}]\n'
-        "}"
+        '  "flashcards": [{"question": "...", "answer": "..."}],\n'
+        '  "assignments": []\n'
+        "}\n"
+        'If category is "syllabus", populate "assignments" with every deadline found:\n'
+        '  {"title": "...", "due_date": "YYYY-MM-DD (assume 2026 if year missing)", '
+        '"course_name": "...", "assignment_type": one of [homework,exam,reading,project,quiz,other], "notes": "..." or null}\n'
+        "For non-syllabus documents, assignments must be []."
     )
     result = call_gemini_json(prompt)
-    # Sanitize category in case Gemini returns something unexpected
     if result.get("category") not in VALID_CATEGORIES:
         result["category"] = "other"
     return result
@@ -129,18 +134,16 @@ async def upload_document(
     # ── Text extraction ───────────────────────────────────────────────────────
     extracted_text = extract_text_from_file(file_bytes, filename, file.content_type or "")
 
-    # ── AI classification + summarization ─────────────────────────────────────
-    ai = _classify_and_summarize(filename, extracted_text)
+    # ── AI: classify, summarize, and extract assignments (single call) ─────────
+    ai = _process_document(filename, extracted_text)
 
-    # ── If syllabus: also run assignment extraction ───────────────────────────
     if ai.get("category") == "syllabus":
         try:
-            result = extract_assignments_from_file(file_bytes, filename, file.content_type or "")
-            assignments = result.get("assignments") or []
+            assignments = ai.get("assignments") or []
             if assignments:
                 save_assignments_to_db(user_id, assignments)
         except Exception:
-            logger.exception("Assignment extraction failed for '%s' (best-effort)", filename)
+            logger.exception("Assignment save failed for '%s' (best-effort)", filename)
 
     # ── Persist to documents table ────────────────────────────────────────────
     now = datetime.now(timezone.utc).isoformat()

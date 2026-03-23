@@ -5,7 +5,6 @@ Syllabus extraction, assignment CRUD, Google Calendar OAuth and sync.
 Migrated from SQLite to Supabase REST API.
 """
 
-import uuid
 import json
 from datetime import datetime, timezone, timedelta
 
@@ -18,7 +17,7 @@ from config import (
 )
 from db.connection import table
 from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
-from services.calendar_service import extract_assignments_from_file
+from services.calendar_service import extract_assignments_from_file, insert_new_assignments
 
 try:
     from google_auth_oauthlib.flow import Flow
@@ -99,30 +98,18 @@ async def extract(file: UploadFile = File(...)):
 
 @router.post("/save")
 def save_assignments(body: SaveAssignmentsBody):
-    # Fetch existing (title, due_date) pairs so we never insert duplicates
-    existing_rows = table("assignments").select(
-        "title,due_date",
-        filters={"user_id": f"eq.{body.user_id}"},
-    )
-    existing_keys = {(r["title"], r["due_date"]) for r in existing_rows}
-
-    rows = []
-    for a in body.assignments:
-        if (a.title, a.due_date) not in existing_keys:
-            rows.append({
-                "id": str(uuid.uuid4()),
-                "user_id": body.user_id,
-                "title": a.title,
-                "course_name": a.course_name,
-                "due_date": a.due_date,
-                "assignment_type": a.assignment_type,
-                "notes": a.notes,
-            })
-            existing_keys.add((a.title, a.due_date))  # prevent intra-batch dupes too
-
-    if rows:
-        table("assignments").insert(rows)
-    return {"saved_count": len(rows)}
+    payload = [
+        {
+            "title": a.title,
+            "course_name": a.course_name,
+            "due_date": a.due_date,
+            "assignment_type": a.assignment_type,
+            "notes": a.notes,
+        }
+        for a in body.assignments
+    ]
+    saved = insert_new_assignments(body.user_id, payload)
+    return {"saved_count": saved}
 
 
 @router.get("/upcoming/{user_id}")

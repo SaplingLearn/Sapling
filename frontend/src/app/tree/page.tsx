@@ -15,6 +15,18 @@ const GLASS = {
   border: '1px solid rgba(107, 114, 128, 0.15)',
 } as const;
 
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 function TreePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -67,6 +79,8 @@ function TreePageInner() {
     return !srcSubj || !tgtSubj || srcSubj === tgtSubj;
   });
 
+  const isMobile = useIsMobile();
+
   const FILTERS: { value: Filter; label: string }[] = [
     { value: 'all', label: 'All' },
     { value: 'mastered', label: 'Mastered' },
@@ -88,7 +102,21 @@ function TreePageInner() {
       />
 
       {/* Floating search + filter bar */}
-      <div className="panel-in-centered panel-in-1" style={{
+      <div className="panel-in-centered panel-in-1" style={isMobile ? {
+        position: 'absolute',
+        top: '10px',
+        left: '10px',
+        right: '10px',
+        ...GLASS,
+        borderRadius: '10px',
+        padding: '8px 12px',
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: '8px',
+        boxShadow: '0 4px 32px rgba(0,0,0,0.4)',
+        zIndex: 10,
+      } : {
         position: 'absolute',
         top: '20px',
         left: '50%',
@@ -111,12 +139,12 @@ function TreePageInner() {
             borderRadius: '5px',
             fontSize: '13px',
             outline: 'none',
-            width: '180px',
+            width: isMobile ? '100%' : '180px',
             background: '#ffffff',
             color: '#111827',
           }}
         />
-        <div style={{ display: 'flex', gap: '4px' }}>
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
           {FILTERS.map(f => {
             const active = filter === f.value;
             return (
@@ -147,7 +175,7 @@ function TreePageInner() {
         <div className="panel-in-centered panel-in-1" style={{
           position: 'absolute',
           bottom: '24px',
-          left: '50%',
+          ...(isMobile ? { left: '10px', width: 'calc(100% - 20px)', minWidth: '0', maxWidth: 'calc(100% - 20px)' } : { left: '50%' }),
           ...GLASS,
           border: '1px solid rgba(26,92,42,0.25)',
           borderRadius: '10px',
@@ -157,8 +185,7 @@ function TreePageInner() {
           display: 'flex',
           flexDirection: 'column',
           gap: '10px',
-          minWidth: '300px',
-          maxWidth: '400px',
+          ...(isMobile ? {} : { minWidth: '300px', maxWidth: '400px' }),
           fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
         }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
@@ -196,15 +223,25 @@ function TreePageInner() {
       {selectedNode && (
         <div className="panel-in panel-in-1" style={{
           position: 'absolute',
-          top: 0,
-          right: 0,
-          bottom: 0,
-          width: '290px',
           ...GLASS,
-          borderLeft: '1px solid rgba(148,163,184,0.1)',
-          borderRight: 'none',
-          borderTop: 'none',
-          borderBottom: 'none',
+          ...(isMobile ? {
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: '100%',
+            maxHeight: '60vh',
+            borderTop: '1px solid rgba(148,163,184,0.15)',
+            borderRadius: '16px 16px 0 0',
+          } : {
+            top: 0,
+            right: 0,
+            bottom: 0,
+            width: '290px',
+            borderLeft: '1px solid rgba(148,163,184,0.1)',
+            borderRight: 'none',
+            borderTop: 'none',
+            borderBottom: 'none',
+          }),
           padding: '22px 20px',
           display: 'flex',
           flexDirection: 'column',

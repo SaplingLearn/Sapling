@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from db.connection import table
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody
@@ -11,6 +11,10 @@ from services.gemini_service import call_gemini_multiturn, extract_graph_update
 from services.graph_service import get_graph, apply_graph_update
 
 router = APIRouter()
+
+# Lazy sessions: start-session does not write to DB until the user sends their first chat message.
+# Maps session_id -> pending payload (cleared on first chat, end-session discard, or delete).
+PENDING_SESSIONS: dict[str, dict] = {}
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
 
@@ -154,15 +158,30 @@ def get_user_name(user_id: str) -> str:
     return rows[0]["name"] if rows else "Student"
 
 
+def _consume_pending(session_id: str, user_id: str) -> None:
+    """If session was started lazily, persist session row + first assistant message before user/chat."""
+    if session_id not in PENDING_SESSIONS:
+        return
+    pending = PENDING_SESSIONS.pop(session_id)
+    if pending["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Session user mismatch")
+    table("sessions").insert({
+        "id": session_id,
+        "user_id": user_id,
+        "mode": pending["mode"],
+        "topic": pending["topic"],
+    })
+    save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
+
+
+def _ensure_session_ready(session_id: str, user_id: str) -> None:
+    """For action/mode-switch: materialize lazy session if still pending."""
+    _consume_pending(session_id, user_id)
+
+
 @router.post("/start-session")
 def start_session(body: StartSessionBody):
     session_id = str(uuid.uuid4())
-    table("sessions").insert({
-        "id": session_id,
-        "user_id": body.user_id,
-        "mode": body.mode,
-        "topic": body.topic,
-    })
 
     student_name = get_user_name(body.user_id)
     graph_data = get_graph(body.user_id)
@@ -184,8 +203,15 @@ def start_session(body: StartSessionBody):
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
     reply, graph_update = extract_graph_update(raw)
-    save_message(session_id, "assistant", reply, graph_update)
     apply_graph_update(body.user_id, graph_update)
+    PENDING_SESSIONS[session_id] = {
+        "user_id": body.user_id,
+        "mode": body.mode,
+        "topic": body.topic,
+        "use_shared_context": body.use_shared_context,
+        "assistant_reply": reply,
+        "graph_update": graph_update,
+    }
 
     return {
         "session_id": session_id,
@@ -196,6 +222,7 @@ def start_session(body: StartSessionBody):
 
 @router.post("/chat")
 def chat(body: ChatBody):
+    _consume_pending(body.session_id, body.user_id)
     save_message(body.session_id, "user", body.message)
 
     student_name = get_user_name(body.user_id)
@@ -225,6 +252,20 @@ def chat(body: ChatBody):
 
 @router.post("/end-session")
 def end_session(body: EndSessionBody):
+    if body.session_id in PENDING_SESSIONS:
+        pending = PENDING_SESSIONS[body.session_id]
+        if body.user_id and pending["user_id"] != body.user_id:
+            raise HTTPException(status_code=403, detail="Session user mismatch")
+        PENDING_SESSIONS.pop(body.session_id, None)
+        empty = {
+            "concepts_covered": [],
+            "mastery_changes": [],
+            "new_connections": [],
+            "time_spent_minutes": 0,
+            "recommended_next": [],
+        }
+        return {"summary": empty}
+
     session_rows = table("sessions").select(
         "user_id,started_at",
         filters={"id": f"eq.{body.session_id}"},
@@ -303,7 +344,13 @@ def list_sessions(user_id: str, limit: int = 10):
 
 
 @router.delete("/sessions/{session_id}")
-def delete_session(session_id: str):
+def delete_session(session_id: str, user_id: str | None = Query(None)):
+    if session_id in PENDING_SESSIONS:
+        pending = PENDING_SESSIONS[session_id]
+        if user_id and pending["user_id"] != user_id:
+            raise HTTPException(status_code=403, detail="Session user mismatch")
+        PENDING_SESSIONS.pop(session_id, None)
+        return {"deleted": True}
     table("messages").delete({"session_id": f"eq.{session_id}"})
     table("sessions").delete({"id": f"eq.{session_id}"})
     return {"deleted": True}
@@ -311,6 +358,28 @@ def delete_session(session_id: str):
 
 @router.get("/sessions/{session_id}/resume")
 def resume_session(session_id: str):
+    if session_id in PENDING_SESSIONS:
+        p = PENDING_SESSIONS[session_id]
+        now = datetime.utcnow().isoformat()
+        return {
+            "session": {
+                "id": session_id,
+                "user_id": p["user_id"],
+                "topic": p["topic"],
+                "mode": p["mode"],
+                "started_at": now,
+                "ended_at": None,
+            },
+            "messages": [
+                {
+                    "id": "pending_assistant",
+                    "role": "assistant",
+                    "content": p["assistant_reply"],
+                    "created_at": now,
+                },
+            ],
+        }
+
     session_rows = table("sessions").select(
         "id,user_id,topic,mode,started_at,ended_at",
         filters={"id": f"eq.{session_id}"},
@@ -331,6 +400,7 @@ def resume_session(session_id: str):
 
 @router.post("/action")
 def action(body: ActionBody):
+    _ensure_session_ready(body.session_id, body.user_id)
     action_prompts = {
         "hint": "The student asked for a hint. Give a small scaffold or clue without giving away the answer.",
         "confused": "The student said they are confused. Identify the likely point of confusion and re-explain with a different analogy.",
@@ -363,6 +433,7 @@ def action(body: ActionBody):
 
 @router.post("/mode-switch")
 def mode_switch(body: ModeSwitchBody):
+    _ensure_session_ready(body.session_id, body.user_id)
     student_name = get_user_name(body.user_id).split()[0]
     topic = _get_session_topic(body.session_id)
     mode_label = MODE_DISPLAY_NAMES.get(body.new_mode, body.new_mode)

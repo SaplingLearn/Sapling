@@ -125,6 +125,22 @@ export interface RoomMember {
   graph: KnowledgeGraph & { stats?: GraphStats };
 }
 
+/** Response from GET /api/social/rooms/:id/overview */
+export interface RoomOverviewData {
+  room: { id: string; name: string; invite_code: string; created_by: string };
+  members: RoomMember[];
+  ai_summary: string;
+}
+
+export interface RoomMessageRow {
+  id: string;
+  user_id: string;
+  user_name: string;
+  text: string | null;
+  image_url: string | null;
+  created_at: string;
+}
+
 export interface StudyMatch {
   partner: { id: string; name: string };
   you_can_teach: { concept: string; your_mastery: number; their_mastery: number }[];

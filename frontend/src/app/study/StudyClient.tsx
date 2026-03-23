@@ -28,8 +28,21 @@ interface CachedGuide { id: string; course_id: string; exam_id: string; course_n
 type Mode = 'flashcards' | 'study-guide';
 type GuideState = 'selection' | 'loading' | 'guide';
 
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 export default function StudyClient() {
   const { userId, userReady } = useUser();
+  const isMobile = useIsMobile();
 
   const [mode, setMode] = useState<Mode>('study-guide');
   const [flashcardStudyMode, setFlashcardStudyMode] = useState(false);
@@ -164,7 +177,7 @@ export default function StudyClient() {
     const fmtGen = generatedAt ? new Date(generatedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
     return (
       <div style={{ height: 'calc(100vh - 48px)', display: 'flex', flexDirection: 'column', fontFamily: font }}>
-        <div style={{ background: '#f0f5f0', borderBottom: '1px solid rgba(107,114,128,0.12)', padding: '0 20px', height: '52px', display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+        <div style={{ background: '#f0f5f0', borderBottom: '1px solid rgba(107,114,128,0.12)', padding: '0 20px', height: '52px', display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0, flexWrap: 'wrap' }}>
           <button onClick={() => { setGuideState('selection'); setGuide(null); }} style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: '18px', cursor: 'pointer', lineHeight: 1 }}>←</button>
           <span style={{ fontSize: '15px', fontWeight: 600, color: '#111827' }}>Study Guide</span>
           <span style={{ fontSize: '13px', color: '#9ca3af' }}>{guide.exam}</span>
@@ -227,9 +240,9 @@ export default function StudyClient() {
 
       {/* Study guide selection */}
       {mode === 'study-guide' && (
-        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden', flexDirection: isMobile ? 'column' as const : 'row' as const }}>
           {/* Left — generator */}
-          <div style={{ width: '380px', flexShrink: 0, borderRight: '1px solid rgba(107,114,128,0.12)', padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: '20px', background: '#f9fafb', overflowY: 'auto' }}>
+          <div style={{ width: isMobile ? '100%' : '380px', ...(isMobile ? {} : { flexShrink: 0 }), borderRight: '1px solid rgba(107,114,128,0.12)', padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: '20px', background: '#f9fafb', overflowY: 'auto' }}>
             <p style={{ fontSize: '15px', fontWeight: 600, color: '#111827', margin: '0 0 4px' }}>Generate study guide</p>
             {error && <div style={{ padding: '12px 16px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', fontSize: '13px', color: '#dc2626' }}>{error}</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
