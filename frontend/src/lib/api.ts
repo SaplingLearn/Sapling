@@ -221,10 +221,27 @@ export const kickMember = (roomId: string, memberId: string, requesterId: string
 export const getRoomMessages = (roomId: string) =>
   fetchJSON<{ messages: RoomMessageRow[] }>(`/api/social/rooms/${roomId}/messages`);
 
-export const sendRoomMessage = (roomId: string, userId: string, userName: string, text: string, imageUrl?: string) =>
+export const sendRoomMessage = (roomId: string, userId: string, userName: string, text: string, imageUrl?: string, replyToId?: string) =>
   fetchJSON<{ message: any }>(`/api/social/rooms/${roomId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, user_name: userName, text: text || null, image_url: imageUrl || null }),
+    body: JSON.stringify({ user_id: userId, user_name: userName, text: text || null, image_url: imageUrl || null, reply_to_id: replyToId || null }),
+  });
+
+export const deleteRoomMessage = (roomId: string, messageId: string, userId: string) =>
+  fetchJSON<{ deleted: boolean }>(`/api/social/rooms/${roomId}/messages/${encodeURIComponent(messageId)}?user_id=${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  });
+
+export const editRoomMessage = (roomId: string, messageId: string, userId: string, text: string) =>
+  fetchJSON<{ edited: boolean }>(`/api/social/rooms/${roomId}/messages/${encodeURIComponent(messageId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ user_id: userId, text }),
+  });
+
+export const toggleRoomReaction = (roomId: string, messageId: string, userId: string, emoji: string) =>
+  fetchJSON<{ added: boolean }>(`/api/social/rooms/${roomId}/messages/${encodeURIComponent(messageId)}/reactions`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, emoji }),
   });
 
 // ── Documents ─────────────────────────────────────────────────────────────────

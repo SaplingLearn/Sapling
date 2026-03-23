@@ -6,7 +6,7 @@ from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Query
 
 from db.connection import table
-from models import CreateRoomBody, JoinRoomBody, MatchBody, SendMessageBody, LeaveRoomBody
+from models import CreateRoomBody, JoinRoomBody, MatchBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
 from services.graph_service import get_graph
 from services.matching_service import find_study_matches
 from services.gemini_service import call_gemini
@@ -228,7 +228,49 @@ def get_room_messages(room_id: str):
         order="created_at.asc",
         limit=50,
     )
-    return {"messages": rows}
+    if not rows:
+        return {"messages": []}
+
+    msg_ids = [r["id"] for r in rows]
+
+    # Fetch reactions for all messages in one query
+    reaction_rows = table("room_reactions").select(
+        "*", filters={"message_id": f"in.({','.join(msg_ids)})"}
+    ) if msg_ids else []
+
+    reactions_by_msg: dict = {}
+    for r in reaction_rows:
+        mid = r["message_id"]
+        if mid not in reactions_by_msg:
+            reactions_by_msg[mid] = {}
+        if r["emoji"] not in reactions_by_msg[mid]:
+            reactions_by_msg[mid][r["emoji"]] = []
+        reactions_by_msg[mid][r["emoji"]].append(r["user_id"])
+
+    # Fetch reply_to snippets
+    reply_ids = list({r["reply_to_id"] for r in rows if r.get("reply_to_id")})
+    reply_map: dict = {}
+    if reply_ids:
+        reply_rows = table("room_messages").select(
+            "id,user_name,text,is_deleted",
+            filters={"id": f"in.({','.join(reply_ids)})"},
+        )
+        for rr in reply_rows:
+            reply_map[rr["id"]] = {
+                "id": rr["id"],
+                "user_name": rr["user_name"],
+                "text": None if rr.get("is_deleted") else rr.get("text"),
+            }
+
+    enriched = []
+    for r in rows:
+        mid = r["id"]
+        emoji_map = reactions_by_msg.get(mid, {})
+        r["reactions"] = [{"emoji": e, "user_ids": uids} for e, uids in emoji_map.items()]
+        r["reply_to"] = reply_map.get(r.get("reply_to_id")) if r.get("reply_to_id") else None
+        enriched.append(r)
+
+    return {"messages": enriched}
 
 
 @router.post("/rooms/{room_id}/messages")
@@ -239,8 +281,55 @@ def send_room_message(room_id: str, body: SendMessageBody):
         "user_name": body.user_name,
         "text": body.text or None,
         "image_url": body.image_url or None,
+        "reply_to_id": body.reply_to_id or None,
     })
     return {"message": row[0] if row else {}}
+
+
+@router.delete("/rooms/{room_id}/messages/{message_id}")
+def delete_room_message(room_id: str, message_id: str, user_id: str = Query(...)):
+    rows = table("room_messages").select("user_id", filters={"id": f"eq.{message_id}"})
+    if not rows:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if rows[0]["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Cannot delete another user's message")
+    table("room_messages").update({"is_deleted": True}, filters={"id": f"eq.{message_id}"})
+    return {"deleted": True}
+
+
+@router.patch("/rooms/{room_id}/messages/{message_id}")
+def edit_room_message(room_id: str, message_id: str, body: EditMessageBody):
+    rows = table("room_messages").select("user_id,is_deleted", filters={"id": f"eq.{message_id}"})
+    if not rows:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if rows[0]["user_id"] != body.user_id:
+        raise HTTPException(status_code=403, detail="Cannot edit another user's message")
+    if rows[0].get("is_deleted"):
+        raise HTTPException(status_code=400, detail="Cannot edit a deleted message")
+    from datetime import datetime, timezone
+    table("room_messages").update(
+        {"text": body.text, "edited_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{message_id}"},
+    )
+    return {"edited": True}
+
+
+@router.post("/rooms/{room_id}/messages/{message_id}/reactions")
+def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody):
+    existing = table("room_reactions").select(
+        "id", filters={"message_id": f"eq.{message_id}", "user_id": f"eq.{body.user_id}", "emoji": f"eq.{body.emoji}"}
+    )
+    if existing:
+        table("room_reactions").delete({"id": f"eq.{existing[0]['id']}"})
+        return {"added": False}
+    reaction_id = str(uuid.uuid4())
+    table("room_reactions").insert({
+        "id": reaction_id,
+        "message_id": message_id,
+        "user_id": body.user_id,
+        "emoji": body.emoji,
+    })
+    return {"added": True}
 
 
 @router.get("/students")

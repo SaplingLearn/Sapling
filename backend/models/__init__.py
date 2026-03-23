@@ -109,6 +109,17 @@ class SendMessageBody(BaseModel):
     user_name: str
     text: Optional[str] = None
     image_url: Optional[str] = None
+    reply_to_id: Optional[str] = None
+
+
+class EditMessageBody(BaseModel):
+    user_id: str
+    text: str
+
+
+class ToggleReactionBody(BaseModel):
+    user_id: str
+    emoji: str
 
 
 class ExportBody(BaseModel):

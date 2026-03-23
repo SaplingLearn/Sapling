@@ -139,6 +139,11 @@ export interface RoomMessageRow {
   text: string | null;
   image_url: string | null;
   created_at: string;
+  reply_to_id: string | null;
+  is_deleted: boolean;
+  edited_at: string | null;
+  reply_to: { id: string; user_name: string; text: string | null } | null;
+  reactions: { emoji: string; user_ids: string[] }[];
 }
 
 export interface StudyMatch {
