@@ -97,12 +97,6 @@ def get_graph(user_id: str) -> dict:
     user_rows = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
     streak = user_rows[0]["streak_count"] if user_rows else 0
 
-    try:
-        course_rows = table("courses").select("course_name", filters={"user_id": f"eq.{user_id}"})
-        user_course_names = {r["course_name"] for r in course_rows}
-    except Exception:
-        user_course_names = set()
-
     stats = {
         "total_nodes": len(nodes),
         "mastered": mastered,
@@ -141,20 +135,6 @@ def get_graph(user_id: str) -> dict:
                 "target": n["id"],
                 "strength": 0.7,
                 "relationship_type": "related",
-            })
-
-    for course_name in user_course_names:
-        if course_name not in subject_map:
-            subject_nodes.append({
-                "id": f"subject_root__{course_name}",
-                "user_id": user_id,
-                "concept_name": course_name,
-                "mastery_score": 0.0,
-                "mastery_tier": "subject_root",
-                "subject": course_name,
-                "times_studied": 0,
-                "last_studied_at": None,
-                "is_subject_root": True,
             })
 
     return {"nodes": nodes + subject_nodes, "edges": edges + subject_edges, "stats": stats}
