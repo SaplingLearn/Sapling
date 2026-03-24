@@ -93,7 +93,7 @@ class TestGetGraph:
         assert roots[0]["concept_name"] == "CS101"
         assert roots[0]["mastery_tier"] == "subject_root"
 
-    def test_empty_course_appears_as_subject_root(self):
+    def test_empty_course_does_not_appear_as_subject_root(self):
         factory = _mock_table({
             "users": [{"streak_count": 0}],
             "graph_nodes": [],
@@ -104,7 +104,7 @@ class TestGetGraph:
             result = get_graph("u1")
 
         roots = [n for n in result["nodes"] if n.get("is_subject_root")]
-        assert any(n["concept_name"] == "Philosophy" for n in roots)
+        assert not any(n["concept_name"] == "Philosophy" for n in roots)
 
     def test_edges_are_remapped(self):
         nodes = [{"id": "n1", "concept_name": "A", "mastery_tier": "learning", "mastery_score": 0.5, "subject": "X", "times_studied": 0, "user_id": "u1"}]
