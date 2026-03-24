@@ -202,7 +202,13 @@ export default function LibraryPage() {
       valid.push(file);
     }
 
-    setFileError(errors[0] ?? '');
+    setFileError(
+      errors.length === 0
+        ? ''
+        : errors.length === 1
+          ? errors[0]
+          : `${errors.slice(0, 2).join(' · ')}${errors.length > 2 ? ` (+${errors.length - 2} more)` : ''}`
+    );
     setPickedFiles(valid);
   }
 
@@ -308,6 +314,7 @@ export default function LibraryPage() {
 
   // ── Close modal ──────────────────────────────────────────────────────────────
   function closeModal() {
+    const hadBatchUpload = uploadItems.length > 0;
     setShowUpload(false);
     setUploadStep('pick');
     setPickedFiles([]);
@@ -318,6 +325,15 @@ export default function LibraryPage() {
     setShowAddCourse(false);
     setNewCourseName('');
     setCourseAddError('');
+    // Parallel uploads may have persisted docs before the user finished review — resync grid.
+    if (hadBatchUpload && userId) {
+      const sync = () =>
+        getDocuments(userId)
+          .then(d => setDocs(d.documents))
+          .catch(() => {});
+      sync();
+      window.setTimeout(sync, 1500);
+    }
   }
 
   // ── Inline add course ────────────────────────────────────────────────────────
