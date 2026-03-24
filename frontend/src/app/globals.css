@@ -53,6 +53,23 @@
   --dur-slow:    350ms;
 }
 
+/* Library upload modal — reliable spinner (avoid inline <style> keyframes) */
+@keyframes sapling-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sapling-upload-spinner {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 3px solid rgba(26, 92, 42, 0.15);
+  border-top-color: #1a5c2a;
+  margin: 0 auto 20px;
+  animation: sapling-spin 0.8s linear infinite;
+}
+
 /* ── Base Reset ─────────────────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;

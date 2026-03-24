@@ -56,6 +56,29 @@ function useIsMobile(breakpoint = 768) {
 const MAX_BYTES = 15 * 1024 * 1024;
 const ALLOWED_EXTS = ['.pdf', '.docx', '.pptx'];
 
+/** Gemini + extraction can exceed 30s; abort client-side after this so the UI never hangs silently. */
+const LIBRARY_UPLOAD_TIMEOUT_MS = 4 * 60 * 1000;
+
+async function uploadDocumentWithTimeout(fd: FormData): Promise<Doc> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), LIBRARY_UPLOAD_TIMEOUT_MS);
+  try {
+    return await uploadDocument(fd, { signal: controller.signal });
+  } catch (e: unknown) {
+    const aborted =
+      (typeof DOMException !== 'undefined' && e instanceof DOMException && e.name === 'AbortError') ||
+      (e instanceof Error && e.name === 'AbortError');
+    if (aborted) {
+      throw new Error(
+        'This is taking longer than expected (over 4 minutes). Check your connection and try again with a smaller file.'
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
@@ -119,6 +142,7 @@ export default function LibraryPage() {
   const [dragging, setDragging] = useState(false);
   const [selectedCourseId, setSelectedCourseId] = useState('');
   const [uploadError, setUploadError] = useState('');
+  const [processingSeconds, setProcessingSeconds] = useState(0);
   const [result, setResult] = useState<Doc | null>(null);
   const [resultCategory, setResultCategory] = useState<string>('other');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -136,6 +160,18 @@ export default function LibraryPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [userId, userReady]);
+
+  useEffect(() => {
+    if (uploadStep !== 'processing') {
+      setProcessingSeconds(0);
+      return;
+    }
+    setProcessingSeconds(0);
+    const id = window.setInterval(() => {
+      setProcessingSeconds(s => s + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [uploadStep]);
 
   const courseById = useMemo(() => {
     const m: Record<string, Course> = {};
@@ -181,7 +217,7 @@ export default function LibraryPage() {
       fd.append('file', pickedFile);
       fd.append('course_id', selectedCourseId);
       fd.append('user_id', userId);
-      const doc = await uploadDocument(fd);
+      const doc = await uploadDocumentWithTimeout(fd);
       setResult(doc);
       setResultCategory(doc.category ?? 'other');
       setUploadStep('confirm');
@@ -209,25 +245,25 @@ export default function LibraryPage() {
 
   // ── Re-analyze ──────────────────────────────────────────────────────────────
   async function handleReanalyze() {
-    const previousId = result?.id;
-    setResult(null);
+    const previous = result;
+    if (!pickedFile || !previous) return;
     setUploadStep('processing');
     setUploadError('');
     try {
-      // Delete the previous document to avoid duplicates
-      if (previousId) {
-        await deleteDocument(previousId, userId).catch(() => {});
-      }
       const fd = new FormData();
-      fd.append('file', pickedFile!);
+      fd.append('file', pickedFile);
       fd.append('course_id', selectedCourseId);
       fd.append('user_id', userId);
-      const doc = await uploadDocument(fd);
+      const doc = await uploadDocumentWithTimeout(fd);
+      if (doc.id !== previous.id) {
+        await deleteDocument(previous.id, userId).catch(() => {});
+      }
       setResult(doc);
       setResultCategory(doc.category ?? 'other');
       setUploadStep('confirm');
     } catch (e: any) {
       setUploadError(e.message || 'Re-analysis failed.');
+      setResult(previous);
       setUploadStep('confirm');
     }
   }
@@ -622,14 +658,16 @@ export default function LibraryPage() {
             {/* ── STEP: processing ── */}
             {uploadStep === 'processing' && (
               <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                <div style={{
-                  width: '40px', height: '40px', borderRadius: '50%',
-                  border: '3px solid rgba(26,92,42,0.15)', borderTopColor: '#1a5c2a',
-                  margin: '0 auto 20px', animation: 'spin 0.8s linear infinite',
-                }} />
+                <div className="sapling-upload-spinner" role="status" aria-live="polite" aria-label="Analyzing document" />
                 <p style={{ fontSize: '15px', fontWeight: 600, color: '#111827', margin: 0 }}>Analyzing your document…</p>
-                <p style={{ fontSize: '13px', color: '#9ca3af', margin: '6px 0 0' }}>This may take a moment.</p>
-                <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+                <p style={{ fontSize: '13px', color: '#9ca3af', margin: '6px 0 0' }}>
+                  Extracting text and running AI. Large files can take one to several minutes.
+                </p>
+                <p style={{ fontSize: '12px', color: '#9ca3af', margin: '10px 0 0', fontVariantNumeric: 'tabular-nums' }}>
+                  {processingSeconds < 60
+                    ? `Elapsed: ${processingSeconds}s`
+                    : `Elapsed: ${Math.floor(processingSeconds / 60)}:${String(processingSeconds % 60).padStart(2, '0')}`}
+                </p>
               </div>
             )}
 
