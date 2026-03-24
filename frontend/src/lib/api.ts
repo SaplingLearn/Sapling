@@ -128,7 +128,28 @@ export const extractSyllabus = (formData: FormData, userId?: string): Promise<an
   return fetch(`${API_URL}/api/calendar/extract`, {
     method: 'POST',
     body: formData,
-  }).then(r => r.json());
+  }).then(async r => {
+    let data: Record<string, unknown> = {};
+    try {
+      data = (await r.json()) as Record<string, unknown>;
+    } catch {
+      throw new Error(`Could not read server response (HTTP ${r.status}).`);
+    }
+    if (!r.ok) {
+      const detail = data.detail;
+      let msg = '';
+      if (typeof detail === 'string') msg = detail;
+      else if (Array.isArray(detail)) {
+        msg = detail
+          .map((d: unknown) => (typeof d === 'object' && d && 'msg' in d ? String((d as { msg: string }).msg) : ''))
+          .filter(Boolean)
+          .join('; ');
+      }
+      if (!msg && typeof data.error === 'string') msg = data.error;
+      throw new Error(msg || `Request failed (HTTP ${r.status}).`);
+    }
+    return data;
+  });
 };
 
 export const getUpcomingAssignments = (userId: string) =>

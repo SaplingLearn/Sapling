@@ -25,6 +25,7 @@ import {
   generateQuiz,
   submitQuiz,
   getUpcomingAssignments,
+  extractSyllabus,
   saveAssignments,
   getCalendarStatus,
   syncToGoogleCalendar,
@@ -251,6 +252,40 @@ describe('getUpcomingAssignments', () => {
     mockFetch({ assignments: [] });
     await getUpcomingAssignments('user_andres');
     expect(lastCall()[0]).toBe('/api/calendar/upcoming/user_andres');
+  });
+});
+
+describe('extractSyllabus', () => {
+  it('POST /api/calendar/extract with FormData and returns JSON on success', async () => {
+    mockFetch({ assignments: [], warnings: [] });
+    const fd = new FormData();
+    fd.append('file', new Blob(['x'], { type: 'application/pdf' }), 's.pdf');
+    const res = await extractSyllabus(fd, 'user_andres');
+    expect(lastCall()[0]).toBe('/api/calendar/extract');
+    expect(lastCall()[1]?.method).toBe('POST');
+    expect(res.assignments).toEqual([]);
+  });
+
+  it('throws with detail message when response is not OK', async () => {
+    mockFetch({ detail: 'Invalid file' }, false, 400);
+    const fd = new FormData();
+    await expect(extractSyllabus(fd)).rejects.toThrow('Invalid file');
+  });
+
+  it('throws with HTTP status when body has no detail', async () => {
+    mockFetch({}, false, 502);
+    const fd = new FormData();
+    await expect(extractSyllabus(fd)).rejects.toThrow('Request failed (HTTP 502).');
+  });
+
+  it('throws joining FastAPI validation detail array', async () => {
+    mockFetch(
+      { detail: [{ msg: 'field required' }, { msg: 'invalid type' }] },
+      false,
+      422
+    );
+    const fd = new FormData();
+    await expect(extractSyllabus(fd)).rejects.toThrow('field required; invalid type');
   });
 });
 
