@@ -182,13 +182,13 @@ export default function LandingPage() {
           navRef.current.classList.add('shadow-sm');
           navRef.current.style.background = 'rgba(255,255,255,0.35)';
           navRef.current.style.backdropFilter = 'blur(24px)';
-          navRef.current.style.webkitBackdropFilter = 'blur(24px)';
+          navRef.current.style.setProperty('-webkit-backdrop-filter', 'blur(24px)');
           navRef.current.style.borderBottomColor = 'rgba(255,255,255,0.55)';
         } else {
           navRef.current.classList.remove('shadow-sm');
           navRef.current.style.background = 'rgba(255,255,255,0.2)';
           navRef.current.style.backdropFilter = 'blur(16px)';
-          navRef.current.style.webkitBackdropFilter = 'blur(16px)';
+          navRef.current.style.setProperty('-webkit-backdrop-filter', 'blur(16px)');
           navRef.current.style.borderBottomColor = 'rgba(255,255,255,0.35)';
         }
       }
