@@ -43,21 +43,35 @@ def _resolve_course(topic: str, user_id: str) -> str:
     """Return the subject/course the topic belongs to, or '' if unknown."""
     if not topic:
         return ""
+    topic_trim = topic.strip()
+    if not topic_trim:
+        return ""
     subject_match = table("graph_nodes").select(
-        "subject", filters={"user_id": f"eq.{user_id}", "subject": f"eq.{topic}"}, limit=1
+        "subject", filters={"user_id": f"eq.{user_id}", "subject": f"eq.{topic_trim}"}, limit=1
     )
     if subject_match:
-        return topic
+        return topic_trim
     concept_match = table("graph_nodes").select(
-        "subject", filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{topic}"}, limit=1
+        "subject", filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{topic_trim}"}, limit=1
     )
     if concept_match:
         return concept_match[0].get("subject") or ""
     course_match = table("courses").select(
-        "course_name", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{topic}"}, limit=1
+        "course_name", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{topic_trim}"}, limit=1
     )
     if course_match:
-        return topic
+        return topic_trim
+    try:
+        course_rows = table("courses").select(
+            "course_name",
+            filters={"user_id": f"eq.{user_id}"},
+        )
+    except Exception:
+        course_rows = []
+    for row in course_rows or []:
+        cn = row.get("course_name") or ""
+        if cn.lower() == topic_trim.lower():
+            return cn
     return ""
 
 

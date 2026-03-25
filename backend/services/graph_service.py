@@ -5,6 +5,37 @@ from config import get_mastery_tier
 from db.connection import table
 
 
+def ensure_graph_nodes_for_courses(user_id: str) -> None:
+    """Ensure each course has at least one graph node so subject roots and Learn course pickers work."""
+    try:
+        rows = table("courses").select(
+            "course_name",
+            filters={"user_id": f"eq.{user_id}"},
+        )
+    except Exception:
+        return
+    if not rows:
+        return
+    for r in rows:
+        course_name = r["course_name"]
+        existing = table("graph_nodes").select(
+            "id",
+            filters={"user_id": f"eq.{user_id}", "subject": f"eq.{course_name}"},
+            limit=1,
+        )
+        if existing:
+            continue
+        table("graph_nodes").insert({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "concept_name": course_name,
+            "mastery_score": 0.0,
+            "mastery_tier": get_mastery_tier(0.0),
+            "subject": course_name,
+            "mastery_events": [],
+        })
+
+
 def ensure_user_exists(user_id: str) -> None:
     """Create a user row if one doesn't exist yet (prevents FK violations)."""
     existing = table("users").select("id", filters={"id": f"eq.{user_id}"})
@@ -66,6 +97,7 @@ def _compute_velocity(events: list) -> float:
 
 def get_graph(user_id: str) -> dict:
     ensure_user_exists(user_id)
+    ensure_graph_nodes_for_courses(user_id)
     nodes = table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"})
 
     edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
@@ -136,9 +168,6 @@ def get_graph(user_id: str) -> dict:
                 "strength": 0.7,
                 "relationship_type": "related",
             })
-
-    # Do not add subject roots for courses that only exist in `courses` with no graph_nodes yet
-    # (e.g. after syllabus upload). Subject roots appear once concepts exist for that subject (#18).
 
     return {"nodes": nodes + subject_nodes, "edges": edges + subject_edges, "stats": stats}
 

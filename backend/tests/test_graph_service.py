@@ -13,6 +13,7 @@ from services.graph_service import (
     delete_course,
     apply_graph_update,
     get_recommendations,
+    ensure_graph_nodes_for_courses,
 )
 
 
@@ -93,7 +94,8 @@ class TestGetGraph:
         assert roots[0]["concept_name"] == "CS101"
         assert roots[0]["mastery_tier"] == "subject_root"
 
-    def test_empty_course_does_not_appear_as_subject_root(self):
+    def test_course_with_only_courses_row_still_has_no_root_until_seed_exists(self):
+        """Orphan course rows do not produce graph data until ensure inserts a seed (mock has no insert state)."""
         factory = _mock_table({
             "users": [{"streak_count": 0}],
             "graph_nodes": [],
@@ -105,6 +107,54 @@ class TestGetGraph:
 
         roots = [n for n in result["nodes"] if n.get("is_subject_root")]
         assert not any(n["concept_name"] == "Philosophy" for n in roots)
+
+
+# ── ensure_graph_nodes_for_courses ────────────────────────────────────────────
+
+class TestEnsureGraphNodesForCourses:
+    def test_inserts_seed_when_course_has_no_nodes(self):
+        gn = MagicMock()
+        gn.select.return_value = []
+        cr = MagicMock()
+        cr.select.return_value = [{"course_name": "Bio101"}]
+
+        def factory(name):
+            if name == "graph_nodes":
+                return gn
+            if name == "courses":
+                return cr
+            m = MagicMock()
+            m.select.return_value = []
+            return m
+
+        with patch("services.graph_service.table", side_effect=factory):
+            ensure_graph_nodes_for_courses("u1")
+
+        gn.insert.assert_called_once()
+        row = gn.insert.call_args[0][0]
+        assert row["subject"] == "Bio101"
+        assert row["concept_name"] == "Bio101"
+        assert row["user_id"] == "u1"
+
+    def test_skips_insert_when_subject_already_has_nodes(self):
+        gn = MagicMock()
+        gn.select.return_value = [{"id": "n1"}]
+        cr = MagicMock()
+        cr.select.return_value = [{"course_name": "Bio101"}]
+
+        def factory(name):
+            if name == "graph_nodes":
+                return gn
+            if name == "courses":
+                return cr
+            m = MagicMock()
+            m.select.return_value = []
+            return m
+
+        with patch("services.graph_service.table", side_effect=factory):
+            ensure_graph_nodes_for_courses("u1")
+
+        gn.insert.assert_not_called()
 
     def test_edges_are_remapped(self):
         nodes = [{"id": "n1", "concept_name": "A", "mastery_tier": "learning", "mastery_score": 0.5, "subject": "X", "times_studied": 0, "user_id": "u1"}]
