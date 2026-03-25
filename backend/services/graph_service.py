@@ -5,35 +5,27 @@ from config import get_mastery_tier
 from db.connection import table
 
 
-def ensure_graph_nodes_for_courses(user_id: str) -> None:
-    """Ensure each course has at least one graph node so subject roots and Learn course pickers work."""
+def _user_course_titles(user_id: str) -> set[str]:
     try:
         rows = table("courses").select(
             "course_name",
             filters={"user_id": f"eq.{user_id}"},
         )
     except Exception:
-        return
-    if not rows:
-        return
-    for r in rows:
-        course_name = r["course_name"]
-        existing = table("graph_nodes").select(
-            "id",
-            filters={"user_id": f"eq.{user_id}", "subject": f"eq.{course_name}"},
-            limit=1,
-        )
-        if existing:
+        return set()
+    return {r["course_name"] for r in (rows or []) if r.get("course_name")}
+
+
+def _filter_course_title_seed_nodes(nodes: list, course_titles: set[str]) -> list:
+    """Remove rows that only duplicated the course hub (concept_name == subject == registered course)."""
+    out = []
+    for n in nodes:
+        subj = (n.get("subject") or "").strip()
+        concept = (n.get("concept_name") or "").strip()
+        if subj and concept == subj and subj in course_titles:
             continue
-        table("graph_nodes").insert({
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "concept_name": course_name,
-            "mastery_score": 0.0,
-            "mastery_tier": get_mastery_tier(0.0),
-            "subject": course_name,
-            "mastery_events": [],
-        })
+        out.append(n)
+    return out
 
 
 def ensure_user_exists(user_id: str) -> None:
@@ -97,8 +89,10 @@ def _compute_velocity(events: list) -> float:
 
 def get_graph(user_id: str) -> dict:
     ensure_user_exists(user_id)
-    ensure_graph_nodes_for_courses(user_id)
-    nodes = table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"})
+    course_titles = _user_course_titles(user_id)
+    nodes_raw = table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"})
+    nodes = _filter_course_title_seed_nodes(nodes_raw or [], course_titles)
+    node_ids = {n["id"] for n in nodes}
 
     edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
     edges = [
@@ -110,6 +104,7 @@ def get_graph(user_id: str) -> dict:
             "relationship_type": e.get("relationship_type", "related"),
         }
         for e in edges_raw
+        if e["source_node_id"] in node_ids and e["target_node_id"] in node_ids
     ]
 
     # Enrich each node with learning velocity; trim event history for API response
@@ -144,11 +139,17 @@ def get_graph(user_id: str) -> dict:
         subj = n.get("subject") or "General"
         subject_map.setdefault(subj, []).append(n)
 
+    for title in course_titles:
+        subject_map.setdefault(title, [])
+
     subject_nodes = []
     subject_edges = []
     for subj, subj_nodes in subject_map.items():
         root_id = f"subject_root__{subj}"
-        avg_mastery = sum(n["mastery_score"] for n in subj_nodes) / len(subj_nodes)
+        if subj_nodes:
+            avg_mastery = sum(n["mastery_score"] for n in subj_nodes) / len(subj_nodes)
+        else:
+            avg_mastery = 0.0
         subject_nodes.append({
             "id": root_id,
             "user_id": user_id,
