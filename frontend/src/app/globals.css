@@ -2,15 +2,25 @@
 
 /* ── Design Tokens ─────────────────────────────────────────────── */
 :root {
+  /* Brand mesh (landing reference palette) */
+  --brand-primary:   #2e7d52;
+  --brand-success:   #22c55e;
+  --brand-progress:  #e8a33a;
+  --brand-teal:      #2b8c96;
+  --brand-struggle:  #e85d4a;
+  --brand-text1:     #1a1a1a;
+  --brand-text2:     #4b5563;
+  --bg-mesh:         #f0f4f2;
+
   /* Backgrounds */
-  --bg:           #e6ede6;
+  --bg:           var(--bg-mesh);
   --bg-panel:     #f8fbf8;
   --bg-sidebar:   #dfe8df;
   --bg-topbar:    #dce6dc;
   --bg-input:     #f8fbf8;
   --bg-subtle:    #e9efe9;
-  --bg-space:     #e6ede6;
-  --bg-glass:     rgba(220, 234, 220, 0.95);
+  --bg-space:     var(--bg-mesh);
+  --bg-glass:     rgba(255, 255, 255, 0.35);
 
   /* Forest green accent */
   --accent:           #1a5c2a;
@@ -167,6 +177,65 @@ input, select, textarea { color-scheme: light; }
 .topbar {
   background: var(--bg-topbar);
   border-bottom: 1px solid var(--border-light);
+}
+
+/* ── Global mesh (three animated blobs, reference landing) ─────── */
+.sapling-mesh-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--bg-mesh);
+}
+
+.sapling-mesh-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  mix-blend-mode: multiply;
+  opacity: 0.7;
+  animation: sapling-blob 10s ease-in-out infinite;
+}
+
+.sapling-mesh-blob--1 {
+  top: -10%;
+  left: -10%;
+  width: 50vw;
+  height: 50vw;
+  max-width: 900px;
+  max-height: 900px;
+  background: rgba(46, 125, 82, 0.22);
+}
+
+.sapling-mesh-blob--2 {
+  top: 20%;
+  right: -10%;
+  width: 40vw;
+  height: 40vw;
+  max-width: 720px;
+  max-height: 720px;
+  background: rgba(43, 140, 150, 0.2);
+  animation-delay: -2.5s;
+}
+
+.sapling-mesh-blob--3 {
+  bottom: -20%;
+  left: 20%;
+  width: 60vw;
+  height: 60vw;
+  max-width: 1000px;
+  max-height: 1000px;
+  background: rgba(232, 163, 58, 0.18);
+  opacity: 0.6;
+  animation-delay: -5s;
+}
+
+@keyframes sapling-blob {
+  0%   { transform: translate(0, 0) scale(1); }
+  33%  { transform: translate(30px, -50px) scale(1.1); }
+  66%  { transform: translate(-20px, 20px) scale(0.9); }
+  100% { transform: translate(0, 0) scale(1); }
 }
 
 /* ── Glass (legacy alias kept) ──────────────────────────────────── */
@@ -409,7 +478,29 @@ input, select, textarea { color-scheme: light; }
 .font-jetbrains { font-family: var(--font-jetbrains), 'JetBrains Mono', monospace; }
 
 /* Prevent horizontal overflow without breaking position: sticky */
-.landing-page { clip-path: inset(0); }
+.landing-page {
+  clip-path: inset(0);
+  /* Same airy base as hero: mesh + soft radial so scroll feels one canvas */
+  background:
+    radial-gradient(ellipse 100% 60% at 50% -10%, rgba(255, 255, 255, 0.55) 0%, transparent 50%),
+    radial-gradient(ellipse 80% 50% at 100% 40%, rgba(255, 255, 255, 0.2) 0%, transparent 45%),
+    radial-gradient(ellipse 70% 45% at 0% 70%, rgba(255, 255, 255, 0.18) 0%, transparent 40%),
+    transparent;
+}
+
+/* Sections sit on mesh; no solid gray blocks */
+.landing-section {
+  background: transparent;
+  position: relative;
+}
+
+.landing-divider {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+}
+
+.landing-divider-v {
+  background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+}
 
 /* ── Ambient glow ──────────────────────────────────────────────── */
 .landing-ambient-glow {
@@ -417,7 +508,7 @@ input, select, textarea { color-scheme: light; }
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: radial-gradient(ellipse at 50% 20%, rgba(255,255,255,0.7) 0%, transparent 60%);
+  background: radial-gradient(ellipse at 50% 18%, rgba(255, 255, 255, 0.45) 0%, transparent 55%);
   transition: background 0.8s ease;
 }
 
@@ -559,7 +650,7 @@ input, select, textarea { color-scheme: light; }
 
 /* ── Landing scrollbar ─────────────────────────────────────────── */
 .landing-page ::-webkit-scrollbar       { width: 6px; }
-.landing-page ::-webkit-scrollbar-track { background: #E9EFED; }
+.landing-page ::-webkit-scrollbar-track { background: var(--bg-mesh); }
 .landing-page ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
 .landing-page ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
 
@@ -567,17 +658,15 @@ input, select, textarea { color-scheme: light; }
    LIQUID GLASS SYSTEM
    ════════════════════════════════════════════════════════════════════ */
 
-/* Base glass panel */
+/* Base glass panel (reference glass-panel: frosted + inset rim) */
 .liquid-glass {
-  background: rgba(255, 255, 255, 0.42);
-  backdrop-filter: blur(24px) saturate(1.6);
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.7),
-    inset 0 -1px 0 0 rgba(0, 0, 0, 0.04),
-    0 4px 24px -2px rgba(0, 0, 0, 0.06),
-    0 1px 3px rgba(0, 0, 0, 0.04);
+    0 8px 32px 0 rgba(31, 38, 135, 0.05),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.4);
   position: relative;
   overflow: hidden;
   isolation: isolate;
@@ -609,81 +698,47 @@ input, select, textarea { color-scheme: light; }
 
 /* Stronger glass for modals / overlays */
 .liquid-glass-strong {
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(40px) saturate(1.8);
-  -webkit-backdrop-filter: blur(40px) saturate(1.8);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(40px) saturate(1.65);
+  -webkit-backdrop-filter: blur(40px) saturate(1.65);
+  border: 1px solid rgba(255, 255, 255, 0.65);
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.8),
-    inset 0 -1px 0 0 rgba(0, 0, 0, 0.03),
-    0 12px 48px -4px rgba(0, 0, 0, 0.12),
-    0 2px 6px rgba(0, 0, 0, 0.04);
+    0 8px 32px 0 rgba(31, 38, 135, 0.08),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5),
+    0 12px 48px -4px rgba(0, 0, 0, 0.1);
 }
 
 /* Subtle glass for pills / small buttons */
 .liquid-glass-subtle {
-  background: rgba(255, 255, 255, 0.50);
-  backdrop-filter: blur(16px) saturate(1.4);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px) saturate(1.45);
+  -webkit-backdrop-filter: blur(12px) saturate(1.45);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.6),
-    0 2px 8px rgba(0, 0, 0, 0.04);
+    0 4px 24px -2px rgba(31, 38, 135, 0.04),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
 
-/* ── Ambient gradient blobs ────────────────────────────────────── */
-@keyframes landing-blob-drift {
-  0%   { transform: translate(0, 0) scale(1); }
-  33%  { transform: translate(40px, -30px) scale(1.08); }
-  66%  { transform: translate(-20px, 20px) scale(0.95); }
-  100% { transform: translate(0, 0) scale(1); }
+/* Alias + inputs (reference glass-input) */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 8px 32px 0 rgba(31, 38, 135, 0.05),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.4);
 }
 
-.landing-ambient-blobs {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 0;
+.glass-input {
+  background: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
-
-.landing-ambient-blobs::before,
-.landing-ambient-blobs::after {
-  content: '';
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  animation: landing-blob-drift 18s ease-in-out infinite;
+.glass-input:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.6);
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 2px rgba(46, 125, 82, 0.2);
 }
-.landing-ambient-blobs::before {
-  width: 500px;
-  height: 500px;
-  top: -10%;
-  left: -5%;
-  background: radial-gradient(circle, rgba(138,99,210,0.10) 0%, rgba(59,130,246,0.06) 50%, transparent 70%);
-  animation-duration: 20s;
-}
-.landing-ambient-blobs::after {
-  width: 450px;
-  height: 450px;
-  bottom: -10%;
-  right: -5%;
-  background: radial-gradient(circle, rgba(20,184,166,0.08) 0%, rgba(217,119,6,0.06) 50%, transparent 70%);
-  animation-duration: 16s;
-  animation-delay: -6s;
-}
-
-.landing-blob-extra {
-  position: absolute;
-  width: 400px;
-  height: 400px;
-  top: 40%;
-  left: 50%;
-  transform: translateX(-50%);
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(59,130,246,0.07) 0%, rgba(138,99,210,0.05) 50%, transparent 70%);
-  filter: blur(80px);
-  pointer-events: none;
-  animation: landing-blob-drift 22s ease-in-out infinite -4s;
-}
-

@@ -69,7 +69,7 @@ export default function LandingPage() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d', { alpha: false });
+    const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) return;
 
     let width = 0, height = 0;
@@ -120,8 +120,7 @@ export default function LandingPage() {
 
     function draw() {
       if (!ctx) return;
-      ctx.fillStyle = '#E9EFED';
-      ctx.fillRect(0, 0, width, height);
+      ctx.clearRect(0, 0, width, height);
       rotAngle += 0.0008;
       const fl = 1000, cx = width / 2, cy = height / 2, t = Date.now() * 0.001;
       const mx = mouseRef.current.x, my = mouseRef.current.y;
@@ -179,8 +178,19 @@ export default function LandingPage() {
         parallaxYRef.current = sy * 0.1;
       }
       if (navRef.current) {
-        if (sy > 60) { navRef.current.classList.add('shadow-sm'); navRef.current.style.background = 'rgba(255,255,255,0.9)'; }
-        else { navRef.current.classList.remove('shadow-sm'); navRef.current.style.background = 'rgba(233,239,237,0.8)'; }
+        if (sy > 60) {
+          navRef.current.classList.add('shadow-sm');
+          navRef.current.style.background = 'rgba(255,255,255,0.35)';
+          navRef.current.style.backdropFilter = 'blur(24px)';
+          navRef.current.style.setProperty('-webkit-backdrop-filter', 'blur(24px)');
+          navRef.current.style.borderBottomColor = 'rgba(255,255,255,0.55)';
+        } else {
+          navRef.current.classList.remove('shadow-sm');
+          navRef.current.style.background = 'rgba(255,255,255,0.2)';
+          navRef.current.style.backdropFilter = 'blur(16px)';
+          navRef.current.style.setProperty('-webkit-backdrop-filter', 'blur(16px)');
+          navRef.current.style.borderBottomColor = 'rgba(255,255,255,0.35)';
+        }
       }
     };
     document.addEventListener('mousemove', onMouse);
@@ -299,7 +309,7 @@ export default function LandingPage() {
   if (userReady && isAuthenticated) return null;
 
   return (
-    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), 'Inter', sans-serif", color: '#111827', background: '#E9EFED' }}>
+    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), 'Inter', sans-serif", color: 'var(--brand-text1, #1a1a1a)', background: 'transparent' }}>
       <div className="landing-ambient-glow" />
 
       {/* ═══ Initial load intro overlay ═══ */}
@@ -321,7 +331,7 @@ export default function LandingPage() {
             <div className="font-playfair text-3xl sm:text-4xl font-semibold bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent">
               Sapling
             </div>
-            <div className="mt-2 text-xs sm:text-sm font-jetbrains tracking-[0.2em] uppercase text-gray-500">
+            <div className="mt-2 text-xs sm:text-sm font-jetbrains tracking-[0.2em] uppercase text-[var(--brand-text2)]">
               Growing your knowledge
             </div>
           </div>
@@ -331,9 +341,12 @@ export default function LandingPage() {
       {/* ═══ Navbar ═══ */}
       <nav
         ref={navRef}
-        className="fixed top-0 w-full z-50 backdrop-blur-xl border-b border-gray-200/60 px-6 py-4"
+        className="fixed top-0 w-full z-50 border-b border-solid px-6 py-4"
         style={{
-          background: 'rgba(233,239,237,0.8)',
+          background: 'rgba(255,255,255,0.2)',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          borderBottomColor: 'rgba(255,255,255,0.35)',
           opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(-30px)',
           transition: 'all 800ms cubic-bezier(0.22,1,0.36,1)',
@@ -345,7 +358,7 @@ export default function LandingPage() {
             <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: '#1a5c2a', letterSpacing: '-0.02em' }}>Sapling</span>
           </div>
           <div className="flex items-center">
-            <button onClick={() => openModal('signin')} className="text-gray-500 hover:text-gray-900 font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
+            <button onClick={() => openModal('signin')} className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
             <button onClick={() => openModal('signup')} className="relative overflow-hidden group bg-[#1B6C42] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
               Get Started
             </button>
@@ -365,10 +378,10 @@ export default function LandingPage() {
             data-base-rot="-6" data-float-delay="0" data-float-dur="5000"
           >
             <span className="font-jetbrains text-xs text-[#3B82F6] font-medium block mb-3">CS 101</span>
-            <div className="h-1 rounded-full bg-gray-100 w-full overflow-hidden mb-2">
+            <div className="h-1 rounded-full bg-white/45 w-full overflow-hidden mb-2">
               <div className="h-full bg-[#3B82F6] w-[55%] rounded-full" />
             </div>
-            <span className="text-xs text-gray-400 block">55% mastered</span>
+            <span className="text-xs text-[var(--brand-text2)] opacity-80 block">55% mastered</span>
           </div>
 
           {/* Card D: Progress summary under legend */}
@@ -378,15 +391,15 @@ export default function LandingPage() {
             data-base-rot="2" data-float-delay="1600" data-float-dur="5200"
           >
             <div className="flex flex-col gap-2 text-left">
-              <div className="flex items-center justify-between text-xs text-gray-500">
+              <div className="flex items-center justify-between text-xs text-[var(--brand-text2)]">
                 <span>Total nodes</span>
-                <span className="font-jetbrains text-gray-700">2,413</span>
+                <span className="font-jetbrains text-[var(--brand-text1)]">2,413</span>
               </div>
-              <div className="flex items-center justify-between text-xs text-gray-500">
+              <div className="flex items-center justify-between text-xs text-[var(--brand-text2)]">
                 <span>Mastered</span>
                 <span className="font-jetbrains text-[#1B6C42]">68%</span>
               </div>
-              <div className="flex items-center justify-between text-xs text-gray-500">
+              <div className="flex items-center justify-between text-xs text-[var(--brand-text2)]">
                 <span>On track</span>
                 <span className="font-jetbrains text-[#D97706]">24%</span>
               </div>
@@ -399,10 +412,10 @@ export default function LandingPage() {
             data-base-rot="4" data-float-delay="1000" data-float-dur="6000"
           >
             <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#1B6C42]" /><span className="text-xs text-gray-500 uppercase tracking-wide">Mastered</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#D97706]" /><span className="text-xs text-gray-500 uppercase tracking-wide">Learning</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#EF4444]" /><span className="text-xs text-gray-500 uppercase tracking-wide">Struggling</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-gray-300" /><span className="text-xs text-gray-500 uppercase tracking-wide">Unexplored</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#1B6C42]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Mastered</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#D97706]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Learning</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#EF4444]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Struggling</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#9CA3AF]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Unexplored</span></div>
             </div>
           </div>
 
@@ -411,13 +424,13 @@ export default function LandingPage() {
             style={{ position: 'absolute', bottom: '34%', left: '24%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.2s' }}
             data-base-rot="-6" data-float-delay="500" data-float-dur="4500"
           >
-            <div className="bg-gray-50/60 border border-gray-100/50 rounded-xl py-2 flex items-center justify-center gap-2">
-              <PenSquare className="text-gray-400 w-4 h-4" strokeWidth={1.5} />
-              <span className="text-xs text-gray-500">Quick Quiz</span>
+            <div className="liquid-glass-subtle rounded-xl py-2 flex items-center justify-center gap-2">
+              <PenSquare className="text-[var(--brand-text2)] w-4 h-4" strokeWidth={1.5} />
+              <span className="text-xs text-[var(--brand-text2)]">Quick Quiz</span>
             </div>
-            <div className="bg-gray-50/60 border border-gray-100/50 rounded-xl py-2 flex items-center justify-center gap-2">
-              <Users className="text-gray-400 w-4 h-4" strokeWidth={1.5} />
-              <span className="text-xs text-gray-500">Study Room</span>
+            <div className="liquid-glass-subtle rounded-xl py-2 flex items-center justify-center gap-2">
+              <Users className="text-[var(--brand-text2)] w-4 h-4" strokeWidth={1.5} />
+              <span className="text-xs text-[var(--brand-text2)]">Study Room</span>
             </div>
           </div>
         </div>
@@ -431,7 +444,7 @@ export default function LandingPage() {
           }}>
             <div className="inline-flex items-center gap-2.5 liquid-glass-subtle rounded-full px-5 py-2">
               <div className="w-2 h-2 rounded-full bg-[#1B6C42] animate-pulse" />
-              <span className="font-jetbrains text-xs tracking-[0.25em] uppercase text-gray-500 font-medium">AI-Powered Learning</span>
+              <span className="font-jetbrains text-xs tracking-[0.25em] uppercase text-[var(--brand-text2)] font-medium">AI-Powered Learning</span>
             </div>
           </div>
 
@@ -447,7 +460,7 @@ export default function LandingPage() {
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 500ms',
-          }} className="font-playfair text-2xl sm:text-3xl md:text-4xl text-gray-500 max-w-xl mx-auto mt-7 leading-relaxed tracking-tight font-medium">
+          }} className="font-playfair text-2xl sm:text-3xl md:text-4xl text-[var(--brand-text2)] max-w-xl mx-auto mt-7 leading-relaxed tracking-tight font-medium">
             {heroText2 || '\u00A0'}
           </p>
 
@@ -457,9 +470,9 @@ export default function LandingPage() {
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 700ms',
           }} className="flex flex-col sm:flex-row gap-4 mt-10 items-center justify-center">
             <button onClick={() => openModal('signup')} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
-              Get Started, It&apos;s Free
+              Get Started
             </button>
-            <button onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })} className="liquid-glass-subtle text-gray-600 hover:text-gray-900 px-10 py-4 rounded-full font-medium text-base transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]">
+            <button onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })} className="liquid-glass-subtle text-[var(--brand-text2)] hover:text-[var(--brand-text1)] px-10 py-4 rounded-full font-medium text-base transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]">
               See What&apos;s Inside <span className="ml-1 opacity-50">↓</span>
             </button>
           </div>
@@ -467,22 +480,21 @@ export default function LandingPage() {
 
         {/* Scroll Indicator */}
         <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 landing-animate-float-indicator flex flex-col items-center">
-          <div className="w-[1px] h-14 bg-gradient-to-b from-transparent via-gray-300 to-transparent" />
-          <span className="font-jetbrains text-xs tracking-[0.4em] text-gray-400 mt-3">SCROLL</span>
+          <div className="w-px h-14 landing-divider-v" />
+          <span className="font-jetbrains text-xs tracking-[0.4em] text-[var(--brand-text2)] opacity-70 mt-3">SCROLL</span>
         </div>
       </section>
 
       {/* ═══ Features Section ═══ */}
-      <section id="features" className="relative py-32 bg-[#E9EFED] z-10">
-        <div className="landing-ambient-blobs" aria-hidden="true"><div className="landing-blob-extra" /></div>
-        <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-gray-300 to-transparent" />
+      <section id="features" className="landing-section relative py-32 z-10">
+        <div className="absolute top-0 left-0 w-full h-px landing-divider" />
         <div className="max-w-6xl mx-auto px-6 lg:px-8 relative z-[1]">
           <div className="text-center mb-16 landing-fade-up">
             <span className="font-jetbrains text-xs tracking-[0.3em] text-[#1B6C42] uppercase font-medium">Features</span>
-            <h2 className="font-playfair text-4xl md:text-6xl font-semibold text-gray-900 mt-4 leading-tight tracking-tight">
+            <h2 className="font-playfair text-4xl md:text-6xl font-semibold text-[var(--brand-text1)] mt-4 leading-tight tracking-tight">
               Everything You Need<br />to Learn Smarter
             </h2>
-            <p className="font-inter text-gray-500 text-lg mt-6 max-w-lg mx-auto font-light leading-relaxed">
+            <p className="font-inter text-[var(--brand-text2)] text-lg mt-6 max-w-lg mx-auto font-light leading-relaxed">
               Six powerful tools. One beautiful platform. Built for how your brain actually works.
             </p>
           </div>
@@ -505,8 +517,8 @@ export default function LandingPage() {
                   <div className={`landing-icon-container w-12 h-12 rounded-xl flex items-center justify-center mb-5 ${feature.bg}`}>
                     <feature.icon style={{ color: feature.color }} className="w-6 h-6" strokeWidth={1.5} />
                   </div>
-                  <h3 className="text-gray-900 font-medium text-lg mb-3 tracking-tight">{feature.title}</h3>
-                  <p className="text-gray-500 text-sm leading-relaxed font-light">{feature.desc}</p>
+                  <h3 className="text-[var(--brand-text1)] font-medium text-lg mb-3 tracking-tight">{feature.title}</h3>
+                  <p className="text-[var(--brand-text2)] text-sm leading-relaxed font-light">{feature.desc}</p>
                 </div>
               </div>
             ))}
@@ -515,29 +527,29 @@ export default function LandingPage() {
       </section>
 
       {/* ═══ How It Works (Sticky Scroll Cinema) ═══ */}
-      <section ref={stickyRef} id="how-it-works" className="relative bg-[#E9EFED]" style={{ height: '510vh' }}>
+      <section ref={stickyRef} id="how-it-works" className="landing-section relative" style={{ height: '510vh' }}>
         <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden">
           <div
             ref={stepNumRef}
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-jetbrains text-[25vw] sm:text-[250px] font-bold text-gray-900/[0.03] pointer-events-none select-none z-0 transition-opacity duration-500"
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-jetbrains text-[25vw] sm:text-[250px] font-bold text-[#1B6C42]/[0.06] pointer-events-none select-none z-0 transition-opacity duration-500"
           >
             01
           </div>
           <div className="w-full max-w-2xl px-6 relative z-10 text-center">
             <div ref={step1Ref} className="absolute left-0 right-0 top-1/2 -translate-y-1/2 transition-all duration-[600ms] ease-out px-6">
               <span className="font-jetbrains text-xs tracking-[0.3em] text-[#1B6C42] uppercase mb-4 block font-medium">Step 01</span>
-              <h3 className="font-playfair text-4xl md:text-5xl font-semibold text-gray-900 mb-4 tracking-tight">Sign Up &amp; Add Courses</h3>
-              <p className="font-inter text-gray-500 text-lg leading-relaxed font-light mx-auto">Connect with Google in one click. Tell us your school and year. Add your classes. Takes 30 seconds.</p>
+              <h3 className="font-playfair text-4xl md:text-5xl font-semibold text-[var(--brand-text1)] mb-4 tracking-tight">Sign Up &amp; Add Courses</h3>
+              <p className="font-inter text-[var(--brand-text2)] text-lg leading-relaxed font-light mx-auto">Connect with Google in one click. Tell us your school and year. Add your classes. Takes 30 seconds.</p>
             </div>
             <div ref={step2Ref} className="absolute left-0 right-0 top-1/2 -translate-y-1/2 transition-all duration-[600ms] ease-out opacity-0 translate-y-[60px] pointer-events-none px-6">
               <span className="font-jetbrains text-xs tracking-[0.3em] text-[#1B6C42] uppercase mb-4 block font-medium">Step 02</span>
-              <h3 className="font-playfair text-4xl md:text-5xl font-semibold text-gray-900 mb-4 tracking-tight">Upload Your Materials</h3>
-              <p className="font-inter text-gray-500 text-lg leading-relaxed font-light mx-auto">Drop in a syllabus, textbook PDF, or lecture notes. Our AI reads everything, extracts concepts, and builds your knowledge map instantly.</p>
+              <h3 className="font-playfair text-4xl md:text-5xl font-semibold text-[var(--brand-text1)] mb-4 tracking-tight">Upload Your Materials</h3>
+              <p className="font-inter text-[var(--brand-text2)] text-lg leading-relaxed font-light mx-auto">Drop in a syllabus, textbook PDF, or lecture notes. Our AI reads everything, extracts concepts, and builds your knowledge map instantly.</p>
             </div>
             <div ref={step3Ref} className="absolute left-0 right-0 top-1/2 -translate-y-1/2 transition-all duration-[600ms] ease-out opacity-0 translate-y-[60px] pointer-events-none px-6">
               <span className="font-jetbrains text-xs tracking-[0.3em] text-[#1B6C42] uppercase mb-4 block font-medium">Step 03</span>
-              <h3 className="font-playfair text-4xl md:text-5xl font-semibold text-gray-900 mb-4 tracking-tight">Start Growing</h3>
-              <p className="font-inter text-gray-500 text-lg leading-relaxed font-light mx-auto">Follow your personalized learning path. Take adaptive quizzes. Watch your knowledge graph come alive, node by node turning green.</p>
+              <h3 className="font-playfair text-4xl md:text-5xl font-semibold text-[var(--brand-text1)] mb-4 tracking-tight">Start Growing</h3>
+              <p className="font-inter text-[var(--brand-text2)] text-lg leading-relaxed font-light mx-auto">Follow your personalized learning path. Take adaptive quizzes. Watch your knowledge graph come alive, node by node turning green.</p>
             </div>
           </div>
         </div>
@@ -545,39 +557,37 @@ export default function LandingPage() {
 
 
       {/* ═══ Final CTA ═══ */}
-      <section className="py-32 relative text-center z-10 overflow-hidden bg-[#E9EFED]">
-        <div className="landing-ambient-blobs" aria-hidden="true"><div className="landing-blob-extra" /></div>
+      <section className="landing-section py-32 relative text-center z-10 overflow-hidden">
         <div className="relative z-10 max-w-3xl mx-auto px-6 landing-fade-up">
-          <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-gray-900 tracking-tight leading-[1.05]">
+          <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--brand-text1)] tracking-tight leading-[1.05]">
             Ready to <br /> Start <span className="bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient pr-2">Growing?</span>
           </h2>
-          <p className="text-gray-500 text-lg mt-6 font-light">Join thousands of students who learn smarter, not harder.</p>
+          <p className="text-[var(--brand-text2)] text-lg mt-6 font-light">Join students who learn smarter, not harder.</p>
           <div className="mt-10 flex flex-col items-center">
             <button onClick={() => openModal('signup')} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
-              Get Started, It&apos;s Free
+              Get Started
             </button>
-            <p className="text-gray-400 text-xs mt-4">No credit card required. Free forever for students.</p>
           </div>
         </div>
       </section>
 
       {/* ═══ Footer ═══ */}
-      <footer className="border-t border-gray-200 bg-[#E9EFED] py-12 px-8 relative z-10">
+      <footer className="landing-section border-t border-white/35 py-12 px-8 relative z-10">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-2">
             <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '20px', height: '20px' }} />
-            <span className="text-sm font-light tracking-wide text-gray-500">Sapling · © 2026</span>
+            <span className="text-sm font-light tracking-wide text-[var(--brand-text2)]">Sapling · © 2026</span>
           </div>
           <div className="flex flex-wrap justify-center gap-6">
-            <a href="#" className="text-gray-500 hover:text-gray-900 text-sm transition-colors">About</a>
-            <a href="#" className="text-gray-500 hover:text-gray-900 text-sm transition-colors">Features</a>
-            <a href="#" className="text-gray-500 hover:text-gray-900 text-sm transition-colors">Pricing</a>
-            <a href="#" className="text-gray-500 hover:text-gray-900 text-sm transition-colors">Contact</a>
-            <a href="#" className="text-gray-500 hover:text-gray-900 text-sm transition-colors">Privacy</a>
+            <a href="#" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">About</a>
+            <a href="#" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Features</a>
+            <a href="#" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Pricing</a>
+            <a href="#" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Contact</a>
+            <a href="#" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Privacy</a>
           </div>
         </div>
-        <div className="max-w-7xl mx-auto mt-8 pt-6 border-t border-gray-200/60 text-center">
-          <p className="text-xs text-gray-400 font-light tracking-wide">
+        <div className="max-w-7xl mx-auto mt-8 pt-6 border-t border-white/25 text-center">
+          <p className="text-xs text-[var(--brand-text2)] opacity-75 font-light tracking-wide">
             © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
           </p>
         </div>
@@ -586,10 +596,10 @@ export default function LandingPage() {
       {/* ═══ Onboarding Modal ═══ */}
       {modalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center">
-          <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm transition-opacity duration-300" onClick={closeModal} />
+          <div className="absolute inset-0 bg-[var(--brand-text1)]/20 backdrop-blur-md transition-opacity duration-300" onClick={closeModal} />
           <div className="relative w-full max-w-md mx-4 sm:mx-auto">
             <div className="liquid-glass-strong rounded-3xl p-10 relative overflow-hidden">
-              <button onClick={closeModal} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-all z-20">
+              <button onClick={closeModal} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center rounded-full text-[var(--brand-text2)] hover:text-[var(--brand-text1)] hover:bg-white/40 transition-all z-20">
                 <X className="w-5 h-5" />
               </button>
 
@@ -597,34 +607,34 @@ export default function LandingPage() {
               {modalMode === 'signup' && (
                 <div className="flex justify-center gap-2 mb-8 relative z-10">
                   <div className={`w-10 h-1.5 rounded-full transition-all duration-500 ${modalStep === 1 ? 'bg-[#1B6C42]' : 'bg-[#1B6C42]/30'}`} />
-                  <div className={`w-10 h-1.5 rounded-full transition-all duration-500 ${modalStep === 2 ? 'bg-[#1B6C42]' : modalStep > 2 ? 'bg-[#1B6C42]/30' : 'bg-gray-200'}`} />
-                  <div className={`w-10 h-1.5 rounded-full transition-all duration-500 ${modalStep === 3 ? 'bg-[#1B6C42]' : 'bg-gray-200'}`} />
+                  <div className={`w-10 h-1.5 rounded-full transition-all duration-500 ${modalStep === 2 ? 'bg-[#1B6C42]' : modalStep > 2 ? 'bg-[#1B6C42]/30' : 'bg-white/50'}`} />
+                  <div className={`w-10 h-1.5 rounded-full transition-all duration-500 ${modalStep === 3 ? 'bg-[#1B6C42]' : 'bg-white/50'}`} />
                 </div>
               )}
 
               <div className="relative w-full h-[320px]">
                 {/* Step 1: Auth */}
                 <div className={`absolute inset-0 w-full transition-all duration-300 ease-in-out flex flex-col justify-center ${modalStep === 1 ? 'translate-x-0 opacity-100' : '-translate-x-[30px] opacity-0 pointer-events-none'}`}>
-                  <h3 className="font-playfair text-2xl font-semibold text-gray-900 text-center tracking-tight">
+                  <h3 className="font-playfair text-2xl font-semibold text-[var(--brand-text1)] text-center tracking-tight">
                     {modalMode === 'signin' ? 'Welcome back' : 'Welcome to Sapling'}
                   </h3>
-                  <p className="text-gray-500 text-center text-sm mt-2 font-light">
+                  <p className="text-[var(--brand-text2)] text-center text-sm mt-2 font-light">
                     {modalMode === 'signin' ? 'Sign in to continue' : 'Start your learning journey'}
                   </p>
-                  <button onClick={handleGoogleContinue} className="mt-8 liquid-glass-subtle hover:bg-white/70 text-gray-700 w-full py-3.5 rounded-xl flex items-center justify-center gap-3 transition-all duration-300 text-sm font-medium">
+                  <button onClick={handleGoogleContinue} className="mt-8 liquid-glass-subtle hover:bg-white/70 text-[var(--brand-text1)] w-full py-3.5 rounded-xl flex items-center justify-center gap-3 transition-all duration-300 text-sm font-medium">
                     <svg className="w-4 h-4" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" /><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" /><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" /><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" /></svg>
                     Continue with Google
                   </button>
                   <div className="flex items-center gap-4 my-6">
-                    <div className="flex-1 h-[1px] bg-gray-200" />
-                    <span className="text-gray-400 text-[11px] font-medium uppercase">or</span>
-                    <div className="flex-1 h-[1px] bg-gray-200" />
+                    <div className="flex-1 h-px landing-divider opacity-80" />
+                    <span className="text-[var(--brand-text2)] text-[11px] font-medium uppercase">or</span>
+                    <div className="flex-1 h-px landing-divider opacity-80" />
                   </div>
-                  <input type="email" placeholder="your@email.com" className="bg-gray-50/60 border border-gray-200/60 focus:border-[#1B6C42] focus:ring-2 focus:ring-[#1B6C42]/20 rounded-xl px-4 py-3 text-gray-900 placeholder:text-gray-400 w-full outline-none transition-all text-sm mb-3" />
+                  <input type="email" placeholder="your@email.com" className="glass-input rounded-xl px-4 py-3 text-[var(--brand-text1)] placeholder:text-[var(--brand-text2)] placeholder:opacity-60 w-full transition-all text-sm mb-3" />
                   <button onClick={handleEmailContinue} className="w-full bg-[#1B6C42] text-white py-3.5 rounded-xl font-medium text-sm hover:bg-[#155A35] shadow-sm transition-all duration-300">
                     Continue
                   </button>
-                  <p className="text-center text-gray-500 text-xs mt-6">
+                  <p className="text-center text-[var(--brand-text2)] text-xs mt-6">
                     {modalMode === 'signin' ? "Don't have an account? " : 'Already have an account? '}
                     <button onClick={() => setModalMode(modalMode === 'signin' ? 'signup' : 'signin')} className="text-[#1B6C42] font-medium hover:underline cursor-pointer">
                       {modalMode === 'signin' ? 'Get started' : 'Sign in'}
@@ -634,14 +644,14 @@ export default function LandingPage() {
 
                 {/* Step 2: School Info */}
                 <div className={`absolute inset-0 w-full transition-all duration-300 ease-in-out flex flex-col justify-center ${modalStep === 2 ? 'translate-x-0 opacity-100' : 'translate-x-[30px] opacity-0 pointer-events-none'}`}>
-                  <h3 className="font-playfair text-2xl font-semibold text-gray-900 text-center tracking-tight">About You</h3>
-                  <p className="text-gray-500 text-center text-sm mt-2 mb-8 font-light">Help us personalize your experience</p>
+                  <h3 className="font-playfair text-2xl font-semibold text-[var(--brand-text1)] text-center tracking-tight">About You</h3>
+                  <p className="text-[var(--brand-text2)] text-center text-sm mt-2 mb-8 font-light">Help us personalize your experience</p>
                   <div className="relative mb-4">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-                    <input type="text" placeholder="Search your university..." className="bg-gray-50/60 border border-gray-200/60 focus:border-[#1B6C42] focus:ring-2 focus:ring-[#1B6C42]/20 rounded-xl pl-10 pr-4 py-3 text-gray-900 placeholder:text-gray-400 w-full outline-none transition-all text-sm" />
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--brand-text2)] opacity-70 w-4 h-4" />
+                    <input type="text" placeholder="Search your university..." className="glass-input rounded-xl pl-10 pr-4 py-3 text-[var(--brand-text1)] placeholder:text-[var(--brand-text2)] placeholder:opacity-60 w-full transition-all text-sm" />
                   </div>
                   <div className="relative mb-6">
-                    <select className="appearance-none bg-gray-50/60 border border-gray-200/60 focus:border-[#1B6C42] focus:ring-2 focus:ring-[#1B6C42]/20 rounded-xl px-4 py-3 text-gray-900 w-full outline-none transition-all text-sm cursor-pointer invalid:text-gray-400" required defaultValue="">
+                    <select className="glass-input appearance-none rounded-xl px-4 py-3 text-[var(--brand-text1)] w-full transition-all text-sm cursor-pointer invalid:text-[var(--brand-text2)]" required defaultValue="">
                       <option value="" disabled hidden>Select class year</option>
                       <option value="freshman">Freshman</option>
                       <option value="sophomore">Sophomore</option>
@@ -650,7 +660,7 @@ export default function LandingPage() {
                       <option value="graduate">Graduate</option>
                       <option value="other">Other</option>
                     </select>
-                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none" />
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--brand-text2)] opacity-70 w-4 h-4 pointer-events-none" />
                   </div>
                   <button onClick={() => setModalStep(3)} className="w-full bg-[#1B6C42] text-white py-3.5 rounded-xl font-medium text-sm hover:bg-[#155A35] shadow-sm transition-all duration-300">
                     Continue
@@ -659,8 +669,8 @@ export default function LandingPage() {
 
                 {/* Step 3: Classes */}
                 <div className={`absolute inset-0 w-full transition-all duration-300 ease-in-out flex flex-col justify-center ${modalStep === 3 ? 'translate-x-0 opacity-100' : 'translate-x-[30px] opacity-0 pointer-events-none'}`}>
-                  <h3 className="font-playfair text-2xl font-semibold text-gray-900 text-center tracking-tight">Your Classes</h3>
-                  <p className="text-gray-500 text-center text-sm mt-2 mb-8 font-light">What are you studying this semester?</p>
+                  <h3 className="font-playfair text-2xl font-semibold text-[var(--brand-text1)] text-center tracking-tight">Your Classes</h3>
+                  <p className="text-[var(--brand-text2)] text-center text-sm mt-2 mb-8 font-light">What are you studying this semester?</p>
                   <div className="flex gap-2 mb-4">
                     <input
                       type="text"
@@ -668,30 +678,30 @@ export default function LandingPage() {
                       onChange={e => setClassInput(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addClass(); } }}
                       placeholder="Add a class..."
-                      className="flex-1 bg-gray-50/60 border border-gray-200/60 focus:border-[#1B6C42] focus:ring-2 focus:ring-[#1B6C42]/20 rounded-xl px-4 py-3 text-gray-900 placeholder:text-gray-400 outline-none transition-all text-sm"
+                      className="glass-input flex-1 rounded-xl px-4 py-3 text-[var(--brand-text1)] placeholder:text-[var(--brand-text2)] placeholder:opacity-60 transition-all text-sm"
                     />
                     <button onClick={addClass} className="bg-[#1B6C42]/10 hover:bg-[#1B6C42]/20 text-[#1B6C42] px-5 rounded-xl text-sm font-medium transition-all">Add</button>
                   </div>
                   <div className="flex flex-wrap gap-2 mb-4 min-h-[42px]">
                     {classChips.map((chip, idx) => (
-                      <div key={`${chip}-${idx}`} className="bg-gray-100/70 border border-gray-200/60 rounded-full px-4 py-2 text-gray-700 text-sm flex items-center gap-2">
+                      <div key={`${chip}-${idx}`} className="liquid-glass-subtle rounded-full px-4 py-2 text-[var(--brand-text1)] text-sm flex items-center gap-2">
                         {chip}
-                        <button onClick={() => setClassChips(prev => prev.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-gray-600 ml-1 transition-colors">
+                        <button onClick={() => setClassChips(prev => prev.filter((_, i) => i !== idx))} className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] ml-1 transition-colors">
                           <XCircle className="w-4 h-4" />
                         </button>
                       </div>
                     ))}
                   </div>
                   <div className="mb-8 flex items-center flex-wrap gap-2">
-                    <span className="text-gray-400 text-xs mr-2 font-medium">Popular:</span>
+                    <span className="text-[var(--brand-text2)] text-xs mr-2 font-medium">Popular:</span>
                     {['CS 101', 'Calculus I', 'Physics I'].map(s => (
-                      <span key={s} onClick={() => addSuggested(s)} className="border border-gray-200/60 text-gray-500 hover:text-gray-900 hover:bg-gray-50 rounded-full px-3 py-1.5 text-xs cursor-pointer transition-all">{s}</span>
+                      <span key={s} onClick={() => addSuggested(s)} className="liquid-glass-subtle text-[var(--brand-text2)] hover:text-[var(--brand-text1)] rounded-full px-3 py-1.5 text-xs cursor-pointer transition-all">{s}</span>
                     ))}
                   </div>
                   <button onClick={closeModal} className="w-full bg-[#1B6C42] text-white py-3.5 rounded-xl font-medium text-sm hover:bg-[#155A35] shadow-sm transition-all duration-300">
                     Launch Sapling 🌱
                   </button>
-                  <button onClick={closeModal} className="w-full text-center text-gray-400 hover:text-gray-600 text-xs mt-3 cursor-pointer transition-colors">Skip for now</button>
+                  <button onClick={closeModal} className="w-full text-center text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-xs mt-3 cursor-pointer transition-colors">Skip for now</button>
                 </div>
               </div>
             </div>
