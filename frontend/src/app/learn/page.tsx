@@ -9,7 +9,7 @@ import QuizPanel from '@/components/QuizPanel';
 import SessionSummary from '@/components/SessionSummary';
 import SessionFeedbackFlow from '@/components/SessionFeedbackFlow';
 import { GraphNode, GraphEdge, ChatMessage, TeachingMode, SessionSummary as SessionSummaryType } from '@/lib/types';
-import { startSession, sendChat, sendAction, endSession, getGraph, getSessions, resumeSession, switchMode, deleteSession } from '@/lib/api';
+import { startSession, sendChat, sendAction, endSession, getGraph, getCourses, getSessions, resumeSession, switchMode, deleteSession } from '@/lib/api';
 import Link from 'next/link';
 import { getMasteryLabel } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
@@ -74,6 +74,7 @@ function LearnInner() {
     return saved === null ? true : saved === 'true';
   });
   const [mobileView, setMobileView] = useState<'chat' | 'graph'>('chat');
+  const [apiCourseNames, setApiCourseNames] = useState<string[]>([]);
 
   const isMobile = useIsMobile();
 
@@ -85,7 +86,17 @@ function LearnInner() {
     });
   };
 
-  const courses = [...new Set(nodes.map(n => n.subject).filter(Boolean))].sort();
+  useEffect(() => {
+    if (!userReady || !USER_ID) return;
+    getCourses(USER_ID)
+      .then(data => setApiCourseNames((data.courses ?? []).map(c => c.course_name)))
+      .catch(console.error);
+  }, [USER_ID, userReady]);
+
+  const courses = useMemo(() => {
+    const fromGraph = nodes.map(n => n.subject).filter(Boolean) as string[];
+    return [...new Set([...fromGraph, ...apiCourseNames])].sort();
+  }, [nodes, apiCourseNames]);
 
   // Node matching the Navbar "learn next" suggestion
   const suggestNode = useMemo(

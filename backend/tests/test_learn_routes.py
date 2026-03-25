@@ -50,6 +50,17 @@ class TestResolveCourse:
         with patch("routes.learn.table", return_value=mock):
             assert _resolve_course("UnknownXyzzy", "u1") == ""
 
+    def test_topic_matches_course_case_insensitive(self):
+        mock = MagicMock()
+        mock.select.side_effect = [
+            [],
+            [],
+            [],
+            [{"course_name": "Biology 101"}],
+        ]
+        with patch("routes.learn.table", return_value=mock):
+            assert _resolve_course("biology 101", "u1") == "Biology 101"
+
 
 # ── GET /api/learn/sessions/{user_id} ────────────────────────────────────────
 

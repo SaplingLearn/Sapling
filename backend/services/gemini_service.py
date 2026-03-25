@@ -10,7 +10,12 @@ from google.genai import types
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import GEMINI_API_KEY
 
-_client = genai.Client(api_key=GEMINI_API_KEY)
+_HTTP_TIMEOUT_MS = 180_000
+
+_client = genai.Client(
+    api_key=GEMINI_API_KEY or "dummy-key-for-import",
+    http_options=types.HttpOptions(timeout=_HTTP_TIMEOUT_MS),
+)
 _MODEL = "gemini-2.5-flash"
 
 
@@ -104,6 +109,7 @@ def call_gemini_multiturn(system_prompt: str, history: list[dict], user_message:
                 temperature=0.7,
                 max_output_tokens=16384,
                 system_instruction=system_prompt,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             )
             chat = _client.chats.create(model=_MODEL, config=config, history=gemini_history)
             response = chat.send_message(user_message)
