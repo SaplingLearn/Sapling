@@ -94,6 +94,22 @@ class TestGetGraph:
         assert roots[0]["concept_name"] == "CS101"
         assert roots[0]["mastery_tier"] == "subject_root"
 
+    def test_no_subject_root_when_only_placeholder_matches_course_name(self):
+        """Seed node uses the course title as concept_name; do not add a second hub with the same label."""
+        nodes = [
+            {
+                "id": "n1", "concept_name": "EK 103: LINEAR ALGEBRA", "mastery_tier": "unexplored",
+                "mastery_score": 0.0, "subject": "EK 103: LINEAR ALGEBRA", "times_studied": 0, "user_id": "u1",
+            },
+        ]
+        factory = _mock_table({"users": [{"streak_count": 0}], "graph_nodes": nodes, "graph_edges": [], "courses": []})
+        with patch("services.graph_service.table", side_effect=factory):
+            result = get_graph("u1")
+
+        roots = [n for n in result["nodes"] if n.get("is_subject_root")]
+        assert len(roots) == 0
+        assert len([n for n in result["nodes"] if not n.get("is_subject_root")]) == 1
+
     def test_course_with_only_courses_row_still_has_no_root_until_seed_exists(self):
         """Orphan course rows do not produce graph data until ensure inserts a seed (mock has no insert state)."""
         factory = _mock_table({

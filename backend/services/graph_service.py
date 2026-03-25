@@ -147,6 +147,10 @@ def get_graph(user_id: str) -> dict:
     subject_nodes = []
     subject_edges = []
     for subj, subj_nodes in subject_map.items():
+        # One placeholder node whose concept is the course title would duplicate the synthetic
+        # subject hub (same label). Skip the hub so the course appears as a single node.
+        if len(subj_nodes) == 1 and (subj_nodes[0].get("concept_name") or "") == subj:
+            continue
         root_id = f"subject_root__{subj}"
         avg_mastery = sum(n["mastery_score"] for n in subj_nodes) / len(subj_nodes)
         subject_nodes.append({
