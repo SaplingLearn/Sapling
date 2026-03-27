@@ -64,7 +64,9 @@ const sections = [
   },
   {
     title: "7. Children's Privacy",
-    body: "Sapling is not directed at children under 13. We do not knowingly collect personal information from children under 13. If you believe a child under 13 has provided us with personal data, please contact us and we will take steps to delete it.",
+    body: "Sapling is not directed at children under 13. We do not knowingly collect personal information from children under 13. If you believe a child under 13 has provided us with personal data, please email us at ",
+    link: { label: "careers@saplinglearn.com", href: "mailto:careers@saplinglearn.com" },
+    bodySuffix: " and we will take steps to delete it.",
   },
   {
     title: "8. Changes to This Policy",
@@ -72,7 +74,9 @@ const sections = [
   },
   {
     title: "9. Contact",
-    body: "If you have questions or concerns about this Privacy Policy, please reach out via the feedback or issue reporting tools within the app.",
+    body: "If you have questions or concerns about this Privacy Policy, please email us at ",
+    link: { label: "careers@saplinglearn.com", href: "mailto:careers@saplinglearn.com" },
+    bodySuffix: ".",
   },
 ];
 
@@ -99,14 +103,20 @@ export default function PrivacyPage() {
               <h2 className="text-base font-semibold text-gray-900 mb-2">{section.title}</h2>
 
               {section.body && (
-                <p className="text-gray-600 leading-relaxed mb-3">{section.body}</p>
+                <p className="text-gray-600 leading-relaxed mb-3">
+                  {section.body}
+                  {section.link && (
+                    <a href={section.link.href} className="text-green-700 hover:underline">{section.link.label}</a>
+                  )}
+                  {section.bodySuffix}
+                </p>
               )}
 
               {section.list && (
                 <ul className="space-y-1.5 pl-4">
                   {section.list.map((item, i) => (
                     <li key={i} className="flex gap-2 text-gray-600">
-                      <span className="text-gray-400 mt-0.5">–</span>
+                      <span className="text-gray-400 mt-0.5">•</span>
                       <span>{item}</span>
                     </li>
                   ))}
@@ -121,7 +131,7 @@ export default function PrivacyPage() {
                       <ul className="space-y-1.5 pl-4">
                         {sub.list.map((item, i) => (
                           <li key={i} className="flex gap-2 text-gray-600">
-                            <span className="text-gray-400 mt-0.5">–</span>
+                            <span className="text-gray-400 mt-0.5">•</span>
                             <span>{item}</span>
                           </li>
                         ))}
@@ -135,7 +145,7 @@ export default function PrivacyPage() {
                 <ul className="space-y-2 pl-4">
                   {section.highlights.map((h) => (
                     <li key={h.label} className="flex gap-2 text-gray-600">
-                      <span className="text-gray-400 mt-0.5">–</span>
+                      <span className="text-gray-400 mt-0.5">•</span>
                       <span>
                         <strong className="text-gray-800">{h.label}</strong> {h.text}
                       </span>

@@ -35,7 +35,7 @@ export default function AboutPage() {
                 "Everything from syllabus tracking to exam study guides is powered by Gemini, so the busywork of getting organized is handled for you.",
               ].map((item, i) => (
                 <li key={i} className="flex gap-3">
-                  <span className="text-green-600 mt-0.5">–</span>
+                  <span className="text-green-600 mt-0.5">•</span>
                   <span>{item}</span>
                 </li>
               ))}

@@ -53,7 +53,8 @@ const sections = [
   },
   {
     title: "12. Contact",
-    body: "For questions about these Terms, please use the feedback or issue reporting tools within the app.",
+    body: "For questions about these Terms, please email us at ",
+    link: { label: "careers@saplinglearn.com", href: "mailto:careers@saplinglearn.com" },
   },
 ];
 
@@ -78,12 +79,17 @@ export default function TermsPage() {
           {sections.map((section) => (
             <div key={section.title}>
               <h2 className="text-base font-semibold text-gray-900 mb-2">{section.title}</h2>
-              <p className="text-gray-600 leading-relaxed">{section.body}</p>
+              <p className="text-gray-600 leading-relaxed">
+                {section.body}
+                {section.link && (
+                  <a href={section.link.href} className="text-green-700 hover:underline">{section.link.label}</a>
+                )}
+              </p>
               {section.list && (
                 <ul className="mt-3 space-y-1.5 pl-4">
                   {section.list.map((item, i) => (
                     <li key={i} className="flex gap-2 text-gray-600">
-                      <span className="text-gray-400 mt-0.5">–</span>
+                      <span className="text-gray-400 mt-0.5">•</span>
                       <span>{item}</span>
                     </li>
                   ))}
