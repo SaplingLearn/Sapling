@@ -60,14 +60,15 @@ export default function Navbar() {
   }, [pathname]);
 
   const publicPaths = ['/', '/signin/callback', '/about', '/terms', '/privacy'];
+  const isPublic = publicPaths.includes(pathname) || pathname.startsWith('/careers');
 
   useEffect(() => {
-    if (userReady && !isAuthenticated && !publicPaths.includes(pathname)) {
+    if (userReady && !isAuthenticated && !isPublic) {
       router.push('/');
     }
-  }, [userReady, isAuthenticated, pathname, router]);
+  }, [userReady, isAuthenticated, isPublic, router]);
 
-  if (publicPaths.includes(pathname)) return null;
+  if (isPublic) return null;
 
   const handleSuggest = async () => {
     setSuggesting(true);
