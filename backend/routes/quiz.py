@@ -11,6 +11,7 @@ from models import GenerateQuizBody, SubmitQuizBody
 from services.gemini_service import call_gemini_json
 from services.graph_service import get_graph, update_streak
 from services.quiz_context_service import get_quiz_context, save_quiz_context
+from services.activity_service import log_room_activity
 
 router = APIRouter()
 
@@ -118,10 +119,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks):
     total = len(questions)
 
     node_rows = table("graph_nodes").select(
-        "mastery_score,times_studied,mastery_events",
+        "mastery_score,mastery_tier,times_studied,mastery_events",
         filters={"id": f"eq.{concept_node_id}"},
     )
     mastery_before = node_rows[0]["mastery_score"] if node_rows else 0.0
+    old_tier = node_rows[0].get("mastery_tier", "unexplored") if node_rows else "unexplored"
     mastery_after = max(0.0, min(1.0, mastery_before + (score * 0.03) - ((total - score) * 0.02)))
     new_tier = get_mastery_tier(mastery_after)
     times_studied = (node_rows[0]["times_studied"] if node_rows else 0) + 1
@@ -163,7 +165,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks):
         filters={"id": f"eq.{body.quiz_id}"},
     )
 
-    update_streak(user_id)
+    new_streak = update_streak(user_id)
 
     node2_rows = table("graph_nodes").select(
         "concept_name", filters={"id": f"eq.{concept_node_id}"}
@@ -191,6 +193,15 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks):
             pass
 
     background_tasks.add_task(_update_context, ctx_prompt, user_id, concept_node_id)
+
+    try:
+        log_room_activity(user_id, "quiz_completed", concept_name=concept_name, detail=f"{score}/{total} correct")
+        if new_tier == "mastered" and old_tier != "mastered":
+            log_room_activity(user_id, "concept_mastered", concept_name=concept_name)
+        if new_streak in (7, 14, 30, 60, 100):
+            log_room_activity(user_id, "streak_milestone", detail=f"{new_streak} day streak")
+    except Exception:
+        pass
 
     return {
         "score": score,

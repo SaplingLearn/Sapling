@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import { GraphNode, GraphStats, Recommendation, Assignment } from '@/lib/types';
 import { getGraph, getRecommendations, getUpcomingAssignments, getCourses, addCourse, deleteCourse, updateCourseColor } from '@/lib/api';
-import { getMasteryColor, getMasteryLabel, formatDueDate, formatRelativeTime, getCourseColor, PRESET_COURSE_COLORS, RAINBOW_COLORS } from '@/lib/graphUtils';
+import { getMasteryColor, getMasteryLabel, formatDueDate, formatRelativeTime, getCourseColor, PRESET_COURSE_COLORS, RAINBOW_COLORS, daysUntil } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
 import Link from 'next/link';
 import { Maximize2, Minimize2 } from 'lucide-react';
@@ -18,9 +18,12 @@ const STATS_LABELS: Record<string, string> = {
 };
 
 const GLASS: React.CSSProperties = {
-  background: '#ffffff',
-  border: '1px solid rgba(107, 114, 128, 0.15)',
+  background: 'rgba(255, 255, 255, 0.45)',
+  backdropFilter: 'blur(12px) saturate(1.6)',
+  WebkitBackdropFilter: 'blur(12px) saturate(1.6)',
+  border: '1px solid rgba(255, 255, 255, 0.68)',
   borderRadius: '10px',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 2px 10px rgba(26, 92, 42, 0.07), 0 1px 3px rgba(26, 92, 42, 0.04)',
 };
 
 const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
@@ -722,11 +725,13 @@ function DashboardInner() {
                 bottom: isMobile ? '8px' : '16px',
                 left: '50%',
                 transform: 'translateX(-50%)',
-                background: '#ffffff',
-                border: '1px solid rgba(26,92,42,0.25)',
+                background: 'rgba(255, 255, 255, 0.78)',
+                backdropFilter: 'blur(20px) saturate(1.5)',
+                WebkitBackdropFilter: 'blur(20px) saturate(1.5)',
+                border: '1px solid rgba(255, 255, 255, 0.72)',
                 borderRadius: '10px',
                 padding: isMobile ? '10px 12px' : '14px 18px',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.90), 0 8px 32px rgba(26,92,42,0.12)',
                 zIndex: 20,
                 display: 'flex',
                 flexDirection: 'column',
@@ -812,7 +817,7 @@ function DashboardInner() {
                   background: 'rgba(255,255,255,0.96)',
                 }}
               >
-                <span style={{ fontSize: '14px', fontWeight: 600, color: '#111827' }}>Knowledge graph</span>
+                <span style={{ fontSize: '15px', fontWeight: 700, color: '#111827', letterSpacing: '-0.01em' }}>Knowledge graph</span>
                 <button
                   type="button"
                   onClick={() => setGraphFullscreen(false)}
@@ -854,15 +859,15 @@ function DashboardInner() {
           {/* Upcoming assignments strip */}
           <div style={{ ...GLASS, padding: isMobile ? '10px 12px' : '14px 16px', fontFamily: UI_FONT, height: isMobile ? 'auto' : '160px', maxHeight: isMobile ? '200px' : undefined, flexShrink: 0, overflowY: 'auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-              <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              <p style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
                 Upcoming
               </p>
-              <Link href="/calendar" style={{ fontSize: '12px', color: '#6b7280', textDecoration: 'none' }}>
+              <Link href="/calendar" style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', textDecoration: 'none' }}>
                 View Calendar
               </Link>
             </div>
             {allAssignments.length === 0 ? (
-              <p style={{ color: '#9ca3af', fontSize: '13px' }}>No upcoming assignments</p>
+              <p style={{ color: '#16a34a', fontSize: '13px', fontWeight: 500 }}>All caught up! 🎉</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {allAssignments.slice(0, 4).map(a => {
@@ -874,7 +879,7 @@ function DashboardInner() {
                       gap: isMobile ? '6px' : '10px',
                       flexWrap: isMobile ? 'wrap' : 'nowrap',
                     }}>
-                      <span style={{ fontSize: isMobile ? '11px' : '12px', color: '#6b7280', minWidth: isMobile ? '40px' : '50px' }}>
+                      <span style={{ fontSize: isMobile ? '11px' : '12px', fontWeight: daysUntil(a.due_date) <= 1 ? 600 : 400, color: daysUntil(a.due_date) <= 0 ? '#dc2626' : daysUntil(a.due_date) <= 1 ? '#d97706' : '#6b7280', minWidth: isMobile ? '40px' : '50px' }}>
                         {formatDueDate(a.due_date)}
                       </span>
                       <span style={{ fontSize: isMobile ? '11px' : '12px', fontWeight: 600, color: c.text, minWidth: isMobile ? '40px' : '52px' }}>
@@ -980,16 +985,14 @@ function DashboardInner() {
         >
 
           {/* User header + streak */}
-          <div style={{ ...GLASS, padding: '16px' }}>
-            <p style={{ fontSize: '15px', fontWeight: 600, color: '#111827' }}>{userName}</p>
-
+          <div style={{ ...GLASS, padding: '16px', background: 'rgba(255, 250, 240, 0.52)' }}>
             {/* Streak count */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '6px' }}>
-              <span style={{ fontSize: '17px', lineHeight: 1 }}>🔥</span>
-              <span style={{ fontSize: '17px', fontWeight: 700, color: '#ea580c', lineHeight: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '6px' }}>
+              <span style={{ fontSize: '22px', lineHeight: 1, alignSelf: 'center' }}>🔥</span>
+              <span style={{ fontSize: '26px', fontWeight: 800, color: '#ea580c', lineHeight: 1, letterSpacing: '-0.02em' }}>
                 {stats?.streak ?? 0}
               </span>
-              <span style={{ fontSize: '12px', color: '#9ca3af', marginLeft: '1px' }}>day streak</span>
+              <span style={{ fontSize: '13px', color: '#9ca3af', fontWeight: 500 }}>Day Streak</span>
             </div>
 
             {/* 7-day week strip */}
@@ -1037,7 +1040,7 @@ function DashboardInner() {
           {/* Stats */}
           {stats && (
             <div style={{ ...GLASS, padding: '16px' }}>
-              <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '12px' }}>
+              <p style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '12px' }}>
                 Knowledge
               </p>
               {(['mastered', 'learning', 'struggling', 'unexplored'] as const).map(tier => (
@@ -1047,8 +1050,11 @@ function DashboardInner() {
                     background: getMasteryColor(tier),
                     flexShrink: 0,
                   }} />
-                  <span style={{ fontSize: '13px', color: '#374151' }}>
-                    {stats[tier]} {STATS_LABELS[tier]}
+                  <span style={{ fontSize: '15px', fontWeight: 700, color: getMasteryColor(tier), letterSpacing: '-0.01em', minWidth: '26px', display: 'inline-block' }}>
+                    {stats[tier]}
+                  </span>
+                  <span style={{ fontSize: '13px', color: getMasteryColor(tier), opacity: 0.75 }}>
+                    {STATS_LABELS[tier]}
                   </span>
                 </div>
               ))}
@@ -1058,7 +1064,7 @@ function DashboardInner() {
           {/* Recommendations */}
           {recommendations.length > 0 && (
             <div style={{ ...GLASS, padding: '16px' }}>
-              <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>
+              <p style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>
                 Learn Next
               </p>
               {recommendations.map(rec => {
@@ -1076,8 +1082,8 @@ function DashboardInner() {
                       textDecoration: 'none',
                     }}
                   >
-                    <span style={{ fontSize: '13px', color: '#374151' }}>{rec.concept_name}</span>
-                    <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                    <span style={{ fontSize: '14px', fontWeight: 400, color: '#374151' }}>{rec.concept_name}</span>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: node ? getMasteryColor(node.mastery_tier) : '#6b7280' }}>
                       {node ? getMasteryLabel(node.mastery_score) : '0%'}
                     </span>
                   </Link>
@@ -1093,13 +1099,15 @@ function DashboardInner() {
               style={{
                 display: 'block',
                 textAlign: 'center',
-                padding: '10px',
-                background: '#f8faf8',
-                border: '1px solid rgba(107,114,128,0.18)',
-                borderRadius: '7px',
-                color: '#4b5563',
+                padding: '11px',
+                background: 'var(--accent)',
+                border: '1px solid var(--accent-hover)',
+                borderRadius: '8px',
+                color: '#ffffff',
                 fontSize: '14px',
+                fontWeight: 600,
                 textDecoration: 'none',
+                letterSpacing: '0.01em',
               }}
             >
               Quick Quiz
@@ -1122,7 +1130,7 @@ function DashboardInner() {
           {/* Recent activity */}
           {nodes.length > 0 && (
             <div style={{ ...GLASS, padding: '16px' }}>
-              <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>
+              <p style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>
                 Recent Activity
               </p>
               {nodes
@@ -1131,10 +1139,10 @@ function DashboardInner() {
                 .slice(0, 4)
                 .map(n => (
                   <div key={n.id} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '7px' }}>
-                    <span style={{ fontSize: '12px', color: '#374151' }}>
+                    <span style={{ fontSize: '13px', color: '#374151' }}>
                       {n.concept_name} — {getMasteryLabel(n.mastery_score)}
                     </span>
-                    <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '8px', flexShrink: 0 }}>
+                    <span style={{ fontSize: '12px', color: '#9ca3af', marginLeft: '8px', flexShrink: 0 }}>
                       {formatRelativeTime(n.last_studied_at)}
                     </span>
                   </div>
@@ -1162,7 +1170,9 @@ function DashboardInner() {
         >
           <div
             style={{
-              background: '#ffffff',
+              background: 'rgba(246, 252, 246, 0.88)',
+              backdropFilter: 'blur(32px) saturate(1.5)',
+              WebkitBackdropFilter: 'blur(32px) saturate(1.5)',
               borderRadius: '12px',
               padding: '28px',
               width: '480px',
@@ -1170,8 +1180,8 @@ function DashboardInner() {
               maxHeight: '80vh',
               overflowY: 'auto',
               position: 'relative',
-              border: '1px solid rgba(107,114,128,0.15)',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
+              border: '1px solid rgba(255, 255, 255, 0.75)',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.90), 0 20px 60px rgba(15, 23, 42, 0.18)',
               fontFamily: UI_FONT,
             }}
           >
@@ -1183,7 +1193,7 @@ function DashboardInner() {
               ✕
             </button>
 
-            <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>
+            <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#111827', letterSpacing: '-0.02em', margin: '0 0 4px' }}>
               My Courses
             </h2>
             <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px' }}>

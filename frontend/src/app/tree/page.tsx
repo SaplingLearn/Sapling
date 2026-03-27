@@ -10,10 +10,13 @@ import { useUser } from '@/context/UserContext';
 
 type Filter = 'all' | 'mastered' | 'learning' | 'struggling' | 'unexplored';
 
-const GLASS = {
-  background: '#ffffff',
-  border: '1px solid rgba(107, 114, 128, 0.15)',
-} as const;
+const GLASS: React.CSSProperties = {
+  background: 'rgba(255, 255, 255, 0.45)',
+  backdropFilter: 'blur(12px) saturate(1.6)',
+  WebkitBackdropFilter: 'blur(12px) saturate(1.6)',
+  border: '1px solid rgba(255, 255, 255, 0.68)',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 2px 10px rgba(26, 92, 42, 0.07), 0 1px 3px rgba(26, 92, 42, 0.04)',
+};
 
 function useIsMobile(breakpoint = 768) {
   const [isMobile, setIsMobile] = useState(false);
@@ -140,7 +143,7 @@ function TreePageInner() {
             fontSize: '13px',
             outline: 'none',
             width: isMobile ? '100%' : '180px',
-            background: '#ffffff',
+            background: 'rgba(255, 255, 255, 0.55)',
             color: '#111827',
           }}
         />
@@ -177,10 +180,10 @@ function TreePageInner() {
           bottom: '24px',
           ...(isMobile ? { left: '10px', width: 'calc(100% - 20px)', minWidth: '0', maxWidth: 'calc(100% - 20px)' } : { left: '50%' }),
           ...GLASS,
-          border: '1px solid rgba(26,92,42,0.25)',
+          border: '1px solid rgba(255,255,255,0.72)',
           borderRadius: '10px',
           padding: '14px 18px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.85), 0 8px 32px rgba(26,92,42,0.12)',
           zIndex: 20,
           display: 'flex',
           flexDirection: 'column',

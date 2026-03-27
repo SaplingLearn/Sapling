@@ -27,9 +27,7 @@ export default function ChatPanel({ messages, onSend, onAction, onEndSession, lo
   const [input, setInput] = useState('');
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (prefillInput) setInput(prefillInput);
-  }, [prefillInput]);
+  // prefillInput is used only as a transient placeholder hint — never fills the input value
 
   useEffect(() => {
     const container = messagesContainerRef.current;
@@ -130,7 +128,7 @@ export default function ChatPanel({ messages, onSend, onAction, onEndSession, lo
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKey}
-            placeholder="Type your answer..."
+            placeholder={prefillInput || "Type your answer..."}
             rows={2}
             style={{
               flex: 1,

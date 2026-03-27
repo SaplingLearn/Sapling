@@ -151,7 +151,7 @@ function SocialPageInner() {
     <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, height: isMobile ? 'auto' : 'calc(100vh - 48px)', minHeight: isMobile ? 'calc(100vh - 48px)' : undefined }}>
       {/* Left sidebar */}
       {(!isMobile || showRooms) && (
-      <div className="panel-in panel-in-1" style={{ width: isMobile ? '100%' : '240px', maxHeight: isMobile ? '300px' : undefined, background: '#f2f7f2', borderRight: '1px solid rgba(107,114,128,0.12)', overflowY: 'auto' }}>
+      <div className="panel-in panel-in-1" style={{ width: isMobile ? '100%' : '240px', maxHeight: isMobile ? '300px' : undefined, background: 'rgba(255, 255, 255, 0.32)', backdropFilter: 'blur(16px) saturate(1.5)', WebkitBackdropFilter: 'blur(16px) saturate(1.5)', borderRight: '1px solid rgba(255, 255, 255, 0.55)', overflowY: 'auto' }}>
         <RoomList
           rooms={rooms}
           activeRoomId={schoolView ? null : activeRoomId}
@@ -186,7 +186,7 @@ function SocialPageInner() {
         ) : activeRoomId ? (
           <>
             {/* Tabs */}
-            <div style={{ background: '#f0f5f0', borderBottom: '1px solid rgba(107,114,128,0.12)', padding: isMobile ? '0 12px' : '0 24px', display: 'flex', alignItems: 'center' }}>
+            <div style={{ background: 'rgba(255, 255, 255, 0.32)', backdropFilter: 'blur(16px) saturate(1.5)', WebkitBackdropFilter: 'blur(16px) saturate(1.5)', borderBottom: '1px solid rgba(255, 255, 255, 0.55)', padding: isMobile ? '0 12px' : '0 24px', display: 'flex', alignItems: 'center' }}>
               <button style={tabStyle('overview')} onClick={() => { setTab('overview'); setShowMembers(false); }}>Overview</button>
               <button style={tabStyle('chat')} onClick={() => { setTab('chat'); setShowMembers(false); }}>Chat</button>
               <button style={tabStyle('match')} onClick={() => { setTab('match'); setShowMembers(false); }}>Study Match</button>

@@ -13,6 +13,7 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from db.connection import table
 from services.extraction_service import extract_text_from_file
 from services.gemini_service import call_gemini_json
+from services.activity_service import log_room_activity
 from services.calendar_service import save_assignments_to_db
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,12 @@ async def upload_document(
         "processed_at": now,
     }
     inserted = table("documents").insert(row)
+
+    try:
+        category = ai.get("category", "other")
+        log_room_activity(user_id, "document_uploaded", detail=f"{filename} ({category})")
+    except Exception:
+        pass
 
     # Invalidate any cached study guides for this user+course so they regenerate fresh
     try:

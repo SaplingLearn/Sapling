@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sapling — Feature Ideas for University Students</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #f8f9fb;
+      color: #1a1a2e;
+      line-height: 1.6;
+    }
+
+    .page {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 60px 48px;
+    }
+
+    /* Header */
+    .header {
+      border-bottom: 3px solid #4f46e5;
+      padding-bottom: 32px;
+      margin-bottom: 48px;
+    }
+
+    .header .logo {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #4f46e5;
+      margin-bottom: 16px;
+    }
+
+    .header h1 {
+      font-size: 36px;
+      font-weight: 800;
+      color: #0f0f1a;
+      line-height: 1.2;
+      margin-bottom: 12px;
+    }
+
+    .header p {
+      font-size: 16px;
+      color: #64748b;
+      max-width: 560px;
+    }
+
+    .header .meta {
+      margin-top: 20px;
+      font-size: 13px;
+      color: #94a3b8;
+    }
+
+    /* Section */
+    .section {
+      margin-bottom: 52px;
+    }
+
+    .section-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 4px;
+      margin-bottom: 24px;
+    }
+
+    .label-high    { background: #ede9fe; color: #5b21b6; }
+    .label-practical { background: #d1fae5; color: #065f46; }
+    .label-viral   { background: #fef3c7; color: #92400e; }
+    .label-lms     { background: #dbeafe; color: #1e40af; }
+
+    /* Feature Card */
+    .feature {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 28px 32px;
+      margin-bottom: 20px;
+      page-break-inside: avoid;
+    }
+
+    .feature-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .icon-purple { background: #ede9fe; }
+    .icon-green  { background: #d1fae5; }
+    .icon-yellow { background: #fef3c7; }
+    .icon-blue   { background: #dbeafe; }
+    .icon-pink   { background: #fce7f3; }
+    .icon-orange { background: #ffedd5; }
+
+    .feature-title-block h3 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #0f0f1a;
+      margin-bottom: 4px;
+    }
+
+    .feature-title-block .tag {
+      font-size: 12px;
+      font-weight: 500;
+      color: #94a3b8;
+    }
+
+    .feature p {
+      font-size: 14.5px;
+      color: #374151;
+      margin-bottom: 14px;
+    }
+
+    .feature .subsection {
+      margin-top: 14px;
+    }
+
+    .feature .subsection h4 {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+
+    .feature ul {
+      padding-left: 18px;
+    }
+
+    .feature ul li {
+      font-size: 14px;
+      color: #4b5563;
+      margin-bottom: 5px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pill {
+      font-size: 12px;
+      font-weight: 500;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: #f1f5f9;
+      color: #475569;
+    }
+
+    /* Priority Table */
+    .priority-box {
+      background: #0f0f1a;
+      color: #f8fafc;
+      border-radius: 12px;
+      padding: 32px;
+      margin-top: 48px;
+      page-break-inside: avoid;
+    }
+
+    .priority-box h2 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 24px;
+      color: #f1f5f9;
+    }
+
+    .priority-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 20px;
+    }
+
+    .priority-col h4 {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .priority-col.retention h4 { color: #a78bfa; }
+    .priority-col.growth h4    { color: #34d399; }
+    .priority-col.dau h4       { color: #fbbf24; }
+
+    .priority-col ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    .priority-col ul li {
+      font-size: 13.5px;
+      color: #cbd5e1;
+      margin-bottom: 6px;
+      padding-left: 14px;
+      position: relative;
+    }
+
+    .priority-col ul li::before {
+      content: '→';
+      position: absolute;
+      left: 0;
+      color: #64748b;
+    }
+
+    /* LMS section */
+    .lms-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .lms-card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 20px;
+    }
+
+    .lms-card h4 {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #0f0f1a;
+    }
+
+    .lms-card .status {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-bottom: 10px;
+    }
+
+    .status-yes    { background: #d1fae5; color: #065f46; }
+    .status-no     { background: #fee2e2; color: #991b1b; }
+    .status-maybe  { background: #fef3c7; color: #92400e; }
+
+    .lms-card p {
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    @media print {
+      body { background: white; }
+      .page { padding: 40px 32px; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">Sapling — Internal Document</div>
+    <h1>Feature Ideas for University Students</h1>
+    <p>A deep-dive into high-impact features to increase engagement, retention, and growth among the university student demographic.</p>
+    <div class="meta">Prepared March 2026 &nbsp;·&nbsp; Confidential</div>
+  </div>
+
+  <!-- ═══════════════════════════════════ -->
+  <!-- SECTION 1: HIGH IMPACT             -->
+  <!-- ═══════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label label-high">High Impact / High Excitement</span>
+
+    <!-- AI Practice Exams -->
+    <div class="feature">
+      <div class="feature-header">
+        <div class="feature-icon icon-purple">📝</div>
+        <div class="feature-title-block">
+          <h3>AI Practice Exams</h3>
+          <div class="tag">Directly addresses exam anxiety — the #1 student stressor</div>
+        </div>
+      </div>
+      <p>
+        Generate a full mock exam from any uploaded lecture notes, slides, or documents. The exam is timed, auto-graded, and each wrong answer comes with an AI-generated explanation tied back to the source material. Students can retake with reshuffled questions, track score history, and identify weak areas.
+      </p>
+      <div class="two-col">
+        <div class="subsection">
+          <h4>Key Capabilities</h4>
+          <ul>
+            <li>Multiple choice, short answer, and true/false question types</li>
+            <li>Configurable exam length and time limit</li>
+            <li>Per-question explanations tied to source docs</li>
+            <li>Score history and weak-topic identification</li>
+            <li>Re-take mode with reshuffled questions</li>
+          </ul>
+        </div>
+        <div class="subsection">
+          <h4>Why It Works</h4>
+          <ul>
+            <li>Exam prep is the highest-urgency student activity</li>
+            <li>Builds on existing document upload + Gemini pipeline</li>
+            <li>Drives repeat uploads of new course material</li>
+            <li>Differentiated from basic flashcard apps</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Grade Calculator -->
+    <div class="feature">
+      <div class="feature-header">
+        <div class="feature-icon icon-purple">🎓</div>
+        <div class="feature-title-block">
+          <h3>Grade Calculator</h3>
+          <div class="tag">Simple, universally needed, daily active use driver</div>
+        </div>
+      </div>
+      <p>
+        Students input their current grades and assignment weights per course, and Sapling calculates exactly what they need on remaining assignments or the final exam to reach their target grade. If a syllabus has already been uploaded, weights can be auto-populated. Supports both percentage-based and point-based grading schemas.
+      </p>
+      <div class="two-col">
+        <div class="subsection">
+          <h4>Key Capabilities</h4>
+          <ul>
+            <li>Auto-populate weights from uploaded syllabus</li>
+            <li>Scenario modeling ("what if I get an 80 on the final?")</li>
+            <li>GPA impact calculation</li>
+            <li>Drop-lowest-score support</li>
+            <li>Per-course grade dashboard</li>
+          </ul>
+        </div>
+        <div class="subsection">
+          <h4>Why It Works</h4>
+          <ul>
+            <li>Every student Googles a grade calculator every semester</li>
+            <li>Extremely low build effort, high retention payoff</li>
+            <li>Encourages syllabus uploads (feeds other features)</li>
+            <li>Keeps students coming back throughout the semester</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Competitive Study Rooms -->
+    <div class="feature">
+      <div class="feature-header">
+        <div class="feature-icon icon-purple">🏆</div>
+        <div class="feature-title-block">
+          <h3>Competitive Study Rooms</h3>
+          <div class="tag">Gamifies collaboration — turns studying social</div>
+        </div>
+      </div>
+      <p>
+        Layer competitive mechanics on top of the existing study rooms. Room members can see each other's weekly study time, quiz scores, and knowledge graph mastery side-by-side. Weekly leaderboards reset every Monday. A live "study battle" mode lets two students race to answer the same quiz questions.
+      </p>
+      <div class="two-col">
+        <div class="subsection">
+          <h4>Key Capabilities</h4>
+          <ul>
+            <li>Weekly leaderboard (study time, quiz scores, mastery gain)</li>
+            <li>Side-by-side knowledge graph comparisons</li>
+            <li>Live "study battle" — real-time quiz races</li>
+            <li>Room XP / level system</li>
+            <li>Achievement badges (e.g. "First to master all nodes")</li>
+          </ul>
+        </div>
+        <div class="subsection">
+          <h4>Why It Works</h4>
+          <ul>
+            <li>Friendly competition is a proven retention mechanic</li>
+            <li>Builds on existing rooms infrastructure</li>
+            <li>Encourages students to invite classmates (organic growth)</li>
+            <li>Gives study rooms a reason to come back to daily</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Wrapped Stats -->
+    <div class="feature">
+      <div class="feature-header">
+        <div class="feature-icon icon-purple">✨</div>
+        <div class="feature-title-block">
+          <h3>"Wrapped" Study Stats</h3>
+          <div class="tag">Shareable recap — organic social media growth</div>
+        </div>
+      </div>
+      <p>
+        At the end of each week and semester, Sapling generates a visually striking recap card: total hours studied, concepts mastered, top subject, longest streak, most-used study mode. Cards are designed to be shared — one tap copies a shareable image. Semester wrap-ups could go viral during finals season.
+      </p>
+      <div class="two-col">
+        <div class="subsection">
+          <h4>Key Capabilities</h4>
+          <ul>
+            <li>Weekly and semester recap cards</li>
+            <li>Shareable image export (PNG/link)</li>
+            <li>Animated reveal on first view</li>
+            <li>Comparison to previous weeks/semesters</li>
+            <li>Highlights: top subject, study streak, busiest day</li>
+          </ul>
+        </div>
+        <div class="subsection">
+          <h4>Why It Works</h4>
+          <ul>
+            <li>Students love sharing achievements — see Duolingo, Wordle</li>
+            <li>Sapling branding on every shared card = free impressions</li>
+            <li>Finals season drops could trend on campus social media</li>
+            <li>Motivates consistent use to "earn" a better recap</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════ -->
+  <!-- SECTION 2: PRACTICAL / STICKY      -->
+  <!-- ═══════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label label-practical">Practical / Sticky</span>
+
+    <!-- Pomodoro Timer -->
+    <div class="feature">
+      <div class="feature-header">
+        <div class="feature-icon icon-green">⏱️</div>
+        <div class="feature-title-block">
+          <h3>Pomodoro Focus Timer</h3>
+          <div class="tag">Keeps users in the app — increases session depth</div>
+        </div>
+      </div>
+      <p>
+        An integrated focus timer built into learning sessions. Students pick a topic, set a Pomodoro block (default 25 min / 5 min break), and Sapling tracks exactly what concept they studied during each block. At the end of the session, a breakdown shows time-per-concept, helping students see where their study time actually goes.
+      </p>
+      <div class="subsection">
+        <h4>Key Capabilities</h4>
+        <ul>
+          <li>Customizable work/break intervals (25/5, 50/10, etc.)</li>
+          <li>Per-block topic tagging — ties into knowledge graph</li>
+          <li>Session summary: time per concept, total focused time</li>
+          <li>Ambient sound options (rain, lo-fi, white noise)</li>
+          <li>Do-not-disturb mode suggestion during active blocks</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Voice Mode -->
+    <div class="feature">
+      <div class="feature-header">
+        <div class="feature-icon icon-green">🎙️</div>
+        <div class="feature-title-block">
+          <h3>Voice Mode</h3>
+          <div class="tag">Study anywhere — removes the typing barrier</div>
+        </div>
+      </div>
+      <p>
+        Allow students to speak to the AI tutor instead of typing. Voice input is transcribed and sent to the existing learning pipeline. The AI response can be read back via text-to-speech. This is transformative for commuters, students reviewing on the go, or anyone who finds typing in a study session disruptive to their flow.
+      </p>
+      <div class="subsection">
+        <h4>Key Capabilities</h4>
+        <ul>
+          <li>Push-to-talk or continuous voice input</li>
+          <li>Real-time transcription display</li>
+          <li>Optional AI voice read-back (adjustable speed)</li>
+          <li>Works across all session modes (Socratic, Quiz, Teachback)</li>
+          <li>Hands-free mode for mobile</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Screenshot to Notes -->
+    <div class="feature">
+      <div class="feature-header">
+        <div class="feature-icon icon-green">📸</div>
+        <div class="feature-title-block">
+          <h3>Screenshot → Study Notes</h3>
+          <div class="tag">Removes upload friction — captures in-the-moment learning</div>
+        </div>
+      </div>
+      <p>
+        Students snap a photo of a whiteboard, slide projected in class, or handwritten notes. Sapling OCRs the image, formats it into clean structured notes, and automatically maps new concepts into the knowledge graph. A quick mobile capture flow means students can add to their library without leaving class.
+      </p>
+      <div class="subsection">
+        <h4>Key Capabilities</h4>
+        <ul>
+          <li>Camera capture directly in the mobile web app</li>
+          <li>OCR → clean formatted notes with headings and bullets</li>
+          <li>Automatic concept extraction and knowledge graph update</li>
+          <li>Batch upload of multiple screenshots into one document</li>
+          <li>Edit/correct OCR output before saving</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════ -->
+  <!-- SECTION 3: VIRAL / COMMUNITY       -->
+  <!-- ═══════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label label-viral">Viral / Community</span>
+
+    <!-- Shareable Knowledge Graph -->
+    <div class="feature">
+      <div class="feature-header">
+        <div class="feature-icon icon-yellow">🌐</div>
+        <div class="feature-title-block">
+          <h3>Shareable Knowledge Graph</h3>
+          <div class="tag">Visually unique — spreads Sapling organically</div>
+        </div>
+      </div>
+      <p>
+        Let users share a snapshot or live link to their knowledge graph. The 3D graph is one of Sapling's most visually distinctive features — a shareable version posted to Reddit, Twitter, or a Discord study server would generate curiosity and sign-ups. Public graphs could also show anonymized class-wide mastery averages if study room members opt in.
+      </p>
+      <div class="subsection">
+        <h4>Key Capabilities</h4>
+        <ul>
+          <li>Generate a shareable link or image snapshot of your graph</li>
+          <li>Privacy controls: share full graph, subject-only, or stats-only</li>
+          <li>Embed in personal websites or portfolios</li>
+          <li>Study room aggregate view — "our group's collective knowledge"</li>
+          <li>Optional public profile page showing graph + stats</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Study Challenges -->
+    <div class="feature">
+      <div class="feature-header">
+        <div class="feature-icon icon-yellow">⚡</div>
+        <div class="feature-title-block">
+          <h3>Study Challenges</h3>
+          <div class="tag">Friend-to-friend sharing loop — viral invite mechanic</div>
+        </div>
+      </div>
+      <p>
+        Issue a challenge to a friend or study room: "Master these 10 concepts before Friday." Both participants track progress in real-time. The challenger gets notified when the challengee catches up or overtakes them. Challenges can be shared as invite links, pulling non-users into Sapling.
+      </p>
+      <div class="subsection">
+        <h4>Key Capabilities</h4>
+        <ul>
+          <li>Create a challenge from any topic or concept set</li>
+          <li>Invite via link — works for non-users (creates sign-up prompt)</li>
+          <li>Real-time progress tracker for both parties</li>
+          <li>Deadline and win condition customization</li>
+          <li>Challenge history and win/loss record</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════ -->
+  <!-- SECTION 4: LMS / DEADLINE SYNC     -->
+  <!-- ═══════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label label-lms">LMS & Deadline Integration</span>
+
+    <p style="font-size:14.5px; color:#374151; margin-bottom:24px;">
+      Gradescope does not have an official public API. The most practical path to automatic deadline sync is integrating with the LMS platforms that host Gradescope assignments. Below is a realistic breakdown of each platform.
+    </p>
+
+    <div class="lms-grid">
+
+      <div class="lms-card">
+        <h4>Canvas LMS</h4>
+        <span class="status status-yes">Official OAuth API</span>
+        <p>The most common US university LMS. Has a full REST API with OAuth 2.0 — same pattern as the existing Google Calendar integration. Gradescope assignments sync to Canvas automatically via LTI. <strong>Recommended first integration.</strong></p>
+      </div>
+
+      <div class="lms-card">
+        <h4>Google Classroom</h4>
+        <span class="status status-yes">Official OAuth API</span>
+        <p>Strong in K-12 and some smaller colleges. Google Classroom API is well-documented and straightforward. Good secondary target alongside Canvas.</p>
+      </div>
+
+      <div class="lms-card">
+        <h4>Blackboard</h4>
+        <span class="status status-maybe">Official API, but complex</span>
+        <p>Has a REST API with OAuth, but requires registration with each institution's Blackboard instance. Hard to self-serve — better as a later addition once there's institutional demand.</p>
+      </div>
+
+      <div class="lms-card">
+        <h4>Gradescope (direct)</h4>
+        <span class="status status-no">No official API</span>
+        <p>No public API exists. Unofficial scraping libraries exist but require storing user passwords and break with SSO, which most universities use. Not recommended.</p>
+      </div>
+
+      <div class="lms-card">
+        <h4>Moodle</h4>
+        <span class="status status-maybe">Official API</span>
+        <p>Common internationally and at some US institutions. Has a REST API but adoption is more fragmented — worth targeting if international expansion is planned.</p>
+      </div>
+
+      <div class="lms-card">
+        <h4>Email Parsing</h4>
+        <span class="status status-maybe">Workaround</span>
+        <p>Gradescope sends email notifications for new assignments. Users forward emails to a Sapling address; AI extracts the deadline. Fragile but no credentials required — good fallback for non-Canvas schools.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════ -->
+  <!-- PRIORITY SUMMARY                   -->
+  <!-- ═══════════════════════════════════ -->
+  <div class="priority-box">
+    <h2>Recommended Build Priority</h2>
+    <div class="priority-row">
+      <div class="priority-col retention">
+        <h4>For Retention</h4>
+        <ul>
+          <li>AI Practice Exams</li>
+          <li>Pomodoro Focus Timer</li>
+          <li>Grade Calculator</li>
+        </ul>
+      </div>
+      <div class="priority-col growth">
+        <h4>For Growth</h4>
+        <ul>
+          <li>Wrapped Study Stats</li>
+          <li>Shareable Knowledge Graph</li>
+          <li>Study Challenges</li>
+        </ul>
+      </div>
+      <div class="priority-col dau">
+        <h4>For Daily Active Use</h4>
+        <ul>
+          <li>Canvas LMS Integration</li>
+          <li>Voice Mode</li>
+          <li>Competitive Study Rooms</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

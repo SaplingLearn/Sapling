@@ -54,18 +54,18 @@ class SupabaseTable:
     def update(self, data: dict, filters: dict) -> list:
         r = _client.patch(self.url, params=filters, json=data)
         r.raise_for_status()
-        return r.json()
+        return r.json() if r.content else []
 
     def upsert(self, data, on_conflict: str = "id") -> list:
         headers = {"Prefer": "return=representation,resolution=merge-duplicates"}
         r = _client.post(self.url, headers=headers, params={"on_conflict": on_conflict}, json=data)
         r.raise_for_status()
-        return r.json()
+        return r.json() if r.content else []
 
     def delete(self, filters: dict) -> list:
         r = _client.delete(self.url, params=filters)
         r.raise_for_status()
-        return r.json()
+        return r.json() if r.content else []
 
 
 def table(name: str) -> SupabaseTable:

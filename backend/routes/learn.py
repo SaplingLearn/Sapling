@@ -7,8 +7,9 @@ from fastapi import APIRouter, HTTPException, Query
 
 from db.connection import table
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody
-from services.gemini_service import call_gemini_multiturn, extract_graph_update
+from services.gemini_service import call_gemini, call_gemini_multiturn, extract_graph_update
 from services.graph_service import get_graph, apply_graph_update
+from services.activity_service import log_room_activity
 
 router = APIRouter()
 
@@ -158,6 +159,39 @@ def get_user_name(user_id: str) -> str:
     return rows[0]["name"] if rows else "Student"
 
 
+def _make_session_name(topic: str, mode: str) -> str:
+    """Generate a descriptive sentence summarising the session topic. Falls back to topic on error."""
+    mode_note = {
+        "socratic": "question-based exploration",
+        "expository": "direct explanation",
+        "teachback": "student explains the material back",
+    }.get(mode, mode)
+    try:
+        prompt = (
+            f"Write a 4–6 word phrase (no verb needed) describing a tutoring session.\n"
+            f"Topic: {topic}\n"
+            f"Style: {mode_note}\n\n"
+            f"Reply with ONLY the phrase. No quotes. No period."
+        )
+        name = call_gemini(prompt, max_output_tokens=30).strip().strip('"\'').strip('.').strip()
+        return name[:80] if name else topic
+    except Exception:
+        return topic
+
+
+def _enforce_session_limit(user_id: str, course_name: str, limit: int = 10) -> None:
+    """Delete the oldest session(s) for this user+course so at most `limit - 1` remain before the new insert."""
+    filters = {"user_id": f"eq.{user_id}"}
+    if course_name:
+        filters["course_name"] = f"eq.{course_name}"
+    sessions = table("sessions").select("id", filters=filters, order="started_at.asc")
+    excess = len(sessions) - limit + 1
+    for i in range(max(0, excess)):
+        old_id = sessions[i]["id"]
+        table("messages").delete({"session_id": f"eq.{old_id}"})
+        table("sessions").delete({"id": f"eq.{old_id}"})
+
+
 def _consume_pending(session_id: str, user_id: str) -> None:
     """If session was started lazily, persist session row + first assistant message before user/chat."""
     if session_id not in PENDING_SESSIONS:
@@ -165,12 +199,28 @@ def _consume_pending(session_id: str, user_id: str) -> None:
     pending = PENDING_SESSIONS.pop(session_id)
     if pending["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Session user mismatch")
+    course_name = pending.get("course_name", "")
+    # Enforce session limit — skip silently if name/course_name columns not migrated yet
+    try:
+        _enforce_session_limit(user_id, course_name)
+    except Exception:
+        pass
+    # Core insert — always works on the base schema
     table("sessions").insert({
         "id": session_id,
         "user_id": user_id,
         "mode": pending["mode"],
         "topic": pending["topic"],
     })
+    # Set generated name + course — skip silently if columns don't exist yet (run migration)
+    try:
+        name = _make_session_name(pending["topic"], pending["mode"])
+        table("sessions").update(
+            {"name": name, "course_name": course_name or None},
+            filters={"id": f"eq.{session_id}"},
+        )
+    except Exception:
+        pass
     save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
 
 
@@ -208,6 +258,7 @@ def start_session(body: StartSessionBody):
         "user_id": body.user_id,
         "mode": body.mode,
         "topic": body.topic,
+        "course_name": course_name,
         "use_shared_context": body.use_shared_context,
         "assistant_reply": reply,
         "graph_update": graph_update,
@@ -317,14 +368,25 @@ def end_session(body: EndSessionBody):
         {"summary_json": summary},
         filters={"id": f"eq.{body.session_id}"},
     )
+
+    try:
+        n = len(concepts_covered)
+        detail = f"Covered {n} concept{'s' if n != 1 else ''}"
+        log_room_activity(session["user_id"], "session_completed", detail=detail)
+    except Exception:
+        pass
+
     return {"summary": summary}
 
 
 @router.get("/sessions/{user_id}")
-def list_sessions(user_id: str, limit: int = 10):
+def list_sessions(user_id: str, limit: int = 10, course_name: str | None = Query(None)):
+    filters: dict = {"user_id": f"eq.{user_id}"}
+    if course_name:
+        filters["course_name"] = f"eq.{course_name}"
     sessions = table("sessions").select(
         "*",
-        filters={"user_id": f"eq.{user_id}"},
+        filters=filters,
         order="started_at.desc",
         limit=limit,
     )
@@ -334,6 +396,8 @@ def list_sessions(user_id: str, limit: int = 10):
         result.append({
             "id": s["id"],
             "topic": s["topic"],
+            "name": s.get("name"),
+            "course_name": s.get("course_name"),
             "mode": s["mode"],
             "started_at": s["started_at"],
             "ended_at": s.get("ended_at"),
@@ -351,8 +415,15 @@ def delete_session(session_id: str, user_id: str | None = Query(None)):
             raise HTTPException(status_code=403, detail="Session user mismatch")
         PENDING_SESSIONS.pop(session_id, None)
         return {"deleted": True}
-    table("messages").delete({"session_id": f"eq.{session_id}"})
-    table("sessions").delete({"id": f"eq.{session_id}"})
+    # Delete child messages before the session to satisfy the FK constraint
+    try:
+        table("messages").delete({"session_id": f"eq.{session_id}"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete session messages: {e}")
+    try:
+        table("sessions").delete({"id": f"eq.{session_id}"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete session: {e}")
     return {"deleted": True}
 
 
@@ -443,4 +514,13 @@ def mode_switch(body: ModeSwitchBody):
         f"We'll continue with {topic}, let's keep going!"
     )
     save_message(body.session_id, "assistant", reply)
-    return {"reply": reply}
+
+    try:
+        table("sessions").update(
+            {"mode": body.new_mode},
+            filters={"id": f"eq.{body.session_id}"},
+        )
+    except Exception:
+        pass
+
+    return {"reply": reply, "mode": body.new_mode}

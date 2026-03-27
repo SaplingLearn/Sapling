@@ -9,9 +9,12 @@ import { useUser } from '@/context/UserContext';
 const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
 
 const GLASS: React.CSSProperties = {
-  background: '#ffffff',
-  border: '1px solid rgba(107, 114, 128, 0.15)',
+  background: 'rgba(255, 255, 255, 0.45)',
+  backdropFilter: 'blur(12px) saturate(1.6)',
+  WebkitBackdropFilter: 'blur(12px) saturate(1.6)',
+  border: '1px solid rgba(255, 255, 255, 0.68)',
   borderRadius: '10px',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 2px 10px rgba(26, 92, 42, 0.07), 0 1px 3px rgba(26, 92, 42, 0.04)',
 };
 
 type Category = 'all' | 'syllabus' | 'lecture_notes' | 'slides' | 'reading' | 'assignment' | 'study_guide' | 'other';

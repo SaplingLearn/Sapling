@@ -64,10 +64,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id     TEXT NOT NULL REFERENCES users(id),
     mode        TEXT NOT NULL,
     topic       TEXT NOT NULL,
+    name        TEXT,                          -- AI-generated descriptive sentence (set on first user message)
+    course_name TEXT,                          -- Resolved course/subject this session belongs to
     started_at  TIMESTAMPTZ DEFAULT now(),
     ended_at    TIMESTAMPTZ,
     summary_json JSONB
 );
+-- Migration:
+-- ALTER TABLE sessions ADD COLUMN IF NOT EXISTS name TEXT;
+-- ALTER TABLE sessions ADD COLUMN IF NOT EXISTS course_name TEXT;
 
 -- Chat messages within a session
 CREATE TABLE IF NOT EXISTS messages (
@@ -226,6 +231,18 @@ CREATE TABLE public.flashcards (
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT flashcards_pkey PRIMARY KEY (id),
   CONSTRAINT flashcards_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id)
+);
+
+-- Job Applications
+CREATE TABLE IF NOT EXISTS job_applications (
+    id           UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    position     TEXT NOT NULL,
+    full_name    TEXT NOT NULL,
+    email        TEXT NOT NULL,
+    phone        TEXT,
+    linkedin_url TEXT NOT NULL,
+    resume       BYTEA,
+    submitted_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_flashcards_user_topic ON public.flashcards(user_id, topic);

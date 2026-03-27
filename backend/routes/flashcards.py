@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from db.connection import table
 from services.gemini_service import generate_flashcards as _generate
+from services.activity_service import log_room_activity
 
 router = APIRouter()
 
@@ -147,6 +148,11 @@ def generate(body: GenerateFlashcardsBody):
             status_code=500,
             detail=f"Failed to save flashcards. Has the flashcards table been created in Supabase? Error: {e}"
         )
+
+    try:
+        log_room_activity(body.user_id, "flashcards_generated", concept_name=body.topic, detail=f"{len(rows_to_insert)} cards")
+    except Exception:
+        pass
 
     return {
         "flashcards": rows_to_insert,

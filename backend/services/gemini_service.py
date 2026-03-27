@@ -52,13 +52,13 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False) -> str:
+def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False, max_output_tokens: int = 8192) -> str:
     """Single-turn call to Gemini with a plain string prompt."""
     for attempt in range(retries + 1):
         try:
             config = types.GenerateContentConfig(
                 temperature=0.7,
-                max_output_tokens=8192,
+                max_output_tokens=max_output_tokens,
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
                 **({"response_mime_type": "application/json"} if json_mode else {}),
             )

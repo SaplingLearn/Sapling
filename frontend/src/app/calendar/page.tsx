@@ -13,6 +13,7 @@ import {
   syncToGoogleCalendar,
   importGoogleEvents,
   disconnectGoogleCalendar,
+  deleteAssignment,
 } from '@/lib/api';
 import { useUser } from '@/context/UserContext';
 
@@ -151,7 +152,7 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
     return (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
         {DAY_NAMES.map(d => (
-          <div key={d} style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', borderBottom: '2px solid rgba(107,114,128,0.12)', background: '#f0f5f0', letterSpacing: '0.05em' }}>
+          <div key={d} style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', borderBottom: '2px solid rgba(255,255,255,0.55)', background: 'rgba(255,255,255,0.32)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', letterSpacing: '0.05em' }}>
             {d}
           </div>
         ))}
@@ -171,7 +172,7 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
                 minHeight: isMobile ? '60px' : '130px',
                 borderBottom: '1px solid rgba(107,114,128,0.08)',
                 borderRight: '1px solid rgba(107,114,128,0.08)',
-                background: isToday ? 'rgba(26,92,42,0.05)' : '#ffffff',
+                background: isToday ? 'rgba(26,92,42,0.07)' : 'rgba(255,255,255,0.55)',
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '4px' }}>
@@ -283,9 +284,9 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
   });
 
   return (
-    <div style={{ border: '1px solid rgba(107,114,128,0.15)', borderRadius: '10px', overflow: 'hidden', background: '#ffffff' }}>
+    <div style={{ border: '1px solid rgba(255,255,255,0.68)', borderRadius: '10px', overflow: 'hidden', background: 'rgba(255,255,255,0.45)', backdropFilter: 'blur(12px) saturate(1.6)', WebkitBackdropFilter: 'blur(12px) saturate(1.6)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.85), 0 2px 10px rgba(26,92,42,0.07)' }}>
       {/* Header */}
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'auto 1fr auto', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid rgba(107,114,128,0.1)', background: '#f0f5f0', gap: '8px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'auto 1fr auto', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid rgba(255,255,255,0.55)', background: 'rgba(255,255,255,0.32)', gap: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button onClick={() => navigate(-1)} style={{ background: 'none', border: '1px solid rgba(107,114,128,0.18)', borderRadius: '5px', cursor: 'pointer', color: '#6b7280', fontSize: '14px', padding: '4px 10px', lineHeight: 1 }}>←</button>
           <button onClick={() => setCurrent(new Date())} style={{ fontSize: '11px', color: '#4b5563', background: '#f8faf8', border: '1px solid rgba(107,114,128,0.18)', borderRadius: '5px', cursor: 'pointer', padding: '4px 10px', fontWeight: 500 }}>Today</button>
@@ -490,15 +491,17 @@ function CalendarInner() {
         >
           <div
             style={{
-              background: '#ffffff',
+              background: 'rgba(246, 252, 246, 0.88)',
+              backdropFilter: 'blur(32px) saturate(1.5)',
+              WebkitBackdropFilter: 'blur(32px) saturate(1.5)',
               borderRadius: '12px',
               maxWidth: '520px',
               width: '100%',
               maxHeight: 'min(70vh, 480px)',
               display: 'flex',
               flexDirection: 'column',
-              boxShadow: '0 24px 64px rgba(0,0,0,0.18)',
-              border: '1px solid rgba(107,114,128,0.18)',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.90), 0 24px 64px rgba(15,23,42,0.18)',
+              border: '1px solid rgba(255,255,255,0.75)',
               fontFamily: UI_FONT,
             }}
           >
@@ -579,12 +582,21 @@ function CalendarInner() {
         {assignments.length === 0 ? (
           <p style={{ color: '#9ca3af', fontSize: '13px' }}>No assignments yet. Import a syllabus to get started.</p>
         ) : (
-          <AssignmentTable assignments={assignments} onChange={setAssignments} />
+          <AssignmentTable
+          assignments={assignments}
+          onChange={(updated) => {
+            const removedIds = assignments
+              .filter(a => !updated.some(u => u.id === a.id))
+              .map(a => a.id);
+            removedIds.forEach(id => deleteAssignment(id).catch(console.error));
+            setAssignments(updated);
+          }}
+        />
         )}
       </div>
 
       {/* Google Calendar panel */}
-      <div className="panel-in panel-in-4" style={{ border: '1px solid rgba(107,114,128,0.15)', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', background: '#f8faf8' }}>
+      <div className="panel-in panel-in-4" style={{ border: '1px solid rgba(255,255,255,0.68)', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', background: 'rgba(255,255,255,0.45)', backdropFilter: 'blur(12px) saturate(1.6)', WebkitBackdropFilter: 'blur(12px) saturate(1.6)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.85), 0 2px 10px rgba(26,92,42,0.07)' }}>
         {googleConnected ? (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>

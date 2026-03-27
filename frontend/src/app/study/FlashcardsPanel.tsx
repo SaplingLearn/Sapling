@@ -118,9 +118,9 @@ export default function FlashcardsPanel({ onStudyModeChange }: Props) {
   if (studyMode && currentCard) {
     const progress = (studyIndex / studyCards.length) * 100;
     return (
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f0f5f0' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
         <div style={{
-          background: '#f0f5f0', borderBottom: '1px solid rgba(107,114,128,0.12)',
+          background: 'rgba(255, 255, 255, 0.32)', backdropFilter: 'blur(16px) saturate(1.5)', WebkitBackdropFilter: 'blur(16px) saturate(1.5)', borderBottom: '1px solid rgba(255, 255, 255, 0.55)',
           padding: '0 20px', height: '52px', display: 'flex', alignItems: 'center',
           gap: '16px', flexShrink: 0,
         }}>
@@ -141,20 +141,20 @@ export default function FlashcardsPanel({ onStudyModeChange }: Props) {
             .flip-card-inner { position: relative; width: 100%; height: 100%; transition: transform 0.55s cubic-bezier(0.4,0.2,0.2,1); transform-style: preserve-3d; }
             .flip-card-inner.flipped { transform: rotateY(180deg); }
             .flip-card-front, .flip-card-back { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; border-radius: 16px; border: 1px solid rgba(107,114,128,0.15); box-shadow: 0 8px 32px rgba(0,0,0,0.08); gap: 16px; cursor: pointer; user-select: none; }
-            .flip-card-front { background: #ffffff; }
-            .flip-card-back { background: #f0fdf4; transform: rotateY(180deg); border-color: rgba(26,92,42,0.2); }
+            .flip-card-front { background: rgba(255,255,255,0.55); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-color: rgba(255,255,255,0.68); }
+            .flip-card-back { background: rgba(240,253,244,0.75); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transform: rotateY(180deg); border-color: rgba(26,92,42,0.25); }
           `}</style>
 
           <div className="flip-card" onClick={() => setFlipped(f => !f)} style={{ width: '100%', maxWidth: '600px', minHeight: '280px', position: 'relative' }}>
             <div className={`flip-card-inner${flipped ? ' flipped' : ''}`} style={{ minHeight: '280px' }}>
               <div className="flip-card-front">
-                <span style={{ fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Question</span>
-                <p style={{ fontSize: '20px', fontWeight: 500, color: '#111827', textAlign: 'center', lineHeight: 1.6, margin: 0 }}>{currentCard.front}</p>
+                <span style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.09em' }}>Question</span>
+                <p style={{ fontSize: '22px', fontWeight: 600, color: '#111827', textAlign: 'center', lineHeight: 1.5, margin: 0, letterSpacing: '-0.01em' }}>{currentCard.front}</p>
                 <span style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px' }}>tap to reveal</span>
               </div>
               <div className="flip-card-back">
-                <span style={{ fontSize: '11px', fontWeight: 500, color: '#1a5c2a', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Answer</span>
-                <p style={{ fontSize: '20px', fontWeight: 500, color: '#111827', textAlign: 'center', lineHeight: 1.6, margin: 0 }}>{currentCard.back}</p>
+                <span style={{ fontSize: '11px', fontWeight: 600, color: '#1a5c2a', textTransform: 'uppercase', letterSpacing: '0.09em' }}>Answer</span>
+                <p style={{ fontSize: '22px', fontWeight: 600, color: '#111827', textAlign: 'center', lineHeight: 1.5, margin: 0, letterSpacing: '-0.01em' }}>{currentCard.back}</p>
               </div>
             </div>
           </div>
@@ -236,13 +236,13 @@ export default function FlashcardsPanel({ onStudyModeChange }: Props) {
             <p style={{ fontSize: '13px', fontWeight: 600, color: '#374151', margin: '0 0 10px' }}>Study by topic</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <button onClick={() => startStudy()} style={{
-                padding: '8px 12px', background: '#ffffff', border: '1px solid rgba(26,92,42,0.25)',
+                padding: '8px 12px', background: 'rgba(255,255,255,0.45)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', border: '1px solid rgba(26,92,42,0.25)',
                 borderRadius: '6px', fontSize: '13px', color: '#1a5c2a', fontWeight: 500,
                 cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
               }}>All cards ({cards.length})</button>
               {topics.map(t => (
                 <button key={t} onClick={() => startStudy(t)} style={{
-                  padding: '8px 12px', background: '#ffffff', border: '1px solid rgba(107,114,128,0.18)',
+                  padding: '8px 12px', background: 'rgba(255,255,255,0.45)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.68)',
                   borderRadius: '6px', fontSize: '13px', color: '#374151', cursor: 'pointer',
                   textAlign: 'left', fontFamily: 'inherit', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 }}>
@@ -288,9 +288,9 @@ export default function FlashcardsPanel({ onStudyModeChange }: Props) {
             const rating = ratingMeta(card.last_rating);
             return (
               <div key={card.id} style={{
-                background: '#ffffff', border: '1px solid rgba(107,114,128,0.15)',
+                background: 'rgba(255,255,255,0.45)', backdropFilter: 'blur(12px) saturate(1.6)', WebkitBackdropFilter: 'blur(12px) saturate(1.6)', border: '1px solid rgba(255,255,255,0.68)',
                 borderRadius: '12px', padding: '18px', display: 'flex',
-                flexDirection: 'column', gap: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
+                flexDirection: 'column', gap: '10px', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.85), 0 2px 10px rgba(26,92,42,0.07)',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ fontSize: '10px', fontWeight: 600, color: '#1a5c2a', background: 'rgba(26,92,42,0.08)', padding: '2px 8px', borderRadius: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{card.topic}</span>

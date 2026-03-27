@@ -312,25 +312,41 @@ export default function QuizPanel({ nodes, userId, selectedCourse, onLearnConcep
   if (phase === 'results' && results) {
     const pct = Math.round((results.score / results.total) * 100);
     const masteryDelta = Math.round((results.mastery_after - results.mastery_before) * 100);
+    const isPerfect = results.score === results.total;
     return (
-      <div className="no-scrollbar" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', overflowY: 'auto' }}>
+      <div className="no-scrollbar animate-fade-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', overflowY: 'auto' }}>
         <div style={{ textAlign: 'center' }}>
-          <p style={{ fontSize: '36px', fontWeight: 700, color: 'var(--text)' }}>{results.score}/{results.total}</p>
-          <p style={{ fontSize: '14px', color: 'var(--text-muted)' }}>{pct}% correct</p>
-          <p style={{ fontSize: '13px', color: masteryDelta >= 0 ? '#16a34a' : '#dc2626', marginTop: '4px' }}>
-            Mastery: {masteryDelta >= 0 ? '+' : ''}{masteryDelta}%
+          {isPerfect && (
+            <div className="animate-celebrate-pop" style={{
+              display: 'inline-flex', alignItems: 'center', gap: '6px',
+              padding: '4px 14px', marginBottom: '12px',
+              background: 'linear-gradient(135deg, rgba(234,179,8,0.18) 0%, rgba(234,179,8,0.06) 100%)',
+              border: '1px solid rgba(234,179,8,0.4)',
+              borderRadius: '999px',
+              fontSize: '13px', fontWeight: 700, color: '#b45309',
+              letterSpacing: '0.04em',
+            }}>
+              ✦ Perfect score ✦
+            </div>
+          )}
+          <p className="animate-celebrate-pop" style={{ fontSize: '42px', fontWeight: 800, color: isPerfect ? '#d97706' : 'var(--text)', letterSpacing: '-0.03em', lineHeight: 1, animationDelay: '80ms' }}>
+            {results.score}/{results.total}
+          </p>
+          <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginTop: '6px' }}>{pct}% correct</p>
+          <p className="animate-fade-in" style={{ fontSize: '14px', fontWeight: 600, color: masteryDelta >= 0 ? '#16a34a' : '#dc2626', marginTop: '6px', animationDelay: '200ms' }}>
+            Mastery {masteryDelta >= 0 ? '+' : ''}{masteryDelta}%
           </p>
         </div>
 
         <div>
           {results.results.map((r, i) => (
-            <div key={r.question_id} style={{ display: 'flex', gap: '8px', padding: '6px 0', borderBottom: i < results.results.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
-              <span style={{ fontSize: '13px', color: r.correct ? '#16a34a' : '#dc2626', fontWeight: 600, minWidth: '20px' }}>
-                {r.correct ? 'Y' : 'N'}
+            <div key={r.question_id} style={{ display: 'flex', gap: '8px', padding: '7px 0', borderBottom: i < results.results.length - 1 ? '1px solid var(--border-light)' : 'none', alignItems: 'baseline' }}>
+              <span style={{ fontSize: '14px', color: r.correct ? '#16a34a' : '#dc2626', fontWeight: 700, minWidth: '20px', lineHeight: 1 }}>
+                {r.correct ? '✓' : '✗'}
               </span>
               <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Q{i + 1}</span>
               {!r.correct && (
-                <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Correct: {r.correct_answer}</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>→ {r.correct_answer}</span>
               )}
             </div>
           ))}

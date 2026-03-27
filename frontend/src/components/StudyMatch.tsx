@@ -63,11 +63,11 @@ export default function StudyMatch({ matches, onFindMatches, loading }: Props) {
           onClick={e => { if (e.target === e.currentTarget) setShowPopup(false); }}
         >
           <div style={{
-            background: '#ffffff', borderRadius: '14px',
+            background: 'rgba(246, 252, 246, 0.88)', backdropFilter: 'blur(32px) saturate(1.5)', WebkitBackdropFilter: 'blur(32px) saturate(1.5)', borderRadius: '14px',
             padding: '32px 28px 24px', width: '480px', maxWidth: '95vw',
             position: 'relative',
-            border: '1px solid rgba(107,114,128,0.15)',
-            boxShadow: '0 24px 64px rgba(0,0,0,0.18)',
+            border: '1px solid rgba(255, 255, 255, 0.75)',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.90), 0 24px 64px rgba(15,23,42,0.18)',
           }}>
             {/* X */}
             <button
@@ -96,7 +96,7 @@ export default function StudyMatch({ matches, onFindMatches, loading }: Props) {
                 fontSize: '14px', color: '#4b5563', lineHeight: 1.65,
                 textAlign: 'center', fontStyle: 'italic',
                 margin: '0 0 20px', padding: '12px 16px',
-                background: '#f8faf8', borderRadius: '8px',
+                background: 'rgba(255,255,255,0.40)', borderRadius: '8px',
                 border: '1px solid rgba(26,92,42,0.12)',
               }}>
                 "{best.summary}"

@@ -11,6 +11,7 @@ from services.graph_service import get_graph
 from services.matching_service import find_study_matches
 from services.gemini_service import call_gemini
 from services.social_cache_service import get_cached_summary, save_summary, invalidate as invalidate_summary
+from services.activity_service import log_room_activity
 
 router = APIRouter()
 
@@ -46,6 +47,10 @@ def join_room(body: JoinRoomBody):
     if not existing:
         table("room_members").insert({"room_id": room["id"], "user_id": body.user_id})
         invalidate_summary(room["id"])
+        try:
+            log_room_activity(body.user_id, "room_joined", room_id=room["id"])
+        except Exception:
+            pass
 
     members = table("room_members").select("user_id", filters={"room_id": f"eq.{room['id']}"})
     return {"room": {**room, "member_count": len(members)}}
@@ -152,6 +157,14 @@ def match_partners(room_id: str, body: MatchBody):
         matches = find_study_matches(body.user_id, members_with_graphs)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+
+    if matches:
+        try:
+            names = ", ".join(m.get("name", "") for m in matches[:3])
+            log_room_activity(body.user_id, "study_match_found", room_id=room_id, detail=names)
+        except Exception:
+            pass
+
     return {"matches": matches}
 
 

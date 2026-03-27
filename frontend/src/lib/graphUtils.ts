@@ -172,13 +172,17 @@ export function formatRelativeTime(isoDate: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-export function formatDueDate(dateStr: string): string {
+export function formatDueDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return '';
   const d = new Date(dateStr + 'T00:00:00');
+  if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export function daysUntil(dateStr: string): number {
+export function daysUntil(dateStr: string | null | undefined): number {
+  if (!dateStr) return Infinity;
   const d = new Date(dateStr + 'T00:00:00');
+  if (Number.isNaN(d.getTime())) return Infinity;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return Math.ceil((d.getTime() - today.getTime()) / 86400000);

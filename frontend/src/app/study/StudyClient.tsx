@@ -143,8 +143,10 @@ export default function StudyClient() {
 
   const ModeToggle = () => (
     <div style={{
-      background: '#f0f5f0',
-      borderBottom: '1px solid rgba(107,114,128,0.12)',
+      background: 'rgba(255, 255, 255, 0.32)',
+      backdropFilter: 'blur(16px) saturate(1.5)',
+      WebkitBackdropFilter: 'blur(16px) saturate(1.5)',
+      borderBottom: '1px solid rgba(255, 255, 255, 0.55)',
       padding: '0 20px',
       height: '52px',
       display: 'flex',
@@ -177,7 +179,7 @@ export default function StudyClient() {
     const fmtGen = generatedAt ? new Date(generatedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
     return (
       <div style={{ height: 'calc(100vh - 48px)', display: 'flex', flexDirection: 'column', fontFamily: font }}>
-        <div style={{ background: '#f0f5f0', borderBottom: '1px solid rgba(107,114,128,0.12)', padding: '0 20px', height: '52px', display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0, flexWrap: 'wrap' }}>
+        <div style={{ background: 'rgba(255, 255, 255, 0.32)', backdropFilter: 'blur(16px) saturate(1.5)', WebkitBackdropFilter: 'blur(16px) saturate(1.5)', borderBottom: '1px solid rgba(255, 255, 255, 0.55)', padding: '0 20px', height: '52px', display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0, flexWrap: 'wrap' }}>
           <button onClick={() => { setGuideState('selection'); setGuide(null); }} style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: '18px', cursor: 'pointer', lineHeight: 1 }}>←</button>
           <span style={{ fontSize: '15px', fontWeight: 600, color: '#111827' }}>Study Guide</span>
           <span style={{ fontSize: '13px', color: '#9ca3af' }}>{guide.exam}</span>
@@ -187,17 +189,17 @@ export default function StudyClient() {
             </button>
           </div>
         </div>
-        <div style={{ flex: 1, overflow: 'auto', padding: '32px 24px', background: '#f0f5f0' }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: '32px 24px', background: 'var(--bg)' }}>
           <div style={{ maxWidth: '800px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
             {error && <div style={{ padding: '12px 16px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', fontSize: '13px', color: '#dc2626' }}>{error}</div>}
-            <div style={{ background: '#ffffff', border: '1px solid rgba(107,114,128,0.15)', borderRadius: '12px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+            <div style={{ background: 'rgba(255,255,255,0.45)', backdropFilter: 'blur(12px) saturate(1.6)', WebkitBackdropFilter: 'blur(12px) saturate(1.6)', border: '1px solid rgba(255,255,255,0.68)', borderRadius: '12px', padding: '24px', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.85), 0 2px 10px rgba(26,92,42,0.07)' }}>
               <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 6px' }}>Exam</p>
               <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>{guide.exam}</h1>
               {fmtDate && <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 16px' }}>Due {fmtDate}</p>}
               <p style={{ fontSize: '14px', color: '#374151', lineHeight: 1.7, margin: 0 }}>{guide.overview}</p>
             </div>
             {guide.topics.map((topic, i) => (
-              <div key={i} style={{ background: '#ffffff', border: '1px solid rgba(107,114,128,0.15)', borderRadius: '12px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+              <div key={i} style={{ background: 'rgba(255,255,255,0.45)', backdropFilter: 'blur(12px) saturate(1.6)', WebkitBackdropFilter: 'blur(12px) saturate(1.6)', border: '1px solid rgba(255,255,255,0.68)', borderRadius: '12px', padding: '20px 24px', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.85), 0 2px 10px rgba(26,92,42,0.07)' }}>
                 <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>{topic.name}</h2>
                 <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 14px', lineHeight: 1.5, fontStyle: 'italic' }}>{topic.importance}</p>
                 <ul style={{ margin: 0, paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -290,13 +292,13 @@ export default function StudyClient() {
                   const ts = new Date(g.generated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
                   return (
                     <button key={g.id} onClick={() => handleOpenCached(g)} style={{
-                      background: '#ffffff', border: '1px solid rgba(107,114,128,0.15)', borderRadius: '12px',
+                      background: 'rgba(255,255,255,0.45)', backdropFilter: 'blur(12px) saturate(1.6)', WebkitBackdropFilter: 'blur(12px) saturate(1.6)', border: '1px solid rgba(255,255,255,0.68)', borderRadius: '12px',
                       padding: '16px 20px', textAlign: 'left', cursor: 'pointer', fontFamily: font,
-                      boxShadow: '0 1px 4px rgba(0,0,0,0.04)', transition: 'border-color 0.15s, box-shadow 0.15s',
+                      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.85), 0 2px 10px rgba(26,92,42,0.07)', transition: 'border-color 0.15s, box-shadow 0.15s',
                       display: 'flex', flexDirection: 'column', gap: '6px',
                     }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(26,92,42,0.3)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)'; }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(107,114,128,0.15)'; e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.04)'; }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.85)'; e.currentTarget.style.boxShadow = 'inset 0 1px 0 rgba(255,255,255,0.85), 0 5px 20px rgba(26,92,42,0.10)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.68)'; e.currentTarget.style.boxShadow = 'inset 0 1px 0 rgba(255,255,255,0.85), 0 2px 10px rgba(26,92,42,0.07)'; }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
                         <span style={{ fontSize: '14px', fontWeight: 600, color: '#111827' }}>{g.exam_title}</span>

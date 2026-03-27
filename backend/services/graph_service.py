@@ -16,18 +16,19 @@ def ensure_user_exists(user_id: str) -> None:
             pass  # already exists (race condition) — safe to ignore
 
 
-def update_streak(user_id: str) -> None:
-    """Increment streak if first study activity today, reset to 1 if gap > 1 day."""
+def update_streak(user_id: str) -> int | None:
+    """Increment streak if first study activity today, reset to 1 if gap > 1 day.
+    Returns the new streak count, or None if already updated today."""
     today = date.today().isoformat()
     rows = table("users").select("streak_count,last_active_date", filters={"id": f"eq.{user_id}"})
     if not rows:
-        return
+        return None
     row = rows[0]
     last = row.get("last_active_date")
     streak = row.get("streak_count") or 0
 
     if last == today:
-        return  # already counted today
+        return None  # already counted today
 
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     new_streak = streak + 1 if last == yesterday else 1
@@ -36,6 +37,7 @@ def update_streak(user_id: str) -> None:
         {"streak_count": new_streak, "last_active_date": today},
         filters={"id": f"eq.{user_id}"},
     )
+    return new_streak
 
 
 def _compute_velocity(events: list) -> float:

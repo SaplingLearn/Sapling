@@ -112,6 +112,12 @@ def save_assignments(body: SaveAssignmentsBody):
     return {"saved_count": saved}
 
 
+@router.delete("/assignments/{assignment_id}")
+def delete_assignment(assignment_id: str):
+    table("assignments").delete({"id": f"eq.{assignment_id}"})
+    return {"deleted": True}
+
+
 @router.get("/upcoming/{user_id}")
 def get_upcoming(user_id: str):
     today = datetime.utcnow().strftime("%Y-%m-%d")

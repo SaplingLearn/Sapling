@@ -76,21 +76,23 @@ export const endSession = (sessionId: string, userId: string) =>
     body: JSON.stringify({ session_id: sessionId, user_id: userId }),
   });
 
-export const getSessions = (userId: string, limit = 10) =>
+export const getSessions = (userId: string, limit = 10, courseName?: string) =>
   fetchJSON<{
     sessions: {
       id: string;
       topic: string;
+      name?: string;
+      course_name?: string;
       mode: string;
       started_at: string;
       ended_at: string | null;
       message_count: number;
       is_active: boolean;
     }[];
-  }>(`/api/learn/sessions/${userId}?limit=${limit}`);
+  }>(`/api/learn/sessions/${userId}?limit=${limit}${courseName ? `&course_name=${encodeURIComponent(courseName)}` : ''}`);
 
 export const switchMode = (sessionId: string, userId: string, newMode: string) =>
-  fetchJSON<{ reply: string }>('/api/learn/mode-switch', {
+  fetchJSON<{ reply: string; mode: string }>('/api/learn/mode-switch', {
     method: 'POST',
     body: JSON.stringify({ session_id: sessionId, user_id: userId, new_mode: newMode }),
   });
@@ -138,6 +140,11 @@ export const saveAssignments = (userId: string, assignments: any[]) =>
   fetchJSON<{ saved_count: number }>('/api/calendar/save', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, assignments }),
+  });
+
+export const deleteAssignment = (assignmentId: string) =>
+  fetchJSON<{ deleted: boolean }>(`/api/calendar/assignments/${assignmentId}`, {
+    method: 'DELETE',
   });
 
 export const getCalendarAuthUrl = (userId: string) =>
@@ -298,3 +305,29 @@ export const submitFeedback = (data: {
 export const submitIssueReport = (data: {
   user_id: string; topic: string; description: string; screenshot_urls: string[];
 }) => fetchJSON<{ ok: boolean }>('/api/issue-reports', { method: 'POST', body: JSON.stringify(data) });
+
+// ── Careers ────────────────────────────────────────────────────────────────────
+
+export const submitJobApplication = async (data: {
+  position: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  linkedin_url: string;
+  resume?: File | null;
+}): Promise<{ ok: boolean; id: string | null }> => {
+  const formData = new FormData();
+  formData.append('position', data.position);
+  formData.append('full_name', data.full_name);
+  formData.append('email', data.email);
+  formData.append('phone', data.phone);
+  formData.append('linkedin_url', data.linkedin_url);
+  if (data.resume) formData.append('resume', data.resume);
+
+  const res = await fetch(`${API_URL}/api/careers/apply`, { method: 'POST', body: formData });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || `HTTP ${res.status}`);
+  }
+  return res.json();
+};

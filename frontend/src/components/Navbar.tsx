@@ -59,15 +59,15 @@ export default function Navbar() {
     setMobileNavOpen(false);
   }, [pathname]);
 
-  const isLandingPage = pathname === '/';
+  const isPublicPage = pathname === '/' || pathname.startsWith('/careers');
 
   useEffect(() => {
-    if (userReady && !isAuthenticated && pathname !== '/' && pathname !== '/signin/callback') {
+    if (userReady && !isAuthenticated && pathname !== '/' && pathname !== '/signin/callback' && !pathname.startsWith('/careers')) {
       router.push('/');
     }
   }, [userReady, isAuthenticated, pathname, router]);
 
-  if (isLandingPage) return null;
+  if (isPublicPage) return null;
 
   const handleSuggest = async () => {
     setSuggesting(true);
@@ -99,10 +99,10 @@ export default function Navbar() {
     <>
       <nav
       style={{
-        background: 'rgba(255, 255, 255, 0.92)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        borderBottom: '1px solid rgba(107, 114, 128, 0.12)',
+        background: 'rgba(255, 255, 255, 0.72)',
+        backdropFilter: 'blur(20px) saturate(1.5)',
+        WebkitBackdropFilter: 'blur(20px) saturate(1.5)',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.55)',
         padding: isMobile ? '0 12px' : '0 24px',
         display: 'flex',
         alignItems: 'center',
@@ -140,10 +140,12 @@ export default function Navbar() {
               top: '100%',
               left: 0,
               marginTop: '8px',
-              background: '#ffffff',
-              border: '1px solid rgba(107,114,128,0.15)',
+              background: 'rgba(246, 252, 246, 0.88)',
+              backdropFilter: 'blur(24px) saturate(1.5)',
+              WebkitBackdropFilter: 'blur(24px) saturate(1.5)',
+              border: '1px solid rgba(255, 255, 255, 0.72)',
               borderRadius: '10px',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.90), 0 8px 32px rgba(26,92,42,0.10)',
               minWidth: '200px',
               zIndex: 100,
               overflow: 'hidden',
@@ -228,8 +230,8 @@ export default function Navbar() {
                 className="nav-link"
                 style={{
                   padding: '4px 12px',
-                  fontSize: '13px',
-                  color: active ? '#1a5c2a' : '#9ca3af',
+                  fontSize: '14px',
+                  color: active ? '#1a5c2a' : '#6b7280',
                   fontWeight: active ? 600 : 400,
                   textDecoration: 'none',
                   borderRadius: '5px',
@@ -346,10 +348,12 @@ export default function Navbar() {
               top: '100%',
               right: 0,
               marginTop: '4px',
-              background: '#ffffff',
-              border: '1px solid rgba(107,114,128,0.15)',
+              background: 'rgba(246, 252, 246, 0.88)',
+              backdropFilter: 'blur(24px) saturate(1.5)',
+              WebkitBackdropFilter: 'blur(24px) saturate(1.5)',
+              border: '1px solid rgba(255, 255, 255, 0.72)',
               borderRadius: '8px',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.90), 0 4px 16px rgba(26,92,42,0.09)',
               minWidth: '160px',
               zIndex: 100,
               overflow: 'hidden',

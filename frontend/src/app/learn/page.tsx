@@ -59,6 +59,7 @@ function LearnInner() {
   const hasDimensionsRef = useRef(false);
   const pendingNavRef = useRef<string | null>(null);
   const feedbackDueRef = useRef(false);
+  const deletedSessionIds = useRef<Set<string>>(new Set());
 
   const SESSION_COUNT_KEY = 'sapling_session_end_count';
   const SESSION_FEEDBACK_EVERY_N = 5;
@@ -67,7 +68,7 @@ function LearnInner() {
   const [topic, setTopic] = useState(topicParam);
   const [selectedCourse, setSelectedCourse] = useState('');
   const [prefillInput, setPrefillInput] = useState('');
-  const [recentSessions, setRecentSessions] = useState<{ id: string; topic: string; mode: string; started_at: string; is_active: boolean }[]>([]);
+  const [recentSessions, setRecentSessions] = useState<{ id: string; topic: string; name?: string; course_name?: string; mode: string; started_at: string; is_active: boolean }[]>([]);
   const [useSharedContext, setUseSharedContext] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     const saved = localStorage.getItem('sapling_shared_ctx');
@@ -113,7 +114,7 @@ function LearnInner() {
     }
   }, [messages.length, sessionId]);
 
-  // Load initial graph + recent sessions — re-runs when the active user changes
+  // Load initial graph — re-runs when the active user changes
   useEffect(() => {
     if (!userReady) return;
     getGraph(USER_ID).then(data => {
@@ -121,8 +122,15 @@ function LearnInner() {
       setEdges(data.edges);
       setGraphReady(true);
     }).catch(console.error);
-    getSessions(USER_ID, 10).then(data => setRecentSessions(data.sessions.filter(s => s.message_count > 0))).catch(console.error);
   }, [USER_ID, userReady]);
+
+  // Load recent sessions filtered by selected course
+  useEffect(() => {
+    if (!userReady) return;
+    getSessions(USER_ID, 10, selectedCourse || undefined).then(data =>
+      setRecentSessions(data.sessions.filter(s => s.message_count > 0))
+    ).catch(console.error);
+  }, [USER_ID, userReady, selectedCourse]);
 
   useEffect(() => {
     const el = graphContainerRef.current;
@@ -157,6 +165,7 @@ function LearnInner() {
     setSessionError(null);
     setMessages([]);
     setSessionId(null);
+    setPrefillInput('');
     try {
       const res = await startSession(USER_ID, t, m, useSharedContext);
       setSessionId(res.session_id);
@@ -180,6 +189,7 @@ function LearnInner() {
 
   const handleSend = async (message: string) => {
     if (!sessionId) return;
+    setPrefillInput('');
     const userMsg: ChatMessage = {
       id: `msg_${Date.now()}`,
       role: 'user',
@@ -198,7 +208,9 @@ function LearnInner() {
       }]);
       getGraph(USER_ID).then(data => { setNodes(data.nodes); setEdges(data.edges); }).catch(console.error);
       if (messages.filter(m => m.role === 'user').length === 0) {
-        getSessions(USER_ID, 10).then(data => setRecentSessions(data.sessions.filter(s => s.message_count > 0))).catch(console.error);
+        getSessions(USER_ID, 10, selectedCourse || undefined).then(data =>
+          setRecentSessions(data.sessions.filter(s => s.message_count > 0 && !deletedSessionIds.current.has(s.id)))
+        ).catch(console.error);
       }
     } catch (e) {
       console.error(e);
@@ -258,6 +270,9 @@ function LearnInner() {
           content: res.reply,
           timestamp: new Date().toISOString(),
         }]);
+        setRecentSessions(prev => prev.map(s =>
+          s.id === sessionId ? { ...s, mode: newMode } : s
+        ));
       } catch (e) {
         console.error(e);
       }
@@ -272,11 +287,22 @@ function LearnInner() {
   };
 
   const handleDeleteSession = async (sid: string) => {
+    deletedSessionIds.current.add(sid);
+    setRecentSessions(prev => prev.filter(s => s.id !== sid));
+    if (sid === sessionId) {
+      setSessionId(null);
+      setMessages([]);
+      setTopic('');
+    }
     try {
       await deleteSession(sid, USER_ID);
-      setRecentSessions(prev => prev.filter(s => s.id !== sid));
     } catch (e) {
       console.error(e);
+      // Restore session on failure
+      deletedSessionIds.current.delete(sid);
+      getSessions(USER_ID, 10, selectedCourse || undefined).then(data =>
+        setRecentSessions(data.sessions.filter(s => s.message_count > 0 && !deletedSessionIds.current.has(s.id)))
+      ).catch(console.error);
     }
   };
 
@@ -324,8 +350,10 @@ function LearnInner() {
     <div style={{ height: 'calc(100vh - 48px)', display: 'flex', flexDirection: 'column' }}>
       {/* Top bar */}
       <div className="panel-in panel-in-1" style={{
-        background: '#f0f5f0',
-        borderBottom: '1px solid rgba(107,114,128,0.12)',
+        background: 'rgba(255, 255, 255, 0.32)',
+        backdropFilter: 'blur(16px) saturate(1.5)',
+        WebkitBackdropFilter: 'blur(16px) saturate(1.5)',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.55)',
         padding: isMobile ? '8px 10px' : '0 20px',
         height: isMobile ? 'auto' : '52px',
         minHeight: isMobile ? '48px' : undefined,
@@ -354,12 +382,12 @@ function LearnInner() {
         {/* Resume past session */}
         {!isMobile && recentSessions.length > 0 && (
           <CustomSelect
-            value=""
+            value={sessionId ?? ""}
             onChange={sid => handleResumeSession(sid)}
             placeholder="Resume session…"
             options={recentSessions.map(s => {
               const date = new Date(s.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-              return { value: s.id, label: `${s.topic} · ${s.mode} · ${date}${s.is_active ? ' ●' : ''}` };
+              return { value: s.id, label: `${s.name || s.topic} · ${s.mode} · ${date}` };
             })}
             onDelete={handleDeleteSession}
             style={{ minWidth: '200px' }}
@@ -478,11 +506,13 @@ function LearnInner() {
               position: 'absolute',
               bottom: '44px',
               left: '50%',
-              background: '#ffffff',
-              border: '1px solid rgba(26,92,42,0.25)',
+              background: 'rgba(255, 255, 255, 0.78)',
+              backdropFilter: 'blur(20px) saturate(1.5)',
+              WebkitBackdropFilter: 'blur(20px) saturate(1.5)',
+              border: '1px solid rgba(255, 255, 255, 0.72)',
               borderRadius: '10px',
               padding: '14px 18px',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.90), 0 8px 32px rgba(26,92,42,0.12)',
               zIndex: 20,
               display: 'flex',
               flexDirection: 'column',
