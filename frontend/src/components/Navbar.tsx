@@ -59,15 +59,15 @@ export default function Navbar() {
     setMobileNavOpen(false);
   }, [pathname]);
 
-  const isLandingPage = pathname === '/';
+  const publicPaths = ['/', '/signin/callback', '/about', '/terms', '/privacy'];
 
   useEffect(() => {
-    if (userReady && !isAuthenticated && pathname !== '/' && pathname !== '/signin/callback') {
+    if (userReady && !isAuthenticated && !publicPaths.includes(pathname)) {
       router.push('/');
     }
   }, [userReady, isAuthenticated, pathname, router]);
 
-  if (isLandingPage) return null;
+  if (publicPaths.includes(pathname)) return null;
 
   const handleSuggest = async () => {
     setSuggesting(true);

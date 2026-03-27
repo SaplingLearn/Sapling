@@ -579,11 +579,9 @@ export default function LandingPage() {
             <span className="text-sm font-light tracking-wide text-[var(--brand-text2)]">Sapling · © 2026</span>
           </div>
           <div className="flex flex-wrap justify-center gap-6">
-            <a href="#" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">About</a>
-            <a href="#" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Features</a>
-            <a href="#" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Pricing</a>
-            <a href="#" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Contact</a>
-            <a href="#" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Privacy</a>
+            <a href="/about" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">About</a>
+            <a href="/terms" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Terms of Service</a>
+            <a href="/privacy" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Privacy Policy</a>
           </div>
         </div>
         <div className="max-w-7xl mx-auto mt-8 pt-6 border-t border-white/25 text-center">
