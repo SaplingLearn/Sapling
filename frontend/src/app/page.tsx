@@ -580,6 +580,7 @@ export default function LandingPage() {
           </div>
           <div className="flex flex-wrap justify-center gap-6">
             <a href="/about" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">About</a>
+            <a href="/careers" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Careers</a>
             <a href="/terms" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Terms of Service</a>
             <a href="/privacy" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Privacy Policy</a>
           </div>

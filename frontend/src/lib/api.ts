@@ -319,3 +319,29 @@ export const submitFeedback = (data: {
 export const submitIssueReport = (data: {
   user_id: string; topic: string; description: string; screenshot_urls: string[];
 }) => fetchJSON<{ ok: boolean }>('/api/issue-reports', { method: 'POST', body: JSON.stringify(data) });
+
+// ── Careers ───────────────────────────────────────────────────────────────────
+
+export const submitJobApplication = async (data: {
+  position: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  linkedin_url: string;
+  resume?: File | null;
+}): Promise<{ ok: boolean; id: string | null }> => {
+  const formData = new FormData();
+  formData.append('position', data.position);
+  formData.append('full_name', data.full_name);
+  formData.append('email', data.email);
+  formData.append('phone', data.phone);
+  formData.append('linkedin_url', data.linkedin_url);
+  if (data.resume) formData.append('resume', data.resume);
+
+  const res = await fetch(`${API_URL}/api/careers/apply`, { method: 'POST', body: formData });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
