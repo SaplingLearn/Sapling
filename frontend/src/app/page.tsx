@@ -171,6 +171,7 @@ export default function LandingPage() {
     const onMouse = (e: MouseEvent) => {
       mouseRef.current = { x: (e.clientX / window.innerWidth - 0.5) * 2, y: (e.clientY / window.innerHeight - 0.5) * 2 };
     };
+    let lastSy = window.scrollY;
     const onScroll = () => {
       const sy = window.scrollY;
       if (heroContentRef.current && sy < window.innerHeight) {
@@ -178,6 +179,13 @@ export default function LandingPage() {
         parallaxYRef.current = sy * 0.1;
       }
       if (navRef.current) {
+        const scrollingDown = sy > lastSy;
+        const pastHero = sy > window.innerHeight * 0.5;
+        if (scrollingDown && pastHero) {
+          navRef.current.style.transform = 'translateY(-100%)';
+        } else {
+          navRef.current.style.transform = 'translateY(0)';
+        }
         if (sy > 60) {
           navRef.current.classList.add('shadow-sm');
           navRef.current.style.background = 'rgba(255,255,255,0.35)';
@@ -192,6 +200,7 @@ export default function LandingPage() {
           navRef.current.style.borderBottomColor = 'rgba(255,255,255,0.35)';
         }
       }
+      lastSy = sy;
     };
     document.addEventListener('mousemove', onMouse);
     window.addEventListener('scroll', onScroll);
@@ -452,7 +461,7 @@ export default function LandingPage() {
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 300ms',
-          }} className="font-playfair text-5xl sm:text-7xl md:text-8xl lg:text-[10rem] font-semibold leading-[1.15] tracking-tight mt-8 pb-4 bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient">
+          }} className="font-playfair text-5xl sm:text-7xl md:text-8xl lg:text-[10rem] font-semibold leading-[1.15] tracking-tight mt-8 pb-8 px-4 bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient">
             <span>{heroText1 || '\u00A0'}</span>
           </h1>
 
