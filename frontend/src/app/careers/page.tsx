@@ -59,7 +59,7 @@ export default function CareersPage() {
 
       {/* ── Hero ── */}
       <section style={{ paddingTop: '80px', paddingBottom: '60px', textAlign: 'center', padding: '80px 24px 60px' }}>
-        <div style={{
+        <div className="fade-up anim-d0" style={{
           display: 'inline-flex', alignItems: 'center', gap: '6px',
           background: 'rgba(26,92,42,0.06)', border: '1px solid rgba(26,92,42,0.14)',
           borderRadius: '999px', padding: '4px 14px', marginBottom: '28px',
@@ -70,7 +70,7 @@ export default function CareersPage() {
           </span>
         </div>
 
-        <h1 style={{
+        <h1 className="fade-up anim-d1" style={{
           fontFamily: "var(--font-playfair), 'Playfair Display', serif",
           fontSize: 'clamp(2.5rem, 5vw, 3.75rem)',
           fontWeight: 700,
@@ -82,7 +82,7 @@ export default function CareersPage() {
           Opportunities
         </h1>
 
-        <p style={{
+        <p className="fade-up anim-d2" style={{
           fontSize: '1.0625rem', color: '#4b5563', maxWidth: '500px',
           margin: '0 auto', lineHeight: 1.65, fontWeight: 300,
         }}>
@@ -99,7 +99,7 @@ export default function CareersPage() {
             const isOpen = expandedId === job.id;
 
             return (
-              <div key={job.id} style={{ ...GLASS, overflow: 'hidden', transition: 'box-shadow 0.2s' }}>
+              <div key={job.id} className="fade-up" style={{ ...GLASS, overflow: 'hidden', transition: 'box-shadow 0.2s', animationDelay: `${240 + job.id * 80}ms` }}>
                 {/* Toggle row — native button for keyboard/a11y */}
                 <button
                   onClick={() => setExpandedId(isOpen ? null : job.id)}
@@ -178,7 +178,7 @@ export default function CareersPage() {
         </div>
 
         {/* General Application */}
-        <div style={{ ...GLASS_STRONG, marginTop: '40px', padding: '36px 32px', textAlign: 'center' }}>
+        <div className="fade-up anim-d5" style={{ ...GLASS_STRONG, marginTop: '40px', padding: '36px 32px', textAlign: 'center' }}>
           <svg
             style={{ width: '28px', height: '28px', color: '#1a5c2a', margin: '0 auto 12px' }}
             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}
@@ -192,7 +192,7 @@ export default function CareersPage() {
             We&apos;re always interested in meeting talented people. Send us a note and tell us what you&apos;d build.
           </p>
           <a
-            href="mailto:careers@sapling.learn"
+            href="mailto:careers@saplinglearn.com"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: '6px',
               background: 'rgba(26,92,42,0.07)', color: '#1a5c2a',

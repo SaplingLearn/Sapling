@@ -62,22 +62,22 @@ export default function TermsPage() {
   return (
     <div className="min-h-screen bg-[#F4F7F5] flex flex-col">
       <div className="flex-1 max-w-3xl mx-auto px-8 py-16 w-full">
-        <div className="flex items-center gap-2 mb-12">
+        <div className="flex items-center gap-2 mb-12 fade-up anim-d0">
           <Link href="/" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">
             ← Back to Sapling
           </Link>
         </div>
 
-        <h1 className="text-4xl font-semibold text-gray-900 mb-2">Terms of Service</h1>
-        <p className="text-sm text-gray-400 mb-10">Last updated: March 27, 2026</p>
+        <h1 className="text-4xl font-semibold text-gray-900 mb-2 fade-up anim-d1">Terms of Service</h1>
+        <p className="text-sm text-gray-400 mb-10 fade-up anim-d2">Last updated: March 27, 2026</p>
 
-        <p className="text-gray-600 leading-relaxed mb-10">
+        <p className="text-gray-600 leading-relaxed mb-10 fade-up anim-d3">
           By accessing or using Sapling ("the Service"), you agree to be bound by these Terms of Service. If you do not agree, please do not use the Service.
         </p>
 
         <div className="space-y-8">
-          {sections.map((section) => (
-            <div key={section.title}>
+          {sections.map((section, i) => (
+            <div key={section.title} className="fade-up" style={{ animationDelay: `${Math.min(320 + i * 40, 640)}ms` }}>
               <h2 className="text-base font-semibold text-gray-900 mb-2">{section.title}</h2>
               <p className="text-gray-600 leading-relaxed">
                 {section.body}

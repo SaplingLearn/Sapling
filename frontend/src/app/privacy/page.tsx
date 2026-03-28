@@ -69,11 +69,17 @@ const sections = [
     bodySuffix: " and we will take steps to delete it.",
   },
   {
-    title: "8. Changes to This Policy",
+    title: "8. Job Applicants",
+    body: "If you apply for a position at Sapling, we collect the information you submit through our application form, including your name, email address, phone number, LinkedIn profile URL, and resume. This data is used solely to evaluate your application and communicate with you about the hiring process. We do not share applicant data with third parties outside of our core infrastructure providers. If your application is unsuccessful, we may retain your information for up to 12 months in case a suitable role arises. You may request deletion of your applicant data at any time by emailing ",
+    link: { label: "careers@saplinglearn.com", href: "mailto:careers@saplinglearn.com" },
+    bodySuffix: ".",
+  },
+  {
+    title: "9. Changes to This Policy",
     body: "We may update this Privacy Policy from time to time. We will notify users of material changes by updating the date at the top of this page.",
   },
   {
-    title: "9. Contact",
+    title: "10. Contact",
     body: "If you have questions or concerns about this Privacy Policy, please email us at ",
     link: { label: "careers@saplinglearn.com", href: "mailto:careers@saplinglearn.com" },
     bodySuffix: ".",
@@ -84,22 +90,22 @@ export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-[#F4F7F5] flex flex-col">
       <div className="flex-1 max-w-3xl mx-auto px-8 py-16 w-full">
-        <div className="flex items-center gap-2 mb-12">
+        <div className="flex items-center gap-2 mb-12 fade-up anim-d0">
           <Link href="/" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">
             ← Back to Sapling
           </Link>
         </div>
 
-        <h1 className="text-4xl font-semibold text-gray-900 mb-2">Privacy Policy</h1>
-        <p className="text-sm text-gray-400 mb-10">Last updated: March 27, 2026</p>
+        <h1 className="text-4xl font-semibold text-gray-900 mb-2 fade-up anim-d1">Privacy Policy</h1>
+        <p className="text-sm text-gray-400 mb-10 fade-up anim-d2">Last updated: March 27, 2026</p>
 
-        <p className="text-gray-600 leading-relaxed mb-10">
+        <p className="text-gray-600 leading-relaxed mb-10 fade-up anim-d3">
           This Privacy Policy explains how Sapling ("we," "us," or "our") collects, uses, and protects your information when you use our Service.
         </p>
 
         <div className="space-y-8">
-          {sections.map((section) => (
-            <div key={section.title}>
+          {sections.map((section, i) => (
+            <div key={section.title} className="fade-up" style={{ animationDelay: `${Math.min(320 + i * 40, 640)}ms` }}>
               <h2 className="text-base font-semibold text-gray-900 mb-2">{section.title}</h2>
 
               {section.body && (

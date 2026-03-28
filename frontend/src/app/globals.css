@@ -434,6 +434,24 @@ input, select, textarea { color-scheme: light; }
 .animate-fade-in  { animation: fade-in  var(--dur-slow) var(--ease-out) both; }
 .animate-scale-in { animation: scale-in var(--dur-base) var(--ease-out) both; }
 
+/* ── Public page entrance animations ───────────────────────────── */
+.fade-up   { animation: fade-in 0.5s var(--ease-out) both; }
+.fade-up-s { animation: fade-in 0.4s var(--ease-out) both; }
+
+.anim-d0 { animation-delay:   0ms; }
+.anim-d1 { animation-delay:  80ms; }
+.anim-d2 { animation-delay: 160ms; }
+.anim-d3 { animation-delay: 240ms; }
+.anim-d4 { animation-delay: 320ms; }
+.anim-d5 { animation-delay: 400ms; }
+.anim-d6 { animation-delay: 480ms; }
+.anim-d7 { animation-delay: 560ms; }
+.anim-d8 { animation-delay: 640ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-up, .fade-up-s { animation: none; opacity: 1; }
+}
+
 /* ── Hide scrollbar while keeping scroll ────────────────────────── */
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }

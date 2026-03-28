@@ -43,6 +43,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [agreedToPrivacy, setAgreedToPrivacy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!job) {
@@ -70,7 +71,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
     if (file) setResumeFile(file);
   };
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!resumeFile) {
       setSubmitError('Please attach your resume (PDF) before submitting.');
@@ -127,10 +128,10 @@ export default function ApplyForm({ job }: { job: Job | null }) {
       </header>
 
       {/* ── Content ── */}
-      <section style={{ maxWidth: '600px', margin: '0 auto', padding: '56px 24px 96px' }}>
+      <section style={{ maxWidth: '760px', margin: '0 auto', padding: '56px 24px 96px' }}>
 
         {/* Job context */}
-        <div style={{ marginBottom: '32px' }}>
+        <div className="fade-up anim-d1" style={{ marginBottom: '32px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
             <h1 style={{
               fontFamily: "var(--font-playfair), 'Playfair Display', serif",
@@ -154,7 +155,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
         </div>
 
         {/* Form panel */}
-        <div style={PANEL}>
+        <div className="fade-up anim-d2" style={PANEL}>
           {submitted ? (
             <div style={{ padding: '56px 32px', textAlign: 'center' }}>
               <div style={{
@@ -171,7 +172,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                 Application submitted
               </h2>
               <p style={{ fontSize: '13px', color: '#6b7280', lineHeight: 1.6, maxWidth: '320px', margin: '0 auto 24px' }}>
-                Thanks for applying to {job.title}. We&apos;ll review your application and reach out soon.
+                Thanks for applying to Sapling. We&apos;ll review your application and reach out soon.
               </p>
               <Link
                 href="/careers"
@@ -299,6 +300,25 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                   </div>
                 </div>
 
+              </div>
+
+              {/* Privacy consent */}
+              <div style={{ marginTop: '20px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                <input
+                  type="checkbox"
+                  id="privacy-consent"
+                  required
+                  checked={agreedToPrivacy}
+                  onChange={e => setAgreedToPrivacy(e.target.checked)}
+                  style={{ marginTop: '2px', accentColor: '#1a5c2a', cursor: 'pointer', flexShrink: 0 }}
+                />
+                <label htmlFor="privacy-consent" style={{ fontSize: '13px', color: '#6b7280', lineHeight: 1.5, cursor: 'pointer' }}>
+                  I have read and agree to Sapling&apos;s{' '}
+                  <Link href="/privacy" target="_blank" style={{ color: '#1a5c2a', textDecoration: 'underline' }}>
+                    Privacy Policy
+                  </Link>
+                  , including how my application data is collected and used.
+                </label>
               </div>
 
               {/* Submit */}
