@@ -37,7 +37,7 @@ const LABEL: React.CSSProperties = {
 };
 
 export default function ApplyForm({ job }: { job: Job | null }) {
-  const [form, setForm] = useState({ name: '', email: '', phone: '', linkedin: '' });
+  const [form, setForm] = useState({ name: '', email: '', phone: '', linkedin: '', portfolio: '' });
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -86,6 +86,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
         email: form.email,
         phone: form.phone,
         linkedin_url: form.linkedin,
+        portfolio_link: form.portfolio || undefined,
         resume: resumeFile,
       });
       setSubmitted(true);
@@ -241,6 +242,20 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                     placeholder="https://linkedin.com/in/yourprofile"
                     value={form.linkedin}
                     onChange={e => setForm(f => ({ ...f, linkedin: e.target.value }))}
+                    style={INPUT}
+                    onFocus={e => (e.currentTarget.style.borderColor = 'rgba(26,92,42,0.4)')}
+                    onBlur={e => (e.currentTarget.style.borderColor = 'rgba(107,114,128,0.18)')}
+                  />
+                </div>
+
+                {/* Portfolio */}
+                <div>
+                  <label style={LABEL}>Portfolio Link</label>
+                  <input
+                    type="url"
+                    placeholder="https://yourportfolio.com"
+                    value={form.portfolio}
+                    onChange={e => setForm(f => ({ ...f, portfolio: e.target.value }))}
                     style={INPUT}
                     onFocus={e => (e.currentTarget.style.borderColor = 'rgba(26,92,42,0.4)')}
                     onBlur={e => (e.currentTarget.style.borderColor = 'rgba(107,114,128,0.18)')}
