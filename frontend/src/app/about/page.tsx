@@ -14,7 +14,7 @@ export default function AboutPage() {
 
         <div className="prose prose-gray max-w-none space-y-6 text-gray-600 leading-relaxed">
           <p>
-            <strong className="text-gray-900">Sapling</strong> is an AI-powered study companion built by students, for students. We believe that learning shouldn't be passive — it should adapt to you, challenge you, and show you exactly where you stand.
+            <strong className="text-gray-900">Sapling</strong> is an AI-powered study companion built by students, for students. We believe that learning shouldn't be passive. It should adapt to you, challenge you, and show you exactly where you stand.
           </p>
 
           <p>
@@ -29,9 +29,9 @@ export default function AboutPage() {
             <p className="font-medium text-gray-900 mb-3">What makes Sapling different:</p>
             <ul className="space-y-2 list-none pl-0">
               {[
-                "Your knowledge graph is yours — it updates in real time based on your actual performance, not just what you've clicked through.",
+                "Your knowledge graph is yours. It updates in real time based on your actual performance, not just what you've clicked through.",
                 "Three distinct teaching modes mean you're never locked into one way of learning.",
-                "Study rooms let you learn alongside classmates and see how your mastery compares — anonymously and collaboratively.",
+                "Study rooms let you learn alongside classmates and see how your mastery compares, anonymously and collaboratively.",
                 "Everything from syllabus tracking to exam study guides is powered by Gemini, so the busywork of getting organized is handled for you.",
               ].map((item, i) => (
                 <li key={i} className="flex gap-3">
@@ -43,7 +43,7 @@ export default function AboutPage() {
           </div>
 
           <p>
-            Sapling is actively developed and we're always building. If something's broken or you have an idea, there's a feedback button in the navbar — we actually read those.
+            Sapling is actively developed and we're always building. If something's broken or you have an idea, there's a feedback button in the navbar and we actually read those.
           </p>
         </div>
 

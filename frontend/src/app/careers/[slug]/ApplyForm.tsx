@@ -110,9 +110,9 @@ export default function ApplyForm({ job }: { job: Job | null }) {
         zIndex: 50,
       }}>
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px', height: '52px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' }}>
-            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '22px', height: '22px' }} />
-            <span style={{ fontFamily: "var(--font-spectral), 'Spectral', serif", color: '#1a5c2a', fontSize: '17px', fontWeight: 600 }}>
+          <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
+            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '26px', height: '26px', flexShrink: 0, position: 'relative', top: '-2px' }} />
+            <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: '#1a5c2a', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
               Sapling
             </span>
           </Link>
