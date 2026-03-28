@@ -53,7 +53,7 @@ export default function AboutPage() {
           <div className="space-y-8">
             <div>
               <p className="font-semibold text-gray-900 text-base">Best AI Tutor in Education</p>
-              <p className="text-xs text-green-700 font-medium mt-0.5">Boston University Civic Hacks 2025 · BU Spark! & Wheelock College of Education</p>
+              <p className="text-xs text-green-700 font-medium mt-0.5">Boston University Civic Hacks 2026 · BU Spark! & Wheelock College of Education</p>
               <p className="text-gray-600 text-sm mt-2 leading-relaxed">
                 Recognized among competing teams at BU's annual civic hackathon for building the most impactful AI-driven learning experience. Sapling was awarded for its approach to personalized, student-centered tutoring, bridging the gap between artificial intelligence and meaningful education.
               </p>
