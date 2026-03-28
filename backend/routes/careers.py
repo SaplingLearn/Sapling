@@ -37,6 +37,7 @@ async def apply(
     email: str = Form(...),
     linkedin_url: str = Form(...),
     phone: str = Form(""),
+    portfolio_link: str = Form(""),
     resume: Optional[UploadFile] = File(None),
 ):
     resume_path = _upload_resume(resume) if resume else None
@@ -46,6 +47,7 @@ async def apply(
         "email": email,
         "phone": phone or None,
         "linkedin_url": linkedin_url,
+        "portfolio_link": portfolio_link or None,
         "resume": resume_path,
     })
     return {"ok": True, "id": row[0]["id"] if row else None}

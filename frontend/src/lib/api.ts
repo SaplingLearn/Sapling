@@ -328,6 +328,7 @@ export const submitJobApplication = async (data: {
   email: string;
   phone: string;
   linkedin_url: string;
+  portfolio_link?: string;
   resume?: File | null;
 }): Promise<{ ok: boolean; id: string | null }> => {
   const formData = new FormData();
@@ -336,6 +337,7 @@ export const submitJobApplication = async (data: {
   formData.append('email', data.email);
   formData.append('phone', data.phone);
   formData.append('linkedin_url', data.linkedin_url);
+  if (data.portfolio_link) formData.append('portfolio_link', data.portfolio_link);
   if (data.resume) formData.append('resume', data.resume);
 
   const res = await fetch(`${API_URL}/api/careers/apply`, { method: 'POST', body: formData });
