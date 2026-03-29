@@ -527,7 +527,8 @@ input, select, textarea { color-scheme: light; }
   z-index: 0;
   pointer-events: none;
   background: radial-gradient(ellipse at 50% 18%, rgba(255, 255, 255, 0.45) 0%, transparent 55%);
-  transition: background 0.8s ease;
+  opacity: 0;
+  transition: opacity 0.5s ease, background 0.8s ease;
 }
 
 /* ── Gradient shift ────────────────────────────────────────────── */
@@ -760,3 +761,34 @@ input, select, textarea { color-scheme: light; }
   border-color: var(--brand-primary);
   box-shadow: 0 0 0 2px rgba(46, 125, 82, 0.2);
 }
+
+/* Global pointer states for interactive controls */
+button,
+[role="button"],
+a[role="button"],
+input[type="button"],
+input[type="submit"],
+input[type="reset"] {
+  cursor: pointer;
+}
+
+button:disabled,
+[role="button"][aria-disabled="true"],
+a[role="button"][aria-disabled="true"],
+input[type="button"]:disabled,
+input[type="submit"]:disabled,
+input[type="reset"]:disabled {
+  cursor: not-allowed;
+}
+
+.landing-modal-panel {
+  opacity: 0;
+  transform: translateY(24px) scale(0.94);
+  transition: opacity 420ms var(--ease-out), transform 420ms var(--ease-out);
+}
+
+.landing-modal-panel--visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+

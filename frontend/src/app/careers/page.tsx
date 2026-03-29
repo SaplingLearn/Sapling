@@ -137,41 +137,49 @@ export default function CareersPage() {
                 </button>
 
                 {/* Expanded content */}
-                {isOpen && (
-                  <div style={{ borderTop: '1px solid rgba(107,114,128,0.10)', padding: '20px 24px 24px' }}>
-                    <p style={{ fontSize: '14px', color: '#374151', lineHeight: 1.7, marginBottom: '16px' }}>
-                      {job.description}
-                    </p>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '22px' }}>
-                      {job.tags.map(tag => (
-                        <span key={tag} style={{
-                          fontSize: '11px', padding: '3px 10px', borderRadius: '6px',
-                          background: 'rgba(107,114,128,0.06)', border: '1px solid rgba(107,114,128,0.13)',
-                          color: '#4b5563',
-                        }}>
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                    <Link
-                      href={`/careers/${job.slug}`}
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '6px',
-                        background: '#1B6C42', color: 'white',
-                        padding: '9px 20px', borderRadius: '8px',
-                        fontSize: '13px', fontWeight: 500, textDecoration: 'none',
-                        transition: 'background 0.15s',
-                      }}
-                      onMouseEnter={e => (e.currentTarget.style.background = '#155A35')}
-                      onMouseLeave={e => (e.currentTarget.style.background = '#1B6C42')}
-                    >
-                      Apply for this role
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M5 12h14M12 5l7 7-7 7" />
-                      </svg>
-                    </Link>
+                <div
+                  style={{
+                    borderTop: '1px solid rgba(107,114,128,0.10)',
+                    padding: isOpen ? '20px 24px 24px' : '0 24px 0',
+                    maxHeight: isOpen ? '520px' : '0px',
+                    opacity: isOpen ? 1 : 0,
+                    overflow: 'hidden',
+                    pointerEvents: isOpen ? 'auto' : 'none',
+                    transition: 'max-height 420ms cubic-bezier(0.22,1,0.36,1), opacity 420ms ease, padding 420ms cubic-bezier(0.22,1,0.36,1)',
+                  }}
+                >
+                  <p style={{ fontSize: '14px', color: '#374151', lineHeight: 1.7, marginBottom: '16px' }}>
+                    {job.description}
+                  </p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '22px' }}>
+                    {job.tags.map(tag => (
+                      <span key={tag} style={{
+                        fontSize: '11px', padding: '3px 10px', borderRadius: '6px',
+                        background: 'rgba(107,114,128,0.06)', border: '1px solid rgba(107,114,128,0.13)',
+                        color: '#4b5563',
+                      }}>
+                        {tag}
+                      </span>
+                    ))}
                   </div>
-                )}
+                  <Link
+                    href={`/careers/${job.slug}`}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '6px',
+                      background: '#1B6C42', color: 'white',
+                      padding: '9px 20px', borderRadius: '8px',
+                      fontSize: '13px', fontWeight: 500, textDecoration: 'none',
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#155A35')}
+                    onMouseLeave={e => (e.currentTarget.style.background = '#1B6C42')}
+                  >
+                    Apply for this role
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M5 12h14M12 5l7 7-7 7" />
+                    </svg>
+                  </Link>
+                </div>
               </div>
             );
           })}
