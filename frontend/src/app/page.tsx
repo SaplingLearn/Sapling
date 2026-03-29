@@ -392,12 +392,10 @@ export default function LandingPage() {
         className="fixed top-0 w-full z-50 border-b border-solid px-6 py-4"
         style={{
           background: 'rgba(255,255,255,0)',
-          backdropFilter: 'blur(0px)',
-          WebkitBackdropFilter: 'blur(0px)',
-          borderBottomColor: 'rgba(255,255,255,0)',
+          borderBottomColor: 'transparent',
           opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(-30px)',
-          transition: 'all 800ms cubic-bezier(0.22,1,0.36,1)',
+          transition: 'opacity 800ms cubic-bezier(0.22,1,0.36,1), transform 800ms cubic-bezier(0.22,1,0.36,1)',
         }}
       >
         <div className="max-w-[88%] mx-auto flex items-center justify-between w-full">
