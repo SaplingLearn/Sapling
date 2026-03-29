@@ -4,7 +4,6 @@ import './globals.css';
 import { Suspense } from 'react';
 import { UserProvider } from '@/context/UserContext';
 import Navbar from '@/components/Navbar';
-import SpaceBackground from '@/components/SpaceBackground';
 import FeedbackFlow from '@/components/FeedbackFlow';
 import SessionFeedbackGlobal from '@/components/SessionFeedbackGlobal';
 
@@ -53,7 +52,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${spectral.variable} ${dmSans.variable} ${inter.variable} ${playfairDisplay.variable} ${jetbrainsMono.variable}`}>
       <body>
-        <SpaceBackground />
         <UserProvider>
           <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
             <Navbar />
