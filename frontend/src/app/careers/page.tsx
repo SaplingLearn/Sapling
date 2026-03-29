@@ -129,7 +129,7 @@ export default function CareersPage() {
                     </div>
                   </div>
                   <svg
-                    style={{ flexShrink: 0, width: '15px', height: '15px', color: '#9ca3af', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s var(--ease-out, cubic-bezier(0.16,1,0.3,1))' }}
+                    style={{ flexShrink: 0, width: '15px', height: '15px', color: '#9ca3af', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.65s cubic-bezier(0.16,1,0.3,1)' }}
                     fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -145,7 +145,7 @@ export default function CareersPage() {
                     opacity: isOpen ? 1 : 0,
                     overflow: 'hidden',
                     pointerEvents: isOpen ? 'auto' : 'none',
-                    transition: 'max-height 420ms cubic-bezier(0.22,1,0.36,1), opacity 420ms ease, padding 420ms cubic-bezier(0.22,1,0.36,1)',
+                    transition: 'max-height 700ms cubic-bezier(0.22,1,0.36,1), opacity 600ms ease, padding 700ms cubic-bezier(0.22,1,0.36,1)',
                   }}
                 >
                   <p style={{ fontSize: '14px', color: '#374151', lineHeight: 1.7, marginBottom: '16px' }}>

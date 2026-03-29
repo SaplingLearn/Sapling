@@ -94,6 +94,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
+  overflow-x: hidden;
+  overscroll-behavior-y: none;
 }
 
 .font-spectral {
@@ -193,9 +195,10 @@ input, select, textarea { color-scheme: light; }
   position: absolute;
   border-radius: 50%;
   filter: blur(100px);
-  mix-blend-mode: multiply;
   opacity: 0.7;
   animation: sapling-blob 10s ease-in-out infinite;
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 .sapling-mesh-blob--1 {

@@ -192,24 +192,11 @@ export default function LandingPage() {
       const pastHero = sy > window.innerHeight * 0.5;
       nav.style.transform = scrollingDown && pastHero ? 'translateY(-100%)' : 'translateY(0)';
 
-      if (sy > 60) {
-        nav.classList.add('shadow-sm');
-        nav.style.background = 'rgba(255,255,255,0.35)';
-        nav.style.backdropFilter = 'blur(24px)';
-        nav.style.setProperty('-webkit-backdrop-filter', 'blur(24px)');
-        nav.style.borderBottomColor = 'rgba(255,255,255,0.55)';
-      } else {
-        nav.classList.remove('shadow-sm');
-        const t = Math.min(1, sy / 80);
-        const eased = t * t * (3 - 2 * t);
-        const bgAlpha = 0.22 * eased;
-        const borderAlpha = 0.35 * eased;
-        const blurPx = 16 * eased;
-        nav.style.background = `rgba(255,255,255,${bgAlpha})`;
-        nav.style.backdropFilter = `blur(${blurPx}px)`;
-        nav.style.setProperty('-webkit-backdrop-filter', `blur(${blurPx}px)`);
-        nav.style.borderBottomColor = `rgba(255,255,255,${borderAlpha})`;
-      }
+      nav.classList.remove('shadow-sm');
+      nav.style.background = 'transparent';
+      nav.style.backdropFilter = 'none';
+      nav.style.setProperty('-webkit-backdrop-filter', 'none');
+      nav.style.borderBottomColor = 'transparent';
     };
 
     const updateAmbientGlow = (sy: number) => {
@@ -428,7 +415,12 @@ export default function LandingPage() {
       </nav>
 
       {/* ═══ Hero Section ═══ */}
-      <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
+      <section className="relative min-h-screen flex items-center justify-center">
+        {/* Ambient orbs — scoped to hero */}
+        <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
+          <div className="sapling-mesh-blob sapling-mesh-blob--1" />
+          <div className="sapling-mesh-blob sapling-mesh-blob--2" />
+        </div>
         <canvas ref={canvasRef} className="absolute inset-0 z-0 w-full h-full pointer-events-auto opacity-100" />
 
         {/* Floating Glass Accent Cards */}
@@ -548,6 +540,9 @@ export default function LandingPage() {
 
       {/* ═══ Features Section ═══ */}
       <section id="features" className="landing-section relative py-32 z-10">
+        <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
+          <div className="sapling-mesh-blob sapling-mesh-blob--3" style={{ top: '10%', left: '-8%', opacity: 0.28, width: '30vw', height: '30vw' }} />
+        </div>
         <div className="absolute top-0 left-0 w-full h-px landing-divider" />
         <div className="max-w-6xl mx-auto px-6 lg:px-8 relative z-[1]">
           <div className="text-center mb-16 landing-fade-up">
@@ -589,7 +584,10 @@ export default function LandingPage() {
 
       {/* ═══ How It Works (Sticky Scroll Cinema) ═══ */}
       <section ref={stickyRef} id="how-it-works" className="landing-section relative" style={{ height: '510vh' }}>
-        <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden">
+        <div className="sticky top-0 h-screen w-full flex items-center justify-center">
+          <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
+            <div className="sapling-mesh-blob sapling-mesh-blob--2" style={{ top: '25%', right: '5%', left: 'auto', opacity: 0.28, width: '26vw', height: '26vw' }} />
+          </div>
           <div
             ref={stepNumRef}
             className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-jetbrains text-[25vw] sm:text-[250px] font-bold text-[#1B6C42]/[0.06] pointer-events-none select-none z-0 transition-opacity duration-500"
@@ -618,7 +616,11 @@ export default function LandingPage() {
 
 
       {/* ═══ Final CTA ═══ */}
-      <section className="landing-section py-32 relative text-center z-10 overflow-hidden">
+      <section className="landing-section py-32 relative text-center z-10">
+        <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
+          <div className="sapling-mesh-blob sapling-mesh-blob--1" style={{ top: '0%', right: '-15%', left: 'auto', opacity: 0.38, width: '38vw', height: '38vw' }} />
+          <div className="sapling-mesh-blob sapling-mesh-blob--2" style={{ bottom: '0%', left: '-12%', opacity: 0.28, width: '32vw', height: '32vw' }} />
+        </div>
         <div className="relative z-10 max-w-3xl mx-auto px-6 landing-fade-up">
           <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--brand-text1)] tracking-tight leading-[1.05]">
             Ready to <br /> Start <span className="bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient pr-2">Growing?</span>
