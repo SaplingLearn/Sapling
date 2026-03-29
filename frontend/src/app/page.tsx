@@ -206,21 +206,21 @@ export default function LandingPage() {
         const progress = Math.max(0, Math.min(1, -rect.top / (rect.height - window.innerHeight)));
         const s1 = step1Ref.current, s2 = step2Ref.current, s3 = step3Ref.current, sn = stepNumRef.current;
         if (s1 && s2 && s3 && sn) {
-          const activate = (el: HTMLDivElement, num: string) => {
-            el.classList.remove('opacity-0', 'pointer-events-none', 'translate-y-[60px]', '-translate-y-[60px]');
-            sn.textContent = num;
-          };
-          const deactivateTop = (el: HTMLDivElement) => {
-            el.classList.add('opacity-0', 'pointer-events-none', '-translate-y-[60px]');
-            el.classList.remove('translate-y-[60px]');
-          };
-          const deactivateBottom = (el: HTMLDivElement) => {
-            el.classList.add('opacity-0', 'pointer-events-none', 'translate-y-[60px]');
-            el.classList.remove('-translate-y-[60px]');
-          };
-          if (progress < 0.33) { activate(s1, '01'); deactivateBottom(s2); deactivateBottom(s3); }
-          else if (progress < 0.66) { deactivateTop(s1); activate(s2, '02'); deactivateBottom(s3); }
-          else { deactivateTop(s1); deactivateTop(s2); activate(s3, '03'); }
+          function applyStep(el: HTMLDivElement, enterStart: number, enterEnd: number, exitStart: number, exitEnd: number) {
+            let o: number, ty: number;
+            if (progress <= enterStart)       { o = 0; ty = 40; }
+            else if (progress < enterEnd)     { const t = (progress - enterStart) / (enterEnd - enterStart); o = t; ty = 40 * (1 - t); }
+            else if (progress < exitStart)    { o = 1; ty = 0; }
+            else if (progress < exitEnd)      { const t = (progress - exitStart) / (exitEnd - exitStart); o = 1 - t; ty = -40 * t; }
+            else                              { o = 0; ty = -40; }
+            el.style.opacity = String(o);
+            el.style.transform = `translateY(calc(-50% + ${ty}px))`;
+            el.style.pointerEvents = o > 0.05 ? 'auto' : 'none';
+          }
+          applyStep(s1, -1,   0.05, 0.28, 0.38);
+          applyStep(s2, 0.38, 0.48, 0.62, 0.72);
+          applyStep(s3, 0.72, 0.82, 2,    2);
+          sn.textContent = progress < 0.34 ? '01' : progress < 0.67 ? '02' : '03';
         }
       }
     };
@@ -540,17 +540,17 @@ export default function LandingPage() {
             01
           </div>
           <div className="w-full max-w-2xl px-6 relative z-10 text-center">
-            <div ref={step1Ref} className="absolute left-0 right-0 top-1/2 -translate-y-1/2 transition-all duration-[600ms] ease-out px-6">
+            <div ref={step1Ref} className="absolute left-0 right-0 top-1/2 px-6" style={{ transform: 'translateY(-50%)', opacity: 1 }}>
               <span className="font-jetbrains text-xs tracking-[0.3em] text-[#1B6C42] uppercase mb-4 block font-medium">Step 01</span>
               <h3 className="font-playfair text-4xl md:text-5xl font-semibold text-[var(--brand-text1)] mb-4 tracking-tight">Sign Up &amp; Add Courses</h3>
               <p className="font-inter text-[var(--brand-text2)] text-lg leading-relaxed font-light mx-auto">Connect with Google in one click. Tell us your school and year. Add your classes. Takes 30 seconds.</p>
             </div>
-            <div ref={step2Ref} className="absolute left-0 right-0 top-1/2 -translate-y-1/2 transition-all duration-[600ms] ease-out opacity-0 translate-y-[60px] pointer-events-none px-6">
+            <div ref={step2Ref} className="absolute left-0 right-0 top-1/2 px-6" style={{ transform: 'translateY(calc(-50% + 40px))', opacity: 0, pointerEvents: 'none' }}>
               <span className="font-jetbrains text-xs tracking-[0.3em] text-[#1B6C42] uppercase mb-4 block font-medium">Step 02</span>
               <h3 className="font-playfair text-4xl md:text-5xl font-semibold text-[var(--brand-text1)] mb-4 tracking-tight">Upload Your Materials</h3>
               <p className="font-inter text-[var(--brand-text2)] text-lg leading-relaxed font-light mx-auto">Drop in a syllabus, textbook PDF, or lecture notes. Our AI reads everything, extracts concepts, and builds your knowledge map instantly.</p>
             </div>
-            <div ref={step3Ref} className="absolute left-0 right-0 top-1/2 -translate-y-1/2 transition-all duration-[600ms] ease-out opacity-0 translate-y-[60px] pointer-events-none px-6">
+            <div ref={step3Ref} className="absolute left-0 right-0 top-1/2 px-6" style={{ transform: 'translateY(calc(-50% + 40px))', opacity: 0, pointerEvents: 'none' }}>
               <span className="font-jetbrains text-xs tracking-[0.3em] text-[#1B6C42] uppercase mb-4 block font-medium">Step 03</span>
               <h3 className="font-playfair text-4xl md:text-5xl font-semibold text-[var(--brand-text1)] mb-4 tracking-tight">Start Growing</h3>
               <p className="font-inter text-[var(--brand-text2)] text-lg leading-relaxed font-light mx-auto">Follow your personalized learning path. Take adaptive quizzes. Watch your knowledge graph come alive, node by node turning green.</p>
