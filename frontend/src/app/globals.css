@@ -702,14 +702,14 @@ input, select, textarea { color-scheme: light; }
   border-radius: inherit;
   background: linear-gradient(
     105deg,
-    transparent 30%,
-    rgba(255, 255, 255, 0.25) 45%,
-    rgba(255, 255, 255, 0.08) 55%,
-    transparent 70%
+    transparent 25%,
+    rgba(255, 255, 255, 0.6) 42%,
+    rgba(255, 255, 255, 0.2) 52%,
+    transparent 68%
   );
   opacity: 0;
   transform: translateX(-100%);
-  transition: opacity 0.4s ease, transform 0.7s ease;
+  transition: opacity 0.25s ease, transform 0.55s ease;
   pointer-events: none;
   z-index: 2;
 }
