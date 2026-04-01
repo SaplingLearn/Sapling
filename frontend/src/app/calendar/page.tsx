@@ -424,6 +424,7 @@ function CalendarInner() {
   };
 
   const handleDisconnectGoogle = async () => {
+    if (!window.confirm('Disconnect from Google Calendar? Synced events will not be removed.')) return;
     try {
       await disconnectGoogleCalendar(USER_ID);
       setGoogleConnected(false);

@@ -115,6 +115,7 @@ function DashboardInner() {
   // Inline color picker state
   const [editingColorFor, setEditingColorFor] = useState<string | null>(null);
   const [colorHexInput, setColorHexInput] = useState('');
+  const [confirmDeleteCourse, setConfirmDeleteCourse] = useState<string | null>(null);
 
 
   // Mon–Sun dates for the current week (computed once on mount)
@@ -1250,19 +1251,37 @@ function DashboardInner() {
                             </span>
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleDeleteCourse(c.course_name)}
-                          disabled={isDeleting}
-                          title="Remove course"
-                          style={{
-                            background: 'none', border: '1px solid rgba(220,38,38,0.25)', borderRadius: '5px',
-                            color: isDeleting ? '#9ca3af' : '#b91c1c', fontSize: '12px',
-                            cursor: isDeleting ? 'default' : 'pointer', padding: '3px 9px',
-                            fontFamily: 'inherit', opacity: isDeleting ? 0.5 : 1,
-                          }}
-                        >
-                          {isDeleting ? '…' : 'Delete'}
-                        </button>
+                        {confirmDeleteCourse === c.course_name ? (
+                          <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                            <button
+                              onClick={() => setConfirmDeleteCourse(null)}
+                              style={{ background: 'none', border: '1px solid rgba(107,114,128,0.2)', borderRadius: '5px', color: '#6b7280', fontSize: '11px', cursor: 'pointer', padding: '3px 8px', fontFamily: 'inherit' }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={() => { setConfirmDeleteCourse(null); handleDeleteCourse(c.course_name); }}
+                              disabled={isDeleting}
+                              style={{ background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.35)', borderRadius: '5px', color: '#b91c1c', fontSize: '11px', cursor: 'pointer', padding: '3px 8px', fontWeight: 600, fontFamily: 'inherit' }}
+                            >
+                              Confirm
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmDeleteCourse(c.course_name)}
+                            disabled={isDeleting}
+                            title="Remove course"
+                            style={{
+                              background: 'none', border: '1px solid rgba(220,38,38,0.25)', borderRadius: '5px',
+                              color: isDeleting ? '#9ca3af' : '#b91c1c', fontSize: '12px',
+                              cursor: isDeleting ? 'default' : 'pointer', padding: '3px 9px',
+                              fontFamily: 'inherit', opacity: isDeleting ? 0.5 : 1,
+                            }}
+                          >
+                            {isDeleting ? '…' : 'Delete'}
+                          </button>
+                        )}
                       </div>
 
                       {/* Inline color picker (animated via maxHeight) */}
