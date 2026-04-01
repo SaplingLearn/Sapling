@@ -82,6 +82,7 @@ function DashboardInner() {
   // All upcoming assignments — used by course panel and upcoming strip
   const [allAssignments, setAllAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // Mobile: which sidebar tab is expanded
   const [mobileSidebarTab, setMobileSidebarTab] = useState<'courses' | 'stats' | null>(null);
@@ -188,8 +189,9 @@ function DashboardInner() {
         const colorMap: Record<string, string> = {};
         courseData.courses.forEach(c => { if (c.color) colorMap[c.course_name] = c.color; });
         setCourseColorMap(colorMap);
-      } catch (e) {
+      } catch (e: any) {
         console.error(e);
+        setFetchError(e.message || 'Failed to load dashboard data.');
       } finally {
         setLoading(false);
       }
@@ -342,6 +344,29 @@ function DashboardInner() {
       setCourseDeleting(null);
     }
   };
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 48px)', color: '#9ca3af', fontSize: '14px', fontFamily: UI_FONT }}>
+        Loading your dashboard...
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 48px)', fontFamily: UI_FONT, gap: '12px' }}>
+        <p style={{ fontSize: '15px', fontWeight: 600, color: '#111827' }}>Failed to load dashboard</p>
+        <p style={{ fontSize: '13px', color: '#6b7280', maxWidth: '400px', textAlign: 'center', lineHeight: 1.6 }}>{fetchError}</p>
+        <button
+          onClick={() => { setFetchError(null); setLoading(true); window.location.reload(); }}
+          style={{ padding: '8px 20px', background: 'rgba(26,92,42,0.08)', color: '#1a5c2a', border: '1px solid rgba(26,92,42,0.3)', borderRadius: '7px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <>

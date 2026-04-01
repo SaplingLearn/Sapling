@@ -45,6 +45,7 @@ function SocialPageInner() {
   const [matches, setMatches] = useState<StudyMatchType[]>([]);
   const [matchLoading, setMatchLoading] = useState(false);
   const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
 
   // Auto-switch to overview tab when a suggestion is present
   useEffect(() => {
@@ -74,6 +75,7 @@ function SocialPageInner() {
     setOverviewData(null);
     setActivity([]);
     setMatches([]);
+    setOverviewError(null);
 
     Promise.all([
       getRoomOverview(activeRoomId),
@@ -81,7 +83,10 @@ function SocialPageInner() {
     ]).then(([ovData, actData]) => {
       setOverviewData(ovData);
       setActivity(actData.activities);
-    }).catch(console.error).finally(() => {
+    }).catch((e) => {
+      console.error(e);
+      setOverviewError(e.message || 'Failed to load room data.');
+    }).finally(() => {
       setOverviewLoading(false);
     });
   }, [activeRoomId]);
@@ -237,6 +242,17 @@ function SocialPageInner() {
                   {tab === 'overview' && (
                     overviewLoading ? (
                       <p style={{ color: '#9ca3af', fontSize: '14px' }}>Loading...</p>
+                    ) : overviewError ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', padding: '40px 20px' }}>
+                        <p style={{ color: '#b91c1c', fontSize: '14px', fontWeight: 500 }}>Failed to load room</p>
+                        <p style={{ color: '#6b7280', fontSize: '13px' }}>{overviewError}</p>
+                        <button
+                          onClick={() => { setOverviewError(null); setOverviewLoading(true); getRoomOverview(activeRoomId).then(setOverviewData).catch(e => setOverviewError(e.message)).finally(() => setOverviewLoading(false)); }}
+                          style={{ padding: '6px 16px', background: 'rgba(26,92,42,0.08)', color: '#1a5c2a', border: '1px solid rgba(26,92,42,0.3)', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                        >
+                          Retry
+                        </button>
+                      </div>
                     ) : overviewData ? (
                       <RoomOverview
                         room={overviewData.room}
