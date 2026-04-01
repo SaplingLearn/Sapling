@@ -148,10 +148,10 @@ function SocialPageInner() {
   const memberCount = overviewData?.members?.length ?? null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, height: isMobile ? 'auto' : 'calc(100vh - 48px)', minHeight: isMobile ? 'calc(100vh - 48px)' : undefined }}>
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, height: isMobile ? 'auto' : 'calc(100vh - 48px)', minHeight: isMobile ? 'calc(100vh - 48px)' : undefined, overflow: 'hidden' }}>
       {/* Left sidebar */}
       {(!isMobile || showRooms) && (
-      <div className="panel-in panel-in-1" style={{ width: isMobile ? '100%' : '240px', maxHeight: isMobile ? '300px' : undefined, background: '#f2f7f2', borderRight: '1px solid rgba(107,114,128,0.12)', overflowY: 'auto' }}>
+      <div className="panel-in panel-in-1" style={{ width: isMobile ? '100%' : '240px', flexShrink: 0, maxHeight: isMobile ? '300px' : undefined, background: '#f2f7f2', borderRight: '1px solid rgba(107,114,128,0.12)', overflowY: 'auto' }}>
         <RoomList
           rooms={rooms}
           activeRoomId={schoolView ? null : activeRoomId}
@@ -180,7 +180,7 @@ function SocialPageInner() {
       )}
 
       {/* Main area */}
-      <div className="panel-in panel-in-2" style={{ flex: 1, minHeight: isMobile ? 0 : undefined, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className="panel-in panel-in-2" style={{ flex: 1, minWidth: 0, minHeight: isMobile ? '400px' : 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {schoolView ? (
           <SchoolDirectory currentUserId={USER_ID} />
         ) : activeRoomId ? (
@@ -274,9 +274,9 @@ function SocialPageInner() {
                         <p style={{ color: '#9ca3af', fontSize: '14px' }}>No activity yet.</p>
                       ) : (
                         activity.map(a => (
-                          <div key={a.id} style={{ display: 'flex', gap: '8px', alignItems: 'baseline', padding: '6px 0', borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
-                            <span style={{ fontSize: '14px', fontWeight: 500, color: '#111827', minWidth: '60px' }}>{a.user_name}</span>
-                            <span style={{ fontSize: '13px', color: '#4b5563' }}>
+                          <div key={a.id} style={{ display: 'flex', gap: '8px', alignItems: 'baseline', padding: '6px 0', borderBottom: '1px solid rgba(148,163,184,0.06)', minWidth: 0 }}>
+                            <span style={{ fontSize: '14px', fontWeight: 500, color: '#111827', minWidth: '60px', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.user_name}</span>
+                            <span style={{ fontSize: '13px', color: '#4b5563', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
                               {a.activity_type}
                               {a.concept_name && ` ${a.concept_name}`}
                               {a.detail && ` — ${a.detail}`}
