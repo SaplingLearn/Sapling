@@ -23,6 +23,7 @@ interface Props {
 export default function RoomMembers({ roomId, roomName, leaderId, members, currentUserId, onLeave, onMembersChange }: Props) {
   const { avatarUrl } = useUser();
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [confirmKickId, setConfirmKickId] = useState<string | null>(null);
   const [kickingId, setKickingId] = useState<string | null>(null);
   const [leavingLoading, setLeavingLoading] = useState(false);
 
@@ -112,28 +113,46 @@ export default function RoomMembers({ roomId, roomName, leaderId, members, curre
                 )}
               </div>
 
-              {/* Kick button — only leader sees it, not on themselves or other leaders */}
+              {/* Kick button — only leader sees it, not on themselves */}
               {isLeader && !isMe && (
-                <button
-                  onClick={() => handleKick(m.user_id)}
-                  disabled={kickingId === m.user_id}
-                  style={{
-                    background: 'none',
-                    border: '1px solid rgba(220,38,38,0.3)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: '4px 12px',
-                    fontSize: '12px',
-                    color: '#dc2626',
-                    cursor: kickingId === m.user_id ? 'default' : 'pointer',
-                    flexShrink: 0,
-                    opacity: kickingId === m.user_id ? 0.5 : 1,
-                    transition: 'all var(--dur-fast)',
-                  }}
-                  onMouseEnter={e => { if (kickingId !== m.user_id) e.currentTarget.style.background = 'rgba(220,38,38,0.06)'; }}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >
-                  {kickingId === m.user_id ? '...' : 'Kick'}
-                </button>
+                confirmKickId === m.user_id ? (
+                  <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                    <button
+                      onClick={() => setConfirmKickId(null)}
+                      style={{ background: 'none', border: '1px solid rgba(107,114,128,0.2)', borderRadius: 'var(--radius-sm)', padding: '4px 8px', fontSize: '11px', color: '#6b7280', cursor: 'pointer' }}
+                    >
+                      No
+                    </button>
+                    <button
+                      onClick={() => { setConfirmKickId(null); handleKick(m.user_id); }}
+                      disabled={kickingId === m.user_id}
+                      style={{ background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 'var(--radius-sm)', padding: '4px 8px', fontSize: '11px', color: '#dc2626', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      Kick?
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmKickId(m.user_id)}
+                    disabled={kickingId === m.user_id}
+                    style={{
+                      background: 'none',
+                      border: '1px solid rgba(220,38,38,0.3)',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '4px 12px',
+                      fontSize: '12px',
+                      color: '#dc2626',
+                      cursor: kickingId === m.user_id ? 'default' : 'pointer',
+                      flexShrink: 0,
+                      opacity: kickingId === m.user_id ? 0.5 : 1,
+                      transition: 'all var(--dur-fast)',
+                    }}
+                    onMouseEnter={e => { if (kickingId !== m.user_id) e.currentTarget.style.background = 'rgba(220,38,38,0.06)'; }}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                  >
+                    {kickingId === m.user_id ? '...' : 'Kick'}
+                  </button>
+                )
               )}
             </div>
           );

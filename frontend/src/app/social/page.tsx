@@ -45,6 +45,7 @@ function SocialPageInner() {
   const [matches, setMatches] = useState<StudyMatchType[]>([]);
   const [matchLoading, setMatchLoading] = useState(false);
   const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
 
   // Auto-switch to overview tab when a suggestion is present
   useEffect(() => {
@@ -74,6 +75,7 @@ function SocialPageInner() {
     setOverviewData(null);
     setActivity([]);
     setMatches([]);
+    setOverviewError(null);
 
     Promise.all([
       getRoomOverview(activeRoomId),
@@ -81,7 +83,10 @@ function SocialPageInner() {
     ]).then(([ovData, actData]) => {
       setOverviewData(ovData);
       setActivity(actData.activities);
-    }).catch(console.error).finally(() => {
+    }).catch((e) => {
+      console.error(e);
+      setOverviewError(e.message || 'Failed to load room data.');
+    }).finally(() => {
       setOverviewLoading(false);
     });
   }, [activeRoomId]);
@@ -148,10 +153,10 @@ function SocialPageInner() {
   const memberCount = overviewData?.members?.length ?? null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, height: isMobile ? 'auto' : 'calc(100vh - 48px)', minHeight: isMobile ? 'calc(100vh - 48px)' : undefined }}>
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' as const : 'row' as const, height: isMobile ? 'auto' : 'calc(100vh - 48px)', minHeight: isMobile ? 'calc(100vh - 48px)' : undefined, overflow: 'hidden' }}>
       {/* Left sidebar */}
       {(!isMobile || showRooms) && (
-      <div className="panel-in panel-in-1" style={{ width: isMobile ? '100%' : '240px', maxHeight: isMobile ? '300px' : undefined, background: '#f2f7f2', borderRight: '1px solid rgba(107,114,128,0.12)', overflowY: 'auto' }}>
+      <div className="panel-in panel-in-1" style={{ width: isMobile ? '100%' : '240px', flexShrink: 0, maxHeight: isMobile ? '300px' : undefined, background: '#f2f7f2', borderRight: '1px solid rgba(107,114,128,0.12)', overflowY: 'auto' }}>
         <RoomList
           rooms={rooms}
           activeRoomId={schoolView ? null : activeRoomId}
@@ -180,7 +185,7 @@ function SocialPageInner() {
       )}
 
       {/* Main area */}
-      <div className="panel-in panel-in-2" style={{ flex: 1, minHeight: isMobile ? 0 : undefined, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className="panel-in panel-in-2" style={{ flex: 1, minWidth: 0, minHeight: isMobile ? '400px' : 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {schoolView ? (
           <SchoolDirectory currentUserId={USER_ID} />
         ) : activeRoomId ? (
@@ -237,6 +242,17 @@ function SocialPageInner() {
                   {tab === 'overview' && (
                     overviewLoading ? (
                       <p style={{ color: '#9ca3af', fontSize: '14px' }}>Loading...</p>
+                    ) : overviewError ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', padding: '40px 20px' }}>
+                        <p style={{ color: '#b91c1c', fontSize: '14px', fontWeight: 500 }}>Failed to load room</p>
+                        <p style={{ color: '#6b7280', fontSize: '13px' }}>{overviewError}</p>
+                        <button
+                          onClick={() => { setOverviewError(null); setOverviewLoading(true); getRoomOverview(activeRoomId).then(setOverviewData).catch(e => setOverviewError(e.message)).finally(() => setOverviewLoading(false)); }}
+                          style={{ padding: '6px 16px', background: 'rgba(26,92,42,0.08)', color: '#1a5c2a', border: '1px solid rgba(26,92,42,0.3)', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                        >
+                          Retry
+                        </button>
+                      </div>
                     ) : overviewData ? (
                       <RoomOverview
                         room={overviewData.room}
@@ -274,9 +290,9 @@ function SocialPageInner() {
                         <p style={{ color: '#9ca3af', fontSize: '14px' }}>No activity yet.</p>
                       ) : (
                         activity.map(a => (
-                          <div key={a.id} style={{ display: 'flex', gap: '8px', alignItems: 'baseline', padding: '6px 0', borderBottom: '1px solid rgba(148,163,184,0.06)' }}>
-                            <span style={{ fontSize: '14px', fontWeight: 500, color: '#111827', minWidth: '60px' }}>{a.user_name}</span>
-                            <span style={{ fontSize: '13px', color: '#4b5563' }}>
+                          <div key={a.id} style={{ display: 'flex', gap: '8px', alignItems: 'baseline', padding: '6px 0', borderBottom: '1px solid rgba(148,163,184,0.06)', minWidth: 0 }}>
+                            <span style={{ fontSize: '14px', fontWeight: 500, color: '#111827', minWidth: '60px', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.user_name}</span>
+                            <span style={{ fontSize: '13px', color: '#4b5563', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
                               {a.activity_type}
                               {a.concept_name && ` ${a.concept_name}`}
                               {a.detail && ` — ${a.detail}`}

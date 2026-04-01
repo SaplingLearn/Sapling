@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import KnowledgeGraph from './KnowledgeGraph';
 import CustomSelect from './CustomSelect';
 import { RoomMember } from '@/lib/types';
@@ -20,6 +20,28 @@ interface Props {
 export default function RoomOverview({ room, members, aiSummary, myUserId, suggestNodeId, suggestConcept, onSuggestDismiss, onSuggestAccept }: Props) {
   const [copied, setCopied] = useState(false);
   const [compareWith, setCompareWith] = useState<string>('');
+  const [isMobile, setIsMobile] = useState(false);
+  const graphContainerRef = useRef<HTMLDivElement>(null);
+  const [graphWidth, setGraphWidth] = useState(440);
+
+  useEffect(() => {
+    const mql = window.matchMedia('(max-width: 768px)');
+    setIsMobile(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, []);
+
+  useEffect(() => {
+    if (!graphContainerRef.current) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setGraphWidth(Math.floor(entry.contentRect.width));
+      }
+    });
+    ro.observe(graphContainerRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   const myMember = members.find(m => m.user_id === myUserId);
   const partnerMember = members.find(m => m.user_id === compareWith);
@@ -35,7 +57,7 @@ export default function RoomOverview({ room, members, aiSummary, myUserId, sugge
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px' }}>
+      <div style={{ display: 'flex', alignItems: isMobile ? 'stretch' : 'flex-start', justifyContent: 'space-between', gap: '12px', flexDirection: isMobile ? 'column' : 'row' }}>
         <h2 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text)', margin: 0 }}>{room.name}</h2>
 
         {/* Invite code chip */}
@@ -76,22 +98,22 @@ export default function RoomOverview({ room, members, aiSummary, myUserId, sugge
       </div>
 
       {/* Graphs side-by-side */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-        <div style={{ position: 'relative' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '16px' }}>
+        <div ref={graphContainerRef} style={{ position: 'relative', minWidth: 0 }}>
           <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-dim)', marginBottom: '8px' }}>Your Tree</p>
           <div className="panel" style={{ overflow: 'hidden' }}>
             {myMember ? (
               <KnowledgeGraph
                 nodes={myMember.graph.nodes}
                 edges={filterCrossSubjectEdges(myMember.graph.nodes, myMember.graph.edges)}
-                width={440}
-                height={380}
+                width={graphWidth}
+                height={isMobile ? 300 : 380}
                 interactive={true}
                 highlightId={suggestNodeId}
                 comparison={partnerMember ? { partnerNodes: partnerMember.graph.nodes } : undefined}
               />
             ) : (
-              <div style={{ height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: '13px' }}>
+              <div style={{ height: isMobile ? 300 : 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: '13px' }}>
                 No data
               </div>
             )}
@@ -148,7 +170,7 @@ export default function RoomOverview({ room, members, aiSummary, myUserId, sugge
           )}
         </div>
 
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
             <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-dim)', margin: 0 }}>Compare with</p>
             <CustomSelect
@@ -164,13 +186,13 @@ export default function RoomOverview({ room, members, aiSummary, myUserId, sugge
               <KnowledgeGraph
                 nodes={partnerMember.graph.nodes}
                 edges={filterCrossSubjectEdges(partnerMember.graph.nodes, partnerMember.graph.edges)}
-                width={440}
-                height={380}
+                width={graphWidth}
+                height={isMobile ? 300 : 380}
                 interactive={true}
                 comparison={myMember ? { partnerNodes: myMember.graph.nodes } : undefined}
               />
             ) : (
-              <div style={{ height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: '13px' }}>
+              <div style={{ height: isMobile ? 300 : 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: '13px' }}>
                 Select a member to compare
               </div>
             )}

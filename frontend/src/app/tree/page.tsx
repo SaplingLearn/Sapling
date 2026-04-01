@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useMemo, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import { GraphNode, GraphEdge } from '@/lib/types';
-import { getGraph } from '@/lib/api';
+import { getGraph, getCourses } from '@/lib/api';
 import { getMasteryColor, getMasteryLabel, formatRelativeTime, getCourseColor } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
 
@@ -37,6 +37,7 @@ function TreePageInner() {
   const [search, setSearch] = useState('');
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [dimensions, setDimensions] = useState({ width: 1200, height: 700 });
+  const [courseColorMap, setCourseColorMap] = useState<Record<string, string>>({});
   const containerRef = useRef<HTMLDivElement>(null);
 
   const suggestConcept = searchParams.get('suggest') ?? '';
@@ -46,6 +47,11 @@ function TreePageInner() {
     getGraph(userId).then(data => {
       setAllNodes(data.nodes);
       setAllEdges(data.edges);
+    }).catch(console.error);
+    getCourses(userId).then(data => {
+      const colorMap: Record<string, string> = {};
+      (data.courses ?? []).forEach(c => { if (c.color) colorMap[c.course_name] = c.color; });
+      setCourseColorMap(colorMap);
     }).catch(console.error);
   }, [userId, userReady]);
 
@@ -99,6 +105,7 @@ function TreePageInner() {
         interactive
         highlightId={suggestNode?.id}
         onNodeClick={setSelectedNode}
+        courseColorMap={courseColorMap}
       />
 
       {/* Floating search + filter bar */}
@@ -264,8 +271,8 @@ function TreePageInner() {
           <div>
             <p style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Subject</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: getCourseColor(selectedNode.subject).fill, flexShrink: 0, display: 'inline-block' }} />
-              <p style={{ fontSize: '14px', color: getCourseColor(selectedNode.subject).text, fontWeight: 500, margin: 0 }}>{selectedNode.subject}</p>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: getCourseColor(selectedNode.subject, courseColorMap[selectedNode.subject]).fill, flexShrink: 0, display: 'inline-block' }} />
+              <p style={{ fontSize: '14px', color: getCourseColor(selectedNode.subject, courseColorMap[selectedNode.subject]).text, fontWeight: 500, margin: 0 }}>{selectedNode.subject}</p>
             </div>
           </div>
 

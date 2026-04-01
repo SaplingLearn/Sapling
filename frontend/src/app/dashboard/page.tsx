@@ -82,6 +82,7 @@ function DashboardInner() {
   // All upcoming assignments — used by course panel and upcoming strip
   const [allAssignments, setAllAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // Mobile: which sidebar tab is expanded
   const [mobileSidebarTab, setMobileSidebarTab] = useState<'courses' | 'stats' | null>(null);
@@ -114,6 +115,7 @@ function DashboardInner() {
   // Inline color picker state
   const [editingColorFor, setEditingColorFor] = useState<string | null>(null);
   const [colorHexInput, setColorHexInput] = useState('');
+  const [confirmDeleteCourse, setConfirmDeleteCourse] = useState<string | null>(null);
 
 
   // Mon–Sun dates for the current week (computed once on mount)
@@ -188,8 +190,9 @@ function DashboardInner() {
         const colorMap: Record<string, string> = {};
         courseData.courses.forEach(c => { if (c.color) colorMap[c.course_name] = c.color; });
         setCourseColorMap(colorMap);
-      } catch (e) {
+      } catch (e: any) {
         console.error(e);
+        setFetchError(e.message || 'Failed to load dashboard data.');
       } finally {
         setLoading(false);
       }
@@ -342,6 +345,29 @@ function DashboardInner() {
       setCourseDeleting(null);
     }
   };
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 48px)', color: '#9ca3af', fontSize: '14px', fontFamily: UI_FONT }}>
+        Loading your dashboard...
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 48px)', fontFamily: UI_FONT, gap: '12px' }}>
+        <p style={{ fontSize: '15px', fontWeight: 600, color: '#111827' }}>Failed to load dashboard</p>
+        <p style={{ fontSize: '13px', color: '#6b7280', maxWidth: '400px', textAlign: 'center', lineHeight: 1.6 }}>{fetchError}</p>
+        <button
+          onClick={() => { setFetchError(null); setLoading(true); window.location.reload(); }}
+          style={{ padding: '8px 20px', background: 'rgba(26,92,42,0.08)', color: '#1a5c2a', border: '1px solid rgba(26,92,42,0.3)', borderRadius: '7px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -1225,19 +1251,37 @@ function DashboardInner() {
                             </span>
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleDeleteCourse(c.course_name)}
-                          disabled={isDeleting}
-                          title="Remove course"
-                          style={{
-                            background: 'none', border: '1px solid rgba(220,38,38,0.25)', borderRadius: '5px',
-                            color: isDeleting ? '#9ca3af' : '#b91c1c', fontSize: '12px',
-                            cursor: isDeleting ? 'default' : 'pointer', padding: '3px 9px',
-                            fontFamily: 'inherit', opacity: isDeleting ? 0.5 : 1,
-                          }}
-                        >
-                          {isDeleting ? '…' : 'Delete'}
-                        </button>
+                        {confirmDeleteCourse === c.course_name ? (
+                          <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                            <button
+                              onClick={() => setConfirmDeleteCourse(null)}
+                              style={{ background: 'none', border: '1px solid rgba(107,114,128,0.2)', borderRadius: '5px', color: '#6b7280', fontSize: '11px', cursor: 'pointer', padding: '3px 8px', fontFamily: 'inherit' }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={() => { setConfirmDeleteCourse(null); handleDeleteCourse(c.course_name); }}
+                              disabled={isDeleting}
+                              style={{ background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.35)', borderRadius: '5px', color: '#b91c1c', fontSize: '11px', cursor: 'pointer', padding: '3px 8px', fontWeight: 600, fontFamily: 'inherit' }}
+                            >
+                              Confirm
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmDeleteCourse(c.course_name)}
+                            disabled={isDeleting}
+                            title="Remove course"
+                            style={{
+                              background: 'none', border: '1px solid rgba(220,38,38,0.25)', borderRadius: '5px',
+                              color: isDeleting ? '#9ca3af' : '#b91c1c', fontSize: '12px',
+                              cursor: isDeleting ? 'default' : 'pointer', padding: '3px 9px',
+                              fontFamily: 'inherit', opacity: isDeleting ? 0.5 : 1,
+                            }}
+                          >
+                            {isDeleting ? '…' : 'Delete'}
+                          </button>
+                        )}
                       </div>
 
                       {/* Inline color picker (animated via maxHeight) */}

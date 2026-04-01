@@ -75,6 +75,7 @@ function LearnInner() {
   });
   const [mobileView, setMobileView] = useState<'chat' | 'graph'>('chat');
   const [apiCourseNames, setApiCourseNames] = useState<string[]>([]);
+  const [courseColorMap, setCourseColorMap] = useState<Record<string, string>>({});
 
   const isMobile = useIsMobile();
 
@@ -89,7 +90,13 @@ function LearnInner() {
   useEffect(() => {
     if (!userReady || !USER_ID) return;
     getCourses(USER_ID)
-      .then(data => setApiCourseNames((data.courses ?? []).map(c => c.course_name)))
+      .then(data => {
+        const courses = data.courses ?? [];
+        setApiCourseNames(courses.map(c => c.course_name));
+        const colorMap: Record<string, string> = {};
+        courses.forEach(c => { if (c.color) colorMap[c.course_name] = c.color; });
+        setCourseColorMap(colorMap);
+      })
       .catch(console.error);
   }, [USER_ID, userReady]);
 
@@ -474,6 +481,7 @@ function LearnInner() {
                 interactive
                 highlightId={suggestNode?.id ?? topicNode?.id}
                 onNodeClick={handleNodeClick}
+                courseColorMap={courseColorMap}
               />
             )}
           </div>

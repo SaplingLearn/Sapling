@@ -4,6 +4,7 @@ import './globals.css';
 import { Suspense } from 'react';
 import { UserProvider } from '@/context/UserContext';
 import Navbar from '@/components/Navbar';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import FeedbackFlow from '@/components/FeedbackFlow';
 import SessionFeedbackGlobal from '@/components/SessionFeedbackGlobal';
 
@@ -55,7 +56,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <UserProvider>
           <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
             <Navbar />
-            <main style={{ flex: 1 }}>{children}</main>
+            <main style={{ flex: 1 }}><ErrorBoundary>{children}</ErrorBoundary></main>
             <Suspense fallback={null}><FeedbackFlow /></Suspense>
             <Suspense fallback={null}><SessionFeedbackGlobal /></Suspense>
           </div>
