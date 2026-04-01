@@ -155,6 +155,9 @@ export const extractSyllabus = (formData: FormData, userId?: string): Promise<an
 export const getUpcomingAssignments = (userId: string) =>
   fetchJSON<{ assignments: any[] }>(`/api/calendar/upcoming/${userId}`);
 
+export const getAllAssignments = (userId: string) =>
+  fetchJSON<{ assignments: any[] }>(`/api/calendar/all/${userId}`);
+
 export const saveAssignments = (userId: string, assignments: any[]) =>
   fetchJSON<{ saved_count: number }>('/api/calendar/save', {
     method: 'POST',

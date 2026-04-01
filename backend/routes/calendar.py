@@ -83,7 +83,7 @@ def _require_google_creds(user_id: str) -> "Credentials":
 # ── Syllabus extraction ───────────────────────────────────────────────────────
 
 @router.post("/extract")
-async def extract(file: UploadFile = File(...)):
+async def extract(file: UploadFile = File(...), user_id: str = Form(None)):
     file_bytes = await file.read()
     filename = file.filename or "upload"
     content_type = file.content_type or "application/octet-stream"
@@ -120,6 +120,17 @@ def get_upcoming(user_id: str):
         filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
         order="due_date.asc",
         limit=20,
+    )
+    return {"assignments": rows}
+
+
+@router.get("/all/{user_id}")
+def get_all_assignments(user_id: str):
+    """Return all assignments for a user (past and future) for the calendar view."""
+    rows = table("assignments").select(
+        "*",
+        filters={"user_id": f"eq.{user_id}"},
+        order="due_date.asc",
     )
     return {"assignments": rows}
 

@@ -8,7 +8,7 @@ import { Assignment } from '@/lib/types';
 import {
   extractSyllabus,
   saveAssignments,
-  getUpcomingAssignments,
+  getAllAssignments,
   getCalendarStatus,
   syncToGoogleCalendar,
   importGoogleEvents,
@@ -163,8 +163,8 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
 
     return (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
-        {DAY_NAMES.map(d => (
-          <div key={d} style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', borderBottom: '2px solid rgba(107,114,128,0.12)', background: '#f0f5f0', letterSpacing: '0.05em' }}>
+        {DAY_NAMES.map((d, i) => (
+          <div key={i} style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', borderBottom: '2px solid rgba(107,114,128,0.12)', background: '#f0f5f0', letterSpacing: '0.05em' }}>
             {d}
           </div>
         ))}
@@ -350,8 +350,8 @@ function CalendarInner() {
   // prevent repeated fetches every time Next.js reconstructs the search params object
   useEffect(() => {
     if (!userReady) return;
-    getUpcomingAssignments(USER_ID)
-      .then(data => setAssignments(data.assignments))
+    getAllAssignments(USER_ID)
+      .then(data => setAssignments(data.assignments ?? []))
       .catch(console.error);
     getCalendarStatus(USER_ID)
       .then(res => setGoogleConnected(res.connected))
@@ -409,8 +409,8 @@ function CalendarInner() {
     setSaving(true);
     try {
       await saveAssignments(USER_ID, extractedAssignments);
-      const data = await getUpcomingAssignments(USER_ID);
-      setAssignments(data.assignments);
+      const data = await getAllAssignments(USER_ID);
+      setAssignments(data.assignments ?? []);
       setExtractedAssignments([]);
       setFileProcessed(false);
       setWarnings([]);
@@ -441,8 +441,8 @@ function CalendarInner() {
       const res = await syncToGoogleCalendar(USER_ID);
       setSyncedCount(res.synced_count);
       // Refresh so google_event_id values are up to date
-      getUpcomingAssignments(USER_ID)
-        .then(data => setAssignments(data.assignments))
+      getAllAssignments(USER_ID)
+        .then(data => setAssignments(data.assignments ?? []))
         .catch(console.error);
     } catch (e: any) {
       alert(e.message);
