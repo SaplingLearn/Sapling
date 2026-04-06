@@ -1,10 +1,28 @@
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import FRONTEND_URL, PORT
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers
+from recost.frameworks.fastapi import RecostMiddleware
+
+
+load_dotenv(Path(__file__).with_name(".env"))
+
+RECOST_PROJECT_ID = "eaf22d10-840d-494f-8513-2dcef769ace1"
+recost_api_key = os.getenv("RECOST_API_KEY")
 
 app = FastAPI(title="Sapling API", version="1.0.0")
+
+if recost_api_key:
+    app.add_middleware(
+        RecostMiddleware,
+        api_key=recost_api_key,
+        project_id=RECOST_PROJECT_ID,
+    )
 
 app.add_middleware(
     CORSMiddleware,

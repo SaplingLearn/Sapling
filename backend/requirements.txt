@@ -12,6 +12,7 @@ pypdfium2
 httpx
 mammoth
 python-pptx
+recost
 
 # Testing
 pytest
