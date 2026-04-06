@@ -123,105 +123,81 @@ function SproutSVG({ active }: { active: boolean }) {
 }
 
 function TreeSVG({ active }: { active: boolean }) {
-  // Each branch has a short thick stub (base) overlapping a longer thin path (full),
-  // creating a natural taper. First control point follows the trunk upward before
-  // sweeping outward so the branch departs smoothly instead of jutting sideways.
-  const branches: { base: string; full: string; bsw: number; fsw: number; delay: number }[] = [
-    {
-      base: 'M 97 130 C 96 121 87 116 76 115',
-      full: 'M 97 130 C 95 115 67 109 38 115',
-      bsw: 4.5, fsw: 1.5, delay: 0.44,
-    },
-    {
-      base: 'M 103 122 C 104 113 113 108 124 108',
-      full: 'M 103 122 C 106 107 133 103 163 108',
-      bsw: 4.5, fsw: 1.5, delay: 0.50,
-    },
-    {
-      base: 'M 97 105 C 96 97 84 92 72 92',
-      full: 'M 97 105 C 96 91 69 85 48 89',
-      bsw: 3.5, fsw: 1.5, delay: 0.56,
-    },
-    {
-      base: 'M 103 98 C 104 90 116 85 128 85',
-      full: 'M 103 98 C 104 84 131 78 153 82',
-      bsw: 3.5, fsw: 1.5, delay: 0.62,
-    },
+  const roots = [
+    { d: 'M340 358 L340 405 Q338 415 332 425',            sw: 2.5, delay: 0    },
+    { d: 'M340 358 Q325 380 305 402 Q295 406 285 404',    sw: 2,   delay: 0.12 },
+    { d: 'M340 358 Q355 380 375 402 Q385 406 395 403',    sw: 2,   delay: 0.14 },
+    { d: 'M340 358 Q332 382 322 405',                     sw: 1.5, delay: 0.24 },
+    { d: 'M340 358 Q348 382 358 404',                     sw: 1.5, delay: 0.26 },
   ];
 
-  const tufts = [
-    { cx: 30,  cy: 112, r: 17, c: '#1B6C42', delay: 0.54 },
-    { cx: 166, cy: 105, r: 16, c: '#2D8F5C', delay: 0.60 },
-    { cx: 40,  cy: 86,  r: 15, c: '#1a5c2a', delay: 0.66 },
-    { cx: 155, cy: 79,  r: 14, c: '#1B6C42', delay: 0.72 },
-    { cx: 100, cy: 50,  r: 20, c: '#1B6C42', delay: 0.78 },
-    { cx: 80,  cy: 60,  r: 13, c: '#1a5c2a', delay: 0.82 },
-    { cx: 120, cy: 57,  r: 12, c: '#2D8F5C', delay: 0.82 },
+  const stemAndBranches = [
+    { d: 'M338 358 Q337 330 337 300 Q338 270 340 240 Q341 220 342 205', sw: 4.5, delay: 0.1,  color: '#5a3e28' },
+    { d: 'M337 310 Q322 300 310 297',  sw: 2.5, delay: 0.38, color: '#5a3e28' },
+    { d: 'M339 275 Q355 265 368 262',  sw: 2.5, delay: 0.44, color: '#5a3e28' },
+    { d: 'M340 245 Q328 236 318 232',  sw: 2,   delay: 0.50, color: '#5a3e28' },
   ];
+
+  const leaves: { cx: number; cy: number; rx: number; ry: number; rot: number; c: string; delay: number }[] = [
+    { cx: 342, cy: 185, rx: 12, ry: 20, rot: 0,   c: '#3a8060', delay: 0.62 },
+    { cx: 328, cy: 198, rx: 11, ry: 18, rot: -30, c: '#2d6b4f', delay: 0.66 },
+    { cx: 356, cy: 198, rx: 11, ry: 18, rot: 30,  c: '#4a9470', delay: 0.66 },
+    { cx: 308, cy: 226, rx: 10, ry: 17, rot: -40, c: '#3a8060', delay: 0.70 },
+    { cx: 318, cy: 238, rx:  9, ry: 15, rot: 20,  c: '#2d6b4f', delay: 0.72 },
+    { cx: 378, cy: 255, rx: 11, ry: 18, rot: 35,  c: '#3a8060', delay: 0.70 },
+    { cx: 365, cy: 268, rx:  9, ry: 15, rot: -15, c: '#4a9470', delay: 0.73 },
+    { cx: 375, cy: 248, rx: 10, ry: 16, rot: 60,  c: '#2d6b4f', delay: 0.74 },
+    { cx: 300, cy: 290, rx: 11, ry: 18, rot: -35, c: '#3a8060', delay: 0.74 },
+    { cx: 312, cy: 302, rx:  9, ry: 15, rot: 15,  c: '#4a9470', delay: 0.77 },
+    { cx: 296, cy: 300, rx: 10, ry: 16, rot: -55, c: '#2d6b4f', delay: 0.78 },
+  ];
+
+  // Anchor soil at (100,215) matching SeedSVG/SproutSVG — user SVG soil top is at y=362, center x=340
+  const treeTransform = 'translate(100,215) scale(0.72,0.55) translate(-340,-362)';
 
   return (
     <svg viewBox="0 0 200 280" fill="none" className="w-full h-full">
-      {/* Soil */}
+      {/* Soil — identical to SeedSVG & SproutSVG */}
       <ellipse cx="100" cy="215" rx="72" ry="10" fill="#92683A" opacity="0.22" />
       <rect x="28" y="215" width="144" height="48" rx="5" fill="#92683A" opacity="0.09" />
-      <g style={{ transformOrigin: '100px 215px', transform: 'scaleY(0.75)' }}>
-      {/* Roots */}
-      {([
-        { d: 'M 100 218 Q 80 233 67 250',   sw: 2.5, op: 0.50, delay: 0    },
-        { d: 'M 100 218 Q 121 234 134 251',  sw: 2.5, op: 0.50, delay: 0.18 },
-        { d: 'M 100 220 Q 97 237 89 254',    sw: 1.5, op: 0.32, delay: 0.34 },
-      ] as const).map((r, i) => (
-        <motion.path key={i} d={r.d}
-          stroke="#92683A" strokeWidth={r.sw} strokeLinecap="round" opacity={r.op}
-          initial={{ pathLength: 0 }}
-          animate={active ? { pathLength: 1 } : { pathLength: 0 }}
-          transition={{ duration: 0.6, delay: r.delay, ease: 'easeOut' }}
-        />
-      ))}
-      {/* Trunk — S-curve: leans right at base, corrects toward top */}
-      <motion.path
-        d="M 100 215 C 105 193 93 168 97 142 C 101 118 95 96 100 72"
-        stroke="#5C3B1E" strokeWidth="12" strokeLinecap="round"
-        initial={{ pathLength: 0 }} animate={active ? { pathLength: 1 } : { pathLength: 0 }}
-        transition={{ duration: 0.5, ease: 'easeOut' }}
-      />
-      {/* Trunk highlight */}
-      <motion.path
-        d="M 104 214 C 109 192 97 167 101 141 C 105 117 99 95 104 72"
-        stroke="#8B6040" strokeWidth="3.5" strokeLinecap="round"
-        initial={{ pathLength: 0 }} animate={active ? { pathLength: 1 } : { pathLength: 0 }}
-        transition={{ duration: 0.5, ease: 'easeOut' }}
-      />
-      {/* Top shoot */}
-      <motion.path d="M 100 80 C 100 68 100 58 100 50"
-        stroke="#5C3B1E" strokeWidth="2" strokeLinecap="round"
-        initial={{ pathLength: 0 }} animate={active ? { pathLength: 1 } : { pathLength: 0 }}
-        transition={{ duration: 0.35, delay: 0.38, ease: 'easeOut' }}
-      />
-      {/* Branches — thick stub + thin full path = tapered look */}
-      {branches.map((b, i) => (
-        <g key={i}>
-          <motion.path d={b.base}
-            stroke="#5C3B1E" strokeWidth={b.bsw} strokeLinecap="round"
+
+      <g transform={treeTransform}>
+        {/* Roots */}
+        {roots.map((r, i) => (
+          <motion.path key={i} d={r.d}
+            stroke="#9e8a70" strokeWidth={r.sw} strokeLinecap="round" fill="none"
             initial={{ pathLength: 0 }} animate={active ? { pathLength: 1 } : { pathLength: 0 }}
-            transition={{ duration: 0.22, delay: b.delay, ease: 'easeOut' }}
+            transition={{ duration: 0.5, delay: r.delay, ease: 'easeOut' }}
           />
-          <motion.path d={b.full}
-            stroke="#5C3B1E" strokeWidth={b.fsw} strokeLinecap="round"
+        ))}
+
+        {/* Stem + branches */}
+        {stemAndBranches.map((s, i) => (
+          <motion.path key={i} d={s.d}
+            stroke={s.color} strokeWidth={s.sw} strokeLinecap="round" fill="none"
             initial={{ pathLength: 0 }} animate={active ? { pathLength: 1 } : { pathLength: 0 }}
-            transition={{ duration: 0.42, delay: b.delay, ease: 'easeOut' }}
+            transition={{ duration: 0.5, delay: s.delay, ease: 'easeOut' }}
           />
-        </g>
-      ))}
-      {/* Canopy clusters */}
-      {tufts.map((t, i) => (
-        <motion.circle key={i} cx={t.cx} cy={t.cy} r={t.r}
-          fill={t.c} opacity={0.9}
+        ))}
+
+        {/* Leaves */}
+        {leaves.map((l, i) => (
+          <motion.ellipse key={i}
+            cx={l.cx} cy={l.cy} rx={l.rx} ry={l.ry}
+            fill={l.c}
+            transform={`rotate(${l.rot} ${l.cx} ${l.cy})`}
+            initial={{ scale: 0 }} animate={active ? { scale: 1 } : { scale: 0 }}
+            transition={{ duration: 0.4, delay: l.delay, ease: [0.34, 1.56, 0.64, 1] }}
+            style={{ transformOrigin: `${l.cx}px ${l.cy}px` }}
+          />
+        ))}
+
+        {/* Top bud */}
+        <motion.circle cx="342" cy="168" r="4" fill="#3a8060"
           initial={{ scale: 0 }} animate={active ? { scale: 1 } : { scale: 0 }}
-          transition={{ duration: 0.44, delay: t.delay, ease: [0.34, 1.56, 0.64, 1] }}
-          style={{ transformOrigin: `${t.cx}px ${t.cy}px` }}
+          transition={{ duration: 0.35, delay: 0.60, ease: [0.34, 1.56, 0.64, 1] }}
+          style={{ transformOrigin: '342px 168px' }}
         />
-      ))}
       </g>
     </svg>
   );
@@ -427,6 +403,7 @@ function Step2Content({ active, showGraph }: { active: boolean; showGraph: boole
 function Step3Content({ active }: { active: boolean }) {
   return (
     <div className="h-full relative">
+      <div className="absolute inset-0 scale-[0.72] origin-center">
       <svg viewBox="88 42 252 168" className="absolute inset-0 w-full h-full">
         {/* Edges */}
         {EDGES.map(([a, b], i) => {
@@ -476,6 +453,7 @@ function Step3Content({ active }: { active: boolean }) {
           );
         })}
       </svg>
+      </div>
 
       {/* Quiz card */}
       <motion.div
@@ -565,16 +543,7 @@ const TEXT_RANGES = [
   { in: [0.38, 0.48, 0.62, 0.72], yIn: [30, 0, 0, -30] },
   { in: [0.72, 0.82, 1, 1], yIn: [30, 0, 0, 0] },
 ];
-const SAPLING_RANGES = [
-  { in: [0, 0.05, 0.28, 0.40] },
-  { in: [0.28, 0.42, 0.60, 0.75] },
-  { in: [0.60, 0.78, 1, 1] },
-];
-const APP_RANGES = [
-  { in: [0, 0.05, 0.28, 0.40] },
-  { in: [0.38, 0.50, 0.60, 0.72] },
-  { in: [0.72, 0.85, 1, 1] },
-];
+
 const BG_COLORS = [
   'rgba(0,0,0,0)',
   'rgba(120,53,15,0.035)',
@@ -600,11 +569,7 @@ export default function HowItWorks() {
   const textOpacities = TEXT_RANGES.map(r => useTransform(scrollYProgress, r.in, [0, 1, 1, 0])); // eslint-disable-line react-hooks/rules-of-hooks
   const textYs = TEXT_RANGES.map(r => useTransform(scrollYProgress, r.in, r.yIn)); // eslint-disable-line react-hooks/rules-of-hooks
 
-  // Sapling
-  const saplingOpacities = SAPLING_RANGES.map(r => useTransform(scrollYProgress, r.in, [0, 1, 1, 0])); // eslint-disable-line react-hooks/rules-of-hooks
-
-  // App
-  const appOpacities = APP_RANGES.map(r => useTransform(scrollYProgress, r.in, [0, 1, 1, 0])); // eslint-disable-line react-hooks/rules-of-hooks
+  const panelOpacity = useTransform(scrollYProgress, [0, 0.05, 0.82, 1], [0, 1, 1, 0]);
 
   // Background
   const bgColor = useTransform(scrollYProgress, [0, 0.38, 0.72, 1], BG_COLORS);
@@ -614,21 +579,24 @@ export default function HowItWorks() {
   return (
     <section ref={containerRef} id="how-it-works" className="landing-section relative" style={{ height: '510vh' }}>
       <motion.div className="sticky top-0 h-screen w-full overflow-hidden" style={{ backgroundColor: bgColor }}>
-        <div className="h-full max-w-7xl mx-auto px-9 lg:px-[72px] flex flex-col lg:flex-row items-center gap-12 lg:gap-40 pt-16 lg:pt-0">
+        <div className="h-full max-w-[1600px] mx-auto px-9 lg:px-[72px] flex flex-col lg:flex-row items-center gap-12 lg:gap-32 pt-16 lg:pt-0 lg:-translate-y-20">
 
           {/* ── Left: Sapling + text ──────────────────────────────────── */}
-          <div className="flex-1 flex flex-col items-center lg:items-start justify-center h-full py-8 lg:py-0">
+          <div className="flex-1 flex flex-col items-center lg:items-start justify-center h-full py-8 lg:py-0 lg:-ml-8 lg:translate-y-16">
             {/* Sapling illustration */}
-            <div className="relative w-56 h-72 lg:w-64 lg:h-80 mb-12 lg:mb-[60px] flex-shrink-0">
+            <motion.div className="relative w-56 h-72 lg:w-64 lg:h-80 mb-12 lg:mb-[60px] flex-shrink-0" style={{ opacity: panelOpacity }}>
               {SaplingComponents.map((SVG, i) => (
-                <motion.div key={i} className="absolute inset-0" style={{ opacity: saplingOpacities[i] }}>
+                <motion.div key={i} className="absolute inset-0"
+                  animate={{ opacity: activeStep === i + 1 ? 1 : 0 }}
+                  transition={{ duration: 0.35 }}
+                >
                   <SVG active={activeStep === i + 1} />
                 </motion.div>
               ))}
-            </div>
+            </motion.div>
 
             {/* Step text layers */}
-            <div className="relative w-full max-w-[480px] lg:max-w-xl" style={{ minHeight: 240 }}>
+            <div className="relative w-full max-w-[600px] lg:max-w-2xl" style={{ minHeight: 240 }}>
               {STEPS.map((step, i) => (
                 <motion.div
                   key={i}
@@ -652,19 +620,28 @@ export default function HowItWorks() {
           </div>
 
           {/* ── Right: App window ─────────────────────────────────────── */}
-          <div className="flex-[1.5] w-full max-w-2xl lg:max-w-none flex-shrink-0">
+          <motion.div className="flex-[1.68] w-full max-w-2xl lg:max-w-none flex-shrink-0 lg:translate-y-28" style={{ opacity: panelOpacity }}>
             <AppWindow>
               {([
                 <Step1Content key={0} active={activeStep === 1} />,
                 <Step2Content key={1} active={activeStep === 2} showGraph={showStep2Graph} />,
                 <Step3Content key={2} active={activeStep === 3} />,
               ] as const).map((el, i) => (
-                <motion.div key={i} className="absolute inset-0" style={{ opacity: appOpacities[i] }}>
-                  {el}
+                <motion.div key={i} className="absolute inset-0"
+                  animate={{ opacity: activeStep === i + 1 ? 1 : 0 }}
+                  transition={{ duration: 0.35 }}
+                >
+                  <motion.div
+                    className="h-full origin-center"
+                    animate={{ scale: i === 0 ? 1.18 : i === 1 ? (showStep2Graph ? 0.72 : 1.18) : 1 }}
+                    transition={{ duration: 0.4 }}
+                  >
+                    {el}
+                  </motion.div>
                 </motion.div>
               ))}
             </AppWindow>
-          </div>
+          </motion.div>
         </div>
 
         {/* Step indicator */}
