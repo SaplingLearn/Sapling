@@ -11,10 +11,10 @@ export function middleware(request: NextRequest) {
   const isProtected = PROTECTED.some(p => pathname.startsWith(p))
   if (!isProtected) return NextResponse.next()
 
-  const uid = request.cookies.get('sapling_uid')?.value
+  const session = request.cookies.get('sapling_session')?.value
   const approved = request.cookies.get('sapling_approved')?.value
 
-  if (!uid) {
+  if (!session) {
     return NextResponse.redirect(new URL('/signin', request.url))
   }
   if (approved !== '1') {

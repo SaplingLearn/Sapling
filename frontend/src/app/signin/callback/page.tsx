@@ -23,9 +23,11 @@ function CallbackInner() {
 
     if (userId && name) {
       setActiveUser(userId, name, avatar || '', true);
-      document.cookie = 'sapling_approved=1; path=/; max-age=2592000; SameSite=Lax';
-      document.cookie = `sapling_uid=${userId}; path=/; max-age=2592000; SameSite=Lax`;
-      router.replace('/dashboard');
+      fetch('/api/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      }).then(() => router.replace('/dashboard'));
     } else {
       router.replace('/signin');
     }

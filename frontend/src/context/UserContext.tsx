@@ -94,6 +94,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setIsAuthenticated(false);
     setIsApproved(false);
     localStorage.removeItem('sapling_user');
+    fetch('/api/auth/session', { method: 'DELETE' });
   };
 
   const value = useMemo(

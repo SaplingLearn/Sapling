@@ -68,6 +68,15 @@ def _generate_pkce_pair():
     return code_verifier, code_challenge
 
 
+@router.get("/me")
+def get_me(user_id: str = Query(...)):
+    """Return approval status for a given user_id (used by Next.js session API route)."""
+    user = table("users").select("id,is_approved", filters={"id": f"eq.{user_id}"})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"user_id": user_id, "is_approved": bool(user[0]["is_approved"])}
+
+
 @router.get("/google")
 def google_login():
     """Redirect to Google consent screen with identity + calendar scopes."""
@@ -166,7 +175,7 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
     )
 
     if not is_approved:
-        return RedirectResponse(f"{FRONTEND_URL}/signin?error=not_approved")
+        return RedirectResponse(f"{FRONTEND_URL}/pending")
 
     # Redirect to frontend with user info
     params = urlencode({
