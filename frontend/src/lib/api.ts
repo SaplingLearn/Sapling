@@ -166,7 +166,7 @@ export const extractSyllabus = (formData: FormData, userId?: string): Promise<an
           .join('; ');
       }
       if (!msg && typeof data.error === 'string') msg = data.error;
-      throw new Error(msg || `Request failed (HTTP ${res.status}).`);
+      throw new Error(msg || `Request failed (HTTP ${r.status}).`);
     }
     return data;
   });

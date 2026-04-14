@@ -113,17 +113,17 @@ describe('getCourses', () => {
 });
 
 describe('addCourse', () => {
-  it('POST /api/graph/:userId/courses with course_name', async () => {
-    mockFetch({ course_name: 'Math', already_existed: false });
+  it('POST /api/graph/:userId/courses with course_id', async () => {
+    mockFetch({ course_id: 'Math', already_existed: false });
     await addCourse('user_andres', 'Math');
     const [url, opts] = lastCall();
     expect(url).toBe('/api/graph/user_andres/courses');
     expect(opts?.method).toBe('POST');
-    expect(JSON.parse(opts?.body as string)).toMatchObject({ course_name: 'Math' });
+    expect(JSON.parse(opts?.body as string)).toMatchObject({ course_id: 'Math' });
   });
 
   it('includes color when provided', async () => {
-    mockFetch({ course_name: 'Math', already_existed: false });
+    mockFetch({ course_id: 'Math', already_existed: false });
     await addCourse('user_andres', 'Math', '#ff0000');
     const body = JSON.parse(lastCall()[1]?.body as string);
     expect(body.color).toBe('#ff0000');
