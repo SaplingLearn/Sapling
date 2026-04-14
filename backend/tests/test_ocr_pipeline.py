@@ -10,6 +10,11 @@ import os
 
 import pytest
 
+pytestmark = pytest.mark.skipif(
+    not os.getenv("GEMINI_API_KEY"),
+    reason="OCR/Gemini integration tests require GEMINI_API_KEY",
+)
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.calendar_service import save_assignments_to_db, process_and_save_syllabus

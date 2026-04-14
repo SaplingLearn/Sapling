@@ -119,8 +119,26 @@ class TestSaveAssignments:
 class TestGetUpcoming:
     def test_returns_assignments_from_db(self):
         mock_rows = [
-            {"id": "a1", "title": "HW1",  "due_date": "2026-03-01"},
-            {"id": "a2", "title": "Quiz", "due_date": "2026-03-10"},
+            {
+                "id": "a1",
+                "user_id": "user_andres",
+                "title": "HW1",
+                "due_date": "2026-03-01",
+                "assignment_type": "homework",
+                "notes": None,
+                "google_event_id": None,
+                "course_id": None,
+            },
+            {
+                "id": "a2",
+                "user_id": "user_andres",
+                "title": "Quiz",
+                "due_date": "2026-03-10",
+                "assignment_type": "quiz",
+                "notes": None,
+                "google_event_id": None,
+                "course_id": None,
+            },
         ]
         with patch("routes.calendar.table") as t:
             t.return_value.select.return_value = mock_rows
