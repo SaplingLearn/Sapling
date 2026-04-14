@@ -96,11 +96,14 @@ export interface QuizContext {
 export interface Assignment {
   id: string;
   title: string;
-  course_name: string;
+  course_name?: string;
+  course_code?: string;
+  /** Canonical course FK when known (required for save API). */
+  course_id?: string;
   due_date: string;
-  assignment_type: string;
-  notes: string | null;
-  google_event_id: string | null;
+  assignment_type?: string;
+  notes?: string | null;
+  google_event_id?: string | null;
 }
 
 export interface StudyBlockSuggestion {

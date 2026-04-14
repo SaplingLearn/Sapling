@@ -1,7 +1,15 @@
 'use client';
 
 import { useEffect, useState, useMemo, useRef, DragEvent } from 'react';
-import { getCourses, addCourse, getDocuments, uploadDocument, deleteDocument, updateDocument } from '@/lib/api';
+import {
+  getCourses,
+  addCourse,
+  getDocuments,
+  uploadDocument,
+  deleteDocument,
+  updateDocument,
+  type EnrolledCourse,
+} from '@/lib/api';
 import CustomSelect from '@/components/CustomSelect';
 import { getCourseColor, PRESET_COURSE_COLORS } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
@@ -83,7 +91,6 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-interface Course { id: string; course_name: string; color: string | null; node_count: number; }
 interface Flashcard { question: string; answer: string; }
 interface Doc {
   id: string; course_id: string; file_name: string; category: string;
@@ -102,7 +109,7 @@ export default function LibraryPage() {
   const { userId, userReady } = useUser();
   const isMobile = useIsMobile();
 
-  const [courses, setCourses] = useState<Course[]>([]);
+  const [courses, setCourses] = useState<EnrolledCourse[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -167,8 +174,10 @@ export default function LibraryPage() {
   }, [userId, userReady]);
 
   const courseById = useMemo(() => {
-    const m: Record<string, Course> = {};
-    courses.forEach(c => { m[c.id] = c; });
+    const m: Record<string, EnrolledCourse> = {};
+    courses.forEach(c => {
+      m[c.course_id] = c;
+    });
     return m;
   }, [courses]);
 
@@ -352,7 +361,7 @@ export default function LibraryPage() {
         const updated = await getCourses(userId);
         setCourses(updated.courses);
         const created = updated.courses.find(c => c.course_name === name);
-        if (created) setSelectedCourseId(created.id);
+        if (created) setSelectedCourseId(created.course_id);
         setNewCourseName('');
         setShowAddCourse(false);
       }
@@ -407,8 +416,8 @@ export default function LibraryPage() {
           {courses.map(c => {
             const col = getCourseColor(c.course_name, c.color);
             return (
-              <button key={c.id} onClick={() => setActiveCourse(c.id)}
-                style={pillStyle(activeCourse === c.id, { bg: col.bg, text: col.text, border: col.border })}>
+              <button key={c.course_id} onClick={() => setActiveCourse(c.course_id)}
+                style={pillStyle(activeCourse === c.course_id, { bg: col.bg, text: col.text, border: col.border })}>
                 {c.course_name}
               </button>
             );
@@ -675,7 +684,7 @@ export default function LibraryPage() {
                     value={selectedCourseId}
                     onChange={setSelectedCourseId}
                     placeholder="Select a course…"
-                    options={courses.map(c => ({ value: c.id, label: c.course_name }))}
+                    options={courses.map(c => ({ value: c.course_id, label: c.course_name }))}
                     style={{ width: '100%', display: 'block' }}
                   />
 

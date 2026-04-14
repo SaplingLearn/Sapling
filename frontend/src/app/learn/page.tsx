@@ -176,7 +176,7 @@ function LearnInner() {
     setMessages([]);
     setSessionId(null);
     try {
-      const res = await startSession(USER_ID, t, m, useSharedContext);
+      const res = await startSession(USER_ID, t, m, undefined, useSharedContext);
       setSessionId(res.session_id);
       setNodes(res.graph_state.nodes);
       setEdges(res.graph_state.edges);

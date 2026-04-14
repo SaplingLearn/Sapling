@@ -13,6 +13,7 @@ import {
   syncToGoogleCalendar,
   importGoogleEvents,
   disconnectGoogleCalendar,
+  type SaveAssignmentItem,
 } from '@/lib/api';
 import { useUser } from '@/context/UserContext';
 
@@ -53,7 +54,7 @@ const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> 
 };
 
 function AssignmentChip({ a, isMobile }: { a: Assignment; isMobile?: boolean }) {
-  const c = TYPE_COLORS[a.assignment_type] ?? TYPE_COLORS.other;
+  const c = TYPE_COLORS[a.assignment_type ?? 'other'] ?? TYPE_COLORS.other;
   return (
     <div
       title={`${a.title}${a.course_name ? ` — ${a.course_name}` : ''}${a.notes ? `\n${a.notes}` : ''}`}
@@ -265,7 +266,7 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '600px', margin: '0 auto' }}>
             {dayAssignments.map(a => {
-              const c = TYPE_COLORS[a.assignment_type] ?? TYPE_COLORS.other;
+              const c = TYPE_COLORS[a.assignment_type ?? 'other'] ?? TYPE_COLORS.other;
               return (
                 <div key={a.id} style={{ padding: '14px 16px', borderRadius: '8px', background: c.bg, borderLeft: `4px solid ${c.text}`, display: 'flex', flexDirection: 'column', gap: '6px', border: `1px solid ${c.border}` }}>
                   <span style={{ fontSize: '15px', fontWeight: 600, color: '#111827' }}>{a.title}</span>
@@ -327,10 +328,22 @@ function normalizeAssignments(items: any[]): Assignment[] {
     id: a.id ?? `missing-id-${index}`,
     title: a.title ?? '',
     course_name: a.course_name ?? '',
+    course_code: a.course_code ?? '',
+    course_id: a.course_id ?? '',
     due_date: a.due_date ?? '',
     assignment_type: a.assignment_type ?? 'other',
     notes: a.notes ?? null,
     google_event_id: a.google_event_id ?? null,
+  }));
+}
+
+function toSaveItems(assignments: Assignment[]): SaveAssignmentItem[] {
+  return assignments.map(a => ({
+    title: a.title,
+    course_id: a.course_id ?? '',
+    due_date: a.due_date,
+    assignment_type: a.assignment_type ?? 'other',
+    notes: a.notes ?? undefined,
   }));
 }
 
@@ -403,6 +416,8 @@ function CalendarInner() {
         id: `extracted_${i}_${Date.now()}`,
         title: a.title ?? '',
         course_name: a.course_name ?? '',
+        course_code: a.course_code ?? '',
+        course_id: a.course_id ?? '',
         due_date: a.due_date ?? '',
         assignment_type: a.assignment_type ?? 'other',
         notes: a.notes ?? null,
@@ -421,7 +436,7 @@ function CalendarInner() {
   const handleSaveDetected = async () => {
     setSaving(true);
     try {
-      await saveAssignments(USER_ID, extractedAssignments);
+      await saveAssignments(USER_ID, toSaveItems(extractedAssignments));
       const data = await getAllAssignments(USER_ID);
       setAssignments(normalizeAssignments(data.assignments ?? []));
       setExtractedAssignments([]);

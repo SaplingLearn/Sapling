@@ -4,7 +4,16 @@ import { useEffect, useLayoutEffect, useState, useRef, useMemo, useCallback, Sus
 import { useRouter, useSearchParams } from 'next/navigation';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import { GraphNode, GraphStats, Recommendation, Assignment } from '@/lib/types';
-import { getGraph, getRecommendations, getUpcomingAssignments, getCourses, addCourse, deleteCourse, updateCourseColor } from '@/lib/api';
+import {
+  getGraph,
+  getRecommendations,
+  getUpcomingAssignments,
+  getCourses,
+  addCourse,
+  deleteCourse,
+  updateCourseColor,
+  type EnrolledCourse,
+} from '@/lib/api';
 import { getMasteryColor, getMasteryLabel, formatDueDate, formatRelativeTime, getCourseColor, PRESET_COURSE_COLORS, RAINBOW_COLORS } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
 import Link from 'next/link';
@@ -106,7 +115,7 @@ function DashboardInner() {
 
   // Courses panel state
   const [showCourses, setShowCourses] = useState(false);
-  const [courseList, setCourseList] = useState<{ id: string; course_name: string; color: string | null; node_count: number }[]>([]);
+  const [courseList, setCourseList] = useState<EnrolledCourse[]>([]);
   const [courseColorMap, setCourseColorMap] = useState<Record<string, string>>({});
   const [newCourseName, setNewCourseName] = useState('');
   const [courseAdding, setCourseAdding] = useState(false);
@@ -318,11 +327,11 @@ function DashboardInner() {
     }
   };
 
-  const handleColorChange = async (courseName: string, newHex: string) => {
+  const handleColorChange = async (courseId: string, courseName: string, newHex: string) => {
     if (!/^#[0-9a-fA-F]{6}$/.test(newHex)) return;
     try {
-      await updateCourseColor(userId, courseName, newHex);
-      setCourseList(prev => prev.map(c => c.course_name === courseName ? { ...c, color: newHex } : c));
+      await updateCourseColor(userId, courseId, newHex);
+      setCourseList(prev => prev.map(c => (c.course_id === courseId ? { ...c, color: newHex } : c)));
       setCourseColorMap(prev => ({ ...prev, [courseName]: newHex }));
       setEditingColorFor(null);
     } catch (e) {
@@ -330,11 +339,11 @@ function DashboardInner() {
     }
   };
 
-  const handleDeleteCourse = async (courseName: string) => {
-    setCourseDeleting(courseName);
+  const handleDeleteCourse = async (courseId: string) => {
+    setCourseDeleting(courseId);
     try {
-      await deleteCourse(userId, courseName);
-      setCourseList(prev => prev.filter(c => c.course_name !== courseName));
+      await deleteCourse(userId, courseId);
+      setCourseList(prev => prev.filter(c => c.course_id !== courseId));
       // Refresh graph so the removed subject-root node disappears
       const graphData = await getGraph(userId);
       setNodes(graphData.nodes);
@@ -892,7 +901,8 @@ function DashboardInner() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {allAssignments.slice(0, 4).map(a => {
-                  const c = getCourseColor(a.course_name, courseColorMap[a.course_name]);
+                  const cn = a.course_name ?? '';
+                  const c = getCourseColor(cn, courseColorMap[cn]);
                   return (
                     <div key={a.id} style={{
                       display: 'flex',
@@ -1223,17 +1233,17 @@ function DashboardInner() {
               ) : (
                 courseList.map(c => {
                   const color = getCourseColor(c.course_name, c.color);
-                  const isDeleting = courseDeleting === c.course_name;
-                  const isEditingColor = editingColorFor === c.course_name;
+                  const isDeleting = courseDeleting === c.course_id;
+                  const isEditingColor = editingColorFor === c.course_id;
                   return (
-                    <div key={c.id} style={{ borderRadius: '8px', background: color.bg, border: `1px solid ${color.border}`, overflow: 'hidden' }}>
+                    <div key={c.course_id} style={{ borderRadius: '8px', background: color.bg, border: `1px solid ${color.border}`, overflow: 'hidden' }}>
                       {/* Main row */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 13px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           {/* Color swatch — click to open picker */}
                           <button
                             onClick={() => {
-                              setEditingColorFor(isEditingColor ? null : c.course_name);
+                              setEditingColorFor(isEditingColor ? null : c.course_id);
                               setColorHexInput(c.color ?? color.fill);
                             }}
                             title="Change color"
@@ -1251,7 +1261,7 @@ function DashboardInner() {
                             </span>
                           </div>
                         </div>
-                        {confirmDeleteCourse === c.course_name ? (
+                        {confirmDeleteCourse === c.course_id ? (
                           <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                             <button
                               onClick={() => setConfirmDeleteCourse(null)}
@@ -1260,7 +1270,7 @@ function DashboardInner() {
                               Cancel
                             </button>
                             <button
-                              onClick={() => { setConfirmDeleteCourse(null); handleDeleteCourse(c.course_name); }}
+                              onClick={() => { setConfirmDeleteCourse(null); handleDeleteCourse(c.course_id); }}
                               disabled={isDeleting}
                               style={{ background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.35)', borderRadius: '5px', color: '#b91c1c', fontSize: '11px', cursor: 'pointer', padding: '3px 8px', fontWeight: 600, fontFamily: 'inherit' }}
                             >
@@ -1269,7 +1279,7 @@ function DashboardInner() {
                           </div>
                         ) : (
                           <button
-                            onClick={() => setConfirmDeleteCourse(c.course_name)}
+                            onClick={() => setConfirmDeleteCourse(c.course_id)}
                             disabled={isDeleting}
                             title="Remove course"
                             style={{
@@ -1299,7 +1309,7 @@ function DashboardInner() {
                             {RAINBOW_COLORS.map(hex => (
                               <button
                                 key={hex}
-                                onClick={() => handleColorChange(c.course_name, hex)}
+                                onClick={() => handleColorChange(c.course_id, c.course_name, hex)}
                                 style={{
                                   width: '22px', height: '22px', borderRadius: '50%', background: hex,
                                   border: (c.color ?? '') === hex ? '2.5px solid #111827' : '2px solid rgba(0,0,0,0.1)',
@@ -1326,7 +1336,7 @@ function DashboardInner() {
                             <input
                               value={colorHexInput}
                               onChange={e => setColorHexInput(e.target.value)}
-                              onKeyDown={e => { if (e.key === 'Enter') handleColorChange(c.course_name, colorHexInput); }}
+                              onKeyDown={e => { if (e.key === 'Enter') handleColorChange(c.course_id, c.course_name, colorHexInput); }}
                               placeholder="#2563eb"
                               style={{
                                 flex: 1, padding: '4px 8px', border: '1px solid rgba(107,114,128,0.25)',
@@ -1335,7 +1345,7 @@ function DashboardInner() {
                               }}
                             />
                             <button
-                              onClick={() => handleColorChange(c.course_name, colorHexInput)}
+                              onClick={() => handleColorChange(c.course_id, c.course_name, colorHexInput)}
                               disabled={!/^#[0-9a-fA-F]{6}$/.test(colorHexInput)}
                               style={{
                                 padding: '4px 10px', background: /^#[0-9a-fA-F]{6}$/.test(colorHexInput) ? '#1a5c2a' : '#f3f4f6',
