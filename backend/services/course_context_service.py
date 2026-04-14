@@ -144,10 +144,8 @@ def update_course_context(course_id: str, semester: str = "Spring 2026") -> None
 
     # ── 4. Group by concept_name, track per-user scores ───────────────────────
     concept_data: dict = {}
-    node_id_set: set = set()
 
     for n in node_rows:
-        node_id_set.add(n["id"])
         name = n["concept_name"]
         if name not in concept_data:
             concept_data[name] = {"scores": [], "tiers": [], "node_ids": []}
@@ -183,22 +181,29 @@ def update_course_context(course_id: str, semester: str = "Spring 2026") -> None
             "node_ids": data["node_ids"],
         }
 
-    # ── 6. Pull quiz_context data for aggregated insights ────────────────────
-    node_id_list = list(node_id_set)
-    common_misconceptions: list = []
-    effective_explanations: list = []
-    prerequisite_gaps: list = []
-    
-    if node_id_list:
-        node_filter = ",".join(node_id_list[:100])  # Limit to avoid URL length issues
-        try:
-            ctx_rows = table("quiz_context").select(
-                "concept_node_id,context_json",
-                filters={"concept_node_id": f"in.({node_filter})"},
-            )
-        except Exception:
-            ctx_rows = []
+    # ── 6. Helpers: quiz_context rows for a set of graph node ids ────────────
+    def _fetch_quiz_context_rows(node_ids: list) -> list:
+        if not node_ids:
+            return []
+        chunk_size = 80
+        out = []
+        for i in range(0, len(node_ids), chunk_size):
+            chunk = node_ids[i : i + chunk_size]
+            node_filter = ",".join(chunk)
+            try:
+                rows = table("quiz_context").select(
+                    "concept_node_id,context_json",
+                    filters={"concept_node_id": f"in.({node_filter})"},
+                )
+            except Exception:
+                rows = []
+            out.extend(rows or [])
+        return out
 
+    def _parse_quiz_context_to_arrays(ctx_rows: list) -> tuple[list, list, list]:
+        common_misconceptions: list = []
+        effective_explanations: list = []
+        prerequisite_gaps: list = []
         seen_misconceptions: set = set()
         seen_explanations: set = set()
         seen_prereqs: set = set()
@@ -211,29 +216,32 @@ def update_course_context(course_id: str, semester: str = "Spring 2026") -> None
                 except Exception:
                     cj = {}
 
-            # Extract common mistakes as misconceptions
             for m in cj.get("common_mistakes", []):
                 m = (m or "").strip()
                 if m and m.lower() not in seen_misconceptions:
                     seen_misconceptions.add(m.lower())
                     common_misconceptions.append(m)
 
-            # Extract weak areas as prerequisite gaps
             for w in cj.get("weak_areas", []):
                 w = (w or "").strip()
                 if w and w.lower() not in seen_prereqs:
                     seen_prereqs.add(w.lower())
                     prerequisite_gaps.append(w)
-                    
-            # Look for effective explanations in any field
+
             for exp in cj.get("effective_explanations", []):
                 exp = (exp or "").strip()
                 if exp and exp.lower() not in seen_explanations:
                     seen_explanations.add(exp.lower())
                     effective_explanations.append(exp)
 
-    # ── 7. Upsert into course_concept_stats ───────────────────────────────────
+        return common_misconceptions[:20], effective_explanations[:20], prerequisite_gaps[:20]
+
+    # ── 7. Upsert into course_concept_stats (quiz arrays per concept) ─────────
     for name, metrics in concept_metrics.items():
+        node_ids_for_concept = concept_data.get(name, {}).get("node_ids", [])
+        ctx_rows = _fetch_quiz_context_rows(node_ids_for_concept)
+        cm, ee, pg = _parse_quiz_context_to_arrays(ctx_rows)
+
         table("course_concept_stats").upsert(
             {
                 "course_id": course_id,
@@ -244,9 +252,9 @@ def update_course_context(course_id: str, semester: str = "Spring 2026") -> None
                 "pct_mastered": metrics["pct_mastered"],
                 "pct_struggling": metrics["pct_struggling"],
                 "pct_unexplored": metrics["pct_unexplored"],
-                "common_misconceptions": common_misconceptions[:20],  # Limit array size
-                "effective_explanations": effective_explanations[:20],
-                "prerequisite_gaps": prerequisite_gaps[:20],
+                "common_misconceptions": cm,
+                "effective_explanations": ee,
+                "prerequisite_gaps": pg,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
             on_conflict="course_id,concept_name,semester",

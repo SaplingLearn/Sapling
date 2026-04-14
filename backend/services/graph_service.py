@@ -283,6 +283,13 @@ def delete_course(user_id: str, course_id: str) -> dict:
     return {"deleted": True}
 
 
+def _node_filters(user_id: str, concept_name: str, course_id: str | None) -> dict:
+    f = {"user_id": f"eq.{user_id}", "concept_name": f"eq.{concept_name}"}
+    if course_id:
+        f["course_id"] = f"eq.{course_id}"
+    return f
+
+
 def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None = None) -> list:
     """
     Apply a graph_update dict to the DB. Returns mastery_changes list.
@@ -296,10 +303,9 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         node_course_id = course_id or new_node.get("course_id")
         init_m = float(new_node.get("initial_mastery", 0.0))
         
-        # Check for existing node by concept_name for this user
         existing = table("graph_nodes").select(
             "id",
-            filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{name}"},
+            filters=_node_filters(user_id, name, node_course_id),
         )
         
         if not existing:
@@ -320,7 +326,7 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         delta = float(upd.get("mastery_delta", 0.0))
         rows = table("graph_nodes").select(
             "id,mastery_score,times_studied,course_id,mastery_events",
-            filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{name}"},
+            filters=_node_filters(user_id, name, course_id),
         )
         if rows:
             row = rows[0]
@@ -361,10 +367,10 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         strength = float(new_edge.get("strength", 0.5))
         relationship_type = new_edge.get("relationship_type", "related")
         src_rows = table("graph_nodes").select(
-            "id", filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{src_name}"}
+            "id", filters=_node_filters(user_id, src_name, course_id)
         )
         tgt_rows = table("graph_nodes").select(
-            "id", filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{tgt_name}"}
+            "id", filters=_node_filters(user_id, tgt_name, course_id)
         )
         if src_rows and tgt_rows:
             src_id = src_rows[0]["id"]

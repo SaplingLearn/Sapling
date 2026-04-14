@@ -141,6 +141,9 @@ async def upload_document(
         try:
             assignments = ai.get("assignments") or []
             if assignments:
+                for a in assignments:
+                    if isinstance(a, dict):
+                        a["course_id"] = course_id
                 save_assignments_to_db(user_id, assignments)
         except Exception:
             logger.exception("Assignment save failed for '%s' (best-effort)", filename)

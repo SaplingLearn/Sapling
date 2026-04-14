@@ -292,7 +292,7 @@ describe('extractSyllabus', () => {
 describe('saveAssignments', () => {
   it('POST /api/calendar/save with user_id and assignments', async () => {
     mockFetch({ saved_count: 2 });
-    const assignments = [{ title: 'HW1', due_date: '2026-03-01', assignment_type: 'homework', course_name: '' }];
+    const assignments = [{ title: 'HW1', due_date: '2026-03-01', assignment_type: 'homework', course_id: 'c1' }];
     await saveAssignments('user_andres', assignments);
     const [url, opts] = lastCall();
     expect(url).toBe('/api/calendar/save');
