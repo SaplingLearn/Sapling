@@ -49,8 +49,23 @@ def generate_quiz(body: GenerateQuizBody):
         from services.course_context_service import get_course_context
         course_ctx = get_course_context(course_id)
         if course_ctx:
-            misconceptions = course_ctx.get("common_misconceptions", [])
-            weak_areas = course_ctx.get("weak_areas", [])
+            misconceptions: list[str] = []
+            weak_areas: list[str] = []
+            seen_m: set[str] = set()
+            seen_w: set[str] = set()
+            for row in course_ctx.get("concept_stats") or []:
+                if not isinstance(row, dict):
+                    continue
+                for m in row.get("common_misconceptions") or []:
+                    m = (m or "").strip()
+                    if m and m.lower() not in seen_m:
+                        seen_m.add(m.lower())
+                        misconceptions.append(m)
+                for w in row.get("prerequisite_gaps") or []:
+                    w = (w or "").strip()
+                    if w and w.lower() not in seen_w:
+                        seen_w.add(w.lower())
+                        weak_areas.append(w)
             if misconceptions or weak_areas:
                 addendum_parts = []
                 if misconceptions:

@@ -68,6 +68,10 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
             # Match on course_name
             if topic_trim.lower() == course_name.lower():
                 return row["course_id"]
+            # Same label as graph subject roots (graph_service)
+            label = f"{course_code} - {course_name}" if course_code else course_name
+            if label and topic_trim == label:
+                return row["course_id"]
     except Exception:
         pass
     
@@ -511,11 +515,10 @@ def action(body: ActionBody):
 def mode_switch(body: ModeSwitchBody):
     _ensure_session_ready(body.session_id, body.user_id)
     student_name = get_user_name(body.user_id).split()[0]
-    topic = table("sessions").select(
+    session_rows = table("sessions").select(
         "topic", filters={"id": f"eq.{body.session_id}"}, limit=1
-    )[0]["topic"] if table("sessions").select(
-        "topic", filters={"id": f"eq.{body.session_id}"}, limit=1
-    ) else "this topic"
+    )
+    topic = session_rows[0]["topic"] if session_rows else "this topic"
     
     mode_label = MODE_DISPLAY_NAMES.get(body.new_mode, body.new_mode)
 

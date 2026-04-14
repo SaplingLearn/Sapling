@@ -425,13 +425,15 @@ class TestQuizPromptAugmentation(unittest.TestCase):
     ):
         mock_table.return_value.select.return_value = [{
             "id": "node-abc", "concept_name": "Pointers",
-            "mastery_score": 0.3, "subject": "CS101",
+            "mastery_score": 0.3, "subject": "CS101", "course_id": "c1",
         }]
         mock_table.return_value.insert.return_value = None
         mock_graph.return_value = {"nodes": [], "edges": []}
         mock_ctx.return_value = {
-            "common_misconceptions": ["Dangling pointers", "Memory leaks"],
-            "weak_areas": ["Pointer arithmetic"],
+            "concept_stats": [{
+                "common_misconceptions": ["Dangling pointers", "Memory leaks"],
+                "prerequisite_gaps": ["Pointer arithmetic"],
+            }],
         }
         mock_gemini.return_value = {"questions": []}
 
@@ -453,7 +455,7 @@ class TestQuizPromptAugmentation(unittest.TestCase):
     ):
         mock_table.return_value.select.return_value = [{
             "id": "node-abc", "concept_name": "Loops",
-            "mastery_score": 0.5, "subject": "CS101",
+            "mastery_score": 0.5, "subject": "CS101", "course_id": "c1",
         }]
         mock_table.return_value.insert.return_value = None
         mock_graph.return_value = {"nodes": [], "edges": []}
@@ -477,13 +479,15 @@ class TestQuizPromptAugmentation(unittest.TestCase):
     ):
         mock_table.return_value.select.return_value = [{
             "id": "node-abc", "concept_name": "Pointers",
-            "mastery_score": 0.3, "subject": "CS101",
+            "mastery_score": 0.3, "subject": "CS101", "course_id": "c1",
         }]
         mock_table.return_value.insert.return_value = None
         mock_graph.return_value = {"nodes": [], "edges": []}
         mock_ctx.return_value = {
-            "common_misconceptions": [f"mistake_{i}" for i in range(20)],
-            "weak_areas": [],
+            "concept_stats": [{
+                "common_misconceptions": [f"mistake_{i}" for i in range(20)],
+                "prerequisite_gaps": [],
+            }],
         }
         mock_gemini.return_value = {"questions": []}
 

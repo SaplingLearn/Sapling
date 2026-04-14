@@ -321,7 +321,12 @@ function DashboardInner() {
         setEdges(graphData.edges);
       }
     } catch (e: any) {
-      setCourseError(e.message || 'Failed to add course.');
+      let msg = e.message || 'Failed to add course.';
+      try {
+        const j = JSON.parse(msg);
+        if (j.detail) msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+      } catch { /* keep msg */ }
+      setCourseError(msg);
     } finally {
       setCourseAdding(false);
     }

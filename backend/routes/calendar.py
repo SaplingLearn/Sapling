@@ -115,14 +115,12 @@ def save_assignments(body: SaveAssignmentsBody):
 @router.get("/upcoming/{user_id}")
 def get_upcoming(user_id: str):
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    # Join with courses to get course_code and course_name
     rows = table("assignments").select(
         "*,courses!left(course_code,course_name)",
         filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
         order="due_date.asc",
         limit=20,
     )
-    # Transform to include course info at top level
     assignments = []
     for r in rows:
         course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
@@ -135,8 +133,8 @@ def get_upcoming(user_id: str):
             "notes": r.get("notes"),
             "google_event_id": r.get("google_event_id"),
             "course_id": r.get("course_id"),
-            "course_code": course.get("course_code", ""),
-            "course_name": course.get("course_name", ""),
+            "course_code": course.get("course_code") or r.get("course_code") or "",
+            "course_name": course.get("course_name") or r.get("course_name") or "",
         })
     return {"assignments": assignments}
 
@@ -144,13 +142,11 @@ def get_upcoming(user_id: str):
 @router.get("/all/{user_id}")
 def get_all_assignments(user_id: str):
     """Return all assignments for a user (past and future) for the calendar view."""
-    # Join with courses to get course_code and course_name
     rows = table("assignments").select(
         "*,courses!left(course_code,course_name)",
         filters={"user_id": f"eq.{user_id}"},
         order="due_date.asc",
     )
-    # Transform to include course info at top level
     assignments = []
     for r in rows:
         course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
@@ -163,8 +159,8 @@ def get_all_assignments(user_id: str):
             "notes": r.get("notes"),
             "google_event_id": r.get("google_event_id"),
             "course_id": r.get("course_id"),
-            "course_code": course.get("course_code", ""),
-            "course_name": course.get("course_name", ""),
+            "course_code": course.get("course_code") or r.get("course_code") or "",
+            "course_name": course.get("course_name") or r.get("course_name") or "",
         })
     return {"assignments": assignments}
 
@@ -180,9 +176,11 @@ def suggest_study_blocks(body: StudyBlockBody):
     blocks = []
     for a in assignments:
         course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        course_label = f"[{course.get('course_code', '')}] " if course.get('course_code') else ""
+        cc = course.get("course_code") or a.get("course_code") or ""
+        cn = course.get("course_name") or a.get("course_name") or ""
+        course_label = f"[{cc}] " if cc else (f"{cn}: " if cn else "")
         blocks.append({
-            "topic": a["title"],
+            "topic": f"{course_label}{a['title']}" if course_label else a["title"],
             "suggested_date": a["due_date"],
             "duration_minutes": 60,
             "reason": f"Due {a['due_date']}",
@@ -279,9 +277,9 @@ def sync_to_google(body: SyncBody):
             continue
             
         course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        course_code = course.get("course_code", "")
-        course_name = course.get("course_name", "")
-        course_label = f"[{course_code}] " if course_code else ""
+        course_code = course.get("course_code") or a.get("course_code") or ""
+        course_name = course.get("course_name") or a.get("course_name") or ""
+        course_label = f"[{course_code}] " if course_code else (f"{course_name}: " if course_name else "")
         
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
@@ -319,9 +317,9 @@ def export_to_google(body: ExportBody):
             continue
 
         course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        course_code = course.get("course_code", "")
-        course_name = course.get("course_name", "")
-        course_label = f"[{course_code}] " if course_code else ""
+        course_code = course.get("course_code") or a.get("course_code") or ""
+        course_name = course.get("course_name") or a.get("course_name") or ""
+        course_label = f"[{course_code}] " if course_code else (f"{course_name}: " if course_name else "")
 
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],

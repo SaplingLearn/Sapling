@@ -13,7 +13,9 @@ import {
   syncToGoogleCalendar,
   importGoogleEvents,
   disconnectGoogleCalendar,
+  getCourses,
   type SaveAssignmentItem,
+  type EnrolledCourse,
 } from '@/lib/api';
 import { useUser } from '@/context/UserContext';
 
@@ -337,14 +339,34 @@ function normalizeAssignments(items: any[]): Assignment[] {
   }));
 }
 
-function toSaveItems(assignments: Assignment[]): SaveAssignmentItem[] {
-  return assignments.map(a => ({
-    title: a.title,
-    course_id: a.course_id ?? '',
-    due_date: a.due_date,
-    assignment_type: a.assignment_type ?? 'other',
-    notes: a.notes ?? undefined,
-  }));
+function buildCourseNameToIdMap(courses: EnrolledCourse[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const c of courses) {
+    const label = c.course_code ? `${c.course_code} - ${c.course_name}` : c.course_name;
+    const keys = [c.course_name, label, c.nickname].filter(Boolean) as string[];
+    for (const k of keys) {
+      const lower = k.toLowerCase();
+      if (!m.has(lower)) m.set(lower, c.course_id);
+    }
+  }
+  return m;
+}
+
+function toSaveItems(assignments: Assignment[], nameToId: Map<string, string>): SaveAssignmentItem[] {
+  return assignments.map(a => {
+    let courseId = (a.course_id ?? '').trim();
+    if (!courseId && a.course_name?.trim()) {
+      const key = a.course_name.trim().toLowerCase();
+      courseId = nameToId.get(key) ?? '';
+    }
+    return {
+      title: a.title,
+      course_id: courseId,
+      due_date: a.due_date,
+      assignment_type: a.assignment_type ?? 'other',
+      notes: a.notes ?? undefined,
+    };
+  });
 }
 
 function CalendarInner() {
@@ -366,6 +388,7 @@ function CalendarInner() {
   const [googleConnected, setGoogleConnected] = useState(false);
   const [googleEvents, setGoogleEvents] = useState<any[]>([]);
   const [importingGoogle, setImportingGoogle] = useState(false);
+  const [courseNameToId, setCourseNameToId] = useState<Map<string, string>>(() => new Map());
 
   /** Orange (notice) vs red (error) — matches syllabusInlineMessage fallback when kind is stale. */
   const syllabusNoticeStyle =
@@ -382,6 +405,9 @@ function CalendarInner() {
     getCalendarStatus(USER_ID)
       .then(res => setGoogleConnected(res.connected))
       .catch(() => {});
+    getCourses(USER_ID)
+      .then(data => setCourseNameToId(buildCourseNameToIdMap(data.courses ?? [])))
+      .catch(console.error);
   }, [USER_ID, userReady]);
 
   // Handle OAuth redirect (?connected=true) once on mount, independently
@@ -436,7 +462,7 @@ function CalendarInner() {
   const handleSaveDetected = async () => {
     setSaving(true);
     try {
-      await saveAssignments(USER_ID, toSaveItems(extractedAssignments));
+      await saveAssignments(USER_ID, toSaveItems(extractedAssignments, courseNameToId));
       const data = await getAllAssignments(USER_ID);
       setAssignments(normalizeAssignments(data.assignments ?? []));
       setExtractedAssignments([]);

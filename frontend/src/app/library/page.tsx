@@ -360,13 +360,18 @@ export default function LibraryPage() {
       } else {
         const updated = await getCourses(userId);
         setCourses(updated.courses);
-        const created = updated.courses.find(c => c.course_name === name);
+        const created = updated.courses.find(c => c.course_id === res.course_id);
         if (created) setSelectedCourseId(created.course_id);
         setNewCourseName('');
         setShowAddCourse(false);
       }
     } catch (e: any) {
-      setCourseAddError(e.message || 'Failed to add course.');
+      let msg = e.message || 'Failed to add course.';
+      try {
+        const j = JSON.parse(msg);
+        if (j.detail) msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+      } catch { /* keep msg */ }
+      setCourseAddError(msg);
     } finally {
       setCourseAdding(false);
     }

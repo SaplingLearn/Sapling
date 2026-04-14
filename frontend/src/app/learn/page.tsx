@@ -9,7 +9,7 @@ import QuizPanel from '@/components/QuizPanel';
 import SessionSummary from '@/components/SessionSummary';
 import SessionFeedbackFlow from '@/components/SessionFeedbackFlow';
 import { GraphNode, GraphEdge, ChatMessage, TeachingMode, SessionSummary as SessionSummaryType } from '@/lib/types';
-import { startSession, sendChat, sendAction, endSession, getGraph, getCourses, getSessions, resumeSession, switchMode, deleteSession } from '@/lib/api';
+import { startSession, sendChat, sendAction, endSession, getGraph, getCourses, getSessions, resumeSession, switchMode, deleteSession, type EnrolledCourse } from '@/lib/api';
 import Link from 'next/link';
 import { getMasteryLabel } from '@/lib/graphUtils';
 import { useUser } from '@/context/UserContext';
@@ -75,6 +75,7 @@ function LearnInner() {
   });
   const [mobileView, setMobileView] = useState<'chat' | 'graph'>('chat');
   const [apiCourseNames, setApiCourseNames] = useState<string[]>([]);
+  const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
   const [courseColorMap, setCourseColorMap] = useState<Record<string, string>>({});
 
   const isMobile = useIsMobile();
@@ -92,9 +93,16 @@ function LearnInner() {
     getCourses(USER_ID)
       .then(data => {
         const courses = data.courses ?? [];
+        setEnrolledCourses(courses);
         setApiCourseNames(courses.map(c => c.course_name));
         const colorMap: Record<string, string> = {};
-        courses.forEach(c => { if (c.color) colorMap[c.course_name] = c.color; });
+        courses.forEach(c => {
+          if (!c.color) return;
+          const label = c.course_code ? `${c.course_code} - ${c.course_name}` : c.course_name;
+          colorMap[c.course_name] = c.color;
+          colorMap[label] = c.color;
+          if (c.nickname) colorMap[c.nickname] = c.color;
+        });
         setCourseColorMap(colorMap);
       })
       .catch(console.error);
@@ -170,13 +178,13 @@ function LearnInner() {
     beginSession(topicParam, mode);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const beginSession = async (t: string, m: TeachingMode) => {
+  const beginSession = async (t: string, m: TeachingMode, explicitCourseId?: string) => {
     setSessionLoading(true);
     setSessionError(null);
     setMessages([]);
     setSessionId(null);
     try {
-      const res = await startSession(USER_ID, t, m, undefined, useSharedContext);
+      const res = await startSession(USER_ID, t, m, explicitCourseId, useSharedContext);
       setSessionId(res.session_id);
       setNodes(res.graph_state.nodes);
       setEdges(res.graph_state.edges);
@@ -286,7 +294,11 @@ function LearnInner() {
     if (!course) return;
     setSelectedCourse(course);
     setTopic(course);
-    beginSession(course, mode);
+    const match = enrolledCourses.find(c => {
+      const label = c.course_code ? `${c.course_code} - ${c.course_name}` : c.course_name;
+      return course === c.course_name || course === label || (c.nickname ? course === c.nickname : false);
+    });
+    beginSession(course, mode, match?.course_id);
   };
 
   const handleDeleteSession = async (sid: string) => {
@@ -326,7 +338,8 @@ function LearnInner() {
   const handleNodeClick = useCallback((n: GraphNode) => {
     const { mode: m, beginSession: bs } = nodeClickPayloadRef.current;
     setTopic(n.concept_name);
-    bs(n.concept_name, m);
+    const cid = n.course_id && String(n.course_id).trim() ? n.course_id : undefined;
+    bs(n.concept_name, m, cid);
   }, []);
 
   const topicNode = nodes.find(n => n.concept_name.toLowerCase() === topic.toLowerCase());
@@ -437,7 +450,12 @@ function LearnInner() {
                 useSharedContext={useSharedContext}
                 onLearnConcept={concept => {
                   setQuizMode(false);
-                  if (concept) { setTopic(concept); beginSession(concept, mode); }
+                  if (concept) {
+                    setTopic(concept);
+                    const node = nodes.find(x => x.concept_name === concept);
+                    const cid = node?.course_id && String(node.course_id).trim() ? node.course_id : undefined;
+                    beginSession(concept, mode, cid);
+                  }
                 }}
               />
             </div>
