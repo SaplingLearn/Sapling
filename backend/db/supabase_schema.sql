@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at  TIMESTAMPTZ DEFAULT now(),
     google_id   TEXT UNIQUE,
     avatar_url  TEXT,
-    auth_provider TEXT DEFAULT 'google'
+    auth_provider TEXT DEFAULT 'google',
+    is_approved BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);

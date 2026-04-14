@@ -117,9 +117,10 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         )
 
     # Determine user_id: check if this Google ID already exists
-    existing = table("users").select("id", filters={"google_id": f"eq.{google_id}"})
+    existing = table("users").select("id,is_approved", filters={"google_id": f"eq.{google_id}"})
     if existing:
         user_id = existing[0]["id"]
+        is_approved = existing[0]["is_approved"]
         # Update name/avatar in case they changed
         table("users").update(
             {"name": name, "avatar_url": avatar_url, "email": email},
@@ -127,9 +128,10 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         )
     else:
         # Check if a user with this email exists (migration from old system)
-        email_match = table("users").select("id", filters={"email": f"eq.{email}"})
+        email_match = table("users").select("id,is_approved", filters={"email": f"eq.{email}"})
         if email_match:
             user_id = email_match[0]["id"]
+            is_approved = email_match[0]["is_approved"]
             table("users").update(
                 {
                     "google_id": google_id,
@@ -142,6 +144,7 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         else:
             # Create new user
             user_id = f"user_{google_id}"
+            is_approved = False
             table("users").insert({
                 "id": user_id,
                 "name": name,
@@ -162,10 +165,14 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         on_conflict="user_id",
     )
 
+    if not is_approved:
+        return RedirectResponse(f"{FRONTEND_URL}/signin?error=not_approved")
+
     # Redirect to frontend with user info
     params = urlencode({
         "user_id": user_id,
         "name": name,
         "avatar": avatar_url,
+        "is_approved": "true",
     })
     return RedirectResponse(f"{FRONTEND_URL}/signin/callback?{params}")

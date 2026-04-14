@@ -13,12 +13,21 @@ function CallbackInner() {
     const userId = searchParams.get('user_id');
     const name = searchParams.get('name');
     const avatar = searchParams.get('avatar');
+    const isApproved = searchParams.get('is_approved') === 'true';
+    const error = searchParams.get('error');
+
+    if (error === 'not_approved' || !isApproved) {
+      router.replace('/pending');
+      return;
+    }
 
     if (userId && name) {
-      setActiveUser(userId, name, avatar || '');
-      router.replace('/');
+      setActiveUser(userId, name, avatar || '', true);
+      document.cookie = 'sapling_approved=1; path=/; max-age=2592000; SameSite=Lax';
+      document.cookie = `sapling_uid=${userId}; path=/; max-age=2592000; SameSite=Lax`;
+      router.replace('/dashboard');
     } else {
-      router.replace('/');
+      router.replace('/signin');
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

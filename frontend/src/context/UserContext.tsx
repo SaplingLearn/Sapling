@@ -16,7 +16,8 @@ interface UserContextValue {
    *  never fire with the hardcoded default user before we know the real one. */
   userReady: boolean;
   isAuthenticated: boolean;
-  setActiveUser: (id: string, name: string, avatar?: string) => void;
+  isApproved: boolean;
+  setActiveUser: (id: string, name: string, avatar?: string, approved?: boolean) => void;
   signOut: () => void;
 }
 
@@ -27,6 +28,7 @@ const UserContext = createContext<UserContextValue>({
   users: [],
   userReady: false,
   isAuthenticated: false,
+  isApproved: false,
   setActiveUser: () => {},
   signOut: () => {},
 });
@@ -37,6 +39,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [avatarUrl, setAvatarUrl] = useState('');
   const [users, setUsers] = useState<UserOption[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isApproved, setIsApproved] = useState(false);
   // Becomes true after localStorage is read — prevents pages from fetching
   // data with the hardcoded default before the real saved user is known.
   const [userReady, setUserReady] = useState(false);
@@ -46,11 +49,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem('sapling_user');
     if (saved) {
       try {
-        const { id, name, avatar } = JSON.parse(saved);
+        const { id, name, avatar, isApproved: savedApproved } = JSON.parse(saved);
         setUserId(id);
         setUserName(name);
         if (avatar) setAvatarUrl(avatar);
         setIsAuthenticated(true);
+        setIsApproved(savedApproved === true);
       } catch {}
     }
     setUserReady(true);
@@ -74,12 +78,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, []);
 
-  const setActiveUser = (id: string, name: string, avatar?: string) => {
+  const setActiveUser = (id: string, name: string, avatar?: string, approved?: boolean) => {
     setUserId(id);
     setUserName(name);
     if (avatar) setAvatarUrl(avatar);
     setIsAuthenticated(true);
-    localStorage.setItem('sapling_user', JSON.stringify({ id, name, avatar: avatar || '' }));
+    setIsApproved(approved === true);
+    localStorage.setItem('sapling_user', JSON.stringify({ id, name, avatar: avatar || '', isApproved: approved === true }));
   };
 
   const signOut = () => {
@@ -87,12 +92,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setUserName('');
     setAvatarUrl('');
     setIsAuthenticated(false);
+    setIsApproved(false);
     localStorage.removeItem('sapling_user');
   };
 
   const value = useMemo(
-    () => ({ userId, userName, avatarUrl, users, userReady, isAuthenticated, setActiveUser, signOut }),
-    [userId, userName, avatarUrl, users, userReady, isAuthenticated]
+    () => ({ userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved, setActiveUser, signOut }),
+    [userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved]
   );
 
   return (
