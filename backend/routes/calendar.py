@@ -117,7 +117,7 @@ def get_upcoming(user_id: str):
     today = datetime.utcnow().strftime("%Y-%m-%d")
     # Join with courses to get course_code and course_name
     rows = table("assignments").select(
-        "*,courses!inner(course_code,course_name)",
+        "*,courses!left(course_code,course_name)",
         filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
         order="due_date.asc",
         limit=20,
@@ -146,7 +146,7 @@ def get_all_assignments(user_id: str):
     """Return all assignments for a user (past and future) for the calendar view."""
     # Join with courses to get course_code and course_name
     rows = table("assignments").select(
-        "*,courses!inner(course_code,course_name)",
+        "*,courses!left(course_code,course_name)",
         filters={"user_id": f"eq.{user_id}"},
         order="due_date.asc",
     )
@@ -173,7 +173,7 @@ def get_all_assignments(user_id: str):
 def suggest_study_blocks(body: StudyBlockBody):
     today = datetime.utcnow().strftime("%Y-%m-%d")
     assignments = table("assignments").select(
-        "*,courses!inner(course_code,course_name)",
+        "*,courses!left(course_code,course_name)",
         filters={"user_id": f"eq.{body.user_id}", "due_date": f"gte.{today}"},
         order="due_date.asc",
     )
@@ -258,7 +258,7 @@ def sync_to_google(body: SyncBody):
     service = build("calendar", "v3", credentials=creds)
 
     unsynced = table("assignments").select(
-        "*,courses!inner(course_code,course_name)",
+        "*,courses!left(course_code,course_name)",
         filters={
             "user_id": f"eq.{body.user_id}",
             "google_event_id": "is.null",
@@ -266,7 +266,7 @@ def sync_to_google(body: SyncBody):
     )
     # Also catch empty-string google_event_id
     unsynced += table("assignments").select(
-        "*,courses!inner(course_code,course_name)",
+        "*,courses!left(course_code,course_name)",
         filters={
             "user_id": f"eq.{body.user_id}",
             "google_event_id": "eq.",
@@ -309,7 +309,7 @@ def export_to_google(body: ExportBody):
     exported = 0
     skipped = 0
     for aid in body.assignment_ids:
-        rows = table("assignments").select("*,courses!inner(course_code,course_name)", filters={"id": f"eq.{aid}"})
+        rows = table("assignments").select("*,courses!left(course_code,course_name)", filters={"id": f"eq.{aid}"})
         if not rows:
             continue
         a = rows[0]

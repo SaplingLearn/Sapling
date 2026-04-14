@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
@@ -39,7 +39,10 @@ def list_courses(user_id: str):
 
 @router.post("/{user_id}/courses")
 def create_course(user_id: str, body: AddCourseBody):
-    return add_course(user_id, body.course_id, body.color, body.nickname)
+    result = add_course(user_id, body.course_id, body.color, body.nickname)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @router.patch("/{user_id}/courses/{course_id}/color")

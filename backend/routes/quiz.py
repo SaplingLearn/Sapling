@@ -44,10 +44,10 @@ def generate_quiz(body: GenerateQuizBody):
     )
 
     # Append shared course-level context (misconceptions + weak areas) if available
-    subject = node.get("subject", "")
-    if body.use_shared_context and subject:
+    course_id = node.get("course_id", "")
+    if body.use_shared_context and course_id:
         from services.course_context_service import get_course_context
-        course_ctx = get_course_context(subject)
+        course_ctx = get_course_context(course_id)
         if course_ctx:
             misconceptions = course_ctx.get("common_misconceptions", [])
             weak_areas = course_ctx.get("weak_areas", [])

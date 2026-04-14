@@ -108,12 +108,16 @@ CREATE TABLE IF NOT EXISTS assignments (
     user_id         TEXT NOT NULL REFERENCES users(id),
     title           TEXT NOT NULL,
     course_name     TEXT,
+    course_id       TEXT REFERENCES courses(id),
     due_date        TEXT NOT NULL,
     assignment_type TEXT,
     notes           TEXT,
     google_event_id TEXT,
     created_at      TIMESTAMPTZ DEFAULT now()
 );
+
+-- Migration (run if table already exists without course_id column):
+-- ALTER TABLE assignments ADD COLUMN IF NOT EXISTS course_id TEXT REFERENCES courses(id);
 
 -- Study rooms
 CREATE TABLE IF NOT EXISTS rooms (

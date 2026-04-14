@@ -328,7 +328,7 @@ def end_session(body: EndSessionBody):
         pending = PENDING_SESSIONS[body.session_id]
         if body.user_id and pending["user_id"] != body.user_id:
             raise HTTPException(status_code=403, detail="Session user mismatch")
-        PENDING_SESSIONS.pop(session_id, None)
+        PENDING_SESSIONS.pop(body.session_id, None)
         empty = {
             "concepts_covered": [],
             "mastery_changes": [],
