@@ -7,6 +7,195 @@ Sapling is an AI-powered study companion. It has two services:
 - **Frontend** — Next.js (TypeScript), lives in `frontend/`
 - **Backend** — FastAPI (Python), lives in `backend/`
 
+## Directory Structure
+
+```
+sapling/
+├── CLAUDE.md                                          # Claude Code guidelines and project conventions
+├── README.md                                          # Project overview and setup instructions
+├── docker-compose.yml                                 # Orchestrates frontend + backend containers
+├── landingpage.png                                    # Screenshot of the landing page
+├── .impeccable.md                                     # Impeccable design skill configuration
+│
+├── backend/
+│   ├── main.py                                        # FastAPI app entry point, registers all routers
+│   ├── config.py                                      # Loads and validates env vars (Supabase, Gemini, etc.)
+│   ├── requirements.txt                               # Python dependencies
+│   ├── Dockerfile                                     # Backend container image definition
+│   ├── .dockerignore                                  # Files excluded from the Docker build context
+│   ├── .env                                           # Local secrets (not committed)
+│   ├── .env.example                                   # Template showing required env vars
+│   │
+│   ├── db/
+│   │   ├── connection.py                              # Creates and exports the Supabase client
+│   │   ├── supabase_schema.sql                        # Full Supabase table/index schema
+│   │   ├── seed.sql                                   # Sample data for local development
+│   │   ├── migration_google_auth.sql                  # Migration adding Google OAuth user fields
+│   │   ├── dedup_nodes.py                             # One-off script to deduplicate knowledge graph nodes
+│   │   └── archive/
+│   │       ├── init_db.py                             # Old DB init script (archived, no longer used)
+│   │       ├── schema.sql                             # Old schema before Supabase migration
+│   │       └── seed.py                                # Old Python-based seed script
+│   │
+│   ├── models/
+│   │   └── __init__.py                                # Pydantic request/response models package init
+│   │
+│   ├── prompts/
+│   │   ├── preamble.txt                               # System preamble injected into every AI session
+│   │   ├── socratic.txt                               # Prompt for Socratic questioning study mode
+│   │   ├── teachback.txt                              # Prompt for teach-back (explain-it-back) mode
+│   │   ├── expository.txt                             # Prompt for direct expository explanation mode
+│   │   ├── quiz_generation.txt                        # Prompt for generating quiz questions from content
+│   │   ├── quiz_context_update.txt                    # Prompt for updating quiz state after each answer
+│   │   ├── study_match.txt                            # Prompt for matching students into study groups
+│   │   ├── syllabus_extraction.txt                    # Prompt for extracting assignments from a syllabus
+│   │   └── shared_context.txt                         # Prompt fragment injected when shared course context is on
+│   │
+│   ├── routes/
+│   │   ├── auth.py                                    # Google OAuth sign-in and user upsert endpoints
+│   │   ├── calendar.py                                # Endpoints to read and sync assignment calendar events
+│   │   ├── careers.py                                 # Endpoints for job listings and application submission
+│   │   ├── documents.py                               # Upload, classify, summarize, and extract from docs
+│   │   ├── extract.py                                 # OCR and text extraction pipeline for uploaded files
+│   │   ├── feedback.py                                # Endpoints to submit session and general user feedback
+│   │   ├── flashcards.py                              # CRUD endpoints for user flashcard decks
+│   │   ├── graph.py                                   # Endpoints to build and query the knowledge graph
+│   │   ├── learn.py                                   # Streaming AI tutoring chat endpoint (SSE)
+│   │   ├── quiz.py                                    # Quiz session creation, answering, and scoring endpoints
+│   │   ├── social.py                                  # Study room creation, membership, and chat endpoints
+│   │   └── study_guide.py                             # Endpoint to generate a structured study guide from docs
+│   │
+│   ├── services/
+│   │   ├── assignment_dedupe.py                       # Deduplicates assignments before inserting into DB
+│   │   ├── calendar_service.py                        # Formats and writes assignments as calendar events
+│   │   ├── course_context_service.py                  # Fetches and caches shared course context for a session
+│   │   ├── extraction_service.py                      # Orchestrates OCR → text extraction for uploaded files
+│   │   ├── gemini_service.py                          # Wrapper around the Gemini API (chat, streaming, vision)
+│   │   ├── graph_service.py                           # Builds knowledge graph nodes and edges from content
+│   │   ├── matching_service.py                        # Matches students into compatible study groups via AI
+│   │   ├── quiz_context_service.py                    # Manages per-session quiz state and context window
+│   │   └── social_cache_service.py                    # Caches room membership and presence for social features
+│   │
+│   └── tests/
+│       ├── conftest.py                                # Shared pytest fixtures (mock Supabase, Gemini, etc.)
+│       ├── README.md                                  # Notes on running and writing backend tests
+│       ├── test_assignment_dedupe.py                  # Tests for assignment deduplication logic
+│       ├── test_calendar_routes.py                    # Tests for calendar sync endpoints
+│       ├── test_config.py                             # Tests that config loads env vars correctly
+│       ├── test_documents_routes.py                   # Tests for document upload and processing endpoints
+│       ├── test_extraction_service.py                 # Tests for the OCR extraction pipeline
+│       ├── test_gemini_service.py                     # Tests for Gemini API wrapper behavior
+│       ├── test_graph_service.py                      # Tests for knowledge graph construction
+│       ├── test_learn_routes.py                       # Tests for the streaming tutoring chat endpoint
+│       ├── test_ocr_pipeline.py                       # Tests for end-to-end OCR pipeline
+│       ├── test_quiz_routes.py                        # Tests for quiz session endpoints
+│       ├── test_shared_course_context.py              # Tests for shared course context injection
+│       └── test_supabase.py                           # Integration tests against Supabase connection
+│
+└── frontend/
+    ├── next.config.ts                                 # Next.js build and runtime configuration
+    ├── tsconfig.json                                  # TypeScript compiler options
+    ├── tsconfig.tsbuildinfo                           # TypeScript incremental build cache
+    ├── package.json                                   # Node dependencies and npm scripts
+    ├── package-lock.json                              # Locked dependency tree
+    ├── jest.config.js                                 # Jest test runner config (module aliases, transforms)
+    ├── jest.setup.js                                  # Jest global setup (testing-library, env vars)
+    ├── eslint.config.mjs                              # ESLint rules for the frontend
+    ├── postcss.config.mjs                             # PostCSS config (Tailwind plugin)
+    ├── Dockerfile                                     # Frontend container image definition
+    ├── .dockerignore                                  # Files excluded from the Docker build context
+    ├── .env.local                                     # Local frontend secrets (not committed)
+    ├── README.md                                      # Frontend-specific setup notes
+    │
+    ├── public/
+    │   ├── sapling-icon.svg                           # App icon used in favicon and UI
+    │   └── sapling-word-icon.png                      # Full wordmark logo for navbar/branding
+    │
+    └── src/
+        ├── app/
+        │   ├── layout.tsx                             # Root layout: Navbar, UserContext, global providers
+        │   ├── page.tsx                               # Landing/home page
+        │   ├── error.tsx                              # Global Next.js error boundary page
+        │   ├── globals.css                            # Tailwind base styles and CSS custom properties
+        │   ├── icon.svg                               # App icon for Next.js metadata
+        │   ├── about/page.tsx                         # About page with mission and team info
+        │   ├── calendar/page.tsx                      # Assignment calendar view with due-date timeline
+        │   ├── dashboard/page.tsx                     # User dashboard showing docs, assignments, progress
+        │   ├── flashcards/page.tsx                    # Flashcard study and deck management page
+        │   ├── learn/page.tsx                         # AI tutoring session page (mode select + chat)
+        │   ├── library/page.tsx                       # Document library for uploaded course materials
+        │   ├── privacy/page.tsx                       # Privacy policy page
+        │   ├── social/page.tsx                        # Study rooms and peer matching page
+        │   ├── terms/page.tsx                         # Terms of service page
+        │   ├── tree/page.tsx                          # Knowledge graph tree visualization page
+        │   ├── signin/callback/page.tsx               # OAuth callback handler that exchanges code for session
+        │   ├── careers/
+        │   │   ├── jobs.ts                            # Static list of open job positions
+        │   │   ├── page.tsx                           # Careers listing page
+        │   │   └── [slug]/
+        │   │       ├── page.tsx                       # Individual job detail page
+        │   │       └── ApplyForm.tsx                  # Job application form component
+        │   └── study/
+        │       ├── page.tsx                           # Study session entry point (SSR shell)
+        │       ├── StudyClient.tsx                    # Client-side study session orchestrator
+        │       └── FlashcardsPanel.tsx                # Inline flashcard panel within a study session
+        │
+        ├── components/
+        │   ├── AIDisclaimerChip.tsx                   # Small chip shown on AI-generated content
+        │   ├── AssignmentTable.tsx                    # Table displaying assignments with status and due dates
+        │   ├── Avatar.tsx                             # User avatar with initials fallback
+        │   ├── ChatPanel.tsx                          # Main AI chat UI with streaming message rendering
+        │   ├── CustomSelect.tsx                       # Styled dropdown select component
+        │   ├── DisclaimerModal.tsx                    # Modal shown on first use with AI disclaimer
+        │   ├── ErrorBoundary.tsx                      # React error boundary wrapper for safe rendering
+        │   ├── FeedbackFlow.tsx                       # Multi-step general feedback submission flow
+        │   ├── HowItWorks.tsx                         # Landing page section explaining the product
+        │   ├── KnowledgeGraph.tsx                     # D3-powered interactive knowledge graph visualization
+        │   ├── ModeSelector.tsx                       # Selector for choosing AI tutoring mode (Socratic, etc.)
+        │   ├── Navbar.tsx                             # Top navigation bar with auth state and links
+        │   ├── OnboardingModal.tsx                    # First-run onboarding modal for new users
+        │   ├── QuizPanel.tsx                          # Quiz UI for answering and reviewing questions
+        │   ├── ReportIssueFlow.tsx                    # Flow for users to report bugs or content issues
+        │   ├── RoomChat.tsx                           # Real-time chat UI for a study room (Supabase Realtime)
+        │   ├── RoomList.tsx                           # List of available and joined study rooms
+        │   ├── RoomMembers.tsx                        # Displays current members of a study room
+        │   ├── RoomOverview.tsx                       # Overview card for a study room (name, topic, members)
+        │   ├── SchoolDirectory.tsx                    # Directory for browsing schools and courses
+        │   ├── SessionFeedbackFlow.tsx                # In-session feedback prompt after study sessions
+        │   ├── SessionFeedbackGlobal.tsx              # Global wrapper that triggers session feedback on navigate
+        │   ├── SessionSummary.tsx                     # Post-session summary of topics covered and performance
+        │   ├── SharedContextToggle.tsx                # Toggle to enable/disable shared course context in chat
+        │   ├── SpaceBackground.tsx                    # Animated starfield canvas background
+        │   ├── StudyMatch.tsx                         # UI for finding and joining study partner matches
+        │   └── UploadZone.tsx                         # Drag-and-drop file upload zone for course documents
+        │
+        ├── context/
+        │   └── UserContext.tsx                        # React context providing authenticated user state globally
+        │
+        ├── lib/
+        │   ├── api.ts                                 # Typed fetch helpers for every backend API endpoint
+        │   ├── avatarUtils.ts                         # Utilities for generating avatar initials and colors
+        │   ├── graphUtils.ts                          # Helpers for transforming graph data for D3 rendering
+        │   ├── supabase.ts                            # Supabase browser client singleton
+        │   └── types.ts                               # Shared TypeScript types used across the frontend
+        │
+        ├── __mocks__/
+        │   ├── rehypeKatex.js                         # Mock for ESM-only rehype-katex (Jest compat)
+        │   ├── remarkMath.js                          # Mock for ESM-only remark-math (Jest compat)
+        │   └── styleMock.js                           # Mock for CSS/image imports in Jest
+        │
+        └── __tests__/
+            ├── README.md                              # Notes on frontend test conventions
+            ├── api.test.ts                            # Tests for API helper functions
+            ├── authAndPrefillWiring.test.ts           # Tests for auth flow and form pre-fill logic
+            ├── chatPanel.test.tsx                     # Tests for ChatPanel rendering and streaming
+            ├── dataFetching.test.tsx                  # Tests for data-fetching hooks and loading states
+            ├── graphUtils.test.ts                     # Tests for graph transformation utilities
+            ├── hydration.test.tsx                     # Tests for SSR/CSR hydration correctness
+            ├── sessionSummary.test.tsx                # Tests for SessionSummary rendering
+            └── userContext.test.tsx                   # Tests for UserContext auth state management
+```
+
 ## Running Locally
 
 **Backend**
