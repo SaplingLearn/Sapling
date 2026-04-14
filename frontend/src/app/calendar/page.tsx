@@ -323,8 +323,8 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
 
 
 function normalizeAssignments(items: any[]): Assignment[] {
-  return (items ?? []).map((a: any) => ({
-    id: a.id ?? '',
+  return (items ?? []).map((a: any, index: number) => ({
+    id: a.id ?? `missing-id-${index}`,
     title: a.title ?? '',
     course_name: a.course_name ?? '',
     due_date: a.due_date ?? '',
