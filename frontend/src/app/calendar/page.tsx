@@ -321,6 +321,19 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
   );
 }
 
+
+function normalizeAssignments(items: any[]): Assignment[] {
+  return (items ?? []).map((a: any) => ({
+    id: a.id ?? '',
+    title: a.title ?? '',
+    course_name: a.course_name ?? '',
+    due_date: a.due_date ?? '',
+    assignment_type: a.assignment_type ?? 'other',
+    notes: a.notes ?? null,
+    google_event_id: a.google_event_id ?? null,
+  }));
+}
+
 function CalendarInner() {
   const { userId: USER_ID, userReady } = useUser();
   const searchParams = useSearchParams();
@@ -351,7 +364,7 @@ function CalendarInner() {
   useEffect(() => {
     if (!userReady) return;
     getAllAssignments(USER_ID)
-      .then(data => setAssignments(data.assignments ?? []))
+      .then(data => setAssignments(normalizeAssignments(data.assignments ?? [])))
       .catch(console.error);
     getCalendarStatus(USER_ID)
       .then(res => setGoogleConnected(res.connected))
@@ -410,7 +423,7 @@ function CalendarInner() {
     try {
       await saveAssignments(USER_ID, extractedAssignments);
       const data = await getAllAssignments(USER_ID);
-      setAssignments(data.assignments ?? []);
+      setAssignments(normalizeAssignments(data.assignments ?? []));
       setExtractedAssignments([]);
       setFileProcessed(false);
       setWarnings([]);
@@ -443,7 +456,7 @@ function CalendarInner() {
       setSyncedCount(res.synced_count);
       // Refresh so google_event_id values are up to date
       getAllAssignments(USER_ID)
-        .then(data => setAssignments(data.assignments ?? []))
+        .then(data => setAssignments(normalizeAssignments(data.assignments ?? [])))
         .catch(console.error);
     } catch (e: any) {
       alert(e.message);
