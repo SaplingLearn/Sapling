@@ -27,35 +27,54 @@ export const getGraph = (userId: string) =>
 export const getRecommendations = (userId: string) =>
   fetchJSON<{ recommendations: any[] }>(`/api/graph/${userId}/recommendations`);
 
-export const getCourses = (userId: string) =>
-  fetchJSON<{ courses: { id: string; course_name: string; color: string | null; node_count: number; created_at: string }[] }>(
-    `/api/graph/${userId}/courses`
-  );
+export interface EnrolledCourse {
+  enrollment_id: string;
+  course_id: string;
+  course_code: string;
+  course_name: string;
+  school: string;
+  department: string;
+  color: string | null;
+  nickname: string | null;
+  node_count: number;
+  enrolled_at: string;
+}
 
-export const addCourse = (userId: string, courseName: string, color?: string) =>
-  fetchJSON<{ course_name: string; already_existed: boolean }>(`/api/graph/${userId}/courses`, {
+export const getCourses = (userId: string) =>
+  fetchJSON<{ courses: EnrolledCourse[] }>(`/api/graph/${userId}/courses`);
+
+export const addCourse = (userId: string, courseId: string, color?: string, nickname?: string) =>
+  fetchJSON<{ course_id: string; already_existed: boolean; error?: string }>(`/api/graph/${userId}/courses`, {
     method: 'POST',
-    body: JSON.stringify({ course_name: courseName, ...(color ? { color } : {}) }),
+    body: JSON.stringify({ course_id: courseId, ...(color ? { color } : {}), ...(nickname ? { nickname } : {}) }),
   });
 
-export const updateCourseColor = (userId: string, courseName: string, color: string) =>
+export const updateCourseColor = (userId: string, courseId: string, color: string) =>
   fetchJSON<{ updated: boolean }>(
-    `/api/graph/${userId}/courses/${encodeURIComponent(courseName)}/color`,
+    `/api/graph/${userId}/courses/${encodeURIComponent(courseId)}/color`,
     { method: 'PATCH', body: JSON.stringify({ color }) }
   );
 
-export const deleteCourse = (userId: string, courseName: string) =>
+export const deleteCourse = (userId: string, courseId: string) =>
   fetchJSON<{ deleted: boolean }>(
-    `/api/graph/${userId}/courses/${encodeURIComponent(courseName)}`,
+    `/api/graph/${userId}/courses/${encodeURIComponent(courseId)}`,
     { method: 'DELETE' }
   );
 
 // ── Learn ─────────────────────────────────────────────────────────────────────
 
-export const startSession = (userId: string, topic: string, mode: string, useSharedContext = true) =>
+export interface StartSessionRequest {
+  user_id: string;
+  topic: string;
+  mode: string;
+  use_shared_context?: boolean;
+  course_id?: string;
+}
+
+export const startSession = (userId: string, topic: string, mode: string, courseId?: string, useSharedContext = true) =>
   fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, topic, mode, use_shared_context: useSharedContext }),
+    body: JSON.stringify({ user_id: userId, topic, mode, use_shared_context: useSharedContext, course_id: courseId }),
   });
 
 export const sendChat = (sessionId: string, userId: string, message: string, mode: string, useSharedContext = true) =>
@@ -76,18 +95,19 @@ export const endSession = (sessionId: string, userId: string) =>
     body: JSON.stringify({ session_id: sessionId, user_id: userId }),
   });
 
+export interface Session {
+  id: string;
+  topic: string;
+  mode: string;
+  course_id: string | null;
+  started_at: string;
+  ended_at: string | null;
+  message_count: number;
+  is_active: boolean;
+}
+
 export const getSessions = (userId: string, limit = 10) =>
-  fetchJSON<{
-    sessions: {
-      id: string;
-      topic: string;
-      mode: string;
-      started_at: string;
-      ended_at: string | null;
-      message_count: number;
-      is_active: boolean;
-    }[];
-  }>(`/api/learn/sessions/${userId}?limit=${limit}`);
+  fetchJSON<{ sessions: Session[] }>(`/api/learn/sessions/${userId}?limit=${limit}`);
 
 export const switchMode = (sessionId: string, userId: string, newMode: string) =>
   fetchJSON<{ reply: string }>('/api/learn/mode-switch', {
@@ -103,7 +123,7 @@ export const deleteSession = (sessionId: string, userId: string) =>
 
 export const resumeSession = (sessionId: string) =>
   fetchJSON<{
-    session: { id: string; topic: string; mode: string; started_at: string; ended_at: string | null };
+    session: { id: string; user_id: string; topic: string; mode: string; course_id: string | null; started_at: string; ended_at: string | null };
     messages: { id: string; role: string; content: string; created_at: string }[];
   }>(`/api/learn/sessions/${sessionId}/resume`);
 
@@ -146,19 +166,40 @@ export const extractSyllabus = (formData: FormData, userId?: string): Promise<an
           .join('; ');
       }
       if (!msg && typeof data.error === 'string') msg = data.error;
-      throw new Error(msg || `Request failed (HTTP ${r.status}).`);
+      throw new Error(msg || `Request failed (HTTP ${res.status}).`);
     }
     return data;
   });
 };
 
+export interface Assignment {
+  id: string;
+  user_id: string;
+  title: string;
+  due_date: string;
+  assignment_type?: string;
+  notes?: string;
+  google_event_id?: string;
+  course_id?: string;
+  course_code?: string;
+  course_name?: string;
+}
+
 export const getUpcomingAssignments = (userId: string) =>
-  fetchJSON<{ assignments: any[] }>(`/api/calendar/upcoming/${userId}`);
+  fetchJSON<{ assignments: Assignment[] }>(`/api/calendar/upcoming/${userId}`);
 
 export const getAllAssignments = (userId: string) =>
-  fetchJSON<{ assignments: any[] }>(`/api/calendar/all/${userId}`);
+  fetchJSON<{ assignments: Assignment[] }>(`/api/calendar/all/${userId}`);
 
-export const saveAssignments = (userId: string, assignments: any[]) =>
+export interface SaveAssignmentItem {
+  title: string;
+  course_id: string;
+  due_date: string;
+  assignment_type?: string;
+  notes?: string;
+}
+
+export const saveAssignments = (userId: string, assignments: SaveAssignmentItem[]) =>
   fetchJSON<{ saved_count: number }>('/api/calendar/save', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, assignments }),

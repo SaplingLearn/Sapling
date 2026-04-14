@@ -101,7 +101,7 @@ def save_assignments(body: SaveAssignmentsBody):
     payload = [
         {
             "title": a.title,
-            "course_name": a.course_name,
+            "course_id": a.course_id,
             "due_date": a.due_date,
             "assignment_type": a.assignment_type,
             "notes": a.notes,
@@ -115,44 +115,79 @@ def save_assignments(body: SaveAssignmentsBody):
 @router.get("/upcoming/{user_id}")
 def get_upcoming(user_id: str):
     today = datetime.utcnow().strftime("%Y-%m-%d")
+    # Join with courses to get course_code and course_name
     rows = table("assignments").select(
-        "*",
+        "*,courses!inner(course_code,course_name)",
         filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
         order="due_date.asc",
         limit=20,
     )
-    return {"assignments": rows}
+    # Transform to include course info at top level
+    assignments = []
+    for r in rows:
+        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
+        assignments.append({
+            "id": r["id"],
+            "user_id": r["user_id"],
+            "title": r["title"],
+            "due_date": r["due_date"],
+            "assignment_type": r.get("assignment_type"),
+            "notes": r.get("notes"),
+            "google_event_id": r.get("google_event_id"),
+            "course_id": r.get("course_id"),
+            "course_code": course.get("course_code", ""),
+            "course_name": course.get("course_name", ""),
+        })
+    return {"assignments": assignments}
 
 
 @router.get("/all/{user_id}")
 def get_all_assignments(user_id: str):
     """Return all assignments for a user (past and future) for the calendar view."""
+    # Join with courses to get course_code and course_name
     rows = table("assignments").select(
-        "*",
+        "*,courses!inner(course_code,course_name)",
         filters={"user_id": f"eq.{user_id}"},
         order="due_date.asc",
     )
-    return {"assignments": rows}
+    # Transform to include course info at top level
+    assignments = []
+    for r in rows:
+        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
+        assignments.append({
+            "id": r["id"],
+            "user_id": r["user_id"],
+            "title": r["title"],
+            "due_date": r["due_date"],
+            "assignment_type": r.get("assignment_type"),
+            "notes": r.get("notes"),
+            "google_event_id": r.get("google_event_id"),
+            "course_id": r.get("course_id"),
+            "course_code": course.get("course_code", ""),
+            "course_name": course.get("course_name", ""),
+        })
+    return {"assignments": assignments}
 
 
 @router.post("/suggest-study-blocks")
 def suggest_study_blocks(body: StudyBlockBody):
     today = datetime.utcnow().strftime("%Y-%m-%d")
     assignments = table("assignments").select(
-        "*",
+        "*,courses!inner(course_code,course_name)",
         filters={"user_id": f"eq.{body.user_id}", "due_date": f"gte.{today}"},
         order="due_date.asc",
     )
-    blocks = [
-        {
+    blocks = []
+    for a in assignments:
+        course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
+        course_label = f"[{course.get('course_code', '')}] " if course.get('course_code') else ""
+        blocks.append({
             "topic": a["title"],
             "suggested_date": a["due_date"],
             "duration_minutes": 60,
             "reason": f"Due {a['due_date']}",
             "related_assignment_id": a["id"],
-        }
-        for a in assignments
-    ]
+        })
     return {"study_blocks": blocks[:5]}
 
 
@@ -223,7 +258,7 @@ def sync_to_google(body: SyncBody):
     service = build("calendar", "v3", credentials=creds)
 
     unsynced = table("assignments").select(
-        "*",
+        "*,courses!inner(course_code,course_name)",
         filters={
             "user_id": f"eq.{body.user_id}",
             "google_event_id": "is.null",
@@ -231,7 +266,7 @@ def sync_to_google(body: SyncBody):
     )
     # Also catch empty-string google_event_id
     unsynced += table("assignments").select(
-        "*",
+        "*,courses!inner(course_code,course_name)",
         filters={
             "user_id": f"eq.{body.user_id}",
             "google_event_id": "eq.",
@@ -242,8 +277,14 @@ def sync_to_google(body: SyncBody):
     for a in unsynced:
         if not a.get("due_date"):
             continue
+            
+        course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
+        course_code = course.get("course_code", "")
+        course_name = course.get("course_name", "")
+        course_label = f"[{course_code}] " if course_code else ""
+        
         event = {
-            "summary": f"[{a['course_name']}] {a['title']}" if a.get("course_name") else a["title"],
+            "summary": f"{course_label}{a['title']}" if course_label else a["title"],
             "description": a.get("notes") or "",
             "start": {"date": a["due_date"]},
             "end": {"date": a["due_date"]},
@@ -268,7 +309,7 @@ def export_to_google(body: ExportBody):
     exported = 0
     skipped = 0
     for aid in body.assignment_ids:
-        rows = table("assignments").select("*", filters={"id": f"eq.{aid}"})
+        rows = table("assignments").select("*,courses!inner(course_code,course_name)", filters={"id": f"eq.{aid}"})
         if not rows:
             continue
         a = rows[0]
@@ -277,8 +318,13 @@ def export_to_google(body: ExportBody):
             skipped += 1
             continue
 
+        course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
+        course_code = course.get("course_code", "")
+        course_name = course.get("course_name", "")
+        course_label = f"[{course_code}] " if course_code else ""
+
         event = {
-            "summary": f"[{a['course_name']}] {a['title']}" if a.get("course_name") else a["title"],
+            "summary": f"{course_label}{a['title']}" if course_label else a["title"],
             "description": a.get("notes") or "",
             "start": {"date": a["due_date"]},
             "end": {"date": a["due_date"]},

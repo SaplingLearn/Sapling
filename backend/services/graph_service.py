@@ -5,27 +5,24 @@ from config import get_mastery_tier
 from db.connection import table
 
 
-def _user_course_titles(user_id: str) -> set[str]:
+def _user_enrolled_courses(user_id: str) -> list[dict]:
+    """Get all courses a user is enrolled in via user_courses join."""
     try:
-        rows = table("courses").select(
-            "course_name",
+        rows = table("user_courses").select(
+            "id,course_id,color,nickname,enrolled_at,courses!inner(course_code,course_name,department,school)",
             filters={"user_id": f"eq.{user_id}"},
         )
     except Exception:
-        return set()
-    return {r["course_name"] for r in (rows or []) if r.get("course_name")}
+        return []
+    return rows or []
 
 
-def _filter_course_title_seed_nodes(nodes: list, course_titles: set[str]) -> list:
-    """Remove rows that only duplicated the course hub (concept_name == subject == registered course)."""
-    out = []
-    for n in nodes:
-        subj = (n.get("subject") or "").strip()
-        concept = (n.get("concept_name") or "").strip()
-        if subj and concept == subj and subj in course_titles:
-            continue
-        out.append(n)
-    return out
+def _get_course_nodes(user_id: str, course_id: str) -> list:
+    """Get graph nodes for a specific course."""
+    return table("graph_nodes").select(
+        "*",
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+    ) or []
 
 
 def ensure_user_exists(user_id: str) -> None:
@@ -89,9 +86,14 @@ def _compute_velocity(events: list) -> float:
 
 def get_graph(user_id: str) -> dict:
     ensure_user_exists(user_id)
-    course_titles = _user_course_titles(user_id)
+    
+    # Get all enrolled courses for this user
+    enrolled_courses = _user_enrolled_courses(user_id)
+    course_id_map = {r["course_id"]: r for r in enrolled_courses}
+    
+    # Get all graph nodes for this user
     nodes_raw = table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"})
-    nodes = _filter_course_title_seed_nodes(nodes_raw or [], course_titles)
+    nodes = nodes_raw or []
     node_ids = {n["id"] for n in nodes}
 
     edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
@@ -134,33 +136,40 @@ def get_graph(user_id: str) -> dict:
         "avg_learning_velocity": avg_velocity,
     }
 
-    subject_map: dict = {}
-    for n in nodes:
-        subj = n.get("subject") or "General"
-        subject_map.setdefault(subj, []).append(n)
-
-    for title in course_titles:
-        subject_map.setdefault(title, [])
-
+    # Build subject root hubs from enrolled courses
     subject_nodes = []
     subject_edges = []
-    for subj, subj_nodes in subject_map.items():
-        root_id = f"subject_root__{subj}"
+    
+    for enrollment in enrolled_courses:
+        course_id = enrollment["course_id"]
+        course = enrollment.get("courses", {}) if isinstance(enrollment.get("courses"), dict) else {}
+        course_code = course.get("course_code", "")
+        course_name = course.get("course_name", "")
+        
+        # Use "Course Code - Course Name" as the subject label
+        subject_label = f"{course_code} - {course_name}" if course_code else course_name
+        
+        # Find all nodes belonging to this course
+        subj_nodes = [n for n in nodes if n.get("course_id") == course_id]
+        
+        root_id = f"subject_root__{course_id}"
         if subj_nodes:
             avg_mastery = sum(n["mastery_score"] for n in subj_nodes) / len(subj_nodes)
         else:
             avg_mastery = 0.0
+            
         subject_nodes.append({
             "id": root_id,
             "user_id": user_id,
-            "concept_name": subj,
+            "concept_name": subject_label,
             "mastery_score": round(avg_mastery, 4),
             "mastery_tier": "subject_root",
-            "subject": subj,
+            "course_id": course_id,
             "times_studied": sum(n.get("times_studied", 0) for n in subj_nodes),
             "last_studied_at": None,
             "is_subject_root": True,
         })
+        
         for n in subj_nodes:
             subject_edges.append({
                 "id": f"subject_edge__{root_id}__{n['id']}",
@@ -176,91 +185,123 @@ def get_graph(user_id: str) -> dict:
 # ── Course management ──────────────────────────────────────────────────────────
 
 def get_courses(user_id: str) -> list:
+    """
+    Return user's enrolled courses joined with canonical course data.
+    Returns list of dicts with: enrollment_id, course_id, course_code, course_name, 
+    school, department, color, nickname, node_count, enrolled_at
+    """
     try:
-        rows = table("courses").select(
-            "id,course_name,color,created_at",
+        rows = table("user_courses").select(
+            "id,course_id,color,nickname,enrolled_at,courses!inner(course_code,course_name,school,department)",
             filters={"user_id": f"eq.{user_id}"},
-            order="created_at.asc",
+            order="enrolled_at.asc",
         )
     except Exception:
         return []
+    
     result = []
     for r in rows:
+        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
+        course_id = r["course_id"]
+        
+        # Count nodes for this course
         node_rows = table("graph_nodes").select(
             "id",
-            filters={"user_id": f"eq.{user_id}", "subject": f"eq.{r['course_name']}"},
+            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
         )
+        
         result.append({
-            "id": r["id"],
-            "course_name": r["course_name"],
-            "color": r["color"],
+            "enrollment_id": r["id"],
+            "course_id": course_id,
+            "course_code": course.get("course_code", ""),
+            "course_name": course.get("course_name", ""),
+            "school": course.get("school", ""),
+            "department": course.get("department", ""),
+            "color": r.get("color"),
+            "nickname": r.get("nickname"),
             "node_count": len(node_rows),
-            "created_at": r["created_at"],
+            "enrolled_at": r["enrolled_at"],
         })
     return result
 
 
-def add_course(user_id: str, course_name: str, color: str | None = None) -> dict:
-    existing = table("courses").select(
+def add_course(user_id: str, course_id: str, color: str | None = None, nickname: str | None = None) -> dict:
+    """
+    Enroll a user in a course (insert into user_courses).
+    course_id refers to the canonical courses table.
+    """
+    # Check if already enrolled
+    existing = table("user_courses").select(
         "id",
-        filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{course_name}"},
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
     )
     if existing:
-        return {"course_name": course_name, "already_existed": True}
-    table("courses").insert({
+        return {"course_id": course_id, "already_existed": True}
+    
+    # Verify the course exists in canonical courses
+    course_check = table("courses").select("id", filters={"id": f"eq.{course_id}"})
+    if not course_check:
+        return {"course_id": course_id, "error": "Course not found in catalog"}
+    
+    table("user_courses").insert({
         "id": str(uuid.uuid4()),
         "user_id": user_id,
-        "course_name": course_name,
+        "course_id": course_id,
         "color": color,
+        "nickname": nickname,
     })
-    return {"course_name": course_name, "already_existed": False}
+    return {"course_id": course_id, "already_existed": False}
 
 
-def update_course_color(user_id: str, course_name: str, color: str) -> dict:
-    table("courses").update(
+def update_course_color(user_id: str, course_id: str, color: str) -> dict:
+    """Update the color for a user's course enrollment."""
+    table("user_courses").update(
         {"color": color},
-        filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{course_name}"},
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
     )
     return {"updated": True}
 
 
-def delete_course(user_id: str, course_name: str) -> dict:
-    node_rows = table("graph_nodes").select(
-        "id",
-        filters={"user_id": f"eq.{user_id}", "subject": f"eq.{course_name}"},
+def update_course_nickname(user_id: str, course_id: str, nickname: str) -> dict:
+    """Update the nickname for a user's course enrollment."""
+    table("user_courses").update(
+        {"nickname": nickname},
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
     )
-    node_ids = [n["id"] for n in node_rows]
+    return {"updated": True}
 
-    if node_ids:
-        ids_str = ",".join(node_ids)
-        # Delete all tables that FK-reference graph_nodes before deleting nodes
-        table("quiz_context").delete({"concept_node_id": f"in.({ids_str})"})
-        table("quiz_attempts").delete({"concept_node_id": f"in.({ids_str})"})
-        table("graph_edges").delete({"source_node_id": f"in.({ids_str})"})
-        table("graph_edges").delete({"target_node_id": f"in.({ids_str})"})
-        table("graph_nodes").delete(
-            {"user_id": f"eq.{user_id}", "subject": f"eq.{course_name}"}
-        )
 
-    table("courses").delete(
-        {"user_id": f"eq.{user_id}", "course_name": f"eq.{course_name}"}
+def delete_course(user_id: str, course_id: str) -> dict:
+    """
+    Unenroll a user from a course (delete from user_courses).
+    Note: We don't delete the graph nodes - they remain for potential re-enrollment.
+    """
+    # Just delete the enrollment, not the nodes
+    table("user_courses").delete(
+        {"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
     )
     return {"deleted": True}
 
 
-def apply_graph_update(user_id: str, graph_update: dict) -> list:
-    """Apply a graph_update dict to the DB. Returns mastery_changes list."""
+def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None = None) -> list:
+    """
+    Apply a graph_update dict to the DB. Returns mastery_changes list.
+    If course_id is provided, all new/updated nodes will be associated with that course.
+    """
     mastery_changes = []
-    touched_subjects: set = set()
+    touched_courses: set = set()
 
     for new_node in graph_update.get("new_nodes", []):
         name = new_node.get("concept_name", "")
-        subject = new_node.get("subject", "General")
+        node_course_id = course_id or new_node.get("course_id")
         init_m = float(new_node.get("initial_mastery", 0.0))
+        
+        # Check for existing node by concept_name for this user
         existing = table("graph_nodes").select(
             "id",
             filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{name}"},
         )
+        
         if not existing:
             table("graph_nodes").insert({
                 "id": str(uuid.uuid4()),
@@ -268,17 +309,17 @@ def apply_graph_update(user_id: str, graph_update: dict) -> list:
                 "concept_name": name,
                 "mastery_score": init_m,
                 "mastery_tier": get_mastery_tier(init_m),
-                "subject": subject,
+                "course_id": node_course_id,
                 "mastery_events": [],
             })
-        if subject and subject != "General":
-            touched_subjects.add(subject)
+            if node_course_id:
+                touched_courses.add(node_course_id)
 
     for upd in graph_update.get("updated_nodes", []):
         name = upd.get("concept_name", "")
         delta = float(upd.get("mastery_delta", 0.0))
         rows = table("graph_nodes").select(
-            "id,mastery_score,times_studied,subject,mastery_events",
+            "id,mastery_score,times_studied,course_id,mastery_events",
             filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{name}"},
         )
         if rows:
@@ -306,9 +347,11 @@ def apply_graph_update(user_id: str, graph_update: dict) -> list:
                 filters={"id": f"eq.{row['id']}"},
             )
             mastery_changes.append({"concept": name, "before": before, "after": after})
-            subj = row.get("subject", "")
-            if subj and subj != "General":
-                touched_subjects.add(subj)
+            
+            cid = row.get("course_id")
+            if cid:
+                touched_courses.add(cid)
+                
     if mastery_changes:
         update_streak(user_id)
 
@@ -344,12 +387,12 @@ def apply_graph_update(user_id: str, graph_update: dict) -> list:
                     "relationship_type": relationship_type,
                 })
 
-    # Refresh shared course context for every subject touched in this update
-    if touched_subjects:
+    # Refresh shared course context for every course touched in this update
+    if touched_courses:
         from services.course_context_service import update_course_context
-        for subj in touched_subjects:
+        for cid in touched_courses:
             try:
-                update_course_context(subj)
+                update_course_context(cid)
             except Exception:
                 pass  # never block the main response for a context refresh
 

@@ -39,58 +39,81 @@ MODE_PROMPTS = {
 }
 
 
-def _resolve_course(topic: str, user_id: str) -> str:
-    """Return the subject/course the topic belongs to, or '' if unknown."""
+def _get_course_id_for_topic(topic: str, user_id: str) -> str:
+    """
+    Find the course_id associated with a topic/concept for a user.
+    First checks if topic matches a course_code or course_name,
+    then falls back to finding via graph_nodes.
+    """
     if not topic:
         return ""
     topic_trim = topic.strip()
     if not topic_trim:
         return ""
-    subject_match = table("graph_nodes").select(
-        "subject", filters={"user_id": f"eq.{user_id}", "subject": f"eq.{topic_trim}"}, limit=1
-    )
-    if subject_match:
-        return topic_trim
-    concept_match = table("graph_nodes").select(
-        "subject", filters={"user_id": f"eq.{user_id}", "concept_name": f"eq.{topic_trim}"}, limit=1
-    )
-    if concept_match:
-        return concept_match[0].get("subject") or ""
-    course_match = table("courses").select(
-        "course_name", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{topic_trim}"}, limit=1
-    )
-    if course_match:
-        return topic_trim
+    
+    # First, check if topic matches a course code or name in user's enrolled courses
     try:
-        course_rows = table("courses").select(
-            "course_name",
+        enrolled = table("user_courses").select(
+            "course_id,courses!inner(course_code,course_name)",
             filters={"user_id": f"eq.{user_id}"},
         )
+        for row in enrolled:
+            course = row.get("courses", {}) if isinstance(row.get("courses"), dict) else {}
+            course_code = course.get("course_code", "")
+            course_name = course.get("course_name", "")
+            
+            # Match on course_code (exact or case-insensitive)
+            if topic_trim.upper() == course_code.upper():
+                return row["course_id"]
+            # Match on course_name
+            if topic_trim.lower() == course_name.lower():
+                return row["course_id"]
     except Exception:
-        course_rows = []
-    for row in course_rows or []:
-        cn = row.get("course_name") or ""
-        if cn.lower() == topic_trim.lower():
-            return cn
+        pass
+    
+    # Fallback: find via graph_nodes - look for nodes matching topic
+    # that have a course_id
+    node_rows = table("graph_nodes").select(
+        "course_id",
+        filters={
+            "user_id": f"eq.{user_id}",
+            "concept_name": f"eq.{topic_trim}",
+        },
+        limit=10,
+    )
+    for row in (node_rows or []):
+        if row.get("course_id"):
+            return row["course_id"]
+    
+    # Try matching on subject field (legacy support)
+    subject_rows = table("graph_nodes").select(
+        "course_id",
+        filters={
+            "user_id": f"eq.{user_id}",
+            "subject": f"eq.{topic_trim}",
+        },
+        limit=1,
+    )
+    for row in (subject_rows or []):
+        if row.get("course_id"):
+            return row["course_id"]
+    
     return ""
 
 
-def _get_session_topic(session_id: str) -> str:
-    rows = table("sessions").select("topic", filters={"id": f"eq.{session_id}"}, limit=1)
-    return rows[0]["topic"] if rows else ""
+def _get_session_course_id(session_id: str) -> str:
+    """Get the course_id from a session if it exists."""
+    rows = table("sessions").select("course_id", filters={"id": f"eq.{session_id}"}, limit=1)
+    if rows and rows[0].get("course_id"):
+        return rows[0]["course_id"]
+    return ""
 
 
-def _get_course_documents(user_id: str, course_name: str) -> list:
+def _get_course_documents(user_id: str, course_id: str) -> list:
     """Fetch uploaded document summaries and key takeaways for a user's course."""
-    if not course_name:
+    if not course_id:
         return []
     try:
-        course_rows = table("courses").select(
-            "id", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{course_name}"}, limit=1
-        )
-        if not course_rows:
-            return []
-        course_id = course_rows[0]["id"]
         docs = table("documents").select(
             "file_name,category,summary,key_takeaways",
             filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
@@ -100,12 +123,32 @@ def _get_course_documents(user_id: str, course_name: str) -> list:
         return []
 
 
+def _get_course_info(course_id: str) -> dict:
+    """Get course info (code and name) for a course_id."""
+    if not course_id:
+        return {"course_code": "", "course_name": ""}
+    try:
+        rows = table("courses").select(
+            "course_code,course_name",
+            filters={"id": f"eq.{course_id}"},
+            limit=1,
+        )
+        if rows:
+            return {
+                "course_code": rows[0].get("course_code", ""),
+                "course_name": rows[0].get("course_name", ""),
+            }
+    except Exception:
+        pass
+    return {"course_code": "", "course_name": ""}
+
+
 def build_system_prompt(
     mode: str,
     student_name: str,
     graph_json: str,
     last_summary: str = "",
-    course_name: str = "",
+    course_id: str = "",
     use_shared_context: bool = True,
     documents: list | None = None,
 ) -> str:
@@ -133,12 +176,14 @@ def build_system_prompt(
                 + "\n\n---\n\n".join(doc_blocks)
             )
 
-    if use_shared_context and course_name:
-        ctx = get_course_context(course_name)
+    if use_shared_context and course_id:
+        ctx = get_course_context(course_id)
         if ctx:
+            course_info = _get_course_info(course_id)
+            course_label = f"{course_info['course_code']} - {course_info['course_name']}" if course_info['course_code'] else course_info['course_name']
             shared_block = (
                 SHARED_CONTEXT_TEMPLATE
-                .replace("{course_name}", course_name)
+                .replace("{course_name}", course_label)
                 .replace("{shared_context_json}", json.dumps(ctx, indent=2))
             )
             parts.append(shared_block)
@@ -179,12 +224,18 @@ def _consume_pending(session_id: str, user_id: str) -> None:
     pending = PENDING_SESSIONS.pop(session_id)
     if pending["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Session user mismatch")
-    table("sessions").insert({
+    
+    # Include course_id in session creation
+    session_data = {
         "id": session_id,
         "user_id": user_id,
         "mode": pending["mode"],
         "topic": pending["topic"],
-    })
+    }
+    if pending.get("course_id"):
+        session_data["course_id"] = pending["course_id"]
+    
+    table("sessions").insert(session_data)
     save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
 
 
@@ -199,11 +250,14 @@ def start_session(body: StartSessionBody):
 
     student_name = get_user_name(body.user_id)
     graph_data = get_graph(body.user_id)
-    course_name = _resolve_course(body.topic, body.user_id)
-    documents = _get_course_documents(body.user_id, course_name)
+    
+    # Use course_id from body, or try to resolve from topic
+    course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
+    documents = _get_course_documents(body.user_id, course_id)
+    
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
-        course_name=course_name, use_shared_context=body.use_shared_context,
+        course_id=course_id, use_shared_context=body.use_shared_context,
         documents=documents,
     )
     user_message = (
@@ -217,11 +271,13 @@ def start_session(body: StartSessionBody):
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
     reply, graph_update = extract_graph_update(raw)
-    apply_graph_update(body.user_id, graph_update)
+    apply_graph_update(body.user_id, graph_update, course_id=course_id)
+    
     PENDING_SESSIONS[session_id] = {
         "user_id": body.user_id,
         "mode": body.mode,
         "topic": body.topic,
+        "course_id": course_id,
         "use_shared_context": body.use_shared_context,
         "assistant_reply": reply,
         "graph_update": graph_update,
@@ -243,12 +299,14 @@ def chat(body: ChatBody):
     graph_data = get_graph(body.user_id)
     # Exclude the just-saved user message so history is prior turns only
     history = get_conversation_history(body.session_id)[:-1]
-    topic = _get_session_topic(body.session_id)
-    course_name = _resolve_course(topic, body.user_id)
-    documents = _get_course_documents(body.user_id, course_name)
+    
+    # Get course_id from session if available
+    course_id = _get_session_course_id(body.session_id)
+    documents = _get_course_documents(body.user_id, course_id)
+    
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
-        course_name=course_name, use_shared_context=body.use_shared_context,
+        course_id=course_id, use_shared_context=body.use_shared_context,
         documents=documents,
     )
 
@@ -259,7 +317,7 @@ def chat(body: ChatBody):
 
     reply, graph_update = extract_graph_update(raw)
     save_message(body.session_id, "assistant", reply, graph_update)
-    mastery_changes = apply_graph_update(body.user_id, graph_update)
+    mastery_changes = apply_graph_update(body.user_id, graph_update, course_id=course_id)
 
     return {"reply": reply, "graph_update": graph_update, "mastery_changes": mastery_changes}
 
@@ -270,7 +328,7 @@ def end_session(body: EndSessionBody):
         pending = PENDING_SESSIONS[body.session_id]
         if body.user_id and pending["user_id"] != body.user_id:
             raise HTTPException(status_code=403, detail="Session user mismatch")
-        PENDING_SESSIONS.pop(body.session_id, None)
+        PENDING_SESSIONS.pop(session_id, None)
         empty = {
             "concepts_covered": [],
             "mastery_changes": [],
@@ -349,6 +407,7 @@ def list_sessions(user_id: str, limit: int = 10):
             "id": s["id"],
             "topic": s["topic"],
             "mode": s["mode"],
+            "course_id": s.get("course_id"),
             "started_at": s["started_at"],
             "ended_at": s.get("ended_at"),
             "message_count": len(msgs),
@@ -381,6 +440,7 @@ def resume_session(session_id: str):
                 "user_id": p["user_id"],
                 "topic": p["topic"],
                 "mode": p["mode"],
+                "course_id": p.get("course_id"),
                 "started_at": now,
                 "ended_at": None,
             },
@@ -395,7 +455,7 @@ def resume_session(session_id: str):
         }
 
     session_rows = table("sessions").select(
-        "id,user_id,topic,mode,started_at,ended_at",
+        "id,user_id,topic,mode,started_at,ended_at,course_id",
         filters={"id": f"eq.{session_id}"},
     )
     if not session_rows:
@@ -424,12 +484,14 @@ def action(body: ActionBody):
     student_name = get_user_name(body.user_id)
     graph_data = get_graph(body.user_id)
     history = get_conversation_history(body.session_id)
-    topic = _get_session_topic(body.session_id)
-    course_name = _resolve_course(topic, body.user_id)
-    documents = _get_course_documents(body.user_id, course_name)
+    
+    # Get course_id from session
+    course_id = _get_session_course_id(body.session_id)
+    documents = _get_course_documents(body.user_id, course_id)
+    
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
-        course_name=course_name, use_shared_context=body.use_shared_context,
+        course_id=course_id, use_shared_context=body.use_shared_context,
         documents=documents,
     )
     action_message = f"[ACTION: {action_prompts.get(body.action_type, '')}]"
@@ -441,7 +503,7 @@ def action(body: ActionBody):
 
     reply, graph_update = extract_graph_update(raw)
     save_message(body.session_id, "assistant", reply, graph_update)
-    apply_graph_update(body.user_id, graph_update)
+    apply_graph_update(body.user_id, graph_update, course_id=course_id)
     return {"reply": reply, "graph_update": graph_update}
 
 
@@ -449,7 +511,12 @@ def action(body: ActionBody):
 def mode_switch(body: ModeSwitchBody):
     _ensure_session_ready(body.session_id, body.user_id)
     student_name = get_user_name(body.user_id).split()[0]
-    topic = _get_session_topic(body.session_id)
+    topic = table("sessions").select(
+        "topic", filters={"id": f"eq.{body.session_id}"}, limit=1
+    )[0]["topic"] if table("sessions").select(
+        "topic", filters={"id": f"eq.{body.session_id}"}, limit=1
+    ) else "this topic"
+    
     mode_label = MODE_DISPLAY_NAMES.get(body.new_mode, body.new_mode)
 
     reply = (
