@@ -5,6 +5,11 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
+// If NEXT_PUBLIC_API_URL is not configured, falling back to a relative
+// "/api/auth/google" would 404 (it's a backend endpoint, not a frontend
+// route). Sending the user to "/signin" is the only safe client-resolvable
+// recovery, since the middleware handles re-launching OAuth from there.
+const TRY_AGAIN_HREF = API_URL ? `${API_URL}/api/auth/google` : '/signin';
 
 function CallbackInner() {
   const searchParams = useSearchParams();
@@ -67,7 +72,7 @@ function CallbackInner() {
       }}>
         <p style={{ color: '#374151', fontSize: '15px', textAlign: 'center' }}>{errorMsg}</p>
         <a
-          href={`${API_URL}/api/auth/google`}
+          href={TRY_AGAIN_HREF}
           style={{
             padding: '10px 24px',
             background: '#1a5c2a',

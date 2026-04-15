@@ -13,12 +13,14 @@ async function verifyAuthToken(token: string): Promise<string | null> {
   const payloadB64 = token.slice(0, dot);
   const sigB64 = token.slice(dot + 1);
   try {
-    // Re-pad base64url and convert to bytes for sig comparison
-    function b64urlToBytes(s: string): Uint8Array {
+    // Re-pad base64url and convert to bytes for sig comparison.
+    // Returns Uint8Array<ArrayBuffer> (concrete) so it satisfies BufferSource.
+    function b64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
       const padded = s.replace(/-/g, '+').replace(/_/g, '/');
       const pad = '='.repeat((4 - (padded.length % 4)) % 4);
       const binary = atob(padded + pad);
-      const bytes = new Uint8Array(binary.length);
+      const buf = new ArrayBuffer(binary.length);
+      const bytes = new Uint8Array(buf);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
       return bytes;
     }
