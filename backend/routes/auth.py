@@ -8,7 +8,9 @@ Restricts sign-in to @bu.edu email accounts only.
 import json
 import base64
 import hashlib
+import hmac as _hmac
 import secrets
+import time as _time
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query
@@ -20,6 +22,7 @@ from config import (
     GOOGLE_AUTH_REDIRECT_URI,
     AUTH_SCOPES,
     FRONTEND_URL,
+    SESSION_SECRET,
 )
 from db.connection import table
 
@@ -177,11 +180,21 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
     if not is_approved:
         return RedirectResponse(f"{FRONTEND_URL}/pending")
 
-    # Redirect to frontend with user info
+    # Build a short-lived HMAC token so the frontend can verify this redirect
+    # without a second round-trip to the backend.
+    auth_token = ""
+    if SESSION_SECRET:
+        payload = json.dumps({"user_id": user_id, "exp": int(_time.time()) + 300}).encode()
+        payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+        sig_bytes = _hmac.new(SESSION_SECRET.encode(), payload_b64.encode(), hashlib.sha256).digest()
+        sig_b64 = base64.urlsafe_b64encode(sig_bytes).decode().rstrip("=")
+        auth_token = f"{payload_b64}.{sig_b64}"
+
     params = urlencode({
         "user_id": user_id,
         "name": name,
         "avatar": avatar_url,
         "is_approved": "true",
+        **({"auth_token": auth_token} if auth_token else {}),
     })
     return RedirectResponse(f"{FRONTEND_URL}/signin/callback?{params}")
