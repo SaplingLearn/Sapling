@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, Suspense } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 
@@ -8,6 +8,7 @@ function CallbackInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { setActiveUser, confirmApproved } = useUser();
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const userId = searchParams.get('user_id');
@@ -31,14 +32,49 @@ function CallbackInner() {
         if (res.ok) {
           confirmApproved();
           router.replace('/dashboard');
+        } else if (res.status === 403) {
+          router.replace('/pending');
         } else {
-          router.replace('/signin');
+          setErrorMsg('Unable to complete sign-in. Please try again.');
         }
+      }).catch(() => {
+        setErrorMsg('Unable to reach the server. Please try again.');
       });
     } else {
-      router.replace('/signin');
+      setErrorMsg('Sign-in failed. Please try again.');
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (errorMsg) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        gap: '16px',
+        background: '#f0f5f0',
+        padding: '24px',
+      }}>
+        <p style={{ color: '#374151', fontSize: '15px', textAlign: 'center' }}>{errorMsg}</p>
+        <a
+          href="/api/auth/google"
+          style={{
+            padding: '10px 24px',
+            background: '#1a5c2a',
+            color: '#fff',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: 500,
+            textDecoration: 'none',
+          }}
+        >
+          Try again
+        </a>
+      </div>
+    );
+  }
 
   return (
     <div style={{
