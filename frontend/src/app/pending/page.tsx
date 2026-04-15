@@ -8,8 +8,11 @@ export default function PendingPage() {
 
   async function handleSignOut() {
     localStorage.removeItem('sapling_user');
-    await fetch('/api/auth/session', { method: 'DELETE' });
-    router.replace('/signin');
+    try {
+      await fetch('/api/auth/session', { method: 'DELETE' });
+    } finally {
+      router.replace('/signin');
+    }
   }
 
   return (

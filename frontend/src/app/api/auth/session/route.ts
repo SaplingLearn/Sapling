@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { signSession, SESSION_MAX_AGE } from '@/lib/sessionToken';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export async function POST(request: NextRequest) {
+  if (!API_URL) {
+    return NextResponse.json({ error: 'NEXT_PUBLIC_API_URL not configured' }, { status: 500 });
+  }
+
   const { userId } = await request.json();
   if (!userId || typeof userId !== 'string') {
     return NextResponse.json({ error: 'Missing userId' }, { status: 400 });
@@ -12,7 +16,14 @@ export async function POST(request: NextRequest) {
   // Verify with the backend that the user exists and is approved.
   let approved = false;
   try {
-    const res = await fetch(`${API_URL}/auth/me?user_id=${encodeURIComponent(userId)}`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}/auth/me?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!res.ok) {
       return NextResponse.json({ error: 'User not found' }, { status: 401 });
     }

@@ -89,10 +89,10 @@ export default function Navbar() {
     }
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     setMenuOpen(false);
     setMobileNavOpen(false);
-    signOut();
+    await signOut();
     router.push('/');
   };
 

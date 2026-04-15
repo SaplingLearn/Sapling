@@ -3,17 +3,19 @@ export const SESSION_MAX_AGE = 2592000; // 30 days in seconds
 function getSecret(): string {
   const secret = process.env.SESSION_SECRET;
   if (!secret) throw new Error('SESSION_SECRET env var is not set');
+  if (new TextEncoder().encode(secret).byteLength < 32)
+    throw new Error('SESSION_SECRET must be at least 32 bytes long');
   return secret;
 }
 
-function toBase64Url(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
+function toBase64Url(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
-function fromBase64Url(str: string): Uint8Array {
+function fromBase64Url(str: string): Uint8Array<ArrayBuffer> {
   const padded = str.replace(/-/g, '+').replace(/_/g, '/');
   const padding = '='.repeat((4 - (padded.length % 4)) % 4);
   const binary = atob(padded + padding);

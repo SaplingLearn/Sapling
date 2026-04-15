@@ -19,7 +19,7 @@ interface UserContextValue {
   isApproved: boolean;
   setActiveUser: (id: string, name: string, avatar?: string) => void;
   confirmApproved: () => void;
-  signOut: () => void;
+  signOut: () => Promise<void>;
 }
 
 const UserContext = createContext<UserContextValue>({
@@ -32,7 +32,7 @@ const UserContext = createContext<UserContextValue>({
   isApproved: false,
   setActiveUser: () => {},
   confirmApproved: () => {},
-  signOut: () => {},
+  signOut: () => Promise.resolve(),
 });
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
@@ -89,14 +89,17 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const confirmApproved = () => setIsApproved(true);
 
-  const signOut = () => {
-    setUserId('');
-    setUserName('');
-    setAvatarUrl('');
-    setIsAuthenticated(false);
-    setIsApproved(false);
-    localStorage.removeItem('sapling_user');
-    fetch('/api/auth/session', { method: 'DELETE' });
+  const signOut = async () => {
+    try {
+      await fetch('/api/auth/session', { method: 'DELETE' });
+    } finally {
+      setUserId('');
+      setUserName('');
+      setAvatarUrl('');
+      setIsAuthenticated(false);
+      setIsApproved(false);
+      localStorage.removeItem('sapling_user');
+    }
   };
 
   const value = useMemo(
