@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { X, ChevronRight, ChevronLeft, XCircle } from 'lucide-react';
 
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+
 const STEPS = [
   { id: 'google',   label: 'Account',        color: '#9CA3AF' },
   { id: 'name',     label: 'Name',           color: '#D97706' },
@@ -192,7 +194,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
 
   function handleGoogleSignIn() {
     sessionStorage.setItem('sapling_onboarding_pending', 'true');
-    window.location.href = '/api/auth/google';
+    window.location.href = `${API_URL}/api/auth/google`;
   }
 
   function handleNext() {
