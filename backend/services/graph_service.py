@@ -89,7 +89,6 @@ def get_graph(user_id: str) -> dict:
     
     # Get all enrolled courses for this user
     enrolled_courses = _user_enrolled_courses(user_id)
-    course_id_map = {r["course_id"]: r for r in enrolled_courses}
     
     # Get all graph nodes for this user
     nodes_raw = table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"})
@@ -250,6 +249,11 @@ def add_course(user_id: str, course_id: str, color: str | None = None, nickname:
         "color": color,
         "nickname": nickname,
     })
+    try:
+        from services.course_context_service import update_course_context
+        update_course_context(course_id)
+    except Exception:
+        pass
     return {"course_id": course_id, "already_existed": False}
 
 
@@ -280,6 +284,11 @@ def delete_course(user_id: str, course_id: str) -> dict:
     table("user_courses").delete(
         {"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
     )
+    try:
+        from services.course_context_service import update_course_context
+        update_course_context(course_id)
+    except Exception:
+        pass
     return {"deleted": True}
 
 

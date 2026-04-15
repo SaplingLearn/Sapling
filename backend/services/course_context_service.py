@@ -106,7 +106,7 @@ def get_course_context(course_id: str) -> dict:
         return {}
 
 
-def update_course_context(course_id: str, semester: str = "Spring 2026") -> None:
+def update_course_context(course_id: str) -> None:
     """
     Aggregate mastery + quiz data for all students enrolled in the course and upsert
     into course_concept_stats and course_summary tables.
@@ -121,17 +121,21 @@ def update_course_context(course_id: str, semester: str = "Spring 2026") -> None
         filters={"course_id": f"eq.{course_id}"},
     )
     if not enrollment_rows:
-        return  # No students enrolled, nothing to aggregate
-    
+        # No students enrolled — purge any stale aggregates
+        table("course_concept_stats").delete({"course_id": f"eq.{course_id}"})
+        table("course_summary").delete({"course_id": f"eq.{course_id}"})
+        return
+
     user_ids = [r["user_id"] for r in enrollment_rows]
     student_count = len(user_ids)
 
-    # ── 2. Get course info for the summary ────────────────────────────────────
+    # ── 2. Get course info (including canonical semester) for the summary ──────
     course_rows = table("courses").select(
-        "course_code,course_name",
+        "course_code,course_name,semester",
         filters={"id": f"eq.{course_id}"},
     )
-    course_info = course_rows[0] if course_rows else {"course_code": "", "course_name": ""}
+    course_info = course_rows[0] if course_rows else {"course_code": "", "course_name": "", "semester": "Spring 2026"}
+    semester = course_info.get("semester") or "Spring 2026"
 
     # ── 3. All graph nodes for this course across every enrolled student ──────
     # Build user_id filter for PostgREST
