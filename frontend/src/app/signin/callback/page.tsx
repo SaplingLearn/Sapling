@@ -7,7 +7,7 @@ import { useUser } from '@/context/UserContext';
 function CallbackInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { setActiveUser } = useUser();
+  const { setActiveUser, confirmApproved } = useUser();
 
   useEffect(() => {
     const userId = searchParams.get('user_id');
@@ -22,12 +22,19 @@ function CallbackInner() {
     }
 
     if (userId && name) {
-      setActiveUser(userId, name, avatar || '', true);
+      setActiveUser(userId, name, avatar || '');
       fetch('/api/auth/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId }),
-      }).then(() => router.replace('/dashboard'));
+      }).then(res => {
+        if (res.ok) {
+          confirmApproved();
+          router.replace('/dashboard');
+        } else {
+          router.replace('/signin');
+        }
+      });
     } else {
       router.replace('/signin');
     }

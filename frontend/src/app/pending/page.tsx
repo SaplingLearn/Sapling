@@ -1,26 +1,14 @@
 'use client';
 
-import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 
 export default function PendingPage() {
   const router = useRouter();
 
-  useEffect(() => {
-    const approved = document.cookie
-      .split('; ')
-      .find(row => row.startsWith('sapling_approved='))
-      ?.split('=')[1];
-    if (approved === '1') {
-      router.replace('/dashboard');
-    }
-  }, [router]);
-
-  function handleSignOut() {
+  async function handleSignOut() {
     localStorage.removeItem('sapling_user');
-    document.cookie = 'sapling_approved=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'sapling_uid=; path=/; max-age=0; SameSite=Lax';
+    await fetch('/api/auth/session', { method: 'DELETE' });
     router.replace('/signin');
   }
 

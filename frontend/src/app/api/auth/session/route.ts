@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { signSession, SESSION_MAX_AGE } from '@/lib/sessionToken';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
-const SESSION_MAX_AGE = 2592000; // 30 days
 
 export async function POST(request: NextRequest) {
   const { userId } = await request.json();
@@ -26,14 +26,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Not approved' }, { status: 403 });
   }
 
+  const token = await signSession(userId);
   const response = NextResponse.json({ ok: true });
-  response.cookies.set('sapling_session', userId, {
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: SESSION_MAX_AGE,
-  });
-  response.cookies.set('sapling_approved', '1', {
+  response.cookies.set('sapling_session', token, {
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
@@ -45,6 +40,5 @@ export async function POST(request: NextRequest) {
 export async function DELETE() {
   const response = NextResponse.json({ ok: true });
   response.cookies.set('sapling_session', '', { httpOnly: true, maxAge: 0, path: '/' });
-  response.cookies.set('sapling_approved', '', { httpOnly: true, maxAge: 0, path: '/' });
   return response;
 }

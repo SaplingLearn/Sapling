@@ -17,7 +17,8 @@ interface UserContextValue {
   userReady: boolean;
   isAuthenticated: boolean;
   isApproved: boolean;
-  setActiveUser: (id: string, name: string, avatar?: string, approved?: boolean) => void;
+  setActiveUser: (id: string, name: string, avatar?: string) => void;
+  confirmApproved: () => void;
   signOut: () => void;
 }
 
@@ -30,6 +31,7 @@ const UserContext = createContext<UserContextValue>({
   isAuthenticated: false,
   isApproved: false,
   setActiveUser: () => {},
+  confirmApproved: () => {},
   signOut: () => {},
 });
 
@@ -49,12 +51,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem('sapling_user');
     if (saved) {
       try {
-        const { id, name, avatar, isApproved: savedApproved } = JSON.parse(saved);
+        const { id, name, avatar } = JSON.parse(saved);
         setUserId(id);
         setUserName(name);
         if (avatar) setAvatarUrl(avatar);
         setIsAuthenticated(true);
-        setIsApproved(savedApproved === true);
       } catch {}
     }
     setUserReady(true);
@@ -78,14 +79,15 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, []);
 
-  const setActiveUser = (id: string, name: string, avatar?: string, approved?: boolean) => {
+  const setActiveUser = (id: string, name: string, avatar?: string) => {
     setUserId(id);
     setUserName(name);
     if (avatar) setAvatarUrl(avatar);
     setIsAuthenticated(true);
-    setIsApproved(approved === true);
-    localStorage.setItem('sapling_user', JSON.stringify({ id, name, avatar: avatar || '', isApproved: approved === true }));
+    localStorage.setItem('sapling_user', JSON.stringify({ id, name, avatar: avatar || '' }));
   };
+
+  const confirmApproved = () => setIsApproved(true);
 
   const signOut = () => {
     setUserId('');
@@ -98,7 +100,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   };
 
   const value = useMemo(
-    () => ({ userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved, setActiveUser, signOut }),
+    () => ({ userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved, setActiveUser, confirmApproved, signOut }),
     [userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved]
   );
 
