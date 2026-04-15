@@ -16,8 +16,10 @@ interface UserContextValue {
    *  never fire with the hardcoded default user before we know the real one. */
   userReady: boolean;
   isAuthenticated: boolean;
+  isApproved: boolean;
   setActiveUser: (id: string, name: string, avatar?: string) => void;
-  signOut: () => void;
+  confirmApproved: () => void;
+  signOut: () => Promise<void>;
 }
 
 const UserContext = createContext<UserContextValue>({
@@ -27,8 +29,10 @@ const UserContext = createContext<UserContextValue>({
   users: [],
   userReady: false,
   isAuthenticated: false,
+  isApproved: false,
   setActiveUser: () => {},
-  signOut: () => {},
+  confirmApproved: () => {},
+  signOut: () => Promise.resolve(),
 });
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
@@ -37,6 +41,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [avatarUrl, setAvatarUrl] = useState('');
   const [users, setUsers] = useState<UserOption[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isApproved, setIsApproved] = useState(false);
   // Becomes true after localStorage is read — prevents pages from fetching
   // data with the hardcoded default before the real saved user is known.
   const [userReady, setUserReady] = useState(false);
@@ -82,17 +87,24 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('sapling_user', JSON.stringify({ id, name, avatar: avatar || '' }));
   };
 
-  const signOut = () => {
-    setUserId('');
-    setUserName('');
-    setAvatarUrl('');
-    setIsAuthenticated(false);
-    localStorage.removeItem('sapling_user');
+  const confirmApproved = () => setIsApproved(true);
+
+  const signOut = async () => {
+    try {
+      await fetch('/api/auth/session', { method: 'DELETE' });
+    } finally {
+      setUserId('');
+      setUserName('');
+      setAvatarUrl('');
+      setIsAuthenticated(false);
+      setIsApproved(false);
+      localStorage.removeItem('sapling_user');
+    }
   };
 
   const value = useMemo(
-    () => ({ userId, userName, avatarUrl, users, userReady, isAuthenticated, setActiveUser, signOut }),
-    [userId, userName, avatarUrl, users, userReady, isAuthenticated]
+    () => ({ userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved, setActiveUser, confirmApproved, signOut }),
+    [userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved]
   );
 
   return (

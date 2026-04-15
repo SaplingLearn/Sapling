@@ -10,11 +10,12 @@ CREATE TABLE IF NOT EXISTS users (
     email            TEXT,
     streak_count     INTEGER DEFAULT 0,
     last_active_date TEXT,
-    room_id          TEXT,
-    created_at       TIMESTAMPTZ DEFAULT now(),
-    google_id        TEXT UNIQUE,
-    avatar_url       TEXT,
-    auth_provider    TEXT DEFAULT 'google'
+    room_id     TEXT,
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    google_id   TEXT UNIQUE,
+    avatar_url  TEXT,
+    auth_provider TEXT DEFAULT 'google',
+    is_approved BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);

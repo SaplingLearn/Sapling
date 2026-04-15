@@ -7,18 +7,36 @@ import { useUser } from '@/context/UserContext';
 function CallbackInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { setActiveUser } = useUser();
+  const { setActiveUser, confirmApproved } = useUser();
 
   useEffect(() => {
     const userId = searchParams.get('user_id');
     const name = searchParams.get('name');
     const avatar = searchParams.get('avatar');
+    const isApproved = searchParams.get('is_approved') === 'true';
+    const error = searchParams.get('error');
+
+    if (error === 'not_approved' || !isApproved) {
+      router.replace('/pending');
+      return;
+    }
 
     if (userId && name) {
       setActiveUser(userId, name, avatar || '');
-      router.replace('/');
+      fetch('/api/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      }).then(res => {
+        if (res.ok) {
+          confirmApproved();
+          router.replace('/dashboard');
+        } else {
+          router.replace('/signin');
+        }
+      });
     } else {
-      router.replace('/');
+      router.replace('/signin');
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
