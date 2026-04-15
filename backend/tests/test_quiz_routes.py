@@ -7,6 +7,7 @@ Covers:
 - POST /api/quiz/submit — 404 when quiz not found
 """
 import pytest
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
@@ -98,51 +99,50 @@ def _make_table(questions=None):
     return factory
 
 
+@contextmanager
+def _submit_quiz_mocks(questions=None):
+    with (
+        patch("routes.quiz.table", side_effect=_make_table(questions)),
+        patch("routes.quiz.update_streak"),
+        patch("routes.quiz.get_quiz_context", return_value={}),
+        patch("routes.quiz.call_gemini_json", return_value={}),
+    ):
+        yield
+
+
 class TestSubmitQuiz:
     def test_all_correct_returns_full_score(self):
-        with patch("routes.quiz.table", side_effect=_make_table()):
-            with patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": [], "stats": {}}):
-                with patch("routes.quiz.get_quiz_context", return_value={}):
-                    with patch("routes.quiz.call_gemini_json", return_value={}):
-                        r = client.post("/api/quiz/submit", json={
-                            "quiz_id": "quiz1",
-                            "answers": [
-                                {"question_id": 1, "selected_label": "A"},
-                                {"question_id": 2, "selected_label": "D"},
-                            ],
-                        })
-
+        with _submit_quiz_mocks():
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
         assert r.status_code == 200
         data = r.json()
         assert data["score"] == 2
         assert data["total"] == 2
 
     def test_all_wrong_returns_zero_score(self):
-        with patch("routes.quiz.table", side_effect=_make_table()):
-            with patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": [], "stats": {}}):
-                with patch("routes.quiz.get_quiz_context", return_value={}):
-                    with patch("routes.quiz.call_gemini_json", return_value={}):
-                        r = client.post("/api/quiz/submit", json={
-                            "quiz_id": "quiz1",
-                            "answers": [
-                                {"question_id": 1, "selected_label": "B"},
-                                {"question_id": 2, "selected_label": "C"},
-                            ],
-                        })
-
+        with _submit_quiz_mocks():
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "B"},
+                    {"question_id": 2, "selected_label": "C"},
+                ],
+            })
         assert r.status_code == 200
         assert r.json()["score"] == 0
 
     def test_result_shape_contains_required_fields(self):
-        with patch("routes.quiz.table", side_effect=_make_table()):
-            with patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": [], "stats": {}}):
-                with patch("routes.quiz.get_quiz_context", return_value={}):
-                    with patch("routes.quiz.call_gemini_json", return_value={}):
-                        r = client.post("/api/quiz/submit", json={
-                            "quiz_id": "quiz1",
-                            "answers": [{"question_id": 1, "selected_label": "A"}],
-                        })
-
+        with _submit_quiz_mocks():
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [{"question_id": 1, "selected_label": "A"}],
+            })
         data = r.json()
         assert "score" in data
         assert "total" in data
@@ -151,52 +151,40 @@ class TestSubmitQuiz:
         assert "results" in data
 
     def test_each_result_has_correct_flag(self):
-        with patch("routes.quiz.table", side_effect=_make_table()):
-            with patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": [], "stats": {}}):
-                with patch("routes.quiz.get_quiz_context", return_value={}):
-                    with patch("routes.quiz.call_gemini_json", return_value={}):
-                        r = client.post("/api/quiz/submit", json={
-                            "quiz_id": "quiz1",
-                            "answers": [
-                                {"question_id": 1, "selected_label": "A"},  # correct
-                                {"question_id": 2, "selected_label": "C"},  # wrong
-                            ],
-                        })
-
+        with _submit_quiz_mocks():
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},  # correct
+                    {"question_id": 2, "selected_label": "C"},  # wrong
+                ],
+            })
         results = r.json()["results"]
         correct_flags = {str(res["question_id"]): res["correct"] for res in results}
         assert correct_flags["1"] is True
         assert correct_flags["2"] is False
 
     def test_mastery_after_is_higher_on_perfect_score(self):
-        with patch("routes.quiz.table", side_effect=_make_table()):
-            with patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": [], "stats": {}}):
-                with patch("routes.quiz.get_quiz_context", return_value={}):
-                    with patch("routes.quiz.call_gemini_json", return_value={}):
-                        r = client.post("/api/quiz/submit", json={
-                            "quiz_id": "quiz1",
-                            "answers": [
-                                {"question_id": 1, "selected_label": "A"},
-                                {"question_id": 2, "selected_label": "D"},
-                            ],
-                        })
-
+        with _submit_quiz_mocks():
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
         data = r.json()
         assert data["mastery_after"] > data["mastery_before"]
 
     def test_mastery_after_is_lower_on_zero_score(self):
-        with patch("routes.quiz.table", side_effect=_make_table()):
-            with patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": [], "stats": {}}):
-                with patch("routes.quiz.get_quiz_context", return_value={}):
-                    with patch("routes.quiz.call_gemini_json", return_value={}):
-                        r = client.post("/api/quiz/submit", json={
-                            "quiz_id": "quiz1",
-                            "answers": [
-                                {"question_id": 1, "selected_label": "B"},
-                                {"question_id": 2, "selected_label": "C"},
-                            ],
-                        })
-
+        with _submit_quiz_mocks():
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "B"},
+                    {"question_id": 2, "selected_label": "C"},
+                ],
+            })
         data = r.json()
         assert data["mastery_after"] < data["mastery_before"]
 
@@ -233,7 +221,7 @@ class TestSubmitQuiz:
             return mock
 
         with patch("routes.quiz.table", side_effect=factory):
-            with patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": [], "stats": {}}):
+            with patch("routes.quiz.update_streak"):
                 with patch("routes.quiz.get_quiz_context", return_value={}):
                     with patch("routes.quiz.call_gemini_json", return_value={}):
                         r = client.post("/api/quiz/submit", json={
