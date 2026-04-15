@@ -2,17 +2,15 @@
 
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import { useUser } from '@/context/UserContext';
 
 export default function PendingPage() {
   const router = useRouter();
+  const { signOut } = useUser();
 
   async function handleSignOut() {
-    localStorage.removeItem('sapling_user');
-    try {
-      await fetch('/api/auth/session', { method: 'DELETE' });
-    } finally {
-      router.replace('/signin');
-    }
+    await signOut();
+    router.replace('/signin');
   }
 
   return (

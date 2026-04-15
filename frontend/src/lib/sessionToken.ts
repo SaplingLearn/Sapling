@@ -32,7 +32,6 @@ async function importKey(): Promise<CryptoKey> {
 export async function signSession(userId: string): Promise<string> {
   const payload = JSON.stringify({
     userId,
-    approved: true,
     exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE,
   });
   const payloadB64 = toBase64Url(new TextEncoder().encode(payload));
@@ -43,7 +42,7 @@ export async function signSession(userId: string): Promise<string> {
 
 export async function verifySession(
   token: string,
-): Promise<{ userId: string; approved: boolean } | null> {
+): Promise<{ userId: string } | null> {
   const dot = token.lastIndexOf('.');
   if (dot < 0) return null;
   const payloadB64 = token.slice(0, dot);
@@ -60,7 +59,7 @@ export async function verifySession(
     const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(payloadB64)));
     if (typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000)) return null;
     if (typeof payload.userId !== 'string') return null;
-    return { userId: payload.userId, approved: payload.approved === true };
+    return { userId: payload.userId };
   } catch {
     return null;
   }
