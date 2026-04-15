@@ -1,7 +1,10 @@
-import { NextResponse } from 'next/server';
-
 export const dynamic = 'force-static';
 
 export async function GET() {
-  return NextResponse.redirect('/?error=auth_callback_not_supported');
+  return new Response('Static export build: Google auth callback is handled by the backend redirect.', {
+    status: 410,
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+    },
+  });
 }

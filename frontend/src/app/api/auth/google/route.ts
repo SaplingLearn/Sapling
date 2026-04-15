@@ -1,9 +1,10 @@
-import { NextResponse } from 'next/server';
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
-
 export const dynamic = 'force-static';
 
 export async function GET() {
-  return NextResponse.redirect(`${BACKEND_URL}/api/auth/google`);
+  return new Response('Static export build: use the frontend Google sign-in button instead.', {
+    status: 410,
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+    },
+  });
 }
