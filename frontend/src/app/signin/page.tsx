@@ -28,18 +28,22 @@ function SignInInner() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: id }),
-      }).then(res => {
-        if (cancelled) return;
-        if (res.ok) {
-          router.replace('/dashboard');
-          return;
-        }
-        if (res.status === 403) {
-          router.replace('/pending');
-        }
-      });
+      })
+        .then(res => {
+          if (cancelled) return;
+          if (res.ok) {
+            router.replace('/dashboard');
+            return;
+          }
+          if (res.status === 403) {
+            router.replace('/pending');
+          }
+        })
+        .catch(() => {
+          /* ignore fetch errors */
+        });
     } catch {
-      /* ignore */
+      /* ignore parse errors */
     }
     return () => {
       cancelled = true;
