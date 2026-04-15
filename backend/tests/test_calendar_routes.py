@@ -137,6 +137,14 @@ class TestGetUpcoming:
         assert r.status_code == 200
         assert r.json()["assignments"] == []
 
+    def test_returns_empty_on_db_failure(self):
+        with patch("routes.calendar.table") as t:
+            t.return_value.select.side_effect = Exception("DB connection error")
+            r = client.get("/api/calendar/upcoming/user_andres")
+
+        assert r.status_code == 200
+        assert r.json() == {"assignments": []}
+
 
 # ── POST /api/calendar/suggest-study-blocks ───────────────────────────────────
 

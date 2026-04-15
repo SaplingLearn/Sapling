@@ -6,6 +6,7 @@ Migrated from SQLite to Supabase REST API.
 """
 
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -29,6 +30,7 @@ except ImportError:
     GOOGLE_AVAILABLE = False
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -114,8 +116,8 @@ def save_assignments(body: SaveAssignmentsBody):
 
 @router.get("/upcoming/{user_id}")
 def get_upcoming(user_id: str):
+    today = datetime.utcnow().strftime("%Y-%m-%d")
     try:
-        today = datetime.utcnow().strftime("%Y-%m-%d")
         rows = table("assignments").select(
             "*",
             filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
@@ -124,6 +126,11 @@ def get_upcoming(user_id: str):
         )
         return {"assignments": rows or []}
     except Exception:
+        logger.exception(
+            "Failed to fetch upcoming assignments for user_id=%s today=%s",
+            user_id,
+            today,
+        )
         return {"assignments": []}
 
 

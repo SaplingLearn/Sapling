@@ -67,6 +67,12 @@ def _decode_state(state: str) -> dict:
         return {}
 
 
+def _email_log_value(email: str) -> str:
+    if "@" in email:
+        return email.split("@")[-1]
+    return "unknown"
+
+
 @router.get("/google")
 def google_login():
     """Redirect to Google consent screen with identity + calendar scopes."""
@@ -105,16 +111,17 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         # Fetch user info from Google
         service = build("oauth2", "v2", credentials=creds)
         user_info = service.userinfo().get().execute()
-        print(f"[auth] step 3: user_info email={user_info.get('email')}")
 
         email = user_info.get("email", "")
+        email_log_value = _email_log_value(email)
+        print(f"[auth] step 3: user_info email_domain={email_log_value}")
         google_id = user_info.get("id", "")
         name = user_info.get("name", "")
         avatar_url = user_info.get("picture", "")
 
         # Restrict to .edu accounts
         if not email.endswith(".edu"):
-            print(f"[auth] rejected: not .edu ({email})")
+            print(f"[auth] rejected: not .edu (email_domain={email_log_value})")
             return RedirectResponse(f"{FRONTEND_URL}/?error=invalid_domain")
 
         is_new_user = False

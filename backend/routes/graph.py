@@ -1,5 +1,6 @@
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+import logging
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
@@ -9,25 +10,25 @@ from services.graph_service import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/{user_id}")
 def get_user_graph(user_id: str):
     try:
         return get_graph(user_id)
-    except Exception:
-        return {"nodes": [], "edges": [], "stats": {
-            "total_nodes": 0, "mastered": 0, "learning": 0,
-            "struggling": 0, "unexplored": 0, "streak": 0, "avg_learning_velocity": 0.0,
-        }}
+    except Exception as e:
+        logger.exception("get_graph failed for user_id=%s", user_id)
+        raise HTTPException(status_code=500, detail=str(e) or "Failed to fetch graph")
 
 
 @router.get("/{user_id}/recommendations")
 def get_user_recommendations(user_id: str):
     try:
         return {"recommendations": get_recommendations(user_id)}
-    except Exception:
-        return {"recommendations": []}
+    except Exception as e:
+        logger.exception("get_recommendations failed for user_id=%s", user_id)
+        raise HTTPException(status_code=500, detail=str(e) or "Failed to fetch recommendations")
 
 
 # ── Course endpoints ──────────────────────────────────────────────────────────

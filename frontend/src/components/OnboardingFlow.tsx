@@ -134,10 +134,41 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
 
   // Escape key closes
   useEffect(() => {
+    if (!visible) {
+      if (schoolDebounceRef.current) {
+        clearTimeout(schoolDebounceRef.current);
+        schoolDebounceRef.current = null;
+      }
+      return;
+    }
+
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener('keydown', handler);
+      if (schoolDebounceRef.current) {
+        clearTimeout(schoolDebounceRef.current);
+        schoolDebounceRef.current = null;
+      }
+    };
+  }, [visible, onClose]);
+
+  function handleOptionKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, onSelect: () => void) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onSelect();
+    }
+  }
+
+  function selectSchool(name: string) {
+    setFormData(prev => ({ ...prev, school: name }));
+    setSchoolSuggestions([]);
+  }
+
+  function selectYear(option: string) {
+    setFormData(prev => ({ ...prev, year: option.toLowerCase() }));
+    setYearOpen(false);
+  }
 
   function handleSchoolInput(value: string) {
     setFormData(prev => ({ ...prev, school: value }));
@@ -145,11 +176,13 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
     if (value.trim().length < 2) { setSchoolSuggestions([]); return; }
     schoolDebounceRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`http://universities.hipolabs.com/search?name=${encodeURIComponent(value)}&country=United+States`);
+        const res = await fetch(`https://universities.hipolabs.com/search?name=${encodeURIComponent(value)}&country=United+States`);
         const data: { name: string }[] = await res.json();
         setSchoolSuggestions(data.slice(0, 10).map(u => u.name));
       } catch {
         setSchoolSuggestions([]);
+      } finally {
+        schoolDebounceRef.current = null;
       }
     }, 300);
   }
@@ -409,14 +442,18 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
                     maxHeight: '192px', overflowY: 'auto',
                     zIndex: 100,
                     boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-                  }}>
+                  }} role="listbox" aria-label="School suggestions">
                     {schoolSuggestions.map((name, i) => (
-                      <div key={i}
-                        onMouseDown={() => {
-                          setFormData(prev => ({ ...prev, school: name }));
-                          setSchoolSuggestions([]);
-                        }}
+                      <button
+                        key={i}
+                        type="button"
+                        role="option"
+                        aria-selected={formData.school === name}
+                        onMouseDown={() => selectSchool(name)}
+                        onKeyDown={e => handleOptionKeyDown(e, () => selectSchool(name))}
                         style={{
+                          width: '100%',
+                          textAlign: 'left',
                           padding: '12px 18px',
                           fontSize: '14px',
                           color: '#111827',
@@ -424,12 +461,20 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
                           borderBottom: i < schoolSuggestions.length - 1 ? '1px solid rgba(0,0,0,0.06)' : 'none',
                           fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
                           transition: 'background 0.15s',
+                          background: formData.school === name ? 'rgba(27,108,66,0.06)' : 'transparent',
+                          borderLeft: 'none',
+                          borderRight: 'none',
+                          borderTop: 'none',
                         }}
-                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(27,108,66,0.08)')}
-                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                        onMouseEnter={e => {
+                          if (formData.school !== name) e.currentTarget.style.background = 'rgba(27,108,66,0.08)';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = formData.school === name ? 'rgba(27,108,66,0.06)' : 'transparent';
+                        }}
                       >
                         {name}
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -459,14 +504,18 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
                     maxHeight: '192px', overflowY: 'auto',
                     zIndex: 100,
                     boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-                  }}>
+                  }} role="listbox" aria-label="Class year options">
                     {YEAR_OPTIONS.map((opt, i) => (
-                      <div key={opt}
-                        onMouseDown={() => {
-                          setFormData(prev => ({ ...prev, year: opt.toLowerCase() }));
-                          setYearOpen(false);
-                        }}
+                      <button
+                        key={opt}
+                        type="button"
+                        role="option"
+                        aria-selected={formData.year === opt.toLowerCase()}
+                        onMouseDown={() => selectYear(opt)}
+                        onKeyDown={e => handleOptionKeyDown(e, () => selectYear(opt))}
                         style={{
+                          width: '100%',
+                          textAlign: 'left',
                           padding: '12px 18px',
                           fontSize: '14px',
                           color: formData.year === opt.toLowerCase() ? '#1B6C42' : '#111827',
@@ -476,12 +525,15 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
                           fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
                           transition: 'background 0.15s',
                           background: formData.year === opt.toLowerCase() ? 'rgba(27,108,66,0.06)' : 'transparent',
+                          borderLeft: 'none',
+                          borderRight: 'none',
+                          borderTop: 'none',
                         }}
                         onMouseEnter={e => { if (formData.year !== opt.toLowerCase()) e.currentTarget.style.background = 'rgba(27,108,66,0.08)'; }}
                         onMouseLeave={e => { e.currentTarget.style.background = formData.year === opt.toLowerCase() ? 'rgba(27,108,66,0.06)' : 'transparent'; }}
                       >
                         {opt}
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -498,7 +550,6 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
               {(['majors', 'minors'] as const).map(field => {
                 const isMinor = field === 'minors';
                 const input = isMinor ? minorInput : majorInput;
-                const setInput = isMinor ? setMinorInput : setMajorInput;
                 const suggestions = isMinor ? minorSuggestions : majorSuggestions;
                 const focused = isMinor ? minorFocused : majorFocused;
                 const setFocused = isMinor ? setMinorFocused : setMajorFocused;
@@ -530,16 +581,29 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
                           background: '#ffffff', border: '1px solid rgba(0,0,0,0.1)',
                           borderRadius: '14px', maxHeight: '180px', overflowY: 'auto',
                           zIndex: 100, boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-                        }}>
+                        }} role="listbox" aria-label={isMinor ? 'Minor suggestions' : 'Major suggestions'}>
                           {suggestions.map((s, i) => (
-                            <div key={i} onMouseDown={() => addItem(s)} style={{
+                            <button
+                              key={i}
+                              type="button"
+                              role="option"
+                              aria-selected={items.includes(s)}
+                              onMouseDown={() => addItem(s)}
+                              onKeyDown={e => handleOptionKeyDown(e, () => addItem(s))}
+                              style={{
+                              width: '100%',
+                              textAlign: 'left',
                               padding: '11px 18px', fontSize: '14px', color: '#111827', cursor: 'pointer',
                               borderBottom: i < suggestions.length - 1 ? '1px solid rgba(0,0,0,0.06)' : 'none',
                               fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", transition: 'background 0.15s',
+                              background: 'transparent',
+                              borderLeft: 'none',
+                              borderRight: 'none',
+                              borderTop: 'none',
                             }}
                               onMouseEnter={e => (e.currentTarget.style.background = 'rgba(27,108,66,0.08)')}
                               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                            >{s}</div>
+                            >{s}</button>
                           ))}
                         </div>
                       )}
