@@ -68,17 +68,12 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
             # Match on course_name
             if topic_trim.lower() == course_name.lower():
                 return row["course_id"]
-<<<<<<< HEAD
             # Same label as graph subject roots (graph_service)
             label = f"{course_code} - {course_name}" if course_code else course_name
             if label and topic_trim == label:
                 return row["course_id"]
-    except Exception:
-        pass
-=======
     except Exception as e:
         print(f"Failed to resolve course_id for topic={topic_trim!r} user_id={user_id!r}: {e}")
->>>>>>> bc72ef8 (Fix CodeRabbit review issues: course context payload shape, silent errors, test alignment)
     
     # Fallback: find via graph_nodes - look for nodes matching topic
     # that have a course_id
