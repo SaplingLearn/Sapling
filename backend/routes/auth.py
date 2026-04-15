@@ -5,10 +5,11 @@ Google OAuth sign-in with unified calendar access.
 Restricts sign-in to @bu.edu email accounts only.
 """
 
+import hashlib
 import json
 import base64
-import hashlib
 import secrets
+import traceback
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query
@@ -47,25 +48,23 @@ def _google_client_config() -> dict:
     }
 
 
+def _generate_pkce_pair():
+    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+    return code_verifier, code_challenge
+
+
 def _encode_state(data: dict) -> str:
-    payload = json.dumps(data)
-    return base64.urlsafe_b64encode(payload.encode()).decode()
+    return base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
 
 
 def _decode_state(state: str) -> dict:
     try:
-        payload = base64.urlsafe_b64decode(state.encode()).decode()
-        return json.loads(payload)
+        return json.loads(base64.urlsafe_b64decode(state.encode()).decode())
     except Exception:
         return {}
-
-
-def _generate_pkce_pair():
-    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b'=').decode()
-    code_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode()).digest()
-    ).rstrip(b'=').decode()
-    return code_verifier, code_challenge
 
 
 @router.get("/google")
@@ -80,7 +79,7 @@ def google_login():
     auth_url, _ = flow.authorization_url(
         prompt="consent",
         access_type="offline",
-        state=_encode_state({"action": "signin", "cv": code_verifier}),
+        state=_encode_state({"cv": code_verifier}),
         code_challenge=code_challenge,
         code_challenge_method="S256",
     )
@@ -89,83 +88,101 @@ def google_login():
 
 @router.get("/google/callback")
 def google_callback(code: str = Query(...), state: str = Query(None)):
-    """Exchange auth code for tokens, validate @bu.edu, upsert user."""
+    """Exchange auth code for tokens, validate .edu email, upsert user."""
     if not GOOGLE_AVAILABLE:
-        return RedirectResponse(f"{FRONTEND_URL}/signin?error=google_not_configured")
+        return RedirectResponse(f"{FRONTEND_URL}/?error=google_not_configured")
 
-    state_data = _decode_state(state) if state else {}
-    code_verifier = state_data.get("cv")
+    try:
+        print("[auth] step 1: fetching token")
+        code_verifier = _decode_state(state).get("cv") if state else None
+        print(f"[auth] code_verifier present: {bool(code_verifier)}")
+        flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
+        flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
+        flow.fetch_token(code=code, code_verifier=code_verifier)
+        creds = flow.credentials
+        print("[auth] step 2: token fetched OK")
 
-    flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
-    flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
-    flow.fetch_token(code=code, code_verifier=code_verifier)
-    creds = flow.credentials
+        # Fetch user info from Google
+        service = build("oauth2", "v2", credentials=creds)
+        user_info = service.userinfo().get().execute()
+        print(f"[auth] step 3: user_info email={user_info.get('email')}")
 
-    # Fetch user info from Google
-    service = build("oauth2", "v2", credentials=creds)
-    user_info = service.userinfo().get().execute()
+        email = user_info.get("email", "")
+        google_id = user_info.get("id", "")
+        name = user_info.get("name", "")
+        avatar_url = user_info.get("picture", "")
 
-    email = user_info.get("email", "")
-    google_id = user_info.get("id", "")
-    name = user_info.get("name", "")
-    avatar_url = user_info.get("picture", "")
+        # Restrict to .edu accounts
+        if not email.endswith(".edu"):
+            print(f"[auth] rejected: not .edu ({email})")
+            return RedirectResponse(f"{FRONTEND_URL}/?error=invalid_domain")
 
-    # Restrict to @bu.edu accounts
-    if not email.endswith("@bu.edu"):
-        return RedirectResponse(
-            f"{FRONTEND_URL}/signin?error=invalid_domain"
-        )
+        is_new_user = False
 
-    # Determine user_id: check if this Google ID already exists
-    existing = table("users").select("id", filters={"google_id": f"eq.{google_id}"})
-    if existing:
-        user_id = existing[0]["id"]
-        # Update name/avatar in case they changed
-        table("users").update(
-            {"name": name, "avatar_url": avatar_url, "email": email},
-            filters={"id": f"eq.{user_id}"},
-        )
-    else:
-        # Check if a user with this email exists (migration from old system)
-        email_match = table("users").select("id", filters={"email": f"eq.{email}"})
-        if email_match:
-            user_id = email_match[0]["id"]
+        # Determine user_id: check if this Google ID already exists
+        print("[auth] step 4: checking DB")
+        computed_id = f"user_{google_id}"
+        existing = table("users").select("id", filters={"google_id": f"eq.{google_id}"})
+        if existing:
+            user_id = existing[0]["id"]
+            print(f"[auth] existing user (google_id match): {user_id}")
             table("users").update(
-                {
-                    "google_id": google_id,
-                    "name": name,
-                    "avatar_url": avatar_url,
-                    "auth_provider": "google",
-                },
+                {"name": name, "avatar_url": avatar_url, "email": email},
                 filters={"id": f"eq.{user_id}"},
             )
         else:
-            # Create new user
-            user_id = f"user_{google_id}"
-            table("users").insert({
-                "id": user_id,
-                "name": name,
-                "email": email,
-                "google_id": google_id,
-                "avatar_url": avatar_url,
-                "auth_provider": "google",
-            })
+            email_match = table("users").select("id", filters={"email": f"eq.{email}"})
+            if email_match:
+                user_id = email_match[0]["id"]
+                print(f"[auth] existing user (email match): {user_id}")
+                table("users").update(
+                    {"google_id": google_id, "name": name, "avatar_url": avatar_url, "auth_provider": "google"},
+                    filters={"id": f"eq.{user_id}"},
+                )
+            else:
+                id_match = table("users").select("id", filters={"id": f"eq.{computed_id}"})
+                if id_match:
+                    # Partially created in a previous failed auth — treat as existing
+                    user_id = id_match[0]["id"]
+                    print(f"[auth] existing user (id match, partial prev insert): {user_id}")
+                    table("users").update(
+                        {"google_id": google_id, "name": name, "avatar_url": avatar_url, "email": email, "auth_provider": "google"},
+                        filters={"id": f"eq.{user_id}"},
+                    )
+                else:
+                    is_new_user = True
+                    user_id = computed_id
+                    print(f"[auth] creating new user: {user_id}")
+                    table("users").insert({
+                        "id": user_id,
+                        "name": name,
+                        "email": email,
+                        "google_id": google_id,
+                        "avatar_url": avatar_url,
+                        "auth_provider": "google",
+                    })
 
-    # Store OAuth tokens (calendar access included)
-    table("oauth_tokens").upsert(
-        {
+        print("[auth] step 5: upserting tokens")
+        table("oauth_tokens").upsert(
+            {
+                "user_id": user_id,
+                "access_token": creds.token,
+                "refresh_token": creds.refresh_token or "",
+                "expires_at": creds.expiry.isoformat() if creds.expiry else "",
+            },
+            on_conflict="user_id",
+        )
+
+        print(f"[auth] step 6: done, is_new={is_new_user}, redirecting")
+        params = urlencode({
             "user_id": user_id,
-            "access_token": creds.token,
-            "refresh_token": creds.refresh_token or "",
-            "expires_at": creds.expiry.isoformat() if creds.expiry else "",
-        },
-        on_conflict="user_id",
-    )
+            "name": name,
+            "avatar": avatar_url,
+            "is_new": "true" if is_new_user else "false",
+        })
+        return RedirectResponse(f"{FRONTEND_URL}/signin/callback?{params}")
 
-    # Redirect to frontend with user info
-    params = urlencode({
-        "user_id": user_id,
-        "name": name,
-        "avatar": avatar_url,
-    })
-    return RedirectResponse(f"{FRONTEND_URL}/signin/callback?{params}")
+    except Exception as e:
+        traceback.print_exc()
+        print(f"[auth] FAILED at step above: {e}")
+        return RedirectResponse(f"{FRONTEND_URL}/?error=auth_failed")

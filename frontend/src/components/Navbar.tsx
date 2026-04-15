@@ -212,7 +212,7 @@ export default function Navbar() {
             Sapling
           </span>
           <span style={{ fontSize: '9px', fontWeight: 600, color: '#1a5c2a', letterSpacing: '0.08em', textTransform: 'uppercase', opacity: 0.7, lineHeight: 1 }}>
-            Closed Alpha
+            Closed Beta
           </span>
         </div>
       </Link>

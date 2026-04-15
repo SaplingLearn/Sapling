@@ -702,14 +702,14 @@ input, select, textarea { color-scheme: light; }
   border-radius: inherit;
   background: linear-gradient(
     105deg,
-    transparent 30%,
-    rgba(255, 255, 255, 0.25) 45%,
-    rgba(255, 255, 255, 0.08) 55%,
-    transparent 70%
+    transparent 35%,
+    rgba(255, 255, 255, 0.92) 46%,
+    rgba(255, 255, 255, 0.45) 50%,
+    transparent 62%
   );
   opacity: 0;
   transform: translateX(-100%);
-  transition: opacity 0.4s ease, transform 0.7s ease;
+  transition: opacity 0.25s ease, transform 0.55s ease;
   pointer-events: none;
   z-index: 2;
 }
@@ -793,5 +793,24 @@ input[type="reset"]:disabled {
 .landing-modal-panel--visible {
   opacity: 1;
   transform: translateY(0) scale(1);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   ONBOARDING FLOW ANIMATIONS
+   ════════════════════════════════════════════════════════════════════ */
+
+@keyframes ob-pulse-outer {
+  0%, 100% { opacity: 0.1;  transform: scale(1);    }
+  50%       { opacity: 0.22; transform: scale(1.06); }
+}
+
+@keyframes ob-pulse-inner {
+  0%, 100% { opacity: 0.3;  transform: scale(1);    }
+  50%       { opacity: 0.55; transform: scale(1.04); }
+}
+
+@keyframes ob-card-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to   { opacity: 1; transform: translateX(0);    }
 }
 

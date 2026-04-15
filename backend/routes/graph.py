@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -12,12 +13,21 @@ router = APIRouter()
 
 @router.get("/{user_id}")
 def get_user_graph(user_id: str):
-    return get_graph(user_id)
+    try:
+        return get_graph(user_id)
+    except Exception:
+        return {"nodes": [], "edges": [], "stats": {
+            "total_nodes": 0, "mastered": 0, "learning": 0,
+            "struggling": 0, "unexplored": 0, "streak": 0, "avg_learning_velocity": 0.0,
+        }}
 
 
 @router.get("/{user_id}/recommendations")
 def get_user_recommendations(user_id: str):
-    return {"recommendations": get_recommendations(user_id)}
+    try:
+        return {"recommendations": get_recommendations(user_id)}
+    except Exception:
+        return {"recommendations": []}
 
 
 # ── Course endpoints ──────────────────────────────────────────────────────────

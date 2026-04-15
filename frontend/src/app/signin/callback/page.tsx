@@ -13,10 +13,19 @@ function CallbackInner() {
     const userId = searchParams.get('user_id');
     const name = searchParams.get('name');
     const avatar = searchParams.get('avatar');
+    const isNew = searchParams.get('is_new') === 'true';
 
     if (userId && name) {
       setActiveUser(userId, name, avatar || '');
-      router.replace('/');
+      if (isNew) {
+        // New user — set flag so page.tsx shows onboarding step 1
+        sessionStorage.setItem('sapling_onboarding_pending', 'true');
+        router.replace('/');
+      } else {
+        // Existing user — skip onboarding, go straight to dashboard
+        sessionStorage.removeItem('sapling_onboarding_pending');
+        router.replace('/dashboard');
+      }
     } else {
       router.replace('/');
     }

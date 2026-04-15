@@ -114,14 +114,17 @@ def save_assignments(body: SaveAssignmentsBody):
 
 @router.get("/upcoming/{user_id}")
 def get_upcoming(user_id: str):
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    rows = table("assignments").select(
-        "*",
-        filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
-        order="due_date.asc",
-        limit=20,
-    )
-    return {"assignments": rows}
+    try:
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        rows = table("assignments").select(
+            "*",
+            filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
+            order="due_date.asc",
+            limit=20,
+        )
+        return {"assignments": rows or []}
+    except Exception:
+        return {"assignments": []}
 
 
 @router.post("/suggest-study-blocks")

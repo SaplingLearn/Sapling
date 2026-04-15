@@ -7,9 +7,31 @@ import {
   Network, Sparkles, FilePlus2, Brain, CalendarClock, Users,
   PenSquare, X, Search, ChevronDown, XCircle,
 } from 'lucide-react';
+import OnboardingFlow from '@/components/OnboardingFlow';
 
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!<>-_\\/[]{}=+*^?#_";
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+
+// Cluster node base positions — orbit around center (0.285, 0.475), varied radii
+const CLUSTER_REL = [
+  { rx: 0.18, ry: 0.43 },
+  { rx: 0.27, ry: 0.35 },
+  { rx: 0.40, ry: 0.39 },
+  { rx: 0.42, ry: 0.55 },
+  { rx: 0.26, ry: 0.62 },
+  { rx: 0.15, ry: 0.53 },
+];
+const CLUSTER_COLORS = ['#9CA3AF', '#D97706', '#3B82F6', '#8A63D2', '#14B8A6', '#EF4444'];
+const CLUSTER_SEEDS_BG = [10.0, 11.3, 12.6, 13.9, 15.2, 16.5];
+// Pre-positioned so they land near CLUSTER_REL targets at zoom=2.5 (avg 1680×1050)
+const CLUSTER_INIT_POS = [
+  { ox: -222, oy: -29, oz:  15 },
+  { ox: -161, oy: -59, oz: -20 },
+  { ox:  -81, oy: -42, oz:  30 },
+  { ox:  -67, oy:  17, oz:   0 },
+  { ox: -168, oy:  59, oz:  20 },
+  { ox: -229, oy:   8, oz: -30 },
+];
 
 export default function LandingPage() {
   const router = useRouter();
@@ -38,10 +60,50 @@ export default function LandingPage() {
   const parallaxYRef = useRef(0);
   const mouseRef = useRef({ x: 0, y: 0 });
   const modalCloseTimeout = useRef<NodeJS.Timeout | null>(null);
+  const [onboardingPhase, setOnboardingPhase] = useState<'idle' | 'out' | 'active' | 'complete'>('idle');
+  const [introText, setIntroText] = useState<'hidden' | 'in' | 'out'>('hidden');
+  const [outroText, setOutroText] = useState<'hidden' | 'in' | 'out'>('hidden');
+  const [outroOverlay, setOutroOverlay] = useState(false);
+  const onboardingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const introTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
+  const canvasZoomRef = useRef(1.0);
+  const zoomActiveRef = useRef(false);
+  const zoomOutroRef = useRef(false);
+  const onboardingPhaseRef = useRef<'idle' | 'out' | 'active' | 'complete'>('idle');
+  const clusterProgressRef = useRef(0);
+  const clusterActiveStepRef = useRef(0);
+  const clusterCompletedRef = useRef<Set<number>>(new Set());
+  const obNodesRef = useRef<Array<{
+    ox: number; oy: number; oz: number;
+    startOx: number; startOy: number; startOz: number;
+    migDelay: number; migDur: number;
+    color: string; radius: number; seed: number;
+    birthTime: number; stepIndex: number; isPreview: boolean;
+    dyingAt?: number;
+  }>>([]);
+  const obInitStepsRef = useRef<Set<number>>(new Set());
+  const obDoneStepsRef = useRef<Set<number>>(new Set());
+  const [activeStep, setActiveStep] = useState(0);
+  const [completed, setCompleted] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (userReady && isAuthenticated) {
-      router.replace('/dashboard');
+      const pending = sessionStorage.getItem('sapling_onboarding_pending');
+      if (pending) {
+        sessionStorage.removeItem('sapling_onboarding_pending');
+        window.scrollTo({ top: 0, behavior: 'instant' });
+        setActiveStep(1);
+        setCompleted(new Set([0]));
+        setHeroMounted(true);
+        setIntroText('hidden');
+        zoomActiveRef.current = true;
+        zoomOutroRef.current = false;
+        canvasZoomRef.current = 2.5;
+        clusterProgressRef.current = 1;
+        setOnboardingPhase('active');
+      } else {
+        router.replace('/dashboard');
+      }
     }
   }, [userReady, isAuthenticated, router]);
 
@@ -51,6 +113,12 @@ export default function LandingPage() {
         clearTimeout(modalCloseTimeout.current);
         modalCloseTimeout.current = null;
       }
+      if (onboardingTimeoutRef.current) {
+        clearTimeout(onboardingTimeoutRef.current);
+        onboardingTimeoutRef.current = null;
+      }
+      introTimeoutsRef.current.forEach(clearTimeout);
+      introTimeoutsRef.current = [];
     };
   }, []);
 
@@ -89,8 +157,9 @@ export default function LandingPage() {
     let animId: number;
 
     const palette = [
-      { c: '#8A63D2', w: 0.25 }, { c: '#3B82F6', w: 0.25 },
-      { c: '#D97706', w: 0.20 }, { c: '#14B8A6', w: 0.15 }, { c: '#D1D5DB', w: 0.15 },
+      { c: '#8A63D2', w: 0.24 }, { c: '#3B82F6', w: 0.24 },
+      { c: '#D97706', w: 0.20 }, { c: '#14B8A6', w: 0.15 },
+      { c: '#9CA3AF', w: 0.10 }, { c: '#D1D5DB', w: 0.07 },
     ];
     function randColor() {
       let r = Math.random(), s = 0;
@@ -108,7 +177,7 @@ export default function LandingPage() {
       { x: 0, y: 0, z: 0 },         { x: 200, y: -50, z: -150 },
     ];
     const spread = 280;
-    const nodes = Array.from({ length: 220 }, () => {
+    const bgNodes = Array.from({ length: 220 }, () => {
       const cl = clusters[Math.floor(Math.random() * clusters.length)];
       return {
         ox: cl.x + (Math.random() - 0.5) * spread,
@@ -117,8 +186,40 @@ export default function LandingPage() {
         color: randColor(),
         radius: 1 + Math.random() * 4,
         seed: Math.random() * 100,
+        clusterIndex: undefined as number | undefined,
       };
     });
+    const clusterNodes = CLUSTER_INIT_POS.map((pos, i) => ({
+      ox: pos.ox, oy: pos.oy, oz: pos.oz,
+      color: CLUSTER_COLORS[i],
+      radius: 2.5 + Math.random() * 1.5,
+      seed: CLUSTER_SEEDS_BG[i],
+      clusterIndex: i as number | undefined,
+    }));
+    const nodes = [...bgNodes, ...clusterNodes];
+
+
+    // OB graph — cluster centres per onboarding step (world space, left half at zoom=2.5)
+    const OB_STEP_CENTERS = [
+      { ox: -155, oy:   0, oz:   0 },  // 0 email
+      { ox: -230, oy: -80, oz:  25 },  // 1 name
+      { ox: -115, oy:-105, oz: -35 },  // 2 birthday
+      { ox: -270, oy:  65, oz: -15 },  // 3 school
+      { ox: -155, oy:  95, oz:  35 },  // 4 courses
+      { ox: -215, oy: -25, oz: -55 },  // 5 style
+    ];
+    const OB_SPREAD = 58;
+    const OB_COUNT  = 15;
+    const easeOutBack = (x: number) => {
+      const c1 = 1.70158, c3 = c1 + 1;
+      return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
+    };
+    const easeInOutCubic = (x: number) =>
+      x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+    const stepRand = (si: number, idx: number) => {
+      const s = Math.sin(si * 9301 + idx * 49297 + 233) * 10000003;
+      return s - Math.floor(s);
+    };
 
     function resize() {
       width = window.innerWidth;
@@ -136,6 +237,89 @@ export default function LandingPage() {
       rotAngle += 0.0008;
       const fl = 1000, cx = width / 2, cy = height / 2, t = Date.now() * 0.001;
       const mx = mouseRef.current.x, my = mouseRef.current.y;
+      const now = Date.now();
+
+      // ── OB knowledge graph: spawn nodes per step ─────────────────────
+      if (onboardingPhaseRef.current === 'active') {
+        const asi  = clusterActiveStepRef.current;
+        // Preview nodes for the currently active (unfilled) step — fly in from background
+        if (!obInitStepsRef.current.has(asi)) {
+          obInitStepsRef.current.add(asi);
+          const ctr = OB_STEP_CENTERS[asi];
+          for (let k = 0; k < 8; k++) {
+            const ox = ctr.ox + (stepRand(asi, k * 4    ) - 0.5) * OB_SPREAD * 0.9;
+            const oy = ctr.oy + (stepRand(asi, k * 4 + 1) - 0.5) * OB_SPREAD * 0.6;
+            const oz = ctr.oz + (stepRand(asi, k * 4 + 2) - 0.5) * OB_SPREAD * 0.9;
+            obNodesRef.current.push({
+              ox, oy, oz,
+              startOx: ox,  // appear in place — no flight, just fade in
+              startOy: oy,
+              startOz: oz,
+              migDelay: k * 60,
+              migDur:   450,
+              color: CLUSTER_COLORS[asi],
+              radius: 1 + stepRand(asi, k * 4 + 3) * 1.5,
+              seed: stepRand(asi, k * 4 + 2) * 100,
+              birthTime: now,
+              stepIndex: asi,
+              isPreview: true,
+            });
+          }
+        }
+      }
+      // Full burst when a step is completed — runs in active and complete so last step fires
+      if (onboardingPhaseRef.current === 'active' || onboardingPhaseRef.current === 'complete') {
+        const comp = clusterCompletedRef.current;
+        comp.forEach(si => {
+          if (!obDoneStepsRef.current.has(si)) {
+            obDoneStepsRef.current.add(si);
+            // Fade out preview nodes instead of hard-removing them
+            obNodesRef.current.forEach(n => {
+              if (n.stepIndex === si && n.isPreview) n.dyingAt = now;
+            });
+            const ctr = OB_STEP_CENTERS[si];
+            for (let k = 0; k < OB_COUNT; k++) {
+              obNodesRef.current.push({
+                ox: ctr.ox + (stepRand(si, k * 4    ) - 0.5) * OB_SPREAD * 2,
+                oy: ctr.oy + (stepRand(si, k * 4 + 1) - 0.5) * OB_SPREAD * 1.5,
+                oz: ctr.oz + (stepRand(si, k * 4 + 2) - 0.5) * OB_SPREAD * 2,
+                startOx: 80 + stepRand(si, k * 4 + 10) * 260,
+                startOy: (stepRand(si, k * 4 + 11) - 0.5) * 220,
+                startOz: (stepRand(si, k * 4 + 12) - 0.5) * 220,
+                migDelay: k * 50,
+                migDur:   580 + stepRand(si, k * 4 + 13) * 160,
+                color: CLUSTER_COLORS[si],
+                radius: 1.8 + stepRand(si, k * 4 + 3) * 3,
+                seed: stepRand(si, k * 4 + 2) * 100,
+                birthTime: now,
+                stepIndex: si,
+                isPreview: false,
+              });
+            }
+          }
+        });
+      }
+      // Clean up fully-faded dying nodes — runs in all phases so fade-out works after close
+      obNodesRef.current = obNodesRef.current.filter(n =>
+        !(n.dyingAt !== undefined && now - n.dyingAt > 500)
+      );
+      if (onboardingPhaseRef.current === 'idle' && obNodesRef.current.length > 0) {
+        obNodesRef.current = [];
+        obInitStepsRef.current = new Set();
+        obDoneStepsRef.current = new Set();
+      }
+
+      const zoomTarget = zoomOutroRef.current ? 5.5 : (zoomActiveRef.current ? 2.5 : 1.0);
+      canvasZoomRef.current += (zoomTarget - canvasZoomRef.current) * 0.025;
+      const zoom = canvasZoomRef.current;
+
+      // Background fade progress
+      if (zoomActiveRef.current) {
+        clusterProgressRef.current = Math.min(1, clusterProgressRef.current + 0.01);
+      } else {
+        clusterProgressRef.current = Math.max(0, clusterProgressRef.current - 0.015);
+      }
+      const clusterProgress = clusterProgressRef.current;
 
       const proj = nodes.map(n => {
         const ny = n.oy + Math.sin(t * 0.4 + n.seed) * 15;
@@ -144,7 +328,9 @@ export default function LandingPage() {
         x -= mx * (z + fl) * 0.02;
         const y2 = ny - my * (z + fl) * 0.02;
         const sc = fl / (fl + z);
-        return { x: x * sc + cx, y: y2 * sc + cy - parallaxYRef.current, z, sc, n };
+        const finalX = x * sc * zoom + cx;
+        const finalY = y2 * sc * zoom + cy - parallaxYRef.current;
+        return { x: finalX, y: finalY, z, sc: sc * zoom, n };
       }).sort((a, b) => b.z - a.z);
 
       ctx.globalCompositeOperation = 'source-over';
@@ -154,24 +340,119 @@ export default function LandingPage() {
           const p1 = proj[i], p2 = proj[j];
           const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
           if (d < 70 * p1.sc) {
-            const a = (1 - d / (70 * p1.sc)) * 0.15 * Math.min(1, p1.sc);
-            ctx.strokeStyle = `rgba(156,163,175,${a})`;
-            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+            const a = (1 - d / (70 * p1.sc)) * 0.15 * Math.min(1, p1.sc) * Math.max(0, 1 - clusterProgress);
+            if (a > 0.002) {
+              ctx.strokeStyle = `rgba(156,163,175,${a})`;
+              ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+            }
           }
         }
       }
+
       proj.forEach(p => {
         if (p.z > -fl) {
           const breathe = 0.92 + 0.08 * Math.sin(t * 0.6 + p.n.seed);
+          let fogA = p.z > 500 ? Math.max(0, 1 - (p.z - 500) / 500) : 1;
+          if (clusterProgress > 0) fogA *= Math.max(0.12, 1 - clusterProgress * 0.82);
           const r = p.n.radius * p.sc * breathe;
           if (r > 0.1) {
-            const fogA = p.z > 500 ? Math.max(0, 1 - (p.z - 500) / 500) : 1;
             ctx.globalAlpha = fogA;
             ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fillStyle = p.n.color; ctx.fill();
           }
         }
       });
       ctx.globalAlpha = 1;
+
+      // ── OB knowledge graph: draw with migration ───────────────────────
+      if (obNodesRef.current.length > 0) {
+        const obProj = obNodesRef.current.flatMap(n => {
+          const elapsed = now - n.birthTime;
+          const rawMigP = (elapsed - n.migDelay) / n.migDur;
+          if (rawMigP < 0) return [];
+
+          // Migration: lerp from start → target
+          const migP   = Math.min(1, rawMigP);
+          const easedM = easeInOutCubic(migP);
+          const curOx  = n.startOx + (n.ox - n.startOx) * easedM;
+          const curOy  = n.startOy + (n.oy - n.startOy) * easedM;
+          const curOz  = n.startOz + (n.oz - n.startOz) * easedM;
+
+          // Arrival: elapsed time after migration completes
+          const arrP = Math.min(1, Math.max(0, (elapsed - n.migDelay - n.migDur) / 400));
+
+          // Continuous scale — no jump at migP=1: flight ramp then gentle spring overshoot from 1.0
+          const popScale = migP < 1
+            ? 0.4 + 0.6 * migP
+            : 1.0 + Math.sin(arrP * Math.PI) * 0.12;
+
+          // Continuous alpha — no jump at migP=1: eased 0→1 during flight, stays 1 after
+          const baseAlpha = migP < 1 ? easeInOutCubic(migP) : 1.0;
+          const dyingFade = n.dyingAt !== undefined
+            ? 1.0 - easeInOutCubic(Math.min(1, (now - n.dyingAt) / 350))
+            : 1.0;
+          const alpha = baseAlpha * dyingFade;
+          if (alpha < 0.005) return [];
+
+          // Bobbing scales in with migration so there's no pop on arrival
+          const ny = curOy + Math.sin(t * 0.4 + n.seed) * 8 * migP;
+          const rx  = curOx * Math.cos(rotAngle) - curOz * Math.sin(rotAngle);
+          const rz  = curOz * Math.cos(rotAngle) + curOx * Math.sin(rotAngle);
+          const sc  = fl / (fl + rz);
+          return [{ x: rx*sc*zoom+cx, y: ny*sc*zoom+cy-parallaxYRef.current, z: rz, sc, n, alpha, popScale, migP, arrP }];
+        }).sort((a, b) => b.z - a.z);
+
+        // Connections — only between arrived nodes
+        ctx.lineWidth = 0.7;
+        for (let i = 0; i < obProj.length; i++) {
+          for (let j = i + 1; j < obProj.length; j++) {
+            const p1 = obProj[i], p2 = obProj[j];
+            if (p1.migP < 1 || p2.migP < 1) continue;
+            if (p1.alpha < 0.1 || p2.alpha < 0.1) continue;
+            const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+            const maxD = 90 * p1.sc * zoom;
+            if (d < maxD) {
+              const a = (1 - d / maxD) * 0.35 * Math.min(p1.arrP, p2.arrP) * Math.min(p1.alpha, p2.alpha);
+              if (a > 0.003) {
+                const col = p1.n.color;
+                const r = parseInt(col.slice(1, 3), 16);
+                const g = parseInt(col.slice(3, 5), 16);
+                const b = parseInt(col.slice(5, 7), 16);
+                ctx.strokeStyle = (p1.n.isPreview && p2.n.isPreview)
+                  ? `rgba(200,210,200,${(a * 0.35).toFixed(4)})`
+                  : `rgba(${r},${g},${b},${a.toFixed(4)})`;
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+              }
+            }
+          }
+        }
+
+        // Nodes
+        obProj.forEach(p => {
+          const breathe = 0.92 + 0.08 * Math.sin(t * 0.6 + p.n.seed);
+          const r = Math.max(0.1, p.n.radius * p.sc * zoom * breathe * p.popScale);
+          if (p.n.isPreview) {
+            ctx.globalAlpha = (0.25 + 0.2 * Math.sin(t * 3 + p.n.seed)) * p.alpha;
+            ctx.shadowBlur = 10;
+          } else {
+            ctx.globalAlpha = p.alpha;
+            ctx.shadowBlur = p.migP >= 1
+              ? 18 * (0.7 + 0.3 * Math.sin(t * 1.5 + p.n.seed * 0.3))
+              : 6;
+          }
+          ctx.shadowColor = p.n.color;
+          ctx.fillStyle   = p.n.color;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          ctx.shadowColor = 'transparent';
+        });
+        ctx.globalAlpha = 1;
+      }
+
       animId = requestAnimationFrame(draw);
     }
     draw();
@@ -349,15 +630,77 @@ export default function LandingPage() {
       modalCloseTimeout.current = null;
     }, 420);
   }
+  useEffect(() => {
+    onboardingPhaseRef.current = onboardingPhase;
+    document.body.style.overflow = onboardingPhase !== 'idle' ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [onboardingPhase]);
+  useEffect(() => { clusterActiveStepRef.current = activeStep; }, [activeStep]);
+  useEffect(() => { clusterCompletedRef.current = completed; }, [completed]);
+
+  function startOnboarding() {
+    if (onboardingTimeoutRef.current) clearTimeout(onboardingTimeoutRef.current);
+    introTimeoutsRef.current.forEach(clearTimeout);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    setActiveStep(0);
+    setCompleted(new Set());
+    setIntroText('hidden');
+    zoomActiveRef.current = false;
+    zoomOutroRef.current = false;
+    // Fade out UI (no zoom yet — background stays vivid)
+    setOnboardingPhase('out');
+    introTimeoutsRef.current = [
+      setTimeout(() => setIntroText('in'), 450),           // UI faded → title fades in
+      setTimeout(() => {                                   // title fades out + zoom starts together
+        setIntroText('out');
+        zoomActiveRef.current = true;
+      }, 1900),
+      setTimeout(() => {                                   // title gone → form appears
+        setIntroText('hidden');
+        setOnboardingPhase('active');
+      }, 2550),
+    ];
+  }
+  function closeOnboarding() {
+    if (onboardingTimeoutRef.current) clearTimeout(onboardingTimeoutRef.current);
+    introTimeoutsRef.current.forEach(clearTimeout);
+    introTimeoutsRef.current = [];
+    zoomActiveRef.current = false;
+    zoomOutroRef.current = false;
+    setIntroText('hidden');
+    // Fade out all existing OB nodes rather than hard-clearing them
+    const t = Date.now();
+    obNodesRef.current.forEach(n => { if (n.dyingAt === undefined) n.dyingAt = t; });
+    setOnboardingPhase('out');
+    onboardingTimeoutRef.current = setTimeout(() => setOnboardingPhase('idle'), 700);
+  }
+  function handleOnboardingComplete(formData: { firstName: string; lastName: string; school: string; year: string; majors: string[]; minors: string[]; courses: string[]; style: string }) {
+    sessionStorage.setItem('sapling_onboarding', JSON.stringify(formData));
+    introTimeoutsRef.current.forEach(clearTimeout);
+    zoomActiveRef.current = true;
+    zoomOutroRef.current = false;
+    setOutroText('hidden');
+    setOutroOverlay(false);
+    setOnboardingPhase('complete');
+    introTimeoutsRef.current = [
+      setTimeout(() => setOutroText('in'),      1400),  // menu gone (~600ms) + pause before welcome text
+      setTimeout(() => {                               // text fades out + zoom in together
+        setOutroText('out');
+        zoomOutroRef.current = true;
+      }, 3050),
+      setTimeout(() => setOutroOverlay(true),   3450),  // white overlay starts covering
+      setTimeout(() => { router.replace('/dashboard'); }, 4250),
+    ];
+  }
   function handleGoogleContinue() { window.location.href = `${API_URL}/api/auth/google`; }
   function handleEmailContinue() { if (modalMode === 'signin') closeModal(); else setModalStep(2); }
   function addClass() { const v = classInput.trim(); if (v) { setClassChips(prev => [...prev, v]); setClassInput(''); } }
   function addSuggested(name: string) { setClassChips(prev => [...prev, name]); }
 
-  if (userReady && isAuthenticated) return null;
+  const authIdle = userReady && isAuthenticated && onboardingPhase === 'idle';
 
   return (
-    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), 'Inter', sans-serif", color: 'var(--brand-text1, #1a1a1a)', background: 'transparent' }}>
+    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), 'Inter', sans-serif", color: 'var(--brand-text1, #1a1a1a)', background: 'transparent', opacity: authIdle ? 0 : 1, pointerEvents: authIdle ? 'none' : 'auto' }}>
       <div ref={ambientGlowRef} className="landing-ambient-glow" />
 
       {/* ═══ Initial load intro overlay ═══ */}
@@ -393,9 +736,9 @@ export default function LandingPage() {
         style={{
           background: 'rgba(255,255,255,0)',
           borderBottomColor: 'transparent',
-          opacity: heroMounted ? 1 : 0,
+          opacity: onboardingPhase !== 'idle' ? 0 : (heroMounted ? 1 : 0),
           transform: heroMounted ? 'translateY(0)' : 'translateY(-30px)',
-          transition: 'opacity 800ms cubic-bezier(0.22,1,0.36,1), transform 800ms cubic-bezier(0.22,1,0.36,1)',
+          transition: 'opacity 700ms cubic-bezier(0.22,1,0.36,1), transform 800ms cubic-bezier(0.22,1,0.36,1)',
         }}
       >
         <div className="max-w-[88%] mx-auto flex items-center justify-between w-full">
@@ -405,7 +748,7 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center">
             <button onClick={() => openModal('signin')} className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
-            <button onClick={() => openModal('signup')} className="relative overflow-hidden group bg-[#1B6C42] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
+            <button onClick={startOnboarding} className="relative overflow-hidden group bg-[#1B6C42] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
               Get Started
             </button>
           </div>
@@ -419,10 +762,17 @@ export default function LandingPage() {
           <div className="sapling-mesh-blob sapling-mesh-blob--1" />
           <div className="sapling-mesh-blob sapling-mesh-blob--2" />
         </div>
-        <canvas ref={canvasRef} className="absolute inset-0 z-0 w-full h-full pointer-events-auto opacity-100" />
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 z-0 w-full h-full pointer-events-auto opacity-100"
+        />
 
         {/* Floating Glass Accent Cards */}
-        <div ref={floatingCardsRef} className="absolute inset-0 z-10 hidden lg:block pointer-events-none">
+        <div
+          ref={floatingCardsRef}
+          className="absolute inset-0 z-10 hidden lg:block pointer-events-none"
+          style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease' }}
+        >
           <div
             className="floating-card absolute w-48 liquid-glass rounded-2xl p-4"
             style={{ position: 'absolute', top: '28%', left: '18%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 0.8s' }}
@@ -487,7 +837,11 @@ export default function LandingPage() {
         </div>
 
         {/* Hero Content */}
-        <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6">
+        <div
+          ref={heroContentRef}
+          className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6"
+          style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease', pointerEvents: onboardingPhase !== 'idle' ? 'none' : 'auto' }}
+        >
           <div style={{
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
@@ -520,7 +874,7 @@ export default function LandingPage() {
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 700ms',
           }} className="flex flex-col sm:flex-row gap-4 mt-10 items-center justify-center">
-            <button onClick={() => openModal('signup')} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
+            <button onClick={startOnboarding} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
               Get Started
             </button>
             <button onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })} className="liquid-glass-subtle text-[var(--brand-text2)] hover:text-[var(--brand-text1)] px-10 py-4 rounded-full font-medium text-base transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]">
@@ -530,11 +884,14 @@ export default function LandingPage() {
         </div>
 
         {/* Scroll Indicator */}
-        <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 landing-animate-float-indicator flex flex-col items-center">
+        <div style={{ opacity: onboardingPhase !== 'idle' ? 0 : (heroMounted ? 1 : 0), transition: 'opacity 600ms ease' }} className="absolute bottom-8 left-1/2 landing-animate-float-indicator flex flex-col items-center">
           <div className="w-px h-14 landing-divider-v" />
           <span className="font-jetbrains text-xs tracking-[0.4em] text-[var(--brand-text2)] opacity-70 mt-3">SCROLL</span>
         </div>
       </section>
+
+      {/* ═══ Sections below hero — fade during onboarding ═══ */}
+      <div style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease', pointerEvents: onboardingPhase !== 'idle' ? 'none' : 'auto' }}>
 
       {/* ═══ Features Section ═══ */}
       <section id="features" className="landing-section relative py-32 z-10">
@@ -625,7 +982,7 @@ export default function LandingPage() {
           </h2>
           <p className="text-[var(--brand-text2)] text-lg mt-6 font-light">Join students who learn smarter, not harder.</p>
           <div className="mt-10 flex flex-col items-center">
-            <button onClick={() => openModal('signup')} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
+            <button onClick={startOnboarding} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
               Get Started
             </button>
           </div>
@@ -652,6 +1009,8 @@ export default function LandingPage() {
           </p>
         </div>
       </footer>
+
+      </div>{/* end sections fade wrapper */}
 
       {/* ═══ Onboarding Modal ═══ */}
       {modalOpen && (
@@ -761,8 +1120,8 @@ export default function LandingPage() {
                       <span key={s} onClick={() => addSuggested(s)} className="liquid-glass-subtle text-[var(--brand-text2)] hover:text-[var(--brand-text1)] rounded-full px-3 py-1.5 text-xs cursor-pointer transition-all">{s}</span>
                     ))}
                   </div>
-                  <button onClick={closeModal} className="w-full bg-[#1B6C42] text-white py-3.5 rounded-xl font-medium text-sm hover:bg-[#155A35] shadow-sm transition-all duration-300">
-                    Launch Sapling 🌱
+                  <button onClick={closeModal} className="w-full text-center bg-[#1B6C42] text-white py-3.5 rounded-xl font-medium text-sm hover:bg-[#155A35] shadow-sm transition-all duration-300">
+                    Launch Sapling
                   </button>
                   <button onClick={closeModal} className="w-full text-center text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-xs mt-3 cursor-pointer transition-colors">Skip for now</button>
                 </div>
@@ -770,6 +1129,97 @@ export default function LandingPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ═══ Intro title reveal ═══ */}
+      {onboardingPhase !== 'idle' && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 75,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            pointerEvents: 'none',
+            opacity: introText === 'in' ? 1 : 0,
+            transition: 'opacity 650ms cubic-bezier(0.22,1,0.36,1)',
+          }}
+        >
+          {/* Soft radial mist behind text — no hard edges, not a panel */}
+          <div style={{
+            position: 'absolute',
+            width: '680px', height: '260px',
+            background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.62) 0%, rgba(255,255,255,0.28) 45%, transparent 72%)',
+            pointerEvents: 'none',
+          }} />
+          <p style={{
+            position: 'relative',
+            fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+            fontSize: 'clamp(26px, 4vw, 50px)',
+            fontWeight: 300,
+            color: '#0f172a',
+            textShadow: '0 1px 2px rgba(255,255,255,0.9)',
+            letterSpacing: '0.01em',
+            textAlign: 'center',
+            lineHeight: 1.3,
+            margin: 0,
+          }}>
+            Let&apos;s Learn About You...
+          </p>
+        </div>
+      )}
+
+      {/* ═══ Outro: Welcome to Sapling ═══ */}
+      {onboardingPhase === 'complete' && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 76,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            pointerEvents: 'none',
+            opacity: outroText === 'in' ? 1 : 0,
+            transition: 'opacity 700ms cubic-bezier(0.22,1,0.36,1)',
+          }}
+        >
+          <div style={{
+            position: 'absolute',
+            width: '780px', height: '280px',
+            background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.65) 0%, rgba(255,255,255,0.28) 45%, transparent 72%)',
+            pointerEvents: 'none',
+          }} />
+          <p style={{
+            position: 'relative',
+            fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+            fontSize: 'clamp(30px, 5vw, 62px)',
+            fontWeight: 300,
+            color: '#0f172a',
+            textShadow: '0 1px 2px rgba(255,255,255,0.9)',
+            letterSpacing: '0.01em',
+            textAlign: 'center',
+            lineHeight: 1.2,
+            margin: 0,
+          }}>
+            Welcome to Sapling
+          </p>
+        </div>
+      )}
+
+      {/* ═══ Outro white overlay ═══ */}
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 92,
+        background: 'white',
+        opacity: outroOverlay ? 1 : 0,
+        transition: 'opacity 900ms cubic-bezier(0.4,0,0.2,1)',
+        pointerEvents: 'none',
+      }} />
+
+      {/* ═══ Node-based onboarding flow ═══ */}
+      {onboardingPhase !== 'idle' && (
+        <OnboardingFlow
+          visible={onboardingPhase === 'active'}
+          onClose={closeOnboarding}
+          onFinish={handleOnboardingComplete}
+          activeStep={activeStep}
+          completed={completed}
+          setActiveStep={setActiveStep}
+          setCompleted={setCompleted}
+        />
       )}
     </div>
   );
