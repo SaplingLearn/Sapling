@@ -14,11 +14,16 @@ function CallbackInner() {
     const userId = searchParams.get('user_id');
     const name = searchParams.get('name');
     const avatar = searchParams.get('avatar');
-    const isApproved = searchParams.get('is_approved') === 'true';
+    const approvedParam = searchParams.get('is_approved');
     const error = searchParams.get('error');
 
-    if (error === 'not_approved' || !isApproved) {
+    if (error === 'not_approved' || approvedParam === 'false') {
       router.replace('/pending');
+      return;
+    }
+
+    if (approvedParam !== 'true') {
+      setErrorMsg('Sign-in failed. Please try again.');
       return;
     }
 
