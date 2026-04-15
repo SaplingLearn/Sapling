@@ -119,34 +119,24 @@ class TestSaveAssignments:
 class TestGetUpcoming:
     def test_returns_assignments_from_db(self):
         mock_rows = [
-            {
-                "id": "a1",
-                "user_id": "user_andres",
-                "title": "HW1",
-                "due_date": "2026-03-01",
-                "assignment_type": "homework",
-                "notes": None,
-                "google_event_id": None,
-                "course_id": None,
-            },
-            {
-                "id": "a2",
-                "user_id": "user_andres",
-                "title": "Quiz",
-                "due_date": "2026-03-10",
-                "assignment_type": "quiz",
-                "notes": None,
-                "google_event_id": None,
-                "course_id": None,
-            },
+            {"id": "a1", "user_id": "user_andres", "title": "HW1",
+             "due_date": "2026-03-01", "assignment_type": "homework",
+             "notes": None, "google_event_id": None, "course_id": None, "courses": None},
+            {"id": "a2", "user_id": "user_andres", "title": "Quiz",
+             "due_date": "2026-03-10", "assignment_type": "quiz",
+             "notes": None, "google_event_id": None, "course_id": None, "courses": None},
         ]
         with patch("routes.calendar.table") as t:
             t.return_value.select.return_value = mock_rows
             r = client.get("/api/calendar/upcoming/user_andres")
 
         assert r.status_code == 200
-        assert len(r.json()["assignments"]) == 2
-        assert r.json()["assignments"][0]["title"] == "HW1"
+        assignments = r.json()["assignments"]
+        assert len(assignments) == 2
+        assert assignments[0]["title"] == "HW1"
+        assert assignments[0]["user_id"] == "user_andres"
+        assert assignments[0]["course_code"] == ""
+        assert assignments[0]["course_name"] == ""
 
     def test_returns_empty_list_when_none(self):
         with patch("routes.calendar.table") as t:

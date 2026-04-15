@@ -97,29 +97,70 @@ class TestGetGraph:
 
     def test_adds_subject_root_node_per_subject(self):
         nodes = [
+<<<<<<< HEAD
             {"id": "n1", "concept_name": "Loops",     "mastery_tier": "learning", "mastery_score": 0.5, "subject": "CS101", "times_studied": 2, "user_id": "u1", "course_id": "c-cs"},
             {"id": "n2", "concept_name": "Functions", "mastery_tier": "mastered", "mastery_score": 0.8, "subject": "CS101", "times_studied": 3, "user_id": "u1", "course_id": "c-cs"},
+=======
+            {"id": "n1", "concept_name": "Loops",     "mastery_tier": "learning", "mastery_score": 0.5,
+             "subject": "CS101", "course_id": "c1", "times_studied": 2, "user_id": "u1"},
+            {"id": "n2", "concept_name": "Functions", "mastery_tier": "mastered", "mastery_score": 0.8,
+             "subject": "CS101", "course_id": "c1", "times_studied": 3, "user_id": "u1"},
         ]
+        enrollment = [{"course_id": "c1", "courses": {"course_code": "CS101", "course_name": "Intro CS"}}]
         factory = _mock_table({
             "users": [{"streak_count": 0}],
+            "user_courses": enrollment,
             "graph_nodes": nodes,
             "graph_edges": [],
-            "user_courses": [_enrollment_row("c-cs", "CS101", "Intro")],
         })
         with patch("services.graph_service.table", side_effect=factory):
             result = get_graph("u1")
 
         roots = [n for n in result["nodes"] if n.get("is_subject_root")]
         assert len(roots) == 1
-        assert roots[0]["concept_name"] == "CS101 - Intro"
+        assert "CS101" in roots[0]["concept_name"]
         assert roots[0]["mastery_tier"] == "subject_root"
 
-    def test_course_with_no_graph_nodes_still_shows_subject_hub(self):
+    def test_legacy_seed_same_as_course_title_shows_only_subject_hub(self):
+        """Course enrolled but no concept nodes — only the subject hub appears."""
+        enrollment = [
+            {"course_id": "c1", "courses": {"course_code": "", "course_name": "EK 103: LINEAR ALGEBRA"}}
+>>>>>>> bc72ef8 (Fix CodeRabbit review issues: course context payload shape, silent errors, test alignment)
+        ]
         factory = _mock_table({
             "users": [{"streak_count": 0}],
+            "user_courses": enrollment,
             "graph_nodes": [],
             "graph_edges": [],
+<<<<<<< HEAD
+            "user_courses": [_enrollment_row("c-cs", "CS101", "Intro")],
+=======
+>>>>>>> bc72ef8 (Fix CodeRabbit review issues: course context payload shape, silent errors, test alignment)
+        })
+        with patch("services.graph_service.table", side_effect=factory):
+            result = get_graph("u1")
+
+        roots = [n for n in result["nodes"] if n.get("is_subject_root")]
+        assert len(roots) == 1
+<<<<<<< HEAD
+        assert roots[0]["concept_name"] == "CS101 - Intro"
+        assert roots[0]["mastery_tier"] == "subject_root"
+=======
+        assert roots[0]["concept_name"] == "EK 103: LINEAR ALGEBRA"
+        assert roots[0]["mastery_score"] == 0.0
+>>>>>>> bc72ef8 (Fix CodeRabbit review issues: course context payload shape, silent errors, test alignment)
+
+    def test_course_with_no_graph_nodes_still_shows_subject_hub(self):
+        enrollment = [{"course_id": "c1", "courses": {"course_code": "", "course_name": "Philosophy"}}]
+        factory = _mock_table({
+            "users": [{"streak_count": 0}],
+            "user_courses": enrollment,
+            "graph_nodes": [],
+            "graph_edges": [],
+<<<<<<< HEAD
             "user_courses": [_enrollment_row("c-phi", "", "Philosophy")],
+=======
+>>>>>>> bc72ef8 (Fix CodeRabbit review issues: course context payload shape, silent errors, test alignment)
         })
         with patch("services.graph_service.table", side_effect=factory):
             result = get_graph("u1")
@@ -161,15 +202,24 @@ class TestGetCourses:
             mock = MagicMock()
             if name == "user_courses":
                 mock.select.return_value = [{
+<<<<<<< HEAD
                     "id": "e1",
                     "course_id": "c1",
                     "color": "#fff",
                     "nickname": None,
                     "enrolled_at": "2026-01-01",
                     "courses": {"course_code": "", "course_name": "Math", "school": "", "department": ""},
+=======
+                    "id": "e1", "course_id": "c1", "color": "#fff",
+                    "nickname": None, "enrolled_at": "2026-01-01",
+                    "courses": {"course_code": "MATH101", "course_name": "Math",
+                                "school": "BU", "department": "Math"},
+>>>>>>> bc72ef8 (Fix CodeRabbit review issues: course context payload shape, silent errors, test alignment)
                 }]
             elif name == "graph_nodes":
                 mock.select.return_value = [{"id": "n1"}, {"id": "n2"}]
+            else:
+                mock.select.return_value = []
             return mock
 
         with patch("services.graph_service.table", side_effect=factory):
@@ -195,6 +245,7 @@ class TestGetCourses:
 class TestAddCourse:
     def test_inserts_new_course(self):
         def factory(name):
+<<<<<<< HEAD
             m = MagicMock()
             if name == "user_courses":
                 m.select.return_value = []
@@ -222,6 +273,30 @@ class TestAddCourse:
 
         with patch("services.graph_service.table", side_effect=factory):
             result = add_course("u1", "phys-catalog")
+=======
+            mock = MagicMock()
+            if name == "user_courses":
+                # First call: check existing enrollment → not found
+                mock.select.return_value = []
+            elif name == "courses":
+                # Check canonical course exists → found
+                mock.select.return_value = [{"id": "c1"}]
+            else:
+                mock.select.return_value = []
+            mock.insert.return_value = []
+            return mock
+
+        with patch("services.graph_service.table", side_effect=factory):
+            result = add_course("u1", "c1")
+
+        assert result["course_id"] == "c1"
+        assert result["already_existed"] is False
+
+    def test_skips_insert_for_existing_course(self):
+        mock = _simple_mock(select_returns=[{"id": "existing"}])
+        with patch("services.graph_service.table", return_value=mock):
+            result = add_course("u1", "c1")
+>>>>>>> bc72ef8 (Fix CodeRabbit review issues: course context payload shape, silent errors, test alignment)
 
         assert result["already_existed"] is True
 

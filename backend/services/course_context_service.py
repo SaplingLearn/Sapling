@@ -81,11 +81,12 @@ def get_course_context(course_id: str) -> dict:
             return {}
         
         summary = summary_rows[0]
-        
-        # Get concept stats for this course
+        semester = summary["semester"]
+
+        # Get concept stats for this course, scoped to the same semester
         stats_rows = table("course_concept_stats").select(
             "*",
-            filters={"course_id": f"eq.{course_id}"},
+            filters={"course_id": f"eq.{course_id}", "semester": f"eq.{semester}"},
         )
         
         return {
@@ -263,16 +264,16 @@ def update_course_context(course_id: str, semester: str = "Spring 2026") -> None
     # ── 8. Compute course-wide summary metrics ────────────────────────────────
     avg_class_mastery = round(sum(all_scores) / len(all_scores), 4) if all_scores else 0.0
     
-    # Sort for top struggling (highest pct_struggling) and top mastered
+    # Sort for top struggling (highest pct_struggling) and top mastered, excluding zeros
     sorted_by_struggling = sorted(
-        [(name, m) for name, m in concept_metrics.items()],
+        [(name, m) for name, m in concept_metrics.items() if m["pct_struggling"] > 0.0],
         key=lambda x: x[1]["pct_struggling"],
         reverse=True,
     )
     top_struggling_concepts = [name for name, _ in sorted_by_struggling[:5]]
-    
+
     sorted_by_mastered = sorted(
-        [(name, m) for name, m in concept_metrics.items()],
+        [(name, m) for name, m in concept_metrics.items() if m["pct_mastered"] > 0.0],
         key=lambda x: x[1]["pct_mastered"],
         reverse=True,
     )

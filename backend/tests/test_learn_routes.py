@@ -8,7 +8,6 @@ import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
-from routes.learn import _get_course_id_for_topic
 from main import app
 
 client = TestClient(app)
@@ -18,10 +17,12 @@ client = TestClient(app)
 
 class TestGetCourseIdForTopic:
     def test_empty_topic_returns_empty(self):
+        from routes.learn import _get_course_id_for_topic
         with patch("routes.learn.table"):
             assert _get_course_id_for_topic("", "u1") == ""
 
     def test_matches_enrolled_course_code(self):
+        from routes.learn import _get_course_id_for_topic
         uc = MagicMock()
         uc.select.return_value = [
             {"course_id": "cid-math", "courses": {"course_code": "MATH", "course_name": "Calculus"}},
@@ -38,6 +39,7 @@ class TestGetCourseIdForTopic:
             assert _get_course_id_for_topic("math", "u1") == "cid-math"
 
     def test_matches_enrolled_course_name(self):
+        from routes.learn import _get_course_id_for_topic
         uc = MagicMock()
         uc.select.return_value = [
             {"course_id": "cid-bio", "courses": {"course_code": "", "course_name": "Biology 101"}},
@@ -54,6 +56,7 @@ class TestGetCourseIdForTopic:
             assert _get_course_id_for_topic("biology 101", "u1") == "cid-bio"
 
     def test_matches_graph_subject_label(self):
+        from routes.learn import _get_course_id_for_topic
         uc = MagicMock()
         uc.select.return_value = [
             {
@@ -77,6 +80,7 @@ class TestGetCourseIdForTopic:
             assert _get_course_id_for_topic("CS - Intro", "u1") == "cid-x"
 
     def test_concept_node_with_course_id(self):
+        from routes.learn import _get_course_id_for_topic
         uc = MagicMock()
         uc.select.return_value = []
 
@@ -96,6 +100,7 @@ class TestGetCourseIdForTopic:
             assert _get_course_id_for_topic("Recursion", "u1") == "cid-from-node"
 
     def test_unknown_topic_returns_empty(self):
+        from routes.learn import _get_course_id_for_topic
         mock = MagicMock()
         mock.select.return_value = []
         with patch("routes.learn.table", return_value=mock):

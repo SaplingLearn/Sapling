@@ -100,11 +100,10 @@ def _make_table(questions=None):
 
 
 @contextmanager
-def _submit_quiz_mocks():
+def _submit_quiz_mocks(questions=None):
     with (
-        patch("routes.quiz.table", side_effect=_make_table()),
+        patch("routes.quiz.table", side_effect=_make_table(questions)),
         patch("routes.quiz.update_streak"),
-        patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": [], "stats": {}}),
         patch("routes.quiz.get_quiz_context", return_value={}),
         patch("routes.quiz.call_gemini_json", return_value={}),
     ):
@@ -121,7 +120,6 @@ class TestSubmitQuiz:
                     {"question_id": 2, "selected_label": "D"},
                 ],
             })
-
         assert r.status_code == 200
         data = r.json()
         assert data["score"] == 2
@@ -136,7 +134,6 @@ class TestSubmitQuiz:
                     {"question_id": 2, "selected_label": "C"},
                 ],
             })
-
         assert r.status_code == 200
         assert r.json()["score"] == 0
 
@@ -146,7 +143,6 @@ class TestSubmitQuiz:
                 "quiz_id": "quiz1",
                 "answers": [{"question_id": 1, "selected_label": "A"}],
             })
-
         data = r.json()
         assert "score" in data
         assert "total" in data
@@ -159,11 +155,10 @@ class TestSubmitQuiz:
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz1",
                 "answers": [
-                    {"question_id": 1, "selected_label": "A"},
-                    {"question_id": 2, "selected_label": "C"},
+                    {"question_id": 1, "selected_label": "A"},  # correct
+                    {"question_id": 2, "selected_label": "C"},  # wrong
                 ],
             })
-
         results = r.json()["results"]
         correct_flags = {str(res["question_id"]): res["correct"] for res in results}
         assert correct_flags["1"] is True
@@ -178,7 +173,6 @@ class TestSubmitQuiz:
                     {"question_id": 2, "selected_label": "D"},
                 ],
             })
-
         data = r.json()
         assert data["mastery_after"] > data["mastery_before"]
 
@@ -191,7 +185,6 @@ class TestSubmitQuiz:
                     {"question_id": 2, "selected_label": "C"},
                 ],
             })
-
         data = r.json()
         assert data["mastery_after"] < data["mastery_before"]
 
@@ -229,16 +222,15 @@ class TestSubmitQuiz:
 
         with patch("routes.quiz.table", side_effect=factory):
             with patch("routes.quiz.update_streak"):
-                with patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": [], "stats": {}}):
-                    with patch("routes.quiz.get_quiz_context", return_value={}):
-                        with patch("routes.quiz.call_gemini_json", return_value={}):
-                            r = client.post("/api/quiz/submit", json={
-                                "quiz_id": "quiz1",
-                                "answers": [
-                                    {"question_id": 1, "selected_label": "A"},
-                                    {"question_id": 2, "selected_label": "D"},
-                                ],
-                            })
+                with patch("routes.quiz.get_quiz_context", return_value={}):
+                    with patch("routes.quiz.call_gemini_json", return_value={}):
+                        r = client.post("/api/quiz/submit", json={
+                            "quiz_id": "quiz1",
+                            "answers": [
+                                {"question_id": 1, "selected_label": "A"},
+                                {"question_id": 2, "selected_label": "D"},
+                            ],
+                        })
 
         assert r.status_code == 200
         assert r.json()["score"] == 2
