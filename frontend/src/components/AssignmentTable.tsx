@@ -74,6 +74,8 @@ export default function AssignmentTable({ assignments, onChange, selectedIds, on
       id: `temp_${Date.now()}`,
       title: '',
       course_name: '',
+      course_code: '',
+      course_id: '',
       due_date: '',
       assignment_type: 'homework',
       notes: null,
@@ -256,7 +258,7 @@ export default function AssignmentTable({ assignments, onChange, selectedIds, on
                 </td>
                 <td style={{ padding: '4px 6px' }}>
                   <CustomSelect
-                    value={a.assignment_type}
+                    value={a.assignment_type ?? 'other'}
                     onChange={val => update(index, 'assignment_type', val)}
                     options={TYPES.map(t => ({ value: t, label: t }))}
                     compact

@@ -7,8 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import FRONTEND_URL, PORT
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers
-from recost.frameworks.fastapi import RecostMiddleware
 
+try:
+    from recost.frameworks.fastapi import RecostMiddleware
+except ImportError:
+    RecostMiddleware = None  # optional; tests/CI without recost package
 
 load_dotenv(Path(__file__).with_name(".env"))
 
@@ -17,7 +20,7 @@ recost_api_key = os.getenv("RECOST_API_KEY")
 
 app = FastAPI(title="Sapling API", version="1.0.0")
 
-if recost_api_key:
+if recost_api_key and RecostMiddleware is not None:
     app.add_middleware(
         RecostMiddleware,
         api_key=recost_api_key,

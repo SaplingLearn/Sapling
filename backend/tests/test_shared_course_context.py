@@ -2,8 +2,7 @@
 Unit tests for the shared course context system.
 
 Tests: course_context_service, graph_service (apply_graph_update side-effects),
-       learn.py helpers (_resolve_course, _get_session_topic, build_system_prompt),
-       quiz.py (generate_quiz prompt augmentation).
+       learn.py (build_system_prompt), quiz.py (generate_quiz prompt augmentation).
 
 Run from backend/:
     python -m pytest tests/test_shared_course_context.py -v
@@ -48,12 +47,45 @@ class TestGetCourseContext(unittest.TestCase):
 
     @patch("services.course_context_service.table")
     def test_returns_context_json_when_found(self, mock_table):
-        ctx = {"struggling_concepts": [{"concept": "Pointers", "avg_mastery": 0.2}]}
-        mock_table.return_value.select.return_value = [{"context_json": ctx}]
+        summary_row = {
+            "course_id": "CS101",
+            "semester": "Spring 2026",
+            "student_count": 5,
+            "avg_class_mastery": 0.6,
+            "top_struggling_concepts": ["Pointers"],
+            "top_mastered_concepts": ["Variables"],
+            "summary_text": "Good progress.",
+            "updated_at": "2026-04-01T00:00:00+00:00",
+        }
+        stat_row = {
+            "course_id": "CS101",
+            "concept_name": "Pointers",
+            "semester": "Spring 2026",
+            "avg_mastery_score": 0.2,
+            "pct_struggling": 0.6,
+            "pct_mastered": 0.1,
+            "pct_unexplored": 0.3,
+            "student_count": 5,
+            "common_misconceptions": ["Dangling pointer"],
+        }
+
+        def _tbl(name):
+            m = MagicMock()
+            if name == "course_summary":
+                m.select.return_value = [summary_row]
+            elif name == "course_concept_stats":
+                m.select.return_value = [stat_row]
+            else:
+                m.select.return_value = []
+            return m
+        mock_table.side_effect = _tbl
 
         from services.course_context_service import get_course_context
         result = get_course_context("CS101")
-        self.assertEqual(result, ctx)
+        self.assertIn("course_summary", result)
+        self.assertIn("concept_stats", result)
+        self.assertEqual(result["course_summary"]["course_id"], "CS101")
+        self.assertEqual(result["concept_stats"][0]["concept_name"], "Pointers")
 
     @patch("services.course_context_service.table")
     def test_returns_empty_dict_when_not_found(self, mock_table):
@@ -96,7 +128,9 @@ class TestUpdateCourseContext(unittest.TestCase):
 
     @patch("services.course_context_service.table")
     def test_aggregates_mastery_and_upserts(self, mock_table):
-        # Two users, same concept "Loops" — one struggling, one mastered
+        # Two students enrolled, same concept "Loops" — one struggling, one mastered
+        enrollment_rows = [{"user_id": "u1"}, {"user_id": "u2"}]
+        course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
         node_rows = [
             {"id": "n1", "concept_name": "Loops", "mastery_score": 0.2,
              "mastery_tier": "struggling", "user_id": "u1"},
@@ -104,45 +138,51 @@ class TestUpdateCourseContext(unittest.TestCase):
              "mastery_tier": "mastered",   "user_id": "u2"},
         ]
 
-        def _select(*args, **kwargs):
-            return node_rows
+        stats_tbl = MagicMock()
+        stats_tbl.upsert.return_value = None
 
-        node_tbl = MagicMock()
-        node_tbl.select.side_effect = _select
-
-        quiz_tbl = MagicMock()
-        quiz_tbl.select.return_value = []
-
-        ctx_tbl = MagicMock()
+        summary_tbl = MagicMock()
+        summary_tbl.select.return_value = []  # no existing summary
+        summary_tbl.upsert.return_value = None
 
         def _table(name):
-            if name == "graph_nodes":
-                return node_tbl
-            if name == "quiz_context":
-                return quiz_tbl
-            if name == "course_context":
-                return ctx_tbl
-            return MagicMock()
+            m = MagicMock()
+            if name == "user_courses":
+                m.select.return_value = enrollment_rows
+            elif name == "courses":
+                m.select.return_value = course_rows
+            elif name == "graph_nodes":
+                m.select.return_value = node_rows
+            elif name == "quiz_context":
+                m.select.return_value = []
+            elif name == "course_concept_stats":
+                return stats_tbl
+            elif name == "course_summary":
+                return summary_tbl
+            else:
+                m.select.return_value = []
+            return m
 
         mock_table.side_effect = _table
 
-        from services.course_context_service import update_course_context
-        update_course_context("CS101")
+        with patch("services.course_context_service._generate_summary_with_gemini", return_value="summary"):
+            from services.course_context_service import update_course_context
+            update_course_context("c-cs101")
 
-        ctx_tbl.upsert.assert_called_once()
-        upsert_payload = ctx_tbl.upsert.call_args[0][0]
-        self.assertEqual(upsert_payload["course_name"], "CS101")
+        # course_concept_stats should be upserted for "Loops"
+        stats_tbl.upsert.assert_called_once()
+        upsert_payload = stats_tbl.upsert.call_args[0][0]
+        self.assertEqual(upsert_payload["course_id"], "c-cs101")
+        self.assertEqual(upsert_payload["concept_name"], "Loops")
         self.assertEqual(upsert_payload["student_count"], 2)
-
-        ctx_json = upsert_payload["context_json"]
         # avg mastery for Loops = (0.2 + 0.9) / 2 = 0.55
-        self.assertAlmostEqual(
-            ctx_json["concept_difficulty_ranking"][0]["avg_mastery"], 0.55, places=2
-        )
+        self.assertAlmostEqual(upsert_payload["avg_mastery_score"], 0.55, places=2)
 
     @patch("services.course_context_service.table")
     def test_struggling_concepts_threshold(self, mock_table):
-        """struggling_pct > 0.2 should appear in struggling_concepts."""
+        """Concepts with pct_struggling > 0 should appear in top_struggling_concepts."""
+        enrollment_rows = [{"user_id": "u1"}, {"user_id": "u2"}]
+        course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
         node_rows = [
             {"id": "n1", "concept_name": "Recursion", "mastery_score": 0.1,
              "mastery_tier": "struggling", "user_id": "u1"},
@@ -152,36 +192,50 @@ class TestUpdateCourseContext(unittest.TestCase):
              "mastery_tier": "mastered", "user_id": "u1"},
         ]
 
-        node_tbl = MagicMock()
-        node_tbl.select.return_value = node_rows
-        quiz_tbl = MagicMock()
-        quiz_tbl.select.return_value = []
-        ctx_tbl = MagicMock()
+        stats_tbl = MagicMock()
+        summary_tbl = MagicMock()
+        summary_tbl.select.return_value = []
 
         def _table(name):
-            if name == "graph_nodes": return node_tbl
-            if name == "quiz_context": return quiz_tbl
-            return ctx_tbl
+            m = MagicMock()
+            if name == "user_courses":
+                m.select.return_value = enrollment_rows
+            elif name == "courses":
+                m.select.return_value = course_rows
+            elif name == "graph_nodes":
+                m.select.return_value = node_rows
+            elif name == "quiz_context":
+                m.select.return_value = []
+            elif name == "course_concept_stats":
+                return stats_tbl
+            elif name == "course_summary":
+                return summary_tbl
+            else:
+                m.select.return_value = []
+            return m
 
         mock_table.side_effect = _table
 
-        from services.course_context_service import update_course_context
-        update_course_context("CS101")
+        with patch("services.course_context_service._generate_summary_with_gemini", return_value="summary"):
+            from services.course_context_service import update_course_context
+            update_course_context("c-cs101")
 
-        payload = ctx_tbl.upsert.call_args[0][0]["context_json"]
-        struggling_names = [c["concept"] for c in payload["struggling_concepts"]]
-        self.assertIn("Recursion", struggling_names)
-        self.assertNotIn("Loops", struggling_names)
+        # course_summary upsert should have Recursion in top_struggling_concepts
+        summary_tbl.upsert.assert_called_once()
+        summary_payload = summary_tbl.upsert.call_args[0][0]
+        self.assertIn("Recursion", summary_payload["top_struggling_concepts"])
+        self.assertNotIn("Loops", summary_payload["top_struggling_concepts"])
 
     @patch("services.course_context_service.table")
     def test_deduplicates_misconceptions_case_insensitive(self, mock_table):
+        enrollment_rows = [{"user_id": "u1"}, {"user_id": "u2"}]
+        course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
         node_rows = [
             {"id": "n1", "concept_name": "Loops", "mastery_score": 0.3,
              "mastery_tier": "learning", "user_id": "u1"},
             {"id": "n2", "concept_name": "Loops", "mastery_score": 0.3,
              "mastery_tier": "learning", "user_id": "u2"},
         ]
-        node_id_set = {"n1", "n2"}
         quiz_rows = [
             {"concept_node_id": "n1",
              "context_json": {"common_mistakes": ["Off-by-one error", "off-by-one error"], "weak_areas": []}},
@@ -189,26 +243,39 @@ class TestUpdateCourseContext(unittest.TestCase):
              "context_json": {"common_mistakes": ["OFF-BY-ONE ERROR"], "weak_areas": ["boundary conditions"]}},
         ]
 
-        node_tbl = MagicMock()
-        node_tbl.select.return_value = node_rows
-        quiz_tbl = MagicMock()
-        quiz_tbl.select.return_value = quiz_rows
-        ctx_tbl = MagicMock()
+        stats_tbl = MagicMock()
+        summary_tbl = MagicMock()
+        summary_tbl.select.return_value = []
 
         def _table(name):
-            if name == "graph_nodes": return node_tbl
-            if name == "quiz_context": return quiz_tbl
-            return ctx_tbl
+            m = MagicMock()
+            if name == "user_courses":
+                m.select.return_value = enrollment_rows
+            elif name == "courses":
+                m.select.return_value = course_rows
+            elif name == "graph_nodes":
+                m.select.return_value = node_rows
+            elif name == "quiz_context":
+                m.select.return_value = quiz_rows
+            elif name == "course_concept_stats":
+                return stats_tbl
+            elif name == "course_summary":
+                return summary_tbl
+            else:
+                m.select.return_value = []
+            return m
 
         mock_table.side_effect = _table
 
-        from services.course_context_service import update_course_context
-        update_course_context("CS101")
+        with patch("services.course_context_service._generate_summary_with_gemini", return_value="summary"):
+            from services.course_context_service import update_course_context
+            update_course_context("c-cs101")
 
-        payload = ctx_tbl.upsert.call_args[0][0]["context_json"]
         # All three "off-by-one" variants are the same after .lower() — only one kept
-        self.assertEqual(len(payload["common_misconceptions"]), 1)
-        self.assertEqual(len(payload["weak_areas"]), 1)
+        stats_tbl.upsert.assert_called_once()
+        upsert_payload = stats_tbl.upsert.call_args[0][0]
+        self.assertEqual(len(upsert_payload["common_misconceptions"]), 1)
+        self.assertEqual(len(upsert_payload["prerequisite_gaps"]), 1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -226,7 +293,8 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
         # patch it at the source module so the import resolves to our mock.
         node_tbl = MagicMock()
         node_tbl.select.return_value = [
-            {"id": "n1", "mastery_score": 0.4, "times_studied": 2, "subject": "CS101"}
+            {"id": "n1", "mastery_score": 0.4, "times_studied": 2,
+             "subject": "CS101", "course_id": "course-1", "mastery_events": []}
         ]
 
         def _table(name):
@@ -243,7 +311,7 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
              "new_edges": []}
         )
 
-        mock_update_ctx.assert_called_once_with("CS101")
+        mock_update_ctx.assert_called_once_with("course-1")
 
     @patch("services.graph_service.table")
     @patch("services.course_context_service.update_course_context",
@@ -254,7 +322,7 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
         """A failure in update_course_context must never surface to the caller."""
         node_tbl = MagicMock()
         node_tbl.select.return_value = [
-            {"id": "n1", "mastery_score": 0.4, "times_studied": 2, "subject": "CS101"}
+            {"id": "n1", "mastery_score": 0.4, "times_studied": 2, "course_id": "c1", "subject": "CS101"}
         ]
 
         def _table(name):
@@ -298,100 +366,124 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. learn.py — _resolve_course, _get_session_topic, build_system_prompt
+# 4. learn.py — build_system_prompt
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestLearnHelpers(unittest.TestCase):
 
     @patch("routes.learn.table")
-    def test_resolve_course_when_topic_is_subject(self, mock_table):
-        mock_table.return_value.select.return_value = [{"subject": "CS101"}]
+    def test_resolve_course_when_topic_matches_course_code(self, mock_table):
+        enrolled_tbl = MagicMock()
+        enrolled_tbl.select.return_value = [
+            {"course_id": "course-1", "courses": {"course_code": "CS101", "course_name": "Intro CS"}}
+        ]
+        node_tbl = MagicMock()
+        node_tbl.select.return_value = []
 
-        from routes.learn import _resolve_course
-        result = _resolve_course("CS101", "user1")
-        self.assertEqual(result, "CS101")
+        def _factory(name):
+            if name == "user_courses": return enrolled_tbl
+            return node_tbl
+
+        mock_table.side_effect = _factory
+
+        from routes.learn import _get_course_id_for_topic
+        result = _get_course_id_for_topic("CS101", "user1")
+        self.assertEqual(result, "course-1")
 
     @patch("routes.learn.table")
     def test_resolve_course_when_topic_is_concept(self, mock_table):
-        tbl = MagicMock()
-        # First call (is topic a subject?) → not found
-        # Second call (is topic a concept?) → found with subject
-        tbl.select.side_effect = [[], [{"subject": "CS101"}]]
-        mock_table.return_value = tbl
+        enrolled_tbl = MagicMock()
+        enrolled_tbl.select.return_value = []
+        node_tbl = MagicMock()
+        # First call (concept_name match) → found with course_id
+        node_tbl.select.side_effect = [[{"course_id": "course-1"}], []]
 
-        from routes.learn import _resolve_course
-        result = _resolve_course("Loops", "user1")
-        self.assertEqual(result, "CS101")
+        def _factory(name):
+            if name == "user_courses": return enrolled_tbl
+            return node_tbl
+
+        mock_table.side_effect = _factory
+
+        from routes.learn import _get_course_id_for_topic
+        result = _get_course_id_for_topic("Loops", "user1")
+        self.assertEqual(result, "course-1")
 
     @patch("routes.learn.table")
     def test_resolve_course_unknown_topic_returns_empty(self, mock_table):
         mock_table.return_value.select.return_value = []
 
-        from routes.learn import _resolve_course
-        result = _resolve_course("RandomTopic", "user1")
+        from routes.learn import _get_course_id_for_topic
+        result = _get_course_id_for_topic("RandomTopic", "user1")
         self.assertEqual(result, "")
 
     def test_resolve_course_empty_topic_returns_empty(self):
-        from routes.learn import _resolve_course
-        result = _resolve_course("", "user1")
+        from routes.learn import _get_course_id_for_topic
+        result = _get_course_id_for_topic("", "user1")
         self.assertEqual(result, "")
 
     @patch("routes.learn.table")
-    def test_get_session_topic_found(self, mock_table):
-        mock_table.return_value.select.return_value = [{"topic": "Recursion"}]
+    def test_get_session_course_id_found(self, mock_table):
+        mock_table.return_value.select.return_value = [{"course_id": "course-1"}]
 
-        from routes.learn import _get_session_topic
-        result = _get_session_topic("session-abc")
-        self.assertEqual(result, "Recursion")
+        from routes.learn import _get_session_course_id
+        result = _get_session_course_id("session-abc")
+        self.assertEqual(result, "course-1")
 
     @patch("routes.learn.table")
-    def test_get_session_topic_not_found(self, mock_table):
+    def test_get_session_course_id_not_found(self, mock_table):
         mock_table.return_value.select.return_value = []
 
-        from routes.learn import _get_session_topic
-        result = _get_session_topic("session-missing")
+        from routes.learn import _get_session_course_id
+        result = _get_session_course_id("session-missing")
         self.assertEqual(result, "")
 
-    # get_course_context is lazily imported inside build_system_prompt;
-    # patch it at the source module so the `from ... import` resolves to our mock.
     @patch("services.course_context_service.get_course_context", return_value={})
-    def test_build_system_prompt_no_course_name(self, mock_ctx):
+    def test_build_system_prompt_no_course_id(self, mock_ctx):
         from routes.learn import build_system_prompt
         prompt = build_system_prompt("socratic", "Alice", "{}")
         self.assertNotIn("COURSE INTELLIGENCE", prompt)
         mock_ctx.assert_not_called()
 
+    @patch("routes.learn.table")
     @patch("services.course_context_service.get_course_context", return_value={})
-    def test_build_system_prompt_course_name_but_empty_ctx(self, mock_ctx):
+    def test_build_system_prompt_course_id_but_empty_ctx(self, mock_ctx, mock_table):
+        mock_table.return_value.select.return_value = []
         from routes.learn import build_system_prompt
-        prompt = build_system_prompt("socratic", "Alice", "{}", course_name="CS101")
+        prompt = build_system_prompt("socratic", "Alice", "{}", course_id="course-1")
         self.assertNotIn("COURSE INTELLIGENCE", prompt)
-        mock_ctx.assert_called_once_with("CS101")
+        mock_ctx.assert_called_once_with("course-1")
 
+    @patch("routes.learn.table")
     @patch("services.course_context_service.get_course_context")
-    def test_build_system_prompt_injects_shared_block(self, mock_ctx):
+    def test_build_system_prompt_injects_shared_block(self, mock_ctx, mock_table):
         mock_ctx.return_value = {
-            "struggling_concepts": [{"concept": "Pointers", "avg_mastery": 0.2}],
-            "mastered_concepts": [],
-            "concept_difficulty_ranking": [],
-            "common_misconceptions": ["Off-by-one errors"],
-            "weak_areas": [],
-            "student_count": 10,
+            "course_summary": {"avg_class_mastery": 0.6, "top_struggling_concepts": ["Pointers"]},
+            "concept_stats": [],
         }
+        mock_table.return_value.select.return_value = [
+            {"course_code": "CS101", "course_name": "Intro CS"}
+        ]
 
         from routes.learn import build_system_prompt
-        prompt = build_system_prompt("socratic", "Alice", "{}", course_name="CS101")
+        prompt = build_system_prompt("socratic", "Alice", "{}", course_id="course-1")
         self.assertIn("COURSE INTELLIGENCE", prompt)
         self.assertIn("CS101", prompt)
-        mock_ctx.assert_called_once_with("CS101")
+        mock_ctx.assert_called_once_with("course-1")
 
+    @patch("routes.learn.table")
     @patch("services.course_context_service.get_course_context")
-    def test_build_system_prompt_mode_appended_after_shared_block(self, mock_ctx):
+    def test_build_system_prompt_mode_appended_after_shared_block(self, mock_ctx, mock_table):
         """Mode prompt must always be the last section."""
-        mock_ctx.return_value = {"struggling_concepts": [], "student_count": 5}
+        mock_ctx.return_value = {
+            "course_summary": {"avg_class_mastery": 0.5, "top_struggling_concepts": []},
+            "concept_stats": [],
+        }
+        mock_table.return_value.select.return_value = [
+            {"course_code": "CS101", "course_name": "Intro CS"}
+        ]
 
         from routes.learn import build_system_prompt, MODE_PROMPTS
-        prompt = build_system_prompt("expository", "Bob", "{}", course_name="CS101")
+        prompt = build_system_prompt("expository", "Bob", "{}", course_id="course-1")
         expository_text = MODE_PROMPTS["expository"]
         ctx_pos = prompt.find("COURSE INTELLIGENCE")
         mode_pos = prompt.find(expository_text[:40])
@@ -425,13 +517,19 @@ class TestQuizPromptAugmentation(unittest.TestCase):
     ):
         mock_table.return_value.select.return_value = [{
             "id": "node-abc", "concept_name": "Pointers",
-            "mastery_score": 0.3, "subject": "CS101",
+            "mastery_score": 0.3, "course_id": "c1",
         }]
         mock_table.return_value.insert.return_value = None
         mock_graph.return_value = {"nodes": [], "edges": []}
         mock_ctx.return_value = {
-            "common_misconceptions": ["Dangling pointers", "Memory leaks"],
-            "weak_areas": ["Pointer arithmetic"],
+            "course_summary": {"avg_class_mastery": 0.4},
+            "concept_stats": [
+                {
+                    "concept_name": "Pointers",
+                    "common_misconceptions": ["Dangling pointers", "Memory leaks"],
+                    "prerequisite_gaps": ["Pointer arithmetic"],
+                }
+            ],
         }
         mock_gemini.return_value = {"questions": []}
 
@@ -453,7 +551,7 @@ class TestQuizPromptAugmentation(unittest.TestCase):
     ):
         mock_table.return_value.select.return_value = [{
             "id": "node-abc", "concept_name": "Loops",
-            "mastery_score": 0.5, "subject": "CS101",
+            "mastery_score": 0.5, "course_id": "c1",
         }]
         mock_table.return_value.insert.return_value = None
         mock_graph.return_value = {"nodes": [], "edges": []}
@@ -463,8 +561,6 @@ class TestQuizPromptAugmentation(unittest.TestCase):
         generate_quiz(self._make_generate_body())
 
         actual_prompt = mock_gemini.call_args[0][0]
-        # The base quiz_generation.txt mentions "misconceptions" in its rules;
-        # assert the course-level addendum header is NOT present when ctx is empty.
         self.assertNotIn("Common misconceptions seen across the class", actual_prompt)
 
     @patch("services.course_context_service.get_course_context")
@@ -477,13 +573,19 @@ class TestQuizPromptAugmentation(unittest.TestCase):
     ):
         mock_table.return_value.select.return_value = [{
             "id": "node-abc", "concept_name": "Pointers",
-            "mastery_score": 0.3, "subject": "CS101",
+            "mastery_score": 0.3, "course_id": "c1",
         }]
         mock_table.return_value.insert.return_value = None
         mock_graph.return_value = {"nodes": [], "edges": []}
         mock_ctx.return_value = {
-            "common_misconceptions": [f"mistake_{i}" for i in range(20)],
-            "weak_areas": [],
+            "course_summary": {"avg_class_mastery": 0.4},
+            "concept_stats": [
+                {
+                    "concept_name": "Pointers",
+                    "common_misconceptions": [f"mistake_{i}" for i in range(20)],
+                    "prerequisite_gaps": [],
+                }
+            ],
         }
         mock_gemini.return_value = {"questions": []}
 
@@ -498,12 +600,12 @@ class TestQuizPromptAugmentation(unittest.TestCase):
     @patch("routes.quiz.get_quiz_context", return_value=None)
     @patch("routes.quiz.get_graph")
     @patch("routes.quiz.table")
-    def test_no_augmentation_when_node_has_no_subject(
+    def test_no_augmentation_when_node_has_no_course_id(
         self, mock_table, mock_graph, mock_quiz_ctx, mock_gemini
     ):
         mock_table.return_value.select.return_value = [{
             "id": "node-abc", "concept_name": "GenericConcept",
-            "mastery_score": 0.5, "subject": "",
+            "mastery_score": 0.5, "course_id": "",
         }]
         mock_table.return_value.insert.return_value = None
         mock_graph.return_value = {"nodes": [], "edges": []}

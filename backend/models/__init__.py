@@ -9,6 +9,7 @@ class StartSessionBody(BaseModel):
     topic: str = ""
     mode: str = "socratic"
     use_shared_context: bool = True
+    course_id: Optional[str] = None  # Direct course_id lookup instead of resolving from topic
 
 
 class ChatBody(BaseModel):
@@ -56,7 +57,7 @@ class SubmitQuizBody(BaseModel):
 
 class AssignmentItem(BaseModel):
     title: str
-    course_name: str = ""
+    course_id: str = ""  # Changed from course_name to course_id
     due_date: str
     assignment_type: str = "other"
     notes: Optional[str] = None
@@ -82,6 +83,20 @@ class ImportSaveBody(BaseModel):
     AssignmentItem shape before posting here.
     """
     assignments: list[AssignmentItem]
+
+
+# ── Graph (Courses) ─────────────────────────────────────────────────────────
+
+class AddCourseBody(BaseModel):
+    """Body for enrolling a user in a course (creating a user_courses record)."""
+    course_id: str
+    color: Optional[str] = None
+    nickname: Optional[str] = None
+
+
+class UpdateCourseColorBody(BaseModel):
+    """Body for updating a course enrollment's color."""
+    color: str
 
 
 # ── Social ────────────────────────────────────────────────────────────────────
@@ -154,3 +169,11 @@ class SubmitIssueReportBody(BaseModel):
     topic: str
     description: str
     screenshot_urls: list[str] = []
+
+
+# ── Documents ──────────────────────────────────────────────────────────────────
+
+class UploadDocumentBody(BaseModel):
+    """Body for document upload."""
+    course_id: str
+    user_id: str

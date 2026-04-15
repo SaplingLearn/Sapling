@@ -13,6 +13,9 @@ import {
   syncToGoogleCalendar,
   importGoogleEvents,
   disconnectGoogleCalendar,
+  getCourses,
+  type SaveAssignmentItem,
+  type EnrolledCourse,
 } from '@/lib/api';
 import { useUser } from '@/context/UserContext';
 
@@ -53,7 +56,7 @@ const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> 
 };
 
 function AssignmentChip({ a, isMobile }: { a: Assignment; isMobile?: boolean }) {
-  const c = TYPE_COLORS[a.assignment_type] ?? TYPE_COLORS.other;
+  const c = TYPE_COLORS[a.assignment_type ?? 'other'] ?? TYPE_COLORS.other;
   return (
     <div
       title={`${a.title}${a.course_name ? ` — ${a.course_name}` : ''}${a.notes ? `\n${a.notes}` : ''}`}
@@ -265,7 +268,7 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '600px', margin: '0 auto' }}>
             {dayAssignments.map(a => {
-              const c = TYPE_COLORS[a.assignment_type] ?? TYPE_COLORS.other;
+              const c = TYPE_COLORS[a.assignment_type ?? 'other'] ?? TYPE_COLORS.other;
               return (
                 <div key={a.id} style={{ padding: '14px 16px', borderRadius: '8px', background: c.bg, borderLeft: `4px solid ${c.text}`, display: 'flex', flexDirection: 'column', gap: '6px', border: `1px solid ${c.border}` }}>
                   <span style={{ fontSize: '15px', fontWeight: 600, color: '#111827' }}>{a.title}</span>
@@ -321,6 +324,51 @@ function CalendarGrid({ assignments }: { assignments: Assignment[] }) {
   );
 }
 
+
+function normalizeAssignments(items: any[]): Assignment[] {
+  return (items ?? []).map((a: any, index: number) => ({
+    id: a.id ?? `missing-id-${index}`,
+    title: a.title ?? '',
+    course_name: a.course_name ?? '',
+    course_code: a.course_code ?? '',
+    course_id: a.course_id ?? '',
+    due_date: a.due_date ?? '',
+    assignment_type: a.assignment_type ?? 'other',
+    notes: a.notes ?? null,
+    google_event_id: a.google_event_id ?? null,
+  }));
+}
+
+function buildCourseNameToIdMap(courses: EnrolledCourse[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const c of courses) {
+    const label = c.course_code ? `${c.course_code} - ${c.course_name}` : c.course_name;
+    const keys = [c.course_name, label, c.nickname].filter(Boolean) as string[];
+    for (const k of keys) {
+      const lower = k.toLowerCase();
+      if (!m.has(lower)) m.set(lower, c.course_id);
+    }
+  }
+  return m;
+}
+
+function toSaveItems(assignments: Assignment[], nameToId: Map<string, string>): SaveAssignmentItem[] {
+  return assignments.map(a => {
+    let courseId = (a.course_id ?? '').trim();
+    if (!courseId && a.course_name?.trim()) {
+      const key = a.course_name.trim().toLowerCase();
+      courseId = nameToId.get(key) ?? '';
+    }
+    return {
+      title: a.title,
+      course_id: courseId,
+      due_date: a.due_date,
+      assignment_type: a.assignment_type ?? 'other',
+      notes: a.notes ?? undefined,
+    };
+  });
+}
+
 function CalendarInner() {
   const { userId: USER_ID, userReady } = useUser();
   const searchParams = useSearchParams();
@@ -340,6 +388,7 @@ function CalendarInner() {
   const [googleConnected, setGoogleConnected] = useState(false);
   const [googleEvents, setGoogleEvents] = useState<any[]>([]);
   const [importingGoogle, setImportingGoogle] = useState(false);
+  const [courseNameToId, setCourseNameToId] = useState<Map<string, string>>(() => new Map());
 
   /** Orange (notice) vs red (error) — matches syllabusInlineMessage fallback when kind is stale. */
   const syllabusNoticeStyle =
@@ -351,11 +400,14 @@ function CalendarInner() {
   useEffect(() => {
     if (!userReady) return;
     getAllAssignments(USER_ID)
-      .then(data => setAssignments(data.assignments ?? []))
+      .then(data => setAssignments(normalizeAssignments(data.assignments ?? [])))
       .catch(console.error);
     getCalendarStatus(USER_ID)
       .then(res => setGoogleConnected(res.connected))
       .catch(() => {});
+    getCourses(USER_ID)
+      .then(data => setCourseNameToId(buildCourseNameToIdMap(data.courses ?? [])))
+      .catch(console.error);
   }, [USER_ID, userReady]);
 
   // Handle OAuth redirect (?connected=true) once on mount, independently
@@ -390,6 +442,8 @@ function CalendarInner() {
         id: `extracted_${i}_${Date.now()}`,
         title: a.title ?? '',
         course_name: a.course_name ?? '',
+        course_code: a.course_code ?? '',
+        course_id: a.course_id ?? '',
         due_date: a.due_date ?? '',
         assignment_type: a.assignment_type ?? 'other',
         notes: a.notes ?? null,
@@ -408,9 +462,9 @@ function CalendarInner() {
   const handleSaveDetected = async () => {
     setSaving(true);
     try {
-      await saveAssignments(USER_ID, extractedAssignments);
+      await saveAssignments(USER_ID, toSaveItems(extractedAssignments, courseNameToId));
       const data = await getAllAssignments(USER_ID);
-      setAssignments(data.assignments ?? []);
+      setAssignments(normalizeAssignments(data.assignments ?? []));
       setExtractedAssignments([]);
       setFileProcessed(false);
       setWarnings([]);
@@ -443,7 +497,7 @@ function CalendarInner() {
       setSyncedCount(res.synced_count);
       // Refresh so google_event_id values are up to date
       getAllAssignments(USER_ID)
-        .then(data => setAssignments(data.assignments ?? []))
+        .then(data => setAssignments(normalizeAssignments(data.assignments ?? [])))
         .catch(console.error);
     } catch (e: any) {
       alert(e.message);

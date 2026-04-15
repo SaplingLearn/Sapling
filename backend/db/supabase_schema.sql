@@ -1,14 +1,14 @@
 -- ============================================================
--- Sapling — Supabase Schema
+-- Sapling — Supabase Schema (course_id migration)
 -- Run this in: Supabase Dashboard → SQL Editor → New query
 -- ============================================================
 
 -- Users
 CREATE TABLE IF NOT EXISTS users (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    email       TEXT,
-    streak_count INTEGER DEFAULT 0,
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    email            TEXT,
+    streak_count     INTEGER DEFAULT 0,
     last_active_date TEXT,
     room_id     TEXT,
     created_at  TIMESTAMPTZ DEFAULT now(),
@@ -20,6 +20,36 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
 
+-- Canonical course catalog (no user_id — shared across all students)
+CREATE TABLE IF NOT EXISTS courses (
+    id              TEXT PRIMARY KEY,
+    course_code     TEXT NOT NULL,
+    course_name     TEXT NOT NULL,
+    department      TEXT,
+    credits         INTEGER,
+    semester        TEXT DEFAULT 'Spring 2026',
+    instructor_name TEXT,
+    meeting_times   TEXT,
+    location        TEXT,
+    description     TEXT,
+    syllabus_url    TEXT,
+    school          TEXT,
+    created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+-- Enrollment join table (user ↔ canonical course)
+CREATE TABLE IF NOT EXISTS user_courses (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id),
+    course_id   TEXT NOT NULL REFERENCES courses(id),
+    color       TEXT,
+    nickname    TEXT,
+    enrolled_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (user_id, course_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_courses_user_id ON user_courses(user_id);
+
 -- Knowledge graph nodes
 CREATE TABLE IF NOT EXISTS graph_nodes (
     id              TEXT PRIMARY KEY,
@@ -30,9 +60,12 @@ CREATE TABLE IF NOT EXISTS graph_nodes (
     times_studied   INTEGER DEFAULT 0,
     last_studied_at TIMESTAMPTZ,
     subject         TEXT,
+    course_id       TEXT REFERENCES courses(id),
     created_at      TIMESTAMPTZ DEFAULT now(),
-    mastery_events  JSONB DEFAULT '[]'  -- array of {ts, delta, reason, event_type} — last 20 events
+    mastery_events  JSONB DEFAULT '[]'
 );
+
+CREATE INDEX IF NOT EXISTS idx_graph_nodes_user_course ON graph_nodes(user_id, course_id);
 
 -- Knowledge graph edges
 CREATE TABLE IF NOT EXISTS graph_edges (
@@ -42,42 +75,30 @@ CREATE TABLE IF NOT EXISTS graph_edges (
     target_node_id    TEXT NOT NULL REFERENCES graph_nodes(id),
     strength          DOUBLE PRECISION DEFAULT 0.5,
     created_at        TIMESTAMPTZ DEFAULT now(),
-    relationship_type TEXT DEFAULT 'related'  -- 'prerequisite' | 'builds_on' | 'related'
-);
-
--- Migrations (run these if the table already exists)
--- ALTER TABLE graph_nodes ADD COLUMN IF NOT EXISTS mastery_events JSONB DEFAULT '[]';
--- ALTER TABLE graph_edges ADD COLUMN IF NOT EXISTS relationship_type TEXT DEFAULT 'related';
-
--- Courses
-CREATE TABLE IF NOT EXISTS courses (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES users(id),
-    course_name TEXT NOT NULL,
-    color       TEXT,
-    created_at  TIMESTAMPTZ DEFAULT now(),
-    UNIQUE (user_id, course_name)
+    relationship_type TEXT DEFAULT 'related'
 );
 
 -- Learning sessions
 CREATE TABLE IF NOT EXISTS sessions (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES users(id),
-    mode        TEXT NOT NULL,
-    topic       TEXT NOT NULL,
-    started_at  TIMESTAMPTZ DEFAULT now(),
-    ended_at    TIMESTAMPTZ,
-    summary_json JSONB
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id),
+    mode         TEXT NOT NULL,
+    topic        TEXT NOT NULL,
+    course_id    TEXT REFERENCES courses(id),
+    started_at   TIMESTAMPTZ DEFAULT now(),
+    ended_at     TIMESTAMPTZ,
+    summary_json JSONB,
+    name         TEXT
 );
 
 -- Chat messages within a session
 CREATE TABLE IF NOT EXISTS messages (
-    id               TEXT PRIMARY KEY,
-    session_id       TEXT NOT NULL REFERENCES sessions(id),
-    role             TEXT NOT NULL,
-    content          TEXT NOT NULL,
+    id                TEXT PRIMARY KEY,
+    session_id        TEXT NOT NULL REFERENCES sessions(id),
+    role              TEXT NOT NULL,
+    content           TEXT NOT NULL,
     graph_update_json JSONB,
-    created_at       TIMESTAMPTZ DEFAULT now()
+    created_at        TIMESTAMPTZ DEFAULT now()
 );
 
 -- Quiz attempts
@@ -108,12 +129,70 @@ CREATE TABLE IF NOT EXISTS assignments (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL REFERENCES users(id),
     title           TEXT NOT NULL,
-    course_name     TEXT,
+    course_id       TEXT REFERENCES courses(id),
     due_date        TEXT NOT NULL,
     assignment_type TEXT,
     notes           TEXT,
     google_event_id TEXT,
     created_at      TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_assignments_user_due ON assignments(user_id, due_date);
+
+-- Documents (uploaded course materials)
+CREATE TABLE IF NOT EXISTS documents (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id),
+    course_id    TEXT NOT NULL REFERENCES courses(id),
+    file_name    TEXT NOT NULL,
+    category     TEXT NOT NULL,
+    summary      TEXT,
+    key_takeaways JSONB,
+    flashcards   JSONB,
+    created_at   TIMESTAMPTZ DEFAULT now(),
+    processed_at TIMESTAMPTZ
+);
+
+-- Study guides
+CREATE TABLE IF NOT EXISTS study_guides (
+    id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    user_id      TEXT NOT NULL REFERENCES users(id),
+    course_id    TEXT NOT NULL REFERENCES courses(id),
+    exam_id      TEXT NOT NULL,
+    generated_at TIMESTAMPTZ DEFAULT now(),
+    content      JSONB NOT NULL
+);
+
+-- Per-concept aggregated course stats (across all enrolled students)
+CREATE TABLE IF NOT EXISTS course_concept_stats (
+    id                    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    course_id             TEXT NOT NULL REFERENCES courses(id),
+    concept_name          TEXT NOT NULL,
+    semester              TEXT NOT NULL DEFAULT 'Spring 2026',
+    student_count         INTEGER DEFAULT 0,
+    avg_mastery_score     DOUBLE PRECISION DEFAULT 0.0,
+    pct_mastered          DOUBLE PRECISION DEFAULT 0.0,
+    pct_struggling        DOUBLE PRECISION DEFAULT 0.0,
+    pct_unexplored        DOUBLE PRECISION DEFAULT 0.0,
+    common_misconceptions TEXT[] DEFAULT '{}',
+    effective_explanations TEXT[] DEFAULT '{}',
+    prerequisite_gaps     TEXT[] DEFAULT '{}',
+    updated_at            TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (course_id, concept_name, semester)
+);
+
+-- Course-wide summary (rolled up from course_concept_stats)
+CREATE TABLE IF NOT EXISTS course_summary (
+    course_id               TEXT NOT NULL REFERENCES courses(id),
+    semester                TEXT NOT NULL DEFAULT 'Spring 2026',
+    student_count           INTEGER DEFAULT 0,
+    avg_class_mastery       DOUBLE PRECISION DEFAULT 0.0,
+    top_struggling_concepts TEXT[] DEFAULT '{}',
+    top_mastered_concepts   TEXT[] DEFAULT '{}',
+    summary_text            TEXT,
+    summary_hash            TEXT,
+    updated_at              TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (course_id, semester)
 );
 
 -- Study rooms
@@ -170,20 +249,15 @@ CREATE INDEX IF NOT EXISTS idx_room_messages_room_id ON room_messages(room_id, c
 
 -- Emoji reactions on room messages
 CREATE TABLE IF NOT EXISTS room_reactions (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    message_id  UUID NOT NULL REFERENCES room_messages(id) ON DELETE CASCADE,
-    user_id     TEXT NOT NULL REFERENCES users(id),
-    emoji       TEXT NOT NULL,
-    created_at  TIMESTAMPTZ DEFAULT now(),
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    message_id UUID NOT NULL REFERENCES room_messages(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id),
+    emoji      TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
     UNIQUE(message_id, user_id, emoji)
 );
 
 CREATE INDEX IF NOT EXISTS idx_room_reactions_message_id ON room_reactions(message_id);
-
--- Migrations (run if tables already exist without these columns):
--- ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS reply_to_id UUID REFERENCES room_messages(id);
--- ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE;
--- ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
 
 -- Cached AI summaries for study rooms
 CREATE TABLE IF NOT EXISTS room_summaries (
@@ -193,14 +267,7 @@ CREATE TABLE IF NOT EXISTS room_summaries (
     updated_at  TIMESTAMPTZ DEFAULT now()
 );
 
--- Shared course-level learning context (aggregated from all students, no Gemini)
-CREATE TABLE IF NOT EXISTS course_context (
-    course_name   TEXT PRIMARY KEY,
-    context_json  JSONB NOT NULL,
-    student_count INTEGER DEFAULT 0,
-    updated_at    TIMESTAMPTZ DEFAULT now()
-);
-
+-- Flashcards
 CREATE TABLE IF NOT EXISTS flashcards (
     id               TEXT PRIMARY KEY,
     user_id          TEXT NOT NULL REFERENCES users(id),
@@ -215,18 +282,38 @@ CREATE TABLE IF NOT EXISTS flashcards (
 
 CREATE INDEX IF NOT EXISTS idx_flashcards_user_topic ON flashcards(user_id, topic);
 
-CREATE TABLE public.flashcards (
-  id text NOT NULL,
-  user_id text NOT NULL,
-  topic text NOT NULL,
-  front text NOT NULL,
-  back text NOT NULL,
-  times_reviewed integer DEFAULT 0,
-  last_rating integer,
-  last_reviewed_at timestamp with time zone,
-  created_at timestamp with time zone DEFAULT now(),
-  CONSTRAINT flashcards_pkey PRIMARY KEY (id),
-  CONSTRAINT flashcards_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id)
+-- Feedback
+CREATE TABLE IF NOT EXISTS feedback (
+    id               SERIAL PRIMARY KEY,
+    user_id          TEXT NOT NULL,
+    type             TEXT NOT NULL,
+    rating           INTEGER NOT NULL,
+    selected_options JSONB DEFAULT '[]',
+    comment          TEXT,
+    session_id       TEXT,
+    topic            TEXT,
+    created_at       TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_flashcards_user_topic ON public.flashcards(user_id, topic);
+-- Issue reports
+CREATE TABLE IF NOT EXISTS issue_reports (
+    id               SERIAL PRIMARY KEY,
+    user_id          TEXT NOT NULL,
+    topic            TEXT NOT NULL,
+    description      TEXT NOT NULL,
+    screenshot_urls  JSONB DEFAULT '[]',
+    created_at       TIMESTAMPTZ DEFAULT now()
+);
+
+-- Job applications
+CREATE TABLE IF NOT EXISTS job_applications (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    position       TEXT NOT NULL,
+    full_name      TEXT NOT NULL,
+    email          TEXT NOT NULL,
+    phone          TEXT,
+    linkedin_url   TEXT NOT NULL,
+    resume         TEXT,
+    portfolio_link TEXT,
+    submitted_at   TIMESTAMPTZ DEFAULT now()
+);

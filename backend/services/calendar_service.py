@@ -41,7 +41,7 @@ def insert_new_assignments(user_id: str, assignments: list[dict]) -> int:
             "id": str(uuid.uuid4()),
             "user_id": user_id,
             "title": title,
-            "course_name": a.get("course_name") or "",
+            "course_id": a.get("course_id") or None,
             "due_date": key[1],
             "assignment_type": a.get("assignment_type") or "other",
             "notes": a.get("notes"),

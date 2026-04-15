@@ -8,58 +8,103 @@ import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
-from routes.learn import _resolve_course
 from main import app
 
 client = TestClient(app)
 
 
-# ── _resolve_course ───────────────────────────────────────────────────────────
+# ── _get_course_id_for_topic ──────────────────────────────────────────────────
 
-class TestResolveCourse:
+class TestGetCourseIdForTopic:
     def test_empty_topic_returns_empty(self):
+        from routes.learn import _get_course_id_for_topic
         with patch("routes.learn.table"):
-            assert _resolve_course("", "u1") == ""
+            assert _get_course_id_for_topic("", "u1") == ""
 
-    def test_topic_matches_subject_name(self):
-        def factory(name):
-            mock = MagicMock()
-            mock.select.return_value = [{"subject": "Math"}]
-            return mock
-
-        with patch("routes.learn.table", side_effect=factory):
-            assert _resolve_course("Math", "u1") == "Math"
-
-    def test_topic_matches_concept_name(self):
-        call_count = {"n": 0}
+    def test_matches_enrolled_course_code(self):
+        from routes.learn import _get_course_id_for_topic
+        uc = MagicMock()
+        uc.select.return_value = [
+            {"course_id": "cid-math", "courses": {"course_code": "MATH", "course_name": "Calculus"}},
+        ]
 
         def factory(name):
-            mock = MagicMock()
-            call_count["n"] += 1
-            # First call: subject lookup → no match
-            # Second call: concept lookup → match with subject
-            mock.select.return_value = [] if call_count["n"] == 1 else [{"subject": "CS101"}]
-            return mock
+            if name == "user_courses":
+                return uc
+            m = MagicMock()
+            m.select.return_value = []
+            return m
 
         with patch("routes.learn.table", side_effect=factory):
-            assert _resolve_course("Recursion", "u1") == "CS101"
+            assert _get_course_id_for_topic("math", "u1") == "cid-math"
+
+    def test_matches_enrolled_course_name(self):
+        from routes.learn import _get_course_id_for_topic
+        uc = MagicMock()
+        uc.select.return_value = [
+            {"course_id": "cid-bio", "courses": {"course_code": "", "course_name": "Biology 101"}},
+        ]
+
+        def factory(name):
+            if name == "user_courses":
+                return uc
+            m = MagicMock()
+            m.select.return_value = []
+            return m
+
+        with patch("routes.learn.table", side_effect=factory):
+            assert _get_course_id_for_topic("biology 101", "u1") == "cid-bio"
+
+    def test_matches_graph_subject_label(self):
+        from routes.learn import _get_course_id_for_topic
+        uc = MagicMock()
+        uc.select.return_value = [
+            {
+                "course_id": "cid-x",
+                "courses": {"course_code": "CS", "course_name": "Intro"},
+            },
+        ]
+
+        def factory(name):
+            if name == "user_courses":
+                return uc
+            if name == "graph_nodes":
+                m = MagicMock()
+                m.select.return_value = []
+                return m
+            m = MagicMock()
+            m.select.return_value = []
+            return m
+
+        with patch("routes.learn.table", side_effect=factory):
+            assert _get_course_id_for_topic("CS - Intro", "u1") == "cid-x"
+
+    def test_concept_node_with_course_id(self):
+        from routes.learn import _get_course_id_for_topic
+        uc = MagicMock()
+        uc.select.return_value = []
+
+        gn = MagicMock()
+        gn.select.return_value = [{"course_id": "cid-from-node"}]
+
+        def factory(name):
+            if name == "user_courses":
+                return uc
+            if name == "graph_nodes":
+                return gn
+            m = MagicMock()
+            m.select.return_value = []
+            return m
+
+        with patch("routes.learn.table", side_effect=factory):
+            assert _get_course_id_for_topic("Recursion", "u1") == "cid-from-node"
 
     def test_unknown_topic_returns_empty(self):
+        from routes.learn import _get_course_id_for_topic
         mock = MagicMock()
         mock.select.return_value = []
         with patch("routes.learn.table", return_value=mock):
-            assert _resolve_course("UnknownXyzzy", "u1") == ""
-
-    def test_topic_matches_course_case_insensitive(self):
-        mock = MagicMock()
-        mock.select.side_effect = [
-            [],
-            [],
-            [],
-            [{"course_name": "Biology 101"}],
-        ]
-        with patch("routes.learn.table", return_value=mock):
-            assert _resolve_course("biology 101", "u1") == "Biology 101"
+            assert _get_course_id_for_topic("UnknownXyzzy", "u1") == ""
 
 
 # ── GET /api/learn/sessions/{user_id} ────────────────────────────────────────
