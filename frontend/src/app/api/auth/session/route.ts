@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     const timeout = setTimeout(() => controller.abort(), 3000);
     let res: Response;
     try {
-      res = await fetch(`${API_URL}/auth/me?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal });
+      res = await fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal });
     } finally {
       clearTimeout(timeout);
     }
