@@ -4,8 +4,10 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } from 'lucide-react';
-import OnboardingModal, { type OnboardingModalHandle } from '@/components/OnboardingModal';
+import OnboardingFlow from '@/components/OnboardingFlow';
 import HowItWorks from '@/components/HowItWorks';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!<>-_\\/[]{}=+*^?#_";
 
@@ -16,6 +18,9 @@ export default function LandingPage() {
   const [heroMounted, setHeroMounted] = useState(false);
   const [heroText1, setHeroText1] = useState('');
   const [heroText2, setHeroText2] = useState('');
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [activeStep, setActiveStep] = useState(0);
+  const [completed, setCompleted] = useState<Set<number>>(new Set());
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const heroContentRef = useRef<HTMLDivElement>(null);
@@ -24,11 +29,18 @@ export default function LandingPage() {
   const ambientGlowRef = useRef<HTMLDivElement>(null);
   const parallaxYRef = useRef(0);
   const mouseRef = useRef({ x: 0, y: 0 });
-  const modalRef = useRef<OnboardingModalHandle>(null);
 
   useEffect(() => {
     if (userReady && isAuthenticated) {
-      router.replace('/dashboard');
+      const pending = sessionStorage.getItem('sapling_onboarding_pending');
+      if (pending) {
+        sessionStorage.removeItem('sapling_onboarding_pending');
+        setActiveStep(1);
+        setCompleted(new Set([0]));
+        setShowOnboarding(true);
+      } else {
+        router.replace('/dashboard');
+      }
     }
   }, [userReady, isAuthenticated, router]);
 
@@ -324,8 +336,8 @@ export default function LandingPage() {
             <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: '#1a5c2a', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Sapling</span>
           </div>
           <div className="flex items-center">
-            <button onClick={() => modalRef.current?.open('signin')} className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
-            <button onClick={() => modalRef.current?.open('signup')} className="relative overflow-hidden group bg-[#1B6C42] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
+            <button onClick={() => { window.location.href = `${API_URL}/api/auth/google`; }} className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
+            <button onClick={() => setShowOnboarding(true)} className="relative overflow-hidden group bg-[#1B6C42] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
               Get Started
             </button>
           </div>
@@ -440,7 +452,7 @@ export default function LandingPage() {
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 700ms',
           }} className="flex flex-col sm:flex-row gap-4 mt-10 items-center justify-center">
-            <button onClick={() => modalRef.current?.open('signup')} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
+            <button onClick={() => setShowOnboarding(true)} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
               Get Started
             </button>
             <button onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })} className="liquid-glass-subtle text-[var(--brand-text2)] hover:text-[var(--brand-text1)] px-10 py-4 rounded-full font-medium text-base transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]">
@@ -516,7 +528,7 @@ export default function LandingPage() {
           </h2>
           <p className="text-[var(--brand-text2)] text-lg mt-6 font-light">Join students who learn smarter, not harder.</p>
           <div className="mt-10 flex flex-col items-center">
-            <button onClick={() => modalRef.current?.open('signup')} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
+            <button onClick={() => setShowOnboarding(true)} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
               Get Started
             </button>
           </div>
@@ -544,7 +556,20 @@ export default function LandingPage() {
         </div>
       </footer>
 
-      <OnboardingModal ref={modalRef} />
+      {showOnboarding && (
+        <OnboardingFlow
+          visible={showOnboarding}
+          onClose={() => setShowOnboarding(false)}
+          onFinish={(formData) => {
+            sessionStorage.setItem('sapling_onboarding', JSON.stringify(formData));
+            router.replace('/dashboard');
+          }}
+          activeStep={activeStep}
+          completed={completed}
+          setActiveStep={setActiveStep}
+          setCompleted={setCompleted}
+        />
+      )}
     </div>
   );
 }

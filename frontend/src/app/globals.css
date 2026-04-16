@@ -795,3 +795,22 @@ input[type="reset"]:disabled {
   transform: translateY(0) scale(1);
 }
 
+/* ════════════════════════════════════════════════════════════════════
+   ONBOARDING FLOW ANIMATIONS
+   ════════════════════════════════════════════════════════════════════ */
+
+@keyframes ob-pulse-outer {
+  0%, 100% { opacity: 0.1;  transform: scale(1);    }
+  50%       { opacity: 0.22; transform: scale(1.06); }
+}
+
+@keyframes ob-pulse-inner {
+  0%, 100% { opacity: 0.3;  transform: scale(1);    }
+  50%       { opacity: 0.55; transform: scale(1.04); }
+}
+
+@keyframes ob-card-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to   { opacity: 1; transform: translateX(0);    }
+}
+

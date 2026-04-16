@@ -30,14 +30,15 @@ function CallbackInner() {
     setActiveUser(userId, name, avatar || '');
     confirmApproved();
 
-    // Try to set the session cookie; redirect to dashboard regardless.
+    // Try to set the session cookie; redirect regardless.
     fetch('/api/auth/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId, ...(authToken ? { authToken } : {}) }),
     }).catch(() => {});
 
-    router.replace('/dashboard');
+    const onboardingPending = sessionStorage.getItem('sapling_onboarding_pending');
+    router.replace(onboardingPending ? '/' : '/dashboard');
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
