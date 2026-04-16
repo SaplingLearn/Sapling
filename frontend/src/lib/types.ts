@@ -266,6 +266,10 @@ export interface UserProfile {
   website: string | null;
   avatar_url: string | null;
   created_at: string | null;
+  year: string | null;
+  majors: string[];
+  minors: string[];
+  school: string | null;
   roles: UserRole[];
   featured_achievements: UserAchievement[];
   equipped_cosmetics: EquippedCosmetics;

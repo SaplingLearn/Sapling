@@ -28,8 +28,8 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
     <button
       onClick={() => !disabled && onChange(!checked)}
       style={{
-        width: '36px',
-        height: '20px',
+        width: '40px',
+        height: '22px',
         borderRadius: 'var(--radius-full)',
         background: checked ? 'var(--accent)' : 'var(--bg-subtle)',
         border: `1px solid ${checked ? 'var(--accent)' : 'var(--border-mid)'}`,
@@ -41,13 +41,13 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
       }}
     >
       <div style={{
-        width: '14px',
-        height: '14px',
+        width: '16px',
+        height: '16px',
         borderRadius: '50%',
         background: '#fff',
         position: 'absolute',
         top: '2px',
-        left: checked ? '18px' : '2px',
+        left: checked ? '20px' : '2px',
         transition: 'left var(--dur-fast)',
         boxShadow: '0 1px 2px rgba(0,0,0,0.15)',
       }} />
@@ -93,7 +93,6 @@ export default function SettingsPage() {
       .catch(() => setLoading(false));
   }, [userId]);
 
-  // Username availability check with debounce
   const checkUsername = useCallback((val: string) => {
     if (usernameTimerRef.current) clearTimeout(usernameTimerRef.current);
     if (!val || val === settings?.username) {
@@ -186,7 +185,7 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div style={{ maxWidth: '800px', margin: '40px auto', padding: '0 20px', fontFamily: UI_FONT }}>
+      <div style={{ maxWidth: '960px', margin: '40px auto', padding: '0 24px', fontFamily: UI_FONT }}>
         <div style={{ color: 'var(--text-dim)', fontSize: '13px' }}>Loading settings...</div>
       </div>
     );
@@ -198,42 +197,57 @@ export default function SettingsPage() {
     color: 'var(--text)',
     border: '1px solid var(--border)',
     borderRadius: 'var(--radius-sm)',
-    padding: '8px 10px',
-    fontSize: '13px',
+    padding: '10px 12px',
+    fontSize: '14px',
     fontFamily: 'inherit',
     outline: 'none',
+    transition: 'border-color var(--dur-fast)',
   };
 
   const labelStyle: React.CSSProperties = {
-    fontSize: '12px',
+    fontSize: '13px',
     fontWeight: 500,
     color: 'var(--text-secondary)',
-    marginBottom: '4px',
+    marginBottom: '6px',
     display: 'block',
   };
 
   const sectionTitleStyle: React.CSSProperties = {
-    fontSize: '15px',
+    fontSize: '18px',
     fontWeight: 600,
     color: 'var(--text)',
-    marginBottom: '16px',
+    marginBottom: '8px',
+  };
+
+  const sectionDescStyle: React.CSSProperties = {
+    fontSize: '13px',
+    color: 'var(--text-dim)',
+    marginBottom: '24px',
+    lineHeight: 1.5,
+  };
+
+  const cardStyle: React.CSSProperties = {
+    background: 'var(--bg-panel)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-md)',
+    padding: '24px',
   };
 
   const settingRowStyle: React.CSSProperties = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '10px 0',
+    padding: '14px 0',
     borderBottom: '1px solid var(--border-light)',
   };
 
   return (
-    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '24px 20px', fontFamily: UI_FONT }}>
-      <h1 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '24px', color: 'var(--text)' }}>Settings</h1>
+    <div style={{ maxWidth: '960px', margin: '0 auto', padding: '32px 24px', fontFamily: UI_FONT }}>
+      <h1 style={{ fontSize: '22px', fontWeight: 700, marginBottom: '28px', color: 'var(--text)' }}>Settings</h1>
 
-      <div style={{ display: 'flex', gap: '32px' }}>
+      <div style={{ display: 'flex', gap: '40px' }}>
         {/* Sidebar */}
-        <nav style={{ minWidth: '140px', flexShrink: 0 }}>
+        <nav style={{ minWidth: '160px', flexShrink: 0, position: 'sticky', top: '24px', alignSelf: 'flex-start' }}>
           {SECTIONS.map(s => (
             <button
               key={s.key}
@@ -242,7 +256,7 @@ export default function SettingsPage() {
                 display: 'block',
                 width: '100%',
                 textAlign: 'left',
-                padding: '6px 10px',
+                padding: '8px 12px',
                 borderRadius: 'var(--radius-sm)',
                 fontSize: '13px',
                 fontFamily: 'inherit',
@@ -266,64 +280,81 @@ export default function SettingsPage() {
           {activeSection === 'profile' && (
             <div>
               <div style={sectionTitleStyle}>Profile</div>
-              <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <AvatarFrame
-                  userId={userId}
-                  name={userName}
-                  size={56}
-                  avatarUrl={avatarUrl}
-                  frameUrl={equippedCosmetics?.avatar_frame?.asset_url}
-                />
-                <label style={{
-                  ...inputStyle,
-                  width: 'auto',
-                  cursor: 'pointer',
-                  textAlign: 'center',
-                  padding: '6px 14px',
-                  color: 'var(--accent)',
-                  border: '1px solid var(--accent-border)',
-                  background: 'var(--accent-dim)',
-                }}>
-                  Change avatar
-                  <input type="file" accept="image/*" onChange={handleAvatarUpload} style={{ display: 'none' }} />
-                </label>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={labelStyle}>Display name</label>
-                  <input style={inputStyle} value={displayName} onChange={e => setDisplayName(e.target.value)} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Username</label>
-                  <input
-                    style={inputStyle}
-                    value={username}
-                    onChange={e => { setUsername(e.target.value); checkUsername(e.target.value); }}
-                    placeholder="your-username"
+              <div style={sectionDescStyle}>Manage your public profile information.</div>
+
+              <div style={cardStyle}>
+                {/* Avatar */}
+                <div style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <AvatarFrame
+                    userId={userId}
+                    name={userName}
+                    size={64}
+                    avatarUrl={avatarUrl}
+                    frameUrl={equippedCosmetics?.avatar_frame?.asset_url}
                   />
-                  {checkingUsername && <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Checking...</span>}
-                  {usernameAvailable === true && <span style={{ fontSize: '11px', color: 'var(--brand-success)' }}>Available</span>}
-                  {usernameAvailable === false && <span style={{ fontSize: '11px', color: 'var(--brand-struggle)' }}>Taken</span>}
+                  <div>
+                    <label style={{
+                      display: 'inline-block',
+                      cursor: 'pointer',
+                      padding: '8px 16px',
+                      fontSize: '13px',
+                      fontWeight: 500,
+                      fontFamily: 'inherit',
+                      color: 'var(--accent)',
+                      border: '1px solid var(--accent-border)',
+                      background: 'var(--accent-dim)',
+                      borderRadius: 'var(--radius-sm)',
+                    }}>
+                      Change avatar
+                      <input type="file" accept="image/*" onChange={handleAvatarUpload} style={{ display: 'none' }} />
+                    </label>
+                    <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>JPG, PNG, or GIF. Max 2MB.</div>
+                  </div>
                 </div>
-                <div>
-                  <label style={labelStyle}>Bio</label>
-                  <textarea
-                    style={{ ...inputStyle, minHeight: '60px', resize: 'vertical' }}
-                    value={bio}
-                    onChange={e => setBio(e.target.value)}
-                    placeholder="Tell us about yourself"
-                  />
+
+                {/* Fields */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label style={labelStyle}>Display name</label>
+                    <input style={inputStyle} value={displayName} onChange={e => setDisplayName(e.target.value)} />
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label style={labelStyle}>Username</label>
+                    <input
+                      style={inputStyle}
+                      value={username}
+                      onChange={e => { setUsername(e.target.value); checkUsername(e.target.value); }}
+                      placeholder="your-username"
+                    />
+                    <div style={{ minHeight: '18px', marginTop: '4px' }}>
+                      {checkingUsername && <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>Checking availability...</span>}
+                      {usernameAvailable === true && <span style={{ fontSize: '11px', color: 'var(--brand-success)' }}>Username available</span>}
+                      {usernameAvailable === false && <span style={{ fontSize: '11px', color: 'var(--brand-struggle)' }}>Username already taken</span>}
+                    </div>
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label style={labelStyle}>Bio</label>
+                    <textarea
+                      style={{ ...inputStyle, minHeight: '80px', resize: 'vertical' }}
+                      value={bio}
+                      onChange={e => setBio(e.target.value)}
+                      placeholder="Tell us about yourself"
+                    />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Location</label>
+                    <input style={inputStyle} value={location} onChange={e => setLocation(e.target.value)} placeholder="City, State" />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Website</label>
+                    <input style={inputStyle} value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://yoursite.com" />
+                  </div>
                 </div>
-                <div>
-                  <label style={labelStyle}>Location</label>
-                  <input style={inputStyle} value={location} onChange={e => setLocation(e.target.value)} placeholder="City, State" />
-                </div>
-                <div>
-                  <label style={labelStyle}>Website</label>
-                  <input style={inputStyle} value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://yoursite.com" />
+
+                <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button className="btn-accent" onClick={saveProfile}>Save profile</button>
                 </div>
               </div>
-              <button className="btn-accent" onClick={saveProfile} style={{ marginTop: '16px' }}>Save profile</button>
             </div>
           )}
 
@@ -331,20 +362,26 @@ export default function SettingsPage() {
           {activeSection === 'account' && (
             <div>
               <div style={sectionTitleStyle}>Account</div>
-              <div style={{ ...settingRowStyle, borderBottom: 'none' }}>
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text)' }}>Email</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Managed by your Google account</div>
+              <div style={sectionDescStyle}>Your account is managed through Google authentication.</div>
+
+              <div style={cardStyle}>
+                <div style={{ ...settingRowStyle, borderBottom: 'none', padding: '0' }}>
+                  <div>
+                    <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text)' }}>Email</div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-dim)', marginTop: '4px' }}>Managed by your Google account</div>
+                  </div>
                 </div>
-              </div>
-              <div style={{
-                padding: '12px',
-                background: 'var(--bg-subtle)',
-                borderRadius: 'var(--radius-md)',
-                fontSize: '13px',
-                color: 'var(--text-muted)',
-              }}>
-                Signed in with Google — password management is handled by your Google account.
+                <div style={{
+                  padding: '14px 16px',
+                  background: 'var(--bg-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: '13px',
+                  color: 'var(--text-muted)',
+                  marginTop: '16px',
+                  lineHeight: 1.5,
+                }}>
+                  Signed in with Google — password management is handled by your Google account.
+                </div>
               </div>
             </div>
           )}
@@ -353,29 +390,33 @@ export default function SettingsPage() {
           {activeSection === 'notifications' && (
             <div>
               <div style={sectionTitleStyle}>Notifications</div>
-              <div style={settingRowStyle}>
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 500 }}>Email notifications</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Receive updates via email</div>
-                </div>
-                <Toggle checked={settings?.notification_email ?? true} onChange={v => saveSettings({ notification_email: v })} />
-              </div>
-              <div style={settingRowStyle}>
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 500 }}>In-app notifications</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Show notifications within the app</div>
-                </div>
-                <Toggle checked={settings?.notification_in_app ?? true} onChange={v => saveSettings({ notification_in_app: v })} />
-              </div>
-              <div style={settingRowStyle}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={sectionDescStyle}>Choose how you want to be notified about activity.</div>
+
+              <div style={cardStyle}>
+                <div style={settingRowStyle}>
                   <div>
-                    <div style={{ fontSize: '13px', fontWeight: 500 }}>Push notifications</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Browser push notifications</div>
+                    <div style={{ fontSize: '14px', fontWeight: 500 }}>Email notifications</div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-dim)', marginTop: '2px' }}>Receive updates via email</div>
                   </div>
-                  <span className="badge" style={{ fontSize: '10px', padding: '1px 6px' }}>Coming soon</span>
+                  <Toggle checked={settings?.notification_email ?? true} onChange={v => saveSettings({ notification_email: v })} />
                 </div>
-                <Toggle checked={false} onChange={() => {}} disabled />
+                <div style={settingRowStyle}>
+                  <div>
+                    <div style={{ fontSize: '14px', fontWeight: 500 }}>In-app notifications</div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-dim)', marginTop: '2px' }}>Show notifications within the app</div>
+                  </div>
+                  <Toggle checked={settings?.notification_in_app ?? true} onChange={v => saveSettings({ notification_in_app: v })} />
+                </div>
+                <div style={{ ...settingRowStyle, borderBottom: 'none' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div>
+                      <div style={{ fontSize: '14px', fontWeight: 500 }}>Push notifications</div>
+                      <div style={{ fontSize: '13px', color: 'var(--text-dim)', marginTop: '2px' }}>Browser push notifications</div>
+                    </div>
+                    <span className="badge" style={{ fontSize: '10px', padding: '2px 8px' }}>Coming soon</span>
+                  </div>
+                  <Toggle checked={false} onChange={() => {}} disabled />
+                </div>
               </div>
             </div>
           )}
@@ -384,45 +425,49 @@ export default function SettingsPage() {
           {activeSection === 'appearance' && (
             <div>
               <div style={sectionTitleStyle}>Appearance</div>
-              <div style={settingRowStyle}>
-                <div style={{ fontSize: '13px', fontWeight: 500 }}>Theme</div>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  {['light', 'dark'].map(t => (
-                    <button
-                      key={t}
-                      onClick={() => handleThemeToggle(t)}
-                      className={settings?.theme === t ? 'pill pill-active' : 'pill pill-inactive'}
-                    >
-                      {t.charAt(0).toUpperCase() + t.slice(1)}
-                    </button>
-                  ))}
+              <div style={sectionDescStyle}>Customize the look and feel of the app.</div>
+
+              <div style={cardStyle}>
+                <div style={settingRowStyle}>
+                  <div style={{ fontSize: '14px', fontWeight: 500 }}>Theme</div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {['light', 'dark'].map(t => (
+                      <button
+                        key={t}
+                        onClick={() => handleThemeToggle(t)}
+                        className={settings?.theme === t ? 'pill pill-active' : 'pill pill-inactive'}
+                      >
+                        {t.charAt(0).toUpperCase() + t.slice(1)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <div style={settingRowStyle}>
-                <div style={{ fontSize: '13px', fontWeight: 500 }}>Font size</div>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  {['small', 'medium', 'large'].map(s => (
-                    <button
-                      key={s}
-                      onClick={() => saveSettings({ font_size: s })}
-                      className={settings?.font_size === s ? 'pill pill-active' : 'pill pill-inactive'}
-                    >
-                      {s.charAt(0).toUpperCase() + s.slice(1)}
-                    </button>
-                  ))}
+                <div style={settingRowStyle}>
+                  <div style={{ fontSize: '14px', fontWeight: 500 }}>Font size</div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {['small', 'medium', 'large'].map(s => (
+                      <button
+                        key={s}
+                        onClick={() => saveSettings({ font_size: s })}
+                        className={settings?.font_size === s ? 'pill pill-active' : 'pill pill-inactive'}
+                      >
+                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <div style={settingRowStyle}>
-                <div style={{ fontSize: '13px', fontWeight: 500 }}>Accent color</div>
-                <input
-                  type="color"
-                  value={settings?.accent_color || '#1a5c2a'}
-                  onChange={e => {
-                    document.documentElement.style.setProperty('--accent', e.target.value);
-                    saveSettings({ accent_color: e.target.value });
-                  }}
-                  style={{ width: '32px', height: '32px', border: 'none', background: 'none', cursor: 'pointer' }}
-                />
+                <div style={{ ...settingRowStyle, borderBottom: 'none' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 500 }}>Accent color</div>
+                  <input
+                    type="color"
+                    value={settings?.accent_color || '#1a5c2a'}
+                    onChange={e => {
+                      document.documentElement.style.setProperty('--accent', e.target.value);
+                      saveSettings({ accent_color: e.target.value });
+                    }}
+                    style={{ width: '36px', height: '36px', border: 'none', background: 'none', cursor: 'pointer' }}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -431,32 +476,36 @@ export default function SettingsPage() {
           {activeSection === 'privacy' && (
             <div>
               <div style={sectionTitleStyle}>Privacy</div>
-              <div style={settingRowStyle}>
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 500 }}>Profile visibility</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Control who can see your profile details</div>
+              <div style={sectionDescStyle}>Control who can see your information.</div>
+
+              <div style={cardStyle}>
+                <div style={settingRowStyle}>
+                  <div>
+                    <div style={{ fontSize: '14px', fontWeight: 500 }}>Profile visibility</div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-dim)', marginTop: '2px' }}>Control who can see your profile details</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {['public', 'private'].map(v => (
+                      <button
+                        key={v}
+                        onClick={() => saveSettings({ profile_visibility: v })}
+                        className={settings?.profile_visibility === v ? 'pill pill-active' : 'pill pill-inactive'}
+                      >
+                        {v.charAt(0).toUpperCase() + v.slice(1)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  {['public', 'private'].map(v => (
-                    <button
-                      key={v}
-                      onClick={() => saveSettings({ profile_visibility: v })}
-                      className={settings?.profile_visibility === v ? 'pill pill-active' : 'pill pill-inactive'}
-                    >
-                      {v.charAt(0).toUpperCase() + v.slice(1)}
-                    </button>
-                  ))}
+                <div style={{ ...settingRowStyle, borderBottom: 'none' }}>
+                  <div>
+                    <div style={{ fontSize: '14px', fontWeight: 500 }}>Activity status</div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-dim)', marginTop: '2px' }}>Show when you are active</div>
+                  </div>
+                  <Toggle
+                    checked={settings?.activity_status_visible ?? true}
+                    onChange={v => saveSettings({ activity_status_visible: v })}
+                  />
                 </div>
-              </div>
-              <div style={settingRowStyle}>
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 500 }}>Activity status</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Show when you are active</div>
-                </div>
-                <Toggle
-                  checked={settings?.activity_status_visible ?? true}
-                  onChange={v => saveSettings({ activity_status_visible: v })}
-                />
               </div>
             </div>
           )}
@@ -465,7 +514,11 @@ export default function SettingsPage() {
           {activeSection === 'cosmetics' && (
             <div>
               <div style={sectionTitleStyle}>Cosmetics</div>
-              <CosmeticsManager userId={userId} />
+              <div style={sectionDescStyle}>Customize your profile appearance with earned cosmetics.</div>
+
+              <div style={cardStyle}>
+                <CosmeticsManager userId={userId} />
+              </div>
             </div>
           )}
 
@@ -473,15 +526,23 @@ export default function SettingsPage() {
           {activeSection === 'danger' && (
             <div>
               <div style={{ ...sectionTitleStyle, color: 'var(--brand-struggle)' }}>Danger Zone</div>
+              <div style={sectionDescStyle}>Irreversible actions. Please be careful.</div>
+
               <div style={{
                 border: '1px solid rgba(220,38,38,0.2)',
                 borderRadius: 'var(--radius-md)',
-                padding: '16px',
+                padding: '24px',
               }}>
-                <div style={{ marginBottom: '16px' }}>
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text)', marginBottom: '6px' }}>Export your data</div>
+                  <div style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '10px' }}>Download a copy of all your data as JSON.</div>
                   <button className="btn-ghost" onClick={handleExport}>Export my data</button>
                 </div>
-                <div>
+                <div style={{ borderTop: '1px solid rgba(220,38,38,0.1)', paddingTop: '20px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text)', marginBottom: '6px' }}>Delete account</div>
+                  <div style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '10px' }}>
+                    Permanently delete your account and all associated data.
+                  </div>
                   <button
                     onClick={() => setShowDeleteForm(!showDeleteForm)}
                     style={{
@@ -499,32 +560,34 @@ export default function SettingsPage() {
                     Delete account
                   </button>
                   {showDeleteForm && (
-                    <div style={{ marginTop: '12px' }}>
-                      <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginBottom: '8px' }}>
-                        This will schedule your account for deletion. You have 30 days to change your mind. Type DELETE to confirm.
+                    <div style={{ marginTop: '16px', padding: '16px', background: 'rgba(220,38,38,0.03)', borderRadius: 'var(--radius-md)' }}>
+                      <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '10px', lineHeight: 1.5 }}>
+                        This will schedule your account for deletion. You have 30 days to change your mind. Type <strong>DELETE</strong> to confirm.
                       </p>
                       <input
-                        style={{ ...inputStyle, marginBottom: '8px' }}
+                        style={{ ...inputStyle, marginBottom: '10px', maxWidth: '300px' }}
                         value={deleteConfirm}
                         onChange={e => setDeleteConfirm(e.target.value)}
                         placeholder="Type DELETE to confirm"
                       />
-                      <button
-                        onClick={handleDeleteAccount}
-                        disabled={deleteConfirm !== 'DELETE' || deleting}
-                        style={{
-                          background: deleteConfirm === 'DELETE' ? '#dc2626' : 'var(--bg-subtle)',
-                          color: deleteConfirm === 'DELETE' ? '#fff' : 'var(--text-dim)',
-                          border: 'none',
-                          borderRadius: 'var(--radius-sm)',
-                          padding: '8px 16px',
-                          fontSize: '13px',
-                          fontFamily: 'inherit',
-                          cursor: deleteConfirm === 'DELETE' && !deleting ? 'pointer' : 'not-allowed',
-                        }}
-                      >
-                        {deleting ? 'Deleting...' : 'Confirm deletion'}
-                      </button>
+                      <div>
+                        <button
+                          onClick={handleDeleteAccount}
+                          disabled={deleteConfirm !== 'DELETE' || deleting}
+                          style={{
+                            background: deleteConfirm === 'DELETE' ? '#dc2626' : 'var(--bg-subtle)',
+                            color: deleteConfirm === 'DELETE' ? '#fff' : 'var(--text-dim)',
+                            border: 'none',
+                            borderRadius: 'var(--radius-sm)',
+                            padding: '8px 16px',
+                            fontSize: '13px',
+                            fontFamily: 'inherit',
+                            cursor: deleteConfirm === 'DELETE' && !deleting ? 'pointer' : 'not-allowed',
+                          }}
+                        >
+                          {deleting ? 'Deleting...' : 'Confirm deletion'}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

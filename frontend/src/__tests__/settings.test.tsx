@@ -100,7 +100,7 @@ describe('SettingsPage', () => {
 
     fireEvent.click(screen.getByText('Danger Zone'));
     await waitFor(() => {
-      expect(screen.getByText(/delete account/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/delete account/i).length).toBeGreaterThanOrEqual(1);
     });
   });
 

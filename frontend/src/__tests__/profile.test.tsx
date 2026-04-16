@@ -29,13 +29,14 @@ jest.mock('@/context/UserContext', () => ({
 
 // Mock api module
 const mockFetchPublicProfile = jest.fn();
+const mockFetchAchievements = jest.fn().mockResolvedValue({ earned: [], available: [] });
 jest.mock('@/lib/api', () => ({
   ...jest.requireActual('@/lib/api'),
   fetchPublicProfile: (...args: any[]) => mockFetchPublicProfile(...args),
+  fetchAchievements: (...args: any[]) => mockFetchAchievements(...args),
 }));
 
 // Mock child components
-jest.mock('@/components/ProfileBanner', () => () => <div data-testid="profile-banner" />);
 jest.mock('@/components/AvatarFrame', () => (props: any) => <div data-testid="avatar-frame" />);
 jest.mock('@/components/NameColorRenderer', () => ({ name }: { name: string }) => <span data-testid="name-renderer">{name}</span>);
 jest.mock('@/components/TitleFlair', () => () => null);
@@ -58,6 +59,10 @@ const validProfile = {
   bio: 'Hello',
   location: 'NYC',
   website: null,
+  year: 'junior',
+  majors: ['Computer Science'],
+  minors: [],
+  school: 'Boston University',
   roles: [],
   equipped_cosmetics: {},
   featured_achievements: [],

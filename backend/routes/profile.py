@@ -124,12 +124,26 @@ def get_public_profile(user_id: str):
     roles = _get_user_roles(user_id)
     equipped = _get_equipped_cosmetics(settings)
 
+    # Resolve school from user's enrolled courses
+    school = None
+    enrollments = table("user_courses").select(
+        "courses(school)",
+        filters={"user_id": f"eq.{user_id}"},
+        limit=1,
+    )
+    if enrollments and enrollments[0].get("courses", {}).get("school"):
+        school = enrollments[0]["courses"]["school"]
+
     profile = {
         "id": user["id"],
         "name": user.get("name", ""),
         "username": user.get("username"),
         "avatar_url": user.get("avatar_url"),
         "created_at": user.get("created_at"),
+        "year": user.get("year"),
+        "majors": user.get("majors") or [],
+        "minors": user.get("minors") or [],
+        "school": school,
         "roles": roles,
         "equipped_cosmetics": equipped,
     }
