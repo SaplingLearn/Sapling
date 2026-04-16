@@ -361,7 +361,7 @@ export default function Navbar() {
                 Signed in as <strong style={{ color: '#374151' }}>{userName}</strong>
               </div>
               {[
-                { href: `/profile/${userId}`, label: 'View profile' },
+                { href: `/profile?id=${userId}`, label: 'View profile' },
                 { href: '/settings', label: 'Settings' },
                 { href: '/achievements', label: 'Achievements' },
                 ...(isAdmin ? [{ href: '/admin', label: 'Admin' }] : []),

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { fetchPublicProfile } from '@/lib/api';
 import type { UserProfile } from '@/lib/types';
@@ -16,8 +16,8 @@ import Link from 'next/link';
 const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
 
 export default function ProfilePage() {
-  const params = useParams();
-  const profileUserId = params.userId as string;
+  const searchParams = useSearchParams();
+  const profileUserId = searchParams.get('id') || '';
   const { userId: currentUserId } = useUser();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);

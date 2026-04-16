@@ -1,5 +1,5 @@
 /**
- * Tests for app/profile/[userId]/page.tsx
+ * Tests for app/profile/page.tsx
  *
  * Covers: loading state, error state, profile data rendering,
  * own-profile edit button, role badges.
@@ -9,9 +9,9 @@ import { render, screen, waitFor } from '@testing-library/react';
 
 // Mock next/navigation
 jest.mock('next/navigation', () => ({
-  useParams: () => ({ userId: 'user_1' }),
+  useSearchParams: () => ({ get: (key: string) => key === 'id' ? 'user_1' : null }),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
-  usePathname: () => '/profile/user_1',
+  usePathname: () => '/profile',
 }));
 
 // Mock UserContext
@@ -43,7 +43,7 @@ jest.mock('@/components/RoleBadge', () => ({ role }: any) => <span data-testid="
 jest.mock('@/components/AchievementShowcase', () => () => <div data-testid="achievement-showcase" />);
 jest.mock('next/link', () => ({ children, ...props }: any) => <a {...props}>{children}</a>);
 
-import ProfilePage from '@/app/profile/[userId]/page';
+import ProfilePage from '@/app/profile/page';
 
 afterEach(() => {
   jest.clearAllMocks();
