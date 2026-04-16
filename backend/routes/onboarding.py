@@ -44,6 +44,7 @@ def save_onboarding_profile(body: OnboardingBody):
             "majors": body.majors,
             "minors": body.minors,
             "learning_style": body.learning_style,
+            "onboarding_completed": True,
         },
         filters={"id": f"eq.{body.user_id}"},
     )

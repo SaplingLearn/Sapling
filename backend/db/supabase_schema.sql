@@ -5,11 +5,18 @@
 
 -- Users
 CREATE TABLE IF NOT EXISTS users (
-    id               TEXT PRIMARY KEY,
-    name             TEXT NOT NULL,
-    email            TEXT,
-    streak_count     INTEGER DEFAULT 0,
-    last_active_date TEXT,
+    id                    TEXT PRIMARY KEY,
+    name                  TEXT NOT NULL,
+    email                 TEXT,
+    first_name            TEXT,
+    last_name             TEXT,
+    class_year            TEXT,
+    majors                TEXT[] DEFAULT '{}',
+    minors                TEXT[] DEFAULT '{}',
+    learning_style        TEXT,
+    onboarding_completed  BOOLEAN NOT NULL DEFAULT false,
+    streak_count          INTEGER DEFAULT 0,
+    last_active_date      TEXT,
     room_id     TEXT,
     created_at  TIMESTAMPTZ DEFAULT now(),
     google_id   TEXT UNIQUE,

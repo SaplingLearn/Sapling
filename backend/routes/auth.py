@@ -73,11 +73,15 @@ def _generate_pkce_pair():
 
 @router.get("/me")
 def get_me(user_id: str = Query(...)):
-    """Return approval status for a given user_id (used by Next.js session API route)."""
-    user = table("users").select("id,is_approved", filters={"id": f"eq.{user_id}"})
+    """Return approval and onboarding status for a given user_id."""
+    user = table("users").select("id,is_approved,onboarding_completed", filters={"id": f"eq.{user_id}"})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return {"user_id": user_id, "is_approved": bool(user[0]["is_approved"])}
+    return {
+        "user_id": user_id,
+        "is_approved": bool(user[0]["is_approved"]),
+        "onboarding_completed": bool(user[0].get("onboarding_completed", False)),
+    }
 
 
 @router.get("/google")

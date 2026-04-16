@@ -38,7 +38,26 @@ function CallbackInner() {
     }).catch(() => {});
 
     const onboardingPending = sessionStorage.getItem('sapling_onboarding_pending');
-    router.replace(onboardingPending ? '/' : '/dashboard');
+    if (onboardingPending) {
+      router.replace('/');
+      return;
+    }
+
+    // Check if user has completed onboarding; if not, send them through it
+    const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+    fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(userId)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.onboarding_completed) {
+          router.replace('/dashboard');
+        } else {
+          sessionStorage.setItem('sapling_onboarding_pending', 'true');
+          router.replace('/');
+        }
+      })
+      .catch(() => {
+        router.replace('/dashboard');
+      });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
