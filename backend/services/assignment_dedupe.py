@@ -3,6 +3,7 @@ Shared assignment deduplication keys (#16).
 
 Used by calendar import, syllabus extraction, and document upload saves.
 """
+from __future__ import annotations
 
 
 def assignment_dedupe_key(title: str | None, due_date: str | None) -> tuple[str, str]:

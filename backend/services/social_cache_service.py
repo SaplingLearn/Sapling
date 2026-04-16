@@ -6,6 +6,7 @@ Persistent cache for AI-generated room summaries stored in Supabase.
 Cache is keyed by room_id. A SHA-256 hash of the member mastery data
 is stored alongside the summary so we can detect when data changed.
 """
+from __future__ import annotations
 
 import hashlib
 from datetime import datetime

@@ -3,6 +3,7 @@ backend/routes/documents.py
 
 Document upload, AI processing, and library storage.
 """
+from __future__ import annotations
 
 import logging
 import uuid
