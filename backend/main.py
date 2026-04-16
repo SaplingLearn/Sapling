@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import FRONTEND_URL, PORT
-from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers
+from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -47,6 +47,7 @@ app.include_router(flashcards.router,  prefix="/api/flashcards")
 app.include_router(study_guide.router, prefix="/api/study-guide")
 app.include_router(feedback.router,    prefix="/api")
 app.include_router(careers.router,     prefix="/api/careers")
+app.include_router(onboarding.router,  prefix="/api/onboarding")
 
 
 @app.get("/api/health")

@@ -122,6 +122,11 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
     name = user_info.get("name", "")
     avatar_url = user_info.get("picture", "")
 
+    # Split Google display name into first/last for the new columns
+    name_parts = name.split(None, 1)
+    first_name = name_parts[0] if name_parts else ""
+    last_name = name_parts[1] if len(name_parts) > 1 else ""
+
     # Restrict to @bu.edu accounts
     if not email.endswith("@bu.edu"):
         return RedirectResponse(
@@ -135,7 +140,7 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         is_approved = existing[0]["is_approved"]
         # Update name/avatar in case they changed
         table("users").update(
-            {"name": name, "avatar_url": avatar_url, "email": email},
+            {"name": name, "first_name": first_name, "last_name": last_name, "avatar_url": avatar_url, "email": email},
             filters={"id": f"eq.{user_id}"},
         )
     else:
@@ -148,6 +153,8 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
                 {
                     "google_id": google_id,
                     "name": name,
+                    "first_name": first_name,
+                    "last_name": last_name,
                     "avatar_url": avatar_url,
                     "auth_provider": "google",
                 },
@@ -160,6 +167,8 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
             table("users").insert({
                 "id": user_id,
                 "name": name,
+                "first_name": first_name,
+                "last_name": last_name,
                 "email": email,
                 "google_id": google_id,
                 "avatar_url": avatar_url,

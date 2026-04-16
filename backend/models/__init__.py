@@ -177,3 +177,16 @@ class UploadDocumentBody(BaseModel):
     """Body for document upload."""
     course_id: str
     user_id: str
+
+
+# ── Onboarding ────────────────────────────────────────────────────────────────
+
+class OnboardingBody(BaseModel):
+    user_id: str
+    first_name: str
+    last_name: str
+    year: str
+    majors: list[str]
+    minors: list[str] = []
+    courses: list[str]
+    learning_style: str
