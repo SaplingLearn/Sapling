@@ -1,5 +1,5 @@
 from typing import Optional, Union
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ── Learn ─────────────────────────────────────────────────────────────────────
@@ -186,7 +186,7 @@ class OnboardingBody(BaseModel):
     first_name: str
     last_name: str
     year: str
-    majors: list[str]
+    majors: list[str] = Field(min_length=1)
     minors: list[str] = []
-    courses: list[str]
+    courses: list[str] = Field(min_length=1)
     learning_style: str
