@@ -292,9 +292,6 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
         pointerEvents: visible ? 'auto' : 'none',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        background: 'rgba(240, 244, 242, 0.85)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
       }}
     >
       {/* ── Close ── */}
