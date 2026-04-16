@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, ChevronRight, ChevronLeft, XCircle } from 'lucide-react';
 
 
@@ -90,6 +90,12 @@ const LEARNING_STYLES = [
   { id: 'mixed',    label: 'Mixed',            desc: 'A combination of multiple styles' },
 ];
 
+interface CourseOption {
+  id: string;
+  course_code: string;
+  course_name: string;
+}
+
 interface FormData {
   firstName: string;
   lastName: string;
@@ -97,14 +103,14 @@ interface FormData {
   year: string;
   majors: string[];
   minors: string[];
-  courses: string[];
+  courses: CourseOption[];
   style: string;
 }
 
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onFinish: (data: { firstName: string; lastName: string; school: string; year: string; majors: string[]; minors: string[]; courses: string[]; style: string }) => void;
+  onFinish: (data: { firstName: string; lastName: string; school: string; year: string; majors: string[]; minors: string[]; course_ids: string[]; style: string }) => void;
   activeStep: number;
   completed: Set<number>;
   setActiveStep: (s: number) => void;
@@ -112,7 +118,6 @@ interface Props {
 }
 
 export default function OnboardingFlow({ visible, onClose, onFinish, activeStep, completed, setActiveStep, setCompleted }: Props) {
-  const [classInput, setClassInput] = useState('');
   const [yearOpen, setYearOpen] = useState(false);
 
   const YEAR_OPTIONS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Other'];
@@ -122,6 +127,10 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
   const [minorSuggestions, setMinorSuggestions] = useState<string[]>([]);
   const [majorFocused, setMajorFocused] = useState(false);
   const [minorFocused, setMinorFocused] = useState(false);
+  const [courseInput, setCourseInput] = useState('');
+  const [courseSuggestions, setCourseSuggestions] = useState<CourseOption[]>([]);
+  const [courseFocused, setCourseFocused] = useState(false);
+  const courseDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const [formData, setFormData] = useState<FormData>({
     firstName: '', lastName: '',
@@ -131,11 +140,17 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
 
   // Escape key closes
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      if (courseDebounceRef.current) { clearTimeout(courseDebounceRef.current); courseDebounceRef.current = null; }
+      return;
+    }
 
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    return () => {
+      window.removeEventListener('keydown', handler);
+      if (courseDebounceRef.current) { clearTimeout(courseDebounceRef.current); courseDebounceRef.current = null; }
+    };
   }, [visible, onClose]);
 
   function handleOptionKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, onSelect: () => void) {
@@ -199,7 +214,15 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
     if (activeStep < STEPS.length - 1) {
       setActiveStep(activeStep + 1);
     } else {
-      onFinish(formData);
+      onFinish({
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        school: formData.school,
+        year: formData.year,
+        majors: formData.majors,
+        course_ids: formData.courses.map(c => c.id),
+        style: formData.style,
+      });
     }
   }
 
@@ -207,12 +230,29 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
     if (activeStep > 0) setActiveStep(activeStep - 1);
   }
 
-  function addClass() {
-    const v = classInput.trim();
-    if (v) {
-      setFormData(prev => ({ ...prev, courses: [...prev.courses, v] }));
-      setClassInput('');
+  function handleCourseInput(value: string) {
+    setCourseInput(value);
+    if (courseDebounceRef.current) clearTimeout(courseDebounceRef.current);
+    if (value.trim().length < 1) { setCourseSuggestions([]); return; }
+    courseDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/onboarding/courses?q=${encodeURIComponent(value)}`);
+        const data: { courses: CourseOption[] } = await res.json();
+        const selectedIds = new Set(formData.courses.map(c => c.id));
+        setCourseSuggestions(data.courses.filter(c => !selectedIds.has(c.id)));
+      } catch {
+        setCourseSuggestions([]);
+      } finally {
+        courseDebounceRef.current = null;
+      }
+    }, 200);
+  }
+
+  function addCourse(course: CourseOption) {
+    if (!formData.courses.some(c => c.id === course.id)) {
+      setFormData(prev => ({ ...prev, courses: [...prev.courses, course] }));
     }
+    setCourseInput(''); setCourseSuggestions([]);
   }
 
   const activeColor = STEPS[activeStep].color;
@@ -557,37 +597,67 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
                 What are you studying?
               </h3>
               <p style={subtitleStyle}>
-                Add your courses this semester.
+                Search and add your courses this semester.
               </p>
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                <input type="text" value={classInput}
-                  onChange={e => setClassInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addClass(); } }}
-                  placeholder="Add a class..." autoFocus style={{ ...inputStyle, flex: 1 }} />
-                <button onClick={addClass} style={{
-                  padding: '12px 18px',
-                  background: 'rgba(255,255,255,0.52)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
-                  border: `1px solid ${activeColor}50`, borderRadius: '14px',
-                  color: activeColor, fontSize: '13px', fontWeight: 500, cursor: 'pointer',
-                  whiteSpace: 'nowrap', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
-                }}>Add</button>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', minHeight: '38px' }}>
-                {formData.courses.map((chip, idx) => (
-                  <div key={`${chip}-${idx}`} style={{
-                    background: 'rgba(255,255,255,0.5)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
-                    border: '1px solid rgba(0,0,0,0.1)',
-                    borderRadius: '9999px', padding: '6px 14px', color: '#111827',
-                    fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px',
-                  }}>
-                    {chip}
-                    <button onClick={() => setFormData(prev => ({ ...prev, courses: prev.courses.filter((_, i) => i !== idx) }))}
-                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', color: 'rgba(0,0,0,0.35)' }}>
-                      <XCircle style={{ width: '14px', height: '14px' }} />
-                    </button>
+              <div style={{ position: 'relative', zIndex: courseFocused ? 20 : 1 }}>
+                <input type="text" value={courseInput}
+                  onChange={e => handleCourseInput(e.target.value)}
+                  onFocus={() => setCourseFocused(true)}
+                  onBlur={() => setTimeout(() => setCourseFocused(false), 150)}
+                  placeholder="Search courses..." autoFocus style={{ ...inputStyle }} />
+                {courseFocused && courseSuggestions.length > 0 && (
+                  <div style={{
+                    position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
+                    background: '#ffffff', border: '1px solid rgba(0,0,0,0.1)',
+                    borderRadius: '14px', maxHeight: '192px', overflowY: 'auto',
+                    zIndex: 100, boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+                  }} role="listbox" aria-label="Course suggestions">
+                    {courseSuggestions.map((c, i) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        role="option"
+                        aria-selected={false}
+                        onMouseDown={() => addCourse(c)}
+                        onKeyDown={e => handleOptionKeyDown(e, () => addCourse(c))}
+                        style={{
+                          width: '100%', textAlign: 'left', padding: '11px 18px',
+                          fontSize: '14px', color: '#111827', cursor: 'pointer',
+                          borderBottom: i < courseSuggestions.length - 1 ? '1px solid rgba(0,0,0,0.06)' : 'none',
+                          fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+                          transition: 'background 0.15s', background: 'transparent',
+                          borderLeft: 'none', borderRight: 'none', borderTop: 'none',
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(27,108,66,0.08)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <span style={{ fontWeight: 500 }}>{c.course_code}</span>
+                        {c.course_code !== c.course_name && (
+                          <span style={{ color: 'rgba(0,0,0,0.45)', marginLeft: '8px' }}>{c.course_name}</span>
+                        )}
+                      </button>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
+              {formData.courses.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '12px' }}>
+                  {formData.courses.map((c, idx) => (
+                    <div key={c.id} style={{
+                      background: `${activeColor}18`, border: `1px solid ${activeColor}40`,
+                      borderRadius: '9999px', padding: '6px 14px', color: '#111827',
+                      fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px',
+                      fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+                    }}>
+                      {c.course_code}
+                      <button onClick={() => setFormData(prev => ({ ...prev, courses: prev.courses.filter((_, i) => i !== idx) }))}
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', color: 'rgba(0,0,0,0.35)' }}>
+                        <XCircle style={{ width: '14px', height: '14px' }} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

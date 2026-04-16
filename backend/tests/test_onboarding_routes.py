@@ -1,10 +1,11 @@
 """
 Unit tests for routes/onboarding.py
 
-Tests the POST /api/onboarding/profile endpoint with DB mocked.
+Tests the POST /api/onboarding/profile and GET /api/onboarding/courses
+endpoints with DB mocked.
 """
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
@@ -18,30 +19,39 @@ VALID_PAYLOAD = {
     "year": "junior",
     "majors": ["Computer Science"],
     "minors": ["Mathematics"],
-    "courses": ["CS 111", "MA 225"],
+    "course_ids": ["cid-cs111", "cid-ma225"],
     "learning_style": "visual",
 }
 
 
-def _make_table_mock(users_exist=True, courses_exist=False, enrolled=False):
-    """Build a table() side_effect that returns mocks per table name."""
-    def factory(name):
-        m = MagicMock()
-        if name == "users":
-            m.select.return_value = [{"id": "user_123"}] if users_exist else []
-            m.update.return_value = []
-        elif name == "courses":
-            m.select.return_value = [{"id": "existing-course-id"}] if courses_exist else []
-            m.insert.return_value = []
-        elif name == "user_courses":
-            m.select.return_value = [{"id": "uc-1"}] if enrolled else []
-            m.insert.return_value = []
-        return m
-    return factory
+class TestSearchCourses:
+    def test_returns_matching_courses(self):
+        mock = MagicMock()
+        mock.select.return_value = [
+            {"id": "cid-1", "course_code": "CS 111", "course_name": "Intro to CS"},
+        ]
+        with patch("routes.onboarding.table", return_value=mock):
+            res = client.get("/api/onboarding/courses?q=CS")
+
+        assert res.status_code == 200
+        assert len(res.json()["courses"]) == 1
+        assert res.json()["courses"][0]["course_code"] == "CS 111"
+
+    def test_empty_query_returns_all(self):
+        mock = MagicMock()
+        mock.select.return_value = [
+            {"id": "cid-1", "course_code": "CS 111", "course_name": "Intro to CS"},
+            {"id": "cid-2", "course_code": "MA 225", "course_name": "Calculus"},
+        ]
+        with patch("routes.onboarding.table", return_value=mock):
+            res = client.get("/api/onboarding/courses")
+
+        assert res.status_code == 200
+        assert len(res.json()["courses"]) == 2
 
 
 class TestSaveOnboardingProfile:
-    def test_success_creates_courses_and_enrolls(self):
+    def test_success_enrolls_in_courses(self):
         tables = {}
 
         def factory(name):
@@ -50,7 +60,7 @@ class TestSaveOnboardingProfile:
                 if name == "users":
                     m.select.return_value = [{"id": "user_123"}]
                 elif name == "courses":
-                    m.select.return_value = []  # no existing courses
+                    m.select.return_value = [{"id": "some-id"}]
                 elif name == "user_courses":
                     m.select.return_value = []  # not enrolled
                 tables[name] = m
@@ -75,13 +85,10 @@ class TestSaveOnboardingProfile:
         assert update_data["minors"] == ["Mathematics"]
         assert update_data["learning_style"] == "visual"
 
-        # Two courses were created
-        assert tables["courses"].insert.call_count == 2
-
         # Two enrollments were created
         assert tables["user_courses"].insert.call_count == 2
 
-    def test_reuses_existing_course(self):
+    def test_skips_nonexistent_course(self):
         tables = {}
 
         def factory(name):
@@ -90,7 +97,7 @@ class TestSaveOnboardingProfile:
                 if name == "users":
                     m.select.return_value = [{"id": "user_123"}]
                 elif name == "courses":
-                    m.select.return_value = [{"id": "existing-cid"}]
+                    m.select.return_value = []  # course not found
                 elif name == "user_courses":
                     m.select.return_value = []
                 tables[name] = m
@@ -100,12 +107,8 @@ class TestSaveOnboardingProfile:
             res = client.post("/api/onboarding/profile", json=VALID_PAYLOAD)
 
         assert res.status_code == 200
-        # Existing course reused — no new courses inserted
-        tables["courses"].insert.assert_not_called()
-        # But enrollments still created
-        assert tables["user_courses"].insert.call_count == 2
-        # Both course_ids should be the existing one
-        assert res.json()["courses_linked"] == ["existing-cid", "existing-cid"]
+        # No enrollments since courses don't exist
+        assert "user_courses" not in tables or tables.get("user_courses", MagicMock()).insert.call_count == 0
 
     def test_skips_enrollment_if_already_enrolled(self):
         tables = {}
@@ -116,7 +119,7 @@ class TestSaveOnboardingProfile:
                 if name == "users":
                     m.select.return_value = [{"id": "user_123"}]
                 elif name == "courses":
-                    m.select.return_value = [{"id": "existing-cid"}]
+                    m.select.return_value = [{"id": "some-id"}]
                 elif name == "user_courses":
                     m.select.return_value = [{"id": "uc-already"}]
                 tables[name] = m
@@ -129,7 +132,9 @@ class TestSaveOnboardingProfile:
         tables["user_courses"].insert.assert_not_called()
 
     def test_user_not_found_returns_404(self):
-        with patch("routes.onboarding.table", side_effect=_make_table_mock(users_exist=False)):
+        mock = MagicMock()
+        mock.select.return_value = []
+        with patch("routes.onboarding.table", return_value=mock):
             res = client.post("/api/onboarding/profile", json=VALID_PAYLOAD)
 
         assert res.status_code == 404
@@ -142,17 +147,17 @@ class TestSaveOnboardingProfile:
             # last_name missing
             "year": "junior",
             "majors": ["Computer Science"],
-            "courses": ["CS 111"],
+            "course_ids": ["cid-1"],
             "learning_style": "visual",
         }
-        with patch("routes.onboarding.table", side_effect=_make_table_mock()):
+        with patch("routes.onboarding.table"):
             res = client.post("/api/onboarding/profile", json=payload)
 
         assert res.status_code == 422
 
-    def test_empty_courses_list_returns_422(self):
-        payload = {**VALID_PAYLOAD, "courses": []}
-        with patch("routes.onboarding.table", side_effect=_make_table_mock()):
+    def test_empty_course_ids_returns_422(self):
+        payload = {**VALID_PAYLOAD, "course_ids": []}
+        with patch("routes.onboarding.table"):
             res = client.post("/api/onboarding/profile", json=payload)
 
         assert res.status_code == 422
@@ -169,7 +174,7 @@ class TestSaveOnboardingProfile:
                 if name == "users":
                     m.select.return_value = [{"id": "user_123"}]
                 elif name == "courses":
-                    m.select.return_value = []
+                    m.select.return_value = [{"id": "some-id"}]
                 elif name == "user_courses":
                     m.select.return_value = []
                 tables[name] = m

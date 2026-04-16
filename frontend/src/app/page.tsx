@@ -549,7 +549,7 @@ export default function LandingPage() {
     onboardingTimeoutRef.current = setTimeout(() => setOnboardingPhase('idle'), 700);
   }
 
-  function handleOnboardingComplete(formData: { firstName: string; lastName: string; school: string; year: string; majors: string[]; minors: string[]; courses: string[]; style: string }) {
+  function handleOnboardingComplete(formData: { firstName: string; lastName: string; school: string; year: string; majors: string[]; course_ids: string[]; style: string }) {
     sessionStorage.setItem('sapling_onboarding', JSON.stringify(formData));
     introTimeoutsRef.current.forEach(clearTimeout);
     zoomActiveRef.current = true;

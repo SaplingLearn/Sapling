@@ -188,5 +188,5 @@ class OnboardingBody(BaseModel):
     year: str
     majors: list[str] = Field(min_length=1)
     minors: list[str] = []
-    courses: list[str] = Field(min_length=1)
+    course_ids: list[str] = Field(min_length=1)
     learning_style: str

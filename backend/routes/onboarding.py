@@ -1,11 +1,27 @@
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from db.connection import table
 from models import OnboardingBody
 
 router = APIRouter()
+
+
+@router.get("/courses")
+def search_courses(q: str = Query("", min_length=0)):
+    """Search BU courses by name or code. Returns all if q is empty."""
+    filters = {"school": "eq.Boston University"}
+    if q.strip():
+        filters["or"] = f"(course_name.ilike.%{q}%,course_code.ilike.%{q}%)"
+
+    rows = table("courses").select(
+        "id,course_code,course_name",
+        filters=filters,
+        order="course_name.asc",
+        limit=20,
+    )
+    return {"courses": rows}
 
 
 @router.post("/profile")
@@ -32,51 +48,32 @@ def save_onboarding_profile(body: OnboardingBody):
         filters={"id": f"eq.{body.user_id}"},
     )
 
-    # Upsert courses and enroll the user
-    course_ids = []
-    for course_name in body.courses:
-        course_name = course_name.strip()
-        if not course_name:
+    # Enroll user in selected courses
+    enrolled_ids = []
+    for course_id in body.course_ids:
+        # Verify course exists
+        course = table("courses").select("id", filters={"id": f"eq.{course_id}"})
+        if not course:
             continue
 
-        # Check if a course with this name already exists at BU
-        existing = table("courses").select(
-            "id",
-            filters={
-                "course_name": f"eq.{course_name}",
-                "school": "eq.Boston University",
-            },
-        )
-
-        if existing:
-            course_id = existing[0]["id"]
-        else:
-            course_id = str(uuid.uuid4())
-            table("courses").insert({
-                "id": course_id,
-                "course_code": course_name,
-                "course_name": course_name,
-                "school": "Boston University",
-            })
-
-        # Enroll user if not already enrolled
-        enrolled = table("user_courses").select(
+        # Enroll if not already enrolled
+        existing = table("user_courses").select(
             "id",
             filters={
                 "user_id": f"eq.{body.user_id}",
                 "course_id": f"eq.{course_id}",
             },
         )
-        if not enrolled:
+        if not existing:
             table("user_courses").insert({
                 "id": str(uuid.uuid4()),
                 "user_id": body.user_id,
                 "course_id": course_id,
             })
 
-        course_ids.append(course_id)
+        enrolled_ids.append(course_id)
 
     return {
         "user_id": body.user_id,
-        "courses_linked": course_ids,
+        "courses_linked": enrolled_ids,
     }
