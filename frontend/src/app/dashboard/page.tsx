@@ -339,6 +339,10 @@ function DashboardInner() {
       setCourseList(prev => prev.map(c => (c.course_id === courseId ? { ...c, color: newHex } : c)));
       setCourseColorMap(prev => ({ ...prev, [courseName]: newHex }));
       setEditingColorFor(null);
+      // Refresh graph so nodes carry the updated course_color
+      const graphData = await getGraph(userId);
+      setNodes(graphData.nodes);
+      setEdges(graphData.edges);
     } catch (e) {
       console.error(e);
     }

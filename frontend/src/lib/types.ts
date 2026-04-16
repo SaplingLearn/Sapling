@@ -7,6 +7,7 @@ export interface GraphNode {
   last_studied_at: string | null;
   subject: string;
   course_id?: string | null;
+  course_color?: string | null;
   is_subject_root?: boolean;
   x?: number;
   y?: number;

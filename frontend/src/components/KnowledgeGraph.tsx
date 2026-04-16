@@ -26,6 +26,7 @@ interface SimNode extends d3.SimulationNodeDatum {
   mastery_score: number;
   mastery_tier: string;
   subject: string;
+  course_color?: string | null;
   is_subject_root?: boolean;
 }
 
@@ -37,6 +38,12 @@ interface SimLink extends d3.SimulationLinkDatum<SimNode> {
 const ROOT_RADIUS = 22;
 const getSimRadius = (d: SimNode) =>
   d.is_subject_root ? ROOT_RADIUS : getNodeRadius(d.mastery_score);
+
+/** Resolve the color override for a node: prefer the node's own course_color,
+ *  then fall back to the courseColorMap lookup by subject name. */
+function nodeColorOverride(d: SimNode, colorMap: Record<string, string>): string | undefined {
+  return d.course_color ?? colorMap[d.subject] ?? undefined;
+}
 
 /** Opacity encodes mastery tier — full colour = mastered, ghost = unexplored. */
 function masteryOpacity(tier: string): number {
@@ -192,7 +199,7 @@ function KnowledgeGraph({
       .attr('font-size', d => d.is_subject_root ? '13px' : '11px')
       .attr('font-weight', d => d.is_subject_root ? '600' : '400')
       .attr('font-family', "'DM Sans', Inter, system-ui, sans-serif")
-      .attr('fill', d => d.is_subject_root ? getCourseColor(d.subject, courseColorMapRef.current[d.subject]).text : '#374151')
+      .attr('fill', d => d.is_subject_root ? getCourseColor(d.subject, nodeColorOverride(d, courseColorMapRef.current)).text : '#374151')
       .attr('pointer-events', 'none')
       .style('user-select', 'none');
 
@@ -224,9 +231,9 @@ function KnowledgeGraph({
     const circles = nodeSel.append('circle')
       .attr('class', 'main-circle')
       .attr('r', d => getSimRadius(d))
-      .attr('fill', d => getCourseColor(d.subject, courseColorMapRef.current[d.subject]).fill)
+      .attr('fill', d => getCourseColor(d.subject, nodeColorOverride(d, courseColorMapRef.current)).fill)
       .attr('fill-opacity', d => masteryOpacity(d.mastery_tier))
-      .attr('stroke', d => getCourseColor(d.subject, courseColorMapRef.current[d.subject]).fill)
+      .attr('stroke', d => getCourseColor(d.subject, nodeColorOverride(d, courseColorMapRef.current)).fill)
       .attr('stroke-opacity', d => d.is_subject_root ? 0.7 : 0.4)
       .attr('stroke-width', d => d.is_subject_root ? 2.5 : 1.5);
 
@@ -263,7 +270,7 @@ function KnowledgeGraph({
           const lastStudied = sourceNode.last_studied_at
             ? new Date(sourceNode.last_studied_at).toLocaleDateString()
             : 'Never';
-          const cc = getCourseColor(sourceNode.subject, courseColorMapRef.current[sourceNode.subject]);
+          const cc = getCourseColor(sourceNode.subject, sourceNode.course_color ?? courseColorMapRef.current[sourceNode.subject]);
           tooltip.innerHTML = `
             <div style="font-weight:600;color:#111827;margin-bottom:4px">${sourceNode.concept_name}</div>
             <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px">
@@ -370,17 +377,25 @@ function KnowledgeGraph({
     const svg = d3.select(svgRef.current);
     svg.selectAll<SVGCircleElement, SimNode>('.main-circle')
       .attr('fill', d => {
-        const subj = nodeMap.get(d.id)?.subject ?? d.subject;
-        return getCourseColor(subj, courseColorMap[subj]).fill;
+        const n = nodeMap.get(d.id);
+        const subj = n?.subject ?? d.subject;
+        const override = n?.course_color ?? d.course_color ?? courseColorMap[subj];
+        return getCourseColor(subj, override).fill;
       })
       .attr('fill-opacity', d => masteryOpacity(nodeMap.get(d.id)?.mastery_tier ?? d.mastery_tier))
       .attr('stroke', d => {
-        const subj = nodeMap.get(d.id)?.subject ?? d.subject;
-        return getCourseColor(subj, courseColorMap[subj]).fill;
+        const n = nodeMap.get(d.id);
+        const subj = n?.subject ?? d.subject;
+        const override = n?.course_color ?? d.course_color ?? courseColorMap[subj];
+        return getCourseColor(subj, override).fill;
       });
     svg.selectAll<SVGTextElement, SimNode>('text')
       .filter(d => !!d.is_subject_root)
-      .attr('fill', d => getCourseColor(d.subject, courseColorMap[d.subject]).text);
+      .attr('fill', d => {
+        const n = nodeMap.get(d.id);
+        const override = n?.course_color ?? d.course_color ?? courseColorMap[d.subject];
+        return getCourseColor(d.subject, override).text;
+      });
   }, [nodes, courseColorMap]);
 
   // Separate lightweight effect: only add/remove the highlight ring.

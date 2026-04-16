@@ -137,28 +137,46 @@ def get_graph(user_id: str) -> dict:
         "avg_learning_velocity": avg_velocity,
     }
 
+    # Build a course_id → color + name lookup from enrollments
+    course_color_map: dict[str, str | None] = {}
+    course_name_map: dict[str, str] = {}
+    for enrollment in enrolled_courses:
+        cid = enrollment["course_id"]
+        course = enrollment.get("courses", {}) if isinstance(enrollment.get("courses"), dict) else {}
+        course_color_map[cid] = enrollment.get("color")
+        course_name_map[cid] = course.get("course_name", "")
+
+    # Stamp each node's subject from its course_id so the frontend has a
+    # consistent key, and attach the enrollment color directly.
+    for n in nodes:
+        cid = n.get("course_id")
+        if cid and cid in course_name_map:
+            n["subject"] = course_name_map[cid]
+        if cid and cid in course_color_map:
+            n["course_color"] = course_color_map[cid]
+
     # Build subject root hubs from enrolled courses
     subject_nodes = []
     subject_edges = []
-    
+
     for enrollment in enrolled_courses:
         course_id = enrollment["course_id"]
         course = enrollment.get("courses", {}) if isinstance(enrollment.get("courses"), dict) else {}
         course_code = course.get("course_code", "")
         course_name = course.get("course_name", "")
-        
+
         # Use "Course Code - Course Name" as the subject label
         subject_label = f"{course_code} - {course_name}" if course_code else course_name
-        
+
         # Find all nodes belonging to this course
         subj_nodes = [n for n in nodes if n.get("course_id") == course_id]
-        
+
         root_id = f"subject_root__{course_id}"
         if subj_nodes:
             avg_mastery = sum(n["mastery_score"] for n in subj_nodes) / len(subj_nodes)
         else:
             avg_mastery = 0.0
-            
+
         subject_nodes.append({
             "id": root_id,
             "user_id": user_id,
@@ -166,11 +184,13 @@ def get_graph(user_id: str) -> dict:
             "mastery_score": round(avg_mastery, 4),
             "mastery_tier": "subject_root",
             "course_id": course_id,
+            "subject": course_name,
+            "course_color": course_color_map.get(course_id),
             "times_studied": sum(n.get("times_studied", 0) for n in subj_nodes),
             "last_studied_at": None,
             "is_subject_root": True,
         })
-        
+
         for n in subj_nodes:
             subject_edges.append({
                 "id": f"subject_edge__{root_id}__{n['id']}",
