@@ -24,7 +24,7 @@ const CLUSTER_INIT_POS = [
 
 export default function LandingPage() {
   const router = useRouter();
-  const { userReady, isAuthenticated } = useUser();
+  const { userReady, isAuthenticated, userId } = useUser();
 
   const [heroMounted, setHeroMounted] = useState(false);
   const [heroText1, setHeroText1] = useState('');
@@ -549,8 +549,27 @@ export default function LandingPage() {
     onboardingTimeoutRef.current = setTimeout(() => setOnboardingPhase('idle'), 700);
   }
 
-  function handleOnboardingComplete(formData: { firstName: string; lastName: string; school: string; year: string; majors: string[]; minors: string[]; course_ids: string[]; style: string }) {
-    sessionStorage.setItem('sapling_onboarding', JSON.stringify(formData));
+  async function handleOnboardingComplete(formData: { firstName: string; lastName: string; school: string; year: string; majors: string[]; minors: string[]; course_ids: string[]; style: string }) {
+    // Persist onboarding data to Supabase
+    try {
+      await fetch(`${API_URL}/api/onboarding/profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          first_name: formData.firstName,
+          last_name: formData.lastName,
+          year: formData.year,
+          majors: formData.majors,
+          minors: formData.minors,
+          course_ids: formData.course_ids,
+          learning_style: formData.style,
+        }),
+      });
+    } catch (e) {
+      console.error('Failed to save onboarding profile:', e);
+    }
+
     introTimeoutsRef.current.forEach(clearTimeout);
     zoomActiveRef.current = true;
     zoomOutroRef.current = false;
