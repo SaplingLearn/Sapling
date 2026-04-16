@@ -220,6 +220,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
         school: formData.school,
         year: formData.year,
         majors: formData.majors,
+        minors: formData.minors,
         course_ids: formData.courses.map(c => c.id),
         style: formData.style,
       });
