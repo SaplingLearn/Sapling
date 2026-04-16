@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { X, ChevronRight, ChevronLeft, XCircle } from 'lucide-react';
 
 
@@ -113,10 +113,7 @@ interface Props {
 
 export default function OnboardingFlow({ visible, onClose, onFinish, activeStep, completed, setActiveStep, setCompleted }: Props) {
   const [classInput, setClassInput] = useState('');
-  const [schoolSuggestions, setSchoolSuggestions] = useState<string[]>([]);
-  const [schoolFocused, setSchoolFocused] = useState(false);
   const [yearOpen, setYearOpen] = useState(false);
-  const schoolDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const YEAR_OPTIONS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Other'];
   const [majorInput, setMajorInput] = useState('');
@@ -128,29 +125,17 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
 
   const [formData, setFormData] = useState<FormData>({
     firstName: '', lastName: '',
-    school: '', year: '', majors: [], minors: [], courses: [], style: '',
+    school: 'Boston University', year: '', majors: [], minors: [], courses: [], style: '',
   });
 
 
   // Escape key closes
   useEffect(() => {
-    if (!visible) {
-      if (schoolDebounceRef.current) {
-        clearTimeout(schoolDebounceRef.current);
-        schoolDebounceRef.current = null;
-      }
-      return;
-    }
+    if (!visible) return;
 
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
-    return () => {
-      window.removeEventListener('keydown', handler);
-      if (schoolDebounceRef.current) {
-        clearTimeout(schoolDebounceRef.current);
-        schoolDebounceRef.current = null;
-      }
-    };
+    return () => window.removeEventListener('keydown', handler);
   }, [visible, onClose]);
 
   function handleOptionKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, onSelect: () => void) {
@@ -160,31 +145,9 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
     }
   }
 
-  function selectSchool(name: string) {
-    setFormData(prev => ({ ...prev, school: name }));
-    setSchoolSuggestions([]);
-  }
-
   function selectYear(option: string) {
     setFormData(prev => ({ ...prev, year: option.toLowerCase() }));
     setYearOpen(false);
-  }
-
-  function handleSchoolInput(value: string) {
-    setFormData(prev => ({ ...prev, school: value }));
-    if (schoolDebounceRef.current) clearTimeout(schoolDebounceRef.current);
-    if (value.trim().length < 2) { setSchoolSuggestions([]); return; }
-    schoolDebounceRef.current = setTimeout(async () => {
-      try {
-        const res = await fetch(`https://universities.hipolabs.com/search?name=${encodeURIComponent(value)}&country=United+States`);
-        const data: { name: string }[] = await res.json();
-        setSchoolSuggestions(data.slice(0, 10).map(u => u.name));
-      } catch {
-        setSchoolSuggestions([]);
-      } finally {
-        schoolDebounceRef.current = null;
-      }
-    }, 300);
   }
 
   function handleMajorInput(value: string) {
@@ -424,60 +387,16 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
                 Where do you study?
               </h3>
               <p style={subtitleStyle}>
-                Tell us your school and year.
+                Sapling is currently available for BU affiliates. Select your year below.
               </p>
-              <div style={{ position: 'relative', marginBottom: '10px', zIndex: 20 }}>
-                <input type="text" value={formData.school}
-                  onChange={e => handleSchoolInput(e.target.value)}
-                  onFocus={() => setSchoolFocused(true)}
-                  onBlur={() => setTimeout(() => setSchoolFocused(false), 150)}
-                  placeholder="Search your university..." autoFocus
-                  style={{ ...inputStyle }} />
-                {schoolFocused && schoolSuggestions.length > 0 && (
-                  <div style={{
-                    position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
-                    background: '#ffffff',
-                    border: '1px solid rgba(0,0,0,0.1)',
-                    borderRadius: '14px',
-                    maxHeight: '192px', overflowY: 'auto',
-                    zIndex: 100,
-                    boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-                  }} role="listbox" aria-label="School suggestions">
-                    {schoolSuggestions.map((name, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        role="option"
-                        aria-selected={formData.school === name}
-                        onMouseDown={() => selectSchool(name)}
-                        onKeyDown={e => handleOptionKeyDown(e, () => selectSchool(name))}
-                        style={{
-                          width: '100%',
-                          textAlign: 'left',
-                          padding: '12px 18px',
-                          fontSize: '14px',
-                          color: '#111827',
-                          cursor: 'pointer',
-                          borderBottom: i < schoolSuggestions.length - 1 ? '1px solid rgba(0,0,0,0.06)' : 'none',
-                          fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
-                          transition: 'background 0.15s',
-                          background: formData.school === name ? 'rgba(27,108,66,0.06)' : 'transparent',
-                          borderLeft: 'none',
-                          borderRight: 'none',
-                          borderTop: 'none',
-                        }}
-                        onMouseEnter={e => {
-                          if (formData.school !== name) e.currentTarget.style.background = 'rgba(27,108,66,0.08)';
-                        }}
-                        onMouseLeave={e => {
-                          e.currentTarget.style.background = formData.school === name ? 'rgba(27,108,66,0.06)' : 'transparent';
-                        }}
-                      >
-                        {name}
-                      </button>
-                    ))}
-                  </div>
-                )}
+              <div style={{
+                ...inputStyle,
+                marginBottom: '10px',
+                color: '#111827',
+                fontWeight: 500,
+                background: 'rgba(255,255,255,0.65)',
+              }}>
+                Boston University
               </div>
               <div style={{ position: 'relative', zIndex: yearOpen ? 20 : 1 }}>
                 <button
