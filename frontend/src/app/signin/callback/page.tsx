@@ -26,7 +26,7 @@ function CallbackInner() {
     const error = searchParams.get('error');
 
     if (error === 'not_approved' || approvedParam === 'false') {
-      router.replace('/pending');
+      router.replace('/signin?error=not_approved');
       return;
     }
 
@@ -46,7 +46,7 @@ function CallbackInner() {
           confirmApproved();
           router.replace('/dashboard');
         } else if (res.status === 403) {
-          router.replace('/pending');
+          router.replace('/signin?error=not_approved');
         } else {
           setErrorMsg('Unable to complete sign-in. Please try again.');
         }

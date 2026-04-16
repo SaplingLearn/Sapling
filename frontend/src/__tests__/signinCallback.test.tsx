@@ -62,7 +62,7 @@ describe('signin/callback page', () => {
 
     render(<CallbackPage />);
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith('/pending'));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/signin?error=not_approved'));
     expect(confirmApproved).not.toHaveBeenCalled();
   });
 
@@ -110,7 +110,7 @@ describe('signin/callback page', () => {
 
     render(<CallbackPage />);
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith('/pending'));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/signin?error=not_approved'));
   });
 
   it('redirects to /pending when error=not_approved is set', async () => {
@@ -118,6 +118,6 @@ describe('signin/callback page', () => {
 
     render(<CallbackPage />);
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith('/pending'));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/signin?error=not_approved'));
   });
 });
