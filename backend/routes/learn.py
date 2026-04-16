@@ -395,7 +395,17 @@ def end_session(body: EndSessionBody):
         {"summary_json": summary},
         filters={"id": f"eq.{body.session_id}"},
     )
-    return {"summary": summary}
+
+    # Check for achievements after session end
+    newly_earned = []
+    try:
+        from services.achievement_service import check_achievements
+        newly_earned = check_achievements(body.user_id, "login_streak", {})
+        newly_earned += check_achievements(body.user_id, "session_count", {})
+    except Exception:
+        pass
+
+    return {"summary": summary, "achievements_earned": newly_earned}
 
 
 @router.get("/sessions/{user_id}")

@@ -1,4 +1,8 @@
-import type { RoomMessageRow, RoomOverviewData } from '@/lib/types';
+import type {
+  RoomMessageRow, RoomOverviewData,
+  UserProfile, UserSettings, UserRole, UserAchievement, Achievement,
+  UserCosmetic, CosmeticType,
+} from '@/lib/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
@@ -391,3 +395,123 @@ export const submitJobApplication = async (data: {
   }
   return res.json();
 };
+
+// ── Profile ───────────────────────────────────────────────────────────────────
+
+export const fetchPublicProfile = (userId: string) =>
+  fetchJSON<UserProfile>(`/api/profile/${userId}`);
+
+export const updateProfile = (userId: string, data: Partial<UserProfile>) =>
+  fetchJSON<{ updated: boolean }>(`/api/profile/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+
+export const uploadAvatar = async (userId: string, file: File): Promise<{ avatar_url: string }> => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`${API_URL}/api/profile/${userId}/avatar?user_id=${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+export const fetchSettings = (userId: string) =>
+  fetchJSON<UserSettings>(`/api/profile/${userId}/settings?user_id=${encodeURIComponent(userId)}`);
+
+export const updateSettings = (userId: string, data: Partial<UserSettings>) =>
+  fetchJSON<UserSettings>(`/api/profile/${userId}/settings?user_id=${encodeURIComponent(userId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+
+export const equipCosmetic = (userId: string, slot: CosmeticType, cosmeticId: string | null) =>
+  fetchJSON<{ equipped: boolean }>(`/api/profile/${userId}/equip?user_id=${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ slot, cosmetic_id: cosmeticId }),
+  });
+
+export const setFeaturedRole = (userId: string, roleId: string | null) =>
+  fetchJSON<{ updated: boolean }>(`/api/profile/${userId}/featured-role?user_id=${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ role_id: roleId }),
+  });
+
+export const setFeaturedAchievements = (userId: string, ids: string[]) =>
+  fetchJSON<{ updated: boolean }>(`/api/profile/${userId}/featured-achievements?user_id=${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ achievement_ids: ids }),
+  });
+
+export const fetchAchievements = (userId: string) =>
+  fetchJSON<{ earned: UserAchievement[]; available: Achievement[] }>(`/api/profile/${userId}/achievements`);
+
+export const fetchCosmetics = (userId: string) =>
+  fetchJSON<{ cosmetics: Record<CosmeticType, UserCosmetic[]>; equipped: Record<string, any> }>(
+    `/api/profile/${userId}/cosmetics?user_id=${encodeURIComponent(userId)}`
+  );
+
+export const fetchRoles = (userId: string) =>
+  fetchJSON<{ roles: UserRole[] }>(`/api/profile/${userId}/roles`);
+
+export const deleteAccount = (userId: string, confirmation: string) =>
+  fetchJSON<{ deleted: boolean }>(`/api/profile/${userId}/account?user_id=${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ confirmation }),
+  });
+
+export const exportData = (userId: string) =>
+  fetchJSON<any>(`/api/profile/${userId}/export?user_id=${encodeURIComponent(userId)}`, {
+    method: 'POST',
+  });
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+export const adminCreateRole = (data: any) =>
+  fetchJSON<{ role: any }>('/api/admin/roles', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const adminAssignRole = (userId: string, roleId: string, grantedBy?: string) =>
+  fetchJSON<{ assigned: boolean }>('/api/admin/roles/assign', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, role_id: roleId, granted_by: grantedBy }),
+  });
+
+export const adminRevokeRole = (userId: string, roleId: string) =>
+  fetchJSON<{ revoked: boolean }>('/api/admin/roles/revoke', {
+    method: 'DELETE',
+    body: JSON.stringify({ user_id: userId, role_id: roleId }),
+  });
+
+export const adminCreateAchievement = (data: any) =>
+  fetchJSON<{ achievement: any }>('/api/admin/achievements', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const adminGrantAchievement = (userId: string, achievementId: string) =>
+  fetchJSON<{ granted: boolean }>('/api/admin/achievements/grant', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, achievement_id: achievementId }),
+  });
+
+export const adminCreateCosmetic = (data: any) =>
+  fetchJSON<{ cosmetic: any }>('/api/admin/cosmetics', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+export const adminFetchUsers = () =>
+  fetchJSON<{ users: any[] }>('/api/admin/users');
+
+export const adminApproveUser = (userId: string) =>
+  fetchJSON<{ approved: boolean }>(`/api/admin/users/${userId}/approve`, {
+    method: 'PATCH',
+  });

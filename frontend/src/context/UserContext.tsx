@@ -1,6 +1,7 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
 
 interface UserOption {
   id: string;
@@ -17,12 +18,18 @@ interface UserContextValue {
   userReady: boolean;
   isAuthenticated: boolean;
   isApproved: boolean;
+  username: string | null;
+  roles: UserRole[];
+  equippedCosmetics: EquippedCosmetics;
+  featuredRole: Role | null;
+  isAdmin: boolean;
   setActiveUser: (id: string, name: string, avatar?: string) => void;
   confirmApproved: () => void;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
-const UserContext = createContext<UserContextValue>({
+export const UserContext = createContext<UserContextValue>({
   userId: '',
   userName: '',
   avatarUrl: '',
@@ -30,9 +37,15 @@ const UserContext = createContext<UserContextValue>({
   userReady: false,
   isAuthenticated: false,
   isApproved: false,
+  username: null,
+  roles: [],
+  equippedCosmetics: {},
+  featuredRole: null,
+  isAdmin: false,
   setActiveUser: () => {},
   confirmApproved: () => {},
   signOut: () => Promise.resolve(),
+  refreshProfile: () => Promise.resolve(),
 });
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
@@ -45,6 +58,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   // Becomes true after localStorage is read — prevents pages from fetching
   // data with the hardcoded default before the real saved user is known.
   const [userReady, setUserReady] = useState(false);
+
+  // Profile/role state
+  const [username, setUsername] = useState<string | null>(null);
+  const [roles, setRoles] = useState<UserRole[]>([]);
+  const [equippedCosmetics, setEquippedCosmetics] = useState<EquippedCosmetics>({});
+  const [featuredRole, setFeaturedRole] = useState<Role | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // Restore last selected user from localStorage
   useEffect(() => {
@@ -79,6 +99,32 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, []);
 
+  // Fetch extended auth/me data (roles, cosmetics, etc.) when userId is ready
+  const fetchProfileData = useCallback(async (uid: string) => {
+    if (!uid) return;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/me?user_id=${encodeURIComponent(uid)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setUsername(data.username ?? null);
+      setRoles(data.roles ?? []);
+      setEquippedCosmetics(data.equipped_cosmetics ?? {});
+      setIsAdmin(data.is_admin ?? false);
+      const fr = data.equipped_cosmetics?.featured_role ?? null;
+      setFeaturedRole(fr);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (userReady && userId) {
+      fetchProfileData(userId);
+    }
+  }, [userReady, userId, fetchProfileData]);
+
+  const refreshProfile = useCallback(async () => {
+    await fetchProfileData(userId);
+  }, [userId, fetchProfileData]);
+
   const setActiveUser = (id: string, name: string, avatar?: string) => {
     setUserId(id);
     setUserName(name);
@@ -98,13 +144,23 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setAvatarUrl('');
       setIsAuthenticated(false);
       setIsApproved(false);
+      setUsername(null);
+      setRoles([]);
+      setEquippedCosmetics({});
+      setFeaturedRole(null);
+      setIsAdmin(false);
       localStorage.removeItem('sapling_user');
     }
   };
 
   const value = useMemo(
-    () => ({ userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved, setActiveUser, confirmApproved, signOut }),
-    [userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved]
+    () => ({
+      userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved,
+      username, roles, equippedCosmetics, featuredRole, isAdmin,
+      setActiveUser, confirmApproved, signOut, refreshProfile,
+    }),
+    [userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved,
+     username, roles, equippedCosmetics, featuredRole, isAdmin, refreshProfile]
   );
 
   return (

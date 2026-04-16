@@ -207,6 +207,13 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks):
 
     background_tasks.add_task(_update_context, ctx_prompt, user_id, concept_node_id)
 
+    # Check for achievements after quiz completion
+    try:
+        from services.achievement_service import check_achievements
+        check_achievements(user_id, "quizzes_completed", {})
+    except Exception:
+        pass
+
     return {
         "score": score,
         "total": total,

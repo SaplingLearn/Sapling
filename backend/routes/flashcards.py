@@ -150,6 +150,13 @@ def generate(body: GenerateFlashcardsBody):
             detail=f"Failed to save flashcards. Has the flashcards table been created in Supabase? Error: {e}"
         )
 
+    # Check for achievements after flashcard generation
+    try:
+        from services.achievement_service import check_achievements
+        check_achievements(body.user_id, "flashcards_created", {})
+    except Exception:
+        pass
+
     return {
         "flashcards": rows_to_insert,
         "context_used": {

@@ -5,9 +5,10 @@ interface Props {
   name: string;
   size?: number;
   avatarUrl?: string;
+  className?: string;
 }
 
-export default function Avatar({ userId, name, size = 32, avatarUrl }: Props) {
+export default function Avatar({ userId, name, size = 32, avatarUrl, className }: Props) {
   if (avatarUrl) {
     return (
       <img

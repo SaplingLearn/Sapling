@@ -173,4 +173,11 @@ async def upload_document(
     except Exception:
         logger.exception("Failed to invalidate study guides cache for user=%s course=%s", user_id, course_id)
 
+    # Check for achievements after successful upload
+    try:
+        from services.achievement_service import check_achievements
+        check_achievements(user_id, "documents_uploaded", {})
+    except Exception:
+        pass
+
     return inserted[0] if inserted else row

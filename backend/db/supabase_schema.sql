@@ -324,3 +324,124 @@ CREATE TABLE IF NOT EXISTS job_applications (
     portfolio_link TEXT,
     submitted_at   TIMESTAMPTZ DEFAULT now()
 );
+
+-- ══════════════════════════════════════════════════════════════════
+-- Profile, Settings, Roles, Achievements, Cosmetics
+-- ══════════════════════════════════════════════════════════════════
+
+-- Profile columns on users (added via migration)
+-- ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT UNIQUE;
+-- ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT;
+-- ALTER TABLE users ADD COLUMN IF NOT EXISTS location TEXT;
+-- ALTER TABLE users ADD COLUMN IF NOT EXISTS website TEXT;
+-- ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+-- User settings
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id                  TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    display_name             TEXT,
+    username                 TEXT,
+    bio                      TEXT,
+    location                 TEXT,
+    website                  TEXT,
+    profile_visibility       TEXT DEFAULT 'public' CHECK (profile_visibility IN ('public', 'private')),
+    activity_status_visible  BOOL DEFAULT true,
+    notification_email       BOOL DEFAULT true,
+    notification_push        BOOL DEFAULT false,
+    notification_in_app      BOOL DEFAULT true,
+    theme                    TEXT DEFAULT 'light' CHECK (theme IN ('light', 'dark')),
+    font_size                TEXT DEFAULT 'medium' CHECK (font_size IN ('small', 'medium', 'large')),
+    accent_color             TEXT,
+    featured_role_id         UUID,
+    featured_achievement_ids TEXT[] DEFAULT '{}',
+    equipped_avatar_frame_id UUID,
+    equipped_banner_id       UUID,
+    equipped_name_color_id   UUID,
+    equipped_title_id        UUID,
+    created_at               TIMESTAMPTZ DEFAULT now(),
+    updated_at               TIMESTAMPTZ DEFAULT now()
+);
+
+-- Roles
+CREATE TABLE IF NOT EXISTS roles (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name             TEXT NOT NULL,
+    slug             TEXT UNIQUE NOT NULL,
+    color            TEXT NOT NULL,
+    icon             TEXT,
+    description      TEXT,
+    is_staff_assigned BOOL DEFAULT true,
+    is_earnable      BOOL DEFAULT false,
+    display_priority INT DEFAULT 0,
+    created_at       TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS user_roles (
+    user_id    TEXT REFERENCES users(id) ON DELETE CASCADE,
+    role_id    UUID REFERENCES roles(id) ON DELETE CASCADE,
+    granted_at TIMESTAMPTZ DEFAULT now(),
+    granted_by TEXT,
+    PRIMARY KEY (user_id, role_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_roles_user_id ON user_roles(user_id);
+
+-- Achievements
+CREATE TABLE IF NOT EXISTS achievements (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        TEXT NOT NULL,
+    slug        TEXT UNIQUE NOT NULL,
+    description TEXT,
+    icon        TEXT,
+    category    TEXT CHECK (category IN ('activity', 'social', 'milestone', 'special')),
+    rarity      TEXT CHECK (rarity IN ('common', 'uncommon', 'rare', 'epic', 'legendary')),
+    is_secret   BOOL DEFAULT false,
+    created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS achievement_triggers (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    achievement_id   UUID REFERENCES achievements(id) ON DELETE CASCADE,
+    trigger_type     TEXT NOT NULL,
+    trigger_threshold INT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_achievements (
+    user_id        TEXT REFERENCES users(id) ON DELETE CASCADE,
+    achievement_id UUID REFERENCES achievements(id) ON DELETE CASCADE,
+    earned_at      TIMESTAMPTZ DEFAULT now(),
+    is_featured    BOOL DEFAULT false,
+    PRIMARY KEY (user_id, achievement_id)
+);
+
+CREATE TABLE IF NOT EXISTS achievement_cosmetics (
+    achievement_id UUID REFERENCES achievements(id) ON DELETE CASCADE,
+    cosmetic_id    UUID,
+    PRIMARY KEY (achievement_id, cosmetic_id)
+);
+
+-- Cosmetics
+CREATE TABLE IF NOT EXISTS cosmetics (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    type          TEXT CHECK (type IN ('avatar_frame', 'banner', 'name_color', 'title')),
+    name          TEXT NOT NULL,
+    slug          TEXT UNIQUE NOT NULL,
+    asset_url     TEXT,
+    css_value     TEXT,
+    rarity        TEXT CHECK (rarity IN ('common', 'uncommon', 'rare', 'epic', 'legendary')),
+    unlock_source TEXT,
+    created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS role_cosmetics (
+    role_id     UUID REFERENCES roles(id) ON DELETE CASCADE,
+    cosmetic_id UUID REFERENCES cosmetics(id) ON DELETE CASCADE,
+    PRIMARY KEY (role_id, cosmetic_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_cosmetics (
+    user_id     TEXT REFERENCES users(id) ON DELETE CASCADE,
+    cosmetic_id UUID REFERENCES cosmetics(id) ON DELETE CASCADE,
+    unlocked_at TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (user_id, cosmetic_id)
+);

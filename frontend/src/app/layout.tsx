@@ -7,6 +7,7 @@ import Navbar from '@/components/Navbar';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import FeedbackFlow from '@/components/FeedbackFlow';
 import SessionFeedbackGlobal from '@/components/SessionFeedbackGlobal';
+import ToastProvider from '@/components/ToastProvider';
 
 const spectral = Spectral({
   subsets: ['latin'],
@@ -56,7 +57,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <UserProvider>
           <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
             <Navbar />
-            <main style={{ flex: 1 }}><ErrorBoundary>{children}</ErrorBoundary></main>
+            <main style={{ flex: 1 }}><ErrorBoundary><ToastProvider>{children}</ToastProvider></ErrorBoundary></main>
             <Suspense fallback={null}><FeedbackFlow /></Suspense>
             <Suspense fallback={null}><SessionFeedbackGlobal /></Suspense>
           </div>

@@ -814,3 +814,92 @@ input[type="reset"]:disabled {
   to   { transform: translateX(0);    }
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   RARITY TIER TOKENS
+   ══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Derived from existing brand palette */
+  --rarity-common:       var(--text-dim);
+  --rarity-common-bg:    rgba(107, 114, 128, 0.08);
+  --rarity-uncommon:     var(--brand-primary);
+  --rarity-uncommon-bg:  rgba(46, 125, 82, 0.08);
+  --rarity-rare:         var(--brand-teal);
+  --rarity-rare-bg:      rgba(43, 140, 150, 0.08);
+  --rarity-epic:         #8b5cf6;
+  --rarity-epic-bg:      rgba(139, 92, 246, 0.08);
+  --rarity-legendary:    var(--brand-progress);
+  --rarity-legendary-bg: rgba(232, 163, 58, 0.08);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   DARK MODE
+   ══════════════════════════════════════════════════════════════════ */
+
+html.dark {
+  --bg:             #0f1110;
+  --bg-mesh:        #0f1110;
+  --bg-panel:       #1a1d1b;
+  --bg-sidebar:     #151816;
+  --bg-topbar:      #151816;
+  --bg-input:       #1a1d1b;
+  --bg-subtle:      #1f2421;
+  --bg-space:       #0f1110;
+  --bg-glass:       rgba(0, 0, 0, 0.35);
+
+  --accent:         #4a9e5c;
+  --accent-hover:   #5bb86d;
+  --accent-dim:     rgba(74, 158, 92, 0.12);
+  --accent-border:  rgba(74, 158, 92, 0.35);
+  --accent-active:  rgba(74, 158, 92, 0.7);
+  --accent-glow:    rgba(74, 158, 92, 0.15);
+
+  --text:             #e5e7eb;
+  --text-primary:     #e5e7eb;
+  --text-secondary:   #d1d5db;
+  --text-muted:       #9ca3af;
+  --text-dim:         #6b7280;
+  --text-placeholder: #4b5563;
+
+  --border:         rgba(148, 163, 184, 0.15);
+  --border-light:   rgba(148, 163, 184, 0.08);
+  --border-mid:     rgba(148, 163, 184, 0.22);
+  --border-glass:   rgba(148, 163, 184, 0.12);
+
+  --shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.35), 0 2px 4px rgba(0, 0, 0, 0.2);
+  --shadow-lg:  0 12px 32px rgba(0, 0, 0, 0.4), 0 4px 8px rgba(0, 0, 0, 0.25);
+
+  --rarity-common-bg:    rgba(107, 114, 128, 0.15);
+  --rarity-uncommon-bg:  rgba(46, 125, 82, 0.15);
+  --rarity-rare-bg:      rgba(43, 140, 150, 0.15);
+  --rarity-epic-bg:      rgba(139, 92, 246, 0.15);
+  --rarity-legendary-bg: rgba(232, 163, 58, 0.15);
+
+  color-scheme: dark;
+}
+
+html.dark input,
+html.dark select,
+html.dark textarea {
+  color-scheme: dark;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   ACHIEVEMENT / TOAST ANIMATIONS
+   ══════════════════════════════════════════════════════════════════ */
+
+@keyframes toast-slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+.toast-enter {
+  animation: toast-slide-in 200ms ease-out forwards;
+}
+
+/* Cosmetic equip transition */
+.cosmetic-equipped {
+  transition: box-shadow 150ms ease, border-color 150ms ease;
+}
+

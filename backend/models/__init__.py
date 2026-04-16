@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Union, List
 from pydantic import BaseModel, Field
 
 
@@ -190,3 +190,136 @@ class OnboardingBody(BaseModel):
     minors: list[str] = []
     course_ids: list[str] = Field(min_length=1)
     learning_style: str
+
+
+# ── Profile & Settings ───────────────────────────────────────────────────────
+
+class UpdateProfileBody(BaseModel):
+    username: Optional[str] = None
+    bio: Optional[str] = None
+    location: Optional[str] = None
+    website: Optional[str] = None
+    display_name: Optional[str] = None
+
+
+class UpdateSettingsBody(BaseModel):
+    profile_visibility: Optional[str] = None
+    activity_status_visible: Optional[bool] = None
+    notification_email: Optional[bool] = None
+    notification_push: Optional[bool] = None
+    notification_in_app: Optional[bool] = None
+    theme: Optional[str] = None
+    font_size: Optional[str] = None
+    accent_color: Optional[str] = None
+
+
+class EquipCosmeticBody(BaseModel):
+    slot: str
+    cosmetic_id: Optional[str] = None
+
+
+class SetFeaturedRoleBody(BaseModel):
+    role_id: Optional[str] = None
+
+
+class SetFeaturedAchievementsBody(BaseModel):
+    achievement_ids: List[str] = Field(max_length=5)
+
+
+class DeleteAccountBody(BaseModel):
+    confirmation: str
+
+
+class AvatarUploadResponse(BaseModel):
+    avatar_url: str
+
+
+class PublicProfileResponse(BaseModel):
+    id: str
+    name: str
+    username: Optional[str] = None
+    bio: Optional[str] = None
+    location: Optional[str] = None
+    website: Optional[str] = None
+    avatar_url: Optional[str] = None
+    created_at: Optional[str] = None
+    roles: list = []
+    featured_achievements: list = []
+    equipped_cosmetics: dict = {}
+    stats: dict = {}
+
+
+class SettingsResponse(BaseModel):
+    user_id: str
+    display_name: Optional[str] = None
+    username: Optional[str] = None
+    bio: Optional[str] = None
+    location: Optional[str] = None
+    website: Optional[str] = None
+    profile_visibility: str = "public"
+    activity_status_visible: bool = True
+    notification_email: bool = True
+    notification_push: bool = False
+    notification_in_app: bool = True
+    theme: str = "light"
+    font_size: str = "medium"
+    accent_color: Optional[str] = None
+
+
+# ── Roles (Admin) ────────────────────────────────────────────────────────────
+
+class CreateRoleBody(BaseModel):
+    name: str
+    slug: str
+    color: str
+    icon: Optional[str] = None
+    description: Optional[str] = None
+    is_staff_assigned: bool = True
+    is_earnable: bool = False
+    display_priority: int = 0
+
+
+class AssignRoleBody(BaseModel):
+    user_id: str
+    role_id: str
+    granted_by: Optional[str] = None
+
+
+class RevokeRoleBody(BaseModel):
+    user_id: str
+    role_id: str
+
+
+# ── Achievements (Admin) ─────────────────────────────────────────────────────
+
+class CreateAchievementBody(BaseModel):
+    name: str
+    slug: str
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    category: str = "milestone"
+    rarity: str = "common"
+    is_secret: bool = False
+
+
+class CreateAchievementTriggerBody(BaseModel):
+    achievement_id: str
+    trigger_type: str
+    trigger_threshold: int
+
+
+class GrantAchievementBody(BaseModel):
+    user_id: str
+    achievement_id: str
+
+
+# ── Cosmetics (Admin) ────────────────────────────────────────────────────────
+
+class CreateCosmeticBody(BaseModel):
+    type: str
+    name: str
+    slug: str
+    asset_url: Optional[str] = None
+    css_value: Optional[str] = None
+    rarity: str = "common"
+    unlock_source: Optional[str] = None

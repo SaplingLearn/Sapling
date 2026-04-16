@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { getRecommendations } from '@/lib/api';
 import ReportIssueFlow from '@/components/ReportIssueFlow';
+import AvatarFrame from '@/components/AvatarFrame';
 
 const LINKS = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -32,7 +33,7 @@ function useIsMobile(breakpoint = 768) {
 export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { userId, userName, avatarUrl, userReady, isAuthenticated, signOut } = useUser();
+  const { userId, userName, avatarUrl, userReady, isAuthenticated, isAdmin, equippedCosmetics, signOut } = useUser();
   const [suggesting, setSuggesting] = useState(false);
   const [, startTransition] = useTransition();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -57,7 +58,19 @@ export default function Navbar() {
 
   useEffect(() => {
     setMobileNavOpen(false);
+    setMenuOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMenuOpen(false);
+        setMobileNavOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, []);
 
   const publicPaths = ['/', '/signin/callback', '/about', '/terms', '/privacy'];
   const isPublic = publicPaths.includes(pathname) || pathname.startsWith('/careers');
@@ -315,29 +328,13 @@ export default function Navbar() {
               color: '#374151',
             }}
           >
-            {avatarUrl ? (
-              <img
-                src={avatarUrl}
-                alt=""
-                style={{ width: '24px', height: '24px', borderRadius: '50%' }}
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <div style={{
-                width: '24px',
-                height: '24px',
-                borderRadius: '50%',
-                background: 'rgba(26,92,42,0.12)',
-                color: '#1a5c2a',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '12px',
-                fontWeight: 600,
-              }}>
-                {userName?.charAt(0)?.toUpperCase() || '?'}
-              </div>
-            )}
+            <AvatarFrame
+              userId={userId}
+              name={userName}
+              size={24}
+              avatarUrl={avatarUrl}
+              frameUrl={equippedCosmetics?.avatar_frame?.asset_url}
+            />
             {!isMobile && <span style={{ fontWeight: 500 }}>{userName || 'User'}</span>}
           </button>
 
@@ -363,6 +360,31 @@ export default function Navbar() {
               }}>
                 Signed in as <strong style={{ color: '#374151' }}>{userName}</strong>
               </div>
+              {[
+                { href: `/profile/${userId}`, label: 'View profile' },
+                { href: '/settings', label: 'Settings' },
+                { href: '/achievements', label: 'Achievements' },
+                ...(isAdmin ? [{ href: '/admin', label: 'Admin' }] : []),
+              ].map(item => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMenuOpen(false)}
+                  style={{
+                    display: 'block',
+                    padding: '8px 14px',
+                    fontSize: '13px',
+                    color: '#374151',
+                    textDecoration: 'none',
+                    fontFamily: 'inherit',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(107,114,128,0.06)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                >
+                  {item.label}
+                </Link>
+              ))}
+              <div style={{ borderTop: '1px solid rgba(107,114,128,0.1)', margin: '2px 0' }} />
               <button
                 onClick={handleSignOut}
                 style={{

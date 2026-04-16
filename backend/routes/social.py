@@ -48,6 +48,14 @@ def join_room(body: JoinRoomBody):
         invalidate_summary(room["id"])
 
     members = table("room_members").select("user_id", filters={"room_id": f"eq.{room['id']}"})
+
+    # Check for achievements after room join
+    try:
+        from services.achievement_service import check_achievements
+        check_achievements(body.user_id, "rooms_joined", {})
+    except Exception:
+        pass
+
     return {"room": {**room, "member_count": len(members)}}
 
 
@@ -283,6 +291,14 @@ def send_room_message(room_id: str, body: SendMessageBody):
         "image_url": body.image_url or None,
         "reply_to_id": body.reply_to_id or None,
     })
+
+    # Check for achievements after message send
+    try:
+        from services.achievement_service import check_achievements
+        check_achievements(body.user_id, "post_count", {})
+    except Exception:
+        pass
+
     return {"message": row[0] if row else {}}
 
 

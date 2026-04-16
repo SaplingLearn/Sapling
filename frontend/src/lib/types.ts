@@ -186,3 +186,111 @@ export interface Document {
   created_at: string;
   processed_at: string | null;
 }
+
+// ── Profile, Roles, Achievements, Cosmetics ─────────────────────────────────
+
+export type RarityTier = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
+export type CosmeticType = 'avatar_frame' | 'banner' | 'name_color' | 'title';
+export type AchievementCategory = 'activity' | 'social' | 'milestone' | 'special';
+
+export interface Role {
+  id: string;
+  name: string;
+  slug: string;
+  color: string;
+  icon: string | null;
+  description: string | null;
+  is_staff_assigned: boolean;
+  is_earnable: boolean;
+  display_priority: number;
+}
+
+export interface UserRole {
+  role: Role;
+  granted_at: string;
+}
+
+export interface Achievement {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  icon: string | null;
+  category: AchievementCategory;
+  rarity: RarityTier;
+  is_secret: boolean;
+}
+
+export interface UserAchievement {
+  achievement: Achievement;
+  earned_at: string;
+  is_featured: boolean;
+}
+
+export interface AchievementTrigger {
+  id: string;
+  achievement_id: string;
+  trigger_type: string;
+  trigger_threshold: number;
+}
+
+export interface Cosmetic {
+  id: string;
+  type: CosmeticType;
+  name: string;
+  slug: string;
+  asset_url?: string;
+  css_value?: string;
+  rarity: RarityTier;
+}
+
+export interface UserCosmetic {
+  cosmetic: Cosmetic;
+  unlocked_at: string;
+}
+
+export interface EquippedCosmetics {
+  avatar_frame?: Cosmetic;
+  banner?: Cosmetic;
+  name_color?: Cosmetic;
+  title?: Cosmetic;
+  featured_role?: Role;
+}
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  username: string | null;
+  bio: string | null;
+  location: string | null;
+  website: string | null;
+  avatar_url: string | null;
+  created_at: string | null;
+  roles: UserRole[];
+  featured_achievements: UserAchievement[];
+  equipped_cosmetics: EquippedCosmetics;
+  stats: UserStats;
+}
+
+export interface UserStats {
+  streak_count: number;
+  session_count: number;
+  documents_count: number;
+  achievements_count: number;
+}
+
+export interface UserSettings {
+  display_name: string | null;
+  username: string | null;
+  bio: string | null;
+  location: string | null;
+  website: string | null;
+  notification_email: boolean;
+  notification_push: boolean;
+  notification_in_app: boolean;
+  theme: string;
+  font_size: string;
+  accent_color: string | null;
+  profile_visibility: string;
+  activity_status_visible: boolean;
+}

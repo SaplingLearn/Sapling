@@ -31,6 +31,10 @@ AUTH_SCOPES = [
 ]
 
 
+STORAGE_BUCKET: str = "avatars"
+MAX_AVATAR_SIZE: int = 5 * 1024 * 1024  # 5 MB
+
+
 def get_mastery_tier(score: float) -> str:
     if score >= 0.75:
         return "mastered"

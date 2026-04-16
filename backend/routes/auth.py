@@ -74,13 +74,59 @@ def _generate_pkce_pair():
 @router.get("/me")
 def get_me(user_id: str = Query(...)):
     """Return approval and onboarding status for a given user_id."""
-    user = table("users").select("id,is_approved,onboarding_completed", filters={"id": f"eq.{user_id}"})
+    user = table("users").select("id,is_approved,onboarding_completed,username", filters={"id": f"eq.{user_id}"})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Fetch user roles
+    role_rows = table("user_roles").select(
+        "granted_at,roles(id,name,slug,color,icon,description,is_staff_assigned,is_earnable,display_priority)",
+        filters={"user_id": f"eq.{user_id}"},
+    )
+    roles = []
+    is_admin = False
+    if role_rows:
+        for r in role_rows:
+            role_data = r.get("roles", {})
+            if role_data:
+                roles.append({"role": role_data, "granted_at": r.get("granted_at")})
+                if role_data.get("slug") == "admin":
+                    is_admin = True
+
+    # Fetch equipped cosmetics from settings
+    equipped_cosmetics = {}
+    settings_rows = table("user_settings").select(
+        "equipped_avatar_frame_id,equipped_banner_id,equipped_name_color_id,equipped_title_id,featured_role_id",
+        filters={"user_id": f"eq.{user_id}"},
+    )
+    if settings_rows:
+        s = settings_rows[0]
+        slot_map = {
+            "avatar_frame": "equipped_avatar_frame_id",
+            "banner": "equipped_banner_id",
+            "name_color": "equipped_name_color_id",
+            "title": "equipped_title_id",
+        }
+        for slot, col in slot_map.items():
+            cid = s.get(col)
+            if cid:
+                cosmetic_rows = table("cosmetics").select("*", filters={"id": f"eq.{cid}"})
+                if cosmetic_rows:
+                    equipped_cosmetics[slot] = cosmetic_rows[0]
+        frid = s.get("featured_role_id")
+        if frid:
+            fr_rows = table("roles").select("*", filters={"id": f"eq.{frid}"})
+            if fr_rows:
+                equipped_cosmetics["featured_role"] = fr_rows[0]
+
     return {
         "user_id": user_id,
         "is_approved": bool(user[0]["is_approved"]),
         "onboarding_completed": bool(user[0].get("onboarding_completed", False)),
+        "username": user[0].get("username"),
+        "roles": roles,
+        "equipped_cosmetics": equipped_cosmetics,
+        "is_admin": is_admin,
     }
 
 
