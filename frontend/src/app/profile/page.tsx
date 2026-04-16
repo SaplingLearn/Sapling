@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { fetchPublicProfile } from '@/lib/api';
@@ -16,6 +16,18 @@ import Link from 'next/link';
 const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
 
 export default function ProfilePage() {
+  return (
+    <Suspense fallback={
+      <div style={{ maxWidth: '720px', margin: '40px auto', padding: '0 20px', fontFamily: UI_FONT }}>
+        <div style={{ color: 'var(--text-dim)', fontSize: '13px' }}>Loading profile...</div>
+      </div>
+    }>
+      <ProfileContent />
+    </Suspense>
+  );
+}
+
+function ProfileContent() {
   const searchParams = useSearchParams();
   const profileUserId = searchParams.get('id') || '';
   const { userId: currentUserId } = useUser();
