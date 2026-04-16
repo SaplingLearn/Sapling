@@ -10,8 +10,8 @@ router = APIRouter()
 
 @router.get("/courses")
 def search_courses(q: str = Query("", min_length=0)):
-    """Search BU courses by name or code. Returns all if q is empty."""
-    filters = {"school": "eq.Boston University"}
+    """Search courses by name or code. Returns all if q is empty."""
+    filters = {}
     if q.strip():
         filters["or"] = f"(course_name.ilike.%{q}%,course_code.ilike.%{q}%)"
 
