@@ -80,7 +80,7 @@ class TestSaveOnboardingProfile:
         assert update_data["first_name"] == "Jose"
         assert update_data["last_name"] == "Cruz"
         assert update_data["name"] == "Jose Cruz"
-        assert update_data["class_year"] == "junior"
+        assert update_data["year"] == "junior"
         assert update_data["majors"] == ["Computer Science"]
         assert update_data["minors"] == ["Mathematics"]
         assert update_data["learning_style"] == "visual"

@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     email                 TEXT,
     first_name            TEXT,
     last_name             TEXT,
-    class_year            TEXT,
+    year                  TEXT,
     majors                TEXT[] DEFAULT '{}',
     minors                TEXT[] DEFAULT '{}',
     learning_style        TEXT,

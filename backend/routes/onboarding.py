@@ -40,7 +40,7 @@ def save_onboarding_profile(body: OnboardingBody):
             "name": name,
             "first_name": body.first_name,
             "last_name": body.last_name,
-            "class_year": body.year,
+            "year": body.year,
             "majors": body.majors,
             "minors": body.minors,
             "learning_style": body.learning_style,
