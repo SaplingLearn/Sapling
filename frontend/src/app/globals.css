@@ -491,6 +491,10 @@ input, select, textarea { color-scheme: light; }
 .nav-link:hover {
   text-shadow: 0.5px 0 0 currentColor, -0.5px 0 0 currentColor !important;
 }
+.nav-link:focus,
+.nav-link:focus-visible {
+  outline: none;
+}
 
 /* ════════════════════════════════════════════════════════════════════
    LANDING PAGE STYLES

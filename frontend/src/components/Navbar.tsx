@@ -240,6 +240,12 @@ export default function Navbar() {
                 key={link.href}
                 href={link.href}
                 className="nav-link"
+                onMouseEnter={e => {
+                  if (!active) e.currentTarget.style.color = '#6b7280';
+                }}
+                onMouseLeave={e => {
+                  if (!active) e.currentTarget.style.color = '#9ca3af';
+                }}
                 style={{
                   padding: '7px 14px',
                   fontSize: '15px',
