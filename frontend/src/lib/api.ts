@@ -4,9 +4,15 @@ import type {
   UserCosmetic, CosmeticType,
 } from '@/lib/types';
 
+import { handleLocalRequest } from '@/lib/localData';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
+export const IS_LOCAL_MODE = process.env.NEXT_PUBLIC_LOCAL_MODE === 'true';
 
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
+  if (IS_LOCAL_MODE) {
+    return handleLocalRequest(path, options) as T;
+  }
   const res = await fetch(`${API_URL}${path}`, {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
@@ -148,6 +154,7 @@ export const submitQuiz = (quizId: string, answers: any[]) =>
 // ── Calendar ──────────────────────────────────────────────────────────────────
 
 export const extractSyllabus = (formData: FormData, userId?: string): Promise<any> => {
+  if (IS_LOCAL_MODE) return Promise.resolve({ assignments: [] });
   if (userId) formData.set('user_id', userId);
   return fetch(`${API_URL}/api/calendar/extract`, {
     method: 'POST',
@@ -327,11 +334,13 @@ export const updateDocument = (documentId: string, data: { category?: string; us
     body: JSON.stringify(data),
   });
 
-export const uploadDocument = (formData: FormData, init?: RequestInit): Promise<any> =>
-  fetch(`${API_URL}/api/documents/upload`, { method: 'POST', body: formData, ...init }).then(async r => {
+export const uploadDocument = (formData: FormData, init?: RequestInit): Promise<any> => {
+  if (IS_LOCAL_MODE) return Promise.resolve({ id: 'local-doc', status: 'processed' });
+  return fetch(`${API_URL}/api/documents/upload`, { method: 'POST', body: formData, ...init }).then(async r => {
     if (!r.ok) { const e = await r.text(); throw new Error(e || `HTTP ${r.status}`); }
     return r.json();
   });
+};
 
 // ── Flashcards ────────────────────────────────────────────────────────────────
 
@@ -379,6 +388,7 @@ export const submitJobApplication = async (data: {
   portfolio_link?: string;
   resume?: File | null;
 }): Promise<{ ok: boolean; id: string | null }> => {
+  if (IS_LOCAL_MODE) return { ok: true, id: null };
   const formData = new FormData();
   formData.append('position', data.position);
   formData.append('full_name', data.full_name);
@@ -408,6 +418,7 @@ export const updateProfile = (userId: string, data: Partial<UserProfile>) =>
   });
 
 export const uploadAvatar = async (userId: string, file: File): Promise<{ avatar_url: string }> => {
+  if (IS_LOCAL_MODE) return { avatar_url: '' };
   const formData = new FormData();
   formData.append('file', file);
   const res = await fetch(`${API_URL}/api/profile/${userId}/avatar?user_id=${encodeURIComponent(userId)}`, {

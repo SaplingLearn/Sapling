@@ -5,7 +5,7 @@ import { verifySession } from '@/lib/sessionToken'
 const PROTECTED = [
   '/dashboard', '/learn', '/study', '/tree',
   '/flashcards', '/library', '/calendar', '/social',
-  '/profile', '/settings', '/achievements', '/admin'
+  '/settings', '/achievements', '/admin'
 ]
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL
@@ -51,6 +51,10 @@ async function redirectIfSignedIn(request: NextRequest): Promise<NextResponse | 
 }
 
 export async function middleware(request: NextRequest) {
+  if (process.env.NEXT_PUBLIC_LOCAL_MODE === 'true') {
+    return NextResponse.next()
+  }
+
   const { pathname } = request.nextUrl
 
   if (pathname === '/signin' || pathname === '/signin/') {
@@ -112,7 +116,7 @@ export const config = {
     '/dashboard/:path*', '/learn/:path*', '/study/:path*',
     '/tree/:path*', '/flashcards/:path*', '/library/:path*',
     '/calendar/:path*', '/social/:path*',
-    '/profile/:path*', '/settings/:path*', '/achievements/:path*',
+    '/settings/:path*', '/achievements/:path*',
     '/admin/:path*'
   ]
 }

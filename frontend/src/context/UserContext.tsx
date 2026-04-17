@@ -2,6 +2,8 @@
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
+import { IS_LOCAL_MODE } from '@/lib/api';
+import { LOCAL_USER } from '@/lib/localData';
 
 interface UserOption {
   id: string;
@@ -66,8 +68,18 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [featuredRole, setFeaturedRole] = useState<Role | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // Restore last selected user from localStorage
+  // Restore last selected user from localStorage (or use local dev user)
   useEffect(() => {
+    if (IS_LOCAL_MODE) {
+      setUserId(LOCAL_USER.id);
+      setUserName(LOCAL_USER.name);
+      setAvatarUrl(LOCAL_USER.avatar);
+      setIsAuthenticated(true);
+      setIsApproved(true);
+      setIsAdmin(true);
+      setUserReady(true);
+      return;
+    }
     const saved = localStorage.getItem('sapling_user');
     if (saved) {
       try {
@@ -83,6 +95,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   // Fetch user list from backend and reconcile the current user's name
   useEffect(() => {
+    if (IS_LOCAL_MODE) return;
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/users`)
       .then(r => r.json())
       .then((data: { users: UserOption[] }) => {
@@ -101,7 +114,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   // Fetch extended auth/me data (roles, cosmetics, etc.) when userId is ready
   const fetchProfileData = useCallback(async (uid: string) => {
-    if (!uid) return;
+    if (!uid || IS_LOCAL_MODE) return;
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/me?user_id=${encodeURIComponent(uid)}`);
       if (!res.ok) return;

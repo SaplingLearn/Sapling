@@ -485,9 +485,11 @@ input, select, textarea { color-scheme: light; }
 .highlight-ring { animation: pulse-ring 1.6s ease-in-out infinite; }
 
 /* ── Navbar link hover ───────────────────────────────────────────── */
+.nav-link {
+  cursor: pointer;
+}
 .nav-link:hover {
-  background: rgba(26, 92, 42, 0.10) !important;
-  color: #1a5c2a !important;
+  text-shadow: 0.5px 0 0 currentColor, -0.5px 0 0 currentColor !important;
 }
 
 /* ════════════════════════════════════════════════════════════════════

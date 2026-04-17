@@ -494,17 +494,17 @@ function StepIndicator({ scrollYProgress, activeStep }: {
   const bar2H = useTransform(scrollYProgress, [0.38, 0.72], ['0%', '100%']);
 
   return (
-    <div className="absolute right-5 lg:right-8 top-1/2 -translate-y-1/2 flex flex-col items-center gap-2 z-20 hidden sm:flex">
+    <div className="absolute top-1/2 -translate-y-1/2 flex flex-col items-center z-20 hidden sm:flex" style={{ right: 'clamp(1rem, 2vw, 2rem)', gap: 'clamp(0.375rem, 0.6vw, 0.5rem)' }}>
       {[1, 2, 3].map((s, i) => (
-        <div key={s} className="flex flex-col items-center gap-2">
+        <div key={s} className="flex flex-col items-center" style={{ gap: 'clamp(0.375rem, 0.6vw, 0.5rem)' }}>
           <motion.div
-            className="w-2 h-2 rounded-full"
-            style={{ background: activeStep >= s ? '#1B6C42' : 'rgba(156,163,175,0.4)' }}
+            className="rounded-full"
+            style={{ width: 'clamp(0.4rem, 0.6vw, 0.5rem)', height: 'clamp(0.4rem, 0.6vw, 0.5rem)', background: activeStep >= s ? '#1B6C42' : 'rgba(156,163,175,0.4)' }}
             animate={{ scale: activeStep === s ? 1.4 : 1 }}
             transition={{ duration: 0.3 }}
           />
           {i < 2 && (
-            <div className="w-px h-9 overflow-hidden" style={{ background: 'rgba(156,163,175,0.2)' }}>
+            <div className="w-px overflow-hidden" style={{ height: 'clamp(1.5rem, 3vh, 2.25rem)', background: 'rgba(156,163,175,0.2)' }}>
               <motion.div className="w-full" style={{
                 height: i === 0 ? bar1H : bar2H,
                 background: '#1B6C42',
@@ -577,14 +577,14 @@ export default function HowItWorks() {
   const SaplingComponents = [SeedSVG, SproutSVG, TreeSVG];
 
   return (
-    <section ref={containerRef} id="how-it-works" className="landing-section relative" style={{ height: '510vh' }}>
+    <section ref={containerRef} id="how-it-works" className="landing-section relative" style={{ height: '340vh' }}>
       <motion.div className="sticky top-0 h-screen w-full overflow-hidden" style={{ backgroundColor: bgColor }}>
-        <div className="h-full max-w-[1600px] mx-auto px-9 lg:px-[72px] flex flex-col lg:flex-row items-center gap-12 lg:gap-32 pt-16 lg:pt-0 lg:-translate-y-20">
+        <div className="h-full max-w-[1600px] mx-auto flex flex-col lg:flex-row items-center" style={{ padding: 'clamp(1rem, 4vh, 2.5rem) clamp(1.25rem, 4vw, 4.5rem)', gap: 'clamp(2rem, 5vw, 8rem)' }}>
 
           {/* ── Left: Sapling + text ──────────────────────────────────── */}
-          <div className="flex-1 flex flex-col items-center lg:items-start justify-center h-full py-8 lg:py-0 lg:-ml-8 lg:translate-y-16">
+          <div className="flex-1 flex flex-col items-center lg:items-start justify-center h-full" style={{ paddingBlock: 'clamp(1rem, 2vh, 0px)' }}>
             {/* Sapling illustration */}
-            <motion.div className="relative w-56 h-72 lg:w-64 lg:h-80 mb-12 lg:mb-[60px] flex-shrink-0" style={{ opacity: panelOpacity }}>
+            <motion.div className="relative flex-shrink-0" style={{ width: 'clamp(12rem, 18vw, 16rem)', height: 'clamp(15rem, 24vw, 20rem)', marginBottom: 'clamp(2rem, 4vh, 3.75rem)', opacity: panelOpacity }}>
               {SaplingComponents.map((SVG, i) => (
                 <motion.div key={i} className="absolute inset-0"
                   animate={{ opacity: activeStep === i + 1 ? 1 : 0 }}
@@ -596,22 +596,22 @@ export default function HowItWorks() {
             </motion.div>
 
             {/* Step text layers */}
-            <div className="relative w-full max-w-[600px] lg:max-w-2xl" style={{ minHeight: 240 }}>
+            <div className="relative w-full" style={{ maxWidth: 'clamp(20rem, 45vw, 42rem)', minHeight: 'clamp(10rem, 18vh, 15rem)' }}>
               {STEPS.map((step, i) => (
                 <motion.div
                   key={i}
                   className="absolute inset-x-0 top-0 text-center lg:text-left"
                   style={{ opacity: textOpacities[i], y: textYs[i] }}
                 >
-                  <span className="font-jetbrains text-[15px] tracking-[0.3em] text-[#1B6C42] uppercase mb-[15px] block font-medium">
+                  <span className="font-jetbrains tracking-[0.3em] text-[#1B6C42] uppercase block font-medium" style={{ fontSize: 'clamp(0.75rem, 1.1vw, 0.9375rem)', marginBottom: 'clamp(0.5rem, 1.2vh, 0.9375rem)' }}>
                     Step {step.num}
                   </span>
-                  <h3 className="font-playfair text-[38px] lg:text-[45px] font-semibold tracking-tight leading-tight mb-5"
-                    style={{ color: 'var(--brand-text1)' }}>
+                  <h3 className="font-playfair font-semibold tracking-tight leading-tight"
+                    style={{ color: 'var(--brand-text1)', fontSize: 'clamp(1.75rem, 3.5vw, 2.8125rem)', marginBottom: 'clamp(0.75rem, 1.5vh, 1.25rem)' }}>
                     {step.title}
                   </h3>
-                  <p className="font-inter text-xl leading-relaxed font-light"
-                    style={{ color: 'var(--brand-text2)' }}>
+                  <p className="font-inter leading-relaxed font-light"
+                    style={{ color: 'var(--brand-text2)', fontSize: 'clamp(0.9375rem, 1.4vw, 1.25rem)' }}>
                     {step.desc}
                   </p>
                 </motion.div>
@@ -620,7 +620,7 @@ export default function HowItWorks() {
           </div>
 
           {/* ── Right: App window ─────────────────────────────────────── */}
-          <motion.div className="flex-[1.68] w-full max-w-2xl lg:max-w-none flex-shrink-0 lg:translate-y-28" style={{ opacity: panelOpacity }}>
+          <motion.div className="flex-[1.68] w-full max-w-2xl lg:max-w-none flex-shrink-0" style={{ opacity: panelOpacity }}>
             <AppWindow>
               {([
                 <Step1Content key={0} active={activeStep === 1} />,

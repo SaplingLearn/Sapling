@@ -173,10 +173,10 @@ export default function Navbar() {
                       display: 'block',
                       padding: '10px 16px',
                       fontSize: '14px',
-                      color: active ? '#1a5c2a' : '#374151',
-                      fontWeight: active ? 600 : 400,
+                      color: active ? '#374151' : '#374151',
+                      fontWeight: active ? 700 : 400,
                       textDecoration: 'none',
-                      background: active ? 'rgba(26, 92, 42, 0.06)' : 'transparent',
+                      background: 'transparent',
                       fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
                     }}
                   >
@@ -243,15 +243,18 @@ export default function Navbar() {
                 style={{
                   padding: '7px 14px',
                   fontSize: '15px',
-                  color: active ? '#1a5c2a' : '#9ca3af',
-                  fontWeight: active ? 600 : 400,
+                  color: active ? '#374151' : '#9ca3af',
+                  fontWeight: 400,
+                  textShadow: active
+                    ? '0.5px 0 0 currentColor, -0.5px 0 0 currentColor'
+                    : 'none',
                   textDecoration: 'none',
                   borderRadius: '6px',
                   borderBottom: 'none',
-                  background: active ? 'rgba(26, 92, 42, 0.10)' : 'transparent',
+                  background: 'transparent',
                   fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
                   letterSpacing: '0.2px',
-                  transition: 'color 0.15s, background 0.15s',
+                  transition: 'color 0.15s',
                 }}
               >
                 {link.label}

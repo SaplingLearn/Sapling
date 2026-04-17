@@ -28,6 +28,10 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 * **Document Library** — Upload PDFs and notes; Sapling extracts summaries, key takeaways, and flashcard topics to enrich your knowledge graph and study guides.
 * **Study Rooms** — Invite classmates, compare knowledge graphs, and track relative mastery across your group.
 * **Room Chat** — Real-time text chat with avatars inside each study room.
+* **User Profiles** — Public profiles with academic info, bio, featured achievements, and equipped cosmetics.
+* **Achievements & Cosmetics** — Unlock achievements by hitting milestones (sessions, quizzes, streaks). Equip cosmetic rewards like avatar frames, name colors, and title flairs.
+* **Roles & Admin Panel** — Role-based access control with an admin panel for user approval, role assignment, and content management.
+* **Onboarding Flow** — Multi-step onboarding that collects school, major, year, and courses after first sign-in.
 * **Feedback & Issue Reporting** — Submit session feedback or report bugs directly from the app via the Navbar.
 
 ## Tech Stack
@@ -112,6 +116,35 @@ npm run dev                # → http://localhost:3000
 - `POST` `/api/social/school-match` — Find study partners school-wide
 - `GET`  `/api/social/students` — List all students with mastery stats
 
+**Auth**
+- `GET`  `/api/auth/google` — Redirect to Google OAuth consent screen
+- `GET`  `/api/auth/google/callback` — OAuth callback, issues session token
+- `GET`  `/api/auth/me` — Get current user from session token
+
+**Onboarding**
+- `GET`  `/api/onboarding/courses` — Search courses by name or code
+- `POST` `/api/onboarding/profile` — Save onboarding profile data
+
+**Profile**
+- `GET`  `/api/profile/{user_id}` — Public profile with roles, achievements, cosmetics
+- `PUT`  `/api/profile/{user_id}` — Update profile fields (bio, major, links, etc.)
+- `PUT`  `/api/profile/{user_id}/settings` — Update user settings
+- `POST` `/api/profile/{user_id}/avatar` — Upload a profile avatar
+- `POST` `/api/profile/{user_id}/equip` — Equip or unequip a cosmetic item
+- `PUT`  `/api/profile/{user_id}/featured-role` — Set featured role on profile
+- `PUT`  `/api/profile/{user_id}/featured-achievements` — Set featured achievements
+- `DELETE` `/api/profile/{user_id}` — Delete account
+
+**Admin**
+- `POST` `/api/admin/roles` — Create a role
+- `POST` `/api/admin/roles/assign` — Assign a role to a user
+- `POST` `/api/admin/roles/revoke` — Revoke a role from a user
+- `POST` `/api/admin/achievements` — Create an achievement
+- `POST` `/api/admin/achievements/triggers` — Create an achievement trigger
+- `POST` `/api/admin/achievements/grant` — Manually grant an achievement
+- `POST` `/api/admin/cosmetics` — Create a cosmetic item
+- `POST` `/api/admin/approve/{user_id}` — Approve a pending user
+
 **Feedback**
 - `POST` `/api/feedback/feedback` — Submit session or general feedback
 - `POST` `/api/feedback/issue-reports` — Submit a bug/issue report
@@ -129,12 +162,14 @@ npm run dev                # → http://localhost:3000
 | `FRONTEND_URL` | — | Allowed CORS origin (default `http://localhost:3000`) |
 | `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (for sign-in and Calendar) |
 | `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
+| `SESSION_SECRET` | — | HMAC secret for session tokens (min 32 bytes) |
 
 **`frontend/.env.local`**
 
 | Variable | Required | Description |
 |---|---|---|
 | `NEXT_PUBLIC_API_URL` | ✅ | Backend base URL (e.g. `http://localhost:5000`) |
+| `SESSION_SECRET` | — | Same HMAC secret as backend (for middleware token verification) |
 
 ## License
 
