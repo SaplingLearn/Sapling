@@ -121,7 +121,7 @@ export default function Navbar() {
         display: 'flex',
         alignItems: 'center',
         gap: isMobile ? '8px' : '32px',
-        height: '48px',
+        height: '60px',
         position: 'sticky',
         top: 0,
         zIndex: 50,
@@ -241,12 +241,12 @@ export default function Navbar() {
                 href={link.href}
                 className="nav-link"
                 style={{
-                  padding: '4px 12px',
-                  fontSize: '13px',
+                  padding: '7px 14px',
+                  fontSize: '15px',
                   color: active ? '#1a5c2a' : '#9ca3af',
                   fontWeight: active ? 600 : 400,
                   textDecoration: 'none',
-                  borderRadius: '5px',
+                  borderRadius: '6px',
                   borderBottom: 'none',
                   background: active ? 'rgba(26, 92, 42, 0.10)' : 'transparent',
                   fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
@@ -267,13 +267,13 @@ export default function Navbar() {
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '5px',
-            padding: '5px 11px',
+            gap: '6px',
+            padding: '7px 14px',
             background: 'rgba(220,38,38,0.07)',
             color: '#dc2626',
             border: '1px solid rgba(220,38,38,0.2)',
-            borderRadius: '6px',
-            fontSize: '12px',
+            borderRadius: '7px',
+            fontSize: '14px',
             fontWeight: 500,
             fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
             cursor: 'pointer',
@@ -291,13 +291,13 @@ export default function Navbar() {
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              padding: '5px 13px',
+              gap: '7px',
+              padding: '7px 15px',
               background: 'rgba(26,92,42,0.08)',
               color: '#1a5c2a',
               border: '1px solid rgba(26,92,42,0.22)',
-              borderRadius: '6px',
-              fontSize: '12px',
+              borderRadius: '7px',
+              fontSize: '14px',
               fontWeight: 500,
               fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
               cursor: suggesting ? 'default' : 'pointer',
@@ -317,13 +317,13 @@ export default function Navbar() {
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: isMobile ? '4px' : '8px',
-              padding: '4px 10px',
+              gap: isMobile ? '5px' : '10px',
+              padding: '5px 12px',
               background: 'transparent',
               border: '1px solid rgba(107,114,128,0.18)',
-              borderRadius: '6px',
+              borderRadius: '7px',
               cursor: 'pointer',
-              fontSize: '13px',
+              fontSize: '14px',
               fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
               color: '#374151',
             }}
@@ -331,7 +331,7 @@ export default function Navbar() {
             <AvatarFrame
               userId={userId}
               name={userName}
-              size={24}
+              size={28}
               avatarUrl={avatarUrl}
               frameUrl={equippedCosmetics?.avatar_frame?.asset_url}
             />
@@ -361,9 +361,7 @@ export default function Navbar() {
                 Signed in as <strong style={{ color: '#374151' }}>{userName}</strong>
               </div>
               {[
-                { href: `/profile?id=${userId}`, label: 'View profile' },
                 { href: '/settings', label: 'Settings' },
-                { href: '/achievements', label: 'Achievements' },
                 ...(isAdmin ? [{ href: '/admin', label: 'Admin' }] : []),
               ].map(item => (
                 <Link
