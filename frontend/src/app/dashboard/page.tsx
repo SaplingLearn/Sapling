@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useState, useRef, useMemo, useCallback, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter, useSearchParams } from 'next/navigation';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import { GraphNode, GraphStats, Recommendation, Assignment } from '@/lib/types';
@@ -128,6 +129,8 @@ function DashboardInner() {
   const [courseSearchInput, setCourseSearchInput] = useState('');
   const [courseSuggestions, setCourseSuggestions] = useState<CourseCatalogOption[]>([]);
   const [courseSearchFocused, setCourseSearchFocused] = useState(false);
+  const [courseInputRect, setCourseInputRect] = useState<DOMRect | null>(null);
+  const courseInputRef = useRef<HTMLInputElement | null>(null);
   const courseDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const [courseAdding, setCourseAdding] = useState(false);
   const [courseDeleting, setCourseDeleting] = useState<string | null>(null);
@@ -229,6 +232,28 @@ function DashboardInner() {
     if (courseDebounceRef.current) clearTimeout(courseDebounceRef.current);
   }, []);
 
+  // Track the search input's viewport rect so the portal dropdown stays pinned
+  // to it as the modal scrolls or the window resizes.
+  useLayoutEffect(() => {
+    const open = showCourses && courseSearchFocused && courseSuggestions.length > 0;
+    if (!open) {
+      setCourseInputRect(null);
+      return;
+    }
+    const update = () => {
+      if (courseInputRef.current) {
+        setCourseInputRect(courseInputRef.current.getBoundingClientRect());
+      }
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [showCourses, courseSearchFocused, courseSuggestions.length]);
+
   // Typing animation for greeting
   useEffect(() => {
     const firstName = userName.split(' ')[0];
@@ -321,7 +346,7 @@ function DashboardInner() {
         const res = await fetch(`${API_URL}/api/onboarding/courses?q=${encodeURIComponent(value)}`);
         const data: { courses: CourseCatalogOption[] } = await res.json();
         const enrolledIds = new Set(courseList.map(c => c.course_id));
-        setCourseSuggestions(data.courses.filter(c => !enrolledIds.has(c.id)));
+        setCourseSuggestions(data.courses.filter(c => !enrolledIds.has(c.id)).slice(0, 5));
       } catch {
         setCourseSuggestions([]);
       } finally {
@@ -1415,8 +1440,9 @@ function DashboardInner() {
             <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
               Add a Course
             </p>
-            <div style={{ position: 'relative', zIndex: courseSearchFocused ? 20 : 1 }}>
+            <div>
               <input
+                ref={courseInputRef}
                 type="text"
                 value={courseSearchInput}
                 onChange={e => handleCourseSearchInput(e.target.value)}
@@ -1436,58 +1462,59 @@ function DashboardInner() {
                   opacity: courseAdding ? 0.6 : 1,
                 }}
               />
-              {courseSearchFocused && courseSuggestions.length > 0 && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 4px)',
-                    left: 0,
-                    right: 0,
-                    background: '#ffffff',
-                    border: '1px solid rgba(107,114,128,0.2)',
-                    borderRadius: '8px',
-                    maxHeight: '192px',
-                    overflowY: 'auto',
-                    zIndex: 100,
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
-                  }}
-                  role="listbox"
-                  aria-label="Course suggestions"
-                >
-                  {courseSuggestions.map((c, i) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      role="option"
-                      aria-selected={false}
-                      onMouseDown={() => handleAddCourseFromCatalog(c)}
-                      style={{
-                        width: '100%',
-                        textAlign: 'left',
-                        padding: '9px 14px',
-                        fontSize: '13px',
-                        color: '#111827',
-                        cursor: 'pointer',
-                        borderBottom: i < courseSuggestions.length - 1 ? '1px solid rgba(107,114,128,0.08)' : 'none',
-                        fontFamily: 'inherit',
-                        transition: 'background 0.15s',
-                        background: 'transparent',
-                        borderLeft: 'none',
-                        borderRight: 'none',
-                        borderTop: 'none',
-                      }}
-                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(26,92,42,0.08)')}
-                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <span style={{ fontWeight: 600 }}>{c.course_code}</span>
-                      {c.course_code !== c.course_name && (
-                        <span style={{ color: '#6b7280', marginLeft: '8px' }}>{c.course_name}</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
+            {courseSearchFocused && courseSuggestions.length > 0 && courseInputRect && typeof document !== 'undefined' && createPortal(
+              <div
+                style={{
+                  position: 'fixed',
+                  top: courseInputRect.bottom + 4,
+                  left: courseInputRect.left,
+                  width: courseInputRect.width,
+                  background: '#ffffff',
+                  border: '1px solid rgba(107,114,128,0.2)',
+                  borderRadius: '8px',
+                  overflow: 'hidden',
+                  zIndex: 1000,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                  fontFamily: UI_FONT,
+                }}
+                role="listbox"
+                aria-label="Course suggestions"
+              >
+                {courseSuggestions.map((c, i) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    role="option"
+                    aria-selected={false}
+                    onMouseDown={() => handleAddCourseFromCatalog(c)}
+                    style={{
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '9px 14px',
+                      fontSize: '13px',
+                      color: '#111827',
+                      cursor: 'pointer',
+                      borderBottom: i < courseSuggestions.length - 1 ? '1px solid rgba(107,114,128,0.08)' : 'none',
+                      fontFamily: 'inherit',
+                      transition: 'background 0.15s',
+                      background: 'transparent',
+                      borderLeft: 'none',
+                      borderRight: 'none',
+                      borderTop: 'none',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(26,92,42,0.08)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <span style={{ fontWeight: 600 }}>{c.course_code}</span>
+                    {c.course_code !== c.course_name && (
+                      <span style={{ color: '#6b7280', marginLeft: '8px' }}>{c.course_name}</span>
+                    )}
+                  </button>
+                ))}
+              </div>,
+              document.body
+            )}
             {courseAdding && (
               <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px' }}>Adding…</p>
             )}
