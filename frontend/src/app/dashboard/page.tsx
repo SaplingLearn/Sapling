@@ -264,7 +264,7 @@ function DashboardInner() {
     });
     obs.observe(el);
     return () => { obs.disconnect(); clearTimeout(timer); };
-  }, []);
+  }, [loading]);
 
   // Fullscreen graph (#24): measure overlay pane; Escape exits
   useLayoutEffect(() => {
