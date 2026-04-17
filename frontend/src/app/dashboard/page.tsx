@@ -19,6 +19,14 @@ import { useUser } from '@/context/UserContext';
 import Link from 'next/link';
 import { Maximize2, Minimize2 } from 'lucide-react';
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+
+interface CourseCatalogOption {
+  id: string;
+  course_code: string;
+  course_name: string;
+}
+
 const STATS_LABELS: Record<string, string> = {
   mastered: 'Mastered',
   learning: 'Learning',
@@ -117,7 +125,10 @@ function DashboardInner() {
   const [showCourses, setShowCourses] = useState(false);
   const [courseList, setCourseList] = useState<EnrolledCourse[]>([]);
   const [courseColorMap, setCourseColorMap] = useState<Record<string, string>>({});
-  const [newCourseName, setNewCourseName] = useState('');
+  const [courseSearchInput, setCourseSearchInput] = useState('');
+  const [courseSuggestions, setCourseSuggestions] = useState<CourseCatalogOption[]>([]);
+  const [courseSearchFocused, setCourseSearchFocused] = useState(false);
+  const courseDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const [courseAdding, setCourseAdding] = useState(false);
   const [courseDeleting, setCourseDeleting] = useState<string | null>(null);
   const [courseError, setCourseError] = useState('');
@@ -214,6 +225,10 @@ function DashboardInner() {
     setQuote(QUOTES[Math.floor(Math.random() * QUOTES.length)]);
   }, []);
 
+  useEffect(() => () => {
+    if (courseDebounceRef.current) clearTimeout(courseDebounceRef.current);
+  }, []);
+
   // Typing animation for greeting
   useEffect(() => {
     const firstName = userName.split(' ')[0];
@@ -296,26 +311,44 @@ function DashboardInner() {
   }, [router]);
 
 
-  const handleAddCourse = async () => {
-    const name = newCourseName.trim();
-    if (!name) return;
+  const handleCourseSearchInput = (value: string) => {
+    setCourseSearchInput(value);
+    setCourseError('');
+    if (courseDebounceRef.current) clearTimeout(courseDebounceRef.current);
+    if (value.trim().length < 1) { setCourseSuggestions([]); return; }
+    courseDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/onboarding/courses?q=${encodeURIComponent(value)}`);
+        const data: { courses: CourseCatalogOption[] } = await res.json();
+        const enrolledIds = new Set(courseList.map(c => c.course_id));
+        setCourseSuggestions(data.courses.filter(c => !enrolledIds.has(c.id)));
+      } catch {
+        setCourseSuggestions([]);
+      } finally {
+        courseDebounceRef.current = null;
+      }
+    }, 200);
+  };
+
+  const handleAddCourseFromCatalog = async (course: CourseCatalogOption) => {
     setCourseError('');
     setCourseAdding(true);
     try {
-      // Pick a preset color not already used by any existing course
       const usedColors = new Set(Object.values(courseColorMap));
       const pickedColor = PRESET_COURSE_COLORS.find(c => !usedColors.has(c)) ?? PRESET_COURSE_COLORS[0];
-      const res = await addCourse(userId, name, pickedColor);
+      const res = await addCourse(userId, course.id, pickedColor);
       if (res.already_existed) {
-        setCourseError(`"${name}" is already in your course list.`);
+        setCourseError(`"${course.course_code}" is already in your course list.`);
+      } else if (res.error) {
+        setCourseError(res.error);
       } else {
-        setNewCourseName('');
+        setCourseSearchInput('');
+        setCourseSuggestions([]);
         const updated = await getCourses(userId);
         setCourseList(updated.courses);
         const colorMap: Record<string, string> = {};
         updated.courses.forEach(c => { if (c.color) colorMap[c.course_name] = c.color; });
         setCourseColorMap(colorMap);
-        // Refresh graph so the new subject-root node appears immediately
         const graphData = await getGraph(userId);
         setNodes(graphData.nodes);
         setEdges(graphData.edges);
@@ -1203,7 +1236,7 @@ function DashboardInner() {
             justifyContent: 'center',
             padding: '20px',
           }}
-          onClick={e => { if (e.target === e.currentTarget) { setShowCourses(false); setCourseError(''); setNewCourseName(''); setEditingColorFor(null); } }}
+          onClick={e => { if (e.target === e.currentTarget) { setShowCourses(false); setCourseError(''); setCourseSearchInput(''); setCourseSuggestions([]); setEditingColorFor(null); } }}
         >
           <div
             style={{
@@ -1222,7 +1255,7 @@ function DashboardInner() {
           >
             {/* Close */}
             <button
-              onClick={() => { setShowCourses(false); setCourseError(''); setNewCourseName(''); setEditingColorFor(null); }}
+              onClick={() => { setShowCourses(false); setCourseError(''); setCourseSearchInput(''); setCourseSuggestions([]); setEditingColorFor(null); }}
               style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#6b7280', lineHeight: 1, padding: '4px 6px', borderRadius: '4px' }}
             >
               ✕
@@ -1382,14 +1415,17 @@ function DashboardInner() {
             <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
               Add a Course
             </p>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ position: 'relative', zIndex: courseSearchFocused ? 20 : 1 }}>
               <input
-                value={newCourseName}
-                onChange={e => { setNewCourseName(e.target.value); setCourseError(''); }}
-                onKeyDown={e => { if (e.key === 'Enter') handleAddCourse(); }}
-                placeholder="e.g. Calculus II, World History…"
+                type="text"
+                value={courseSearchInput}
+                onChange={e => handleCourseSearchInput(e.target.value)}
+                onFocus={() => setCourseSearchFocused(true)}
+                onBlur={() => setTimeout(() => setCourseSearchFocused(false), 150)}
+                placeholder="Search courses…"
+                disabled={courseAdding}
                 style={{
-                  flex: 1,
+                  width: '100%',
                   padding: '8px 12px',
                   border: '1px solid rgba(107,114,128,0.25)',
                   borderRadius: '6px',
@@ -1397,28 +1433,64 @@ function DashboardInner() {
                   outline: 'none',
                   fontFamily: 'inherit',
                   color: '#111827',
+                  opacity: courseAdding ? 0.6 : 1,
                 }}
               />
-              <button
-                onClick={handleAddCourse}
-                disabled={courseAdding || !newCourseName.trim()}
-                style={{
-                  padding: '8px 18px',
-                  background: courseAdding || !newCourseName.trim() ? '#f3f4f6' : '#1a5c2a',
-                  color: courseAdding || !newCourseName.trim() ? '#9ca3af' : '#ffffff',
-                  border: 'none',
-                  borderRadius: '6px',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  cursor: courseAdding || !newCourseName.trim() ? 'default' : 'pointer',
-                  fontFamily: 'inherit',
-                  transition: 'background 0.15s',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {courseAdding ? 'Adding…' : 'Add Course'}
-              </button>
+              {courseSearchFocused && courseSuggestions.length > 0 && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    left: 0,
+                    right: 0,
+                    background: '#ffffff',
+                    border: '1px solid rgba(107,114,128,0.2)',
+                    borderRadius: '8px',
+                    maxHeight: '192px',
+                    overflowY: 'auto',
+                    zIndex: 100,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
+                  }}
+                  role="listbox"
+                  aria-label="Course suggestions"
+                >
+                  {courseSuggestions.map((c, i) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      role="option"
+                      aria-selected={false}
+                      onMouseDown={() => handleAddCourseFromCatalog(c)}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '9px 14px',
+                        fontSize: '13px',
+                        color: '#111827',
+                        cursor: 'pointer',
+                        borderBottom: i < courseSuggestions.length - 1 ? '1px solid rgba(107,114,128,0.08)' : 'none',
+                        fontFamily: 'inherit',
+                        transition: 'background 0.15s',
+                        background: 'transparent',
+                        borderLeft: 'none',
+                        borderRight: 'none',
+                        borderTop: 'none',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(26,92,42,0.08)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <span style={{ fontWeight: 600 }}>{c.course_code}</span>
+                      {c.course_code !== c.course_name && (
+                        <span style={{ color: '#6b7280', marginLeft: '8px' }}>{c.course_name}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
+            {courseAdding && (
+              <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px' }}>Adding…</p>
+            )}
             {courseError && (
               <p style={{ fontSize: '12px', color: '#b91c1c', marginTop: '6px' }}>{courseError}</p>
             )}
