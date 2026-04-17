@@ -1088,7 +1088,6 @@ function DashboardInner() {
 
             {/* Streak count */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '6px' }}>
-              <span style={{ fontSize: '17px', lineHeight: 1 }}>🔥</span>
               <span style={{ fontSize: '17px', fontWeight: 700, color: '#ea580c', lineHeight: 1 }}>
                 {stats?.streak ?? 0}
               </span>
