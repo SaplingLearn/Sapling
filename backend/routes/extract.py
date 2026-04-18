@@ -1,3 +1,4 @@
+import os
 import sys
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
@@ -7,6 +8,9 @@ from services.extraction_service import (
     extract_text_from_pdf_native,
     extract_text_from_pdf_ocr,
 )
+from services.extraction_backends.docling_backend import docling_available
+from services.extraction_backends.got_ocr_backend import got_ocr_available
+from services.extraction_backends.tesseract_backend import tesseract_available
 
 router = APIRouter()
 
@@ -26,12 +30,16 @@ ALLOWED_PDF_TYPES = {"application/pdf"}
 
 @router.get("/health")
 def extraction_health():
-    try:
-        import pytesseract
-        ver = pytesseract.get_tesseract_version()
-        return {"tesseract_available": True, "tesseract_version": str(ver)}
-    except Exception:
-        return {"tesseract_available": False, "tesseract_version": None}
+    tess_ok, tess_ver = tesseract_available()
+    docling_ok, docling_ver = docling_available()
+    return {
+        "tesseract_available": tess_ok,
+        "tesseract_version": tess_ver,
+        "docling_available": docling_ok,
+        "docling_version": docling_ver,
+        "got_ocr_available": got_ocr_available(),
+        "active_engine": os.getenv("OCR_ENGINE", "docling").lower(),
+    }
 
 
 @router.post("/pdf")

@@ -218,3 +218,138 @@ class TestExtractTextFromFileRouting:
     def test_routes_txt_by_extension(self):
         result = extract_text_from_file(b"plain text", "notes.txt", "application/octet-stream")
         assert result == "plain text"
+
+
+# ── Router dispatch by OCR_ENGINE ─────────────────────────────────────────────
+
+from services.extraction_service import (
+    extract_text_from_pdf_ocr,
+    extract_text_from_image_bytes,
+)
+
+
+class TestRouterDispatch:
+    def test_engine_tesseract_uses_legacy_pdf_ocr(self, monkeypatch):
+        monkeypatch.setenv("OCR_ENGINE", "tesseract")
+        with (
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_pdf_ocr_impl",
+                return_value=("legacy-ocr", 3),
+            ) as mock_tess,
+            patch("services.extraction_service.extract_pdf_with_docling") as mock_docling,
+        ):
+            text, pages = extract_text_from_pdf_ocr(b"pdf", max_pages=5, lang="eng")
+
+        mock_tess.assert_called_once()
+        mock_docling.assert_not_called()
+        assert text == "legacy-ocr"
+        assert pages == 3
+
+    def test_engine_docling_uses_docling_backend(self, monkeypatch):
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setenv("GOT_OCR_ENABLED", "false")
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("# Markdown", 2, {"fallback_pages": [], "per_page_markdown": ["# Markdown"]}),
+            ) as mock_docling,
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_pdf_ocr_impl"
+            ) as mock_tess,
+        ):
+            text, pages = extract_text_from_pdf_ocr(b"pdf")
+
+        mock_docling.assert_called_once()
+        mock_tess.assert_not_called()
+        assert text == "# Markdown"
+        assert pages == 2
+
+    def test_engine_auto_skips_got_ocr_when_disabled(self, monkeypatch):
+        monkeypatch.setenv("OCR_ENGINE", "auto")
+        monkeypatch.setenv("GOT_OCR_ENABLED", "false")
+        metadata = {
+            "per_page_markdown": ["math page with ≥"],
+            "fallback_pages": [0],
+        }
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("math page with ≥", 1, metadata),
+            ),
+            patch("services.extraction_service.extract_page_with_got_ocr") as mock_got,
+        ):
+            text, _ = extract_text_from_pdf_ocr(b"pdf")
+
+        mock_got.assert_not_called()
+        assert "math page" in text
+
+    def test_engine_auto_invokes_got_ocr_for_flagged_pages(self, monkeypatch):
+        monkeypatch.setenv("OCR_ENGINE", "auto")
+        monkeypatch.setenv("GOT_OCR_ENABLED", "true")
+        metadata = {
+            "per_page_markdown": ["weak page 0", "good page 1"],
+            "fallback_pages": [0],
+        }
+
+        fake_pdf = MagicMock()
+        fake_pdf.__len__ = MagicMock(return_value=2)
+        fake_page = MagicMock()
+        fake_pdf.__getitem__ = MagicMock(return_value=fake_page)
+        rendered = MagicMock()
+
+        from PIL import Image
+        dummy_img = Image.new("RGB", (2, 2), color="white")
+        rendered.to_pil = MagicMock(return_value=dummy_img)
+        fake_page.render = MagicMock(return_value=rendered)
+        fake_page.close = MagicMock()
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("weak page 0\n\ngood page 1", 2, metadata),
+            ),
+            patch("pypdfium2.PdfDocument", return_value=fake_pdf),
+            patch(
+                "services.extraction_service.extract_page_with_got_ocr",
+                return_value="\\frac{1}{2}",
+            ) as mock_got,
+        ):
+            text, _ = extract_text_from_pdf_ocr(b"pdf")
+
+        mock_got.assert_called_once()
+        assert "\\frac{1}{2}" in text
+        assert "good page 1" in text
+
+    def test_docling_failure_falls_back_to_tesseract(self, monkeypatch):
+        from services.extraction_backends.docling_backend import DoclingUnavailableError
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                side_effect=DoclingUnavailableError("not installed"),
+            ),
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_pdf_ocr_impl",
+                return_value=("tess-fallback", 1),
+            ) as mock_tess,
+        ):
+            text, pages = extract_text_from_pdf_ocr(b"pdf")
+
+        mock_tess.assert_called_once()
+        assert text == "tess-fallback"
+        assert pages == 1
+
+    def test_image_tesseract_engine_uses_legacy(self, monkeypatch):
+        monkeypatch.setenv("OCR_ENGINE", "tesseract")
+        with (
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_image_bytes_impl",
+                return_value="legacy-img",
+            ) as mock_tess,
+            patch("services.extraction_service.extract_pdf_with_docling") as mock_docling,
+        ):
+            result = extract_text_from_image_bytes(b"imgbytes")
+
+        mock_tess.assert_called_once()
+        mock_docling.assert_not_called()
+        assert result == "legacy-img"

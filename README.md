@@ -39,6 +39,7 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 * **Frontend** — Next.js (TypeScript) with D3.js for interactive graph visualization
 * **Backend** — FastAPI (Python) serving a REST API with structured Gemini prompts
 * **AI** — Google Gemini for tutoring, quiz generation, graph updates, and syllabus extraction
+* **OCR** — Docling (layout-aware PDF → Markdown) with GOT-OCR 2.0 fallback for math/handwriting; Tesseract retained as a legacy fallback
 * **Database** — Supabase (PostgreSQL) for all persistent data
 
 ## Usage

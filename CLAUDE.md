@@ -288,6 +288,7 @@ Keep tests in sync with the code they cover:
 - **Document AI**: `routes/documents.py` does classification, summarization, and syllabus assignment extraction in a single Gemini call (`_process_document`). Assignments come back in the AI response, not from a separate function call.
 - **Session feedback**: triggered in `learn/page.tsx` — fires after every 3 session ends (no cooldown) and on navigate-away with a 2-day cooldown.
 - **ESM packages in tests**: `remark-math` and `rehype-katex` are ESM-only. They are mocked in `src/__mocks__/` so Jest can handle them. If you add new ESM-only packages that break tests, add a mock there and map it in `jest.config.js`.
+- **OCR routing**: `services/extraction_service.py` is a thin router in front of `services/extraction_backends/`. Engine selection is driven by the `OCR_ENGINE` env var: `docling` (default, layout-aware markdown), `auto` (Docling plus GOT-OCR 2.0 fallback for pages Docling flags as low char-density or math-without-LaTeX — only active when `GOT_OCR_ENABLED=true`), or `tesseract` (legacy). All heavy ML backends are lazy-imported so cold start stays well under a second. Docling/GOT-OCR failures degrade gracefully to Tesseract, then raise `RuntimeError` so `routes/extract.py` can surface the existing 503.
 
 ## Code Style
 
