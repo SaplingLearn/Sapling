@@ -2,19 +2,16 @@
 
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import UploadZone from '@/components/UploadZone';
 import AssignmentTable from '@/components/AssignmentTable';
+import DocumentUploadModal, { type UploadedDoc } from '@/components/DocumentUploadModal';
 import { Assignment } from '@/lib/types';
 import {
-  extractSyllabus,
-  saveAssignments,
   getAllAssignments,
   getCalendarStatus,
   syncToGoogleCalendar,
   importGoogleEvents,
   disconnectGoogleCalendar,
   getCourses,
-  type SaveAssignmentItem,
   type EnrolledCourse,
 } from '@/lib/api';
 import { useUser } from '@/context/UserContext';
@@ -22,29 +19,6 @@ import { useUser } from '@/context/UserContext';
 const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
 
 type CalendarView = 'month' | 'week' | 'day';
-
-/** What to show inline under the upload zone (#17 — short line; full text only in modal). */
-type SyllabusAlertKind = 'none' | 'fatal_upload' | 'soft' | 'save_failed';
-
-function syllabusInlineMessage(warnings: string[], kind: SyllabusAlertKind): string {
-  if (warnings.length === 0) return '';
-  // If kind was not set but we still have messages, treat as soft (avoids blank inline + “View details”).
-  const k = kind === 'none' && warnings.length > 0 ? 'soft' : kind;
-  if (k === 'none') return '';
-  if (k === 'fatal_upload') return "We couldn't import your syllabus.";
-  if (k === 'save_failed') return "We couldn't save your assignments.";
-  if (warnings.length === 1) {
-    const w = warnings[0];
-    return w.length > 100 ? `${w.slice(0, 97)}…` : w;
-  }
-  return `${warnings.length} notices from your syllabus import.`;
-}
-
-function syllabusModalTitle(kind: SyllabusAlertKind): string {
-  if (kind === 'fatal_upload') return 'Syllabus import error';
-  if (kind === 'save_failed') return 'Save error';
-  return 'Syllabus import details';
-}
 
 const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   exam:     { bg: 'rgba(220,38,38,0.08)',   text: '#b91c1c', border: 'rgba(220,38,38,0.2)' },
@@ -339,61 +313,19 @@ function normalizeAssignments(items: any[]): Assignment[] {
   }));
 }
 
-function buildCourseNameToIdMap(courses: EnrolledCourse[]): Map<string, string> {
-  const m = new Map<string, string>();
-  for (const c of courses) {
-    const label = c.course_code ? `${c.course_code} - ${c.course_name}` : c.course_name;
-    const keys = [c.course_name, label, c.nickname].filter(Boolean) as string[];
-    for (const k of keys) {
-      const lower = k.toLowerCase();
-      if (!m.has(lower)) m.set(lower, c.course_id);
-    }
-  }
-  return m;
-}
-
-function toSaveItems(assignments: Assignment[], nameToId: Map<string, string>): SaveAssignmentItem[] {
-  return assignments.map(a => {
-    let courseId = (a.course_id ?? '').trim();
-    if (!courseId && a.course_name?.trim()) {
-      const key = a.course_name.trim().toLowerCase();
-      courseId = nameToId.get(key) ?? '';
-    }
-    return {
-      title: a.title,
-      course_id: courseId,
-      due_date: a.due_date,
-      assignment_type: a.assignment_type ?? 'other',
-      notes: a.notes ?? undefined,
-    };
-  });
-}
-
 function CalendarInner() {
   const { userId: USER_ID, userReady } = useUser();
   const searchParams = useSearchParams();
   const isMobile = useIsMobile();
 
   const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [extractedAssignments, setExtractedAssignments] = useState<Assignment[]>([]);
-  const [fileProcessed, setFileProcessed] = useState(false);
-  const [warnings, setWarnings] = useState<string[]>([]);
-  const [syllabusAlertKind, setSyllabusAlertKind] = useState<SyllabusAlertKind>('none');
-  const [warningsModalOpen, setWarningsModalOpen] = useState(false);
-  const [uploadLoading, setUploadLoading] = useState(false);
-  const [uploadFilename, setUploadFilename] = useState('');
-  const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncedCount, setSyncedCount] = useState<number | null>(null);
   const [googleConnected, setGoogleConnected] = useState(false);
   const [googleEvents, setGoogleEvents] = useState<any[]>([]);
   const [importingGoogle, setImportingGoogle] = useState(false);
-  const [courseNameToId, setCourseNameToId] = useState<Map<string, string>>(() => new Map());
-
-  /** Orange (notice) vs red (error) — matches syllabusInlineMessage fallback when kind is stale. */
-  const syllabusNoticeStyle =
-    syllabusAlertKind === 'soft' ||
-    (syllabusAlertKind === 'none' && warnings.length > 0);
+  const [courses, setCourses] = useState<EnrolledCourse[]>([]);
+  const [showUpload, setShowUpload] = useState(false);
 
   // Fetch data once when user is ready — does NOT depend on searchParams to
   // prevent repeated fetches every time Next.js reconstructs the search params object
@@ -406,7 +338,7 @@ function CalendarInner() {
       .then(res => setGoogleConnected(res.connected))
       .catch(() => {});
     getCourses(USER_ID)
-      .then(data => setCourseNameToId(buildCourseNameToIdMap(data.courses ?? [])))
+      .then(data => setCourses(data.courses ?? []))
       .catch(console.error);
   }, [USER_ID, userReady]);
 
@@ -417,63 +349,17 @@ function CalendarInner() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleFile = async (file: File) => {
-    setUploadFilename(file.name);
-    setUploadLoading(true);
-    setWarnings([]);
-    setSyllabusAlertKind('none');
-    setExtractedAssignments([]);
-    setFileProcessed(false);
-    try {
-      const form = new FormData();
-      form.append('file', file);
-      const res = await extractSyllabus(form, USER_ID);
-      const err = res.error != null ? String(res.error).trim() : '';
-      const fromApi = Array.isArray(res.warnings) ? res.warnings.map((w: unknown) => String(w)) : [];
-      const merged: string[] = [];
-      if (err) merged.push(err);
-      for (const w of fromApi) {
-        if (w && !merged.includes(w)) merged.push(w);
-      }
-      setWarnings(merged);
-      setSyllabusAlertKind(err ? 'fatal_upload' : merged.length > 0 ? 'soft' : 'none');
+  const refreshAssignments = () =>
+    getAllAssignments(USER_ID)
+      .then(data => setAssignments(normalizeAssignments(data.assignments ?? [])))
+      .catch(console.error);
 
-      const mapped: Assignment[] = (res.assignments ?? []).map((a: any, i: number) => ({
-        id: `extracted_${i}_${Date.now()}`,
-        title: a.title ?? '',
-        course_name: a.course_name ?? '',
-        course_code: a.course_code ?? '',
-        course_id: a.course_id ?? '',
-        due_date: a.due_date ?? '',
-        assignment_type: a.assignment_type ?? 'other',
-        notes: a.notes ?? null,
-        google_event_id: null,
-      }));
-      setExtractedAssignments(mapped);
-      setFileProcessed(true);
-    } catch (e: any) {
-      setSyllabusAlertKind('fatal_upload');
-      setWarnings([e.message || 'Extraction failed']);
-    } finally {
-      setUploadLoading(false);
-    }
-  };
-
-  const handleSaveDetected = async () => {
-    setSaving(true);
-    try {
-      await saveAssignments(USER_ID, toSaveItems(extractedAssignments, courseNameToId));
-      const data = await getAllAssignments(USER_ID);
-      setAssignments(normalizeAssignments(data.assignments ?? []));
-      setExtractedAssignments([]);
-      setFileProcessed(false);
-      setWarnings([]);
-      setSyllabusAlertKind('none');
-    } catch (e: any) {
-      setSyllabusAlertKind('save_failed');
-      setWarnings([e.message || 'Save failed']);
-    } finally {
-      setSaving(false);
+  const handleUploadClose = (uploaded: UploadedDoc[]) => {
+    setShowUpload(false);
+    if (uploaded.some(d => d.category === 'syllabus')) {
+      refreshAssignments();
+      // Assignment inserts can race with the response — resync once more shortly.
+      window.setTimeout(() => { refreshAssignments(); }, 1500);
     }
   };
 
@@ -496,9 +382,7 @@ function CalendarInner() {
       const res = await syncToGoogleCalendar(USER_ID);
       setSyncedCount(res.synced_count);
       // Refresh so google_event_id values are up to date
-      getAllAssignments(USER_ID)
-        .then(data => setAssignments(normalizeAssignments(data.assignments ?? [])))
-        .catch(console.error);
+      refreshAssignments();
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -520,154 +404,24 @@ function CalendarInner() {
 
   return (
     <div style={{ maxWidth: '1100px', margin: '0 auto', padding: isMobile ? '12px' : '32px', display: 'flex', flexDirection: 'column', gap: '28px', fontFamily: UI_FONT }}>
-      <h1 style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontSize: isMobile ? '22px' : '32px', fontWeight: 700, color: '#111827', margin: 0, letterSpacing: '-0.02em' }}>Calendar</h1>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+        <h1 style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontSize: isMobile ? '22px' : '32px', fontWeight: 700, color: '#111827', margin: 0, letterSpacing: '-0.02em' }}>Calendar</h1>
+        <button
+          onClick={() => setShowUpload(true)}
+          style={{
+            padding: '8px 20px', background: '#1a5c2a', color: '#fff',
+            border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 600,
+            cursor: 'pointer', fontFamily: UI_FONT, letterSpacing: '0.3px',
+          }}
+        >
+          Upload Syllabus
+        </button>
+      </div>
 
       {/* Calendar grid — full width, prominent */}
       <div className="panel-in panel-in-1">
         <CalendarGrid assignments={assignments} />
       </div>
-
-      {/* Import syllabus */}
-      <div className="panel-in panel-in-2">
-        <p style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-          Import Syllabus
-        </p>
-        <UploadZone onFile={handleFile} loading={uploadLoading} filename={uploadFilename} />
-        {warnings.length > 0 && (
-          <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' }}>
-            <p
-              style={{
-                color: syllabusNoticeStyle ? '#c2410c' : '#b91c1c',
-                fontSize: '13px',
-                fontWeight: 500,
-                margin: 0,
-                flex: '1 1 200px',
-              }}
-            >
-              {syllabusInlineMessage(warnings, syllabusAlertKind)}
-            </p>
-            <button
-              type="button"
-              onClick={() => setWarningsModalOpen(true)}
-              style={{
-                padding: '5px 12px',
-                fontSize: '12px',
-                fontWeight: 600,
-                color: syllabusNoticeStyle ? '#c2410c' : '#b91c1c',
-                background: syllabusNoticeStyle ? 'rgba(234,88,12,0.08)' : 'rgba(220,38,38,0.08)',
-                border: syllabusNoticeStyle
-                  ? '1px solid rgba(234,88,12,0.35)'
-                  : '1px solid rgba(220,38,38,0.35)',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontFamily: UI_FONT,
-              }}
-            >
-              View details
-            </button>
-          </div>
-        )}
-      </div>
-
-      {warningsModalOpen && warnings.length > 0 && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="syllabus-warnings-title"
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 120,
-            background: 'rgba(15,23,42,0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px',
-          }}
-          onClick={e => { if (e.target === e.currentTarget) setWarningsModalOpen(false); }}
-        >
-          <div
-            style={{
-              background: '#ffffff',
-              borderRadius: '12px',
-              maxWidth: '520px',
-              width: '100%',
-              maxHeight: 'min(70vh, 480px)',
-              display: 'flex',
-              flexDirection: 'column',
-              boxShadow: '0 24px 64px rgba(0,0,0,0.18)',
-              border: '1px solid rgba(107,114,128,0.18)',
-              fontFamily: UI_FONT,
-            }}
-          >
-            <div style={{ padding: '16px 18px', borderBottom: '1px solid rgba(107,114,128,0.12)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 id="syllabus-warnings-title" style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#111827' }}>
-                {syllabusModalTitle(syllabusAlertKind)}
-              </h2>
-              <button
-                type="button"
-                onClick={() => setWarningsModalOpen(false)}
-                aria-label="Close"
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '22px',
-                  lineHeight: 1,
-                  cursor: 'pointer',
-                  color: '#6b7280',
-                  padding: '4px 8px',
-                }}
-              >
-                ×
-              </button>
-            </div>
-            <div style={{ padding: '14px 18px 18px', overflowY: 'auto', fontSize: '13px', color: '#374151', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
-              {warnings.join('\n\n')}
-            </div>
-            <div style={{ padding: '0 18px 16px', display: 'flex', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                onClick={() => setWarningsModalOpen(false)}
-                style={{
-                  padding: '8px 18px',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  color: '#fff',
-                  background: '#1a5c2a',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  fontFamily: UI_FONT,
-                }}
-              >
-                OK
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {fileProcessed && (
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-            <p style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              {extractedAssignments.length > 0
-                ? `Detected ${extractedAssignments.length} assignment${extractedAssignments.length !== 1 ? 's' : ''}`
-                : 'No assignments detected'}
-            </p>
-            {extractedAssignments.length > 0 && (
-              <button
-                onClick={handleSaveDetected}
-                disabled={saving}
-                style={{ padding: '6px 16px', background: 'rgba(26,92,42,0.08)', color: '#1a5c2a', border: '1px solid rgba(26,92,42,0.3)', borderRadius: '5px', fontSize: '12px', fontWeight: 600, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.6 : 1 }}
-              >
-                {saving ? 'Saving...' : 'Save to Calendar'}
-              </button>
-            )}
-          </div>
-          <AssignmentTable assignments={extractedAssignments} onChange={setExtractedAssignments} />
-        </div>
-      )}
 
       {/* All assignments */}
       <div className="panel-in panel-in-3">
@@ -742,6 +496,16 @@ function CalendarInner() {
           </p>
         )}
       </div>
+
+      <DocumentUploadModal
+        open={showUpload}
+        onClose={handleUploadClose}
+        userId={USER_ID}
+        courses={courses}
+        onCoursesChanged={setCourses}
+        title="Upload Syllabus"
+        subtitle="Pick a course, then upload your syllabus. We'll extract assignments and add them to your calendar."
+      />
     </div>
   );
 }
