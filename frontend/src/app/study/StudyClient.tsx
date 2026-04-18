@@ -280,7 +280,6 @@ export default function StudyClient() {
             <p style={{ fontSize: '13px', fontWeight: 600, color: '#374151', margin: '0 0 16px' }}>Recent guides</p>
             {cachedGuides.length === 0 ? (
               <div style={{ textAlign: 'center', marginTop: '80px', color: '#9ca3af' }}>
-                <p style={{ fontSize: '32px', margin: '0 0 12px' }}>📖</p>
                 <p style={{ fontSize: '14px', fontWeight: 500, color: '#6b7280', margin: '0 0 4px' }}>No guides yet</p>
                 <p style={{ fontSize: '13px', margin: 0 }}>Generate your first study guide on the left.</p>
               </div>
