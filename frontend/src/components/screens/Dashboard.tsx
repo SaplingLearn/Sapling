@@ -56,27 +56,75 @@ function getGreetingPrefix(d: Date) {
   return "Good evening";
 }
 
-function Typewriter({ text, speed = 55 }: { text: string; speed?: number }) {
+// Pre-revamp typing animation (main@929658f:app/dashboard/page.tsx:257-284):
+//  - Types one char every 55ms.
+//  - Thin forest-green vertical bar '|' cursor, weight 200, blinks 530ms.
+//  - When the text finishes typing, wait 300ms then hide the cursor
+//    entirely (no perpetual blinking).
+//  - Exposes an onDone callback so the parent can fade the quote in once
+//    the greeting settles.
+function Typewriter({
+  text,
+  speed = 55,
+  onDone,
+}: {
+  text: string;
+  speed?: number;
+  onDone?: () => void;
+}) {
   const [shown, setShown] = React.useState("");
-  const [cursor, setCursor] = React.useState(true);
+  const [done, setDone] = React.useState(false);
+  const [cursorOn, setCursorOn] = React.useState(true);
+
+  // Keep onDone in a ref so the typing effect only restarts when text
+  // or speed changes — not on every parent re-render.
+  const onDoneRef = React.useRef(onDone);
+  React.useEffect(() => { onDoneRef.current = onDone; }, [onDone]);
+
   React.useEffect(() => {
     setShown("");
+    setDone(false);
+    setCursorOn(true);
     let i = 0;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
     const iv = setInterval(() => {
       i += 1;
       setShown(text.slice(0, i));
-      if (i >= text.length) clearInterval(iv);
+      if (i >= text.length) {
+        clearInterval(iv);
+        settleTimer = setTimeout(() => {
+          setDone(true);
+          onDoneRef.current?.();
+        }, 300);
+      }
     }, speed);
-    return () => clearInterval(iv);
+    return () => {
+      clearInterval(iv);
+      if (settleTimer) clearTimeout(settleTimer);
+    };
   }, [text, speed]);
+
   React.useEffect(() => {
-    const iv = setInterval(() => setCursor((c) => !c), 530);
-    return () => clearInterval(iv);
-  }, []);
+    if (done) { setCursorOn(false); return; }
+    const blink = setInterval(() => setCursorOn((v) => !v), 530);
+    return () => clearInterval(blink);
+  }, [done]);
+
   return (
     <span>
       {shown}
-      <span style={{ opacity: cursor ? 1 : 0, marginLeft: 2, color: "var(--accent)" }}>▍</span>
+      <span
+        aria-hidden
+        style={{
+          opacity: done ? 0 : cursorOn ? 1 : 0,
+          marginLeft: 1,
+          color: "var(--accent)",
+          fontWeight: 200,
+          transition: "opacity 0.1s",
+        }}
+      >
+        |
+      </span>
     </span>
   );
 }
@@ -211,7 +259,9 @@ export function Dashboard() {
   React.useEffect(() => {
     setGreetingPrefix(getGreetingPrefix(new Date()));
   }, []);
-  const greetingText = firstName ? `${greetingPrefix}, ${firstName}` : "Welcome back";
+  // Pre-revamp greeting ended with a period for typographic weight.
+  const greetingText = firstName ? `${greetingPrefix}, ${firstName}.` : "Welcome back.";
+  const [greetingDone, setGreetingDone] = React.useState(false);
   // Greeting + quote render as a centered hero below the TopBar (see
   // return JSX), not as TopBar title/subtitle. Leaving the TopBar lean
   // makes the Dashboard feel like an arrival page, not a tool page.
@@ -511,51 +561,12 @@ export function Dashboard() {
 
   return (
     <div>
-      {/* No TopBar on the Dashboard — the white sticky bar was empty
-          chrome. The greeting + quote carry the page identity; the
-          breadcrumb + action buttons drop into a compact meta row
-          between the hero and the grid. */}
+      {/* Meta row sits at the very top: breadcrumb left, primary actions
+          right. No chrome bar, no border — flows on top of the atmospheric
+          backdrop. */}
       <div
         style={{
-          textAlign: "center",
-          padding: isMobile ? "18px 20px 4px" : "22px 32px 6px",
-        }}
-      >
-        <h1
-          className="h-serif"
-          style={{
-            margin: 0,
-            fontSize: isMobile ? 26 : 30,
-            fontWeight: 600,
-            color: "var(--text)",
-            letterSpacing: "-0.02em",
-            lineHeight: 1.2,
-          }}
-        >
-          <Typewriter text={greetingText} />
-        </h1>
-        {quote && (
-          <p
-            className="body-serif"
-            style={{
-              margin: "8px auto 0",
-              maxWidth: 640,
-              fontSize: 14,
-              fontStyle: "italic",
-              color: "var(--text-dim)",
-              lineHeight: 1.55,
-            }}
-          >
-            "{quote}"
-          </p>
-        )}
-      </div>
-
-      {/* Compact meta row: breadcrumb left, primary actions right.
-          No background, no border — flows with the hero above it. */}
-      <div
-        style={{
-          padding: isMobile ? "10px 20px 0" : "12px 32px 0",
+          padding: isMobile ? "14px 20px 0" : "18px 32px 0",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
@@ -572,6 +583,47 @@ export function Dashboard() {
             <Icon name="sparkle" size={13} /> Start learning
           </button>
         </div>
+      </div>
+
+      {/* Hero drops below the meta row now. Greeting types in, then
+          the quote fades in (0.7s) once typing completes — same
+          sequence as the pre-revamp dashboard. */}
+      <div
+        style={{
+          textAlign: "center",
+          padding: isMobile ? "20px 20px 4px" : "28px 32px 8px",
+        }}
+      >
+        <h1
+          className="h-serif"
+          style={{
+            margin: 0,
+            fontSize: isMobile ? 26 : 30,
+            fontWeight: 600,
+            color: "var(--text)",
+            letterSpacing: "-0.02em",
+            lineHeight: 1.2,
+          }}
+        >
+          <Typewriter text={greetingText} onDone={() => setGreetingDone(true)} />
+        </h1>
+        {quote && (
+          <p
+            className="body-serif"
+            style={{
+              margin: "10px auto 0",
+              maxWidth: 640,
+              fontSize: 14,
+              fontStyle: "italic",
+              color: "var(--text-dim)",
+              lineHeight: 1.55,
+              opacity: greetingDone ? 1 : 0,
+              transition: "opacity 0.7s var(--ease)",
+            }}
+          >
+            "{quote}"
+          </p>
+        )}
       </div>
 
       {suggestNode && !suggestDismissed && (
