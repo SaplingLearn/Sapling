@@ -411,8 +411,9 @@ export function Settings() {
                   onClick={async () => {
                     if (!userId) return;
                     try {
+                      const base = process.env.NEXT_PUBLIC_API_URL ?? '';
                       const res = await fetch(
-                        `${process.env.NEXT_PUBLIC_API_URL}/api/profile/${userId}/export?user_id=${encodeURIComponent(userId)}`,
+                        `${base}/api/profile/${userId}/export?user_id=${encodeURIComponent(userId)}`,
                         { method: "POST" },
                       );
                       const data = await res.json();

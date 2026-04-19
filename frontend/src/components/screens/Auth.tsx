@@ -4,7 +4,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { IS_LOCAL_MODE } from "@/lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+// Empty fallback lets the browser use a same-origin /api/... path, which
+// Next.js rewrites to BACKEND_URL server-side. Hardcoding localhost here
+// would break production deploys that forgot to set NEXT_PUBLIC_API_URL.
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 const ERROR_COPY: Record<string, string> = {
   not_approved: "Your account is pending approval. We'll email you once an admin lets you in.",

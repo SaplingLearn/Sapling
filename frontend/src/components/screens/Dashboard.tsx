@@ -124,9 +124,15 @@ export function Dashboard() {
   const [suggestDismissed, setSuggestDismissed] = React.useState(false);
   React.useEffect(() => { setSuggestDismissed(false); }, [suggest]);
 
-  const quote = React.useMemo(() => QUOTES[Math.floor(Math.random() * QUOTES.length)], []);
-  const today = React.useMemo(() => {
-    const d = new Date(); d.setHours(0, 0, 0, 0); return d;
+  // Client-only to avoid SSR/CSR hydration mismatch on the greeting and the
+  // random quote (server's timezone/RNG result would drift from the client's).
+  const [quote, setQuote] = React.useState<string>(QUOTES[0]);
+  const [today, setToday] = React.useState<Date>(() => {
+    const d = new Date(0); d.setHours(0, 0, 0, 0); return d;
+  });
+  React.useEffect(() => {
+    setQuote(QUOTES[Math.floor(Math.random() * QUOTES.length)]);
+    const t = new Date(); t.setHours(0, 0, 0, 0); setToday(t);
   }, []);
   const weekDays = React.useMemo(() => getWeekDays(today), [today]);
 
@@ -198,7 +204,11 @@ export function Dashboard() {
   }, [fullscreen]);
 
   const firstName = userName ? userName.split(" ")[0] : "";
-  const greetingText = firstName ? `${getGreetingPrefix(new Date())}, ${firstName}` : "Welcome back";
+  const [greetingPrefix, setGreetingPrefix] = React.useState<string>("Welcome back");
+  React.useEffect(() => {
+    setGreetingPrefix(getGreetingPrefix(new Date()));
+  }, []);
+  const greetingText = firstName ? `${greetingPrefix}, ${firstName}` : "Welcome back";
   const subtitle = assignments.length
     ? `Your knowledge is growing. ${assignments.length} item${assignments.length === 1 ? "" : "s"} due soon.`
     : "Your knowledge is growing.";

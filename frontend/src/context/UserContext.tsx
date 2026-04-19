@@ -89,7 +89,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (IS_LOCAL_MODE) return;
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/users`)
+    const base = process.env.NEXT_PUBLIC_API_URL ?? '';
+    fetch(`${base}/api/users`)
       .then(r => r.json())
       .then((data: { users: UserOption[] }) => {
         const list = data.users ?? [];
@@ -106,7 +107,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const fetchProfileData = useCallback(async (uid: string) => {
     if (!uid || IS_LOCAL_MODE) return;
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/me?user_id=${encodeURIComponent(uid)}`);
+      const base = process.env.NEXT_PUBLIC_API_URL ?? '';
+      const res = await fetch(`${base}/api/auth/me?user_id=${encodeURIComponent(uid)}`);
       if (!res.ok) return;
       const data = await res.json();
       setUsername(data.username ?? null);

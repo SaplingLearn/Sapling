@@ -35,7 +35,7 @@ function CallbackInner() {
       body: JSON.stringify({ userId, ...(authToken ? { authToken } : {}) }),
     }).catch(() => {});
 
-    const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+    const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
     fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(userId)}`)
       .then(r => r.json())
       .then(data => {
