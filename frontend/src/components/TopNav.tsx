@@ -24,20 +24,22 @@ import React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Avatar } from "./Avatar";
+import { Icon } from "./Icon";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 
-type Entry = { href: string; label: string };
+type Entry = { href: string; label: string; icon: string };
 
+// Icon names match the ones the pre-revamp Sidebar used in components/Icon.tsx.
 const LINKS: Entry[] = [
-  { href: "/dashboard",    label: "Dashboard" },
-  { href: "/learn",        label: "Learn" },
-  { href: "/tree",         label: "Tree" },
-  { href: "/study",        label: "Study" },
-  { href: "/library",      label: "Library" },
-  { href: "/calendar",     label: "Calendar" },
-  { href: "/social",       label: "Social" },
-  { href: "/achievements", label: "Achievements" },
+  { href: "/dashboard",    label: "Dashboard",    icon: "home" },
+  { href: "/learn",        label: "Learn",        icon: "brain" },
+  { href: "/tree",         label: "Tree",         icon: "tree" },
+  { href: "/study",        label: "Study",        icon: "bolt" },
+  { href: "/library",      label: "Library",      icon: "book" },
+  { href: "/calendar",     label: "Calendar",     icon: "cal" },
+  { href: "/social",       label: "Social",       icon: "users" },
+  { href: "/achievements", label: "Achievements", icon: "trophy" },
 ];
 
 export const TOP_NAV_HEIGHT = 56;
@@ -186,7 +188,7 @@ export function TopNav() {
         </div>
       </Link>
 
-      {/* Desktop link row */}
+      {/* Desktop link row — icon + label from the pre-revamp Sidebar */}
       {!isMobile && (
         <div style={{ display: "flex", alignItems: "center", gap: 2, flex: 1, minWidth: 0 }}>
           {LINKS.map(l => {
@@ -196,6 +198,7 @@ export function TopNav() {
                 key={l.href}
                 href={l.href}
                 style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
                   padding: "6px 10px", borderRadius: "var(--r-sm)",
                   fontSize: 13, fontWeight: active ? 700 : 500,
                   color: active ? "var(--text)" : "var(--text-muted)",
@@ -209,6 +212,7 @@ export function TopNav() {
                   if (!active) e.currentTarget.style.color = "var(--text-muted)";
                 }}
               >
+                <Icon name={l.icon} size={14} />
                 {l.label}
               </Link>
             );
@@ -246,9 +250,9 @@ export function TopNav() {
                 <div style={{ padding: "8px 14px 10px", borderBottom: "1px solid var(--border)" }}>
                   <div className="h-serif" style={{ fontSize: 14, fontWeight: 600 }}>{userName}</div>
                 </div>
-                <MenuItem href="/settings" label="Settings" current={pathname.startsWith("/settings")} />
+                <MenuItem href="/settings" label="Settings" icon="cog" current={pathname.startsWith("/settings")} />
                 {isAdmin && (
-                  <MenuItem href="/admin" label="Admin" current={pathname.startsWith("/admin")} />
+                  <MenuItem href="/admin" label="Admin" icon="shield" current={pathname.startsWith("/admin")} />
                 )}
                 <button
                   onClick={onSignOut}
@@ -271,12 +275,13 @@ export function TopNav() {
   );
 }
 
-function MenuItem({ href, label, current }: { href: string; label: string; current: boolean }) {
+function MenuItem({ href, label, icon, current }: { href: string; label: string; icon: string; current: boolean }) {
   return (
     <Link
       href={href}
       style={{
-        display: "block", padding: "8px 14px",
+        display: "flex", alignItems: "center", gap: 10,
+        padding: "8px 14px",
         fontSize: 13, fontWeight: current ? 600 : 400,
         color: current ? "var(--text)" : "var(--text-dim)",
         textDecoration: "none",
@@ -285,6 +290,7 @@ function MenuItem({ href, label, current }: { href: string; label: string; curre
       onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
     >
+      <Icon name={icon} size={14} />
       {label}
     </Link>
   );
@@ -308,7 +314,8 @@ function MobilePanel({ pathname }: { pathname: string }) {
             key={l.href}
             href={l.href}
             style={{
-              display: "block", padding: "10px 14px",
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "10px 14px",
               fontSize: 14, fontWeight: active ? 700 : 500,
               color: active ? "var(--text)" : "var(--text-dim)",
               textDecoration: "none",
@@ -317,6 +324,7 @@ function MobilePanel({ pathname }: { pathname: string }) {
             onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
           >
+            <Icon name={l.icon} size={15} />
             {l.label}
           </Link>
         );
