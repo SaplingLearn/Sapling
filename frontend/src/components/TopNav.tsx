@@ -137,44 +137,53 @@ export function TopNav() {
         </div>
       )}
 
-      {/* Pre-revamp word-lockup (sapling-word-icon.png) — the sprout icon
-          + "Sapling" baked into one asset, with the mono "CLOSED ALPHA"
-          tagline rendered below. Natural size is 543×147 so we scale to
-          ~36px tall here and ~28px on mobile. */}
-      <Link
-        href="/dashboard"
-        aria-label="Sapling home"
-        style={{
-          display: "flex", flexDirection: "column",
-          alignItems: "flex-start", gap: 2,
-          textDecoration: "none",
-          marginRight: isMobile ? 0 : 8,
-          flexShrink: 0,
-        }}
-      >
+      {/* Logo — ported verbatim from the pre-revamp Navbar
+          (main@929658f:frontend/src/components/Navbar.tsx:213-231):
+          /sapling-icon.svg + Spectral "Sapling" with a soft green
+          text-shadow, "Closed Alpha" underneath. */}
+      <Link href="/dashboard" style={{ display: "flex", alignItems: "center", gap: "2px", textDecoration: "none" }}>
         <img
-          src="/sapling-word-icon.png"
+          src="/sapling-icon.svg"
           alt="Sapling"
-          height={isMobile ? 28 : 34}
-          // Natural ratio 543:147 ≈ 3.69:1
-          width={isMobile ? Math.round(28 * 3.69) : Math.round(34 * 3.69)}
-          style={{ display: "block" }}
+          style={{
+            width: "32px",
+            height: "32px",
+            marginTop: "-7px",
+            marginBottom: "-3px",
+            marginLeft: "-2px",
+            marginRight: "-4px",
+            alignSelf: "center",
+            flexShrink: 0,
+          }}
         />
-        {!isMobile && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "1px", alignItems: "center", textAlign: "center" }}>
           <span
             style={{
-              fontSize: 9,
-              fontFamily: "var(--font-mono)",
-              letterSpacing: "0.14em",
-              color: "var(--accent)",
-              opacity: 0.6,
+              fontFamily: "'Spectral', Georgia, serif",
+              fontWeight: 700,
+              fontSize: isMobile ? "17px" : "20px",
+              color: "#1a5c2a",
+              letterSpacing: "-0.02em",
+              textShadow: "0 0 12px rgba(26, 92, 42, 0.2)",
+              lineHeight: 1.1,
+            }}
+          >
+            Sapling
+          </span>
+          <span
+            style={{
+              fontSize: "9px",
+              fontWeight: 600,
+              color: "#1a5c2a",
+              letterSpacing: "0.08em",
               textTransform: "uppercase",
-              marginLeft: 52, // align under the word, past the icon
+              opacity: 0.7,
+              lineHeight: 1,
             }}
           >
             Closed Alpha
           </span>
-        )}
+        </div>
       </Link>
 
       {/* Desktop link row */}
