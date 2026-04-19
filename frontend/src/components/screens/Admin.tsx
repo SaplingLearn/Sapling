@@ -11,7 +11,7 @@ import { useUser } from "@/context/UserContext";
 import {
   adminFetchUsers, adminApproveUser,
   adminListRoles, adminCreateRole, adminDeleteRole, adminAssignRole, adminRevokeRole,
-  adminListAchievements, adminCreateAchievement, adminDeleteAchievement,
+  adminListAchievements, adminCreateAchievement, adminDeleteAchievement, adminGrantAchievement,
   adminListCosmetics, adminCreateCosmetic, adminDeleteCosmetic,
   IS_LOCAL_MODE,
 } from "@/lib/api";
@@ -383,21 +383,42 @@ function RolesTab() {
 function AchievementsTab() {
   const toast = useToast();
   const [items, setItems] = React.useState<Achievement[]>([]);
+  const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [form, setForm] = React.useState<{
     name: string; slug: string; description: string; icon: string;
     category: AchievementCategory; rarity: RarityTier; is_secret: boolean;
   }>({ name: "", slug: "", description: "", icon: "", category: "milestone", rarity: "common", is_secret: false });
   const [saving, setSaving] = React.useState(false);
+  const [grant, setGrant] = React.useState<{ userId: string; achievementId: string }>({ userId: "", achievementId: "" });
+  const [granting, setGranting] = React.useState(false);
 
   const load = async () => {
     try {
-      const r = await adminListAchievements();
+      const [r, u] = await Promise.all([adminListAchievements(), adminFetchUsers()]);
       setItems(r.achievements || []);
+      setUsers(u.users || []);
     } catch (err) {
       toast.error(`Load failed: ${String(err)}`);
     }
   };
   React.useEffect(() => { load(); }, []);
+
+  const doGrant = async () => {
+    if (!grant.userId || !grant.achievementId) {
+      toast.warn("Pick a user and an achievement.");
+      return;
+    }
+    setGranting(true);
+    try {
+      await adminGrantAchievement(grant.userId, grant.achievementId);
+      toast.success("Achievement granted");
+      setGrant({ userId: "", achievementId: "" });
+    } catch (err) {
+      toast.error(`Grant failed: ${String(err)}`);
+    } finally {
+      setGranting(false);
+    }
+  };
 
   const create = async () => {
     if (!form.name.trim() || !form.slug.trim()) {
@@ -463,6 +484,36 @@ function AchievementsTab() {
         <button className="btn btn--primary" onClick={create} disabled={saving} style={{ marginTop: 14, width: "100%" }}>
           {saving ? "Creating…" : "Create achievement"}
         </button>
+
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+          <div className="label-micro" style={{ marginBottom: 10 }}>Grant to user</div>
+          <LabeledField label="User">
+            <CustomSelect
+              size="sm"
+              value={grant.userId}
+              onChange={v => setGrant(g => ({ ...g, userId: v }))}
+              options={users.map(u => ({ value: u.id, label: u.name || u.email, description: u.email }))}
+              placeholder="Pick a user…"
+            />
+          </LabeledField>
+          <LabeledField label="Achievement">
+            <CustomSelect
+              size="sm"
+              value={grant.achievementId}
+              onChange={v => setGrant(g => ({ ...g, achievementId: v }))}
+              options={items.map(a => ({ value: a.id, label: a.name, description: a.rarity }))}
+              placeholder="Pick one…"
+            />
+          </LabeledField>
+          <button
+            className="btn"
+            onClick={doGrant}
+            disabled={granting || !grant.userId || !grant.achievementId}
+            style={{ width: "100%", marginTop: 4 }}
+          >
+            {granting ? "Granting…" : "Grant achievement"}
+          </button>
+        </div>
       </div>
       <div className="card" style={{ padding: 0 }}>
         <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>

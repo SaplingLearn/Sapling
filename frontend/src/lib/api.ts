@@ -220,6 +220,24 @@ export const syncCalendar = (userId: string) =>
     body: JSON.stringify({ user_id: userId }),
   });
 
+export interface GoogleEvent {
+  google_event_id: string;
+  title: string;
+  description?: string;
+  start_date: string;
+  end_date: string;
+  start_datetime?: string | null;
+  end_datetime?: string | null;
+  all_day: boolean;
+  html_link?: string;
+  location?: string;
+}
+
+export const importGoogleEvents = (userId: string, daysAhead = 60) =>
+  fetchJSON<{ events: GoogleEvent[]; count: number }>(
+    `/api/calendar/import/${encodeURIComponent(userId)}?days_ahead=${daysAhead}`,
+  );
+
 export const calendarAuthUrl = (userId: string) =>
   `${API_URL}/api/calendar/auth-url?user_id=${encodeURIComponent(userId)}`;
 
@@ -355,6 +373,12 @@ export const rateFlashcard = (userId: string, cardId: string, rating: number) =>
     method: 'POST',
     body: JSON.stringify({ user_id: userId, card_id: cardId, rating }),
   });
+
+export const deleteFlashcard = (userId: string, cardId: string) =>
+  fetchJSON<{ ok: boolean }>(
+    `/api/flashcards/${encodeURIComponent(cardId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
 
 // Study Guide
 export interface StudyGuideTopic {
@@ -560,6 +584,12 @@ export const adminCreateAchievement = (payload: {
 
 export const adminDeleteAchievement = (achievementId: string) =>
   fetchJSON<{ deleted: boolean }>(`/api/admin/achievements/${encodeURIComponent(achievementId)}`, { method: 'DELETE' });
+
+export const adminGrantAchievement = (userId: string, achievementId: string) =>
+  fetchJSON<{ granted: boolean }>('/api/admin/achievements/grant', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, achievement_id: achievementId }),
+  });
 
 export const adminListCosmetics = () =>
   fetchJSON<{ cosmetics: Cosmetic[] }>('/api/admin/cosmetics');

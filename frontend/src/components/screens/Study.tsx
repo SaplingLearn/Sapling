@@ -17,6 +17,7 @@ import {
   getFlashcards,
   generateFlashcards,
   rateFlashcard,
+  deleteFlashcard,
   type EnrolledCourse,
   type StudyGuideContent,
   type StudyGuideExam,
@@ -35,7 +36,7 @@ type RawCard = {
 const ratingOptions: { n: number; label: string; color: string; emoji: string; hint: string }[] = [
   { n: 1, label: "forgot", color: "var(--err)", emoji: "🙈", hint: "1" },
   { n: 2, label: "hard", color: "var(--warn)", emoji: "🤔", hint: "2" },
-  { n: 3, label: "good", color: "var(--accent)", emoji: "✨", hint: "3" },
+  { n: 3, label: "easy", color: "var(--accent)", emoji: "✨", hint: "3" },
 ];
 
 export function Study() {
@@ -379,6 +380,17 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
     setIdx(i => (filtered.length === 0 ? 0 : (i + 1) % filtered.length));
   }, [card, userId, filtered.length]);
 
+  const remove = React.useCallback(async () => {
+    if (!card) return;
+    try {
+      await deleteFlashcard(userId, card.id);
+      toast.success("Card deleted");
+      await load();
+    } catch (err) {
+      toast.error(`Delete failed: ${String(err)}`);
+    }
+  }, [card, userId, toast, load]);
+
   // Keyboard: Space flips; 1/2/3 rate when flipped.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -517,6 +529,15 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
                   </button>
                 ))}
               </div>
+
+              <button
+                onClick={remove}
+                className="btn btn--sm btn--ghost"
+                style={{ color: "var(--err)", fontSize: 11 }}
+                title="Delete this card"
+              >
+                <Icon name="x" size={11} /> Delete card
+              </button>
 
               <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
                 Space to flip · 1 / 2 / 3 to rate

@@ -183,6 +183,8 @@ export function handleLocalRequest(path: string, options?: RequestInit): unknown
     context_used: { documents_found: LOCAL_DOCUMENTS.length, weak_concepts_found: 0 },
   };
   if (route.match(/^\/api\/flashcards\/rate$/)) return { ok: true };
+  if (route.match(/^\/api\/flashcards\/[^/]+$/) && options?.method === 'DELETE') return { ok: true };
+  if (route.match(/^\/api\/calendar\/import\//)) return { events: [], count: 0 };
 
   if (route.match(/^\/api\/study-guide\/[^/]+\/cached$/)) return { guides: [] };
   if (route.match(/^\/api\/study-guide\/[^/]+\/exams$/)) return {
@@ -245,6 +247,7 @@ export function handleLocalRequest(path: string, options?: RequestInit): unknown
   if (route.match(/^\/api\/admin\/achievements$/) && (!options?.method || options.method === 'GET')) return { achievements: [] };
   if (route.match(/^\/api\/admin\/achievements$/) && options?.method === 'POST') return { achievement: { id: 'ach-local', name: 'Local', slug: 'local', description: null, icon: null, category: 'milestone', rarity: 'common', is_secret: false } };
   if (route.match(/^\/api\/admin\/achievements\/[^/]+$/) && options?.method === 'DELETE') return { deleted: true };
+  if (route.match(/^\/api\/admin\/achievements\/grant$/) && options?.method === 'POST') return { granted: true };
   if (route.match(/^\/api\/admin\/cosmetics$/) && (!options?.method || options.method === 'GET')) return { cosmetics: [] };
   if (route.match(/^\/api\/admin\/cosmetics$/) && options?.method === 'POST') return { cosmetic: { id: 'cos-local', type: 'avatar_frame', name: 'Local', slug: 'local', rarity: 'common' } };
   if (route.match(/^\/api\/admin\/cosmetics\/[^/]+$/) && options?.method === 'DELETE') return { deleted: true };

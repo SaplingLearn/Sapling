@@ -17,8 +17,10 @@ import {
   syncCalendar,
   calendarAuthUrl,
   updateAssignment,
+  importGoogleEvents,
   type Assignment,
   type EnrolledCourse,
+  type GoogleEvent,
 } from "@/lib/api";
 
 type View = "month" | "week" | "day" | "table";
@@ -70,6 +72,8 @@ export function Calendar() {
   const [googleConnected, setGoogleConnected] = React.useState(false);
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [googleEvents, setGoogleEvents] = React.useState<GoogleEvent[] | null>(null);
+  const [importingGoogle, setImportingGoogle] = React.useState(false);
 
   const load = React.useCallback(async () => {
     if (!userId) return;
@@ -130,6 +134,18 @@ export function Calendar() {
       toast.success(`Synced ${res.synced_count} event${res.synced_count === 1 ? "" : "s"} to Google.`);
     } catch (err) {
       toast.error(`Sync failed: ${String(err)}`);
+    }
+  };
+
+  const doImport = async () => {
+    setImportingGoogle(true);
+    try {
+      const res = await importGoogleEvents(userId, 60);
+      setGoogleEvents(res.events || []);
+    } catch (err) {
+      toast.error(`Import failed: ${String(err)}`);
+    } finally {
+      setImportingGoogle(false);
     }
   };
 
@@ -202,6 +218,9 @@ export function Calendar() {
           <button className="btn btn--sm" onClick={doSync}>
             <Icon name="send" size={12} /> Sync
           </button>
+          <button className="btn btn--sm" onClick={doImport} disabled={importingGoogle}>
+            <Icon name="cal" size={12} /> {importingGoogle ? "Loading…" : "View Google events"}
+          </button>
           <button
             className="btn btn--sm"
             onClick={disconnectConfirm.trigger}
@@ -257,6 +276,99 @@ export function Calendar() {
           }
         }}
       />
+
+      {googleEvents !== null && (
+        <GoogleEventsModal
+          events={googleEvents}
+          onClose={() => setGoogleEvents(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function GoogleEventsModal({
+  events, onClose,
+}: {
+  events: GoogleEvent[];
+  onClose: () => void;
+}) {
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 120,
+        background: "rgba(19,38,16,0.45)",
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: "var(--bg)", borderRadius: "var(--r-lg)",
+          border: "1px solid var(--border)", maxWidth: 640, width: "100%",
+          maxHeight: "82vh", overflow: "auto",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--bg)" }}>
+          <div className="label-micro">Upcoming Google Calendar events</div>
+          <button className="btn btn--sm btn--ghost" onClick={onClose} aria-label="Close">
+            <Icon name="x" size={12} /> Close
+          </button>
+        </div>
+        <div style={{ padding: 20 }}>
+          {events.length === 0 ? (
+            <div style={{ color: "var(--text-muted)", fontSize: 13, textAlign: "center", padding: 28 }}>
+              No upcoming events in the next 60 days.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {events.map(e => (
+                <div key={e.google_event_id} className="card" style={{ padding: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{e.title}</div>
+                    <span className="chip" style={{ fontSize: 10 }}>
+                      {e.all_day ? "All day" : e.start_datetime?.slice(11, 16) || ""}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                    {e.start_date} {e.end_date && e.end_date !== e.start_date ? `→ ${e.end_date}` : ""}
+                    {e.location ? ` · ${e.location}` : ""}
+                  </div>
+                  {e.description && (
+                    <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 6, lineHeight: 1.5 }}>
+                      {e.description.length > 140 ? e.description.slice(0, 140) + "…" : e.description}
+                    </div>
+                  )}
+                  {e.html_link && (
+                    <a
+                      href={e.html_link}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ fontSize: 11, color: "var(--accent)", marginTop: 6, display: "inline-block" }}
+                    >
+                      Open in Google Calendar →
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
