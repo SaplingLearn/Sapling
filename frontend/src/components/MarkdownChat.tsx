@@ -54,12 +54,15 @@ const COMPONENTS: Components = {
     </pre>
   ),
   blockquote: ({ children }) => (
+    // Italic body-serif instead of a side-tab accent border (which is the
+    // #1 AI-dashboard tell). The brand's hierarchy should come from type.
     <blockquote
+      className="body-serif"
       style={{
-        margin: "4px 0 10px",
-        padding: "4px 10px",
-        borderLeft: "3px solid var(--accent-border)",
+        margin: "6px 0 12px",
+        padding: "2px 0 2px 12px",
         color: "var(--text-dim)",
+        fontStyle: "italic",
       }}
     >
       {children}

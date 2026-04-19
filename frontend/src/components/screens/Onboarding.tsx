@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { useToast } from "@/components/ToastProvider";
 import { CustomSelect } from "@/components/CustomSelect";
+import { Icon } from "@/components/Icon";
 import {
   onboardingCoursesSearch,
   submitOnboardingProfile,
@@ -16,12 +17,14 @@ type LearningStyleId = OnboardingProfilePayload["learning_style"];
 
 const YEARS = ["freshman", "sophomore", "junior", "senior", "graduate", "other"] as const;
 
-const LEARNING_STYLES: { id: LearningStyleId; title: string; description: string; glyph: string }[] = [
-  { id: "visual", title: "Visual", description: "I learn best through diagrams, graphs, and visuals.", glyph: "◈" },
-  { id: "reading", title: "Reading/Writing", description: "I prefer text — notes, explanations, and written practice.", glyph: "✎" },
-  { id: "auditory", title: "Auditory", description: "I absorb material best when I hear or discuss it.", glyph: "◐" },
-  { id: "hands-on", title: "Hands-on", description: "I learn by doing — exercises, labs, and practical application.", glyph: "◎" },
-  { id: "mixed", title: "A mix of all", description: "I learn best through a blend of modes.", glyph: "◆" },
+// Real Icon names (from components/Icon.tsx), not decorative dingbats.
+// Dingbats look clever but carry no shared meaning; icons do.
+const LEARNING_STYLES: { id: LearningStyleId; title: string; description: string; icon: string }[] = [
+  { id: "visual",   title: "Visual",          description: "I learn best through diagrams, graphs, and visuals.",             icon: "tree" },
+  { id: "reading",  title: "Reading/Writing", description: "I prefer text — notes, explanations, and written practice.",     icon: "book" },
+  { id: "auditory", title: "Auditory",        description: "I absorb material best when I hear or discuss it.",              icon: "users" },
+  { id: "hands-on", title: "Hands-on",        description: "I learn by doing — exercises, labs, and practical application.", icon: "flask" },
+  { id: "mixed",    title: "A mix of all",    description: "I learn best through a blend of modes.",                          icon: "sparkle" },
 ];
 
 const DRAFT_KEY = "sapling_onboarding_draft";
@@ -529,8 +532,10 @@ function StepLearningStyle({ value, onChange }: {
                 transition: "all var(--dur-fast) var(--ease)",
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 18, color: selected ? "var(--accent)" : "var(--text-dim)" }}>{s.glyph}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                <span style={{ color: selected ? "var(--accent)" : "var(--text-dim)", display: "inline-flex" }}>
+                  <Icon name={s.icon} size={16} />
+                </span>
                 <span style={{ fontWeight: 600, fontSize: 14, color: selected ? "var(--accent)" : "var(--text)" }}>{s.title}</span>
               </div>
               <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.4 }}>{s.description}</div>

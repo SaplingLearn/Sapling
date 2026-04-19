@@ -365,9 +365,11 @@ export function Dashboard() {
             </div>
             <div style={{ height: 6, background: "var(--bg-soft)", borderRadius: "var(--r-full)", overflow: "hidden" }}>
               <div style={{
-                width: `${Math.round(progress * 100)}%`, height: "100%",
+                width: "100%", height: "100%",
                 background: course.color || "var(--accent)",
-                transition: "width var(--dur) var(--ease)",
+                transformOrigin: "left",
+                transform: `scaleX(${progress})`,
+                transition: "transform var(--dur) var(--ease)",
               }} />
             </div>
           </div>
@@ -379,10 +381,16 @@ export function Dashboard() {
   const rightPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 10 }}>Streak · this week</div>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 14 }}>
-          <span className="h-serif" style={{ fontSize: 36, color: "var(--warn)", fontWeight: 500 }}>{stats.streak}</span>
-          <span style={{ color: "var(--text-muted)", fontSize: 12 }}>days</span>
+        <div className="label-micro" style={{ marginBottom: 8 }}>This week</div>
+        {/* Prose-style streak line — typographic hierarchy replaces the
+            hero-metric layout (big-number + small-label) called out as
+            an anti-reference in .impeccable.md. */}
+        <div className="body-serif" style={{ fontSize: 16, marginBottom: 14, color: "var(--text)" }}>
+          {stats.streak > 0 ? (
+            <>You're on a <span className="h-serif" style={{ color: "var(--warn)", fontWeight: 600 }}>{stats.streak}-day</span> streak.</>
+          ) : (
+            <>Ready when you are. Open any session to begin a streak.</>
+          )}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
           {weekDays.map(d => {

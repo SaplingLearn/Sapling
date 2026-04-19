@@ -36,10 +36,11 @@ function NavItem({
         borderRadius: "var(--r-sm)",
         background: current ? "var(--accent-soft)" : "transparent",
         color: current ? "var(--accent)" : "var(--text-dim)",
-        fontWeight: current ? 600 : 400,
+        // Active state signalled by accent background + bolder weight.
+        // No side-tab border — that's the classic AI-dashboard tell.
+        fontWeight: current ? 700 : 500,
         fontSize: 13,
-        borderLeft: current && !isRail ? "2px solid var(--accent)" : "2px solid transparent",
-        transition: "all var(--dur-fast) var(--ease)",
+        transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
         textAlign: "left",
         textDecoration: "none",
       }}
@@ -96,6 +97,8 @@ export function Sidebar() {
         width: w,
         minWidth: w,
         borderRight: "1px solid var(--border)",
+        // Near-opaque so the atmospheric backdrop is clearly behind
+        // the chrome, not bleeding through it.
         background: "var(--bg-subtle)",
         padding: "16px 10px",
         display: "flex",
@@ -103,6 +106,7 @@ export function Sidebar() {
         gap: 2,
         transition: "width var(--dur) var(--ease)",
         position: "relative",
+        zIndex: 1,
       }}
     >
       <div

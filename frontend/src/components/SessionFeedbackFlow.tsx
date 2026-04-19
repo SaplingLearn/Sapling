@@ -10,11 +10,12 @@ export const SESSION_COOLDOWN_MS = 2 * 24 * 60 * 60 * 1000;
 export const SESSION_COOLDOWN_KEY = "sapling_last_session_feedback";
 export const SESSION_END_COUNT_KEY = "sapling_session_end_count";
 
-const RATINGS: { value: number; emoji: string; label: string }[] = [
-  { value: 1, emoji: "😕", label: "Frustrating" },
-  { value: 2, emoji: "😐", label: "Just okay" },
-  { value: 3, emoji: "🙂", label: "Productive" },
-  { value: 4, emoji: "🎉", label: "Great session" },
+// Numeric scale — the brand's tone is "quiet library," not emoji reactions.
+const RATINGS: { value: number; label: string }[] = [
+  { value: 1, label: "Frustrating" },
+  { value: 2, label: "Just okay" },
+  { value: 3, label: "Productive" },
+  { value: 4, label: "Great session" },
 ];
 
 const HELPFULNESS = [
@@ -159,16 +160,21 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
                     key={r.value}
                     onClick={() => setRating(r.value)}
                     aria-label={r.label}
+                    title={r.label}
+                    className="h-serif"
                     style={{
                       flex: 1,
                       padding: "14px 4px",
+                      fontSize: 20,
+                      fontWeight: 500,
+                      color: sel ? "var(--accent)" : "var(--text-dim)",
                       borderRadius: "var(--r-md)",
-                      border: `1.5px solid ${sel ? "var(--accent)" : "var(--border)"}`,
+                      border: `1px solid ${sel ? "var(--accent-border)" : "var(--border)"}`,
                       background: sel ? "var(--accent-soft)" : "var(--bg-panel)",
-                      fontSize: 22,
+                      transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
                     }}
                   >
-                    {r.emoji}
+                    {r.value}
                   </button>
                 );
               })}

@@ -17,14 +17,20 @@ import {
 } from "@/lib/api";
 import type { Document as Doc } from "@/lib/types";
 
+// Color communicates learning value, not decoration. Three semantic
+// tiers replace the previous 7-color category palette:
+//  - Core (green):      the materials you study FROM (lecture notes,
+//                       slides, readings, generated study guides)
+//  - Structural (ink):  the scaffolding (syllabus)
+//  - Do-work (rust):    things to produce or submit (assignment)
 const catColor: Record<Doc["category"], string> = {
   lecture_notes: "var(--c-sage)",
-  syllabus: "var(--c-ink)",
-  reading: "var(--c-plum)",
-  slides: "var(--c-amber)",
-  study_guide: "var(--c-teal)",
-  assignment: "var(--c-rust)",
-  other: "var(--text-muted)",
+  slides:        "var(--c-sage)",
+  reading:       "var(--c-sage)",
+  study_guide:   "var(--c-sage)",
+  syllabus:      "var(--c-ink)",
+  assignment:    "var(--c-rust)",
+  other:         "var(--text-muted)",
 };
 
 type Cat = Doc["category"] | "all";
@@ -148,63 +154,92 @@ export function Library() {
           }
         />
 
+        {/* Only show category pills that actually have documents,
+            plus "all" — prevents 7-pill chip spam when the user has
+            uploaded just a couple of things. */}
         <div style={{
-          padding: "14px 32px",
-          display: "flex", gap: 6, borderBottom: "1px solid var(--border)", flexWrap: "wrap",
+          padding: "14px 32px", display: "flex", gap: 10, alignItems: "center",
+          borderBottom: "1px solid var(--border)", flexWrap: "wrap",
         }}>
-          {cats.map((c) => (
-            <Pill key={c} active={cat === c} onClick={() => setCat(c)}>
-              {c.replace("_", " ")}
-            </Pill>
-          ))}
+          <span className="label-micro">Category</span>
+          {cats
+            .filter(c => c === "all" || documents.some(d => d.category === c))
+            .map((c) => (
+              <Pill key={c} active={cat === c} onClick={() => setCat(c)}>
+                {c.replace("_", " ")}
+              </Pill>
+            ))}
         </div>
 
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
           <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px" }}>
             {filtered.length === 0 && (
-              <div style={{ textAlign: "center", padding: 60, color: "var(--text-muted)" }}>
-                <div className="h-serif" style={{ fontSize: 20 }}>Nothing here yet</div>
-                <div style={{ fontSize: 13, marginTop: 6 }}>Upload a document to get started.</div>
+              <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
+                <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Your library is quiet</div>
+                <div className="body-serif" style={{ fontSize: 14, marginTop: 8, lineHeight: 1.6 }}>
+                  Upload a syllabus, lecture notes, or reading. Sapling reads them and starts
+                  building your knowledge graph.
+                </div>
               </div>
             )}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
-              {filtered.map((d) => (
-                <button
-                  key={d.id}
-                  className="card"
-                  onClick={() => setDetail(d)}
-                  style={{
-                    padding: "var(--pad-lg)", display: "flex", flexDirection: "column", gap: 10,
-                    textAlign: "left", cursor: "pointer",
-                    outline: detail?.id === d.id ? "2px solid var(--accent)" : "none",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{
-                      width: 40, height: 48, borderRadius: "var(--r-sm)",
-                      background: catColor[d.category], color: "#fff",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      <Icon name="doc" size={18} />
+            {/* Editorial list layout replaces the previous 280px card grid
+                (the "bubble panel disease" anti-pattern from .impeccable.md).
+                Each row uses type hierarchy — serif title, sans meta,
+                Spectral summary — rather than visual containers. */}
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {filtered.map((d, i) => {
+                const isSelected = detail?.id === d.id;
+                return (
+                  <button
+                    key={d.id}
+                    onClick={() => setDetail(d)}
+                    style={{
+                      display: "flex", alignItems: "flex-start", gap: 14,
+                      width: "100%", padding: "18px 4px",
+                      borderTop: i === 0 ? "none" : "1px solid var(--border)",
+                      background: isSelected ? "var(--accent-soft)" : "transparent",
+                      textAlign: "left", cursor: "pointer",
+                      transition: "background var(--dur-fast) var(--ease)",
+                    }}
+                  >
+                    <span
+                      aria-hidden
+                      style={{
+                        width: 8, height: 8, borderRadius: "50%",
+                        background: catColor[d.category],
+                        marginTop: 10, flexShrink: 0,
+                      }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                        <div className="h-serif" style={{ fontSize: 17, lineHeight: 1.25, color: "var(--text)" }}>
+                          {d.file_name}
+                        </div>
+                        <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "capitalize" }}>
+                          {d.category.replace("_", " ")} · {new Date(d.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      {d.summary && (
+                        <div className="body-serif" style={{
+                          fontSize: 13, color: "var(--text-dim)", marginTop: 4,
+                          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                        }}>
+                          {d.summary}
+                        </div>
+                      )}
+                      {d.key_takeaways && d.key_takeaways.length > 0 && (
+                        <div style={{
+                          fontSize: 11, color: "var(--text-muted)", marginTop: 6,
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                          {d.key_takeaways.slice(0, 3).join(" · ")}
+                        </div>
+                      )}
                     </div>
-                    <span className="chip">{d.category.replace("_", " ")}</span>
-                  </div>
-                  <div>
-                    <div className="h-serif" style={{ fontSize: 16, lineHeight: 1.3 }}>{d.file_name}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-                      {new Date(d.created_at).toLocaleDateString()}
-                    </div>
-                  </div>
-                  {d.summary && <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>{d.summary}</div>}
-                  {d.key_takeaways && d.key_takeaways.length > 0 && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
-                      {d.key_takeaways.slice(0, 3).map((t) => (
-                        <span key={t} className="chip chip--accent">{t}</span>
-                      ))}
-                    </div>
-                  )}
-                </button>
-              ))}
+                    <Icon name="chev" size={14} />
+                  </button>
+                );
+              })}
             </div>
           </div>
 

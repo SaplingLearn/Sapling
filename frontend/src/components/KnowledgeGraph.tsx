@@ -591,10 +591,12 @@ export function KnowledgeGraph({
             >
               <div
                 style={{
-                  width: `${Math.round(hoveredMastery * 100)}%`,
+                  width: "100%",
                   height: "100%",
                   background: courseColor(hovered),
-                  transition: "width var(--dur) var(--ease)",
+                  transformOrigin: "left",
+                  transform: `scaleX(${hoveredMastery})`,
+                  transition: "transform var(--dur) var(--ease)",
                 }}
               />
             </div>

@@ -446,12 +446,16 @@ function MonthView({ cursor, byDate, today, courses }: { cursor: Date; byDate: M
                     key={a.id}
                     style={{
                       fontSize: 10, padding: "3px 6px", borderRadius: "var(--r-xs)",
-                      background: color + "22", color, borderLeft: `2px solid ${dotColor}`,
+                      background: "transparent", color: "var(--text)",
+                      display: "flex", alignItems: "center", gap: 5,
                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                     }}
                     title={a.title}
                   >
-                    {a.title}
+                    <span aria-hidden style={{
+                      width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0,
+                    }} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</span>
                   </div>
                 );
               })}
@@ -501,13 +505,20 @@ function WeekView({ cursor, byDate, today, courses }: { cursor: Date; byDate: Ma
                   <div
                     key={a.id}
                     style={{
-                      fontSize: 11, padding: "5px 8px", borderRadius: "var(--r-xs)",
-                      background: color + "22", color, borderLeft: `2px solid ${dotColor}`,
-                      marginBottom: 6,
+                      fontSize: 11, padding: "6px 0", marginBottom: 6,
+                      display: "flex", gap: 8, alignItems: "flex-start",
                     }}
                   >
-                    <div style={{ fontWeight: 600 }}>{a.title}</div>
-                    <div style={{ opacity: 0.8, fontSize: 10 }}>{a.course_code || a.course_name}</div>
+                    <span aria-hidden style={{
+                      width: 6, height: 6, borderRadius: "50%",
+                      background: dotColor, marginTop: 5, flexShrink: 0,
+                    }} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, color: "var(--text)" }}>{a.title}</div>
+                      <div style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                        {a.course_code || a.course_name}
+                      </div>
+                    </div>
                   </div>
                 );
               })}
@@ -538,7 +549,11 @@ function DayView({ cursor, byDate, courses }: { cursor: Date; byDate: Map<string
         const dotColor = a.course_id ? courseColor.get(a.course_id) || color : color;
         const dl = dueLabel(a.due_date);
         return (
-          <div key={a.id} className="card" style={{ padding: "var(--pad-lg)", marginBottom: 10, display: "flex", gap: 12, alignItems: "flex-start", borderLeft: `3px solid ${dotColor}` }}>
+          <div key={a.id} className="card" style={{ padding: "var(--pad-lg)", marginBottom: 10, display: "flex", gap: 14, alignItems: "flex-start" }}>
+            <span aria-hidden style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: dotColor, marginTop: 8, flexShrink: 0,
+            }} />
             <div style={{ flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                 <strong>{a.title}</strong>

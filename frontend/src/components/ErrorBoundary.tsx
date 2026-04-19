@@ -36,6 +36,23 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 }
 
 export function ErrorFallback({ error, reset }: { error: Error; reset: () => void }) {
+  const msg = (error.message || "").toLowerCase();
+  // Honest, calibrated copy rather than "Something went wrong." Parse
+  // what we can from the error shape and phrase it like a study partner
+  // would — calm, specific, not alarmed.
+  const { headline, subtext } = (() => {
+    if (msg.includes("network") || msg.includes("fetch")) {
+      return { headline: "We can't reach the server right now", subtext: "Usually this is a flaky network. Try again in a moment — your work is saved." };
+    }
+    if (msg.includes("timeout") || msg.includes("aborted")) {
+      return { headline: "That request took too long", subtext: "The server is probably under load. Try again in a few seconds." };
+    }
+    if (msg.includes("401") || msg.includes("unauth") || msg.includes("session")) {
+      return { headline: "Your session expired", subtext: "Head back to sign in and we'll pick up where you left off." };
+    }
+    return { headline: "We hit a snag", subtext: "This is on us. Your progress is saved — try again, and if it keeps happening, let us know below." };
+  })();
+
   return (
     <div
       style={{
@@ -48,22 +65,32 @@ export function ErrorFallback({ error, reset }: { error: Error; reset: () => voi
       }}
     >
       <div
-        className="card"
         style={{
-          maxWidth: 440,
-          width: "100%",
-          padding: "var(--pad-xl)",
-          textAlign: "center",
+          maxWidth: 480, width: "100%",
+          padding: "var(--pad-xl) 12px", textAlign: "center",
         }}
       >
-        <div className="label-micro" style={{ marginBottom: 8 }}>Something went wrong</div>
-        <div className="h-serif" style={{ fontSize: 24, marginBottom: 10 }}>An unexpected error occurred</div>
-        <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 20, wordBreak: "break-word" }}>
-          {error.message || "Unknown error"}
+        <div className="label-micro" style={{ marginBottom: 12 }}>Something interrupted us</div>
+        <div className="h-serif" style={{ fontSize: 28, marginBottom: 12, lineHeight: 1.2 }}>{headline}</div>
+        <div className="body-serif" style={{ fontSize: 15, color: "var(--text-dim)", marginBottom: 18, lineHeight: 1.6 }}>
+          {subtext}
         </div>
-        <button className="btn btn--primary" onClick={reset} style={{ justifyContent: "center", width: "100%" }}>
-          Try again
-        </button>
+        {error.message && (
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 20, wordBreak: "break-word", fontFamily: "var(--font-mono)" }}>
+            {error.message}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+          <button className="btn btn--primary" onClick={reset}>Try again</button>
+          {typeof window !== "undefined" && (
+            <a
+              className="btn"
+              href={`mailto:saplinglearn@gmail.com?subject=${encodeURIComponent("Sapling error report")}&body=${encodeURIComponent(`I hit this error while using Sapling:\n\n${error.message || "Unknown"}\n\n(Stack trace below — you can delete if you don't want to share.)\n\n${error.stack || ""}`)}`}
+            >
+              Report this
+            </a>
+          )}
+        </div>
       </div>
     </div>
   );

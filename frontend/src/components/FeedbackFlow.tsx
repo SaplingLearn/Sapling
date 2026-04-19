@@ -10,12 +10,14 @@ import { useToast } from "./ToastProvider";
 const DELAY_MS = 45_000;
 const COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
 const STORAGE_KEY = "sapling_last_feedback";
-const RATINGS: { value: number; emoji: string; label: string }[] = [
-  { value: 1, emoji: "😞", label: "Struggling" },
-  { value: 2, emoji: "😐", label: "Meh" },
-  { value: 3, emoji: "🙂", label: "Okay" },
-  { value: 4, emoji: "😊", label: "Good" },
-  { value: 5, emoji: "🤩", label: "Great" },
+// Numeric scale (serif numeral) keeps the tone "quiet library,"
+// not mobile-game. Labels on hover for clarity.
+const RATINGS: { value: number; label: string }[] = [
+  { value: 1, label: "Struggling" },
+  { value: 2, label: "Meh" },
+  { value: 3, label: "Okay" },
+  { value: 4, label: "Good" },
+  { value: 5, label: "Great" },
 ];
 const OPTIONS = [
   "Easy to use",
@@ -126,11 +128,11 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="h-serif" style={{ fontSize: 22 }}>How&apos;s Sapling so far?</div>
+          <div className="h-serif" style={{ fontSize: 24 }}>What's clicking?</div>
           <button className="btn btn--ghost btn--sm" onClick={() => close(true)} aria-label="Close">×</button>
         </div>
-        <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 16 }}>
-          Takes 10 seconds. No wrong answers.
+        <div className="body-serif" style={{ fontSize: 14, color: "var(--text-dim)", marginBottom: 16 }}>
+          A quick pulse. Nothing is a wrong answer.
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 6, marginBottom: 20 }}>
@@ -141,17 +143,21 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
                 key={r.value}
                 onClick={() => setRating(r.value)}
                 aria-label={r.label}
+                title={r.label}
+                className="h-serif"
                 style={{
                   flex: 1,
-                  padding: "12px 4px",
-                  fontSize: 24,
+                  padding: "14px 4px",
+                  fontSize: 22,
+                  fontWeight: 500,
+                  color: selectedRating ? "var(--accent)" : "var(--text-dim)",
                   borderRadius: "var(--r-md)",
-                  border: `1.5px solid ${selectedRating ? "var(--accent)" : "var(--border)"}`,
+                  border: `1px solid ${selectedRating ? "var(--accent-border)" : "var(--border)"}`,
                   background: selectedRating ? "var(--accent-soft)" : "var(--bg-panel)",
-                  transition: "all var(--dur-fast) var(--ease)",
+                  transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
                 }}
               >
-                {r.emoji}
+                {r.value}
               </button>
             );
           })}

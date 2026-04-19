@@ -683,7 +683,7 @@ function MasteryBar({ label, value, color, dashed }: { label: string; value: num
         height: 6, background: "var(--bg-soft)", borderRadius: "var(--r-full)", overflow: "hidden",
         outline: dashed ? `1px dashed ${color}` : "none", outlineOffset: 1,
       }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: color, transition: "width var(--dur) var(--ease)" }} />
+        <div style={{ width: "100%", height: "100%", background: color, transformOrigin: "left", transform: `scaleX(${pct / 100})`, transition: "transform var(--dur) var(--ease)" }} />
       </div>
     </div>
   );
@@ -878,27 +878,35 @@ function SchoolDirectory() {
         {loading ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading directory…</div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
-            {filtered.map(s => (
+          // Roster list replaces the previous 280px card grid —
+          // directories of people should scan like a class roster,
+          // not a stock-photo team page.
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {filtered.map((s, i) => (
               <Link
                 key={s.user_id}
                 href={`/profile/${encodeURIComponent(s.user_id)}`}
-                className="card"
-                style={{ padding: "var(--pad-lg)", display: "flex", gap: 12, textDecoration: "none", color: "inherit" }}
+                style={{
+                  padding: "14px 4px",
+                  borderTop: i === 0 ? "none" : "1px solid var(--border)",
+                  display: "flex", gap: 14, alignItems: "center",
+                  textDecoration: "none", color: "inherit",
+                  transition: "background var(--dur-fast) var(--ease)",
+                }}
               >
-                <Avatar name={s.name} size={44} />
+                <Avatar name={s.name} size={40} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <strong>{s.name}</strong>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="h-serif" style={{ fontSize: 15, fontWeight: 500 }}>{s.name}</span>
                     {s.user_id === userId && <span className="chip chip--accent">You</span>}
                   </div>
                   {s.courses.length > 0 && (
-                    <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
                       {s.courses.slice(0, 3).join(" · ")}
                     </div>
                   )}
                   {s.top_concepts.length > 0 && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
                       {s.top_concepts.slice(0, 3).map(c => (
                         <span key={c} className="chip chip--accent">{c}</span>
                       ))}

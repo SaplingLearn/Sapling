@@ -101,7 +101,7 @@ function Card({
           {!isEarned && pct !== null && (
             <div style={{ marginTop: 10 }}>
               <div style={{ height: 5, background: "var(--bg-soft)", borderRadius: "var(--r-full)", overflow: "hidden" }}>
-                <div style={{ width: `${pct}%`, height: "100%", background: c, transition: "width var(--dur) var(--ease)" }} />
+                <div style={{ width: "100%", height: "100%", background: c, transformOrigin: "left", transform: `scaleX(${pct / 100})`, transition: "transform var(--dur) var(--ease)" }} />
               </div>
               <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4, display: "flex", justifyContent: "space-between" }}>
                 <span>{progress!.current} / {progress!.target}</span>

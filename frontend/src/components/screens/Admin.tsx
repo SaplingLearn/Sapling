@@ -156,21 +156,18 @@ function UsersTab() {
     }
   };
 
+  const approvedPct = users.length ? Math.round((approved / users.length) * 100) : 0;
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
-        {(
-          [
-            ["Total users", users.length, "var(--accent)"],
-            ["Approved", approved, "var(--info)"],
-            ["Pending", pending, "var(--warn)"],
-          ] as const
-        ).map(([l, v, c]) => (
-          <div key={l} className="card" style={{ padding: "var(--pad-lg)" }}>
-            <div className="label-micro">{l}</div>
-            <div className="mono" style={{ fontSize: 26, color: c, marginTop: 6 }}>{v}</div>
-          </div>
-        ))}
+      {/* Prose strip replaces the previous 3-card hero-metric layout
+          (anti-pattern: big-number + small-label + gradient accent). */}
+      <div className="body-serif" style={{
+        fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680,
+      }}>
+        <span style={{ color: "var(--text)" }}>{users.length}</span> student{users.length === 1 ? "" : "s"} · {" "}
+        <span style={{ color: "var(--accent)" }}>{approved} approved</span>
+        {users.length > 0 && <span> ({approvedPct}%)</span>}
+        {pending > 0 && <> · <span style={{ color: "var(--warn)" }}>{pending} waiting</span></>}
       </div>
       <div className="card" style={{ padding: 0 }}>
         <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>

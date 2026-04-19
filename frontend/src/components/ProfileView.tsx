@@ -101,11 +101,24 @@ export function ProfileView({ profile, embedded = false }: { profile: UserProfil
       {hero}
 
       {(stats.streak_count !== undefined || stats.session_count !== undefined) && (
-        <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
-          <StatCard label="Streak" value={stats.streak_count ?? 0} suffix="days" />
-          <StatCard label="Sessions" value={stats.session_count ?? 0} />
-          <StatCard label="Documents" value={stats.documents_count ?? 0} />
-          <StatCard label="Achievements" value={stats.achievements_count ?? 0} />
+        // One-line metric strip instead of a 4-card hero grid. Each
+        // number is serif, labels are sans, separators are middots.
+        <section
+          className="body-serif"
+          style={{
+            fontSize: 14, color: "var(--text-dim)",
+            padding: "10px 0", borderTop: "1px solid var(--border)",
+            borderBottom: "1px solid var(--border)",
+            display: "flex", flexWrap: "wrap", gap: "4px 14px",
+          }}
+        >
+          <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.streak_count ?? 0}</span>-day streak</span>
+          <span>·</span>
+          <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.session_count ?? 0}</span> sessions</span>
+          <span>·</span>
+          <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.documents_count ?? 0}</span> documents</span>
+          <span>·</span>
+          <span><span className="h-serif" style={{ color: "var(--text)" }}>{stats.achievements_count ?? 0}</span> achievements</span>
         </section>
       )}
 
@@ -172,18 +185,6 @@ function Meta({ icon, text }: { icon: string; text: string }) {
       <Icon name={icon} size={11} />
       {text}
     </span>
-  );
-}
-
-function StatCard({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
-  return (
-    <div className="card" style={{ padding: "14px 16px" }}>
-      <div className="label-micro">{label}</div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 2 }}>
-        <div className="mono" style={{ fontSize: 22, fontWeight: 600 }}>{value}</div>
-        {suffix && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{suffix}</div>}
-      </div>
-    </div>
   );
 }
 

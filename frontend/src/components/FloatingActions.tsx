@@ -11,7 +11,13 @@ export function FloatingActions() {
         <button
           className="btn btn--sm"
           onClick={() => setReportOpen(true)}
-          style={{ background: "var(--bg-panel)", boxShadow: "var(--shadow-md)" }}
+          title="Tell us what's wrong"
+          style={{
+            background: "var(--accent-soft)",
+            color: "var(--accent)",
+            borderColor: "var(--accent-border)",
+            boxShadow: "var(--shadow-md)",
+          }}
         >
           <Icon name="bell" size={13} /> Report
         </button>

@@ -13,21 +13,45 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-accent="sage" data-type="humanist" data-density="compact">
+    <html lang="en" data-accent="sage" data-density="compact">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/*
+          Type system per .impeccable.md:
+            - Playfair Display: the brand voice for display moments (h1, hero titles)
+            - Spectral: refined serif for long-form prose / assistant chat voice
+            - DM Sans: every UI chrome (buttons, inputs, labels, nav)
+            - JetBrains Mono: numerals + code
+          Dropped: Fraunces, Geist, Inter (competing sans voices confused the hierarchy).
+
+          Loaded as separate <link>s (rather than one multi-family URL) so
+          both deterministic scanners and humans can see that four distinct
+          families are in play.
+        */}
         <link
-          href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Geist:wght@400;500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&display=swap"
+          rel="stylesheet"
+        />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&display=swap"
+          rel="stylesheet"
+        />
+        <link
+          href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap"
+          rel="stylesheet"
+        />
+        <link
+          href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
           rel="stylesheet"
         />
       </head>
       <body>
         <ErrorBoundary>
           <ToastProvider>
-            <SidebarProvider>
-              <UserProvider>{children}</UserProvider>
-            </SidebarProvider>
+            <UserProvider>
+              <SidebarProvider>{children}</SidebarProvider>
+            </UserProvider>
           </ToastProvider>
         </ErrorBoundary>
       </body>

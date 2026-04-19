@@ -3,7 +3,6 @@
 import React, { useEffect, useRef } from "react";
 import { Icon } from "./Icon";
 import { MarkdownChat } from "./MarkdownChat";
-import { AIDisclaimerChip } from "./AIDisclaimerChip";
 
 export type ChatRole = "user" | "assistant";
 export interface ChatMsg {
@@ -175,24 +174,24 @@ function Message({ m }: { m: ChatMsg }) {
           borderRadius: "var(--r-lg)",
           border: isUser ? "none" : "1px solid var(--border)",
           fontSize: 14,
-          lineHeight: 1.55,
-          fontFamily: "var(--font-sans)",
+          lineHeight: 1.6,
+          // Assistant voice is Spectral (body-serif) — "serif for soul,
+          // sans for function". User messages keep the sans UI voice.
+          fontFamily: isUser ? "var(--font-sans)" : "var(--font-serif)",
           wordBreak: "break-word",
           overflowWrap: "break-word",
           position: "relative",
         }}
       >
         {m.loading ? (
-          <span style={{ opacity: 0.6 }}>Thinking…</span>
+          <span style={{ opacity: 0.6, fontFamily: "var(--font-sans)" }}>Thinking…</span>
         ) : isUser ? (
           <div style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
         ) : (
-          <>
-            <MarkdownChat>{m.content}</MarkdownChat>
-            <div style={{ position: "absolute", bottom: 4, right: 8 }}>
-              <AIDisclaimerChip compact />
-            </div>
-          </>
+          // The tutor speaks in Spectral; the per-session DisclaimerModal
+          // covers AI disclosure once up front so each message stays clean
+          // (no "AI-Powered" pill — that anti-pattern is off the table).
+          <MarkdownChat>{m.content}</MarkdownChat>
         )}
       </div>
     </div>

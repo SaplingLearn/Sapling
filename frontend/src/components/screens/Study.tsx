@@ -496,8 +496,11 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
                 </div>
                 <div style={{ height: 6, background: "var(--bg-soft)", borderRadius: "var(--r-full)", overflow: "hidden" }}>
                   <div style={{
-                    width: `${((idx + 1) / filtered.length) * 100}%`,
-                    height: "100%", background: "var(--accent)", transition: "width var(--dur) var(--ease)",
+                    width: "100%", height: "100%",
+                    background: "var(--accent)",
+                    transformOrigin: "left",
+                    transform: `scaleX(${(idx + 1) / filtered.length})`,
+                    transition: "transform var(--dur) var(--ease)",
                   }} />
                 </div>
               </div>

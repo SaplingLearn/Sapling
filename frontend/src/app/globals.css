@@ -1,8 +1,19 @@
-/* Sapling — design tokens */
+/* Sapling — design tokens
+ *
+ * Typography per .impeccable.md:
+ *  - display = Playfair Display (brand moments, h1s, hero)
+ *  - serif   = Spectral (long-form prose, tutor voice in chat)
+ *  - sans    = DM Sans (all UI chrome)
+ *  - mono    = JetBrains Mono (numerals, code)
+ *
+ * "Serif for soul, sans for function" — pair a display serif with a
+ * refined body serif for long-form, and keep DM Sans for UI chrome
+ * so the hierarchy is doing the work, not decoration.
+ */
 :root {
-  /* Type */
-  --font-display: 'Fraunces', 'Lora', Georgia, serif;
-  --font-sans: 'Geist', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Playfair Display', 'Spectral', Georgia, serif;
+  --font-serif: 'Spectral', 'Playfair Display', Georgia, serif;
+  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 
   /* Brand greens */
@@ -98,27 +109,9 @@
   --dur-slow: 420ms;
 }
 
-html.dark {
-  --bg:        #0f120d;
-  --bg-panel:  #161a12;
-  --bg-subtle: #12150f;
-  --bg-soft:   #1b1f17;
-  --bg-input:  #1a1e16;
-  --bg-inset:  #0c0e0a;
-  --border:    rgba(225, 225, 205, 0.08);
-  --border-strong: rgba(225, 225, 205, 0.16);
-  --text:      #ebe6dc;
-  --text-dim:  #b9b1a0;
-  --text-muted:#7a7566;
-  --accent:    #9cbd86;
-  --accent-fg: #0f120d;
-  --accent-soft: rgba(156,189,134,0.12);
-  --accent-border: rgba(156,189,134,0.28);
-
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.35);
-  --shadow-lg: 0 20px 48px rgba(0,0,0,0.5);
-}
+/* Light-mode only per .impeccable.md. Dark-mode rules removed to
+ * prevent accidental activation. If we ever ship dark mode, it gets
+ * its own branch — not squatting in the same stylesheet. */
 
 html[data-density="compact"] {
   --pad-sm: 8px; --pad-md: 12px; --pad-lg: 16px; --pad-xl: 22px; --row-h: 34px;
@@ -126,35 +119,6 @@ html[data-density="compact"] {
 html[data-density="spacious"] {
   --pad-sm: 14px; --pad-md: 20px; --pad-lg: 28px; --pad-xl: 44px; --row-h: 48px;
 }
-
-html[data-type="editorial"] {
-  --font-display: 'Fraunces', Georgia, serif;
-  --font-sans: 'Inter', system-ui, sans-serif;
-}
-html[data-type="grotesk"] {
-  --font-display: 'Geist', 'Inter', system-ui, sans-serif;
-  --font-sans: 'Geist', 'Inter', system-ui, sans-serif;
-}
-html[data-type="humanist"] {
-  --font-display: 'Fraunces', Georgia, serif;
-  --font-sans: 'Geist', 'Inter', system-ui, sans-serif;
-}
-html[data-type="mono"] {
-  --font-display: 'JetBrains Mono', ui-monospace, monospace;
-  --font-sans: 'Geist', 'Inter', system-ui, sans-serif;
-}
-
-html[data-accent="sage"]   { --accent: #4e873c; --accent-soft: #e0ecd8; --accent-border: #c3d8b3; }
-html[data-accent="forest"] { --accent: #2b5221; --accent-soft: #e0ecd8; --accent-border: #9cbd86; }
-html[data-accent="moss"]   { --accent: #6b8e4e; --accent-soft: #eef2e0; --accent-border: #cddca8; }
-html[data-accent="ink"]    { --accent: #2a271f; --accent-soft: #ebe6dc; --accent-border: #b9b1a0; }
-html[data-accent="terracotta"] { --accent: #b4562c; --accent-soft: #f7e6d8; --accent-border: #e8c3a5; }
-
-html.dark[data-accent="sage"]   { --accent: #9cbd86; --accent-soft: rgba(156,189,134,0.14); }
-html.dark[data-accent="forest"] { --accent: #c3d8b3; --accent-soft: rgba(195,216,179,0.14); }
-html.dark[data-accent="moss"]   { --accent: #b1cc8b; --accent-soft: rgba(177,204,139,0.14); }
-html.dark[data-accent="ink"]    { --accent: #ddd6c6; --accent-soft: rgba(221,214,198,0.14); }
-html.dark[data-accent="terracotta"] { --accent: #d98a5f; --accent-soft: rgba(217,138,95,0.14); }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
@@ -170,7 +134,11 @@ body { font-size: 14px; line-height: 1.5; }
 button { font-family: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
 input, textarea, select { font-family: inherit; color: inherit; }
 
-.h-serif { font-family: var(--font-display); letter-spacing: -0.01em; font-weight: 500; }
+.h-serif { font-family: var(--font-display); letter-spacing: -0.015em; font-weight: 500; line-height: 1.15; }
+.h-sans  { font-family: var(--font-sans); letter-spacing: -0.005em; font-weight: 600; line-height: 1.2; }
+/* Body prose in Spectral for long-form reading surfaces (chat tutor, study guide bodies,
+ * About / Pending copy). Never for UI chrome. */
+.body-serif { font-family: var(--font-serif); font-weight: 400; line-height: 1.6; }
 .mono { font-family: var(--font-mono); font-feature-settings: "ss01"; letter-spacing: -0.02em; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
