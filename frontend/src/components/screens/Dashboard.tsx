@@ -324,8 +324,8 @@ export function Dashboard() {
     </div>
   );
 
-  // Pre-revamp layout: 3 columns — courses on the left, graph in the
-  // middle (primary focus), stats on the right.
+  // Pre-revamp layout: 3 columns — courses + upcoming on the left,
+  // graph in the middle (primary focus), stats on the right.
   const coursesPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
@@ -362,6 +362,39 @@ export function Dashboard() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Upcoming assignments live in the left column now, directly under
+          the courses they belong to — feels more like a study planner. */}
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div className="label-micro">Upcoming</div>
+          <button className="btn btn--ghost btn--sm" onClick={() => router.push("/calendar")}>Calendar →</button>
+        </div>
+        {assignments.length === 0 && (
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
+        )}
+        {assignments.slice(0, 4).map((a) => {
+          const diffMs = new Date(a.due_date).getTime() - Date.now();
+          const hours = diffMs / (1000 * 60 * 60);
+          const days = Math.ceil(diffMs / 86400000);
+          let chipClass = "chip--info";
+          let label = `${days}d`;
+          if (hours <= 0) { chipClass = "chip--err"; label = "overdue"; }
+          else if (hours <= 24) { chipClass = "chip--err"; label = hours < 1 ? "now" : `${Math.max(1, Math.round(hours))}h`; }
+          else if (days <= 2) chipClass = "chip--warn";
+          return (
+            <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{a.title}</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  {a.course_name || "—"} · {a.assignment_type || "task"}
+                </div>
+              </div>
+              <span className={`chip ${chipClass}`}>{label}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -460,37 +493,6 @@ export function Dashboard() {
             <Icon name="users" size={12} /> Study room
           </button>
         </div>
-      </div>
-
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="label-micro">Upcoming</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => router.push("/calendar")}>Calendar →</button>
-        </div>
-        {assignments.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
-        )}
-        {assignments.slice(0, 4).map((a) => {
-          const diffMs = new Date(a.due_date).getTime() - Date.now();
-          const hours = diffMs / (1000 * 60 * 60);
-          const days = Math.ceil(diffMs / 86400000);
-          let chipClass = "chip--info";
-          let label = `${days}d`;
-          if (hours <= 0) { chipClass = "chip--err"; label = "overdue"; }
-          else if (hours <= 24) { chipClass = "chip--err"; label = hours < 1 ? "now" : `${Math.max(1, Math.round(hours))}h`; }
-          else if (days <= 2) chipClass = "chip--warn";
-          return (
-            <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{a.title}</div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  {a.course_name || "—"} · {a.assignment_type || "task"}
-                </div>
-              </div>
-              <span className={`chip ${chipClass}`}>{label}</span>
-            </div>
-          );
-        })}
       </div>
 
     </div>
