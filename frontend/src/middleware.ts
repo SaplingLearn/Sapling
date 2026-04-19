@@ -29,6 +29,19 @@ export async function middleware(request: NextRequest) {
   }
 
   const { pathname } = request.nextUrl
+
+  // Mirror pre-revamp behavior: an already-signed-in user hitting /auth or
+  // /auth/callback should bounce straight to /dashboard instead of seeing
+  // the sign-in form again. Pre-revamp handled this via a redirectIfSignedIn
+  // helper on /signin; the route moved but the behavior shouldn't regress.
+  if (pathname === '/auth' || pathname === '/auth/') {
+    const token = request.cookies.get('sapling_session')?.value
+    if (token && (await verifySession(token))) {
+      return NextResponse.redirect(new URL('/dashboard', request.url))
+    }
+    return NextResponse.next()
+  }
+
   const isProtected = PROTECTED.some(p => pathname.startsWith(p))
   if (!isProtected) return NextResponse.next()
 
@@ -63,6 +76,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
+    '/auth', '/auth/',  // for the signed-in -> /dashboard redirect
     '/dashboard/:path*', '/learn/:path*', '/study/:path*',
     '/tree/:path*', '/library/:path*',
     '/calendar/:path*', '/social/:path*',

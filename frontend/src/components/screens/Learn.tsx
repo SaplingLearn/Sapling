@@ -557,7 +557,17 @@ function LearnInner() {
                   width={isMobile ? 320 : 280}
                   height={280}
                   variant="organism"
-                  highlightId={graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id}
+                  highlightId={(() => {
+                    // Pre-revamp Learn honored ?suggest=<concept> from the Dashboard
+                    // "Learn next" suggestion; restore that here, falling back to the
+                    // current topic if no suggestion is active.
+                    const suggest = searchParams.get("suggest");
+                    const suggestMatch = suggest
+                      ? graphNodes.find(n => n.name.toLowerCase() === suggest.trim().toLowerCase())
+                      : null;
+                    if (suggestMatch) return suggestMatch.id;
+                    return graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id;
+                  })()}
                   onNodeClick={(n) => {
                     if (!n.is_subject_root) {
                       router.replace(`/learn?topic=${encodeURIComponent(n.name)}&mode=${mode}`, { scroll: false });

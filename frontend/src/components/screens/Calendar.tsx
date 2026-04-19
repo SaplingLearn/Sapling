@@ -571,6 +571,22 @@ function AssignmentTable({
   const [editing, setEditing] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState<Partial<Assignment>>({});
   const [saving, setSaving] = React.useState(false);
+  type SortKey = "due_date" | "title" | "course" | "type";
+  const [sortKey, setSortKey] = React.useState<SortKey>("due_date");
+  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
+
+  const sorted = React.useMemo(() => {
+    const copy = [...assignments];
+    copy.sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === "due_date") cmp = (a.due_date || "").localeCompare(b.due_date || "");
+      else if (sortKey === "title") cmp = (a.title || "").localeCompare(b.title || "");
+      else if (sortKey === "course") cmp = (a.course_code || a.course_name || "").localeCompare(b.course_code || b.course_name || "");
+      else if (sortKey === "type") cmp = (a.assignment_type || "").localeCompare(b.assignment_type || "");
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [assignments, sortKey, sortDir]);
 
   const toggleAll = () => {
     if (selected.size === assignments.length) onSelectedChange(new Set());
@@ -611,9 +627,33 @@ function AssignmentTable({
 
   return (
     <div style={{ padding: "20px 32px" }}>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
         <div className="label-micro">{selected.size} of {assignments.length} selected</div>
         <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span className="label-micro" style={{ fontSize: 10 }}>Sort</span>
+          <div style={{ minWidth: 140 }}>
+            <CustomSelect
+              size="sm"
+              value={sortKey}
+              onChange={v => setSortKey(v as SortKey)}
+              options={[
+                { value: "due_date", label: "Due date" },
+                { value: "title", label: "Title" },
+                { value: "course", label: "Course" },
+                { value: "type", label: "Type" },
+              ]}
+            />
+          </div>
+          <button
+            className="btn btn--sm btn--ghost"
+            onClick={() => setSortDir(d => (d === "asc" ? "desc" : "asc"))}
+            title={sortDir === "asc" ? "Ascending" : "Descending"}
+            aria-label="Toggle sort direction"
+          >
+            {sortDir === "asc" ? "↑" : "↓"}
+          </button>
+        </div>
         <button className="btn btn--sm" onClick={onExport}>
           <Icon name="doc" size={12} /> Export CSV
         </button>
@@ -633,7 +673,7 @@ function AssignmentTable({
             </tr>
           </thead>
           <tbody>
-            {assignments.map((a, i) => {
+            {sorted.map((a, i) => {
               const editingThis = editing === a.id;
               return (
                 <tr key={a.id} style={{ borderTop: i === 0 ? "none" : "1px solid var(--border)" }}>
