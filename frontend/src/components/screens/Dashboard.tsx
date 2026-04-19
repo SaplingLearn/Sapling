@@ -582,35 +582,36 @@ export function Dashboard() {
         >
           <Typewriter text={greetingText} onDone={() => setGreetingDone(true)} />
         </h1>
-        {/* Quote row stays collapsed (max-height: 0) while the greeting
-            is still typing — no reserved empty band above where the
-            quote will land. When the greeting finishes, the row expands
-            and the text fades in, so the quote drops down into place
-            below the greeting. */}
+        {/* Quote animates from collapsed -> its natural height using the
+            canonical CSS grid trick (grid-template-rows: 0fr -> 1fr).
+            Unlike max-height: 120px, this snaps to exactly the quote's
+            content height, so there's no empty band below it. */}
         {quote && (
           <div
             aria-hidden={!greetingDone}
             style={{
-              maxHeight: greetingDone ? 120 : 0,
-              overflow: "hidden",
-              transition: "max-height 0.7s var(--ease)",
+              display: "grid",
+              gridTemplateRows: greetingDone ? "1fr" : "0fr",
+              transition: "grid-template-rows 0.7s var(--ease)",
             }}
           >
-            <p
-              className="body-serif"
-              style={{
-                margin: "22px auto 0",
-                maxWidth: 640,
-                fontSize: 14,
-                fontStyle: "italic",
-                color: "var(--text-dim)",
-                lineHeight: 1.55,
-                opacity: greetingDone ? 1 : 0,
-                transition: "opacity 0.55s var(--ease) 0.15s",
-              }}
-            >
-              "{quote}"
-            </p>
+            <div style={{ overflow: "hidden" }}>
+              <p
+                className="body-serif"
+                style={{
+                  margin: "22px auto 0",
+                  maxWidth: 640,
+                  fontSize: 14,
+                  fontStyle: "italic",
+                  color: "var(--text-dim)",
+                  lineHeight: 1.55,
+                  opacity: greetingDone ? 1 : 0,
+                  transition: "opacity 0.55s var(--ease) 0.15s",
+                }}
+              >
+                "{quote}"
+              </p>
+            </div>
           </div>
         )}
       </div>
