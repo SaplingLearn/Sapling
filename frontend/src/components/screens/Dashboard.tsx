@@ -117,10 +117,10 @@ export function Dashboard() {
   const [fullscreen, setFullscreen] = React.useState(false);
   const [mobileTab, setMobileTab] = React.useState<"courses" | "stats">("courses");
 
-  // Initial guess matches the container's CSS height (340). Actual
+  // Initial guess matches the container's CSS height (260). Actual
   // dimensions are measured via ResizeObserver below; this default just
   // avoids a one-frame flash at the old taller size.
-  const [size, setSize] = React.useState({ w: 720, h: 340 });
+  const [size, setSize] = React.useState({ w: 720, h: 260 });
   const gRef = React.useRef<HTMLDivElement>(null);
 
   const suggest = search.get("suggest");
@@ -268,7 +268,7 @@ export function Dashboard() {
   }
 
   const graphBlock = (
-    <div className="card" style={{ padding: 0, overflow: "hidden", position: "relative", minHeight: 420 }}>
+    <div className="card" style={{ padding: 0, overflow: "hidden", position: "relative", minHeight: 340 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
         <div>
           <div className="label-micro">Your knowledge graph</div>
@@ -292,7 +292,7 @@ export function Dashboard() {
           </button>
         </div>
       </div>
-      <div ref={gRef} style={{ position: "relative", height: 340 }}>
+      <div ref={gRef} style={{ position: "relative", height: 260 }}>
         <KnowledgeGraph
           nodes={nodes}
           edges={edges}
@@ -326,11 +326,9 @@ export function Dashboard() {
 
   const leftPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {graphBlock}
-
-      {/* "Inspired learning" quote card removed — the quote now lives at
-          the top as the TopBar subtitle (the pre-revamp placement). */}
-
+      {/* My courses sits above the graph now — it's the quickest hop users
+          want from the dashboard, so it shouldn't be buried below a 500px
+          canvas. */}
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">My courses</div>
@@ -365,6 +363,8 @@ export function Dashboard() {
           </div>
         ))}
       </div>
+
+      {graphBlock}
     </div>
   );
 
