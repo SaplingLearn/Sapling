@@ -582,37 +582,29 @@ export function Dashboard() {
         >
           <Typewriter text={greetingText} onDone={() => setGreetingDone(true)} />
         </h1>
-        {/* Quote animates from collapsed -> its natural height using the
-            canonical CSS grid trick (grid-template-rows: 0fr -> 1fr).
-            Unlike max-height: 120px, this snaps to exactly the quote's
-            content height, so there's no empty band below it. */}
+        {/* Quote always reserves its layout space so panels below never
+            shift when the greeting finishes typing. Entry is opacity +
+            subtle translateY so the quote *feels* like it drops in
+            without actually moving anything else on the page. */}
         {quote && (
-          <div
+          <p
             aria-hidden={!greetingDone}
+            className="body-serif"
             style={{
-              display: "grid",
-              gridTemplateRows: greetingDone ? "1fr" : "0fr",
-              transition: "grid-template-rows 0.7s var(--ease)",
+              margin: "22px auto 0",
+              maxWidth: 640,
+              fontSize: 14,
+              fontStyle: "italic",
+              color: "var(--text-dim)",
+              lineHeight: 1.55,
+              opacity: greetingDone ? 1 : 0,
+              transform: greetingDone ? "translateY(0)" : "translateY(-6px)",
+              transition:
+                "opacity 0.55s var(--ease) 0.15s, transform 0.55s var(--ease) 0.15s",
             }}
           >
-            <div style={{ overflow: "hidden" }}>
-              <p
-                className="body-serif"
-                style={{
-                  margin: "22px auto 0",
-                  maxWidth: 640,
-                  fontSize: 14,
-                  fontStyle: "italic",
-                  color: "var(--text-dim)",
-                  lineHeight: 1.55,
-                  opacity: greetingDone ? 1 : 0,
-                  transition: "opacity 0.55s var(--ease) 0.15s",
-                }}
-              >
-                "{quote}"
-              </p>
-            </div>
-          </div>
+            "{quote}"
+          </p>
         )}
       </div>
 
