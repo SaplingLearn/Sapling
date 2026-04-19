@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import React from "react";
-import { SidebarProvider } from "@/lib/sidebar";
 import { UserProvider } from "@/context/UserContext";
 import { ToastProvider } from "@/components/ToastProvider";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -49,9 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ErrorBoundary>
           <ToastProvider>
-            <UserProvider>
-              <SidebarProvider>{children}</SidebarProvider>
-            </UserProvider>
+            <UserProvider>{children}</UserProvider>
           </ToastProvider>
         </ErrorBoundary>
       </body>
