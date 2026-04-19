@@ -54,3 +54,13 @@ ALTER TABLE user_settings
 ALTER TABLE user_settings
     ADD CONSTRAINT fk_user_settings_featured_role
     FOREIGN KEY (featured_role_id) REFERENCES roles(id);
+
+-- Storage: the admin cosmetic creation UI uploads frame/banner assets to a
+-- public Supabase Storage bucket named `cosmetic-assets`. Create it once with:
+--
+--   INSERT INTO storage.buckets (id, name, public)
+--   VALUES ('cosmetic-assets', 'cosmetic-assets', true)
+--   ON CONFLICT (id) DO NOTHING;
+--
+-- Then add an RLS policy on storage.objects that allows inserts from
+-- authenticated admin users (or run the upload via the service key).

@@ -25,6 +25,13 @@ router = APIRouter()
 
 # ── Roles ────────────────────────────────────────────────────────────────────
 
+@router.get("/roles")
+def list_roles(request: Request):
+    require_admin(request)
+    rows = table("roles").select("*", order="display_priority.desc")
+    return {"roles": rows or []}
+
+
 @router.post("/roles")
 def create_role(body: CreateRoleBody, request: Request):
     require_admin(request)
@@ -82,6 +89,13 @@ def delete_role(role_id: str, request: Request):
 
 
 # ── Achievements ─────────────────────────────────────────────────────────────
+
+@router.get("/achievements")
+def list_achievements(request: Request):
+    require_admin(request)
+    rows = table("achievements").select("*", order="created_at.desc")
+    return {"achievements": rows or []}
+
 
 @router.post("/achievements")
 def create_achievement(body: CreateAchievementBody, request: Request):
@@ -152,6 +166,13 @@ def create_trigger(body: CreateAchievementTriggerBody, request: Request):
 
 
 # ── Cosmetics ────────────────────────────────────────────────────────────────
+
+@router.get("/cosmetics")
+def list_cosmetics(request: Request):
+    require_admin(request)
+    rows = table("cosmetics").select("*", order="type.asc")
+    return {"cosmetics": rows or []}
+
 
 @router.post("/cosmetics")
 def create_cosmetic(body: CreateCosmeticBody, request: Request):

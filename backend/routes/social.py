@@ -229,15 +229,22 @@ def kick_member(room_id: str, member_id: str, requester_id: str = Query(...)):
 
 
 @router.get("/rooms/{room_id}/messages")
-def get_room_messages(room_id: str):
+def get_room_messages(room_id: str, before: str | None = None, limit: int = 50):
+    limit = max(1, min(200, limit))
+    filters = {"room_id": f"eq.{room_id}"}
+    if before:
+        filters["created_at"] = f"lt.{before}"
+    # Fetch newest-first so the slice covers the page we need, then reverse to ascending.
     rows = table("room_messages").select(
         "*",
-        filters={"room_id": f"eq.{room_id}"},
-        order="created_at.asc",
-        limit=50,
+        filters=filters,
+        order="created_at.desc",
+        limit=limit,
     )
     if not rows:
-        return {"messages": []}
+        return {"messages": [], "has_more": False}
+    rows = list(reversed(rows))
+    has_more = len(rows) == limit
 
     msg_ids = [r["id"] for r in rows]
 
@@ -278,7 +285,7 @@ def get_room_messages(room_id: str):
         r["reply_to"] = reply_map.get(r.get("reply_to_id")) if r.get("reply_to_id") else None
         enriched.append(r)
 
-    return {"messages": enriched}
+    return {"messages": enriched, "has_more": has_more}
 
 
 @router.post("/rooms/{room_id}/messages")
