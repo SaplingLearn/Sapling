@@ -1,557 +1,423 @@
-'use client';
+"use client";
 
-import { useEffect, useState, useRef, DragEvent } from 'react';
+import React from "react";
+import { createPortal } from "react-dom";
+import { Icon } from "./Icon";
+import { CustomSelect } from "./CustomSelect";
+import { useToast } from "./ToastProvider";
 import {
-  addCourse,
-  getCourses,
   uploadDocument,
-  deleteDocument,
-  updateDocument,
+  updateDocumentCategory,
+  addCourse,
+  onboardingCoursesSearch,
   type EnrolledCourse,
-} from '@/lib/api';
-import CustomSelect from '@/components/CustomSelect';
-import { PRESET_COURSE_COLORS } from '@/lib/graphUtils';
-
-const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
-
-const GLASS: React.CSSProperties = {
-  background: '#ffffff',
-  border: '1px solid rgba(107, 114, 128, 0.15)',
-  borderRadius: '10px',
-};
-
-export interface UploadedDoc {
-  id: string;
-  course_id: string;
-  file_name: string;
-  category: string;
-  summary: string | null;
-  key_takeaways: string[] | null;
-  flashcards: { question: string; answer: string }[] | null;
-  created_at: string;
-}
-
-type UploadStep = 'pick' | 'reviewing';
-
-const CATEGORY_LABELS: Record<string, string> = {
-  syllabus: 'Syllabus',
-  lecture_notes: 'Lecture Notes',
-  slides: 'Slides',
-  reading: 'Reading',
-  assignment: 'Assignment',
-  study_guide: 'Study Guide',
-  other: 'Other',
-};
-
-const UPLOAD_CATEGORIES = ['syllabus', 'lecture_notes', 'slides', 'reading', 'assignment', 'study_guide', 'other'];
+  type OnboardingCourse,
+} from "@/lib/api";
 
 const MAX_FILES = 5;
-const MAX_BYTES = 15 * 1024 * 1024;
-const ALLOWED_EXTS = ['.pdf', '.docx', '.pptx'];
+const MAX_SIZE = 15 * 1024 * 1024;
+const ALLOWED = /\.(pdf|docx|pptx)$/i;
 const UPLOAD_TIMEOUT_MS = 4 * 60 * 1000;
 
-async function uploadDocumentWithTimeout(fd: FormData): Promise<UploadedDoc> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
-  try {
-    return await uploadDocument(fd, { signal: controller.signal });
-  } catch (e: unknown) {
-    const aborted =
-      (typeof DOMException !== 'undefined' && e instanceof DOMException && e.name === 'AbortError') ||
-      (e instanceof Error && e.name === 'AbortError');
-    if (aborted) {
-      throw new Error(
-        'This is taking longer than expected (over 4 minutes). Check your connection and try again with a smaller file.'
-      );
-    }
-    throw e;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
+type UploadStatus = "pending" | "uploading" | "processed" | "error" | "aborted";
 
 interface UploadItem {
+  id: string;
   file: File;
-  status: 'uploading' | 'done' | 'error';
-  result: UploadedDoc | null;
-  error: string | null;
-  resultCategory: string;
+  courseId: string;
+  status: UploadStatus;
+  error?: string;
+  docId?: string;
+  category?: string;
+  summary?: string;
+  takeaways?: string[];
+  abort?: AbortController;
 }
 
 interface Props {
   open: boolean;
-  onClose: (uploaded: UploadedDoc[]) => void;
   userId: string;
   courses: EnrolledCourse[];
-  onCoursesChanged: (courses: EnrolledCourse[]) => void;
-  onDocConfirmed?: (doc: UploadedDoc) => void;
-  initialCourseId?: string;
-  title?: string;
-  subtitle?: string;
+  onClose: () => void;
+  onComplete: (uploaded: UploadItem[]) => void;
 }
 
-export default function DocumentUploadModal({
-  open,
-  onClose,
-  userId,
-  courses,
-  onCoursesChanged,
-  onDocConfirmed,
-  initialCourseId,
-  title = 'Upload Documents',
-  subtitle,
-}: Props) {
-  const [uploadStep, setUploadStep] = useState<UploadStep>('pick');
-  const [pickedFiles, setPickedFiles] = useState<File[]>([]);
-  const [fileError, setFileError] = useState('');
-  const [dragging, setDragging] = useState(false);
-  const [selectedCourseId, setSelectedCourseId] = useState(initialCourseId ?? '');
-  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
-  const [reviewIndex, setReviewIndex] = useState(0);
-  const [confirmedDocs, setConfirmedDocs] = useState<UploadedDoc[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+const CATEGORY_OPTIONS = [
+  { value: "syllabus", label: "Syllabus" },
+  { value: "lecture_notes", label: "Lecture notes" },
+  { value: "slides", label: "Slides" },
+  { value: "reading", label: "Reading" },
+  { value: "assignment", label: "Assignment" },
+  { value: "study_guide", label: "Study guide" },
+  { value: "other", label: "Other" },
+];
 
-  const [showAddCourse, setShowAddCourse] = useState(false);
-  const [newCourseName, setNewCourseName] = useState('');
-  const [courseAdding, setCourseAdding] = useState(false);
-  const [courseAddError, setCourseAddError] = useState('');
+export function DocumentUploadModal({ open, userId, courses, onClose, onComplete }: Props) {
+  const toast = useToast();
+  const [mounted, setMounted] = React.useState(false);
+  const [items, setItems] = React.useState<UploadItem[]>([]);
+  const [dragging, setDragging] = React.useState(false);
+  const [courseQuery, setCourseQuery] = React.useState("");
+  const [courseResults, setCourseResults] = React.useState<OnboardingCourse[]>([]);
+  const [addingCourse, setAddingCourse] = React.useState(false);
 
-  useEffect(() => {
-    if (open) {
-      setSelectedCourseId(initialCourseId ?? '');
+  React.useEffect(() => setMounted(true), []);
+
+  React.useEffect(() => {
+    if (!open) {
+      setItems([]);
+      setCourseQuery("");
+      setCourseResults([]);
+      return;
     }
-  }, [open, initialCourseId]);
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
 
-  if (!open) return null;
+  React.useEffect(() => {
+    if (!courseQuery.trim()) { setCourseResults([]); return; }
+    const t = setTimeout(() => {
+      onboardingCoursesSearch(courseQuery).then(r => setCourseResults(r.courses ?? [])).catch(() => setCourseResults([]));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [courseQuery]);
 
-  const defaultSubtitle = `PDF, DOCX, or PPTX · Up to ${MAX_FILES} files · Max 15 MB each.`;
+  const activeUploads = items.filter(it => it.status === "uploading").length;
 
-  function validateAndSetMultiple(files: File[]) {
-    const limited = files.slice(0, MAX_FILES);
-    const valid: File[] = [];
-    const errors: string[] = [];
-
-    if (files.length > MAX_FILES) {
-      errors.push(`Only up to ${MAX_FILES} files at a time. First ${MAX_FILES} selected.`);
+  const handleClose = () => {
+    if (activeUploads > 0) {
+      if (!window.confirm(`${activeUploads} upload${activeUploads === 1 ? "" : "s"} still running. Abort and close?`)) return;
+      items.forEach(it => it.abort?.abort());
     }
+    onClose();
+  };
 
-    for (const file of limited) {
-      const ext = '.' + file.name.split('.').pop()?.toLowerCase();
-      if (!ALLOWED_EXTS.includes(ext)) {
-        errors.push(`"${file.name}": unsupported type (PDF, DOCX, PPTX only).`);
-        continue;
-      }
-      if (file.size > MAX_BYTES) {
-        errors.push(`"${file.name}" exceeds the 15 MB limit.`);
-        continue;
-      }
-      valid.push(file);
+  const addFiles = (fileList: File[]) => {
+    const defaultCourseId = courses[0]?.course_id || "";
+    const candidates = fileList
+      .slice(0, MAX_FILES - items.length)
+      .filter(f => {
+        if (!ALLOWED.test(f.name)) {
+          toast.error(`${f.name}: only PDF / DOCX / PPTX are accepted.`);
+          return false;
+        }
+        if (f.size > MAX_SIZE) {
+          toast.error(`${f.name}: exceeds the 15 MB limit.`);
+          return false;
+        }
+        return true;
+      })
+      .map<UploadItem>(f => ({
+        id: `${f.name}-${f.size}-${f.lastModified}-${Math.random().toString(36).slice(2, 6)}`,
+        file: f,
+        courseId: defaultCourseId,
+        status: "pending",
+      }));
+    if (candidates.length === 0) return;
+    setItems(prev => [...prev, ...candidates]);
+  };
+
+  const startUpload = async (item: UploadItem) => {
+    if (!item.courseId) {
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: "error", error: "Pick a course first." } : i));
+      return;
     }
-
-    setFileError(
-      errors.length === 0
-        ? ''
-        : errors.length === 1
-          ? errors[0]
-          : `${errors.slice(0, 2).join(' · ')}${errors.length > 2 ? ` (+${errors.length - 2} more)` : ''}`
-    );
-    setPickedFiles(valid);
-  }
-
-  function handleDrop(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    setDragging(false);
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length) validateAndSetMultiple(files);
-  }
-
-  async function handleUpload() {
-    if (!pickedFiles.length || !selectedCourseId) return;
-
-    const items: UploadItem[] = pickedFiles.map(f => ({
-      file: f, status: 'uploading', result: null, error: null, resultCategory: 'other',
-    }));
-    setUploadItems(items);
-    setReviewIndex(0);
-    setUploadStep('reviewing');
-
-    pickedFiles.forEach((file, idx) => {
+    const ac = new AbortController();
+    const timeout = setTimeout(() => ac.abort(), UPLOAD_TIMEOUT_MS);
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: "uploading", abort: ac } : i));
+    try {
       const fd = new FormData();
-      fd.append('file', file);
-      fd.append('course_id', selectedCourseId);
-      fd.append('user_id', userId);
-      uploadDocumentWithTimeout(fd)
-        .then(doc => {
-          setUploadItems(prev => prev.map((it, i) =>
-            i === idx ? { ...it, status: 'done', result: doc, resultCategory: doc.category ?? 'other' } : it
-          ));
-        })
-        .catch((e: any) => {
-          setUploadItems(prev => prev.map((it, i) =>
-            i === idx ? { ...it, status: 'error', error: e.message || 'Upload failed.' } : it
-          ));
-        });
-    });
-  }
+      fd.append("file", item.file);
+      fd.append("course_id", item.courseId);
+      fd.append("user_id", userId);
+      const resp = await uploadDocument(fd, ac.signal);
+      clearTimeout(timeout);
+      setItems(prev => prev.map(i => i.id === item.id ? {
+        ...i,
+        status: "processed",
+        docId: resp?.id,
+        category: resp?.category || "other",
+        summary: resp?.summary,
+        takeaways: resp?.key_takeaways,
+      } : i));
+    } catch (err: any) {
+      clearTimeout(timeout);
+      const aborted = ac.signal.aborted;
+      setItems(prev => prev.map(i => i.id === item.id ? {
+        ...i,
+        status: aborted ? "aborted" : "error",
+        error: aborted ? "Processing took longer than 4 minutes — try a smaller file." : String(err?.message || err),
+      } : i));
+    }
+  };
 
-  async function handleConfirm() {
-    const item = uploadItems[reviewIndex];
-    if (!item?.result) return;
+  const startAll = () => {
+    items.filter(i => i.status === "pending").forEach(i => { void startUpload(i); });
+  };
 
-    if (item.resultCategory !== item.result.category) {
+  const reanalyze = (item: UploadItem) => {
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: "pending", error: undefined } : i));
+    void startUpload({ ...item, status: "pending" });
+  };
+
+  const setItemField = (id: string, updater: (prev: UploadItem) => UploadItem) => {
+    setItems(prev => prev.map(i => i.id === id ? updater(i) : i));
+  };
+
+  const handleCategoryChange = async (item: UploadItem, next: string) => {
+    setItemField(item.id, prev => ({ ...prev, category: next }));
+    if (item.docId) {
       try {
-        await updateDocument(item.result.id, { category: item.resultCategory, user_id: userId });
-      } catch (e) {
-        console.error('Failed to update category:', e);
+        await updateDocumentCategory(item.docId, userId, next);
+        toast.success("Category updated");
+      } catch (err) {
+        toast.error(`Failed: ${String(err)}`);
       }
     }
-    const finalDoc = { ...item.result, category: item.resultCategory };
-    setConfirmedDocs(prev => [...prev, finalDoc]);
-    onDocConfirmed?.(finalDoc);
+  };
 
-    if (reviewIndex < uploadItems.length - 1) {
-      setReviewIndex(prev => prev + 1);
-    } else {
-      closeModal([...confirmedDocs, finalDoc]);
-    }
-  }
-
-  function handleSkip() {
-    if (reviewIndex < uploadItems.length - 1) {
-      setReviewIndex(prev => prev + 1);
-    } else {
-      closeModal(confirmedDocs);
-    }
-  }
-
-  function setItemCategory(idx: number, cat: string) {
-    setUploadItems(prev => prev.map((it, i) => i === idx ? { ...it, resultCategory: cat } : it));
-  }
-
-  async function handleReanalyze() {
-    const item = uploadItems[reviewIndex];
-    if (!item) return;
-
-    const prevResult = item.result;
-    setUploadItems(prev => prev.map((it, i) =>
-      i === reviewIndex ? { ...it, status: 'uploading', error: null } : it
-    ));
-
-    const fd = new FormData();
-    fd.append('file', item.file);
-    fd.append('course_id', selectedCourseId);
-    fd.append('user_id', userId);
-
+  const addCourseInline = async (course: OnboardingCourse) => {
+    setAddingCourse(true);
     try {
-      const doc = await uploadDocumentWithTimeout(fd);
-      if (prevResult && doc.id !== prevResult.id) {
-        await deleteDocument(prevResult.id, userId).catch(() => {});
-      }
-      setUploadItems(prev => prev.map((it, i) =>
-        i === reviewIndex ? { ...it, status: 'done', result: doc, resultCategory: doc.category ?? 'other', error: null } : it
-      ));
-    } catch (e: any) {
-      setUploadItems(prev => prev.map((it, i) =>
-        i === reviewIndex ? { ...it, status: prevResult ? 'done' : 'error', result: prevResult, error: e.message || 'Re-analysis failed.' } : it
-      ));
-    }
-  }
-
-  function closeModal(uploaded: UploadedDoc[]) {
-    setUploadStep('pick');
-    setPickedFiles([]);
-    setFileError('');
-    setSelectedCourseId(initialCourseId ?? '');
-    setUploadItems([]);
-    setReviewIndex(0);
-    setConfirmedDocs([]);
-    setShowAddCourse(false);
-    setNewCourseName('');
-    setCourseAddError('');
-    onClose(uploaded);
-  }
-
-  async function handleAddCourse() {
-    const name = newCourseName.trim();
-    if (!name) return;
-    setCourseAdding(true);
-    setCourseAddError('');
-    try {
-      const usedColors = new Set(courses.map(c => c.color).filter(Boolean));
-      const color = PRESET_COURSE_COLORS.find(c => !usedColors.has(c)) ?? PRESET_COURSE_COLORS[0];
-      const res = await addCourse(userId, name, color);
-      if (res.already_existed) {
-        setCourseAddError(`"${name}" already exists.`);
-      } else {
-        const updated = await getCourses(userId);
-        onCoursesChanged(updated.courses);
-        const created = updated.courses.find(c => c.course_id === res.course_id);
-        if (created) setSelectedCourseId(created.course_id);
-        setNewCourseName('');
-        setShowAddCourse(false);
-      }
-    } catch (e: any) {
-      let msg = e.message || 'Failed to add course.';
-      try {
-        const j = JSON.parse(msg);
-        if (j.detail) msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
-      } catch { /* keep msg */ }
-      setCourseAddError(msg);
+      await addCourse(userId, course.id);
+      toast.success(`Added ${course.course_code}`);
+      setCourseQuery("");
+      setCourseResults([]);
+      // Parent refreshes courses via onComplete.
+    } catch (err) {
+      toast.error(`Failed: ${String(err)}`);
     } finally {
-      setCourseAdding(false);
+      setAddingCourse(false);
     }
-  }
+  };
 
-  const hasActiveUploads = uploadItems.some(it => it.status === 'uploading');
+  const allFinished = items.length > 0 && items.every(i => i.status !== "uploading" && i.status !== "pending");
 
-  return (
+  const done = () => {
+    onComplete(items);
+    onClose();
+  };
+
+  if (!open || !mounted) return null;
+
+  return createPortal(
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
-      onClick={e => { if (!hasActiveUploads && e.target === e.currentTarget) closeModal(confirmedDocs); }}
+      onClick={handleClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(19,38,16,0.45)",
+        zIndex: 200, display: "grid", placeItems: "center", padding: 20,
+      }}
     >
-      <div style={{ background: '#fff', borderRadius: '12px', padding: '28px', width: '520px', maxWidth: '95vw', maxHeight: '88vh', overflowY: 'auto', position: 'relative', border: '1px solid rgba(107,114,128,0.15)', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', fontFamily: UI_FONT }}>
+      <div
+        onClick={e => e.stopPropagation()}
+        className="card slide-up"
+        style={{ width: "min(720px, 100%)", maxHeight: "88vh", overflow: "hidden", padding: 0, display: "flex", flexDirection: "column" }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+          <div>
+            <div className="label-micro">Upload</div>
+            <div className="h-serif" style={{ fontSize: 20 }}>Add course materials</div>
+          </div>
+          <button className="btn btn--ghost btn--sm" onClick={handleClose} aria-label="Close">
+            <Icon name="x" size={14} />
+          </button>
+        </div>
 
-        {!hasActiveUploads && (
-          <button onClick={() => closeModal(confirmedDocs)} style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#6b7280', lineHeight: 1, padding: '4px 6px', borderRadius: '4px' }}>✕</button>
-        )}
-
-        {uploadStep === 'pick' && (
-          <>
-            <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>{title}</h2>
-            <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px' }}>{subtitle ?? defaultSubtitle}</p>
-
-            <div
-              onDrop={handleDrop}
-              onDragOver={e => { e.preventDefault(); setDragging(true); }}
-              onDragLeave={() => setDragging(false)}
-              onClick={() => fileInputRef.current?.click()}
-              style={{
-                border: `2px dashed ${dragging ? '#1a5c2a' : 'rgba(107,114,128,0.3)'}`,
-                borderRadius: '8px', padding: '28px', textAlign: 'center', cursor: 'pointer',
-                background: dragging ? 'rgba(26,92,42,0.04)' : '#fafafa',
-                transition: 'all 0.15s', marginBottom: '8px',
-              }}
-            >
-              {pickedFiles.length > 0 ? (
-                <>
-                  <p style={{ fontSize: '13px', fontWeight: 600, color: '#111827', margin: '0 0 8px' }}>
-                    {pickedFiles.length} file{pickedFiles.length > 1 ? 's' : ''} selected
-                  </p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginBottom: '8px' }}>
-                    {pickedFiles.map((f, i) => (
-                      <p key={i} style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>{f.name}</p>
-                    ))}
-                  </div>
-                  <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>Click to replace</p>
-                </>
-              ) : (
-                <>
-                  <p style={{ fontSize: '14px', color: '#6b7280', margin: 0 }}>Drop files here or click to browse</p>
-                  <p style={{ fontSize: '12px', color: '#9ca3af', margin: '6px 0 0' }}>PDF, DOCX, PPTX · Up to {MAX_FILES} files · Max 15 MB each</p>
-                </>
-              )}
+        <div style={{ padding: 20, overflowY: "auto" }}>
+          <div
+            onDragOver={e => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={e => {
+              e.preventDefault();
+              setDragging(false);
+              addFiles(Array.from(e.dataTransfer.files));
+            }}
+            style={{
+              border: `2px dashed ${dragging ? "var(--accent)" : "var(--border-strong)"}`,
+              borderRadius: "var(--r-md)", padding: 28, textAlign: "center",
+              background: dragging ? "var(--accent-soft)" : "var(--bg-subtle)",
+              transition: "all var(--dur-fast) var(--ease)",
+            }}
+          >
+            <div className="h-serif" style={{ fontSize: 17, marginBottom: 6 }}>
+              {dragging ? "Drop to add files" : "Drag & drop up to 5 files"}
             </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.docx,.pptx"
-              multiple
-              style={{ display: 'none' }}
-              onChange={e => {
-                const files = Array.from(e.target.files || []);
-                if (files.length) validateAndSetMultiple(files);
-                e.target.value = '';
-              }}
-            />
-            {fileError && <p style={{ fontSize: '12px', color: '#b45309', margin: '4px 0 0' }}>{fileError}</p>}
-
-            <div style={{ marginTop: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                <p style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>Course</p>
-                <button
-                  onClick={() => setShowAddCourse(v => !v)}
-                  style={{ fontSize: '12px', color: '#1a5c2a', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
-                >
-                  + Add course
-                </button>
-              </div>
-              <CustomSelect
-                value={selectedCourseId}
-                onChange={setSelectedCourseId}
-                placeholder="Select a course…"
-                options={courses.map(c => ({ value: c.course_id, label: c.course_name }))}
-                style={{ width: '100%', display: 'block' }}
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+              PDF, DOCX, PPTX · max 15 MB each
+            </div>
+            <label className="btn btn--primary btn--sm">
+              <Icon name="up" size={12} /> Browse
+              <input
+                type="file"
+                multiple
+                accept=".pdf,.docx,.pptx"
+                hidden
+                onChange={e => {
+                  if (e.target.files) addFiles(Array.from(e.target.files));
+                  e.target.value = "";
+                }}
               />
+            </label>
+          </div>
 
-              {showAddCourse && (
-                <div style={{ marginTop: '10px', padding: '12px', background: '#f8faf8', borderRadius: '7px', border: '1px solid rgba(107,114,128,0.15)' }}>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <input
-                      autoFocus
-                      value={newCourseName}
-                      onChange={e => { setNewCourseName(e.target.value); setCourseAddError(''); }}
-                      onKeyDown={e => { if (e.key === 'Enter') handleAddCourse(); }}
-                      placeholder="Course name…"
-                      style={{ flex: 1, padding: '6px 10px', border: '1px solid rgba(107,114,128,0.25)', borderRadius: '5px', fontSize: '13px', fontFamily: 'inherit', outline: 'none', color: '#111827' }}
-                    />
+          {courses.length < 10 && (
+            <div style={{ marginTop: 16 }}>
+              <div className="label-micro" style={{ marginBottom: 6 }}>+ Add a course</div>
+              <input
+                value={courseQuery}
+                onChange={e => setCourseQuery(e.target.value)}
+                placeholder="Search a course to add"
+                style={{
+                  width: "100%", padding: "7px 12px", fontSize: 13,
+                  border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
+                  background: "var(--bg-input)",
+                }}
+              />
+              {courseResults.length > 0 && (
+                <div style={{ marginTop: 6, border: "1px solid var(--border)", borderRadius: "var(--r-sm)", maxHeight: 140, overflowY: "auto" }}>
+                  {courseResults.map(c => (
                     <button
-                      onClick={handleAddCourse}
-                      disabled={courseAdding || !newCourseName.trim()}
-                      style={{ padding: '6px 14px', background: courseAdding || !newCourseName.trim() ? '#f3f4f6' : '#1a5c2a', color: courseAdding || !newCourseName.trim() ? '#9ca3af' : '#fff', border: 'none', borderRadius: '5px', fontSize: '13px', fontWeight: 600, cursor: courseAdding || !newCourseName.trim() ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                      key={c.id}
+                      disabled={addingCourse}
+                      onClick={() => addCourseInline(c)}
+                      style={{
+                        width: "100%", padding: "7px 12px", fontSize: 12,
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        borderBottom: "1px solid var(--border)", textAlign: "left",
+                      }}
                     >
-                      {courseAdding ? '…' : 'Add'}
+                      <span><strong>{c.course_code}</strong> · {c.course_name}</span>
+                      <Icon name="plus" size={12} />
                     </button>
-                  </div>
-                  {courseAddError && <p style={{ fontSize: '12px', color: '#b91c1c', margin: '5px 0 0' }}>{courseAddError}</p>}
+                  ))}
                 </div>
               )}
             </div>
+          )}
 
-            <button
-              onClick={handleUpload}
-              disabled={!pickedFiles.length || !selectedCourseId}
-              style={{
-                marginTop: '20px', width: '100%', padding: '10px',
-                background: (!pickedFiles.length || !selectedCourseId) ? '#f3f4f6' : '#1a5c2a',
-                color: (!pickedFiles.length || !selectedCourseId) ? '#9ca3af' : '#fff',
-                border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: 600,
-                cursor: (!pickedFiles.length || !selectedCourseId) ? 'default' : 'pointer',
-                fontFamily: 'inherit', transition: 'background 0.15s',
-              }}
-            >
-              Upload {pickedFiles.length > 1 ? `${pickedFiles.length} Files` : 'File'}
-            </button>
-          </>
-        )}
-
-        {uploadStep === 'reviewing' && (() => {
-          const item = uploadItems[reviewIndex];
-          const isLast = reviewIndex === uploadItems.length - 1;
-          if (!item) return null;
-
-          return (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-                <div>
-                  <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#111827', margin: '0 0 2px' }}>Review</h2>
-                  <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>
-                    {reviewIndex + 1} of {uploadItems.length}
-                  </p>
+          <div style={{ marginTop: 20 }}>
+            {items.length === 0 && (
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Files you add will appear here.</div>
+            )}
+            {items.map(item => (
+              <div
+                key={item.id}
+                className="card"
+                style={{ padding: 14, marginBottom: 10, display: "flex", flexDirection: "column", gap: 10 }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{
+                    width: 28, height: 36, borderRadius: "var(--r-xs)",
+                    background: "var(--accent-soft)", color: "var(--accent)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <Icon name="doc" size={14} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {item.file.name}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                      {(item.file.size / 1024 / 1024).toFixed(1)} MB · {item.file.name.split(".").pop()?.toUpperCase()}
+                    </div>
+                  </div>
+                  <StatusBadge status={item.status} />
+                  <button
+                    className="btn btn--ghost btn--sm"
+                    disabled={item.status === "uploading"}
+                    onClick={() => {
+                      if (item.status === "uploading") item.abort?.abort();
+                      setItems(prev => prev.filter(i => i.id !== item.id));
+                    }}
+                  >
+                    <Icon name="x" size={12} />
+                  </button>
                 </div>
-                {uploadItems.length > 1 && (
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    {uploadItems.map((it, i) => (
-                      <div key={i} style={{
-                        width: i === reviewIndex ? '20px' : '7px',
-                        height: '7px',
-                        borderRadius: '4px',
-                        background: i < reviewIndex
-                          ? '#1a5c2a'
-                          : i === reviewIndex
-                            ? '#1a5c2a'
-                            : 'rgba(107,114,128,0.25)',
-                        transition: 'all 0.2s',
-                        opacity: it.status === 'error' ? 0.4 : 1,
-                      }} />
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Course:</span>
+                  <CustomSelect
+                    size="sm"
+                    value={item.courseId || ""}
+                    onChange={(v) => setItemField(item.id, p => ({ ...p, courseId: v }))}
+                    placeholder="Pick a course"
+                    ariaLabel="Course"
+                    options={courses.map(c => ({ value: c.course_id, label: c.course_code || c.course_name }))}
+                  />
+                  {item.status === "processed" && (
+                    <>
+                      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Category:</span>
+                      <CustomSelect
+                        size="sm"
+                        value={item.category || "other"}
+                        onChange={(v) => handleCategoryChange(item, v)}
+                        options={CATEGORY_OPTIONS}
+                        ariaLabel="Category"
+                      />
+                      <button className="btn btn--ghost btn--sm" onClick={() => reanalyze(item)}>
+                        <Icon name="sparkle" size={12} /> Re-analyze
+                      </button>
+                    </>
+                  )}
+                </div>
+                {item.summary && (
+                  <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>{item.summary}</div>
+                )}
+                {item.takeaways && item.takeaways.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {item.takeaways.slice(0, 4).map(t => (
+                      <span key={t} className="chip chip--accent">{t}</span>
                     ))}
                   </div>
                 )}
+                {item.error && (
+                  <div style={{ fontSize: 11, color: "var(--err)" }}>{item.error}</div>
+                )}
               </div>
+            ))}
+          </div>
+        </div>
 
-              {item.status === 'uploading' && (
-                <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                  <div className="sapling-upload-spinner" role="status" aria-live="polite" aria-label="Analyzing document" />
-                  <p style={{ fontSize: '15px', fontWeight: 600, color: '#111827', margin: '0' }}>Analyzing…</p>
-                  <p style={{ fontSize: '13px', color: '#9ca3af', margin: '6px 0 0', wordBreak: 'break-word' }}>{item.file.name}</p>
-                  <p style={{ fontSize: '12px', color: '#9ca3af', margin: '4px 0 0' }}>Large files can take one to several minutes.</p>
-                </div>
-              )}
-
-              {item.status === 'error' && (
-                <>
-                  <div style={{ background: 'rgba(220,38,38,0.06)', border: '1px solid rgba(220,38,38,0.2)', borderRadius: '7px', padding: '14px 16px', marginBottom: '20px' }}>
-                    <p style={{ fontSize: '13px', fontWeight: 600, color: '#b91c1c', margin: '0 0 4px', wordBreak: 'break-word' }}>{item.file.name}</p>
-                    <p style={{ fontSize: '13px', color: '#b91c1c', margin: 0 }}>{item.error}</p>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      onClick={handleReanalyze}
-                      style={{ flex: 1, padding: '10px', background: '#fff', color: '#374151', border: '1px solid rgba(107,114,128,0.25)', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}
-                    >
-                      Retry
-                    </button>
-                    <button
-                      onClick={handleSkip}
-                      style={{ flex: 2, padding: '10px', background: '#f3f4f6', color: '#6b7280', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                    >
-                      {isLast ? 'Close' : 'Skip'}
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {item.status === 'done' && item.result && (
-                <>
-                  {item.result.category === 'syllabus' && (
-                    <div style={{ background: 'rgba(26,92,42,0.07)', border: '1px solid rgba(26,92,42,0.2)', borderRadius: '7px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', color: '#1a5c2a', fontWeight: 500 }}>
-                      Assignments have been added to your calendar.
-                    </div>
-                  )}
-
-                  <div style={{ ...GLASS, padding: '16px', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <p style={{ fontSize: '14px', fontWeight: 600, color: '#111827', margin: 0, wordBreak: 'break-word' }}>{item.result.file_name}</p>
-
-                    <div>
-                      <p style={{ fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 5px' }}>Category</p>
-                      <CustomSelect
-                        value={item.resultCategory}
-                        onChange={cat => setItemCategory(reviewIndex, cat)}
-                        options={UPLOAD_CATEGORIES.map(cat => ({ value: cat, label: CATEGORY_LABELS[cat] }))}
-                        style={{ width: '100%', display: 'block' }}
-                      />
-                    </div>
-
-                    {item.result.summary && (
-                      <div>
-                        <p style={{ fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 5px' }}>Summary</p>
-                        <p style={{ fontSize: '13px', color: '#374151', margin: 0, lineHeight: 1.6 }}>{item.result.summary}</p>
-                      </div>
-                    )}
-
-                    {item.result.key_takeaways && item.result.key_takeaways.length > 0 && (
-                      <div>
-                        <p style={{ fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 5px' }}>Key Takeaways</p>
-                        <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          {item.result.key_takeaways.map((t, i) => (
-                            <li key={i} style={{ fontSize: '13px', color: '#374151', lineHeight: 1.5 }}>{t}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-
-                  {item.error && <p style={{ fontSize: '12px', color: '#b91c1c', margin: '0 0 12px' }}>{item.error}</p>}
-
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      onClick={handleReanalyze}
-                      style={{ flex: 1, padding: '10px', background: '#fff', color: '#374151', border: '1px solid rgba(107,114,128,0.25)', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}
-                    >
-                      Re-analyze
-                    </button>
-                    <button
-                      onClick={handleConfirm}
-                      style={{ flex: 2, padding: '10px', background: '#1a5c2a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                    >
-                      {isLast ? 'Save' : 'Confirm & Next →'}
-                    </button>
-                  </div>
-                </>
-              )}
-            </>
-          );
-        })()}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderTop: "1px solid var(--border)" }}>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            {items.length} file{items.length === 1 ? "" : "s"} queued
+            {activeUploads > 0 && ` · ${activeUploads} uploading`}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn--ghost btn--sm" onClick={handleClose}>Cancel</button>
+            {allFinished ? (
+              <button className="btn btn--sm btn--primary" onClick={done}>Done</button>
+            ) : (
+              <button
+                className="btn btn--sm btn--primary"
+                disabled={items.length === 0 || items.every(i => i.status !== "pending")}
+                onClick={startAll}
+              >
+                <Icon name="up" size={12} /> Start upload
+              </button>
+            )}
+          </div>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
+}
+
+function StatusBadge({ status }: { status: UploadStatus }) {
+  const meta = statusMeta(status);
+  return (
+    <span className={`chip ${meta.cls}`} style={{ fontSize: 10 }}>
+      {meta.label}
+    </span>
+  );
+}
+
+function statusMeta(s: UploadStatus): { label: string; cls: string } {
+  switch (s) {
+    case "pending": return { label: "queued", cls: "" };
+    case "uploading": return { label: "processing…", cls: "chip--info" };
+    case "processed": return { label: "done", cls: "chip--accent" };
+    case "aborted": return { label: "aborted", cls: "chip--warn" };
+    case "error": return { label: "error", cls: "chip--err" };
+  }
 }

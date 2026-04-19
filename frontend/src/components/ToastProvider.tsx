@@ -1,105 +1,160 @@
-'use client';
+"use client";
 
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
-interface ToastItem {
-  id: string;
+export type ToastVariant = "default" | "success" | "error" | "info" | "warn";
+
+export interface ToastOptions {
+  variant?: ToastVariant;
+  duration?: number | null;
+}
+
+interface Toast {
+  id: number;
   content: React.ReactNode;
-  duration: number;
+  variant: ToastVariant;
+  duration: number | null;
+  createdAt: number;
 }
 
 interface ToastContextValue {
-  showToast: (content: React.ReactNode, options?: { duration?: number }) => void;
+  show: (content: React.ReactNode, options?: ToastOptions) => number;
+  dismiss: (id: number) => void;
+  success: (content: React.ReactNode, options?: ToastOptions) => number;
+  error: (content: React.ReactNode, options?: ToastOptions) => number;
+  info: (content: React.ReactNode, options?: ToastOptions) => number;
+  warn: (content: React.ReactNode, options?: ToastOptions) => number;
 }
 
-const ToastContext = createContext<ToastContextValue>({
-  showToast: () => {},
-});
+const ToastContext = createContext<ToastContextValue | null>(null);
 
-export function useToast() {
-  return useContext(ToastContext);
-}
+let toastCounter = 0;
 
-export default function ToastProvider({ children }: { children: React.ReactNode }) {
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
+export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const [mounted, setMounted] = useState(false);
-  const counterRef = useRef(0);
+  const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
-  const showToast = useCallback((content: React.ReactNode, options?: { duration?: number }) => {
-    const id = `toast-${++counterRef.current}`;
-    const duration = options?.duration ?? 5000;
-    setToasts(prev => [...prev, { id, content, duration }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, duration);
-  }, []);
-
-  const removeToast = useCallback((id: string) => {
+  const dismiss = useCallback((id: number) => {
     setToasts(prev => prev.filter(t => t.id !== id));
+    const timer = timers.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      timers.current.delete(id);
+    }
+  }, []);
+
+  const show = useCallback((content: React.ReactNode, options?: ToastOptions) => {
+    const id = ++toastCounter;
+    const duration = options?.duration === undefined ? 5000 : options.duration;
+    const variant = options?.variant ?? "default";
+    setToasts(prev => [...prev, { id, content, variant, duration, createdAt: Date.now() }]);
+    if (duration !== null && duration > 0) {
+      const timer = setTimeout(() => dismiss(id), duration);
+      timers.current.set(id, timer);
+    }
+    return id;
+  }, [dismiss]);
+
+  const value = useMemo<ToastContextValue>(() => ({
+    show,
+    dismiss,
+    success: (c, o) => show(c, { ...o, variant: "success" }),
+    error: (c, o) => show(c, { ...o, variant: "error" }),
+    info: (c, o) => show(c, { ...o, variant: "info" }),
+    warn: (c, o) => show(c, { ...o, variant: "warn" }),
+  }), [show, dismiss]);
+
+  useEffect(() => () => {
+    timers.current.forEach(t => clearTimeout(t));
+    timers.current.clear();
   }, []);
 
   return (
-    <ToastContext.Provider value={{ showToast }}>
+    <ToastContext.Provider value={value}>
       {children}
-      {mounted && createPortal(
-        <div style={{
-          position: 'fixed',
-          top: '60px',
-          right: '16px',
-          zIndex: 9999,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '8px',
-          pointerEvents: 'none',
-        }}>
-          {toasts.map(toast => (
-            <div
-              key={toast.id}
-              className="toast-enter"
-              style={{
-                pointerEvents: 'auto',
-                background: 'var(--bg-panel)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-md)',
-                boxShadow: 'var(--shadow-md)',
-                padding: '12px 16px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                maxWidth: '360px',
-                fontSize: '13px',
-                fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
-                color: 'var(--text)',
-              }}
-            >
-              <div style={{ flex: 1 }}>{toast.content}</div>
-              <button
-                onClick={() => removeToast(toast.id)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  padding: '2px',
-                  cursor: 'pointer',
-                  color: 'var(--text-dim)',
-                  flexShrink: 0,
-                }}
-                aria-label="Dismiss"
-              >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                  <line x1="3" y1="3" x2="11" y2="11" />
-                  <line x1="11" y1="3" x2="3" y2="11" />
-                </svg>
-              </button>
-            </div>
-          ))}
-        </div>,
-        document.body
-      )}
+      {mounted && createPortal(<ToastStack toasts={toasts} onDismiss={dismiss} />, document.body)}
     </ToastContext.Provider>
   );
+}
+
+function variantStyles(variant: ToastVariant): React.CSSProperties {
+  switch (variant) {
+    case "success":
+      return { background: "var(--accent-soft)", color: "var(--accent)", borderColor: "var(--accent-border)" };
+    case "error":
+      return { background: "var(--err-soft)", color: "var(--err)", borderColor: "transparent" };
+    case "warn":
+      return { background: "var(--warn-soft)", color: "var(--warn)", borderColor: "transparent" };
+    case "info":
+      return { background: "var(--info-soft)", color: "var(--info)", borderColor: "transparent" };
+    default:
+      return { background: "var(--bg-panel)", color: "var(--text)", borderColor: "var(--border-strong)" };
+  }
+}
+
+function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
+  return (
+    <div
+      aria-live="polite"
+      aria-atomic="true"
+      style={{
+        position: "fixed",
+        top: 16,
+        right: 16,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        zIndex: 1000,
+        pointerEvents: "none",
+        maxWidth: "calc(100vw - 32px)",
+      }}
+    >
+      {toasts.map(t => (
+        <div
+          key={t.id}
+          className="fade-in"
+          role="status"
+          style={{
+            pointerEvents: "auto",
+            padding: "10px 12px",
+            borderRadius: "var(--r-md)",
+            border: "1px solid",
+            boxShadow: "var(--shadow-md)",
+            fontSize: 13,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            minWidth: 220,
+            maxWidth: 360,
+            ...variantStyles(t.variant),
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>{t.content}</div>
+          <button
+            onClick={() => onDismiss(t.id)}
+            aria-label="Dismiss notification"
+            style={{
+              color: "inherit",
+              opacity: 0.6,
+              fontSize: 16,
+              lineHeight: 1,
+              padding: 2,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function useToast() {
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error("useToast must be used within ToastProvider");
+  return ctx;
 }

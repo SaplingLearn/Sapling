@@ -2,7 +2,9 @@
 Profile routes — public profiles, settings, cosmetics, achievements, account management.
 """
 
+import re
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
 
@@ -17,6 +19,7 @@ from models import (
 )
 from services.auth_guard import require_self, get_session_user_id
 from services.storage_service import upload_avatar
+from services.achievement_service import get_user_stat
 
 router = APIRouter()
 
@@ -113,6 +116,24 @@ def _get_user_stats(user_id: str) -> dict:
         "documents_count": documents_count,
         "achievements_count": achievements_count,
     }
+
+
+# ── Username Availability ────────────────────────────────────────────────────
+
+_USERNAME_RE = re.compile(r"^[a-z0-9_]{3,24}$")
+
+
+@router.get("/username/check")
+def check_username(username: str = Query(...), user_id: Optional[str] = Query(None)):
+    name = (username or "").strip().lower()
+    if not _USERNAME_RE.match(name):
+        return {"available": False, "reason": "invalid"}
+    existing = table("users").select("id", filters={"username": f"eq.{name}"})
+    if not existing:
+        return {"available": True}
+    if user_id and existing[0]["id"] == user_id:
+        return {"available": True, "reason": "self"}
+    return {"available": False, "reason": "taken"}
 
 
 # ── Public Profile ───────────────────────────────────────────────────────────
@@ -380,6 +401,43 @@ def get_achievements(user_id: str):
         for r in earned_rows:
             earned_ids[r["achievement_id"]] = r
 
+    # Fetch triggers once and group by achievement_id so we can surface progress.
+    trigger_rows = table("achievement_triggers").select(
+        "achievement_id,trigger_type,trigger_threshold",
+    )
+    triggers_by_ach: dict = {}
+    for t in trigger_rows or []:
+        triggers_by_ach.setdefault(t["achievement_id"], []).append(t)
+
+    # Cache stat lookups per trigger_type — most achievements share a handful of counters.
+    stat_cache: dict = {}
+
+    def _progress_for(ach_id: str) -> dict | None:
+        ts = triggers_by_ach.get(ach_id)
+        if not ts:
+            return None
+        # Pick the tightest gap (lowest current/target ratio) so the UI tracks the leading edge.
+        best = None
+        for t in ts:
+            tt = t["trigger_type"]
+            if tt == "manual_admin_grant":
+                continue
+            target = int(t.get("trigger_threshold") or 0)
+            if target <= 0:
+                continue
+            if tt not in stat_cache:
+                try:
+                    stat_cache[tt] = get_user_stat(user_id, tt)
+                except Exception:
+                    stat_cache[tt] = 0
+            current = min(stat_cache[tt], target)
+            ratio = current / target
+            if best is None or ratio < best["ratio"]:
+                best = {"current": current, "target": target, "ratio": ratio}
+        if best is None:
+            return None
+        return {"current": best["current"], "target": best["target"]}
+
     earned = []
     available = []
 
@@ -392,7 +450,7 @@ def get_achievements(user_id: str):
             })
         else:
             if ach.get("is_secret"):
-                available.append({
+                entry = {
                     "id": ach["id"],
                     "name": "Secret Achievement",
                     "slug": ach["slug"],
@@ -401,9 +459,11 @@ def get_achievements(user_id: str):
                     "category": ach["category"],
                     "rarity": ach["rarity"],
                     "is_secret": True,
-                })
+                    "progress": None,
+                }
             else:
-                available.append(ach)
+                entry = {**ach, "progress": _progress_for(ach["id"])}
+            available.append(entry)
 
     return {"earned": earned, "available": available}
 
@@ -431,6 +491,25 @@ def get_cosmetics(user_id: str, request: Request):
                 })
 
     return {"cosmetics": grouped, "equipped": _get_equipped_cosmetics(settings)}
+
+
+@router.get("/{user_id}/cosmetics/catalog")
+def get_cosmetics_catalog(user_id: str, request: Request):
+    """All cosmetics grouped by type with an `owned` flag per item."""
+    require_self(user_id, request)
+    all_cosmetics = table("cosmetics").select("id,type,name,slug,asset_url,css_value,rarity,unlock_source")
+    owned_rows = table("user_cosmetics").select(
+        "cosmetic_id",
+        filters={"user_id": f"eq.{user_id}"},
+    )
+    owned_ids = {r["cosmetic_id"] for r in (owned_rows or [])}
+
+    grouped: dict = {"avatar_frame": [], "banner": [], "name_color": [], "title": []}
+    for c in all_cosmetics or []:
+        if c.get("type") not in grouped:
+            continue
+        grouped[c["type"]].append({**c, "owned": c["id"] in owned_ids})
+    return {"catalog": grouped}
 
 
 # ── Roles ────────────────────────────────────────────────────────────────────

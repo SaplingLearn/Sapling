@@ -1,0 +1,36 @@
+#:schema node_modules/wrangler/config-schema.json
+#
+# Cloudflare WORKERS config for the Next.js frontend.
+#
+# Intentionally named wrangler.workers.toml (not wrangler.toml) so
+# the Cloudflare Pages build pipeline does not auto-detect it and
+# fail with "A Wrangler configuration file was found but it does
+# not appear to be valid." Pages's wrangler-config beta only
+# accepts Pages-shaped configs (with `pages_build_output_dir`),
+# while this file is Workers-shaped (with `main` + `[assets]`).
+#
+# This app is not deployable on Cloudflare Pages: it uses Next.js
+# middleware, API routes, a /api/:path* rewrite, and a dynamic
+# /profile/[userId] route, none of which are compatible with
+# `next export` (Pages's only supported mode for Next.js). The
+# @cloudflare/next-on-pages adapter doesn't support Next 16 yet.
+#
+# To deploy: migrate the project from Cloudflare Pages to Cloudflare
+# Workers, then:
+#
+#     cd frontend
+#     npm install
+#     npm run cf:build                # produces .open-next/
+#     npx wrangler deploy -c wrangler.workers.toml
+
+name = "sapling-frontend"
+main = ".open-next/worker.js"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+
+[assets]
+binding = "ASSETS"
+directory = ".open-next/assets"
+
+[observability]
+enabled = true

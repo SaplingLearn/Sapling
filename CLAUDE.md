@@ -259,17 +259,21 @@ Env files required: `backend/.env` (copy from `backend/.env.example`) and `front
 
 Always run tests after any significant edit and fix failures before moving on.
 
-**Frontend**
-```bash
-cd frontend
-npm test -- --watchAll=false
-```
-
 **Backend**
 ```bash
 cd backend
 source venv/bin/activate
 python -m pytest tests/ -q
+```
+
+**Frontend** — no automated test suite on this branch. Jest, its config, and the
+previous `src/__tests__/*` files were removed during the revamp. Until a new
+harness (Jest or Vitest) is reintroduced, verify frontend changes with:
+
+```bash
+cd frontend
+npx tsc --noEmit    # type safety
+npm run dev         # manual smoke test in the browser
 ```
 
 Keep tests in sync with the code they cover:

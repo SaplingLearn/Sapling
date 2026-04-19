@@ -1,7 +1,6 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import Image from 'next/image';
 import { useUser } from '@/context/UserContext';
 
 export default function PendingPage() {
@@ -10,69 +9,33 @@ export default function PendingPage() {
 
   async function handleSignOut() {
     await signOut();
-    router.replace('/signin');
+    router.replace('/auth');
   }
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: 'var(--bg-base, #0d1117)',
-      color: 'var(--brand-text1, #e6edf3)',
-      padding: '24px',
-    }}>
-      <Image
-        src="/sapling-word-icon.png"
-        alt="Sapling"
-        width={140}
-        height={40}
-        style={{ marginBottom: '40px', objectFit: 'contain' }}
-      />
-      <h1 style={{
-        fontSize: '28px',
-        fontWeight: 600,
-        marginBottom: '12px',
-        textAlign: 'center',
-        letterSpacing: '-0.02em',
-      }}>
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'radial-gradient(ellipse at top, var(--accent-soft) 0%, var(--bg) 60%)',
+        color: 'var(--text)',
+        padding: 24,
+      }}
+    >
+      <svg width="56" height="56" viewBox="0 0 24 24" style={{ marginBottom: 24 }}>
+        <path d="M12 22 Q 5 15 5 9 Q 5 3 12 3 Q 19 3 19 9 Q 19 15 12 22 Z" fill="var(--accent)" opacity={0.2} />
+        <path d="M12 22 V 10 M12 13 Q 8 10 7 7 M12 14 Q 16 11 17 8" stroke="var(--accent)" strokeWidth={1.5} fill="none" strokeLinecap="round" />
+      </svg>
+      <h1 className="h-serif" style={{ fontSize: 36, fontWeight: 500, marginBottom: 12, textAlign: 'center' }}>
         You&apos;re on the waitlist
       </h1>
-      <p style={{
-        fontSize: '15px',
-        color: 'var(--brand-text2, #8b949e)',
-        textAlign: 'center',
-        maxWidth: '340px',
-        lineHeight: 1.6,
-        marginBottom: '40px',
-      }}>
+      <p style={{ fontSize: 15, color: 'var(--text-dim)', textAlign: 'center', maxWidth: 420, lineHeight: 1.6, marginBottom: 32 }}>
         We&apos;ll reach out when your access is approved.
       </p>
-      <button
-        onClick={handleSignOut}
-        style={{
-          background: 'transparent',
-          border: '1px solid rgba(255,255,255,0.15)',
-          color: 'var(--brand-text2, #8b949e)',
-          padding: '10px 24px',
-          borderRadius: '8px',
-          fontSize: '14px',
-          cursor: 'pointer',
-          transition: 'border-color 0.2s, color 0.2s',
-        }}
-        onMouseEnter={e => {
-          (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.35)';
-          (e.currentTarget as HTMLButtonElement).style.color = 'var(--brand-text1, #e6edf3)';
-        }}
-        onMouseLeave={e => {
-          (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.15)';
-          (e.currentTarget as HTMLButtonElement).style.color = 'var(--brand-text2, #8b949e)';
-        }}
-      >
-        Sign out
-      </button>
+      <button className="btn" onClick={handleSignOut}>Sign out</button>
     </div>
   );
 }

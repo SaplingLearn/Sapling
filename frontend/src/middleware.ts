@@ -4,7 +4,7 @@ import { verifySession } from '@/lib/sessionToken'
 
 const PROTECTED = [
   '/dashboard', '/learn', '/study', '/tree',
-  '/flashcards', '/library', '/calendar', '/social',
+  '/library', '/calendar', '/social',
   '/settings', '/achievements', '/admin'
 ]
 
@@ -18,36 +18,9 @@ function googleAuthRedirect() {
 function redirectToGoogleOrSignin(request: NextRequest) {
   const g = googleAuthRedirect()
   if (g) return NextResponse.redirect(g)
-  const u = new URL('/signin', request.url)
+  const u = new URL('/auth', request.url)
   u.searchParams.set('error', 'google_not_configured')
   return NextResponse.redirect(u)
-}
-
-async function redirectIfSignedIn(request: NextRequest): Promise<NextResponse | null> {
-  const token = request.cookies.get('sapling_session')?.value
-  if (!token) return null
-  const session = await verifySession(token)
-  if (!session) return null
-  if (!API_URL) return null
-  try {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 3000)
-    let res: Response
-    try {
-      res = await fetch(
-        `${API_URL}/api/auth/me?user_id=${encodeURIComponent(session.userId)}`,
-        { signal: controller.signal },
-      )
-    } finally {
-      clearTimeout(timeout)
-    }
-    if (!res.ok) return null
-    const data = await res.json()
-    const dest = data.is_approved === true ? '/dashboard' : '/pending'
-    return NextResponse.redirect(new URL(dest, request.url))
-  } catch {
-    return null
-  }
 }
 
 export async function middleware(request: NextRequest) {
@@ -57,33 +30,28 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl
 
-  if (pathname === '/signin' || pathname === '/signin/') {
-    const redirect = await redirectIfSignedIn(request)
-    if (redirect) return redirect
-    const hasError = request.nextUrl.searchParams.get('error')
-    if (hasError) {
-      return NextResponse.next()
+  // Mirror pre-revamp behavior: an already-signed-in user hitting /auth or
+  // /auth/callback should bounce straight to /dashboard instead of seeing
+  // the sign-in form again. Pre-revamp handled this via a redirectIfSignedIn
+  // helper on /signin; the route moved but the behavior shouldn't regress.
+  if (pathname === '/auth' || pathname === '/auth/') {
+    const token = request.cookies.get('sapling_session')?.value
+    if (token && (await verifySession(token))) {
+      return NextResponse.redirect(new URL('/dashboard', request.url))
     }
-    return redirectToGoogleOrSignin(request)
+    return NextResponse.next()
   }
 
   const isProtected = PROTECTED.some(p => pathname.startsWith(p))
   if (!isProtected) return NextResponse.next()
 
   const token = request.cookies.get('sapling_session')?.value
-  if (!token) {
-    return redirectToGoogleOrSignin(request)
-  }
+  if (!token) return redirectToGoogleOrSignin(request)
 
   const session = await verifySession(token)
-  if (!session) {
-    return redirectToGoogleOrSignin(request)
-  }
+  if (!session) return redirectToGoogleOrSignin(request)
 
-  // Re-check approval live so revocation takes effect immediately.
-  if (!API_URL) {
-    return redirectToGoogleOrSignin(request)
-  }
+  if (!API_URL) return redirectToGoogleOrSignin(request)
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 3000)
@@ -96,13 +64,9 @@ export async function middleware(request: NextRequest) {
     } finally {
       clearTimeout(timeout)
     }
-    if (!res.ok) {
-      return redirectToGoogleOrSignin(request)
-    }
+    if (!res.ok) return redirectToGoogleOrSignin(request)
     const data = await res.json()
-    if (data.is_approved !== true) {
-      return NextResponse.redirect(new URL('/pending', request.url))
-    }
+    if (data.is_approved !== true) return NextResponse.redirect(new URL('/pending', request.url))
   } catch {
     return redirectToGoogleOrSignin(request)
   }
@@ -112,9 +76,9 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/signin',
+    '/auth', '/auth/',  // for the signed-in -> /dashboard redirect
     '/dashboard/:path*', '/learn/:path*', '/study/:path*',
-    '/tree/:path*', '/flashcards/:path*', '/library/:path*',
+    '/tree/:path*', '/library/:path*',
     '/calendar/:path*', '/social/:path*',
     '/settings/:path*', '/achievements/:path*',
     '/admin/:path*'

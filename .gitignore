@@ -55,3 +55,8 @@ Thumbs.db
 .codeium/
 .tabnine/
 
+# The npx-skills installer creates /skills/ as a symlink dir pointing at
+# .agents/skills/ (the tracked source of truth). Ignore the root-level
+# symlink dir so only the real files are versioned.
+/skills/
+

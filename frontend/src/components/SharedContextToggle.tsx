@@ -1,135 +1,105 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
+import React, { useEffect, useState } from "react";
 
-interface Props {
-  enabled: boolean;
-  onToggle: () => void;
+const STORAGE_KEY = "sapling_shared_ctx";
+
+export function useSharedContext(): [boolean, (v: boolean) => void] {
+  const [enabled, setEnabled] = useState(true);
+  useEffect(() => {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw === "false") setEnabled(false);
+  }, []);
+  const update = (v: boolean) => {
+    setEnabled(v);
+    localStorage.setItem(STORAGE_KEY, String(v));
+  };
+  return [enabled, update];
 }
 
-export default function SharedContextToggle({ enabled, onToggle }: Props) {
-  const [tooltipVisible, setTooltipVisible] = useState(false);
+export function SharedContextToggle({
+  enabled,
+  onChange,
+}: {
+  enabled: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  const [tooltip, setTooltip] = useState(false);
 
   return (
     <div
-      style={{ position: 'relative', zIndex: 9999 }}
-      onMouseEnter={() => setTooltipVisible(true)}
-      onMouseLeave={() => setTooltipVisible(false)}
+      style={{ position: "relative", display: "inline-block" }}
+      onMouseEnter={() => setTooltip(true)}
+      onMouseLeave={() => setTooltip(false)}
+      onFocus={() => setTooltip(true)}
+      onBlur={() => setTooltip(false)}
     >
       <button
-        onClick={onToggle}
+        role="switch"
+        aria-checked={enabled}
+        onClick={() => onChange(!enabled)}
+        className="btn btn--sm"
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          padding: '4px 10px',
-          borderRadius: '20px',
-          border: enabled
-            ? '1px solid rgba(26,92,42,0.35)'
-            : '1px solid rgba(107,114,128,0.22)',
-          background: enabled ? 'rgba(26,92,42,0.08)' : 'rgba(107,114,128,0.05)',
-          cursor: 'pointer',
-          transition: 'all 0.2s',
+          padding: "5px 10px",
+          background: enabled ? "var(--accent-soft)" : "var(--bg-subtle)",
+          color: enabled ? "var(--accent)" : "var(--text-dim)",
+          borderColor: enabled ? "var(--accent-border)" : "var(--border)",
+          fontSize: 12,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
         }}
       >
-        <span style={{
-          fontSize: '11px',
-          fontWeight: 600,
-          color: enabled ? '#1a5c2a' : '#9ca3af',
-          letterSpacing: '0.03em',
-          fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
-        }}>
-          Class Intel
+        <span
+          aria-hidden
+          style={{
+            width: 24,
+            height: 12,
+            borderRadius: "var(--r-full)",
+            background: enabled ? "var(--accent)" : "var(--border-strong)",
+            position: "relative",
+            transition: "background var(--dur-fast) var(--ease)",
+          }}
+        >
+          <span
+            style={{
+              position: "absolute",
+              top: 1,
+              left: enabled ? 13 : 1,
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              background: "#fff",
+              transition: "left var(--dur-fast) var(--ease)",
+            }}
+          />
         </span>
-        <span style={{
-          width: '28px',
-          height: '14px',
-          borderRadius: '7px',
-          background: enabled ? '#1a5c2a' : 'rgba(107,114,128,0.28)',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 2px',
-          transition: 'background 0.2s',
-          flexShrink: 0,
-        }}>
-          <span style={{
-            width: '10px',
-            height: '10px',
-            borderRadius: '50%',
-            background: '#fff',
-            transform: enabled ? 'translateX(14px)' : 'translateX(0)',
-            transition: 'transform 0.2s',
-            display: 'block',
-          }} />
-        </span>
+        Class intel
       </button>
-
-      {tooltipVisible && (
-        <div style={{
-          position: 'absolute',
-          top: 'calc(100% + 8px)',
-          right: 0,
-          background: '#f8fbf8',
-          border: '1px solid rgba(107,114,128,0.18)',
-          borderRadius: '10px',
-          padding: '13px 15px',
-          fontSize: '12px',
-          lineHeight: 1.6,
-          width: '290px',
-          zIndex: 9999,
-          boxShadow: '0 4px 16px rgba(15,23,42,0.09), 0 1px 4px rgba(15,23,42,0.05)',
-          pointerEvents: 'none',
-          fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '7px' }}>
-            <span style={{
-              fontSize: '11px',
-              fontWeight: 700,
-              color: '#111827',
-              letterSpacing: '0.02em',
-            }}>
-              Class Intelligence
-            </span>
-            <span style={{
-              fontSize: '10px',
-              fontWeight: 600,
-              padding: '1px 7px',
-              borderRadius: '10px',
-              background: enabled ? 'rgba(26,92,42,0.1)' : 'rgba(107,114,128,0.1)',
-              color: enabled ? '#1a5c2a' : '#6b7280',
-            }}>
-              {enabled ? 'On' : 'Off'}
-            </span>
-          </div>
-
-          <p style={{ margin: '0 0 7px', color: '#374151' }}>
-            Sapling uses anonymized, aggregated patterns from your class to personalize
-            your sessions: which concepts students find hardest, common mistakes, and
-            weak areas, without revealing individual data.
-          </p>
-
-          <p style={{ margin: '0 0 10px', color: '#374151' }}>
-            When <strong style={{ color: '#111827' }}>on</strong>: explanations slow
-            down on topics the class struggles with, quizzes target known weak areas,
-            and Sapling proactively addresses common misconceptions before you make them.
-          </p>
-
-          <div style={{
-            borderTop: '1px solid rgba(107,114,128,0.14)',
-            paddingTop: '9px',
-            display: 'flex',
-            gap: '6px',
-            alignItems: 'flex-start',
-          }}>
-            <span style={{ fontSize: '11px', color: '#1a5c2a', flexShrink: 0, marginTop: '1px' }}>
-              &#x2714;
-            </span>
-            <p style={{ margin: 0, fontSize: '11px', color: '#6b7280', lineHeight: 1.5 }}>
-              Privacy: only class-level aggregates are used. Your individual responses
-              and scores are never shared with other students. Turn this off to receive
-              a session based solely on your own learning history.
-            </p>
-          </div>
+      {tooltip && (
+        <div
+          role="tooltip"
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            right: 0,
+            zIndex: 60,
+            width: 240,
+            padding: 10,
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border-strong)",
+            borderRadius: "var(--r-md)",
+            boxShadow: "var(--shadow-md)",
+            fontSize: 11,
+            color: "var(--text-dim)",
+            lineHeight: 1.5,
+          }}
+        >
+          <strong style={{ color: "var(--text)", display: "block", marginBottom: 4 }}>
+            Shared course context
+          </strong>
+          Includes anonymized class-level patterns (common gaps, frequent questions). Disabling keeps the
+          tutor focused on only your individual state.
         </div>
       )}
     </div>

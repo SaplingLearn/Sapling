@@ -1,189 +1,209 @@
-'use client';
+"use client";
 
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
-export interface SelectOption {
-  value: string;
-  label: string;
+export interface CustomSelectOption<T extends string = string> {
+  value: T;
+  label: React.ReactNode;
+  description?: React.ReactNode;
+  disabled?: boolean;
 }
 
-interface Props {
-  value: string;
-  onChange: (value: string) => void;
-  options: SelectOption[];
+interface CustomSelectProps<T extends string = string> {
+  value: T;
+  options: CustomSelectOption<T>[];
+  onChange: (value: T) => void;
   placeholder?: string;
+  ariaLabel?: string;
+  disabled?: boolean;
+  size?: "sm" | "md";
+  align?: "left" | "right";
+  className?: string;
   style?: React.CSSProperties;
-  compact?: boolean;
-  openUpward?: boolean;
-  onDelete?: (value: string) => void;
 }
 
-export default function CustomSelect({ value, onChange, options, placeholder, style, compact, openUpward, onDelete }: Props) {
+export function CustomSelect<T extends string = string>({
+  value,
+  options,
+  onChange,
+  placeholder = "Select…",
+  ariaLabel,
+  disabled,
+  size = "md",
+  align = "left",
+  className,
+  style,
+}: CustomSelectProps<T>) {
   const [open, setOpen] = useState(false);
-  const [dropRect, setDropRect] = useState<DOMRect | null>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const dropRef = useRef<HTMLDivElement>(null);
+  const [highlighted, setHighlighted] = useState(-1);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const listboxId = useId();
 
-  const selected = options.find(o => o.value === value);
-
-  const handleToggle = () => {
-    if (options.length === 0) return;
-    if (!open && triggerRef.current) {
-      setDropRect(triggerRef.current.getBoundingClientRect());
-    }
-    setOpen(o => !o);
-  };
+  const selectedIndex = useMemo(() => options.findIndex(o => o.value === value), [options, value]);
+  const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
 
   useEffect(() => {
     if (!open) return;
-    const handleOutside = (e: MouseEvent) => {
-      if (
-        triggerRef.current?.contains(e.target as Node) ||
-        dropRef.current?.contains(e.target as Node)
-      ) return;
-      setOpen(false);
+    setHighlighted(selectedIndex >= 0 ? selectedIndex : 0);
+    const onDown = (e: MouseEvent) => {
+      if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    const handleScroll = () => {
-      if (triggerRef.current) setDropRect(triggerRef.current.getBoundingClientRect());
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
     };
-    document.addEventListener('mousedown', handleOutside);
-    window.addEventListener('scroll', handleScroll, true);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener('mousedown', handleOutside);
-      window.removeEventListener('scroll', handleScroll, true);
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, selectedIndex]);
 
-  const padding = compact ? '2px 8px' : '5px 10px';
-  const fontSize = compact ? '12px' : '13px';
+  const commit = useCallback((idx: number) => {
+    const opt = options[idx];
+    if (!opt || opt.disabled) return;
+    onChange(opt.value);
+    setOpen(false);
+  }, [options, onChange]);
 
-  const dropdown =
-    open && dropRect
-      ? createPortal(
-          <div
-            ref={dropRef}
-            style={{
-              position: 'fixed',
-              ...(openUpward
-                ? { bottom: window.innerHeight - dropRect.top + 4, maxHeight: dropRect.top - 12 }
-                : { top: dropRect.bottom + 4, maxHeight: window.innerHeight - dropRect.bottom - 8 }),
-              left: dropRect.left,
-              minWidth: Math.max(dropRect.width, compact ? 120 : 140),
-              background: '#ffffff',
-              border: '1px solid rgba(107,114,128,0.18)',
-              borderRadius: '10px',
-              overflowY: 'auto',
-              zIndex: 2147483647,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.1), 0 0 0 1px rgba(107,114,128,0.08)',
-            }}
-          >
-            {options.map(opt => (
-              <div key={opt.value} style={{ display: 'flex', alignItems: 'center' }}>
-                <button
-                  onMouseDown={e => e.preventDefault()}
-                  onClick={() => { onChange(opt.value); setOpen(false); }}
-                  style={{
-                    flex: 1,
-                    padding: compact ? '6px 10px' : '8px 12px',
-                    background: opt.value === value ? 'rgba(26,92,42,0.08)' : 'transparent',
-                    color: opt.value === value ? '#1a5c2a' : '#374151',
-                    fontSize,
-                    cursor: 'pointer',
-                    border: 'none',
-                    textAlign: 'left',
-                    fontFamily: 'inherit',
-                    whiteSpace: 'nowrap',
-                    transition: 'background 0.12s, color 0.12s',
-                  }}
-                  onMouseEnter={e => {
-                    if (opt.value !== value) {
-                      (e.currentTarget as HTMLButtonElement).style.background = 'rgba(26,92,42,0.05)';
-                      (e.currentTarget as HTMLButtonElement).style.color = '#111827';
-                    }
-                  }}
-                  onMouseLeave={e => {
-                    if (opt.value !== value) {
-                      (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-                      (e.currentTarget as HTMLButtonElement).style.color = '#374151';
-                    }
-                  }}
-                >
-                  {opt.label}
-                </button>
-                {onDelete && (
-                  <button
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => { e.stopPropagation(); onDelete(opt.value); }}
-                    title="Delete session"
-                    style={{
-                      flexShrink: 0,
-                      padding: compact ? '6px 8px' : '8px 10px',
-                      background: 'transparent',
-                      border: 'none',
-                      color: '#9ca3af',
-                      fontSize: '16px',
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
-                      lineHeight: 1,
-                      transition: 'color 0.12s',
-                    }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#dc2626'; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#9ca3af'; }}
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>,
-          document.body
-        )
-      : null;
+  const onButtonKey = (e: React.KeyboardEvent) => {
+    if (disabled) return;
+    if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      setOpen(o => !o);
+      return;
+    }
+  };
+
+  const onListKey = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlighted(h => {
+        for (let i = 1; i <= options.length; i++) {
+          const next = (h + i) % options.length;
+          if (!options[next].disabled) return next;
+        }
+        return h;
+      });
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlighted(h => {
+        for (let i = 1; i <= options.length; i++) {
+          const next = (h - i + options.length) % options.length;
+          if (!options[next].disabled) return next;
+        }
+        return h;
+      });
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      commit(highlighted);
+    } else if (e.key === "Tab") {
+      setOpen(false);
+    }
+  };
+
+  const padding = size === "sm" ? "5px 10px" : "8px 12px";
+  const fontSize = size === "sm" ? 12 : 13;
 
   return (
-    <div style={{ position: 'relative', display: 'inline-block', ...style }}>
+    <div
+      ref={wrapperRef}
+      className={className}
+      style={{ position: "relative", display: "inline-block", ...style }}
+    >
       <button
-        ref={triggerRef}
-        onClick={handleToggle}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-label={ariaLabel}
+        disabled={disabled}
+        onClick={() => !disabled && setOpen(o => !o)}
+        onKeyDown={onButtonKey}
         style={{
-          width: '100%',
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          width: "100%",
           padding,
-          background: '#ffffff',
-          border: `1px solid rgba(107,114,128,${open ? '0.35' : '0.2'})`,
-          borderRadius: '8px',
-          color: selected ? '#111827' : '#9ca3af',
           fontSize,
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '8px',
-          outline: 'none',
-          fontFamily: 'inherit',
-          transition: 'border-color 0.15s',
-          boxShadow: open ? '0 0 0 3px rgba(26,92,42,0.1)' : 'none',
+          borderRadius: "var(--r-sm)",
+          border: "1px solid var(--border)",
+          background: "var(--bg-input)",
+          color: selected ? "var(--text)" : "var(--text-muted)",
+          cursor: disabled ? "not-allowed" : "pointer",
+          opacity: disabled ? 0.6 : 1,
+          textAlign: "left",
+          transition: "border-color var(--dur-fast) var(--ease)",
         }}
       >
-        <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-          {selected?.label ?? placeholder ?? ''}
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {selected ? selected.label : placeholder}
         </span>
-        {options.length > 0 && (
-          <span
-            style={{
-              fontSize: '8px',
-              color: '#9ca3af',
-              transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
-              transition: 'transform 0.2s ease',
-              display: 'inline-block',
-              flexShrink: 0,
-            }}
-          >
-            ▼
-          </span>
-        )}
+        <span aria-hidden style={{ fontSize: 10, color: "var(--text-muted)", transform: open ? "rotate(180deg)" : "none", transition: "transform var(--dur-fast) var(--ease)" }}>▾</span>
       </button>
-      {dropdown}
+      {open && (
+        <ul
+          role="listbox"
+          id={listboxId}
+          tabIndex={-1}
+          onKeyDown={onListKey}
+          ref={el => el?.focus()}
+          className="fade-in"
+          style={{
+            position: "absolute",
+            zIndex: 100,
+            top: "calc(100% + 4px)",
+            left: align === "left" ? 0 : "auto",
+            right: align === "right" ? 0 : "auto",
+            minWidth: "100%",
+            margin: 0,
+            padding: 4,
+            listStyle: "none",
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border-strong)",
+            borderRadius: "var(--r-md)",
+            boxShadow: "var(--shadow-lg)",
+            maxHeight: 280,
+            overflowY: "auto",
+          }}
+        >
+          {options.map((opt, idx) => {
+            const active = idx === highlighted;
+            const isSelected = opt.value === value;
+            return (
+              <li
+                key={opt.value}
+                role="option"
+                aria-selected={isSelected}
+                aria-disabled={opt.disabled}
+                onMouseEnter={() => setHighlighted(idx)}
+                onClick={() => commit(idx)}
+                style={{
+                  padding: "7px 10px",
+                  fontSize,
+                  borderRadius: "var(--r-sm)",
+                  cursor: opt.disabled ? "not-allowed" : "pointer",
+                  color: opt.disabled ? "var(--text-muted)" : "var(--text)",
+                  background: active && !opt.disabled ? "var(--bg-subtle)" : "transparent",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span>{opt.label}</span>
+                  {opt.description && (
+                    <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>{opt.description}</span>
+                  )}
+                </span>
+                {isSelected && <span aria-hidden style={{ color: "var(--accent)", fontSize: 12 }}>✓</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

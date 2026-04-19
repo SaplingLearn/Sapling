@@ -11,13 +11,11 @@ function createBrowserClient(): SupabaseClient {
   return createClient(url, key);
 }
 
-/** Lazily creates the client so `next build` can prerender without Supabase env vars. */
 export function getSupabase(): SupabaseClient {
   if (!client) client = createBrowserClient();
   return client;
 }
 
-/** Proxy defers creation until first use (client-side only in practice). */
 export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
   get(_target, prop, receiver) {
     const c = getSupabase();
