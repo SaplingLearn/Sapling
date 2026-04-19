@@ -117,7 +117,10 @@ export function Dashboard() {
   const [fullscreen, setFullscreen] = React.useState(false);
   const [mobileTab, setMobileTab] = React.useState<"courses" | "stats">("courses");
 
-  const [size, setSize] = React.useState({ w: 720, h: 440 });
+  // Initial guess matches the container's CSS height (340). Actual
+  // dimensions are measured via ResizeObserver below; this default just
+  // avoids a one-frame flash at the old taller size.
+  const [size, setSize] = React.useState({ w: 720, h: 340 });
   const gRef = React.useRef<HTMLDivElement>(null);
 
   const suggest = search.get("suggest");
