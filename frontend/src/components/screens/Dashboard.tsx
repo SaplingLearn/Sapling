@@ -230,14 +230,6 @@ export function Dashboard() {
     });
   }, [courses, nodes]);
 
-  const recentByNode = React.useMemo(() => {
-    const items = nodes
-      .filter(n => !n.is_subject_root && n.last_studied_at)
-      .sort((a, b) => new Date(b.last_studied_at!).getTime() - new Date(a.last_studied_at!).getTime())
-      .slice(0, 5);
-    return items;
-  }, [nodes]);
-
   const suggestNode = React.useMemo(() => {
     if (!suggest) return null;
     return nodes.find(n => n.name.toLowerCase() === suggest.toLowerCase()) || null;
@@ -494,33 +486,6 @@ export function Dashboard() {
         })}
       </div>
 
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 12 }}>Recent activity</div>
-        {recentByNode.length === 0 && sessions.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No recent activity.</div>
-        )}
-        {recentByNode.map(n => (
-          <button
-            key={n.id}
-            onClick={() => router.push(`/learn?topic=${encodeURIComponent(n.name)}&mode=socratic${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`)}
-            style={{
-              display: "flex", alignItems: "center", gap: 10, width: "100%",
-              padding: "8px 0", borderBottom: "1px solid var(--border)", textAlign: "left",
-            }}
-          >
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: n.color, flexShrink: 0 }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {n.name}
-              </div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                {n.subject} · {new Date(n.last_studied_at!).toLocaleDateString()}
-              </div>
-            </div>
-            <Icon name="chev" size={12} />
-          </button>
-        ))}
-      </div>
     </div>
   );
 
