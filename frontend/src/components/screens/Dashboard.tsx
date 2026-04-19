@@ -550,7 +550,9 @@ export function Dashboard() {
         style={{
           padding: isMobile ? "14px 20px" : "20px 32px",
           display: "grid", gap: 20,
-          gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 2.3fr) minmax(300px, 1fr)",
+          // Right column pinned to ~1/5 of the available width (4fr : 1fr).
+          // minmax(260px, 1fr) keeps it readable when the viewport is narrow.
+          gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 4fr) minmax(260px, 1fr)",
         }}
       >
         {isMobile ? (mobileTab === "courses" ? leftPanel : rightPanel) : (
