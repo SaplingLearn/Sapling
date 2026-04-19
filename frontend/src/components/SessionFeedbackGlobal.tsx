@@ -1,39 +1,49 @@
-'use client';
+"use client";
 
-import { useEffect, useRef, useState } from 'react';
-import { usePathname } from 'next/navigation';
-import SessionFeedbackFlow from '@/components/SessionFeedbackFlow';
+import React, { useEffect, useRef, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useUser } from "@/context/UserContext";
+import {
+  SessionFeedbackFlow,
+  SESSION_COOLDOWN_MS,
+  SESSION_COOLDOWN_KEY,
+  type SessionFeedbackContext,
+} from "./SessionFeedbackFlow";
 
-const FLAG_KEY = 'sapling_learn_had_session';
-const LAST_KEY = 'sapling_session_feedback_nav_last_shown';
-const COOLDOWN_MS = 3 * 86_400_000;
+const LEARN_PATH = "/learn";
 
-export default function SessionFeedbackGlobal() {
+export function SessionFeedbackGlobal() {
   const pathname = usePathname();
-  const prevPathname = useRef(pathname);
-  const [visible, setVisible] = useState(false);
+  const searchParams = useSearchParams();
+  const { isAuthenticated } = useUser();
+  const testOverride = searchParams.get("testFeedback") === "session";
+
+  const [open, setOpen] = useState(false);
+  const [context, setContext] = useState<SessionFeedbackContext | undefined>();
+  const prevPath = useRef(pathname);
 
   useEffect(() => {
-    const prev = prevPathname.current;
-    prevPathname.current = pathname;
-
-    if (prev === '/learn' && pathname !== '/learn') {
-      const hadSession = localStorage.getItem(FLAG_KEY) === 'true';
-      const lastShown = parseInt(localStorage.getItem(LAST_KEY) ?? '0', 10);
-      const cooldownPassed = Date.now() - lastShown > COOLDOWN_MS;
-
-      if (hadSession && cooldownPassed) {
-        localStorage.removeItem(FLAG_KEY);
-        localStorage.setItem(LAST_KEY, String(Date.now()));
-        queueMicrotask(() => setVisible(true));
+    if (!isAuthenticated) {
+      prevPath.current = pathname;
+      return;
+    }
+    const wasOnLearn = prevPath.current?.startsWith(LEARN_PATH) ?? false;
+    const nowOnLearn = pathname?.startsWith(LEARN_PATH) ?? false;
+    if (wasOnLearn && !nowOnLearn) {
+      const last = Number(localStorage.getItem(SESSION_COOLDOWN_KEY) ?? "0");
+      const now = Date.now();
+      if (testOverride || !last || now - last > SESSION_COOLDOWN_MS) {
+        const raw = sessionStorage.getItem("sapling_last_session_context");
+        let ctx: SessionFeedbackContext | undefined;
+        if (raw) {
+          try { ctx = JSON.parse(raw); } catch {}
+        }
+        setContext(ctx);
+        setOpen(true);
       }
     }
-  }, [pathname]);
+    prevPath.current = pathname;
+  }, [pathname, isAuthenticated, testOverride]);
 
-  return (
-    <SessionFeedbackFlow
-      visible={visible}
-      onDismiss={() => setVisible(false)}
-    />
-  );
+  return <SessionFeedbackFlow open={open} context={context} onClose={() => setOpen(false)} />;
 }

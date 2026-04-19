@@ -1,189 +1,199 @@
-'use client';
+"use client";
 
-import { useState, useRef, useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
-import 'katex/dist/katex.min.css';
-import { ChatMessage, TeachingMode } from '@/lib/types';
+import React, { useEffect, useRef } from "react";
+import { Icon } from "./Icon";
+import { MarkdownChat } from "./MarkdownChat";
+import { AIDisclaimerChip } from "./AIDisclaimerChip";
 
-interface Props {
-  messages: ChatMessage[];
-  onSend: (message: string) => void;
-  onAction: (action: 'hint' | 'confused' | 'skip') => void;
-  onEndSession: () => void;
-  loading: boolean;
-  mode: TeachingMode;
-  prefillInput?: string;
+export type ChatRole = "user" | "assistant";
+export interface ChatMsg {
+  id: string;
+  role: ChatRole;
+  content: string;
+  loading?: boolean;
 }
 
-const MODE_DESCRIPTIONS: Record<TeachingMode, string> = {
-  socratic: 'Asking questions to guide your thinking',
-  expository: 'Explaining, then checking understanding',
-  teachback: "You teach me — I'll play confused",
-};
+interface ChatPanelProps {
+  messages: ChatMsg[];
+  input: string;
+  onInputChange: (v: string) => void;
+  onSend: () => void;
+  onAction?: (action: "hint" | "confused" | "skip") => void;
+  disabled?: boolean;
+  placeholder?: string;
+  header?: React.ReactNode;
+}
 
-export default function ChatPanel({ messages, onSend, onAction, onEndSession, loading, mode, prefillInput }: Props) {
-  const [input, setInput] = useState('');
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
+export function ChatPanel({
+  messages,
+  input,
+  onInputChange,
+  onSend,
+  onAction,
+  disabled,
+  placeholder = "Ask or respond…",
+  header,
+}: ChatPanelProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (prefillInput) setInput(prefillInput);
-  }, [prefillInput]);
-
-  useEffect(() => {
-    const container = messagesContainerRef.current;
-    if (container) {
-      container.scrollTop = container.scrollHeight;
-    }
-  }, [messages, loading]);
-
-  const send = () => {
-    const trimmed = input.trim();
-    if (!trimmed || loading) return;
-    onSend(trimmed);
-    setInput('');
-  };
-
-  const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-  };
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-subtle)' }}>
-      {/* Mode description */}
-      <div style={{
-        padding: '10px 16px',
-        fontSize: '12px',
-        color: 'var(--text-dim)',
-        background: 'var(--bg-topbar)',
-        borderBottom: '1px solid var(--border-light)',
-      }}>
-        {MODE_DESCRIPTIONS[mode]}
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      {header && <div>{header}</div>}
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        aria-atomic="false"
+        aria-label="Conversation"
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "24px 32px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
+        {messages.map(m => <Message key={m.id} m={m} />)}
       </div>
 
-      {/* Messages */}
-      <div ref={messagesContainerRef} style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {messages.map(msg => (
-          <div key={msg.id} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-            <div style={{
-              maxWidth: '80%',
-              padding: '10px 14px',
-              borderRadius: '10px',
-              background: msg.role === 'user'
-                ? 'var(--accent-dim)'
-                : 'var(--bg-panel)',
-              color: 'var(--text)',
-              fontSize: '14px',
-              lineHeight: 1.65,
-              border: msg.role === 'user'
-                ? '1px solid var(--accent-border)'
-                : '1px solid var(--border)',
-              boxShadow: 'var(--shadow-sm)',
-            }}>
-              {msg.role === 'user' ? msg.content : (
-                <ReactMarkdown
-                  remarkPlugins={[remarkMath]}
-                  rehypePlugins={[rehypeKatex]}
-                  components={{
-                    p: ({ children }) => <p style={{ margin: 0, marginBottom: '6px' }}>{children}</p>,
-                    ul: ({ children }) => <ul style={{ margin: '0 0 8px 0', paddingLeft: '20px' }}>{children}</ul>,
-                    ol: ({ children }) => <ol style={{ margin: '0 0 8px 0', paddingLeft: '20px' }}>{children}</ol>,
-                    li: ({ children }) => <li style={{ marginBottom: '2px' }}>{children}</li>,
-                    code: ({ children }) => (
-                      <code style={{ background: 'var(--accent-dim)', borderRadius: '3px', padding: '1px 4px', fontSize: '13px', fontFamily: 'monospace', color: 'var(--accent)' }}>
-                        {children}
-                      </code>
-                    ),
-                    pre: ({ children }) => (
-                      <pre style={{ background: 'var(--bg-subtle)', color: 'var(--text)', borderRadius: '6px', padding: '10px', overflowX: 'auto', fontSize: '13px', margin: '0 0 8px 0', border: '1px solid var(--border)' }}>
-                        {children}
-                      </pre>
-                    ),
-                    strong: ({ children }) => <strong style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{children}</strong>,
-                  }}
-                >
-                  {msg.content}
-                </ReactMarkdown>
-              )}
-            </div>
-          </div>
-        ))}
-
-        {loading && (
-          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-            <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'var(--bg-panel)', border: '1px solid var(--border)', color: 'var(--text-dim)', fontSize: '14px', boxShadow: 'var(--shadow-sm)' }}>
-              <span style={{ letterSpacing: '0.1em' }}>···</span>
-            </div>
+      <div
+        style={{
+          padding: "12px 32px 20px",
+          borderTop: "1px solid var(--border)",
+          background: "var(--bg-panel)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        }}
+      >
+        {onAction && (
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn btn--sm" onClick={() => onAction("hint")} disabled={disabled} title="Ask for a small nudge">
+              <Icon name="sparkle" size={12} /> Hint
+            </button>
+            <button className="btn btn--sm" onClick={() => onAction("confused")} disabled={disabled} title="Say you're stuck">
+              <Icon name="bolt" size={12} /> I&apos;m confused
+            </button>
+            <button className="btn btn--sm" onClick={() => onAction("skip")} disabled={disabled} title="Skip this concept">
+              <Icon name="chev" size={12} /> Skip
+            </button>
           </div>
         )}
-      </div>
-
-      {/* Input area */}
-      <div style={{
-        padding: '12px 16px',
-        background: 'var(--bg-topbar)',
-        borderTop: '1px solid var(--border-light)',
-      }}>
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "flex-end",
+            background: "var(--bg-subtle)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-lg)",
+            padding: "10px 14px",
+          }}
+        >
           <textarea
             value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder="Type your answer..."
-            rows={2}
+            onChange={e => onInputChange(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                onSend();
+              }
+            }}
+            disabled={disabled}
+            placeholder={placeholder}
             style={{
               flex: 1,
-              resize: 'none',
-              background: 'var(--bg-input)',
-              color: 'var(--text)',
-              border: '1px solid var(--border)',
-              borderRadius: '6px',
-              padding: '6px 10px',
-              fontSize: '13px',
-              fontFamily: 'inherit',
-              outline: 'none',
-              transition: 'border-color 120ms',
+              resize: "none",
+              border: 0,
+              background: "transparent",
+              fontSize: 14,
+              lineHeight: 1.5,
+              outline: "none",
+              padding: "6px 0",
+              fontFamily: "var(--font-sans)",
+              maxHeight: 160,
+              minHeight: 36,
             }}
-            onFocus={e => e.currentTarget.style.borderColor = 'var(--accent-border)'}
-            onBlur={e => e.currentTarget.style.borderColor = 'var(--border)'}
+            rows={1}
           />
           <button
-            onClick={send}
-            disabled={loading || !input.trim()}
-            style={{
-              alignSelf: 'flex-end',
-              padding: '8px 16px',
-              background: 'var(--accent-dim)',
-              color: 'var(--accent)',
-              border: '1px solid var(--accent-border)',
-              borderRadius: '7px',
-              fontSize: '13px',
-              fontWeight: 500,
-              fontFamily: 'inherit',
-              cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
-              opacity: loading || !input.trim() ? 0.4 : 1,
-              transition: 'opacity 0.15s',
-            }}
+            className="btn btn--primary btn--sm"
+            onClick={onSend}
+            disabled={disabled || !input.trim()}
+            aria-label="Send"
           >
-            Send
+            <Icon name="send" size={14} />
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
 
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          {(['hint', 'confused', 'skip'] as const).map(action => (
-            <button key={action} onClick={() => onAction(action)} disabled={loading}
-              style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: '12px', cursor: loading ? 'not-allowed' : 'pointer', padding: '2px 0', textTransform: 'capitalize', fontFamily: 'inherit' }}
-            >
-              {action}
-            </button>
-          ))}
-          <button onClick={onEndSession}
-            style={{ background: 'none', border: 'none', color: '#b45252', fontSize: '12px', cursor: 'pointer', padding: '2px 0', marginLeft: 'auto', fontFamily: 'inherit', opacity: 0.7 }}
-          >
-            End Session
-          </button>
+function Message({ m }: { m: ChatMsg }) {
+  const isUser = m.role === "user";
+  return (
+    <div
+      className="fade-in"
+      style={{
+        display: "flex",
+        gap: 12,
+        maxWidth: isUser ? "70%" : "85%",
+        alignSelf: isUser ? "flex-end" : "flex-start",
+      }}
+    >
+      {!isUser && (
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: "50%",
+            background: "var(--accent-soft)",
+            color: "var(--accent)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Icon name="sparkle" size={14} />
         </div>
+      )}
+      <div
+        style={{
+          background: isUser ? "var(--accent)" : "var(--bg-panel)",
+          color: isUser ? "var(--accent-fg)" : "var(--text)",
+          padding: "12px 16px",
+          borderRadius: "var(--r-lg)",
+          border: isUser ? "none" : "1px solid var(--border)",
+          fontSize: 14,
+          lineHeight: 1.55,
+          fontFamily: "var(--font-sans)",
+          wordBreak: "break-word",
+          overflowWrap: "break-word",
+          position: "relative",
+        }}
+      >
+        {m.loading ? (
+          <span style={{ opacity: 0.6 }}>Thinking…</span>
+        ) : isUser ? (
+          <div style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
+        ) : (
+          <>
+            <MarkdownChat>{m.content}</MarkdownChat>
+            <div style={{ position: "absolute", bottom: 4, right: 8 }}>
+              <AIDisclaimerChip compact />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

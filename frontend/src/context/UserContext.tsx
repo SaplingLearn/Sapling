@@ -15,8 +15,6 @@ interface UserContextValue {
   userName: string;
   avatarUrl: string;
   users: UserOption[];
-  /** True once localStorage has been read — gates all data fetches so they
-   *  never fire with the hardcoded default user before we know the real one. */
   userReady: boolean;
   isAuthenticated: boolean;
   isApproved: boolean;
@@ -57,18 +55,14 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [users, setUsers] = useState<UserOption[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
-  // Becomes true after localStorage is read — prevents pages from fetching
-  // data with the hardcoded default before the real saved user is known.
   const [userReady, setUserReady] = useState(false);
 
-  // Profile/role state
   const [username, setUsername] = useState<string | null>(null);
   const [roles, setRoles] = useState<UserRole[]>([]);
   const [equippedCosmetics, setEquippedCosmetics] = useState<EquippedCosmetics>({});
   const [featuredRole, setFeaturedRole] = useState<Role | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // Restore last selected user from localStorage (or use local dev user)
   useEffect(() => {
     if (IS_LOCAL_MODE) {
       setUserId(LOCAL_USER.id);
@@ -93,7 +87,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setUserReady(true);
   }, []);
 
-  // Fetch user list from backend and reconcile the current user's name
   useEffect(() => {
     if (IS_LOCAL_MODE) return;
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/users`)
@@ -101,8 +94,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       .then((data: { users: UserOption[] }) => {
         const list = data.users ?? [];
         setUsers(list);
-        // Always sync userName from the live backend list for the current userId
-        // so the greeting never shows a stale or hardcoded default name
         setUserId(prev => {
           const match = list.find(u => u.id === prev);
           if (match) setUserName(match.name);
@@ -112,7 +103,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, []);
 
-  // Fetch extended auth/me data (roles, cosmetics, etc.) when userId is ready
   const fetchProfileData = useCallback(async (uid: string) => {
     if (!uid || IS_LOCAL_MODE) return;
     try {
@@ -129,14 +119,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (userReady && userId) {
-      fetchProfileData(userId);
-    }
+    if (userReady && userId) fetchProfileData(userId);
   }, [userReady, userId, fetchProfileData]);
 
-  const refreshProfile = useCallback(async () => {
-    await fetchProfileData(userId);
-  }, [userId, fetchProfileData]);
+  const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
 
   const setActiveUser = (id: string, name: string, avatar?: string) => {
     setUserId(id);
@@ -163,6 +149,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setFeaturedRole(null);
       setIsAdmin(false);
       localStorage.removeItem('sapling_user');
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('sapling_onboarding_pending');
+      }
     }
   };
 
@@ -176,13 +165,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
      username, roles, equippedCosmetics, featuredRole, isAdmin, refreshProfile]
   );
 
-  return (
-    <UserContext.Provider value={value}>
-      {children}
-    </UserContext.Provider>
-  );
+  return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
 }
 
-export function useUser() {
-  return useContext(UserContext);
-}
+export function useUser() { return useContext(UserContext); }

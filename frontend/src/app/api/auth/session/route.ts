@@ -4,8 +4,6 @@ import { signSession, SESSION_MAX_AGE } from '@/lib/sessionToken';
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 const SESSION_SECRET = process.env.SESSION_SECRET;
 
-// Verify an HMAC token produced by the backend's OAuth callback.
-// Returns the userId if valid and unexpired, otherwise null.
 async function verifyAuthToken(token: string): Promise<string | null> {
   if (!SESSION_SECRET) return null;
   const dot = token.lastIndexOf('.');
@@ -13,8 +11,6 @@ async function verifyAuthToken(token: string): Promise<string | null> {
   const payloadB64 = token.slice(0, dot);
   const sigB64 = token.slice(dot + 1);
   try {
-    // Re-pad base64url and convert to bytes for sig comparison.
-    // Returns Uint8Array<ArrayBuffer> (concrete) so it satisfies BufferSource.
     function b64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
       const padded = s.replace(/-/g, '+').replace(/_/g, '/');
       const pad = '='.repeat((4 - (padded.length % 4)) % 4);
@@ -55,14 +51,12 @@ export async function POST(request: NextRequest) {
 
   let verifiedUserId: string | null = null;
 
-  // Fast path: verify the backend-signed token (no round-trip needed).
   if (authToken) {
     verifiedUserId = await verifyAuthToken(authToken);
     if (!verifiedUserId) {
       return NextResponse.json({ error: 'Invalid or expired auth token' }, { status: 401 });
     }
   } else {
-    // Fallback: call backend to verify (used when SESSION_SECRET not shared yet).
     if (!API_URL) {
       return NextResponse.json({ error: 'NEXT_PUBLIC_API_URL not configured' }, { status: 500 });
     }
@@ -78,13 +72,9 @@ export async function POST(request: NextRequest) {
       } finally {
         clearTimeout(timeout);
       }
-      if (!res.ok) {
-        return NextResponse.json({ error: 'User not found' }, { status: 401 });
-      }
+      if (!res.ok) return NextResponse.json({ error: 'User not found' }, { status: 401 });
       const data = await res.json();
-      if (data.is_approved !== true) {
-        return NextResponse.json({ error: 'Not approved' }, { status: 403 });
-      }
+      if (data.is_approved !== true) return NextResponse.json({ error: 'Not approved' }, { status: 403 });
       verifiedUserId = userId;
     } catch {
       return NextResponse.json({ error: 'Backend unreachable' }, { status: 502 });

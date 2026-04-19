@@ -87,33 +87,16 @@ export interface QuizResult {
   explanation: string;
 }
 
-export interface QuizContext {
-  weak_areas: string[];
-  common_mistakes: string[];
-  questions_seen_summary: string;
-  recommended_difficulty: string;
-  notes: string;
-}
-
 export interface Assignment {
   id: string;
   title: string;
   course_name?: string;
   course_code?: string;
-  /** Canonical course FK when known (required for save API). */
   course_id?: string;
   due_date: string;
   assignment_type?: string;
   notes?: string | null;
   google_event_id?: string | null;
-}
-
-export interface StudyBlockSuggestion {
-  topic: string;
-  suggested_date: string;
-  duration_minutes: number;
-  reason: string;
-  related_assignment_id: string;
 }
 
 export interface Room {
@@ -130,7 +113,6 @@ export interface RoomMember {
   graph: KnowledgeGraph & { stats?: GraphStats };
 }
 
-/** Response from GET /api/social/rooms/:id/overview */
 export interface RoomOverviewData {
   room: { id: string; name: string; invite_code: string; created_by: string };
   members: RoomMember[];
@@ -151,29 +133,6 @@ export interface RoomMessageRow {
   reactions: { emoji: string; user_ids: string[] }[];
 }
 
-export interface StudyMatch {
-  partner: { id: string; name: string };
-  you_can_teach: { concept: string; your_mastery: number; their_mastery: number }[];
-  they_can_teach: { concept: string; their_mastery: number; your_mastery: number }[];
-  shared_struggles: { concept: string; your_mastery: number; their_mastery: number }[];
-  compatibility_score: number;
-  summary: string;
-}
-
-export interface RoomActivity {
-  id: string;
-  user_name: string;
-  activity_type: string;
-  concept_name: string | null;
-  detail: string;
-  created_at: string;
-}
-
-export interface Recommendation {
-  concept_name: string;
-  reason: string;
-}
-
 export interface Document {
   id: string;
   user_id: string;
@@ -186,8 +145,6 @@ export interface Document {
   created_at: string;
   processed_at: string | null;
 }
-
-// ── Profile, Roles, Achievements, Cosmetics ─────────────────────────────────
 
 export type RarityTier = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 export type CosmeticType = 'avatar_frame' | 'banner' | 'name_color' | 'title';
@@ -210,6 +167,11 @@ export interface UserRole {
   granted_at: string;
 }
 
+export interface AchievementProgress {
+  current: number;
+  target: number;
+}
+
 export interface Achievement {
   id: string;
   name: string;
@@ -219,19 +181,13 @@ export interface Achievement {
   category: AchievementCategory;
   rarity: RarityTier;
   is_secret: boolean;
+  progress?: AchievementProgress | null;
 }
 
 export interface UserAchievement {
   achievement: Achievement;
   earned_at: string;
   is_featured: boolean;
-}
-
-export interface AchievementTrigger {
-  id: string;
-  achievement_id: string;
-  trigger_type: string;
-  trigger_threshold: number;
 }
 
 export interface Cosmetic {
@@ -257,6 +213,13 @@ export interface EquippedCosmetics {
   featured_role?: Role;
 }
 
+export interface UserStats {
+  streak_count: number;
+  session_count: number;
+  documents_count: number;
+  achievements_count: number;
+}
+
 export interface UserProfile {
   id: string;
   name: string;
@@ -274,13 +237,6 @@ export interface UserProfile {
   featured_achievements: UserAchievement[];
   equipped_cosmetics: EquippedCosmetics;
   stats: UserStats;
-}
-
-export interface UserStats {
-  streak_count: number;
-  session_count: number;
-  documents_count: number;
-  achievements_count: number;
 }
 
 export interface UserSettings {

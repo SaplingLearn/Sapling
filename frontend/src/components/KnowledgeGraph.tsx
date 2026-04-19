@@ -1,453 +1,612 @@
-'use client';
+"use client";
+import React from "react";
+import {
+  forceSimulation,
+  forceLink,
+  forceManyBody,
+  forceCenter,
+  forceCollide,
+  forceX,
+  forceY,
+  type Simulation,
+  type SimulationNodeDatum,
+  type SimulationLinkDatum,
+} from "d3-force";
+import type { GraphEdge, GraphNode } from "@/lib/data";
 
-import { useRef, useEffect, useCallback, useMemo, memo } from 'react';
-import * as d3 from 'd3';
-import { GraphNode, GraphEdge } from '@/lib/types';
-import { getMasteryColor, getNodeRadius, getCourseColor } from '@/lib/graphUtils';
+export type GraphVariant = "orb" | "constellation" | "organism";
 
-interface KnowledgeGraphProps {
+type SimNode = SimulationNodeDatum & GraphNode;
+type SimLink = SimulationLinkDatum<SimNode> & {
+  strength: number;
+  source: string | SimNode;
+  target: string | SimNode;
+};
+
+export interface GraphComparisonEntry {
+  /** Partner's concept name — must match the primary graph's node name for the ring to render. */
+  name: string;
+  /** Partner mastery 0–1. Drives the ring radius/opacity. */
+  mastery_score: number;
+  /** Partner display name (for the tooltip/legend). */
+  partner_name?: string;
+}
+
+type Props = {
   nodes: GraphNode[];
   edges: GraphEdge[];
-  width: number;
-  height: number;
-  animate?: boolean;
+  width?: number;
+  height?: number;
+  variant?: GraphVariant;
   highlightId?: string;
-  interactive?: boolean;
-  onNodeClick?: (node: GraphNode) => void;
-  comparison?: {
-    partnerNodes: GraphNode[];
-  };
-  courseColorMap?: Record<string, string>;
-}
+  onNodeClick?: (n: GraphNode) => void;
+  /** Opt-in: fill nodes using mastery-tier color palette instead of course color. */
+  masteryTierFill?: boolean;
+  /** Pause simulation when graph is off-screen (default: true). */
+  pauseWhenOffscreen?: boolean;
+  /** Partner concept mastery, matched to this graph's nodes by name. Renders an outline ring per match. */
+  comparison?: GraphComparisonEntry[] | null;
+  /** Color for the comparison ring (defaults to a muted accent). */
+  comparisonColor?: string;
+  /** Label for the legend/tooltip — usually the partner's display name. */
+  comparisonLabel?: string;
+};
 
-interface SimNode extends d3.SimulationNodeDatum {
-  id: string;
-  concept_name: string;
-  mastery_score: number;
-  mastery_tier: string;
-  subject: string;
-  course_color?: string | null;
-  is_subject_root?: boolean;
-}
+const TIER_COLORS: Record<string, string> = {
+  mastered: "#4a7d5c",
+  learning: "#c89b5e",
+  struggling: "#b25855",
+  unexplored: "#9a9a9a",
+  subject_root: "#8a7bc4",
+};
 
-interface SimLink extends d3.SimulationLinkDatum<SimNode> {
-  id: string;
-  strength: number;
-}
+type DragState =
+  | { kind: "node"; nodeId: string; pointerId: number }
+  | { kind: "pan"; pointerId: number; startX: number; startY: number; originTx: number; originTy: number }
+  | null;
 
-const ROOT_RADIUS = 22;
-const getSimRadius = (d: SimNode) =>
-  d.is_subject_root ? ROOT_RADIUS : getNodeRadius(d.mastery_score);
+const MIN_ZOOM = 0.4;
+const MAX_ZOOM = 3;
 
-/** Resolve the color override for a node: prefer the node's own course_color,
- *  then fall back to the courseColorMap lookup by subject name. */
-function nodeColorOverride(d: SimNode, colorMap: Record<string, string>): string | undefined {
-  return d.course_color ?? colorMap[d.subject] ?? undefined;
-}
-
-/** Opacity encodes mastery tier — full colour = mastered, ghost = unexplored. */
-function masteryOpacity(tier: string): number {
-  switch (tier) {
-    case 'mastered':     return 1.0;
-    case 'learning':     return 0.75;
-    case 'struggling':   return 0.55;
-    case 'unexplored':   return 0.28;
-    case 'subject_root': return 1.0;
-    default:             return 0.65;
-  }
-}
-
-function KnowledgeGraph({
+export function KnowledgeGraph({
   nodes,
   edges,
-  width,
-  height,
-  animate = false,
+  width = 600,
+  height = 480,
+  variant = "organism",
   highlightId,
-  interactive = true,
   onNodeClick,
-  comparison,
-  courseColorMap = {},
-}: KnowledgeGraphProps) {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const simRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
-  const tooltipRef = useRef<HTMLDivElement>(null);
-  const prevNodesRef = useRef<GraphNode[]>([]);
-  const prevEdgesRef = useRef<GraphEdge[]>([]);
+  masteryTierFill = false,
+  pauseWhenOffscreen = true,
+  comparison = null,
+  comparisonColor = "#8a7bc4",
+  comparisonLabel,
+}: Props) {
+  const comparisonByName = React.useMemo(() => {
+    const map = new Map<string, GraphComparisonEntry>();
+    for (const entry of comparison || []) {
+      map.set(entry.name.trim().toLowerCase(), entry);
+    }
+    return map;
+  }, [comparison]);
+  const svgRef = React.useRef<SVGSVGElement>(null);
+  const simRef = React.useRef<Simulation<SimNode, SimLink> | null>(null);
+  const simNodesRef = React.useRef<SimNode[]>([]);
+  const simLinksRef = React.useRef<SimLink[]>([]);
 
-  // Always-current refs so event handler closures never go stale after mastery updates
-  const nodesRef = useRef<GraphNode[]>(nodes);
-  const courseColorMapRef = useRef<Record<string, string>>(courseColorMap);
-  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
-  useEffect(() => { courseColorMapRef.current = courseColorMap; }, [courseColorMap]);
+  const [, forceRerender] = React.useReducer((x) => x + 1, 0);
+  const [hovered, setHovered] = React.useState<GraphNode | null>(null);
+  const [tooltipPos, setTooltipPos] = React.useState({ x: 0, y: 0 });
+  const [view, setView] = React.useState({ tx: 0, ty: 0, scale: 1 });
+  const dragRef = React.useRef<DragState>(null);
+  const movedRef = React.useRef(false);
 
-  // Topology keys — only change when the set of IDs changes, not on mastery/color updates.
-  // This prevents the simulation from restarting on every data refresh.
-  const nodeIdsKey = useMemo(() => nodes.map(n => n.id).join('|'), [nodes]);
-  const edgeIdsKey = useMemo(() => edges.map(e => e.id).join('|'), [edges]);
-
-  const getComparisonOutlineColor = useCallback(
-    (node: GraphNode): string | null => {
-      if (!comparison) return null;
-      const partnerNode = comparison.partnerNodes.find(n => n.concept_name === node.concept_name);
-      if (!partnerNode) return null;
-      const myM = node.mastery_score;
-      const theirM = partnerNode.mastery_score;
-      if (myM > 0.7 && theirM < 0.5) return '#38bdf8';
-      if (theirM > 0.7 && myM < 0.5) return '#fb923c';
-      if (myM < 0.5 && theirM < 0.5) return '#f87171';
-      if (myM > 0.7 && theirM > 0.7) return '#34d399';
-      return null;
-    },
-    [comparison]
+  // Rebuild the simulation whenever the node/edge set fundamentally changes.
+  // We diff by id so stable nodes keep their current x/y/vx/vy.
+  const dataKey = React.useMemo(
+    () => nodes.map((n) => n.id).join("|") + "::" + edges.map((e) => `${e.source}-${e.target}`).join("|"),
+    [nodes, edges],
   );
 
-  useEffect(() => {
-    console.log('[KG] main effect fired', { width, height, nodeIdsKey: nodeIdsKey.slice(0, 40), edgeIdsKey: edgeIdsKey.slice(0, 40), animate, interactive, onNodeClick: !!onNodeClick });
-    if (!svgRef.current || !width || !height) return;
-
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
-
-    // ── Layout ─────────────────────────────────────────────────────────────
-    const container = svg.append('g').attr('class', 'graph-container');
-
-    if (interactive) {
-      const zoom = d3.zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.3, 3])
-        .on('zoom', event => container.attr('transform', event.transform.toString()));
-      svg.call(zoom);
-    }
-
-    const simNodes: SimNode[] = nodes.map(n => ({
-      ...n,
-      x: (n as any).x ?? width / 2 + (Math.random() - 0.5) * 200,
-      y: (n as any).y ?? height / 2 + (Math.random() - 0.5) * 200,
-    }));
-
-    const nodeById = new Map(simNodes.map(n => [n.id, n]));
-    const simLinks: SimLink[] = edges
-      .filter(e => nodeById.has(e.source as string) && nodeById.has(e.target as string))
-      .map(e => ({
-        id: e.id,
-        source: e.source as string,
-        target: e.target as string,
-        strength: e.strength,
-      }));
-
-    const sim = d3.forceSimulation(simNodes)
-      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.04))
-      .force('x', d3.forceX(width / 2).strength(0.03))
-      .force('y', d3.forceY(height / 2).strength(0.03))
-      .force('link', d3.forceLink<SimNode, SimLink>(simLinks)
-        .id(d => d.id)
-        .distance(d => 55 + (1 - d.strength) * 40)
-        .strength(d => d.strength * 0.8))
-      .force('charge', d3.forceManyBody().strength(-120))
-      .force('collide', d3.forceCollide<SimNode>(d => getSimRadius(d) + 8))
-      .alphaDecay(0.04);
-
-    simRef.current = sim;
-
-    // ── Drift animation setup ───────────────────────────────────────────────
-    // driftOffset is added on top of sim positions at render time — never mutates n.x/n.y
-    let rafId = 0;
-    let draggingId: string | null = null;
-    const driftOffset = new Map<string, { dx: number; dy: number }>(
-      simNodes.map(n => [n.id, { dx: 0, dy: 0 }])
-    );
-    const driftParams = new Map(simNodes.map(n => [n.id, {
-      phaseX: Math.random() * Math.PI * 2,
-      phaseY: Math.random() * Math.PI * 2,
-      freqX:  0.00040 + Math.random() * 0.00030,
-      freqY:  0.00032 + Math.random() * 0.00028,
-      amp:    7 + Math.random() * 7,
-    }]));
-
-    // ── Edges ──────────────────────────────────────────────────────────────
-    const linkGroup = container.append('g').attr('class', 'links');
-    const linkSel = linkGroup
-      .selectAll<SVGLineElement, SimLink>('line')
-      .data(simLinks, d => d.id)
-      .enter()
-      .append('line')
-      .attr('stroke', 'rgba(107,114,128,0.2)')
-      .attr('stroke-width', d => 0.5 + d.strength * 1.2)
-      .attr('stroke-linecap', 'round');
-
-    if (animate) {
-      const prevEdgeIds = new Set(prevEdgesRef.current.map(e => e.id));
-      simLinks.forEach(l => {
-        if (!prevEdgeIds.has(l.id)) {
-          const el = linkSel.filter(d => d.id === l.id);
-          el.attr('stroke-dasharray', '100 100').attr('stroke-dashoffset', 100)
-            .transition().duration(300).attr('stroke-dashoffset', 0)
-            .on('end', () => el.attr('stroke-dasharray', null).attr('stroke-dashoffset', null));
-        }
-      });
-    }
-
-    // ── Labels (rendered before nodes so circles appear on top) ───────────
-    const labelGroup = container.append('g').attr('class', 'labels');
-    const labelSel = labelGroup
-      .selectAll<SVGTextElement, SimNode>('text')
-      .data(simNodes, d => d.id)
-      .enter()
-      .append('text')
-      .text(d => d.concept_name)
-      .attr('text-anchor', 'middle')
-      .attr('font-size', d => d.is_subject_root ? '13px' : '11px')
-      .attr('font-weight', d => d.is_subject_root ? '600' : '400')
-      .attr('font-family', "'DM Sans', Inter, system-ui, sans-serif")
-      .attr('fill', d => d.is_subject_root ? getCourseColor(d.subject, nodeColorOverride(d, courseColorMapRef.current)).text : '#374151')
-      .attr('pointer-events', 'none')
-      .style('user-select', 'none');
-
-    // ── Nodes (appended after labels so circles render on top of text) ─────
-    const nodeGroup = container.append('g').attr('class', 'nodes');
-    const nodeSel = nodeGroup
-      .selectAll<SVGGElement, SimNode>('g')
-      .data(simNodes, d => d.id)
-      .enter()
-      .append('g')
-      .attr('class', 'node')
-      .style('cursor', interactive ? 'pointer' : 'default');
-
-    // Comparison outline ring
-    nodeSel.each(function(d) {
-      const sourceNode = nodes.find(n => n.id === d.id);
-      if (!sourceNode) return;
-      const outlineColor = getComparisonOutlineColor(sourceNode);
-      if (outlineColor) {
-        d3.select(this).append('circle')
-          .attr('r', getSimRadius(d) + 5)
-          .attr('fill', 'none')
-          .attr('stroke', outlineColor)
-          .attr('stroke-width', 2);
+  React.useEffect(() => {
+    // Merge new node data into existing sim nodes to preserve motion state.
+    const byId = new Map(simNodesRef.current.map((n) => [n.id, n]));
+    const nextNodes: SimNode[] = nodes.map((n) => {
+      const prev = byId.get(n.id);
+      if (prev) {
+        // Keep position + velocity; refresh mutable data fields (mastery, color).
+        Object.assign(prev, n);
+        return prev;
       }
+      const hubSeed = n.is_subject_root ? 0 : Math.random();
+      return {
+        ...n,
+        x: width / 2 + (Math.random() - 0.5) * 40,
+        y: height / 2 + (Math.random() - 0.5) * 40,
+        vx: 0,
+        vy: 0,
+        index: undefined,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        _hub: hubSeed,
+      } as SimNode;
     });
 
-    // ── Main orb — matte flat colour by course, opacity = mastery ──────────
-    const circles = nodeSel.append('circle')
-      .attr('class', 'main-circle')
-      .attr('r', d => getSimRadius(d))
-      .attr('fill', d => getCourseColor(d.subject, nodeColorOverride(d, courseColorMapRef.current)).fill)
-      .attr('fill-opacity', d => masteryOpacity(d.mastery_tier))
-      .attr('stroke', d => getCourseColor(d.subject, nodeColorOverride(d, courseColorMapRef.current)).fill)
-      .attr('stroke-opacity', d => d.is_subject_root ? 0.7 : 0.4)
-      .attr('stroke-width', d => d.is_subject_root ? 2.5 : 1.5);
+    const nextLinks: SimLink[] = edges
+      .filter((e) => nextNodes.some((n) => n.id === e.source) && nextNodes.some((n) => n.id === e.target))
+      .map((e) => ({ source: e.source, target: e.target, strength: e.strength }));
 
-    if (animate) {
-      const prevNodeIds = new Set(prevNodesRef.current.map(n => n.id));
-      simNodes.forEach(n => {
-        if (!prevNodeIds.has(n.id)) {
-          nodeSel.filter(d => d.id === n.id)
-            .style('opacity', 0)
-            .transition().duration(400)
-            .style('opacity', 1);
-        }
-      });
+    simNodesRef.current = nextNodes;
+    simLinksRef.current = nextLinks;
 
-      prevNodesRef.current.forEach(prevN => {
-        const currN = nodes.find(n => n.id === prevN.id);
-        if (currN && currN.mastery_tier !== prevN.mastery_tier) {
-          circles.filter(d => d.id === currN.id)
-            .transition().duration(500)
-            .attr('fill-opacity', masteryOpacity(currN.mastery_tier));
-        }
+    if (!simRef.current) {
+      simRef.current = forceSimulation<SimNode>(nextNodes).on("tick", () => {
+        forceRerender();
       });
+    } else {
+      simRef.current.nodes(nextNodes);
     }
 
-    // ── Interactions ───────────────────────────────────────────────────────
-    if (interactive && tooltipRef.current) {
-      const tooltip = tooltipRef.current;
+    const sim = simRef.current;
+    sim
+      .force(
+        "link",
+        forceLink<SimNode, SimLink>(nextLinks)
+          .id((d) => d.id)
+          .distance((l) => 40 + (1 - (l.strength || 0.5)) * 90)
+          .strength((l) => 0.15 + (l.strength || 0.5) * 0.4),
+      )
+      .force("charge", forceManyBody<SimNode>().strength((d) => (d.is_subject_root ? -400 : -120)))
+      .force(
+        "collide",
+        forceCollide<SimNode>().radius((d) => (d.is_subject_root ? 36 : 18 + (d.mastery_score || 0) * 6)),
+      )
+      .force("center", forceCenter(width / 2, height / 2).strength(0.06))
+      .force("x", forceX<SimNode>(width / 2).strength(0.02))
+      .force("y", forceY<SimNode>(height / 2).strength(0.02));
 
-      nodeSel
-        .on('mouseover', function(event, d) {
-          const sourceNode = nodesRef.current.find(n => n.id === d.id);
-          if (!sourceNode || !tooltip) return;
-          const mastery = Math.round(sourceNode.mastery_score * 100);
-          const lastStudied = sourceNode.last_studied_at
-            ? new Date(sourceNode.last_studied_at).toLocaleDateString()
-            : 'Never';
-          const cc = getCourseColor(sourceNode.subject, sourceNode.course_color ?? courseColorMapRef.current[sourceNode.subject]);
-          tooltip.innerHTML = `
-            <div style="font-weight:600;color:#111827;margin-bottom:4px">${sourceNode.concept_name}</div>
-            <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px">
-              <span style="width:8px;height:8px;border-radius:50%;background:${cc.fill};display:inline-block;flex-shrink:0"></span>
-              <span style="color:${cc.text};font-size:12px">${sourceNode.subject}</span>
-            </div>
-            <div style="color:${getMasteryColor(sourceNode.mastery_tier)};font-size:12px;margin-bottom:2px">${mastery}% mastery</div>
-            <div style="color:#6b7280;font-size:12px">Last studied: ${lastStudied}</div>
-          `;
-          tooltip.style.display = 'block';
-          const rect = svgRef.current!.getBoundingClientRect();
-          tooltip.style.left = `${event.clientX - rect.left + 14}px`;
-          tooltip.style.top = `${event.clientY - rect.top - 12}px`;
-          d3.select(this).select('.main-circle')
-            .attr('stroke-opacity', 1)
-            .attr('stroke-width', 2.5);
-        })
-        .on('mousemove', function(event) {
-          if (!tooltip || !svgRef.current) return;
-          const rect = svgRef.current.getBoundingClientRect();
-          tooltip.style.left = `${event.clientX - rect.left + 14}px`;
-          tooltip.style.top = `${event.clientY - rect.top - 12}px`;
-        })
-        .on('mouseout', function(_, d) {
-          if (tooltip) tooltip.style.display = 'none';
-          d3.select(this).select('.main-circle')
-            .attr('stroke-opacity', (d as SimNode).is_subject_root ? 0.7 : 0.4)
-            .attr('stroke-width', (d as SimNode).is_subject_root ? 2.5 : 1.5);
-        })
-        .on('click', (_, d) => {
-          const sourceNode = nodesRef.current.find(n => n.id === d.id);
-          if (sourceNode && onNodeClick) onNodeClick(sourceNode);
-        });
+    const reducedMotion = typeof window !== "undefined"
+      && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reducedMotion) {
+      sim.alpha(1).tick(200).alpha(0).stop();
+      forceRerender();
+    } else {
+      sim.alpha(0.9).restart();
     }
 
-    // Drag
-    if (interactive) {
-      nodeSel.call(
-        d3.drag<SVGGElement, SimNode>()
-          .on('start', (event, d) => {
-            draggingId = d.id;
-            if (!event.active) sim.alphaTarget(0.3).restart();
-            d.fx = d.x; d.fy = d.y;
-          })
-          .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
-          .on('end', (event, d) => {
-            draggingId = null;
-            if (!event.active) sim.alphaTarget(0);
-            d.fx = null; d.fy = null;
-          })
-      );
-    }
-
-    // Shared render: sim positions + drift offsets applied together
-    const render = () => {
-      linkSel
-        .attr('x1', d => ((d.source as SimNode).x ?? 0) + (driftOffset.get((d.source as SimNode).id)?.dx ?? 0))
-        .attr('y1', d => ((d.source as SimNode).y ?? 0) + (driftOffset.get((d.source as SimNode).id)?.dy ?? 0))
-        .attr('x2', d => ((d.target as SimNode).x ?? 0) + (driftOffset.get((d.target as SimNode).id)?.dx ?? 0))
-        .attr('y2', d => ((d.target as SimNode).y ?? 0) + (driftOffset.get((d.target as SimNode).id)?.dy ?? 0));
-      nodeSel.attr('transform', d => {
-        const o = driftOffset.get(d.id) ?? { dx: 0, dy: 0 };
-        return `translate(${(d.x ?? 0) + o.dx},${(d.y ?? 0) + o.dy})`;
-      });
-      labelSel.attr('transform', d => {
-        const o = driftOffset.get(d.id) ?? { dx: 0, dy: 0 };
-        const yOff = d.is_subject_root ? getSimRadius(d) + 17 : getSimRadius(d) + 15;
-        return `translate(${(d.x ?? 0) + o.dx},${(d.y ?? 0) + o.dy + yOff})`;
-      });
-    };
-
-    // Drive render from sim ticks (fast, during layout phase)
-    sim.on('tick', render);
-
-    // RAF loop starts immediately — drift begins as soon as nodes appear
-    const driftTick = (t: number) => {
-      driftParams.forEach((p, id) => {
-        const o = driftOffset.get(id)!;
-        if (id === draggingId) { o.dx = 0; o.dy = 0; return; }
-        o.dx = Math.sin(t * p.freqX + p.phaseX) * p.amp;
-        o.dy = Math.cos(t * p.freqY + p.phaseY) * p.amp;
-      });
-      render();
-      rafId = requestAnimationFrame(driftTick);
-    };
-    rafId = requestAnimationFrame(driftTick);
-
-    prevNodesRef.current = nodes;
-    prevEdgesRef.current = edges;
     return () => {
-      sim.stop();
-      cancelAnimationFrame(rafId);
+      // Simulation is kept across renders; only stop on full unmount below.
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodeIdsKey, edgeIdsKey, width, height, animate, interactive, onNodeClick, getComparisonOutlineColor]);
-  // courseColorMap intentionally omitted — handled by the visual update effect below
+  }, [dataKey, width, height]);
 
-  // ── VISUAL UPDATE EFFECT ────────────────────────────────────────────────────
-  // Updates mastery opacity and course colors in-place without touching the
-  // simulation or resetting node positions.
-  useEffect(() => {
-    if (!svgRef.current) return;
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
-    const svg = d3.select(svgRef.current);
-    svg.selectAll<SVGCircleElement, SimNode>('.main-circle')
-      .attr('fill', d => {
-        const n = nodeMap.get(d.id);
-        const subj = n?.subject ?? d.subject;
-        const override = n?.course_color ?? d.course_color ?? courseColorMap[subj];
-        return getCourseColor(subj, override).fill;
-      })
-      .attr('fill-opacity', d => masteryOpacity(nodeMap.get(d.id)?.mastery_tier ?? d.mastery_tier))
-      .attr('stroke', d => {
-        const n = nodeMap.get(d.id);
-        const subj = n?.subject ?? d.subject;
-        const override = n?.course_color ?? d.course_color ?? courseColorMap[subj];
-        return getCourseColor(subj, override).fill;
-      });
-    svg.selectAll<SVGTextElement, SimNode>('text')
-      .filter(d => !!d.is_subject_root)
-      .attr('fill', d => {
-        const n = nodeMap.get(d.id);
-        const override = n?.course_color ?? d.course_color ?? courseColorMap[d.subject];
-        return getCourseColor(d.subject, override).text;
-      });
-  }, [nodes, courseColorMap]);
+  // Stop the simulation on unmount.
+  React.useEffect(() => {
+    return () => {
+      simRef.current?.stop();
+      simRef.current = null;
+    };
+  }, []);
 
-  // Separate lightweight effect: only add/remove the highlight ring.
-  // Runs independently so changing highlightId never restarts the simulation.
-  useEffect(() => {
-    if (!svgRef.current) return;
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('.highlight-ring').remove();
-    if (highlightId) {
-      svg.selectAll<SVGGElement, SimNode>('.node')
-        .filter(d => d.id === highlightId)
-        .insert('circle', '.main-circle')
-        .attr('class', 'highlight-ring')
-        .attr('r', d => getSimRadius(d) + 8)
-        .attr('fill', 'none')
-        .attr('stroke', 'rgba(26,92,42,0.55)')
-        .attr('stroke-width', 2);
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  const masteryOpacity = (tier: GraphNode["mastery_tier"]) =>
+    ({ mastered: 1, learning: 0.78, struggling: 0.55, unexplored: 0.28 })[tier] || 0.6;
+  const nodeRadius = (n: GraphNode) => (n.is_subject_root ? 22 : 8 + (n.mastery_score || 0) * 12);
+  const courseColor = (n?: GraphNode) => n?.color || "var(--c-sage)";
+  const fillFor = (n: GraphNode) => {
+    if (masteryTierFill) {
+      if (n.is_subject_root) return TIER_COLORS.subject_root;
+      return TIER_COLORS[n.mastery_tier] || courseColor(n);
     }
-  }, [highlightId]);
+    return courseColor(n);
+  };
+
+  // ── Pause simulation when offscreen ─────────────────────────────────────
+  React.useEffect(() => {
+    if (!pauseWhenOffscreen) return;
+    const el = svgRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      entries => {
+        for (const entry of entries) {
+          const sim = simRef.current;
+          if (!sim) continue;
+          if (entry.isIntersecting) {
+            sim.alphaTarget(0).restart();
+          } else {
+            sim.stop();
+          }
+        }
+      },
+      { threshold: 0.01 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [pauseWhenOffscreen]);
+
+  const subjectAverage = React.useMemo(() => {
+    const map: Record<string, { total: number; count: number }> = {};
+    for (const n of nodes) {
+      if (n.is_subject_root) continue;
+      const key = n.subject;
+      if (!map[key]) map[key] = { total: 0, count: 0 };
+      map[key].total += n.mastery_score || 0;
+      map[key].count += 1;
+    }
+    const result: Record<string, number> = {};
+    for (const s in map) result[s] = map[s].count ? map[s].total / map[s].count : 0;
+    return result;
+  }, [nodes]);
+
+  // ── Pointer interaction ─────────────────────────────────────────────────
+  const clientToSvg = (clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
+    const rect = svg.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left - view.tx) / view.scale,
+      y: (clientY - rect.top - view.ty) / view.scale,
+    };
+  };
+
+  const onNodePointerDown = (e: React.PointerEvent, n: SimNode) => {
+    e.stopPropagation();
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    dragRef.current = { kind: "node", nodeId: n.id, pointerId: e.pointerId };
+    movedRef.current = false;
+    simRef.current?.alphaTarget(0.3).restart();
+    n.fx = n.x;
+    n.fy = n.y;
+  };
+
+  const onSvgPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    svg.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      kind: "pan",
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      originTx: view.tx,
+      originTy: view.ty,
+    };
+    movedRef.current = false;
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    setTooltipPos({ x: e.clientX, y: e.clientY });
+    const drag = dragRef.current;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    movedRef.current = true;
+    if (drag.kind === "node") {
+      const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
+      if (!n) return;
+      const { x, y } = clientToSvg(e.clientX, e.clientY);
+      n.fx = x;
+      n.fy = y;
+    } else if (drag.kind === "pan") {
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY;
+      setView((v) => ({ ...v, tx: drag.originTx + dx, ty: drag.originTy + dy }));
+    }
+  };
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    try {
+      (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+    } catch {}
+    if (drag.kind === "node") {
+      const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
+      if (n) {
+        // Release the pin so the simulation takes over again.
+        n.fx = null;
+        n.fy = null;
+      }
+      simRef.current?.alphaTarget(0);
+    }
+  };
+
+  const onWheel = (e: React.WheelEvent) => {
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const delta = -e.deltaY * 0.0015;
+    setView((v) => {
+      const nextScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.scale * (1 + delta)));
+      const factor = nextScale / v.scale;
+      return {
+        tx: mx - (mx - v.tx) * factor,
+        ty: my - (my - v.ty) * factor,
+        scale: nextScale,
+      };
+    });
+  };
+
+  const resetView = () => setView({ tx: 0, ty: 0, scale: 1 });
+  const reheat = () => simRef.current?.alpha(0.8).restart();
+
+  const hoveredMastery = hovered
+    ? hovered.is_subject_root
+      ? subjectAverage[hovered.subject] ?? 0
+      : hovered.mastery_score || 0
+    : 0;
+
+  const simNodes = simNodesRef.current;
+  const simLinks = simLinksRef.current;
 
   return (
-    <div style={{ position: 'relative', width: '100%', height }}>
+    <div style={{ position: "relative", width, height, overflow: "hidden", background: "transparent" }}>
       <svg
         ref={svgRef}
-        width="100%"
-        height="100%"
-        viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio="xMidYMid meet"
-        style={{ display: 'block' }}
-      />
-      {interactive && (
+        width={width}
+        height={height}
+        style={{
+          display: "block",
+          cursor: dragRef.current?.kind === "pan" ? "grabbing" : "grab",
+          touchAction: "none",
+        }}
+        onPointerDown={onSvgPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onWheel={onWheel}
+      >
+        <defs>
+          <filter id="soft">
+            <feGaussianBlur stdDeviation="3" />
+          </filter>
+        </defs>
+
+        <g transform={`translate(${view.tx}, ${view.ty}) scale(${view.scale})`}>
+          {/* Edges */}
+          <g>
+            {simLinks.map((l, i) => {
+              const s = typeof l.source === "object" ? (l.source as SimNode) : simNodes.find((n) => n.id === l.source);
+              const t = typeof l.target === "object" ? (l.target as SimNode) : simNodes.find((n) => n.id === l.target);
+              if (!s || !t || s.x == null || t.x == null) return null;
+              const op = variant === "constellation" ? 0.35 : 0.2;
+              return (
+                <line
+                  key={i}
+                  x1={s.x}
+                  y1={s.y}
+                  x2={t.x}
+                  y2={t.y}
+                  stroke="var(--text-muted)"
+                  strokeOpacity={op}
+                  strokeWidth={0.5 + (l.strength || 0.5) * 1.2}
+                  strokeLinecap="round"
+                />
+              );
+            })}
+          </g>
+
+          {/* Nodes */}
+          <g>
+            {simNodes.map((n) => {
+              if (n.x == null || n.y == null) return null;
+              const r = nodeRadius(n);
+              const color = fillFor(n);
+              const op = n.is_subject_root ? 1 : masteryOpacity(n.mastery_tier);
+              const isHl = highlightId === n.id;
+              const isHovered = hovered?.id === n.id;
+              const isPinned = n.fx != null && n.fy != null;
+              return (
+                <g
+                  key={n.id}
+                  style={{ cursor: "grab" }}
+                  onPointerDown={(ev) => onNodePointerDown(ev, n)}
+                  onPointerEnter={() => setHovered(n)}
+                  onPointerLeave={() => setHovered((h) => (h?.id === n.id ? null : h))}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    if (movedRef.current) return;
+                    onNodeClick?.(n);
+                  }}
+                >
+                  {variant === "organism" && (
+                    <circle cx={n.x} cy={n.y} r={r + 8} fill={color} opacity={0.15} filter="url(#soft)" />
+                  )}
+                  {isHl && (
+                    <circle cx={n.x} cy={n.y} r={r + 7} fill="none" stroke={color} strokeWidth={2} opacity={0.7}>
+                      <animate
+                        attributeName="r"
+                        values={`${r + 5};${r + 11};${r + 5}`}
+                        dur="2.4s"
+                        repeatCount="indefinite"
+                      />
+                    </circle>
+                  )}
+                  {(() => {
+                    const partner = !n.is_subject_root && comparisonByName.get((n.name || "").trim().toLowerCase());
+                    if (!partner) return null;
+                    const partnerR = r + 4 + partner.mastery_score * 5;
+                    return (
+                      <circle
+                        cx={n.x}
+                        cy={n.y}
+                        r={partnerR}
+                        fill="none"
+                        stroke={comparisonColor}
+                        strokeWidth={1.8}
+                        strokeDasharray="3 3"
+                        opacity={0.35 + partner.mastery_score * 0.55}
+                      >
+                        <title>
+                          {comparisonLabel ? `${comparisonLabel}: ` : ""}
+                          {Math.round(partner.mastery_score * 100)}% mastery on {n.name}
+                        </title>
+                      </circle>
+                    );
+                  })()}
+                  {variant === "constellation" ? (
+                    <>
+                      <circle cx={n.x} cy={n.y} r={r * 0.7} fill={color} opacity={op} />
+                      <circle cx={n.x} cy={n.y} r={r * 1.6} fill="none" stroke={color} strokeWidth={0.5} opacity={op * 0.4} />
+                    </>
+                  ) : (
+                    <circle
+                      cx={n.x}
+                      cy={n.y}
+                      r={r}
+                      fill={color}
+                      opacity={op}
+                      stroke={color}
+                      strokeWidth={n.is_subject_root ? 2.5 : 1.5}
+                      strokeOpacity={isPinned ? 1 : isHovered ? 0.9 : 0.4}
+                    />
+                  )}
+                  {n.is_subject_root && (
+                    <text
+                      x={n.x}
+                      y={n.y + r + 16}
+                      textAnchor="middle"
+                      fontFamily="var(--font-display)"
+                      fontSize={13}
+                      fontWeight={600}
+                      fill={color}
+                      pointerEvents="none"
+                    >
+                      {n.name}
+                    </text>
+                  )}
+                  {!n.is_subject_root && r > 10 && (
+                    <text
+                      x={n.x}
+                      y={n.y + r + 13}
+                      textAnchor="middle"
+                      fontFamily="var(--font-sans)"
+                      fontSize={10.5}
+                      fill="var(--text-dim)"
+                      opacity={0.85}
+                      pointerEvents="none"
+                    >
+                      {n.name.length > 18 ? n.name.slice(0, 17) + "…" : n.name}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </g>
+        </g>
+      </svg>
+
+      <div
+        style={{
+          position: "absolute",
+          top: 12,
+          right: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          background: "var(--bg-panel)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-sm)",
+          padding: 4,
+          boxShadow: "var(--shadow-sm)",
+        }}
+      >
+        <button
+          className="btn btn--ghost btn--sm"
+          style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
+          onClick={() => setView((v) => ({ ...v, scale: Math.min(MAX_ZOOM, v.scale * 1.2) }))}
+          title="Zoom in"
+        >
+          +
+        </button>
+        <button
+          className="btn btn--ghost btn--sm"
+          style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
+          onClick={() => setView((v) => ({ ...v, scale: Math.max(MIN_ZOOM, v.scale / 1.2) }))}
+          title="Zoom out"
+        >
+          −
+        </button>
+        <button
+          className="btn btn--ghost btn--sm"
+          style={{ padding: "2px 8px", fontSize: 10 }}
+          onClick={resetView}
+          title="Reset view"
+        >
+          ⟲
+        </button>
+        <button
+          className="btn btn--ghost btn--sm"
+          style={{ padding: "2px 8px", fontSize: 10 }}
+          onClick={reheat}
+          title="Re-run forces"
+        >
+          ✦
+        </button>
+      </div>
+
+      {hovered && !dragRef.current && (
         <div
-          ref={tooltipRef}
           style={{
-            display: 'none',
-            position: 'absolute',
-            background: 'rgba(255, 255, 255, 0.97)',
-            backdropFilter: 'blur(14px)',
-            WebkitBackdropFilter: 'blur(14px)',
-            border: '1px solid rgba(107, 114, 128, 0.18)',
-            borderRadius: '8px',
-            padding: '10px 12px',
-            fontSize: '13px',
-            pointerEvents: 'none',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
-            zIndex: 10,
-            maxWidth: '200px',
+            position: "fixed",
+            left: tooltipPos.x + 14,
+            top: tooltipPos.y + 14,
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border-strong)",
+            borderRadius: "var(--r-md)",
+            padding: "10px 12px",
+            boxShadow: "var(--shadow-md)",
+            pointerEvents: "none",
+            zIndex: 50,
+            fontSize: 12,
+            minWidth: 200,
           }}
-        />
+        >
+          <div style={{ fontFamily: "var(--font-display)", fontSize: 14, marginBottom: 4 }}>{hovered.name}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-dim)" }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: courseColor(hovered) }} />
+            {hovered.is_subject_root ? "Course" : hovered.subject}
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 11,
+                color: "var(--text-muted)",
+                marginBottom: 4,
+              }}
+            >
+              <span>{hovered.is_subject_root ? "Avg. mastery" : "Mastery"}</span>
+              <span className="mono" style={{ color: "var(--text)" }}>
+                {Math.round(hoveredMastery * 100)}%
+              </span>
+            </div>
+            <div
+              style={{
+                height: 4,
+                background: "var(--bg-soft)",
+                borderRadius: "var(--r-full)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width: `${Math.round(hoveredMastery * 100)}%`,
+                  height: "100%",
+                  background: courseColor(hovered),
+                  transition: "width var(--dur) var(--ease)",
+                }}
+              />
+            </div>
+          </div>
+          {!hovered.is_subject_root && (
+            <div style={{ marginTop: 6, color: "var(--text-dim)", fontSize: 11, textTransform: "capitalize" }}>
+              {hovered.mastery_tier}
+              {hovered.last_studied_at && <> · {hovered.last_studied_at}</>}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
 }
-
-export default memo(KnowledgeGraph);

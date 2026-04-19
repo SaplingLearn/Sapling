@@ -1,4 +1,4 @@
-export const SESSION_MAX_AGE = 2592000; // 30 days in seconds
+export const SESSION_MAX_AGE = 2592000; // 30 days
 
 function getSecret(): string {
   const secret = process.env.SESSION_SECRET;

@@ -1,67 +1,35 @@
-import type { Metadata } from 'next';
-import { Spectral, DM_Sans, Inter, Playfair_Display, JetBrains_Mono } from 'next/font/google';
-import './globals.css';
-import { Suspense } from 'react';
-import { UserProvider } from '@/context/UserContext';
-import Navbar from '@/components/Navbar';
-import ErrorBoundary from '@/components/ErrorBoundary';
-import FeedbackFlow from '@/components/FeedbackFlow';
-import SessionFeedbackGlobal from '@/components/SessionFeedbackGlobal';
-import ToastProvider from '@/components/ToastProvider';
-
-const spectral = Spectral({
-  subsets: ['latin'],
-  weight: ['200', '300', '400', '500', '600', '700', '800'],
-  style: ['normal', 'italic'],
-  variable: '--font-spectral',
-  display: 'swap',
-});
-
-const dmSans = DM_Sans({
-  subsets: ['latin'],
-  variable: '--font-dm-sans',
-  display: 'swap',
-});
-
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-  display: 'swap',
-});
-
-const playfairDisplay = Playfair_Display({
-  subsets: ['latin'],
-  variable: '--font-playfair',
-  display: 'swap',
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
-  variable: '--font-jetbrains',
-  display: 'swap',
-});
+import type { Metadata } from "next";
+import React from "react";
+import { SidebarProvider } from "@/lib/sidebar";
+import { UserProvider } from "@/context/UserContext";
+import { ToastProvider } from "@/components/ToastProvider";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: 'Sapling',
-  description: 'Learn through conversation. Watch your knowledge grow.',
-  icons: {
-    icon: '/sapling-icon.svg',
-    shortcut: '/sapling-icon.svg',
-  },
+  title: "Sapling",
+  description: "Your mind, quietly mapped.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${spectral.variable} ${dmSans.variable} ${inter.variable} ${playfairDisplay.variable} ${jetbrainsMono.variable}`}>
+    <html lang="en" data-accent="sage" data-type="humanist" data-density="compact">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Geist:wght@400;500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body>
-        <UserProvider>
-          <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-            <Navbar />
-            <main style={{ flex: 1 }}><ErrorBoundary><ToastProvider>{children}</ToastProvider></ErrorBoundary></main>
-            <Suspense fallback={null}><FeedbackFlow /></Suspense>
-            <Suspense fallback={null}><SessionFeedbackGlobal /></Suspense>
-          </div>
-        </UserProvider>
+        <ErrorBoundary>
+          <ToastProvider>
+            <SidebarProvider>
+              <UserProvider>{children}</UserProvider>
+            </SidebarProvider>
+          </ToastProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );

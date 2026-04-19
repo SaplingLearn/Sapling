@@ -1,362 +1,331 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { GraphNode, QuizQuestion, QuizResult } from '@/lib/types';
-import { generateQuiz, submitQuiz } from '@/lib/api';
-import CustomSelect from '@/components/CustomSelect';
+import React, { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { CustomSelect } from "./CustomSelect";
+import { useToast } from "./ToastProvider";
+import { generateQuiz, submitQuiz } from "@/lib/api";
 
-interface Props {
-  nodes: GraphNode[];
-  userId: string;
-  selectedCourse?: string;
-  onLearnConcept?: (concept: string) => void;
-  preselectedNodeId?: string;
-  useSharedContext?: boolean;
+type Phase = "select" | "active" | "review" | "results";
+
+interface ConceptOption {
+  id: string;
+  name: string;
+  course_id?: string | null;
+  course_code?: string | null;
 }
 
-type Phase = 'select' | 'active' | 'review' | 'results';
+interface QuizQuestion {
+  id: number | string;
+  question: string;
+  options: { label: string; text: string; correct: boolean }[];
+  explanation: string;
+  concept_tested: string;
+  difficulty: string;
+}
 
-export default function QuizPanel({ nodes, userId, selectedCourse, onLearnConcept, preselectedNodeId, useSharedContext = true }: Props) {
-  const preselectedNode = preselectedNodeId ? nodes.find(n => n.id === preselectedNodeId) : undefined;
-  const subjectFilter = selectedCourse || preselectedNode?.subject || '';
-  const courseNodes = subjectFilter
-    ? nodes.filter(n => n.subject === subjectFilter && !n.is_subject_root)
-    : nodes.filter(n => !n.is_subject_root);
-  const [phase, setPhase] = useState<Phase>('select');
-  const [selectedNodeId, setSelectedNodeId] = useState(preselectedNodeId ?? '');
-  const [numQuestions, setNumQuestions] = useState(5);
-  const [difficulty, setDifficulty] = useState('medium');
+interface QuizAnswer {
+  question_id: number | string;
+  selected: string;
+}
 
-  const [quizId, setQuizId] = useState('');
+interface QuizResult {
+  question_id: number | string;
+  selected: string;
+  correct: boolean;
+  correct_answer: string;
+  explanation: string;
+}
+
+interface QuizPanelProps {
+  userId: string;
+  concepts: ConceptOption[];
+  initialConceptId?: string | null;
+  onExit: () => void;
+}
+
+const COUNT_OPTIONS = [
+  { value: "5", label: "5 questions" },
+  { value: "10", label: "10 questions" },
+  { value: "15", label: "15 questions" },
+];
+
+const DIFFICULTY_OPTIONS = [
+  { value: "easy", label: "Easy" },
+  { value: "medium", label: "Medium" },
+  { value: "hard", label: "Hard" },
+  { value: "adaptive", label: "Adaptive" },
+];
+
+export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPanelProps) {
+  const router = useRouter();
+  const toast = useToast();
+
+  const [phase, setPhase] = useState<Phase>("select");
+  const [conceptId, setConceptId] = useState<string | null>(initialConceptId ?? concepts[0]?.id ?? null);
+  const [count, setCount] = useState("5");
+  const [difficulty, setDifficulty] = useState("medium");
+
+  const [quizId, setQuizId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
-  const [currentQ, setCurrentQ] = useState(0);
-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
-  const [answers, setAnswers] = useState<{ question_id: number; selected_label: string }[]>([]);
-  const [reviewData, setReviewData] = useState<QuizResult | null>(null);
+  const [answers, setAnswers] = useState<QuizAnswer[]>([]);
+  const [qIndex, setQIndex] = useState(0);
+  const [currentSelection, setCurrentSelection] = useState<string | null>(null);
+  const [lastCorrect, setLastCorrect] = useState<boolean | null>(null);
 
-  const [results, setResults] = useState<{ score: number; total: number; mastery_before: number; mastery_after: number; results: QuizResult[] } | null>(null);
+  const [results, setResults] = useState<{ score: number; total: number; results: QuizResult[]; mastery_before: number; mastery_after: number } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (preselectedNodeId) {
-      setSelectedNodeId(preselectedNodeId);
+  const currentQuestion = questions[qIndex];
+
+  const start = async () => {
+    if (!conceptId) {
+      toast.warn("Pick a concept first.");
+      return;
     }
-  }, [preselectedNodeId]);
-
-  const startQuiz = async () => {
-    if (!selectedNodeId) return;
     setLoading(true);
-    setError('');
     try {
-      const res = await generateQuiz(userId, selectedNodeId, numQuestions, difficulty, useSharedContext);
+      const res = await generateQuiz(userId, conceptId, Number(count), difficulty);
       setQuizId(res.quiz_id);
-      setQuestions(res.questions);
-      setCurrentQ(0);
+      setQuestions(res.questions || []);
       setAnswers([]);
-      setPhase('active');
-    } catch (e: any) {
-      setError(e.message || 'Failed to generate quiz');
+      setQIndex(0);
+      setCurrentSelection(null);
+      setLastCorrect(null);
+      setPhase("active");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to generate quiz.");
     } finally {
       setLoading(false);
     }
   };
 
-  const submitAnswer = () => {
-    if (!selectedAnswer) return;
-    const q = questions[currentQ];
-    const correctOpt = q.options.find(o => o.correct);
-    const isCorrect = selectedAnswer === correctOpt?.label;
-    const result: QuizResult = {
-      question_id: q.id,
-      selected: selectedAnswer,
-      correct: isCorrect,
-      correct_answer: correctOpt?.label ?? '',
-      explanation: q.explanation,
-    };
-    setReviewData(result);
-    setAnswers(prev => [...prev, { question_id: q.id, selected_label: selectedAnswer }]);
-    setPhase('review');
+  const submitCurrent = () => {
+    if (!currentQuestion || !currentSelection) return;
+    const chosen = currentQuestion.options.find(o => o.label === currentSelection);
+    setLastCorrect(!!chosen?.correct);
+    setAnswers(a => [...a, { question_id: currentQuestion.id, selected: currentSelection }]);
+    setPhase("review");
   };
 
-  const nextQuestion = () => {
-    setSelectedAnswer(null);
-    setReviewData(null);
-    if (currentQ + 1 < questions.length) {
-      setCurrentQ(prev => prev + 1);
-      setPhase('active');
-    } else {
-      finishQuiz();
+  const next = () => {
+    if (qIndex + 1 >= questions.length) {
+      finish();
+      return;
     }
+    setQIndex(i => i + 1);
+    setCurrentSelection(null);
+    setLastCorrect(null);
+    setPhase("active");
   };
 
-  const finishQuiz = async () => {
+  const finish = async () => {
+    if (!quizId) return;
     setLoading(true);
     try {
       const res = await submitQuiz(quizId, answers);
       setResults(res);
-      setPhase('results');
-    } catch (e: any) {
-      setError(e.message || 'Failed to submit quiz');
+      setPhase("results");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to submit quiz.");
     } finally {
       setLoading(false);
     }
   };
 
-  const reset = () => {
-    setPhase('select');
+  const retake = () => {
+    setPhase("select");
     setResults(null);
-    setAnswers([]);
-    setSelectedAnswer(null);
-    setReviewData(null);
-    setQuizId('');
-    setQuestions([]);
-    setCurrentQ(0);
   };
 
-  if (phase === 'select') {
-    return (
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-        {/* Scrollable concept list */}
-        <div className="no-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '20px 20px 12px' }}>
-          <p className="label" style={{ marginBottom: '8px' }}>Select Concept</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {!subjectFilter ? (
-              <p style={{ fontSize: '13px', color: 'var(--text-dim)', padding: '8px 2px' }}>Select a course first</p>
-            ) : courseNodes.map(n => {
-              const sel = selectedNodeId === n.id;
-              const pct = Math.round(n.mastery_score * 100);
+  const explainConcept = (concept: string) => {
+    router.push(`/learn?topic=${encodeURIComponent(concept)}&mode=socratic`);
+  };
+
+  const conceptOptions = useMemo(
+    () => concepts.map(c => ({
+      value: c.id,
+      label: c.course_code ? `${c.course_code} — ${c.name}` : c.name,
+    })),
+    [concepts],
+  );
+
+  return (
+    <div
+      className="card"
+      style={{
+        padding: "var(--pad-xl)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 18,
+        maxWidth: 680,
+      }}
+    >
+      {phase === "select" && (
+        <>
+          <div>
+            <div className="label-micro" style={{ marginBottom: 4 }}>Quiz</div>
+            <div className="h-serif" style={{ fontSize: 24 }}>Test what you know</div>
+          </div>
+          <div>
+            <div className="label-micro" style={{ marginBottom: 6 }}>Concept</div>
+            {concepts.length === 0 ? (
+              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No concepts yet — learn something first.</div>
+            ) : (
+              <CustomSelect<string>
+                value={conceptId ?? ""}
+                options={conceptOptions}
+                onChange={v => setConceptId(v)}
+                style={{ width: "100%" }}
+                placeholder="Pick a concept…"
+              />
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div className="label-micro" style={{ marginBottom: 6 }}>Count</div>
+              <CustomSelect value={count} options={COUNT_OPTIONS} onChange={setCount} style={{ width: "100%" }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div className="label-micro" style={{ marginBottom: 6 }}>Difficulty</div>
+              <CustomSelect value={difficulty} options={DIFFICULTY_OPTIONS} onChange={setDifficulty} style={{ width: "100%" }} />
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <button className="btn" onClick={onExit}>Cancel</button>
+            <button className="btn btn--primary" onClick={start} disabled={loading || !conceptId}>
+              {loading ? "Generating…" : "Start quiz"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {phase === "active" && currentQuestion && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div className="label-micro">Question {qIndex + 1} of {questions.length}</div>
+            <div className="chip" style={{ textTransform: "uppercase" }}>{currentQuestion.difficulty}</div>
+          </div>
+          <div style={{ fontSize: 16, lineHeight: 1.55 }}>{currentQuestion.question}</div>
+          <div role="radiogroup" aria-label="Answer choices" style={{ display: "grid", gap: 8 }}>
+            {currentQuestion.options.map(o => {
+              const selected = currentSelection === o.label;
               return (
                 <button
-                  key={n.id}
-                  onClick={() => setSelectedNodeId(n.id)}
+                  key={o.label}
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setCurrentSelection(o.label)}
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    padding: '10px 14px',
-                    border: `1px solid ${sel ? 'var(--accent-border)' : 'var(--border)'}`,
-                    borderRadius: 'var(--radius-md)',
-                    cursor: 'pointer',
-                    background: sel ? 'var(--accent-dim)' : 'var(--bg-panel)',
-                    textAlign: 'left',
-                    fontFamily: 'inherit',
-                    width: '100%',
-                    boxShadow: sel ? '0 0 0 3px var(--accent-glow)' : 'none',
-                    transition: 'border-color var(--dur-fast), background var(--dur-fast), box-shadow var(--dur-fast)',
+                    textAlign: "left",
+                    padding: "10px 14px",
+                    border: `1.5px solid ${selected ? "var(--accent)" : "var(--border)"}`,
+                    background: selected ? "var(--accent-soft)" : "var(--bg-panel)",
+                    color: selected ? "var(--accent)" : "var(--text)",
+                    borderRadius: "var(--r-md)",
+                    fontSize: 14,
                   }}
                 >
-                  {/* Custom radio dot */}
-                  <span style={{
-                    width: '16px',
-                    height: '16px',
-                    borderRadius: '50%',
-                    border: `2px solid ${sel ? 'var(--accent)' : 'var(--border-mid)'}`,
-                    background: sel ? 'var(--accent)' : 'transparent',
-                    flexShrink: 0,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    transition: 'border-color var(--dur-fast), background var(--dur-fast)',
-                  }}>
-                    {sel && <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'white', display: 'block' }} />}
-                  </span>
-
-                  <span style={{ fontSize: '13px', color: 'var(--text)', flex: 1, fontWeight: sel ? 500 : 400 }}>
-                    {n.concept_name}
-                  </span>
-
-                  {/* Mastery pill */}
-                  <span style={{
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    color: sel ? 'var(--accent)' : 'var(--text-dim)',
-                    padding: '2px 8px',
-                    borderRadius: 'var(--radius-full)',
-                    background: sel ? 'rgba(26,92,42,0.1)' : 'var(--bg-subtle)',
-                    border: `1px solid ${sel ? 'var(--accent-border)' : 'var(--border)'}`,
-                    flexShrink: 0,
-                  }}>
-                    {pct}%
-                  </span>
+                  <span className="mono" style={{ marginRight: 8, fontWeight: 600 }}>{o.label}.</span>
+                  {o.text}
                 </button>
               );
             })}
           </div>
-        </div>
-
-        {/* Pinned bottom controls */}
-        <div style={{ flexShrink: 0, padding: '12px 20px 20px', borderTop: '1px solid var(--border-light)' }}>
-          <div style={{ display: 'flex', gap: '16px', marginBottom: '12px' }}>
-            <div>
-              <p className="label" style={{ marginBottom: '6px' }}>Questions</p>
-              <CustomSelect
-                value={String(numQuestions)}
-                onChange={val => setNumQuestions(Number(val))}
-                options={[5, 10, 15].map(n => ({ value: String(n), label: String(n) }))}
-                compact
-              />
-            </div>
-            <div>
-              <p className="label" style={{ marginBottom: '6px' }}>Difficulty</p>
-              <CustomSelect
-                value={difficulty}
-                onChange={val => setDifficulty(val)}
-                options={['easy', 'medium', 'hard', 'adaptive'].map(d => ({ value: d, label: d }))}
-                compact
-              />
-            </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <button className="btn" onClick={onExit}>Exit</button>
+            <button className="btn btn--primary" onClick={submitCurrent} disabled={!currentSelection}>
+              Submit answer
+            </button>
           </div>
+        </>
+      )}
 
-          {error && <p style={{ color: '#dc2626', fontSize: '13px', marginBottom: '8px' }}>{error}</p>}
-
-          <button
-            onClick={startQuiz}
-            disabled={!selectedNodeId || loading}
-            className="btn-accent"
-            style={{ width: '100%', cursor: selectedNodeId && !loading ? 'pointer' : 'not-allowed', opacity: !selectedNodeId || loading ? 0.4 : 1 }}
+      {phase === "review" && currentQuestion && (
+        <>
+          <div className="label-micro">Review</div>
+          <div
+            style={{
+              padding: "10px 14px",
+              borderRadius: "var(--r-md)",
+              background: lastCorrect ? "var(--accent-soft)" : "var(--err-soft)",
+              color: lastCorrect ? "var(--accent)" : "var(--err)",
+              fontSize: 14,
+              fontWeight: 500,
+            }}
           >
-            {loading ? 'Generating...' : 'Start Quiz'}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (phase === 'active' || phase === 'review') {
-    const q = questions[currentQ];
-    return (
-      <div className="no-scrollbar" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', height: '100%', overflowY: 'auto' }}>
-        <p style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
-          Question {currentQ + 1} of {questions.length}
-        </p>
-        <p style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text)', lineHeight: 1.6 }}>{q.question}</p>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {q.options.map(opt => {
-            let borderColor = 'var(--border)';
-            let bg = 'var(--bg-subtle)';
-            if (phase === 'review') {
-              if (opt.correct) { borderColor = 'rgba(22,163,74,0.5)'; bg = 'rgba(22,163,74,0.08)'; }
-              else if (opt.label === selectedAnswer && !opt.correct) { borderColor = 'rgba(220,38,38,0.5)'; bg = 'rgba(220,38,38,0.08)'; }
-            } else if (selectedAnswer === opt.label) {
-              borderColor = 'var(--accent-border)';
-              bg = 'var(--accent-dim)';
-            }
-
-            return (
-              <button
-                key={opt.label}
-                onClick={() => phase === 'active' && setSelectedAnswer(opt.label)}
-                disabled={phase === 'review'}
-                style={{
-                  padding: '13px 18px',
-                  border: `1px solid ${borderColor}`,
-                  borderRadius: '8px',
-                  background: bg,
-                  textAlign: 'left',
-                  cursor: phase === 'active' ? 'pointer' : 'default',
-                  display: 'flex',
-                  gap: '13px',
-                  alignItems: 'flex-start',
-                  fontSize: '18px',
-                  color: 'var(--text)',
-                  fontFamily: 'inherit',
-                }}
-              >
-                <span style={{ fontWeight: 600, color: 'var(--text-dim)', minWidth: '20px' }}>{opt.label}</span>
-                {opt.text}
-              </button>
-            );
-          })}
-        </div>
-
-        {phase === 'review' && (
-          <div className="panel" style={{ padding: '12px' }}>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6 }}>{q.explanation}</p>
-            {!reviewData?.correct && onLearnConcept && (
-              <button
-                onClick={() => onLearnConcept(q.concept_tested)}
-                style={{ marginTop: '8px', background: 'none', border: 'none', color: 'var(--accent)', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline', fontFamily: 'inherit' }}
-              >
-                Explain this
-              </button>
-            )}
+            {lastCorrect ? "Correct." : "Not quite."}
           </div>
-        )}
-
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {phase === 'active' && (
-            <button
-              onClick={submitAnswer}
-              disabled={!selectedAnswer}
-              className="btn-accent"
-              style={{ cursor: selectedAnswer ? 'pointer' : 'not-allowed', opacity: selectedAnswer ? 1 : 0.4 }}
-            >
-              Submit
-            </button>
-          )}
-          {phase === 'review' && (
-            <button
-              onClick={nextQuestion}
-              className="btn-accent"
-            >
-              {currentQ + 1 < questions.length ? 'Next' : 'See Results'}
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (phase === 'results' && results) {
-    const pct = Math.round((results.score / results.total) * 100);
-    const masteryDelta = Math.round((results.mastery_after - results.mastery_before) * 100);
-    return (
-      <div className="no-scrollbar" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', overflowY: 'auto' }}>
-        <div style={{ textAlign: 'center' }}>
-          <p style={{ fontSize: '36px', fontWeight: 700, color: 'var(--text)' }}>{results.score}/{results.total}</p>
-          <p style={{ fontSize: '14px', color: 'var(--text-muted)' }}>{pct}% correct</p>
-          <p style={{ fontSize: '13px', color: masteryDelta >= 0 ? '#16a34a' : '#dc2626', marginTop: '4px' }}>
-            Mastery: {masteryDelta >= 0 ? '+' : ''}{masteryDelta}%
-          </p>
-        </div>
-
-        <div>
-          {results.results.map((r, i) => (
-            <div key={r.question_id} style={{ display: 'flex', gap: '8px', padding: '6px 0', borderBottom: i < results.results.length - 1 ? '1px solid var(--border-light)' : 'none' }}>
-              <span style={{ fontSize: '13px', color: r.correct ? '#16a34a' : '#dc2626', fontWeight: 600, minWidth: '20px' }}>
-                {r.correct ? 'Y' : 'N'}
-              </span>
-              <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Q{i + 1}</span>
-              {!r.correct && (
-                <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Correct: {r.correct_answer}</span>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button
-            onClick={reset}
-            className="btn-ghost"
-            style={{ flex: 1 }}
+          <div style={{ fontSize: 15, lineHeight: 1.55 }}>{currentQuestion.question}</div>
+          <div style={{ display: "grid", gap: 6 }}>
+            {currentQuestion.options.map(o => {
+              const picked = currentSelection === o.label;
+              const right = o.correct;
+              const bg = right ? "var(--accent-soft)" : picked ? "var(--err-soft)" : "var(--bg-subtle)";
+              const color = right ? "var(--accent)" : picked ? "var(--err)" : "var(--text-dim)";
+              return (
+                <div
+                  key={o.label}
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: "var(--r-sm)",
+                    background: bg,
+                    color,
+                    fontSize: 13,
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                  }}
+                >
+                  <span className="mono" style={{ fontWeight: 600 }}>{o.label}.</span>
+                  <span style={{ flex: 1 }}>{o.text}</span>
+                  {right && <span aria-hidden>✓</span>}
+                  {!right && picked && <span aria-hidden>✗</span>}
+                </div>
+              );
+            })}
+          </div>
+          <div
+            style={{
+              padding: 12,
+              background: "var(--bg-subtle)",
+              borderRadius: "var(--r-sm)",
+              fontSize: 13,
+              color: "var(--text-dim)",
+              lineHeight: 1.55,
+            }}
           >
-            Retake
-          </button>
-          {onLearnConcept && (
-            <button
-              onClick={() => onLearnConcept('')}
-              className="btn-accent"
-              style={{ flex: 1 }}
-            >
-              Learn Weak Areas
+            {currentQuestion.explanation}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <button className="btn" onClick={() => explainConcept(currentQuestion.concept_tested)}>
+              Explain this
             </button>
-          )}
-        </div>
-      </div>
-    );
-  }
+            <button className="btn btn--primary" onClick={next}>
+              {qIndex + 1 >= questions.length ? "See results" : "Next question"}
+            </button>
+          </div>
+        </>
+      )}
 
-  return null;
+      {phase === "results" && results && (
+        <>
+          <div className="label-micro">Results</div>
+          <div className="h-serif" style={{ fontSize: 32 }}>
+            {Math.round((results.score / Math.max(1, results.total)) * 100)}%
+          </div>
+          <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
+            {results.score} / {results.total} correct · mastery{" "}
+            <span style={{ color: results.mastery_after >= results.mastery_before ? "var(--accent)" : "var(--err)", fontWeight: 600 }}>
+              {Math.round(results.mastery_before * 100)}% → {Math.round(results.mastery_after * 100)}%
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button className="btn" onClick={retake}>Retake</button>
+            <button className="btn btn--primary" onClick={onExit}>Done</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
