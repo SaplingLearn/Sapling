@@ -324,11 +324,10 @@ export function Dashboard() {
     </div>
   );
 
-  const leftPanel = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* My courses sits above the graph now — it's the quickest hop users
-          want from the dashboard, so it shouldn't be buried below a 500px
-          canvas. */}
+  // Pre-revamp layout: 3 columns — courses on the left, graph in the
+  // middle (primary focus), stats on the right.
+  const coursesPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">My courses</div>
@@ -342,12 +341,13 @@ export function Dashboard() {
         {courseProgress.map(({ course, mastered, total, progress }) => (
           <div key={course.course_id} style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: course.color || "var(--accent)" }} />
-                <strong>{course.course_code || course.course_name}</strong>
-                {course.course_code && <span style={{ color: "var(--text-muted)" }}>· {course.course_name}</span>}
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: course.color || "var(--accent)", flexShrink: 0 }} />
+                <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {course.course_code || course.course_name}
+                </strong>
               </span>
-              <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11 }}>
+              <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
                 {mastered}/{total}
               </span>
             </div>
@@ -363,7 +363,11 @@ export function Dashboard() {
           </div>
         ))}
       </div>
+    </div>
+  );
 
+  const graphPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
       {graphBlock}
     </div>
   );
@@ -550,14 +554,25 @@ export function Dashboard() {
         style={{
           padding: isMobile ? "14px 20px" : "20px 32px",
           display: "grid", gap: 20,
-          // Right column pinned to ~1/5 of the available width (4fr : 1fr).
-          // minmax(260px, 1fr) keeps it readable when the viewport is narrow.
-          gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 4fr) minmax(260px, 1fr)",
+          // Pre-revamp layout: narrow left (courses), wide middle (graph),
+          // narrow right (stats/upcoming/learn-next). Matches the 300px /
+          // flex 1 / 320px split from main@929658f.
+          gridTemplateColumns: isMobile ? "1fr" : "minmax(240px, 280px) minmax(0, 1fr) minmax(240px, 300px)",
         }}
       >
-        {isMobile ? (mobileTab === "courses" ? leftPanel : rightPanel) : (
+        {isMobile ? (
+          mobileTab === "courses" ? (
+            <>
+              {coursesPanel}
+              {graphPanel}
+            </>
+          ) : (
+            rightPanel
+          )
+        ) : (
           <>
-            {leftPanel}
+            {coursesPanel}
+            {graphPanel}
             {rightPanel}
           </>
         )}
