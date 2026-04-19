@@ -117,10 +117,10 @@ export function Dashboard() {
   const [fullscreen, setFullscreen] = React.useState(false);
   const [mobileTab, setMobileTab] = React.useState<"courses" | "stats">("courses");
 
-  // Initial guess matches the container's CSS height (260). Actual
-  // dimensions are measured via ResizeObserver below; this default just
-  // avoids a one-frame flash at the old taller size.
-  const [size, setSize] = React.useState({ w: 720, h: 260 });
+  // Graph container is now flex-filled, so there's no "correct" initial
+  // height — 420 is a reasonable pre-measurement guess that lines up
+  // with the new minHeight. ResizeObserver corrects it on mount.
+  const [size, setSize] = React.useState({ w: 720, h: 420 });
   const gRef = React.useRef<HTMLDivElement>(null);
 
   const suggest = search.get("suggest");
@@ -268,7 +268,18 @@ export function Dashboard() {
   }
 
   const graphBlock = (
-    <div className="card" style={{ padding: 0, overflow: "hidden", position: "relative", minHeight: 340 }}>
+    // Flex-column so the inner gRef can flex: 1 and fill whatever
+    // height the grid row decides (courses + upcoming stacked on the
+    // left determines the row height via align-items: stretch).
+    <div
+      className="card"
+      style={{
+        padding: 0, overflow: "hidden", position: "relative",
+        minHeight: 420,
+        display: "flex", flexDirection: "column",
+        flex: 1,
+      }}
+    >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
         <div>
           <div className="label-micro">Your knowledge graph</div>
@@ -292,7 +303,7 @@ export function Dashboard() {
           </button>
         </div>
       </div>
-      <div ref={gRef} style={{ position: "relative", height: 260 }}>
+      <div ref={gRef} style={{ position: "relative", flex: 1, minHeight: 260 }}>
         <KnowledgeGraph
           nodes={nodes}
           edges={edges}
@@ -400,7 +411,10 @@ export function Dashboard() {
   );
 
   const graphPanel = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+    // height: 100% lets this grid cell fill the row. Combined with the
+    // graphBlock's flex: 1, the canvas stretches to match the left
+    // column's stacked cards instead of floating at a fixed 260px.
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, height: "100%" }}>
       {graphBlock}
     </div>
   );
