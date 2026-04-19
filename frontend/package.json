@@ -9,8 +9,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "cf:build": "opennextjs-cloudflare build",
-    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
+    "cf:preview": "opennextjs-cloudflare build && wrangler dev -c wrangler.workers.toml",
+    "cf:deploy": "opennextjs-cloudflare build && wrangler deploy -c wrangler.workers.toml"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.99.3",
