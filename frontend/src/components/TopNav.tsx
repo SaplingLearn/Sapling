@@ -137,53 +137,44 @@ export function TopNav() {
         </div>
       )}
 
-      {/* Wordmark — pre-revamp logo (sprout SVG) + Playfair "Sapling" +
-          small "Alpha" mono tag. The SVG lives at public/sapling-icon.svg
-          so it ships with the build and <img> loads it without JS. */}
+      {/* Pre-revamp word-lockup (sapling-word-icon.png) — the sprout icon
+          + "Sapling" baked into one asset, with the mono "CLOSED ALPHA"
+          tagline rendered below. Natural size is 543×147 so we scale to
+          ~36px tall here and ~28px on mobile. */}
       <Link
         href="/dashboard"
+        aria-label="Sapling home"
         style={{
-          display: "flex", alignItems: "center", gap: 8,
-          textDecoration: "none", color: "var(--accent)",
+          display: "flex", flexDirection: "column",
+          alignItems: "flex-start", gap: 2,
+          textDecoration: "none",
           marginRight: isMobile ? 0 : 8,
+          flexShrink: 0,
         }}
       >
         <img
-          src="/sapling-icon.svg"
-          alt=""
-          aria-hidden
-          width={28}
-          height={28}
-          style={{ display: "block", flexShrink: 0 }}
+          src="/sapling-word-icon.png"
+          alt="Sapling"
+          height={isMobile ? 28 : 34}
+          // Natural ratio 543:147 ≈ 3.69:1
+          width={isMobile ? Math.round(28 * 3.69) : Math.round(34 * 3.69)}
+          style={{ display: "block" }}
         />
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1 }}>
+        {!isMobile && (
           <span
-            className="h-serif"
             style={{
-              fontSize: isMobile ? 18 : 20,
-              fontWeight: 700,
-              letterSpacing: "-0.02em",
-              lineHeight: 1,
+              fontSize: 9,
+              fontFamily: "var(--font-mono)",
+              letterSpacing: "0.14em",
+              color: "var(--accent)",
+              opacity: 0.6,
+              textTransform: "uppercase",
+              marginLeft: 52, // align under the word, past the icon
             }}
           >
-            Sapling
+            Closed Alpha
           </span>
-          {!isMobile && (
-            <span
-              style={{
-                fontSize: 9,
-                fontFamily: "var(--font-mono)",
-                letterSpacing: "0.12em",
-                color: "var(--accent)",
-                opacity: 0.6,
-                textTransform: "uppercase",
-                marginTop: 3,
-              }}
-            >
-              Closed Alpha
-            </span>
-          )}
-        </div>
+        )}
       </Link>
 
       {/* Desktop link row */}
