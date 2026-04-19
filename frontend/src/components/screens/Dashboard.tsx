@@ -209,9 +209,12 @@ export function Dashboard() {
     setGreetingPrefix(getGreetingPrefix(new Date()));
   }, []);
   const greetingText = firstName ? `${greetingPrefix}, ${firstName}` : "Welcome back";
-  const subtitle = assignments.length
-    ? `Your knowledge is growing. ${assignments.length} item${assignments.length === 1 ? "" : "s"} due soon.`
-    : "Your knowledge is growing.";
+  // Pre-revamp Dashboard rendered the daily quote right under the greeting
+  // (italic, muted). Restoring that placement — the "Inspired learning"
+  // label + card are gone; the quote now IS the subtitle.
+  const subtitle = quote ? (
+    <span style={{ fontStyle: "italic" }}>"{quote}"</span>
+  ) : null;
 
   const courseProgress = React.useMemo(() => {
     return courses.map(c => {
@@ -330,16 +333,8 @@ export function Dashboard() {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {graphBlock}
 
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-          <div>
-            <div className="label-micro">Inspired learning</div>
-            <div style={{ fontStyle: "italic", color: "var(--text-dim)", fontSize: 13, marginTop: 4, maxWidth: 520 }}>
-              "{quote}"
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* "Inspired learning" quote card removed — the quote now lives at
+          the top as the TopBar subtitle (the pre-revamp placement). */}
 
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
