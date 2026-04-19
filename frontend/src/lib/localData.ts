@@ -213,10 +213,14 @@ export function handleLocalRequest(path: string, options?: RequestInit): unknown
     generated_at: new Date().toISOString(),
   };
 
+  if (route.match(/^\/api\/learn\/sessions\/[^/]+$/) && options?.method === 'DELETE') return { deleted: true };
+  if (route.match(/^\/api\/learn\/sessions\/[^/]+\/resume$/)) return { session: { id: 'local-session', user_id: LOCAL_USER.id, topic: 'Local session', mode: 'socratic', course_id: null, started_at: new Date().toISOString(), ended_at: null }, messages: [] };
   if (route.match(/^\/api\/learn\/sessions\/[^/]+$/)) return { sessions: LOCAL_SESSIONS };
   if (route.match(/^\/api\/learn\/start-session$/) && options?.method === 'POST') return { session_id: 'local-session', initial_message: "Welcome! Local mode is active — AI chat is stubbed.", graph_state: {} };
   if (route.match(/^\/api\/learn\/chat$/) && options?.method === 'POST') return { reply: 'Local mode is active — AI chat is unavailable. Connect to the backend to use this feature.', graph_update: { new_nodes: [], updated_nodes: [], new_edges: [], recommended_next: [] }, mastery_changes: [] };
   if (route.match(/^\/api\/learn\/end-session$/) && options?.method === 'POST') return { summary: { concepts_covered: [], mastery_changes: [], new_connections: [], time_spent_minutes: 0, recommended_next: [] } };
+  if (route.match(/^\/api\/learn\/action$/) && options?.method === 'POST') return { reply: 'Local mode — action noted.', graph_update: { new_nodes: [], updated_nodes: [], new_edges: [], recommended_next: [] } };
+  if (route.match(/^\/api\/learn\/mode-switch$/) && options?.method === 'POST') return { reply: 'Local mode — mode switched.' };
 
   if (route.match(/^\/api\/social\/rooms\/[^/]+$/)) return { rooms: LOCAL_ROOMS };
   if (route.match(/^\/api\/social\/students$/)) return { students: [] };

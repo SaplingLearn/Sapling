@@ -90,6 +90,16 @@ class TestGetRoomMessages:
         assert captured["order"] == "created_at.desc"
         assert captured["limit"] == 20
 
+    def test_invalid_before_rejected(self):
+        # Guards against PostgREST operator injection (e.g. ?before=null or
+        # ?before=gt.2026-01-01). Anything not parseable as ISO 8601 is 400.
+        with patch("routes.social.table"):
+            for bad in ["null", "gt.2026-01-01", "not-a-date", "is.null", ""]:
+                if not bad:  # empty string skips the `if before:` branch; still valid
+                    continue
+                r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?before={bad}")
+                assert r.status_code == 400, f"expected 400 for before={bad!r}"
+
     def test_empty_room_returns_no_more(self):
         with patch("routes.social.table") as t:
             t.return_value.select.return_value = []

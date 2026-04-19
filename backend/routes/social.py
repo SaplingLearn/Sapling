@@ -230,9 +230,16 @@ def kick_member(room_id: str, member_id: str, requester_id: str = Query(...)):
 
 @router.get("/rooms/{room_id}/messages")
 def get_room_messages(room_id: str, before: str | None = None, limit: int = 50):
+    from datetime import datetime
     limit = max(1, min(200, limit))
     filters = {"room_id": f"eq.{room_id}"}
     if before:
+        # Validate as ISO 8601 so an attacker can't inject PostgREST operators
+        # (e.g. `null`, `is.null`, `gt.2026-01-01`) into the filter value.
+        try:
+            datetime.fromisoformat(before.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="`before` must be an ISO 8601 timestamp")
         filters["created_at"] = f"lt.{before}"
     # Fetch newest-first so the slice covers the page we need, then reverse to ascending.
     rows = table("room_messages").select(

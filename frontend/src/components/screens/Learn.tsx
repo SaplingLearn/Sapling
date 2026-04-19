@@ -10,6 +10,7 @@ import { SessionSummary } from "../SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../SharedContextToggle";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { QuizPanel } from "../QuizPanel";
+import { KnowledgeGraph } from "../KnowledgeGraph";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -29,6 +30,27 @@ import {
   type SessionSummaryData,
   type EnrolledCourse,
 } from "@/lib/api";
+import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
+import type { GraphNode, GraphEdge } from "@/lib/data";
+
+function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
+  const course = courses.find((c) => c.course_name === n.subject);
+  return {
+    id: n.id,
+    name: n.concept_name,
+    subject: n.subject,
+    color: n.course_color || course?.color || "var(--c-sage)",
+    is_subject_root: n.is_subject_root,
+    mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
+    mastery_score: n.mastery_score,
+    course_id: n.course_id || course?.course_id || "",
+    last_studied_at: n.last_studied_at || undefined,
+  };
+}
+
+function apiToGraphEdge(e: ApiEdge): GraphEdge {
+  return { source: e.source as string, target: e.target as string, strength: e.strength };
+}
 
 type Mode = "socratic" | "expository" | "teachback" | "quiz";
 
@@ -82,6 +104,8 @@ function LearnInner() {
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
   const [concepts, setConcepts] = useState<{ id: string; name: string; course_id: string | null; course_code: string | null }[]>([]);
+  const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
+  const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
 
   const [summary, setSummary] = useState<SessionSummaryData | null>(null);
   const [mobileTab, setMobileTab] = useState<"chat" | "graph">("chat");
@@ -114,6 +138,10 @@ function LearnInner() {
               course_code: n.course_id ? (courseById.get(n.course_id)?.course_code ?? null) : null,
             })),
         );
+        const apiNodes = (gRes.nodes ?? []) as ApiNode[];
+        const apiEdges = (gRes.edges ?? []) as ApiEdge[];
+        setGraphNodes(apiNodes.map(n => apiToGraphNode(n, cRes.courses ?? [])));
+        setGraphEdges(apiEdges.map(apiToGraphEdge));
       } catch (err) {
         console.error("learn bootstrap failed", err);
       }
@@ -517,15 +545,38 @@ function LearnInner() {
               <div className="label-micro">Session</div>
               <div className="h-serif" style={{ fontSize: 18, marginTop: 4 }}>{topic}</div>
             </div>
-            <div className="card" style={{ padding: 14 }}>
-              <div className="label-micro" style={{ marginBottom: 4 }}>Mode</div>
-              <div style={{ fontSize: 13, fontWeight: 500, textTransform: "capitalize" }}>{mode}</div>
+            {graphNodes.length > 0 && (
+              <div
+                className="card"
+                style={{ padding: 8, display: "flex", flexDirection: "column", gap: 4 }}
+              >
+                <div className="label-micro" style={{ padding: "4px 6px" }}>Knowledge graph</div>
+                <KnowledgeGraph
+                  nodes={graphNodes}
+                  edges={graphEdges}
+                  width={isMobile ? 320 : 280}
+                  height={280}
+                  variant="organism"
+                  highlightId={graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id}
+                  onNodeClick={(n) => {
+                    if (!n.is_subject_root) {
+                      router.replace(`/learn?topic=${encodeURIComponent(n.name)}&mode=${mode}`, { scroll: false });
+                    }
+                  }}
+                />
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div className="card" style={{ padding: 12 }}>
+                <div className="label-micro" style={{ marginBottom: 4 }}>Mode</div>
+                <div style={{ fontSize: 13, fontWeight: 500, textTransform: "capitalize" }}>{mode}</div>
+              </div>
+              <div className="card" style={{ padding: 12 }}>
+                <div className="label-micro" style={{ marginBottom: 4 }}>Messages</div>
+                <div className="mono" style={{ fontSize: 16 }}>{messages.length}</div>
+              </div>
             </div>
-            <div className="card" style={{ padding: 14 }}>
-              <div className="label-micro" style={{ marginBottom: 4 }}>Messages</div>
-              <div className="mono" style={{ fontSize: 18 }}>{messages.length}</div>
-            </div>
-            <div className="card" style={{ padding: 14 }}>
+            <div className="card" style={{ padding: 12 }}>
               <div className="label-micro" style={{ marginBottom: 4 }}>Context</div>
               <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
                 {sharedCtx ? "Class intel: on" : "Class intel: off"}
