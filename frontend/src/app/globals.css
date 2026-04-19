@@ -28,42 +28,56 @@
   --sap-800: #1f3e18;
   --sap-900: #132610;
 
-  /* Warm neutrals (paper) */
-  --ink-0:   #faf8f3;
-  --ink-50:  #f4f1ea;
-  --ink-100: #ebe6dc;
-  --ink-200: #ddd6c6;
-  --ink-300: #b9b1a0;
-  --ink-400: #8a8372;
-  --ink-500: #5d5749;
-  --ink-600: #3f3b31;
-  --ink-700: #2a271f;
-  --ink-800: #1a1814;
-  --ink-900: #12110d;
+  /* Cool neutral "mesh" palette — matches the pre-revamp. A faintly
+   * green-tinted off-white background reads as "thriving plant in a
+   * quiet library" without the warm-paper tone the original revamp
+   * leaned on. */
+  --ink-0:   #f0f4f2;  /* brand mesh (page background) */
+  --ink-50:  #e9efe9;  /* subtle panel tint */
+  --ink-100: #dfe8df;  /* soft */
+  --ink-200: #cdd6cd;
+  --ink-300: #a9b3a9;
+  --ink-400: #6b7280;  /* pre-revamp text-dim */
+  --ink-500: #4b5563;  /* pre-revamp text-muted */
+  --ink-600: #374151;  /* pre-revamp text-secondary */
+  --ink-700: #1f2937;
+  --ink-800: #111827;  /* pre-revamp primary text */
+  --ink-900: #0a0f1a;
 
-  /* Semantic (light) */
-  --bg:        var(--ink-0);
-  --bg-panel:  #ffffff;
-  --bg-subtle: var(--ink-50);
-  --bg-soft:   var(--ink-100);
-  --bg-input:  #ffffff;
-  --bg-inset:  #f7f3eb;
-  --border:    rgba(42, 39, 31, 0.10);
-  --border-strong: rgba(42, 39, 31, 0.18);
-  --text:      var(--ink-800);
-  --text-dim:  var(--ink-600);
-  --text-muted:var(--ink-400);
-  --accent:    var(--sap-600);
+  /* Semantic (light) — carries the pre-revamp tokens:
+   *   --bg       = brand-mesh (#f0f4f2)
+   *   --bg-panel = #f8fbf8
+   *   --bg-topbar = #dce6dc (pre-revamp distinguished the nav from pages)
+   *   --accent   = #1a5c2a (deep forest green, THE Sapling green)
+   */
+  --bg:        #f0f4f2;
+  --bg-panel:  #f8fbf8;
+  --bg-subtle: #e9efe9;
+  --bg-soft:   #dfe8df;
+  --bg-input:  #f8fbf8;
+  --bg-inset:  #e9efe9;
+  --bg-topbar: #dce6dc;
+  --border:    rgba(107, 114, 128, 0.18);
+  --border-strong: rgba(107, 114, 128, 0.25);
+  --text:      #111827;
+  --text-dim:  #4b5563;
+  --text-muted:#6b7280;
+  --accent:    #1a5c2a;
   --accent-fg: #ffffff;
-  --accent-soft: var(--sap-50);
-  --accent-border: var(--sap-200);
+  --accent-soft: rgba(26, 92, 42, 0.08);
+  --accent-border: rgba(26, 92, 42, 0.30);
+  --accent-hover:  #144a21;
 
-  --warn: #b4562c;
-  --warn-soft: #f7e6d8;
-  --err:  #a83a3a;
-  --err-soft: #f5d8d3;
-  --info: #3e6f8a;
-  --info-soft: #dfe9ef;
+  /* Learning-state semantic colors — pre-revamp brand palette.
+   *   --warn  amber  = in-progress
+   *   --err   coral  = struggling / destructive
+   *   --info  teal   = informational / success-progress */
+  --warn: #e8a33a;
+  --warn-soft: color-mix(in oklab, #e8a33a 14%, transparent);
+  --err:  #e85d4a;
+  --err-soft: color-mix(in oklab, #e85d4a 14%, transparent);
+  --info: #2b8c96;
+  --info-soft: color-mix(in oklab, #2b8c96 14%, transparent);
 
   --rarity-common: #8a8372;
   --rarity-uncommon: #4e873c;

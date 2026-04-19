@@ -93,7 +93,10 @@ export function TopNav() {
       style={{
         height: TOP_NAV_HEIGHT,
         minHeight: TOP_NAV_HEIGHT,
-        background: "var(--bg-subtle)",
+        // --bg-topbar from the pre-revamp palette is a deliberately
+        // greener tint than --bg-subtle so the nav reads as its own
+        // surface without needing a border or shadow to announce it.
+        background: "var(--bg-topbar)",
         borderBottom: "1px solid var(--border)",
         display: "flex",
         alignItems: "center",
@@ -134,31 +137,53 @@ export function TopNav() {
         </div>
       )}
 
-      {/* Wordmark — Playfair for brand, sans "Alpha" badge below */}
+      {/* Wordmark — pre-revamp logo (sprout SVG) + Playfair "Sapling" +
+          small "Alpha" mono tag. The SVG lives at public/sapling-icon.svg
+          so it ships with the build and <img> loads it without JS. */}
       <Link
         href="/dashboard"
         style={{
-          display: "flex", alignItems: "baseline", gap: 6,
+          display: "flex", alignItems: "center", gap: 8,
           textDecoration: "none", color: "var(--accent)",
           marginRight: isMobile ? 0 : 8,
         }}
       >
-        <span
-          className="h-serif"
-          style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1 }}
-        >
-          Sapling
-        </span>
-        {!isMobile && (
+        <img
+          src="/sapling-icon.svg"
+          alt=""
+          aria-hidden
+          width={28}
+          height={28}
+          style={{ display: "block", flexShrink: 0 }}
+        />
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1 }}>
           <span
+            className="h-serif"
             style={{
-              fontSize: 9, fontFamily: "var(--font-mono)", letterSpacing: "0.12em",
-              color: "var(--accent)", opacity: 0.55, textTransform: "uppercase",
+              fontSize: isMobile ? 18 : 20,
+              fontWeight: 700,
+              letterSpacing: "-0.02em",
+              lineHeight: 1,
             }}
           >
-            Alpha
+            Sapling
           </span>
-        )}
+          {!isMobile && (
+            <span
+              style={{
+                fontSize: 9,
+                fontFamily: "var(--font-mono)",
+                letterSpacing: "0.12em",
+                color: "var(--accent)",
+                opacity: 0.6,
+                textTransform: "uppercase",
+                marginTop: 3,
+              }}
+            >
+              Closed Alpha
+            </span>
+          )}
+        </div>
       </Link>
 
       {/* Desktop link row */}
