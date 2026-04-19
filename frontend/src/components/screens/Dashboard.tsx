@@ -561,37 +561,12 @@ export function Dashboard() {
 
   return (
     <div>
-      {/* Meta row sits at the very top: breadcrumb left, primary actions
-          right. No chrome bar, no border — flows on top of the atmospheric
-          backdrop. */}
-      <div
-        style={{
-          padding: isMobile ? "14px 20px 0" : "18px 32px 0",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        <span className="label-micro">Home / Dashboard</span>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn btn--sm" onClick={() => router.push("/library")}>
-            <Icon name="search" size={13} /> Library
-          </button>
-          <button className="btn btn--sm btn--primary" onClick={() => router.push("/learn")}>
-            <Icon name="sparkle" size={13} /> Start learning
-          </button>
-        </div>
-      </div>
-
-      {/* Hero drops below the meta row now. Greeting types in, then
-          the quote fades in (0.7s) once typing completes — same
-          sequence as the pre-revamp dashboard. */}
+      {/* Hero at the very top — zero TopBar above it, tight top padding
+          so the greeting is literally the first thing on the page. */}
       <div
         style={{
           textAlign: "center",
-          padding: isMobile ? "20px 20px 4px" : "28px 32px 8px",
+          padding: isMobile ? "14px 20px 0" : "18px 32px 0",
         }}
       >
         <h1
@@ -611,7 +586,7 @@ export function Dashboard() {
           <p
             className="body-serif"
             style={{
-              margin: "10px auto 0",
+              margin: "8px auto 0",
               maxWidth: 640,
               fontSize: 14,
               fontStyle: "italic",
@@ -624,6 +599,29 @@ export function Dashboard() {
             "{quote}"
           </p>
         )}
+      </div>
+
+      {/* Meta row pushed DOWN below the hero, tight padding. Breadcrumb
+          left, actions right — one line of chrome, no bar. */}
+      <div
+        style={{
+          padding: isMobile ? "10px 20px 0" : "12px 32px 0",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <span className="label-micro">Home / Dashboard</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn--sm" onClick={() => router.push("/library")}>
+            <Icon name="search" size={13} /> Library
+          </button>
+          <button className="btn btn--sm btn--primary" onClick={() => router.push("/learn")}>
+            <Icon name="sparkle" size={13} /> Start learning
+          </button>
+        </div>
       </div>
 
       {suggestNode && !suggestDismissed && (
@@ -664,8 +662,9 @@ export function Dashboard() {
 
       <div
         style={{
-          // Tight top padding so panels start immediately below the meta row.
-          padding: isMobile ? "12px 20px 16px" : "14px 32px 24px",
+          // Very tight top padding so panels start immediately below the
+          // meta row — maximises the space the content panels can claim.
+          padding: isMobile ? "8px 20px 16px" : "10px 32px 24px",
           display: "grid", gap: 16,
           // Pre-revamp layout: narrow left (courses), wide middle (graph),
           // narrow right (stats/upcoming/learn-next). Matches the 300px /
