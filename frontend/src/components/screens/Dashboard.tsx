@@ -265,7 +265,7 @@ export function Dashboard() {
   }
 
   const graphBlock = (
-    <div className="card" style={{ padding: 0, overflow: "hidden", position: "relative", minHeight: 520 }}>
+    <div className="card" style={{ padding: 0, overflow: "hidden", position: "relative", minHeight: 420 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
         <div>
           <div className="label-micro">Your knowledge graph</div>
@@ -289,7 +289,7 @@ export function Dashboard() {
           </button>
         </div>
       </div>
-      <div ref={gRef} style={{ position: "relative", height: 460 }}>
+      <div ref={gRef} style={{ position: "relative", height: 340 }}>
         <KnowledgeGraph
           nodes={nodes}
           edges={edges}
