@@ -511,31 +511,14 @@ export function Dashboard() {
 
   return (
     <div>
-      {/* Dashboard gets a slim TopBar — just breadcrumb + actions.
-          The ceremonial greeting + quote live in a dedicated centered
-          hero block below. Other pages keep their normal TopBar title. */}
-      <TopBar
-        breadcrumb="Home / Dashboard"
-        title=""
-        actions={
-          <>
-            <button className="btn btn--sm" onClick={() => router.push("/library")}>
-              <Icon name="search" size={13} /> Library
-            </button>
-            <button className="btn btn--sm btn--primary" onClick={() => router.push("/learn")}>
-              <Icon name="sparkle" size={13} /> Start learning
-            </button>
-          </>
-        }
-      />
-
-      {/* Centered "arrival" hero — the greeting sets the tone, the
-          italic quote sets the mood. Typography carries the hierarchy;
-          no card, no decoration. */}
+      {/* No TopBar on the Dashboard — the white sticky bar was empty
+          chrome. The greeting + quote carry the page identity; the
+          breadcrumb + action buttons drop into a compact meta row
+          between the hero and the grid. */}
       <div
         style={{
           textAlign: "center",
-          padding: isMobile ? "24px 20px 6px" : "32px 32px 10px",
+          padding: isMobile ? "18px 20px 4px" : "22px 32px 6px",
         }}
       >
         <h1
@@ -555,7 +538,7 @@ export function Dashboard() {
           <p
             className="body-serif"
             style={{
-              margin: "10px auto 0",
+              margin: "8px auto 0",
               maxWidth: 640,
               fontSize: 14,
               fontStyle: "italic",
@@ -566,6 +549,29 @@ export function Dashboard() {
             "{quote}"
           </p>
         )}
+      </div>
+
+      {/* Compact meta row: breadcrumb left, primary actions right.
+          No background, no border — flows with the hero above it. */}
+      <div
+        style={{
+          padding: isMobile ? "10px 20px 0" : "12px 32px 0",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <span className="label-micro">Home / Dashboard</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn--sm" onClick={() => router.push("/library")}>
+            <Icon name="search" size={13} /> Library
+          </button>
+          <button className="btn btn--sm btn--primary" onClick={() => router.push("/learn")}>
+            <Icon name="sparkle" size={13} /> Start learning
+          </button>
+        </div>
       </div>
 
       {suggestNode && !suggestDismissed && (
@@ -606,8 +612,9 @@ export function Dashboard() {
 
       <div
         style={{
-          padding: isMobile ? "14px 20px" : "20px 32px",
-          display: "grid", gap: 20,
+          // Tight top padding so panels start immediately below the meta row.
+          padding: isMobile ? "12px 20px 16px" : "14px 32px 24px",
+          display: "grid", gap: 16,
           // Pre-revamp layout: narrow left (courses), wide middle (graph),
           // narrow right (stats/upcoming/learn-next). Matches the 300px /
           // flex 1 / 320px split from main@929658f.
