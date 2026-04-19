@@ -582,22 +582,36 @@ export function Dashboard() {
         >
           <Typewriter text={greetingText} onDone={() => setGreetingDone(true)} />
         </h1>
+        {/* Quote row stays collapsed (max-height: 0) while the greeting
+            is still typing — no reserved empty band above where the
+            quote will land. When the greeting finishes, the row expands
+            and the text fades in, so the quote drops down into place
+            below the greeting. */}
         {quote && (
-          <p
-            className="body-serif"
+          <div
+            aria-hidden={!greetingDone}
             style={{
-              margin: "8px auto 0",
-              maxWidth: 640,
-              fontSize: 14,
-              fontStyle: "italic",
-              color: "var(--text-dim)",
-              lineHeight: 1.55,
-              opacity: greetingDone ? 1 : 0,
-              transition: "opacity 0.7s var(--ease)",
+              maxHeight: greetingDone ? 120 : 0,
+              overflow: "hidden",
+              transition: "max-height 0.7s var(--ease)",
             }}
           >
-            "{quote}"
-          </p>
+            <p
+              className="body-serif"
+              style={{
+                margin: "22px auto 0",
+                maxWidth: 640,
+                fontSize: 14,
+                fontStyle: "italic",
+                color: "var(--text-dim)",
+                lineHeight: 1.55,
+                opacity: greetingDone ? 1 : 0,
+                transition: "opacity 0.55s var(--ease) 0.15s",
+              }}
+            >
+              "{quote}"
+            </p>
+          </div>
         )}
       </div>
 
