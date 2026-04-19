@@ -212,12 +212,9 @@ export function Dashboard() {
     setGreetingPrefix(getGreetingPrefix(new Date()));
   }, []);
   const greetingText = firstName ? `${greetingPrefix}, ${firstName}` : "Welcome back";
-  // Pre-revamp Dashboard rendered the daily quote right under the greeting
-  // (italic, muted). Restoring that placement — the "Inspired learning"
-  // label + card are gone; the quote now IS the subtitle.
-  const subtitle = quote ? (
-    <span style={{ fontStyle: "italic" }}>"{quote}"</span>
-  ) : null;
+  // Greeting + quote render as a centered hero below the TopBar (see
+  // return JSX), not as TopBar title/subtitle. Leaving the TopBar lean
+  // makes the Dashboard feel like an arrival page, not a tool page.
 
   const courseProgress = React.useMemo(() => {
     return courses.map(c => {
@@ -514,10 +511,12 @@ export function Dashboard() {
 
   return (
     <div>
+      {/* Dashboard gets a slim TopBar — just breadcrumb + actions.
+          The ceremonial greeting + quote live in a dedicated centered
+          hero block below. Other pages keep their normal TopBar title. */}
       <TopBar
         breadcrumb="Home / Dashboard"
-        title={<Typewriter text={greetingText} />}
-        subtitle={subtitle}
+        title=""
         actions={
           <>
             <button className="btn btn--sm" onClick={() => router.push("/library")}>
@@ -529,6 +528,45 @@ export function Dashboard() {
           </>
         }
       />
+
+      {/* Centered "arrival" hero — the greeting sets the tone, the
+          italic quote sets the mood. Typography carries the hierarchy;
+          no card, no decoration. */}
+      <div
+        style={{
+          textAlign: "center",
+          padding: isMobile ? "24px 20px 6px" : "32px 32px 10px",
+        }}
+      >
+        <h1
+          className="h-serif"
+          style={{
+            margin: 0,
+            fontSize: isMobile ? 26 : 30,
+            fontWeight: 600,
+            color: "var(--text)",
+            letterSpacing: "-0.02em",
+            lineHeight: 1.2,
+          }}
+        >
+          <Typewriter text={greetingText} />
+        </h1>
+        {quote && (
+          <p
+            className="body-serif"
+            style={{
+              margin: "10px auto 0",
+              maxWidth: 640,
+              fontSize: 14,
+              fontStyle: "italic",
+              color: "var(--text-dim)",
+              lineHeight: 1.55,
+            }}
+          >
+            "{quote}"
+          </p>
+        )}
+      </div>
 
       {suggestNode && !suggestDismissed && (
         <div style={{ padding: "14px 32px 0" }}>
