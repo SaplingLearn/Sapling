@@ -1105,7 +1105,7 @@ export default function LandingPage() {
                     <span style={{ fontSize: '11px', color: '#9CA3AF', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif" }}>@alexkim</span>
                   </div>
                 </div>
-                <p style={{ margin: '10px 2px 0', fontSize: 12.5, color: '#6b7280', lineHeight: 1.5 }}>
+                <p style={{ margin: '10px 2px 0', fontSize: 12.5, color: '#6b7280', lineHeight: 1.5, fontStyle: 'italic' }}>
                   The first mark on your profile. A permanent record of showing up early.
                 </p>
               </div>
