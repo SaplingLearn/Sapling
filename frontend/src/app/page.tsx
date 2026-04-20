@@ -38,9 +38,16 @@ export default function LandingPage() {
   const [betaEmail, setBetaEmail] = useState('');
   const [betaEmailError, setBetaEmailError] = useState('');
   const [betaSubmitted, setBetaSubmitted] = useState(false);
+  const [betaEverSubmitted, setBetaEverSubmitted] = useState(false);
   const closeModal = useCallback(() => {
     setBetaModalClosing(true);
-    setTimeout(() => { setBetaModalOpen(false); setBetaModalClosing(false); }, 200);
+    setTimeout(() => {
+      setBetaModalOpen(false);
+      setBetaModalClosing(false);
+      setBetaSubmitted(false);
+      setBetaEmail('');
+      setBetaEmailError('');
+    }, 200);
   }, []);
   useEffect(() => {
     if (betaSubmitted) {
@@ -786,11 +793,13 @@ export default function LandingPage() {
               </button>
             </div>
             <button
-              onClick={() => setBetaModalOpen(true)}
+              onClick={() => { setBetaModalOpen(true); if (betaEverSubmitted) setBetaSubmitted(true); }}
               className="liquid-glass-subtle px-10 py-4 rounded-full font-medium text-base tracking-wide transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]"
               style={{
-                background: 'rgba(217,119,6,0.15)',
-                border: '1px solid rgba(217,119,6,0.45)',
+                background: 'rgba(217,119,6,0.35)',
+                backdropFilter: 'blur(12px) saturate(1.45)',
+                WebkitBackdropFilter: 'blur(12px) saturate(1.45)',
+                border: '1px solid rgba(217,119,6,0.55)',
                 color: '#78350F',
               }}
             >
@@ -1161,6 +1170,7 @@ export default function LandingPage() {
                       }
                       setBetaSubmitting(false);
                       setBetaSubmitted(true);
+                      setBetaEverSubmitted(true);
                     }}
                     style={{ marginTop: 'auto', paddingTop: 28 }}
                   >
