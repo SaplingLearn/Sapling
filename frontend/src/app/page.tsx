@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
-import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } from 'lucide-react';
+import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare, Bell, Map, Shield, X } from 'lucide-react';
 import OnboardingFlow from '@/components/OnboardingFlow';
 import HowItWorks from '@/components/HowItWorks';
 
@@ -33,6 +33,10 @@ export default function LandingPage() {
   const [introText, setIntroText] = useState<'hidden' | 'in' | 'out'>('hidden');
   const [outroText, setOutroText] = useState<'hidden' | 'in' | 'out'>('hidden');
   const [outroOverlay, setOutroOverlay] = useState(false);
+  const [betaModalOpen, setBetaModalOpen] = useState(false);
+  const [betaEmail, setBetaEmail] = useState('');
+  const [betaSubmitted, setBetaSubmitted] = useState(false);
+  const [betaSubmitting, setBetaSubmitting] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
   const [completed, setCompleted] = useState<Set<number>>(new Set());
 
@@ -754,12 +758,25 @@ export default function LandingPage() {
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 700ms',
-          }} className="flex flex-col sm:flex-row gap-4 mt-10 items-center justify-center">
-            <button onClick={startOnboarding} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
-              Get Started
-            </button>
-            <button onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })} className="liquid-glass-subtle text-[var(--brand-text2)] hover:text-[var(--brand-text1)] px-10 py-4 rounded-full font-medium text-base transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]">
-              See What&apos;s Inside <span className="ml-1 opacity-50">↓</span>
+          }} className="flex flex-col items-center gap-4 mt-10">
+            <div className="flex flex-col sm:flex-row gap-4 items-center justify-center">
+              <button onClick={startOnboarding} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
+                Get Started
+              </button>
+              <button onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })} className="liquid-glass-subtle text-[var(--brand-text2)] hover:text-[var(--brand-text1)] px-10 py-4 rounded-full font-medium text-base transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]">
+                See What&apos;s Inside <span className="ml-1 opacity-50">↓</span>
+              </button>
+            </div>
+            <button
+              onClick={() => setBetaModalOpen(true)}
+              className="px-10 py-4 rounded-full font-medium text-base tracking-wide transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]"
+              style={{
+                background: 'rgba(217,119,6,0.08)',
+                border: '1px solid rgba(217,119,6,0.3)',
+                color: '#92400E',
+              }}
+            >
+              Sign up for Beta Testing
             </button>
           </div>
         </div>
@@ -935,6 +952,225 @@ export default function LandingPage() {
         transition: 'opacity 900ms cubic-bezier(0.4,0,0.2,1)',
         pointerEvents: 'none',
       }} />
+
+      {/* ═══ Beta / Newsletter Panel ═══ */}
+      {betaModalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+          style={{ background: 'rgba(12,18,12,0.78)' }}
+          onClick={() => { if (!betaSubmitting) setBetaModalOpen(false); }}
+        >
+          <div
+            className="motion-safe:animate-scale-in relative w-full max-w-4xl rounded-3xl overflow-y-auto shadow-2xl"
+            style={{ background: '#fff', maxHeight: 'calc(100vh - 48px)' }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Beta access and newsletter signup"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Close */}
+            <button
+              onClick={() => setBetaModalOpen(false)}
+              aria-label="Close dialog"
+              className={`absolute top-5 right-5 z-10 w-8 h-8 rounded-full flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-2 ${betaSubmitted ? 'text-white/60 hover:text-white hover:bg-white/10 focus-visible:ring-white/30' : 'text-[var(--brand-text2)] hover:text-[var(--brand-text1)] hover:bg-black/5 focus-visible:ring-black/20'}`}
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {betaSubmitted ? (
+              /* ── Success state ── */
+              <div className="relative flex flex-col items-center justify-center text-center overflow-hidden" style={{ minHeight: 'clamp(300px, 60vh, 420px)', background: 'linear-gradient(145deg, #0f3d22 0%, #1B6C42 60%, #2D8F5C 100%)' }}>
+                <div style={{ position: 'absolute', top: '-80px', right: '-80px', width: '260px', height: '260px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
+                <div style={{ position: 'absolute', bottom: '-60px', left: '-60px', width: '200px', height: '200px', borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
+                <div className="relative z-10 flex flex-col items-center px-10">
+                  <div className="flex items-center gap-2 mb-10">
+                    <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '20px', height: '20px', filter: 'brightness(0) invert(1)', opacity: 0.8 }} />
+                    <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '15px', color: 'rgba(255,255,255,0.85)', letterSpacing: '-0.01em' }}>Sapling</span>
+                  </div>
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6" style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.18)' }}>
+                    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                      <path d="M5 14.5L11 20.5L23 8" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                  <span className="font-jetbrains text-xs tracking-[0.3em] uppercase text-white/40 mb-3">Confirmed</span>
+                  <h3 className="font-playfair text-3xl font-semibold text-white leading-tight mb-4">Your seed has been planted.</h3>
+                  <p className="text-white/55 text-sm font-light max-w-xs leading-relaxed mb-8">
+                    You&apos;re in. We&apos;ll be in touch when the doors open. Until then, something is already growing.
+                  </p>
+                  <button
+                    onClick={() => setBetaModalOpen(false)}
+                    className="px-8 py-2.5 rounded-full text-sm font-medium transition-all hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 active:bg-white/20"
+                    style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.85)' }}
+                  >
+                    Back to Sapling
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr]">
+
+                {/* ── Left: brand panel ── */}
+                <div className="relative flex flex-col justify-between p-6 overflow-hidden order-2 lg:order-none" style={{ background: 'linear-gradient(145deg, #0f3d22 0%, #1B6C42 60%, #2D8F5C 100%)' }}>
+                  <div style={{ position: 'absolute', top: '-60px', right: '-60px', width: '220px', height: '220px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
+                  <div style={{ position: 'absolute', bottom: '-40px', left: '-40px', width: '180px', height: '180px', borderRadius: '50%', background: 'rgba(255,255,255,0.03)', pointerEvents: 'none' }} />
+
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-2 mb-4">
+                      <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '20px', height: '20px', filter: 'brightness(0) invert(1)', opacity: 0.9 }} />
+                      <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '15px', color: 'rgba(255,255,255,0.9)', letterSpacing: '-0.01em' }}>Sapling</span>
+                    </div>
+                    <span className="font-jetbrains text-xs tracking-[0.3em] uppercase text-white/50 font-medium">Early Access</span>
+                    <h2 className="font-playfair text-3xl font-semibold text-white mt-1.5 leading-tight">Learn early. Grow with us.</h2>
+                    <p className="text-white/60 text-xs font-light mt-2 leading-relaxed max-w-xs">Sapling is being built alongside the students who&apos;ll use it most. Join early and help shape what it becomes.</p>
+                  </div>
+
+                  {/* Perks — editorial sections */}
+                  <div className="relative z-10 mt-4 flex flex-col">
+
+                    {/* Gold Node Color */}
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px', paddingBottom: '12px' }}>
+                      <p className="font-playfair text-white font-semibold text-lg mb-2">Exclusive Gold Node Color</p>
+                      <div className="rounded-xl overflow-hidden">
+                        <svg viewBox="0 0 280 148" width="100%" style={{ display: 'block' }}>
+                          <defs>
+                            <filter id="glow-lg" x="-60%" y="-60%" width="220%" height="220%">
+                              <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
+                              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                            </filter>
+                            <filter id="glow-md" x="-60%" y="-60%" width="220%" height="220%">
+                              <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
+                              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                            </filter>
+                            <filter id="glow-sm" x="-60%" y="-60%" width="220%" height="220%">
+                              <feGaussianBlur in="SourceGraphic" stdDeviation="3.5" result="blur" />
+                              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                            </filter>
+                          </defs>
+                          <line x1="138" y1="68" x2="66" y2="26" stroke="rgba(255,255,255,0.2)" strokeWidth="1.22" strokeLinecap="round" />
+                          <line x1="138" y1="68" x2="215" y2="28" stroke="rgba(255,255,255,0.2)" strokeWidth="1.22" strokeLinecap="round" />
+                          <line x1="138" y1="68" x2="58" y2="96" stroke="rgba(255,255,255,0.2)" strokeWidth="1.22" strokeLinecap="round" />
+                          <line x1="138" y1="68" x2="218" y2="86" stroke="rgba(255,255,255,0.2)" strokeWidth="1.22" strokeLinecap="round" />
+                          <line x1="138" y1="68" x2="155" y2="112" stroke="rgba(255,255,255,0.2)" strokeWidth="0.98" strokeLinecap="round" />
+                          <line x1="66" y1="26" x2="215" y2="28" stroke="rgba(255,255,255,0.2)" strokeWidth="0.86" strokeLinecap="round" />
+                          <line x1="215" y1="28" x2="218" y2="86" stroke="rgba(255,255,255,0.2)" strokeWidth="0.86" strokeLinecap="round" />
+                          <text x="66"  y="55"  textAnchor="middle" fontSize="11" fontWeight="400" fontFamily="'DM Sans', Inter, system-ui, sans-serif" fill="rgba(255,255,255,0.8)">Integ. by Parts</text>
+                          <text x="215" y="54"  textAnchor="middle" fontSize="11" fontWeight="400" fontFamily="'DM Sans', Inter, system-ui, sans-serif" fill="rgba(255,255,255,0.8)">Taylor Series</text>
+                          <text x="58"  y="121" textAnchor="middle" fontSize="11" fontWeight="400" fontFamily="'DM Sans', Inter, system-ui, sans-serif" fill="rgba(255,255,255,0.8)">Partial Fractions</text>
+                          <text x="218" y="113" textAnchor="middle" fontSize="11" fontWeight="400" fontFamily="'DM Sans', Inter, system-ui, sans-serif" fill="rgba(255,255,255,0.8)">Polar Coord.</text>
+                          <text x="138" y="107" textAnchor="middle" fontSize="13" fontWeight="700" fontFamily="'Playfair Display', Georgia, serif" fill="#D4AF37">Calculus II</text>
+                          <circle cx="138" cy="68"  r="22" fill="#D4AF37" fillOpacity="1"    stroke="#D4AF37" strokeOpacity="0.7" strokeWidth="2.5" filter="url(#glow-lg)" />
+                          <circle cx="66"  cy="26"  r="14" fill="#D4AF37" fillOpacity="1"    stroke="#D4AF37" strokeOpacity="0.4" strokeWidth="1.5" filter="url(#glow-md)" />
+                          <circle cx="215" cy="28"  r="11" fill="#D4AF37" fillOpacity="0.75" stroke="#D4AF37" strokeOpacity="0.4" strokeWidth="1.5" filter="url(#glow-md)" />
+                          <circle cx="218" cy="86"  r="12" fill="#D4AF37" fillOpacity="0.75" stroke="#D4AF37" strokeOpacity="0.4" strokeWidth="1.5" filter="url(#glow-sm)" />
+                          <circle cx="58"  cy="96"  r="10" fill="#D4AF37" fillOpacity="0.55" stroke="#D4AF37" strokeOpacity="0.4" strokeWidth="1.5" filter="url(#glow-sm)" />
+                          <circle cx="155" cy="112" r="7"  fill="#D4AF37" fillOpacity="0.28" stroke="#D4AF37" strokeOpacity="0.4" strokeWidth="1.5" />
+                        </svg>
+                      </div>
+                      <p className="text-white/50 text-xs mt-1.5 leading-relaxed">A color no one else gets. Your knowledge tree, in gold.</p>
+                    </div>
+
+                    {/* Beta Tester Role */}
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
+                      <p className="font-playfair text-white font-semibold text-lg mb-2">Beta Tester Role</p>
+                      <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: '#EAE5D8', border: '1px solid rgba(0,0,0,0.1)' }}>
+                        <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#374151', fontSize: '13px', fontWeight: 700, color: '#fff', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", letterSpacing: '0.02em' }}>
+                          AK
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span style={{ fontSize: '14px', fontWeight: 700, color: '#111827', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif" }}>Alex Kim</span>
+                            <span className="font-jetbrains" style={{
+                              display: 'inline-flex', alignItems: 'center',
+                              padding: '3px 10px', borderRadius: '9999px',
+                              fontSize: '10px', fontWeight: 500,
+                              letterSpacing: '0.1em',
+                              textTransform: 'uppercase',
+                              background: 'rgba(212,175,55,0.08)',
+                              color: '#C9A227',
+                              border: '1.5px solid rgba(212,175,55,0.55)',
+                            }}>
+                              Beta Tester
+                            </span>
+                          </div>
+                          <span style={{ fontSize: '11px', color: '#9CA3AF', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif" }}>@alexkim</span>
+                        </div>
+                      </div>
+                      <p className="text-white/50 text-xs mt-1.5 leading-relaxed">The first mark on your profile. A permanent record of showing up early.</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── Right: form + benefits ── */}
+                <div className="flex flex-col gap-6 p-6 order-1 lg:order-none">
+                  <div>
+                    <h3 className="font-playfair text-5xl font-semibold text-[var(--brand-text1)] mb-2 leading-tight">Join the Newsletter</h3>
+                    <p className="text-[var(--brand-text2)] text-lg mb-6 leading-relaxed">Hear fun stories from students like you.</p>
+
+                    {/* Newsletter benefits — typography-led, no icon decoration */}
+                    <div className="flex flex-col gap-4">
+                      <div>
+                        <p className="text-[var(--brand-text1)] text-base font-semibold mb-0.5">New features, first.</p>
+                        <p className="text-[var(--brand-text2)] text-xs leading-relaxed">Every study mode, knowledge tool, and capability — before anyone else sees it.</p>
+                      </div>
+                      <div>
+                        <p className="text-[var(--brand-text1)] text-base font-semibold mb-0.5">Real notes from the team.</p>
+                        <p className="text-[var(--brand-text2)] text-xs leading-relaxed">What we&apos;re figuring out as we build. Honest, occasional, and worth opening.</p>
+                      </div>
+                      <div>
+                        <p className="text-[var(--brand-text1)] text-base font-semibold mb-0.5">Your input shapes what we build.</p>
+                        <p className="text-[var(--brand-text2)] text-xs leading-relaxed">Early polls, roadmap previews, and a direct line to the people building it.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Form */}
+                  <form
+                    onSubmit={async e => {
+                      e.preventDefault();
+                      if (!betaEmail.trim()) return;
+                      setBetaSubmitting(true);
+                      try {
+                        await fetch(`${API_URL}/api/newsletter/subscribe`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ email: betaEmail.trim() }),
+                        });
+                      } catch {
+                        // fail silently — still show success
+                      }
+                      setBetaSubmitting(false);
+                      setBetaSubmitted(true);
+                    }}
+                    className="flex flex-col gap-2.5 mt-auto"
+                  >
+                    <input
+                      type="email"
+                      required
+                      aria-label="Email address"
+                      placeholder="your@email.com"
+                      value={betaEmail}
+                      onChange={e => setBetaEmail(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-[rgba(0,0,0,0.12)] bg-[rgba(0,0,0,0.02)] text-[var(--brand-text1)] placeholder-[var(--brand-text2)] text-sm outline-none hover:border-[rgba(0,0,0,0.22)] focus:border-[#1B6C42] transition-colors"
+                    />
+                    <button
+                      type="submit"
+                      disabled={betaSubmitting}
+                      className="w-full text-white py-3 rounded-xl font-semibold text-sm tracking-wide transition-all duration-300 disabled:opacity-60 hover:brightness-95 active:brightness-90"
+                      style={{ background: '#1B6C42' }}
+                    >
+                      {betaSubmitting ? 'Signing Up...' : 'Sign Me Up'}
+                    </button>
+                    <p className="text-center text-[var(--brand-text2)] text-xs font-light opacity-80">
+                      By joining the newsletter, you&apos;ll also be added to the beta waitlist.
+                    </p>
+                  </form>
+                </div>
+
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ═══ Onboarding flow ═══ */}
       {onboardingPhase !== 'idle' && (
