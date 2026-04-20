@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
-import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare, Bell, Map, Shield } from 'lucide-react';
+import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } from 'lucide-react';
 import OnboardingFlow from '@/components/OnboardingFlow';
 import HowItWorks from '@/components/HowItWorks';
 
