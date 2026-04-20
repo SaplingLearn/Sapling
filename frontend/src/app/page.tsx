@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
-import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare, Bell, Map, Shield, X } from 'lucide-react';
+import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare, Bell, Map, Shield } from 'lucide-react';
 import OnboardingFlow from '@/components/OnboardingFlow';
 import HowItWorks from '@/components/HowItWorks';
 
@@ -34,8 +34,26 @@ export default function LandingPage() {
   const [outroText, setOutroText] = useState<'hidden' | 'in' | 'out'>('hidden');
   const [outroOverlay, setOutroOverlay] = useState(false);
   const [betaModalOpen, setBetaModalOpen] = useState(false);
+  const [betaModalClosing, setBetaModalClosing] = useState(false);
   const [betaEmail, setBetaEmail] = useState('');
+  const [betaEmailError, setBetaEmailError] = useState('');
   const [betaSubmitted, setBetaSubmitted] = useState(false);
+  const closeModal = useCallback(() => {
+    setBetaModalClosing(true);
+    setTimeout(() => { setBetaModalOpen(false); setBetaModalClosing(false); }, 200);
+  }, []);
+  useEffect(() => {
+    if (betaSubmitted) {
+      const t = setTimeout(() => closeModal(), 3200);
+      return () => clearTimeout(t);
+    }
+  }, [betaSubmitted, closeModal]);
+  useEffect(() => {
+    if (betaModalOpen) {
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = ''; };
+    }
+  }, [betaModalOpen]);
   const [betaSubmitting, setBetaSubmitting] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
   const [completed, setCompleted] = useState<Set<number>>(new Set());
@@ -769,11 +787,11 @@ export default function LandingPage() {
             </div>
             <button
               onClick={() => setBetaModalOpen(true)}
-              className="px-10 py-4 rounded-full font-medium text-base tracking-wide transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]"
+              className="liquid-glass-subtle px-10 py-4 rounded-full font-medium text-base tracking-wide transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]"
               style={{
-                background: 'rgba(217,119,6,0.08)',
-                border: '1px solid rgba(217,119,6,0.3)',
-                color: '#92400E',
+                background: 'rgba(217,119,6,0.15)',
+                border: '1px solid rgba(217,119,6,0.45)',
+                color: '#78350F',
               }}
             >
               Sign up for Beta Testing
@@ -954,180 +972,183 @@ export default function LandingPage() {
       }} />
 
       {/* ═══ Beta / Newsletter Panel ═══ */}
-      {betaModalOpen && (
+      {betaModalOpen && betaSubmitted && (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-          style={{ background: 'rgba(12,18,12,0.78)' }}
-          onClick={() => { if (!betaSubmitting) setBetaModalOpen(false); }}
+          className={`fixed inset-0 z-[100] flex items-center justify-center p-4 ${betaModalClosing ? 'modal-backdrop-out' : 'modal-backdrop-in'}`}
+          style={{ background: 'rgba(12,18,26,0.45)' }}
+          onClick={closeModal}
         >
           <div
-            className="motion-safe:animate-scale-in relative w-full max-w-4xl rounded-3xl overflow-y-auto shadow-2xl"
-            style={{ background: '#fff', maxHeight: 'calc(100vh - 48px)' }}
+            className={`${betaModalClosing ? 'modal-card-out' : 'modal-card-in'}`}
+            style={{
+              background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)',
+              borderRadius: 20,
+              padding: '40px 52px',
+              textAlign: 'center',
+              border: '1px solid rgba(255,255,255,0.7)',
+              boxShadow: '0 20px 60px rgba(15,23,42,0.15)',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 32, lineHeight: 1.1, fontWeight: 600, letterSpacing: '-0.02em', color: '#1a1a1a' }}>
+              You&apos;re on the <span style={{ fontStyle: 'italic', color: '#1B6C42' }}>tree.</span>
+            </h2>
+            <p style={{ margin: '10px 0 0', fontSize: 17, color: '#4b5563', fontStyle: 'italic' }}>
+              See you in the inbox - The Team
+            </p>
+          </div>
+        </div>
+      )}
+      {betaModalOpen && !betaSubmitted && (
+        <div
+          className={`fixed inset-0 z-[100] flex items-center justify-center p-4 ${betaModalClosing ? 'modal-backdrop-out' : 'modal-backdrop-in'}`}
+          style={{ background: 'rgba(12,18,26,0.65)' }}
+          onClick={() => { if (!betaSubmitting) closeModal(); }}
+        >
+          <div
+            className={`relative w-full ${betaModalClosing ? 'modal-card-out' : 'modal-card-in'}`}
+            style={{
+              maxWidth: 'min(1040px, 94vw)',
+              width: '100%',
+              background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)',
+              borderRadius: 24,
+              display: 'grid',
+              gridTemplateColumns: '1fr 1px 1fr',
+              minHeight: 560,
+              maxHeight: 'calc(100vh - 48px)',
+              overflow: 'hidden',
+              border: '1px solid rgba(255,255,255,0.7)',
+              boxShadow: '0 20px 60px rgba(15,23,42,0.12), inset 0 0 0 1px rgba(255,255,255,0.5)',
+            }}
+            onClick={e => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-label="Beta access and newsletter signup"
-            onClick={e => e.stopPropagation()}
           >
             {/* Close */}
             <button
-              onClick={() => setBetaModalOpen(false)}
+              onClick={closeModal}
               aria-label="Close dialog"
-              className={`absolute top-5 right-5 z-10 w-8 h-8 rounded-full flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-2 ${betaSubmitted ? 'text-white/60 hover:text-white hover:bg-white/10 focus-visible:ring-white/30' : 'text-[var(--brand-text2)] hover:text-[var(--brand-text1)] hover:bg-black/5 focus-visible:ring-black/20'}`}
-            >
-              <X className="w-4 h-4" />
-            </button>
+              style={{
+                position: 'absolute', top: 18, right: 18, zIndex: 10,
+                width: 32, height: 32, borderRadius: 16,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#4b5563', fontSize: 20, lineHeight: 1,
+                background: 'none', border: 'none', cursor: 'pointer',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(107,114,128,0.1)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >×</button>
 
-            {betaSubmitted ? (
-              /* ── Success state ── */
-              <div className="relative flex flex-col items-center justify-center text-center overflow-hidden" style={{ minHeight: 'clamp(300px, 60vh, 420px)', background: 'linear-gradient(145deg, #0f3d22 0%, #1B6C42 60%, #2D8F5C 100%)' }}>
-                <div style={{ position: 'absolute', top: '-80px', right: '-80px', width: '260px', height: '260px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
-                <div style={{ position: 'absolute', bottom: '-60px', left: '-60px', width: '200px', height: '200px', borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
-                <div className="relative z-10 flex flex-col items-center px-10">
-                  <div className="flex items-center gap-2 mb-10">
-                    <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '20px', height: '20px', filter: 'brightness(0) invert(1)', opacity: 0.8 }} />
-                    <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '15px', color: 'rgba(255,255,255,0.85)', letterSpacing: '-0.01em' }}>Sapling</span>
-                  </div>
-                  <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6" style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.18)' }}>
-                    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                      <path d="M5 14.5L11 20.5L23 8" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </div>
-                  <span className="font-jetbrains text-xs tracking-[0.3em] uppercase text-white/40 mb-3">Confirmed</span>
-                  <h3 className="font-playfair text-3xl font-semibold text-white leading-tight mb-4">Your seed has been planted.</h3>
-                  <p className="text-white/55 text-sm font-light max-w-xs leading-relaxed mb-8">
-                    You&apos;re in. We&apos;ll be in touch when the doors open. Until then, something is already growing.
-                  </p>
-                  <button
-                    onClick={() => setBetaModalOpen(false)}
-                    className="px-8 py-2.5 rounded-full text-sm font-medium transition-all hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 active:bg-white/20"
-                    style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.85)' }}
-                  >
-                    Back to Sapling
-                  </button>
-                </div>
+            {/* ── Left: brand + perks panel ── */}
+            <div style={{
+              padding: '36px 36px 32px',
+              background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)',
+              borderRight: 'none',
+              display: 'flex', flexDirection: 'column', gap: 22,
+            }}>
+              {/* Logo */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 22, height: 22 }} />
+                <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 17, color: '#1a5c2a', letterSpacing: '-0.02em' }}>Sapling</span>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr]">
 
-                {/* ── Left: brand panel ── */}
-                <div className="relative flex flex-col justify-between p-6 overflow-hidden order-2 lg:order-none" style={{ background: 'linear-gradient(145deg, #0f3d22 0%, #1B6C42 60%, #2D8F5C 100%)' }}>
-                  <div style={{ position: 'absolute', top: '-60px', right: '-60px', width: '220px', height: '220px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
-                  <div style={{ position: 'absolute', bottom: '-40px', left: '-40px', width: '180px', height: '180px', borderRadius: '50%', background: 'rgba(255,255,255,0.03)', pointerEvents: 'none' }} />
+              {/* Early access header */}
+              <div>
+                <div style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace", fontSize: 10.5, color: '#6b7280', letterSpacing: '0.22em', marginBottom: 14, textTransform: 'uppercase', fontWeight: 600 }}>Early access</div>
+                <h2 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 44, lineHeight: 1.05, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
+                  Learn early.<br /><span style={{ fontStyle: 'italic', fontWeight: 800, color: '#1B6C42', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif" }}>Grow</span> with us.
+                </h2>
+                <p style={{ margin: '14px 0 0', fontSize: 13.5, lineHeight: 1.55, color: '#4b5563', maxWidth: 360 }}>
+                  Sapling is being built alongside the students who&apos;ll use it most. Join early and help shape what it becomes.
+                </p>
+              </div>
 
-                  <div className="relative z-10">
-                    <div className="flex items-center gap-2 mb-4">
-                      <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '20px', height: '20px', filter: 'brightness(0) invert(1)', opacity: 0.9 }} />
-                      <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '15px', color: 'rgba(255,255,255,0.9)', letterSpacing: '-0.01em' }}>Sapling</span>
-                    </div>
-                    <span className="font-jetbrains text-xs tracking-[0.3em] uppercase text-white/50 font-medium">Early Access</span>
-                    <h2 className="font-playfair text-3xl font-semibold text-white mt-1.5 leading-tight">Learn early. Grow with us.</h2>
-                    <p className="text-white/60 text-xs font-light mt-2 leading-relaxed max-w-xs">Sapling is being built alongside the students who&apos;ll use it most. Join early and help shape what it becomes.</p>
+              {/* Divider */}
+              <div style={{ height: '1px', flexShrink: 0, background: 'rgba(107,114,128,0.15)' }} />
+
+              {/* Beta Tester Role */}
+              <div>
+                <h3 style={{ margin: '0 0 12px', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 22, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
+                  Beta Tester Role
+                </h3>
+                <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: '#EBE6DC', border: '1px solid #D6D1C6' }}>
+                  <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#374151', fontSize: '13px', fontWeight: 700, color: '#fff', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", letterSpacing: '0.02em' }}>
+                    AK
                   </div>
-
-                  {/* Perks — editorial sections */}
-                  <div className="relative z-10 mt-4 flex flex-col">
-
-                    {/* Gold Node Color */}
-                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px', paddingBottom: '12px' }}>
-                      <p className="font-playfair text-white font-semibold text-lg mb-2">Exclusive Gold Node Color</p>
-                      <div className="rounded-xl overflow-hidden">
-                        <svg viewBox="0 0 280 148" width="100%" style={{ display: 'block' }}>
-                          <defs>
-                            <filter id="glow-lg" x="-60%" y="-60%" width="220%" height="220%">
-                              <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
-                              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                            </filter>
-                            <filter id="glow-md" x="-60%" y="-60%" width="220%" height="220%">
-                              <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
-                              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                            </filter>
-                            <filter id="glow-sm" x="-60%" y="-60%" width="220%" height="220%">
-                              <feGaussianBlur in="SourceGraphic" stdDeviation="3.5" result="blur" />
-                              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                            </filter>
-                          </defs>
-                          <line x1="138" y1="68" x2="66" y2="26" stroke="rgba(255,255,255,0.2)" strokeWidth="1.22" strokeLinecap="round" />
-                          <line x1="138" y1="68" x2="215" y2="28" stroke="rgba(255,255,255,0.2)" strokeWidth="1.22" strokeLinecap="round" />
-                          <line x1="138" y1="68" x2="58" y2="96" stroke="rgba(255,255,255,0.2)" strokeWidth="1.22" strokeLinecap="round" />
-                          <line x1="138" y1="68" x2="218" y2="86" stroke="rgba(255,255,255,0.2)" strokeWidth="1.22" strokeLinecap="round" />
-                          <line x1="138" y1="68" x2="155" y2="112" stroke="rgba(255,255,255,0.2)" strokeWidth="0.98" strokeLinecap="round" />
-                          <line x1="66" y1="26" x2="215" y2="28" stroke="rgba(255,255,255,0.2)" strokeWidth="0.86" strokeLinecap="round" />
-                          <line x1="215" y1="28" x2="218" y2="86" stroke="rgba(255,255,255,0.2)" strokeWidth="0.86" strokeLinecap="round" />
-                          <text x="66"  y="55"  textAnchor="middle" fontSize="11" fontWeight="400" fontFamily="'DM Sans', Inter, system-ui, sans-serif" fill="rgba(255,255,255,0.8)">Integ. by Parts</text>
-                          <text x="215" y="54"  textAnchor="middle" fontSize="11" fontWeight="400" fontFamily="'DM Sans', Inter, system-ui, sans-serif" fill="rgba(255,255,255,0.8)">Taylor Series</text>
-                          <text x="58"  y="121" textAnchor="middle" fontSize="11" fontWeight="400" fontFamily="'DM Sans', Inter, system-ui, sans-serif" fill="rgba(255,255,255,0.8)">Partial Fractions</text>
-                          <text x="218" y="113" textAnchor="middle" fontSize="11" fontWeight="400" fontFamily="'DM Sans', Inter, system-ui, sans-serif" fill="rgba(255,255,255,0.8)">Polar Coord.</text>
-                          <text x="138" y="107" textAnchor="middle" fontSize="13" fontWeight="700" fontFamily="'Playfair Display', Georgia, serif" fill="#D4AF37">Calculus II</text>
-                          <circle cx="138" cy="68"  r="22" fill="#D4AF37" fillOpacity="1"    stroke="#D4AF37" strokeOpacity="0.7" strokeWidth="2.5" filter="url(#glow-lg)" />
-                          <circle cx="66"  cy="26"  r="14" fill="#D4AF37" fillOpacity="1"    stroke="#D4AF37" strokeOpacity="0.4" strokeWidth="1.5" filter="url(#glow-md)" />
-                          <circle cx="215" cy="28"  r="11" fill="#D4AF37" fillOpacity="0.75" stroke="#D4AF37" strokeOpacity="0.4" strokeWidth="1.5" filter="url(#glow-md)" />
-                          <circle cx="218" cy="86"  r="12" fill="#D4AF37" fillOpacity="0.75" stroke="#D4AF37" strokeOpacity="0.4" strokeWidth="1.5" filter="url(#glow-sm)" />
-                          <circle cx="58"  cy="96"  r="10" fill="#D4AF37" fillOpacity="0.55" stroke="#D4AF37" strokeOpacity="0.4" strokeWidth="1.5" filter="url(#glow-sm)" />
-                          <circle cx="155" cy="112" r="7"  fill="#D4AF37" fillOpacity="0.28" stroke="#D4AF37" strokeOpacity="0.4" strokeWidth="1.5" />
-                        </svg>
-                      </div>
-                      <p className="text-white/50 text-xs mt-1.5 leading-relaxed">A color no one else gets. Your knowledge tree, in gold.</p>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span style={{ fontSize: '14px', fontWeight: 700, color: '#111827', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif" }}>Alex Kim</span>
+                      <span className="font-jetbrains" style={{
+                        display: 'inline-flex', alignItems: 'center',
+                        padding: '3px 10px', borderRadius: '9999px',
+                        fontSize: '10px', fontWeight: 500,
+                        letterSpacing: '0.1em',
+                        textTransform: 'uppercase',
+                        background: 'rgba(212,175,55,0.08)',
+                        color: '#C9A227',
+                        border: '1.5px solid rgba(212,175,55,0.55)',
+                      }}>
+                        Beta Tester
+                      </span>
                     </div>
-
-                    {/* Beta Tester Role */}
-                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
-                      <p className="font-playfair text-white font-semibold text-lg mb-2">Beta Tester Role</p>
-                      <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: '#EAE5D8', border: '1px solid rgba(0,0,0,0.1)' }}>
-                        <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#374151', fontSize: '13px', fontWeight: 700, color: '#fff', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif", letterSpacing: '0.02em' }}>
-                          AK
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span style={{ fontSize: '14px', fontWeight: 700, color: '#111827', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif" }}>Alex Kim</span>
-                            <span className="font-jetbrains" style={{
-                              display: 'inline-flex', alignItems: 'center',
-                              padding: '3px 10px', borderRadius: '9999px',
-                              fontSize: '10px', fontWeight: 500,
-                              letterSpacing: '0.1em',
-                              textTransform: 'uppercase',
-                              background: 'rgba(212,175,55,0.08)',
-                              color: '#C9A227',
-                              border: '1.5px solid rgba(212,175,55,0.55)',
-                            }}>
-                              Beta Tester
-                            </span>
-                          </div>
-                          <span style={{ fontSize: '11px', color: '#9CA3AF', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif" }}>@alexkim</span>
-                        </div>
-                      </div>
-                      <p className="text-white/50 text-xs mt-1.5 leading-relaxed">The first mark on your profile. A permanent record of showing up early.</p>
-                    </div>
+                    <span style={{ fontSize: '11px', color: '#9CA3AF', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif" }}>@alexkim</span>
                   </div>
                 </div>
+                <p style={{ margin: '10px 2px 0', fontSize: 12.5, color: '#6b7280', lineHeight: 1.5 }}>
+                  The first mark on your profile. A permanent record of showing up early.
+                </p>
+              </div>
+            </div>
 
-                {/* ── Right: form + benefits ── */}
-                <div className="flex flex-col gap-6 p-6 order-1 lg:order-none">
-                  <div>
-                    <h3 className="font-playfair text-5xl font-semibold text-[var(--brand-text1)] mb-2 leading-tight">Join the Newsletter</h3>
-                    <p className="text-[var(--brand-text2)] text-lg mb-6 leading-relaxed">Hear fun stories from students like you.</p>
+            {/* ── Column divider ── */}
+            <div style={{ background: 'rgba(107,114,128,0.15)', alignSelf: 'stretch' }} />
 
-                    {/* Newsletter benefits — typography-led, no icon decoration */}
-                    <div className="flex flex-col gap-4">
-                      <div>
-                        <p className="text-[var(--brand-text1)] text-base font-semibold mb-0.5">New features, first.</p>
-                        <p className="text-[var(--brand-text2)] text-xs leading-relaxed">Every study mode, knowledge tool, and capability — before anyone else sees it.</p>
+            {/* ── Right: newsletter form ── */}
+            <div style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column', background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)' }}>
+              {(
+                <>
+                  <div style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace", fontSize: 10, color: '#D97706', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 500, marginBottom: 10, textShadow: '0 0 8px rgba(217,119,6,0.7), 0 0 20px rgba(217,119,6,0.4), 0 0 40px rgba(217,119,6,0.2)' }}>
+                    ● Newsletter · issue 001 dropping soon
+                  </div>
+                  <h1 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
+                    Join the<br />
+                    <span style={{ fontStyle: 'italic', fontWeight: 800, color: '#1B6C42', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif" }}>Newsletter</span>
+                  </h1>
+                  <p style={{ margin: '14px 0 0', fontSize: 15, color: '#4b5563', lineHeight: 1.5 }}>
+                    Hear fun stories from students like you.
+                  </p>
+
+                  {/* Perks */}
+                  <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {([
+                      { dot: '#1B6C42', title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
+                      { dot: '#D97706', title: 'Real notes from the team.', body: "What we're figuring out as we build. Honest, occasional, and worth opening." },
+                      { dot: '#8A63D2', title: 'Your input shapes what we build.', body: 'Early polls, roadmap previews, and a direct line to the people building it.' },
+                    ] as Array<{ dot: string; title: string; body: string }>).map(({ dot, title, body }) => (
+                      <div key={title} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 12, alignItems: 'start' }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: dot, boxShadow: `0 0 8px ${dot}55`, marginTop: 8, flexShrink: 0 }} />
+                        <div>
+                          <div style={{ fontSize: 14.5, fontWeight: 600, color: '#1a1a1a', marginBottom: 2, letterSpacing: '-0.005em' }}>{title}</div>
+                          <div style={{ fontSize: 12.5, color: '#4b5563', lineHeight: 1.5 }}>{body}</div>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-[var(--brand-text1)] text-base font-semibold mb-0.5">Real notes from the team.</p>
-                        <p className="text-[var(--brand-text2)] text-xs leading-relaxed">What we&apos;re figuring out as we build. Honest, occasional, and worth opening.</p>
-                      </div>
-                      <div>
-                        <p className="text-[var(--brand-text1)] text-base font-semibold mb-0.5">Your input shapes what we build.</p>
-                        <p className="text-[var(--brand-text2)] text-xs leading-relaxed">Early polls, roadmap previews, and a direct line to the people building it.</p>
-                      </div>
-                    </div>
+                    ))}
                   </div>
 
                   {/* Form */}
                   <form
                     onSubmit={async e => {
                       e.preventDefault();
-                      if (!betaEmail.trim()) return;
+                      const trimmed = betaEmail.trim();
+                      if (!trimmed) { setBetaEmailError('Enter a valid email (e.g. you@example.com)'); return; }
+                      const [local, domain] = trimmed.split('@');
+                      if (!local || !domain || !domain.includes('.')) {
+                        setBetaEmailError('Enter a valid email (e.g. you@example.com)');
+                        return;
+                      }
+                      setBetaEmailError('');
                       setBetaSubmitting(true);
                       try {
                         await fetch(`${API_URL}/api/newsletter/subscribe`, {
@@ -1141,36 +1162,61 @@ export default function LandingPage() {
                       setBetaSubmitting(false);
                       setBetaSubmitted(true);
                     }}
-                    className="flex flex-col gap-2.5 mt-auto"
+                    style={{ marginTop: 'auto', paddingTop: 28 }}
                   >
-                    <input
-                      type="email"
-                      required
-                      aria-label="Email address"
-                      placeholder="your@email.com"
-                      value={betaEmail}
-                      onChange={e => setBetaEmail(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-[rgba(0,0,0,0.12)] bg-[rgba(0,0,0,0.02)] text-[var(--brand-text1)] placeholder-[var(--brand-text2)] text-sm outline-none hover:border-[rgba(0,0,0,0.22)] focus:border-[#1B6C42] transition-colors"
-                    />
+                    <div style={{ position: 'relative', marginBottom: 10 }}>
+                      <input
+                        type="text"
+                        aria-label="Email address"
+                        placeholder="you@example.com"
+                        value={betaEmail}
+                        onChange={e => { setBetaEmail(e.target.value); setBetaEmailError(''); }}
+                        style={{
+                          width: '100%', padding: '14px 16px', fontSize: 14,
+                          background: 'rgba(255,255,255,0.6)',
+                          border: '1.5px solid rgba(107,114,128,0.25)',
+                          borderRadius: 10, outline: 'none',
+                          transition: 'border-color 0.15s, box-shadow 0.15s',
+                          fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+                          color: '#1a1a1a', boxSizing: 'border-box',
+                        }}
+                        onFocus={e => { e.target.style.borderColor = '#1B6C42'; e.target.style.boxShadow = '0 0 0 3px rgba(27,108,66,0.12)'; }}
+                        onBlur={e => { e.target.style.borderColor = 'rgba(107,114,128,0.25)'; e.target.style.boxShadow = 'none'; }}
+                      />
+                      {betaEmailError && (
+                        <p style={{ margin: '6px 0 0', fontSize: 11.5, color: '#dc2626', fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif" }}>
+                          {betaEmailError}
+                        </p>
+                      )}
+                    </div>
                     <button
                       type="submit"
                       disabled={betaSubmitting}
-                      className="w-full text-white py-3 rounded-xl font-semibold text-sm tracking-wide transition-all duration-300 disabled:opacity-60 hover:brightness-95 active:brightness-90"
-                      style={{ background: '#1B6C42' }}
+                      style={{
+                        width: '100%', padding: '14px 16px', borderRadius: 10,
+                        background: betaSubmitting ? '#4b5563' : '#1B6C42', color: '#fff',
+                        fontSize: 14, fontWeight: 600, letterSpacing: '0.02em',
+                        boxShadow: '0 8px 24px rgba(27,108,66,0.3)',
+                        border: 'none', cursor: betaSubmitting ? 'default' : 'pointer',
+                        transition: 'all 0.18s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                        fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+                      }}
+                      onMouseEnter={e => { if (!betaSubmitting) e.currentTarget.style.background = '#155A35'; }}
+                      onMouseLeave={e => { if (!betaSubmitting) e.currentTarget.style.background = '#1B6C42'; }}
                     >
-                      {betaSubmitting ? 'Signing Up...' : 'Sign Me Up'}
+                      {betaSubmitting ? 'Planting your node…' : <>Sign Me Up <span style={{ opacity: 0.7 }}>→</span></>}
                     </button>
-                    <p className="text-center text-[var(--brand-text2)] text-xs font-light opacity-80">
+                    <p style={{ margin: '12px 0 0', fontSize: 11.5, color: '#6b7280', textAlign: 'center', lineHeight: 1.5 }}>
                       By joining the newsletter, you&apos;ll also be added to the beta waitlist.
                     </p>
                   </form>
-                </div>
-
-              </div>
-            )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
+
 
       {/* ═══ Onboarding flow ═══ */}
       {onboardingPhase !== 'idle' && (
