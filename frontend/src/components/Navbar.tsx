@@ -210,9 +210,9 @@ export default function Navbar() {
         </div>
       )}
 
-      <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '2px', textDecoration: 'none' }}>
-        <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '32px', height: '32px', marginTop: '-7px', marginBottom: '-3px', marginLeft: '-2px', marginRight: '-4px', alignSelf: 'center', flexShrink: 0 }} />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', alignItems: 'center', textAlign: 'center' }}>
+      <Link href="/dashboard" style={{ display: 'flex', alignItems: 'flex-start', gap: '0px', textDecoration: 'none' }}>
+        <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '30px', height: '30px', flexShrink: 0, marginLeft: '-7px', marginRight: '-6px' }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', alignItems: 'flex-start', marginTop: '3px' }}>
           <span style={{
             fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
             fontWeight: 700,

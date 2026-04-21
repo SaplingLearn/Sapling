@@ -1119,8 +1119,8 @@ export default function LandingPage() {
             <div style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column', background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)' }}>
               {(
                 <>
-                  <div style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace", fontSize: 10, color: '#D97706', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 500, marginBottom: 10, textShadow: '0 0 8px rgba(217,119,6,0.7), 0 0 20px rgba(217,119,6,0.4), 0 0 40px rgba(217,119,6,0.2)' }}>
-                    ● Newsletter · issue 001 dropping soon
+                  <div style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace", fontSize: 10, color: '#D97706', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 500, marginBottom: 10 }}>
+                    ● Issue 001 dropping soon
                   </div>
                   <h1 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
                     Join the<br />
