@@ -792,19 +792,21 @@ export default function LandingPage() {
                 See What&apos;s Inside <span className="ml-1 opacity-50">↓</span>
               </button>
             </div>
-            <button
-              onClick={() => { setBetaModalOpen(true); if (betaEverSubmitted) setBetaSubmitted(true); }}
-              className="liquid-glass-subtle px-10 py-4 rounded-full font-medium text-base tracking-wide transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]"
-              style={{
-                background: 'rgba(217,119,6,0.35)',
-                backdropFilter: 'blur(12px) saturate(1.45)',
-                WebkitBackdropFilter: 'blur(12px) saturate(1.45)',
-                border: '1px solid rgba(217,119,6,0.55)',
-                color: '#78350F',
-              }}
-            >
-              Sign up for Beta Testing
-            </button>
+            <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+              <button
+                onClick={() => { setBetaModalOpen(true); if (betaEverSubmitted) setBetaSubmitted(true); }}
+                className={`liquid-glass-subtle px-10 py-4 rounded-full font-medium text-base tracking-wide transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]${betaEverSubmitted ? '' : ' beta-glow-btn'}`}
+                style={{
+                  background: 'rgba(74,158,92,0.4)',
+                  backdropFilter: 'blur(12px) saturate(1.5)',
+                  WebkitBackdropFilter: 'blur(12px) saturate(1.5)',
+                  border: '1px solid rgba(74,158,92,0.6)',
+                  color: '#1f6b35',
+                }}
+              >
+                Sign up for Beta Testing
+              </button>
+            </div>
           </div>
         </div>
 
