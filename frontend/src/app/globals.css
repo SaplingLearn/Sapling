@@ -933,8 +933,8 @@ html.dark textarea {
 
 /* ── Beta button border glow pulse ── */
 @keyframes beta-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(74,158,92,0), 0 4px 20px rgba(74,158,92,0.15), inset 0 0 0 1px rgba(255,255,255,0.3); }
-  50%       { box-shadow: 0 0 0 6px rgba(74,158,92,0.18), 0 4px 28px rgba(74,158,92,0.3), inset 0 0 0 1px rgba(255,255,255,0.3); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(74,158,92,0), 0 4px 20px rgba(74,158,92,0.15); }
+  50%       { box-shadow: 0 0 0 5px rgba(74,158,92,0.6), 0 4px 28px rgba(74,158,92,0.3); }
 }
 .beta-glow-btn { animation: beta-glow 2.2s ease-in-out infinite; }
 
