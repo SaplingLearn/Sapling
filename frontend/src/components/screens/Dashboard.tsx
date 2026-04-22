@@ -630,7 +630,7 @@ export function Dashboard() {
   );
 
   const heroBlock = (
-    <div style={{ textAlign: "center", padding: isMobile ? "14px 4px 0" : "6px 0 0" }}>
+    <div style={{ textAlign: "left", padding: isMobile ? "14px 4px 0" : "6px 0 0" }}>
       <h1
         className="h-serif"
         style={{
@@ -649,7 +649,7 @@ export function Dashboard() {
           aria-hidden={!greetingDone}
           className="body-serif"
           style={{
-            margin: "14px auto 0",
+            margin: "8px 0 0",
             maxWidth: 640,
             fontSize: 14,
             fontStyle: "italic",
