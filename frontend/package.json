@@ -9,8 +9,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "cf:build": "opennextjs-cloudflare build",
-    "cf:preview": "opennextjs-cloudflare build && wrangler dev -c wrangler.workers.toml",
-    "cf:deploy": "opennextjs-cloudflare build && wrangler deploy -c wrangler.workers.toml"
+    "cf:preview": "opennextjs-cloudflare build && wrangler dev",
+    "cf:deploy": "opennextjs-cloudflare build && wrangler deploy"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.99.3",
@@ -36,6 +36,6 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "typescript": "^5",
-    "wrangler": "^4.83.0"
+    "wrangler": "^4.84.1"
   }
 }
