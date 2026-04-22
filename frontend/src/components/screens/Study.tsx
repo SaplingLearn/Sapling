@@ -1,6 +1,8 @@
 "use client";
 import React from "react";
+import { useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
+import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { Icon } from "../Icon";
 import { Pill } from "../Pill";
 import { CustomSelect } from "../CustomSelect";
@@ -42,7 +44,10 @@ const ratingOptions: { n: number; label: string; color: string; emoji: string; h
 export function Study() {
   const isMobile = useIsMobile();
   const { userId, userReady } = useUser();
-  const [mode, setMode] = React.useState<Mode>("guide");
+  const searchParams = useSearchParams();
+  const [mode, setMode] = React.useState<Mode>(
+    searchParams.get("mode") === "cards" ? "cards" : "guide",
+  );
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
 
   React.useEffect(() => {
@@ -53,21 +58,24 @@ export function Study() {
   }, [userReady, userId]);
 
   const actions = (
-    <div style={{ display: "flex", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
-      {([["guide", "Study Guide"], ["cards", "Flashcards"]] as const).map(([v, label]) => (
-        <button
-          key={v}
-          onClick={() => setMode(v)}
-          style={{
-            padding: "6px 14px", fontSize: 12, fontWeight: 600,
-            background: mode === v ? "var(--accent-soft)" : "transparent",
-            color: mode === v ? "var(--accent)" : "var(--text-dim)",
-          }}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <>
+      <AIDisclaimerChip />
+      <div style={{ display: "flex", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
+        {([["guide", "Study Guide"], ["cards", "Flashcards"]] as const).map(([v, label]) => (
+          <button
+            key={v}
+            onClick={() => setMode(v)}
+            style={{
+              padding: "6px 14px", fontSize: 12, fontWeight: 600,
+              background: mode === v ? "var(--accent-soft)" : "transparent",
+              color: mode === v ? "var(--accent)" : "var(--text-dim)",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </>
   );
 
   return (

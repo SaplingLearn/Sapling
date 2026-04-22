@@ -17,7 +17,9 @@ import {
   syncCalendar,
   calendarAuthUrl,
   updateAssignment,
+  deleteAssignment,
   importGoogleEvents,
+  exportToGoogleCalendar,
   type Assignment,
   type EnrolledCourse,
   type GoogleEvent,
@@ -259,6 +261,7 @@ export function Calendar() {
           onSelectedChange={setSelected}
           onExport={exportCsv}
           onReload={load}
+          googleConnected={googleConnected}
         />
       )}
 
@@ -572,7 +575,7 @@ function DayView({ cursor, byDate, courses }: { cursor: Date; byDate: Map<string
 }
 
 function AssignmentTable({
-  assignments, courses, selected, onSelectedChange, onExport, onReload,
+  assignments, courses, selected, onSelectedChange, onExport, onReload, googleConnected,
 }: {
   assignments: Assignment[];
   courses: EnrolledCourse[];
@@ -580,12 +583,15 @@ function AssignmentTable({
   onSelectedChange: (s: Set<string>) => void;
   onExport: () => void;
   onReload: () => void | Promise<void>;
+  googleConnected: boolean;
 }) {
   const toast = useToast();
   const { userId } = useUser();
   const [editing, setEditing] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState<Partial<Assignment>>({});
   const [saving, setSaving] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
   type SortKey = "due_date" | "title" | "course" | "type";
   const [sortKey, setSortKey] = React.useState<SortKey>("due_date");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
@@ -612,6 +618,43 @@ function AssignmentTable({
     const next = new Set(selected);
     if (next.has(id)) next.delete(id); else next.add(id);
     onSelectedChange(next);
+  };
+
+  const removeOne = async (a: Assignment) => {
+    if (!userId) return;
+    if (!window.confirm(`Delete "${a.title}"?`)) return;
+    setDeletingId(a.id);
+    try {
+      await deleteAssignment(a.id, userId);
+      const next = new Set(selected);
+      next.delete(a.id);
+      onSelectedChange(next);
+      toast.success("Assignment deleted.");
+      await onReload();
+    } catch (err) {
+      toast.error(`Delete failed: ${String(err)}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const bulkExport = async () => {
+    if (!userId || selected.size === 0) {
+      toast.warn("Select assignments first.");
+      return;
+    }
+    setExporting(true);
+    try {
+      const res = await exportToGoogleCalendar(userId, Array.from(selected));
+      toast.success(
+        `Exported ${res.exported_count}${res.skipped_count ? ` (${res.skipped_count} skipped)` : ""}.`
+      );
+      await onReload();
+    } catch (err) {
+      toast.error(`Export failed: ${String(err)}`);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const beginEdit = (a: Assignment) => {
@@ -672,6 +715,16 @@ function AssignmentTable({
         <button className="btn btn--sm" onClick={onExport}>
           <Icon name="doc" size={12} /> Export CSV
         </button>
+        {googleConnected && (
+          <button
+            className="btn btn--sm"
+            onClick={bulkExport}
+            disabled={exporting || selected.size === 0}
+            title={selected.size === 0 ? "Select assignments first" : "Push selected assignments to Google Calendar"}
+          >
+            <Icon name="cal" size={12} /> {exporting ? "Exporting…" : "Export to Google"}
+          </button>
+        )}
       </div>
       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -753,9 +806,20 @@ function AssignmentTable({
                         <button className="btn btn--sm btn--ghost" onClick={cancel} disabled={saving}>Cancel</button>
                       </>
                     ) : (
-                      <button className="btn btn--sm btn--ghost" onClick={() => beginEdit(a)}>
-                        <Icon name="pencil" size={11} />
-                      </button>
+                      <>
+                        <button className="btn btn--sm btn--ghost" onClick={() => beginEdit(a)} title="Edit">
+                          <Icon name="pencil" size={11} />
+                        </button>
+                        <button
+                          className="btn btn--sm btn--ghost"
+                          onClick={() => removeOne(a)}
+                          disabled={deletingId === a.id}
+                          title="Delete"
+                          style={{ color: "var(--err)" }}
+                        >
+                          {deletingId === a.id ? "…" : <Icon name="x" size={11} />}
+                        </button>
+                      </>
                     )}
                   </td>
                 </tr>

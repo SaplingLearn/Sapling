@@ -9,6 +9,7 @@ import { ChatPanel, type ChatMsg } from "../ChatPanel";
 import { SessionSummary } from "../SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../SharedContextToggle";
 import { DisclaimerModal } from "../DisclaimerModal";
+import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { QuizPanel } from "../QuizPanel";
 import { KnowledgeGraph } from "../KnowledgeGraph";
 import { useToast } from "../ToastProvider";
@@ -335,6 +336,7 @@ function LearnInner() {
           breadcrumb="Learn"
           title="Start a session"
           subtitle="Pick a topic. Sapling will adapt to your chosen mode."
+          actions={<AIDisclaimerChip />}
         />
         <div
           style={{
@@ -426,9 +428,12 @@ function LearnInner() {
           title="Quiz"
           subtitle="Pick a concept and test what you know."
           actions={
-            <button className="btn btn--sm" onClick={() => setMode("socratic")}>
-              <Icon name="x" size={13} /> Back to Learn
-            </button>
+            <>
+              <AIDisclaimerChip />
+              <button className="btn btn--sm" onClick={() => setMode("socratic")}>
+                <Icon name="x" size={13} /> Back to Learn
+              </button>
+            </>
           }
         />
         <div style={{ padding: 32, flex: 1, overflowY: "auto" }}>
@@ -456,6 +461,7 @@ function LearnInner() {
         subtitle={`${mode} tutor · ${messages.length} msgs`}
         actions={
           <>
+            <AIDisclaimerChip />
             <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
             <button
               className={endConfirm.armed ? "btn btn--danger btn--sm" : "btn btn--sm"}

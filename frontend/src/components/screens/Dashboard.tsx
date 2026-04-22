@@ -8,6 +8,7 @@ import { KnowledgeGraph } from "../KnowledgeGraph";
 import { ManageCoursesModal } from "../ManageCoursesModal";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
+import { useLayoutPref } from "@/lib/useLayoutPref";
 import {
   getGraph,
   getCourses,
@@ -129,6 +130,62 @@ function Typewriter({
   );
 }
 
+const STREAK_SHIELD_PATH =
+  "M8 2.5 L23.5 3.8 Q28.8 4.3 28.3 9.6 L27 24.2 Q26.4 29.2 21.2 28.5 L8.2 27.4 Q3 26.9 3.6 21.7 L4.9 7.6 Q5.5 2.5 10.4 2.7 Z";
+
+function StreakMark({ state, day }: { state: "done" | "today" | "missed" | "future"; day: number }) {
+  if (state === "done") {
+    return (
+      <svg viewBox="0 0 32 32" width="30" height="30" aria-label="completed">
+        <path d={STREAK_SHIELD_PATH} fill="#e87734" />
+        <path
+          d="M10.5 16.5 L14.2 20.2 L22 12.4"
+          stroke="#fff"
+          strokeWidth="3"
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+  if (state === "today") {
+    return (
+      <svg viewBox="0 0 32 32" width="30" height="30" aria-label="today">
+        <circle cx="16" cy="16" r="13" fill="#e94b5c" />
+        <path
+          d="M16 10 V22 M10 16 H22"
+          stroke="#fff"
+          strokeWidth="3"
+          fill="none"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 32 32" width="30" height="30" aria-label={state === "missed" ? "missed" : "upcoming"}>
+      <path
+        d={STREAK_SHIELD_PATH}
+        fill="none"
+        stroke="var(--border)"
+        strokeWidth="1.5"
+      />
+      <text
+        x="16"
+        y="20"
+        textAnchor="middle"
+        fontSize="11"
+        fontWeight="500"
+        fill="var(--text-muted)"
+        opacity={state === "future" ? 0.5 : 1}
+      >
+        {day}
+      </text>
+    </svg>
+  );
+}
+
 function getWeekDays(today: Date) {
   // Monday-first ISO week.
   const start = new Date(today);
@@ -147,6 +204,12 @@ export function Dashboard() {
   const search = useSearchParams();
   const { userId, userName, userReady } = useUser();
   const isMobile = useIsMobile();
+  const [layoutPref] = useLayoutPref();
+  // Top-nav layout keeps the pre-revamp 3-column dashboard with the
+  // streak widget, Learn-next recommendations, and My Courses as a
+  // proper panel on the left. Sidebar layout uses the new 2-column
+  // design with the CoursesKey overlay inside the graph panel.
+  const useLegacyPanels = layoutPref === "topnav";
 
   const [nodes, setNodes] = React.useState<GraphNode[]>([]);
   const [edges, setEdges] = React.useState<GraphEdge[]>([]);
@@ -169,7 +232,22 @@ export function Dashboard() {
   // height — 420 is a reasonable pre-measurement guess that lines up
   // with the new minHeight. ResizeObserver corrects it on mount.
   const [size, setSize] = React.useState({ w: 720, h: 420 });
-  const gRef = React.useRef<HTMLDivElement>(null);
+  // Callback ref so the ResizeObserver (re)attaches every time the graph
+  // container mounts — the loading branch renders before the graph exists,
+  // so a plain useRef + useEffect misses the attachment.
+  const roRef = React.useRef<ResizeObserver | null>(null);
+  const gRefCb = React.useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    roRef.current = null;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        setSize({ w: e.contentRect.width, h: e.contentRect.height });
+      }
+    });
+    ro.observe(el);
+    roRef.current = ro;
+  }, []);
 
   const suggest = search.get("suggest");
   const [suggestDismissed, setSuggestDismissed] = React.useState(false);
@@ -187,13 +265,6 @@ export function Dashboard() {
   }, []);
   const weekDays = React.useMemo(() => getWeekDays(today), [today]);
 
-  React.useEffect(() => {
-    const ro = new ResizeObserver((entries) => {
-      for (const e of entries) setSize({ w: e.contentRect.width, h: e.contentRect.height });
-    });
-    if (gRef.current) ro.observe(gRef.current);
-    return () => ro.disconnect();
-  }, [fullscreen]);
 
   const load = React.useCallback(async () => {
     if (!userId) return;
@@ -259,8 +330,7 @@ export function Dashboard() {
   React.useEffect(() => {
     setGreetingPrefix(getGreetingPrefix(new Date()));
   }, []);
-  // Pre-revamp greeting ended with a period for typographic weight.
-  const greetingText = firstName ? `${greetingPrefix}, ${firstName}.` : "Welcome back.";
+  const greetingText = firstName ? `${greetingPrefix}, ${firstName}` : "Welcome back";
   const [greetingDone, setGreetingDone] = React.useState(false);
   // Greeting + quote render as a centered hero below the TopBar (see
   // return JSX), not as TopBar title/subtitle. Leaving the TopBar lean
@@ -270,10 +340,16 @@ export function Dashboard() {
     return courses.map(c => {
       const courseNodes = nodes.filter(n => n.course_id === c.course_id && !n.is_subject_root);
       const mastered = courseNodes.filter(n => n.mastery_tier === "mastered").length;
+      const learning = courseNodes.filter(n => n.mastery_tier === "learning").length;
+      const struggling = courseNodes.filter(n => n.mastery_tier === "struggling").length;
+      const unexplored = courseNodes.filter(n => n.mastery_tier === "unexplored" || !n.mastery_tier).length;
       const total = courseNodes.length;
       return {
         course: c,
         mastered,
+        learning,
+        struggling,
+        unexplored,
         total,
         progress: total ? mastered / total : 0,
       };
@@ -335,7 +411,7 @@ export function Dashboard() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          {courses.slice(0, 5).map((c) => (
+          {useLegacyPanels && courses.slice(0, 5).map((c) => (
             <div key={c.course_id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)" }}>
               <span style={{ width: 10, height: 10, borderRadius: "50%", background: c.color || "var(--accent)" }} />
               {c.course_code || c.course_name}
@@ -350,7 +426,7 @@ export function Dashboard() {
           </button>
         </div>
       </div>
-      <div ref={gRef} style={{ position: "relative", flex: 1, minHeight: 260 }}>
+      <div ref={gRefCb} style={{ position: "relative", flex: 1, minHeight: 260 }}>
         <KnowledgeGraph
           nodes={nodes}
           edges={edges}
@@ -365,6 +441,14 @@ export function Dashboard() {
             router.push(`/learn?${p.toString()}`);
           }}
         />
+        {/* Courses key — sidebar layout only. Top-nav layout uses the
+            full My Courses panel in the left column instead. */}
+        {!useLegacyPanels && (
+          <CoursesKey
+            courseProgress={courseProgress}
+            onManage={() => setCoursesOpen(true)}
+          />
+        )}
         <div style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
           {([
             ["mastered", "#4a7d5c"],
@@ -382,48 +466,130 @@ export function Dashboard() {
     </div>
   );
 
-  // Pre-revamp layout: 3 columns — courses + upcoming on the left,
-  // graph in the middle (primary focus), stats on the right.
-  const coursesPanel = (
+
+  const graphPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, flex: 1, minHeight: 0 }}>
+      {graphBlock}
+    </div>
+  );
+
+  const relTime = (iso: string | null | undefined) => {
+    if (!iso) return "—";
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.round(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.round(hrs / 24);
+    if (days === 1) return "yesterday";
+    if (days < 7) return `${days}d ago`;
+    return new Date(iso).toLocaleDateString();
+  };
+
+  const courseNameFor = (id: string | null) => {
+    if (!id) return null;
+    const c = courses.find((co) => co.course_id === id);
+    return c?.course_code || c?.course_name || null;
+  };
+
+  const rightPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="label-micro">My courses</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => setCoursesOpen(true)}>
-            <Icon name="cog" size={12} /> Manage
+      {!isMobile && (
+        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 30 }}>
+          <button className="btn btn--sm" onClick={() => router.push("/library")}>
+            <Icon name="search" size={13} /> Search
+          </button>
+          <button className="btn btn--sm btn--primary" onClick={() => router.push("/learn")}>
+            <Icon name="sparkle" size={13} /> Start learning
           </button>
         </div>
-        {courseProgress.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No enrolled courses yet.</div>
-        )}
-        {courseProgress.map(({ course, mastered, total, progress }) => (
-          <div key={course.course_id} style={{ marginBottom: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: course.color || "var(--accent)", flexShrink: 0 }} />
-                <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {course.course_code || course.course_name}
-                </strong>
-              </span>
-              <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
-                {mastered}/{total}
-              </span>
-            </div>
-            <div style={{ height: 6, background: "var(--bg-soft)", borderRadius: "var(--r-full)", overflow: "hidden" }}>
-              <div style={{
-                width: "100%", height: "100%",
-                background: course.color || "var(--accent)",
-                transformOrigin: "left",
-                transform: `scaleX(${progress})`,
-                transition: "transform var(--dur) var(--ease)",
-              }} />
-            </div>
+      )}
+
+      {/* Panel 1 — Streak + Mastered, split 50/50 like the design reference. */}
+      <div className="card" style={{ padding: 0, display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+        <div style={{ padding: "16px 18px", borderRight: "1px solid var(--border)" }}>
+          <div className="label-micro" style={{ marginBottom: 6 }}>Streak</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+            <span
+              className="h-serif"
+              style={{ fontSize: 32, fontWeight: 600, color: stats.streak > 0 ? "var(--warn)" : "var(--text)", lineHeight: 1 }}
+            >
+              {stats.streak}
+            </span>
+            <span style={{ fontSize: 13, color: "var(--text-dim)" }}>days</span>
           </div>
-        ))}
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+            Personal best: {Math.max(stats.streak, 0)}
+          </div>
+        </div>
+        <div style={{ padding: "16px 18px" }}>
+          <div className="label-micro" style={{ marginBottom: 6 }}>Mastered</div>
+          <div
+            className="h-serif"
+            style={{ fontSize: 32, fontWeight: 600, lineHeight: 1 }}
+          >
+            {stats.mastered}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+            {stats.total ? `of ${stats.total} concepts` : "no concepts yet"}
+          </div>
+        </div>
       </div>
 
-      {/* Upcoming assignments live in the left column now, directly under
-          the courses they belong to — feels more like a study planner. */}
+      {/* Panel 2 — Where you left off (recent sessions). */}
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <div className="label-micro">Today</div>
+          <button
+            className="btn btn--ghost btn--sm"
+            onClick={() => router.push("/learn")}
+          >
+            View all
+          </button>
+        </div>
+        <div className="h-serif" style={{ fontSize: 16, marginBottom: 12 }}>Where you left off</div>
+        {sessions.length === 0 ? (
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            No recent sessions — start learning to fill this in.
+          </div>
+        ) : (
+          sessions.slice(0, 3).map((s) => (
+            <button
+              key={s.id}
+              onClick={() => router.push(`/learn?resume=${encodeURIComponent(s.id)}`)}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, width: "100%",
+                padding: "10px 12px", borderRadius: "var(--r-md)",
+                background: "var(--bg-subtle)", marginBottom: 6, textAlign: "left",
+              }}
+            >
+              <Icon name="brain" size={14} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: 13, fontWeight: 600,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}
+                >
+                  {s.topic}
+                </div>
+                <div
+                  style={{
+                    fontSize: 11, color: "var(--text-muted)",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}
+                >
+                  {[courseNameFor(s.course_id), s.mode, relTime(s.started_at)].filter(Boolean).join(" · ")}
+                </div>
+              </div>
+              <Icon name="chev" size={12} />
+            </button>
+          ))
+        )}
+      </div>
+
+      {/* Panel 3 — Upcoming assignments. */}
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">Upcoming</div>
@@ -437,10 +603,16 @@ export function Dashboard() {
           const hours = diffMs / (1000 * 60 * 60);
           const days = Math.ceil(diffMs / 86400000);
           let chipClass = "chip--info";
-          let label = `${days}d`;
-          if (hours <= 0) { chipClass = "chip--err"; label = "overdue"; }
-          else if (hours <= 24) { chipClass = "chip--err"; label = hours < 1 ? "now" : `${Math.max(1, Math.round(hours))}h`; }
-          else if (days <= 2) chipClass = "chip--warn";
+          let label = `${days}D`;
+          if (hours <= 0) {
+            chipClass = "chip--err";
+            label = "OVERDUE";
+          } else if (hours <= 24) {
+            chipClass = "chip--err";
+            label = hours < 1 ? "NOW" : `${Math.max(1, Math.round(hours))}H`;
+          } else if (days <= 2) {
+            chipClass = "chip--warn";
+          }
           return (
             <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -457,25 +629,233 @@ export function Dashboard() {
     </div>
   );
 
-  const graphPanel = (
-    // height: 100% lets this grid cell fill the row. Combined with the
-    // graphBlock's flex: 1, the canvas stretches to match the left
-    // column's stacked cards instead of floating at a fixed 260px.
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, height: "100%" }}>
-      {graphBlock}
+  const heroBlock = (
+    <div style={{ textAlign: "center", padding: isMobile ? "14px 4px 0" : "6px 0 0" }}>
+      <h1
+        className="h-serif"
+        style={{
+          margin: 0,
+          fontSize: isMobile ? 34 : 42,
+          fontWeight: 600,
+          color: "var(--text)",
+          letterSpacing: "-0.02em",
+          lineHeight: 1.15,
+        }}
+      >
+        <Typewriter text={greetingText} onDone={() => setGreetingDone(true)} />
+      </h1>
+      {quote && (
+        <p
+          aria-hidden={!greetingDone}
+          className="body-serif"
+          style={{
+            margin: "14px auto 0",
+            maxWidth: 640,
+            fontSize: 14,
+            fontStyle: "italic",
+            color: "var(--text-dim)",
+            lineHeight: 1.55,
+            opacity: greetingDone ? 1 : 0,
+            transform: greetingDone ? "translateY(0)" : "translateY(-6px)",
+            transition:
+              "opacity 0.55s var(--ease) 0.15s, transform 0.55s var(--ease) 0.15s",
+          }}
+        >
+          "{quote}"
+        </p>
+      )}
     </div>
   );
 
-  const rightPanel = (
+  const mobileMetaRow = isMobile ? (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+      }}
+    >
+      <span className="label-micro">Home / Dashboard</span>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn btn--sm" onClick={() => router.push("/library")}>
+          <Icon name="search" size={13} /> Library
+        </button>
+        <button className="btn btn--sm btn--primary" onClick={() => router.push("/learn")}>
+          <Icon name="sparkle" size={13} /> Start learning
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  const suggestBlock = suggestNode && !suggestDismissed ? (
+    <div className="card fade-in" style={{ padding: "14px 18px", display: "flex", gap: 14, alignItems: "center", borderColor: "var(--accent-border)", background: "var(--accent-soft)" }}>
+      <Icon name="sparkle" size={16} />
+      <div style={{ flex: 1, fontSize: 13 }}>
+        <strong>Try this next:</strong> {suggestNode.name}
+        {suggestNode.subject && <span style={{ color: "var(--text-dim)" }}> · {suggestNode.subject}</span>}
+      </div>
+      <button className="btn btn--sm btn--primary" onClick={() => router.push(`/learn?topic=${encodeURIComponent(suggestNode.name)}&mode=quiz`)}>
+        Start quiz
+      </button>
+      <button className="btn btn--sm btn--ghost" onClick={dismissSuggest}>Dismiss</button>
+    </div>
+  ) : null;
+
+  const mainColumn = (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+        minWidth: 0,
+        minHeight: 0,
+        alignSelf: "stretch",
+      }}
+    >
+      {!isMobile && !useLegacyPanels && (
+        <div style={{ padding: "0 2px", display: "flex", alignItems: "center", minHeight: 30 }}>
+          <span className="label-micro">Home / Dashboard</span>
+        </div>
+      )}
+      {heroBlock}
+      {mobileMetaRow}
+      {suggestBlock}
+      {graphPanel}
+    </div>
+  );
+
+  // ── Legacy (top-nav) layout panels ──────────────────────────────────────
+  // Pre-revamp 3-column dashboard: My Courses + Upcoming on the left,
+  // hero + graph in the middle, streak widget + MiniStat + Learn next
+  // on the right. Only rendered when layoutPref === "topnav".
+  const legacyCoursesPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+      {!isMobile && (
+        <div style={{ padding: "0 2px", display: "flex", alignItems: "center", minHeight: 30 }}>
+          <span className="label-micro">Home / Dashboard</span>
+        </div>
+      )}
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div className="label-micro">My courses</div>
+          <button className="btn btn--ghost btn--sm" onClick={() => setCoursesOpen(true)}>
+            <Icon name="cog" size={12} /> Manage
+          </button>
+        </div>
+        {courseProgress.length === 0 && (
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No enrolled courses yet.</div>
+        )}
+        {courseProgress.map(({ course, mastered, learning, struggling, unexplored, total, progress }) => {
+          const pct = Math.round(progress * 100);
+          const baseColor = course.color || "var(--accent)";
+          const segments = [
+            { key: "mastered",   count: mastered,   color: baseColor, opacity: 1,    label: "Mastered" },
+            { key: "learning",   count: learning,   color: baseColor, opacity: 0.78, label: "Learning" },
+            { key: "struggling", count: struggling, color: baseColor, opacity: 0.55, label: "Struggling" },
+            { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: "Unexplored" },
+          ];
+          return (
+            <div key={course.course_id} style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: baseColor, flexShrink: 0 }} />
+                  <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {course.course_code || course.course_name}
+                  </strong>
+                </span>
+                <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
+                  {pct}%
+                </span>
+              </div>
+              {total > 0 ? (
+                <div
+                  style={{
+                    display: "flex",
+                    height: 8,
+                    background: "var(--bg-soft)",
+                    borderRadius: "var(--r-full)",
+                    overflow: "hidden",
+                  }}
+                  title={segments.filter(s => s.count > 0).map(s => `${s.label}: ${s.count}`).join(" · ")}
+                >
+                  {segments.map((s) => s.count > 0 && (
+                    <div
+                      key={s.key}
+                      style={{
+                        width: `${(s.count / total) * 100}%`,
+                        background: s.color,
+                        opacity: s.opacity,
+                        transition: "width var(--dur) var(--ease)",
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div style={{ height: 8, background: "var(--bg-soft)", borderRadius: "var(--r-full)" }} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div className="label-micro">Upcoming</div>
+          <button className="btn btn--ghost btn--sm" onClick={() => router.push("/calendar")}>Calendar →</button>
+        </div>
+        {assignments.length === 0 && (
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
+        )}
+        {assignments.slice(0, 4).map((a) => {
+          const diffMs = new Date(a.due_date).getTime() - Date.now();
+          const hours = diffMs / (1000 * 60 * 60);
+          const days = Math.ceil(diffMs / 86400000);
+          let chipClass = "chip--info";
+          let label = `${days}D`;
+          if (hours <= 0) {
+            chipClass = "chip--err";
+            label = "OVERDUE";
+          } else if (hours <= 24) {
+            chipClass = "chip--err";
+            label = hours < 1 ? "NOW" : `${Math.max(1, Math.round(hours))}H`;
+          } else if (days <= 2) {
+            chipClass = "chip--warn";
+          }
+          return (
+            <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{a.title}</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  {a.course_name || "—"} · {a.assignment_type || "task"}
+                </div>
+              </div>
+              <span className={`chip ${chipClass}`}>{label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const legacyRightPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+      {!isMobile && (
+        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 30 }}>
+          <button className="btn btn--sm" onClick={() => router.push("/library")}>
+            <Icon name="search" size={13} /> Library
+          </button>
+          <button className="btn btn--sm btn--primary" onClick={() => router.push("/learn")}>
+            <Icon name="sparkle" size={13} /> Start learning
+          </button>
+        </div>
+      )}
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div className="label-micro" style={{ marginBottom: 8 }}>This week</div>
-        {/* Prose-style streak line — typographic hierarchy replaces the
-            hero-metric layout (big-number + small-label) called out as
-            an anti-reference in .impeccable.md. */}
         <div className="body-serif" style={{ fontSize: 16, marginBottom: 14, color: "var(--text)" }}>
           {stats.streak > 0 ? (
-            <>You're on a <span className="h-serif" style={{ color: "var(--warn)", fontWeight: 600 }}>{stats.streak}-day</span> streak.</>
+            <>You&apos;re on a <span className="h-serif" style={{ color: "var(--warn)", fontWeight: 600 }}>{stats.streak}-day</span> streak.</>
           ) : (
             <>Ready when you are. Open any session to begin a streak.</>
           )}
@@ -485,21 +865,16 @@ export function Dashboard() {
             const key = d.toISOString().slice(0, 10);
             const active = activeDays.has(key);
             const isToday = d.getTime() === today.getTime();
+            const isPast = d.getTime() < today.getTime();
+            const state: "done" | "today" | "missed" | "future" =
+              active ? "done" : isToday ? "today" : isPast ? "missed" : "future";
             return (
               <div key={key} style={{ textAlign: "center" }}>
                 <div className="label-micro" style={{ fontSize: 9 }}>
                   {d.toLocaleDateString("en-US", { weekday: "short" }).slice(0, 2)}
                 </div>
-                <div
-                  style={{
-                    marginTop: 4, height: 28, borderRadius: "var(--r-sm)",
-                    background: isToday ? "var(--warn)" : active ? "var(--accent-soft)" : "var(--bg-soft)",
-                    color: isToday ? "#fff" : active ? "var(--accent)" : "var(--text-muted)",
-                    display: "grid", placeItems: "center", fontSize: 13,
-                    border: isToday ? "1px solid var(--warn)" : "1px solid var(--border)",
-                  }}
-                >
-                  {active ? "🔥" : d.getDate()}
+                <div style={{ marginTop: 6, display: "grid", placeItems: "center" }}>
+                  <StreakMark state={state} day={d.getDate()} />
                 </div>
               </div>
             );
@@ -555,99 +930,12 @@ export function Dashboard() {
           </button>
         </div>
       </div>
-
     </div>
   );
 
   return (
     <div>
-      {/* Hero at the very top — zero TopBar above it, tight top padding
-          so the greeting is literally the first thing on the page. */}
-      <div
-        style={{
-          textAlign: "center",
-          padding: isMobile ? "14px 20px 0" : "18px 32px 0",
-        }}
-      >
-        <h1
-          className="h-serif"
-          style={{
-            margin: 0,
-            fontSize: isMobile ? 26 : 30,
-            fontWeight: 600,
-            color: "var(--text)",
-            letterSpacing: "-0.02em",
-            lineHeight: 1.2,
-          }}
-        >
-          <Typewriter text={greetingText} onDone={() => setGreetingDone(true)} />
-        </h1>
-        {/* Quote always reserves its layout space so panels below never
-            shift when the greeting finishes typing. Entry is opacity +
-            subtle translateY so the quote *feels* like it drops in
-            without actually moving anything else on the page. */}
-        {quote && (
-          <p
-            aria-hidden={!greetingDone}
-            className="body-serif"
-            style={{
-              margin: "22px auto 0",
-              maxWidth: 640,
-              fontSize: 14,
-              fontStyle: "italic",
-              color: "var(--text-dim)",
-              lineHeight: 1.55,
-              opacity: greetingDone ? 1 : 0,
-              transform: greetingDone ? "translateY(0)" : "translateY(-6px)",
-              transition:
-                "opacity 0.55s var(--ease) 0.15s, transform 0.55s var(--ease) 0.15s",
-            }}
-          >
-            "{quote}"
-          </p>
-        )}
-      </div>
-
-      {/* Meta row pushed DOWN below the hero, tight padding. Breadcrumb
-          left, actions right — one line of chrome, no bar. */}
-      <div
-        style={{
-          padding: isMobile ? "10px 20px 0" : "12px 32px 0",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        <span className="label-micro">Home / Dashboard</span>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn btn--sm" onClick={() => router.push("/library")}>
-            <Icon name="search" size={13} /> Library
-          </button>
-          <button className="btn btn--sm btn--primary" onClick={() => router.push("/learn")}>
-            <Icon name="sparkle" size={13} /> Start learning
-          </button>
-        </div>
-      </div>
-
-      {suggestNode && !suggestDismissed && (
-        <div style={{ padding: "14px 32px 0" }}>
-          <div className="card fade-in" style={{ padding: "14px 18px", display: "flex", gap: 14, alignItems: "center", borderColor: "var(--accent-border)", background: "var(--accent-soft)" }}>
-            <Icon name="sparkle" size={16} />
-            <div style={{ flex: 1, fontSize: 13 }}>
-              <strong>Try this next:</strong> {suggestNode.name}
-              {suggestNode.subject && <span style={{ color: "var(--text-dim)" }}> · {suggestNode.subject}</span>}
-            </div>
-            <button className="btn btn--sm btn--primary" onClick={() => router.push(`/learn?topic=${encodeURIComponent(suggestNode.name)}&mode=quiz`)}>
-              Start quiz
-            </button>
-            <button className="btn btn--sm btn--ghost" onClick={dismissSuggest}>Dismiss</button>
-          </div>
-        </div>
-      )}
-
-      {isMobile && (
+      {isMobile && useLegacyPanels && (
         <div style={{ display: "flex", gap: 6, padding: "14px 20px 0" }}>
           {(["courses", "stats"] as const).map(t => (
             <button
@@ -667,35 +955,49 @@ export function Dashboard() {
         </div>
       )}
 
-      <div
-        style={{
-          // Very tight top padding so panels start immediately below the
-          // meta row — maximises the space the content panels can claim.
-          padding: isMobile ? "8px 20px 16px" : "10px 32px 24px",
-          display: "grid", gap: 16,
-          // Pre-revamp layout: narrow left (courses), wide middle (graph),
-          // narrow right (stats/upcoming/learn-next). Matches the 300px /
-          // flex 1 / 320px split from main@929658f.
-          gridTemplateColumns: isMobile ? "1fr" : "minmax(240px, 280px) minmax(0, 1fr) minmax(240px, 300px)",
-        }}
-      >
-        {isMobile ? (
-          mobileTab === "courses" ? (
-            <>
-              {coursesPanel}
-              {graphPanel}
-            </>
+      {useLegacyPanels ? (
+        <div
+          style={{
+            padding: isMobile ? "8px 20px 16px" : "18px 32px 24px",
+            display: "grid", gap: 16,
+            gridTemplateColumns: isMobile ? "1fr" : "minmax(240px, 280px) minmax(0, 1fr) minmax(240px, 300px)",
+            alignItems: isMobile ? "start" : "stretch",
+          }}
+        >
+          {isMobile ? (
+            mobileTab === "courses" ? (
+              <>
+                {mainColumn}
+                {legacyCoursesPanel}
+              </>
+            ) : (
+              <>
+                {mainColumn}
+                {legacyRightPanel}
+              </>
+            )
           ) : (
-            rightPanel
-          )
-        ) : (
-          <>
-            {coursesPanel}
-            {graphPanel}
-            {rightPanel}
-          </>
-        )}
-      </div>
+            <>
+              {legacyCoursesPanel}
+              {mainColumn}
+              {legacyRightPanel}
+            </>
+          )}
+        </div>
+      ) : (
+        <div
+          style={{
+            padding: isMobile ? "8px 20px 16px" : "18px 32px 24px",
+            display: "grid", gap: 16,
+            gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(280px, 360px)",
+            alignItems: isMobile ? "start" : "stretch",
+          }}
+        >
+          {mainColumn}
+          {rightPanel}
+        </div>
+      )}
+
 
       {fullscreen && (
         <div
@@ -760,6 +1062,173 @@ function FullscreenGraph({
         highlightId={highlightId}
         onNodeClick={onNodeClick}
       />
+    </div>
+  );
+}
+
+type CourseProgressEntry = {
+  course: EnrolledCourse;
+  mastered: number;
+  learning: number;
+  struggling: number;
+  unexplored: number;
+  total: number;
+  progress: number;
+};
+
+function CoursesKey({
+  courseProgress,
+  onManage,
+}: {
+  courseProgress: CourseProgressEntry[];
+  onManage: () => void;
+}) {
+  const [collapsed, setCollapsed] = React.useState(true);
+
+  if (courseProgress.length === 0) return null;
+
+  // A thick white outline painted BEHIND the glyphs, plus a soft halo.
+  // `paint-order: stroke fill` pushes the stroke under the fill so
+  // letters stay clean-edged. Works against any background colour
+  // (graph nodes, edges, labels) without needing a backdrop.
+  const legibleText: React.CSSProperties = {
+    WebkitTextStroke: "3px rgba(255,255,255,0.95)",
+    paintOrder: "stroke fill" as React.CSSProperties["paintOrder"],
+    textShadow:
+      "0 0 4px rgba(255,255,255,0.95), " +
+      "0 0 2px rgba(255,255,255,1), " +
+      "0 0 8px rgba(255,255,255,0.6)",
+  };
+  // Progress-bar track gets a white ring so the bar geometry reads
+  // even when a colored graph node passes right behind it.
+  const legibleBar: React.CSSProperties = {
+    boxShadow: "0 0 0 1.5px rgba(255,255,255,0.95), 0 0 6px rgba(255,255,255,0.6)",
+  };
+  const legibleDot: React.CSSProperties = {
+    boxShadow: "0 0 0 2px rgba(255,255,255,0.95)",
+  };
+  // Soft white halo around each icon — blurred drop-shadows stacked at
+  // the same origin so the glow follows the icon's shape with no hard
+  // edges. Button itself stays transparent.
+  const paddedIconBtn: React.CSSProperties = {
+    padding: 0,
+    background: "transparent",
+    border: "none",
+    fontSize: 10,
+    lineHeight: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    filter:
+      "drop-shadow(0 0 2px rgba(255,255,255,1)) " +
+      "drop-shadow(0 0 4px rgba(255,255,255,0.85)) " +
+      "drop-shadow(0 0 6px rgba(255,255,255,0.55))",
+  };
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 12,
+        right: 12,
+        width: collapsed ? "auto" : 220,
+        maxWidth: "calc(100% - 24px)",
+        background: "transparent",
+        border: "none",
+        borderRadius: 0,
+        boxShadow: "none",
+        padding: collapsed ? "6px 10px" : "10px 12px 8px",
+        zIndex: 2,
+        fontSize: 11,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          marginBottom: collapsed ? 0 : 8,
+        }}
+      >
+        <div className="label-micro" style={{ fontSize: 9, ...legibleText }}>My courses</div>
+        <div style={{ display: "flex", gap: 4 }}>
+          {!collapsed && (
+            <button
+              className="btn btn--ghost btn--sm"
+              onClick={onManage}
+              title="Manage courses"
+              style={paddedIconBtn}
+            >
+              <Icon name="cog" size={10} />
+            </button>
+          )}
+          <button
+            className="btn btn--ghost btn--sm"
+            onClick={() => setCollapsed(c => !c)}
+            aria-label={collapsed ? "Expand courses key" : "Collapse courses key"}
+            style={paddedIconBtn}
+          >
+            <Icon name={collapsed ? "plus" : "x"} size={10} />
+          </button>
+        </div>
+      </div>
+
+      {!collapsed && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {courseProgress.map(({ course, mastered, learning, struggling, unexplored, total, progress }) => {
+            const pct = Math.round(progress * 100);
+            const baseColor = course.color || "var(--accent)";
+            const segs = [
+              { count: mastered,   color: baseColor,         opacity: 1 },
+              { count: learning,   color: baseColor,         opacity: 0.78 },
+              { count: struggling, color: baseColor,         opacity: 0.55 },
+              { count: unexplored, color: "var(--bg-soft)",  opacity: 1 },
+            ];
+            return (
+              <div key={course.course_id}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3, gap: 6 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: baseColor, flexShrink: 0, ...legibleDot }} />
+                    <strong style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...legibleText }}>
+                      {course.course_code || course.course_name}
+                    </strong>
+                  </span>
+                  <span className="mono" style={{ color: "var(--text-dim)", fontSize: 10, ...legibleText }}>{pct}%</span>
+                </div>
+                {total > 0 ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      height: 5,
+                      background: "var(--bg-soft)",
+                      borderRadius: "var(--r-full)",
+                      overflow: "hidden",
+                      ...legibleBar,
+                    }}
+                    title={`Mastered ${mastered} · Learning ${learning} · Struggling ${struggling} · Unexplored ${unexplored}`}
+                  >
+                    {segs.map((s, i) => s.count > 0 && (
+                      <div
+                        key={i}
+                        style={{
+                          width: `${(s.count / total) * 100}%`,
+                          background: s.color,
+                          opacity: s.opacity,
+                          transition: "width var(--dur) var(--ease)",
+                        }}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ height: 5, background: "var(--bg-soft)", borderRadius: "var(--r-full)", ...legibleBar }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

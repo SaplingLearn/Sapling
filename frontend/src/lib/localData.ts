@@ -4,7 +4,24 @@
 import type {
   GraphNode, GraphEdge, GraphStats, Assignment,
   UserProfile, UserSettings, UserAchievement, Achievement, Document,
+  Role, Cosmetic, CosmeticType, RarityTier, AchievementCategory,
 } from '@/lib/types';
+
+const localRoles: Role[] = [];
+const localAchievements: Achievement[] = [];
+const localCosmetics: Cosmetic[] = [];
+
+function parseBody<T = Record<string, unknown>>(options?: RequestInit): T {
+  const body = options?.body;
+  if (typeof body === 'string') {
+    try { return JSON.parse(body) as T; } catch { return {} as T; }
+  }
+  return {} as T;
+}
+
+function randId(prefix: string) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
 
 export const LOCAL_USER = {
   id: 'local-user-001',
@@ -241,16 +258,85 @@ export function handleLocalRequest(path: string, options?: RequestInit): unknown
   if (route.match(/^\/api\/profile\/[^/]+$/) && options?.method === 'PATCH') return { updated: true };
   if (route.match(/^\/api\/profile\/[^/]+$/)) return LOCAL_PROFILE;
 
-  if (route.match(/^\/api\/admin\/roles$/) && (!options?.method || options.method === 'GET')) return { roles: [] };
-  if (route.match(/^\/api\/admin\/roles$/) && options?.method === 'POST') return { role: { id: 'role-local', name: 'Local Role', slug: 'local', color: '#888', icon: null, description: null, is_staff_assigned: true, is_earnable: false, display_priority: 0 } };
-  if (route.match(/^\/api\/admin\/roles\/[^/]+$/) && options?.method === 'DELETE') return { deleted: true };
-  if (route.match(/^\/api\/admin\/achievements$/) && (!options?.method || options.method === 'GET')) return { achievements: [] };
-  if (route.match(/^\/api\/admin\/achievements$/) && options?.method === 'POST') return { achievement: { id: 'ach-local', name: 'Local', slug: 'local', description: null, icon: null, category: 'milestone', rarity: 'common', is_secret: false } };
-  if (route.match(/^\/api\/admin\/achievements\/[^/]+$/) && options?.method === 'DELETE') return { deleted: true };
+  if (route.match(/^\/api\/admin\/roles$/) && (!options?.method || options.method === 'GET')) {
+    return { roles: [...localRoles].sort((a, b) => b.display_priority - a.display_priority) };
+  }
+  if (route.match(/^\/api\/admin\/roles$/) && options?.method === 'POST') {
+    const b = parseBody<Partial<Role>>(options);
+    const role: Role = {
+      id: randId('role'),
+      name: String(b.name ?? 'Unnamed'),
+      slug: String(b.slug ?? randId('slug')),
+      color: String(b.color ?? '#8a7bc4'),
+      icon: (b.icon as string | null | undefined) ?? null,
+      description: (b.description as string | null | undefined) ?? null,
+      is_staff_assigned: b.is_staff_assigned ?? true,
+      is_earnable: b.is_earnable ?? false,
+      display_priority: b.display_priority ?? 0,
+    };
+    localRoles.push(role);
+    return { role };
+  }
+  {
+    const m = route.match(/^\/api\/admin\/roles\/([^/]+)$/);
+    if (m && options?.method === 'DELETE') {
+      const idx = localRoles.findIndex(r => r.id === m[1]);
+      if (idx >= 0) localRoles.splice(idx, 1);
+      return { deleted: true };
+    }
+  }
+  if (route.match(/^\/api\/admin\/achievements$/) && (!options?.method || options.method === 'GET')) {
+    return { achievements: [...localAchievements] };
+  }
+  if (route.match(/^\/api\/admin\/achievements$/) && options?.method === 'POST') {
+    const b = parseBody<Partial<Achievement>>(options);
+    const achievement: Achievement = {
+      id: randId('ach'),
+      name: String(b.name ?? 'Unnamed'),
+      slug: String(b.slug ?? randId('slug')),
+      description: (b.description as string | null | undefined) ?? null,
+      icon: (b.icon as string | null | undefined) ?? null,
+      category: (b.category as AchievementCategory) ?? 'milestone',
+      rarity: (b.rarity as RarityTier) ?? 'common',
+      is_secret: b.is_secret ?? false,
+    };
+    localAchievements.push(achievement);
+    return { achievement };
+  }
+  {
+    const m = route.match(/^\/api\/admin\/achievements\/([^/]+)$/);
+    if (m && options?.method === 'DELETE') {
+      const idx = localAchievements.findIndex(a => a.id === m[1]);
+      if (idx >= 0) localAchievements.splice(idx, 1);
+      return { deleted: true };
+    }
+  }
   if (route.match(/^\/api\/admin\/achievements\/grant$/) && options?.method === 'POST') return { granted: true };
-  if (route.match(/^\/api\/admin\/cosmetics$/) && (!options?.method || options.method === 'GET')) return { cosmetics: [] };
-  if (route.match(/^\/api\/admin\/cosmetics$/) && options?.method === 'POST') return { cosmetic: { id: 'cos-local', type: 'avatar_frame', name: 'Local', slug: 'local', rarity: 'common' } };
-  if (route.match(/^\/api\/admin\/cosmetics\/[^/]+$/) && options?.method === 'DELETE') return { deleted: true };
+  if (route.match(/^\/api\/admin\/cosmetics$/) && (!options?.method || options.method === 'GET')) {
+    return { cosmetics: [...localCosmetics] };
+  }
+  if (route.match(/^\/api\/admin\/cosmetics$/) && options?.method === 'POST') {
+    const b = parseBody<Partial<Cosmetic>>(options);
+    const cosmetic: Cosmetic = {
+      id: randId('cos'),
+      type: (b.type as CosmeticType) ?? 'avatar_frame',
+      name: String(b.name ?? 'Unnamed'),
+      slug: String(b.slug ?? randId('slug')),
+      ...(b.asset_url ? { asset_url: String(b.asset_url) } : {}),
+      ...(b.css_value ? { css_value: String(b.css_value) } : {}),
+      rarity: (b.rarity as RarityTier) ?? 'common',
+    };
+    localCosmetics.push(cosmetic);
+    return { cosmetic };
+  }
+  {
+    const m = route.match(/^\/api\/admin\/cosmetics\/([^/]+)$/);
+    if (m && options?.method === 'DELETE') {
+      const idx = localCosmetics.findIndex(c => c.id === m[1]);
+      if (idx >= 0) localCosmetics.splice(idx, 1);
+      return { deleted: true };
+    }
+  }
 
   if (route.match(/^\/api\/auth\/me$/)) return { id: LOCAL_USER.id, name: LOCAL_USER.name, is_approved: true, is_admin: true, username: 'localdev', roles: [], equipped_cosmetics: {}, onboarding_completed: true };
   if (route.match(/^\/api\/users$/)) return { users: [{ id: LOCAL_USER.id, name: LOCAL_USER.name, room_id: null }] };

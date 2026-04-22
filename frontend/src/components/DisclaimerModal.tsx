@@ -5,19 +5,29 @@ import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
 
 const ACK_KEY = "sapling_disclaimer_ack";
 
-export function DisclaimerModal() {
-  const [open, setOpen] = useState(false);
+export function DisclaimerModal({
+  open: controlledOpen,
+  onClose,
+}: {
+  open?: boolean;
+  onClose?: () => void;
+} = {}) {
+  const isControlled = controlledOpen !== undefined;
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = isControlled ? controlledOpen : internalOpen;
 
   useEffect(() => {
+    if (isControlled) return;
     const acked = typeof window !== "undefined" && localStorage.getItem(ACK_KEY) === "true";
-    if (!acked) setOpen(true);
-  }, []);
+    if (!acked) setInternalOpen(true);
+  }, [isControlled]);
 
   useBodyScrollLock(open);
 
   const ack = () => {
     localStorage.setItem(ACK_KEY, "true");
-    setOpen(false);
+    if (isControlled) onClose?.();
+    else setInternalOpen(false);
   };
 
   if (!open) return null;

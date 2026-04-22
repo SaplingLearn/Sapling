@@ -39,7 +39,12 @@ function CallbackInner() {
     fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(userId)}`)
       .then(r => r.json())
       .then(data => {
-        router.replace(data.onboarding_completed ? '/dashboard' : '/onboarding');
+        if (data.onboarding_completed) {
+          router.replace('/dashboard');
+        } else {
+          sessionStorage.setItem('sapling_onboarding_pending', '1');
+          router.replace('/');
+        }
       })
       .catch(() => router.replace('/dashboard'));
   // eslint-disable-next-line react-hooks/exhaustive-deps

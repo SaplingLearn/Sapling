@@ -18,9 +18,11 @@ import {
   fetchCosmetics,
   fetchCosmeticsCatalog,
   equipCosmetic,
+  exportData,
   type CatalogCosmetic,
 } from "@/lib/api";
 import type { UserSettings, UserProfile, UserCosmetic, CosmeticType, EquippedCosmetics } from "@/lib/types";
+import { useLayoutPref, type LayoutPref } from "@/lib/useLayoutPref";
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data" | "danger";
 
@@ -62,6 +64,7 @@ export function Settings() {
   const { userId, userName, avatarUrl, userReady, signOut, refreshProfile } = useUser();
   const [tab, setTab] = React.useState<Tab>("profile");
   const [settings, setSettings] = React.useState<UserSettings | null>(null);
+  const [layoutPref, setLayoutPref] = useLayoutPref();
   const [saving, setSaving] = React.useState(false);
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<UserProfile | null>(null);
@@ -72,7 +75,13 @@ export function Settings() {
   React.useEffect(() => {
     if (!userReady || !userId) return;
     fetchSettings(userId)
-      .then(s => { setSettings(s); setUsernameDraft(s.username || ""); })
+      .then(s => {
+        setSettings(s);
+        setUsernameDraft(s.username || "");
+        if (s.accent_color) {
+          document.documentElement.style.setProperty("--accent", s.accent_color);
+        }
+      })
       .catch((e) => console.error("settings load", e));
   }, [userReady, userId]);
 
@@ -338,6 +347,35 @@ export function Settings() {
           {tab === "preferences" && settings && (
             <div style={{ maxWidth: 640 }}>
               <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Preferences</div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "16px 0",
+                  borderBottom: "1px solid var(--border)",
+                  gap: 20,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>Layout</div>
+                  <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
+                    Choose between a top navigation bar or a full-height sidebar.
+                    Falls back to top nav on small screens.
+                  </div>
+                </div>
+                <div style={{ minWidth: 180 }}>
+                  <CustomSelect
+                    size="sm"
+                    value={layoutPref}
+                    onChange={(v) => setLayoutPref(v as LayoutPref)}
+                    options={[
+                      { value: "topnav",  label: "Top nav (default)" },
+                      { value: "sidebar", label: "Sidebar" },
+                    ]}
+                  />
+                </div>
+              </div>
               {(
                 [
                   ["Theme", "theme", ["light", "dark"]],
@@ -367,6 +405,73 @@ export function Settings() {
                   </div>
                 </div>
               ))}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "16px 0",
+                  borderBottom: "1px solid var(--border)",
+                  gap: 20,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>Accent color</div>
+                  <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
+                    Hue used for highlights and active states.
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {["#2b5221", "#2b8c96", "#e8a33a", "#8a63d2", "#dc2626"].map(c => {
+                    const active = (settings.accent_color ?? "#2b5221") === c;
+                    return (
+                      <button
+                        key={c}
+                        onClick={() => {
+                          document.documentElement.style.setProperty("--accent", c);
+                          patch({ accent_color: c });
+                        }}
+                        aria-label={`Accent ${c}`}
+                        style={{
+                          width: 24,
+                          height: 24,
+                          borderRadius: "50%",
+                          background: c,
+                          border: active ? "2px solid var(--text)" : "2px solid transparent",
+                          outline: active ? `2px solid ${c}` : "none",
+                          outlineOffset: 2,
+                          cursor: "pointer",
+                          padding: 0,
+                          transition: "transform var(--dur) var(--ease)",
+                        }}
+                      />
+                    );
+                  })}
+                  <label
+                    style={{
+                      position: "relative",
+                      width: 24,
+                      height: 24,
+                      borderRadius: "50%",
+                      background:
+                        "conic-gradient(from 0deg, #ff6b6b, #f9d423, #6bcf7f, #4dabf7, #b197fc, #ff6b6b)",
+                      cursor: "pointer",
+                      border: "2px solid transparent",
+                    }}
+                    title="Custom color"
+                  >
+                    <input
+                      type="color"
+                      value={settings.accent_color ?? "#2b5221"}
+                      onChange={e => {
+                        document.documentElement.style.setProperty("--accent", e.target.value);
+                        patch({ accent_color: e.target.value });
+                      }}
+                      style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
           )}
 
@@ -411,12 +516,7 @@ export function Settings() {
                   onClick={async () => {
                     if (!userId) return;
                     try {
-                      const base = process.env.NEXT_PUBLIC_API_URL ?? '';
-                      const res = await fetch(
-                        `${base}/api/profile/${userId}/export?user_id=${encodeURIComponent(userId)}`,
-                        { method: "POST" },
-                      );
-                      const data = await res.json();
+                      const data = await exportData(userId);
                       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement("a");
@@ -424,8 +524,9 @@ export function Settings() {
                       a.download = `sapling-export.json`;
                       a.click();
                       URL.revokeObjectURL(url);
+                      toast.success("Data exported.");
                     } catch (err) {
-                      alert(String(err));
+                      toast.error(`Export failed: ${String(err)}`);
                     }
                   }}
                 >

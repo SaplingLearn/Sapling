@@ -277,12 +277,26 @@ function UsersTab() {
 
 function RolesTab() {
   const toast = useToast();
+  const { userName, avatarUrl, username } = useUser();
   const [roles, setRoles] = React.useState<Role[]>([]);
   const [form, setForm] = React.useState({
     name: "", slug: "", color: "#8a7bc4", icon: "", description: "",
     is_staff_assigned: true, is_earnable: false, display_priority: 0,
   });
+  const [slugEdited, setSlugEdited] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+
+  const previewRole: Role = {
+    id: "preview",
+    name: form.name.trim() || "Role name",
+    slug: form.slug || "role-slug",
+    color: form.color,
+    icon: form.icon.trim() || null,
+    description: form.description.trim() || null,
+    is_staff_assigned: form.is_staff_assigned,
+    is_earnable: form.is_earnable,
+    display_priority: form.display_priority,
+  };
 
   const load = async () => {
     try {
@@ -312,6 +326,7 @@ function RolesTab() {
         display_priority: form.display_priority,
       });
       setForm({ name: "", slug: "", color: "#8a7bc4", icon: "", description: "", is_staff_assigned: true, is_earnable: false, display_priority: 0 });
+      setSlugEdited(false);
       await load();
       toast.success("Role created");
     } catch (err) {
@@ -334,18 +349,48 @@ function RolesTab() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) 1fr", gap: 16 }}>
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 10 }}>Create role</div>
+        <div className="label-micro" style={{ marginBottom: 10 }}>Preview</div>
+        <RoleProfilePreview
+          draftRole={previewRole}
+          draftActive={Boolean(form.name.trim())}
+          existingRoles={roles}
+          userName={userName}
+          username={username}
+          avatarUrl={avatarUrl}
+        />
+        <div className="label-micro" style={{ marginTop: 18, marginBottom: 10 }}>Create role</div>
         <LabeledField label="Name">
-          <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={fieldStyle} />
+          <input
+            value={form.name}
+            onChange={e => {
+              const name = e.target.value;
+              setForm(f => ({
+                ...f,
+                name,
+                slug: slugEdited ? f.slug : name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''),
+              }));
+            }}
+            style={fieldStyle}
+          />
         </LabeledField>
         <LabeledField label="Slug">
-          <input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))} style={fieldStyle} />
+          <input
+            value={form.slug}
+            onChange={e => {
+              setSlugEdited(true);
+              setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }));
+            }}
+            style={fieldStyle}
+          />
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+            URL-friendly ID. Auto-filled from name; edit to override.
+          </div>
         </LabeledField>
         <LabeledField label="Color">
           <input type="color" value={form.color} onChange={e => setForm(f => ({ ...f, color: e.target.value }))} style={{ ...fieldStyle, height: 36, padding: 2 }} />
         </LabeledField>
-        <LabeledField label="Icon (emoji)">
-          <input value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} placeholder="🛡️" style={fieldStyle} />
+        <LabeledField label="Icon (emoji, optional)">
+          <input value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} placeholder="🛡️ (leave blank to skip)" style={fieldStyle} />
         </LabeledField>
         <LabeledField label="Description">
           <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} style={fieldStyle} />
@@ -781,6 +826,54 @@ function CatalogRow({
       >
         {del.armed ? "Click again" : <Icon name="x" size={12} />}
       </button>
+    </div>
+  );
+}
+
+function RoleProfilePreview({
+  draftRole, draftActive, existingRoles, userName, username, avatarUrl,
+}: {
+  draftRole: Role;
+  draftActive: boolean;
+  existingRoles: Role[];
+  userName: string;
+  username: string | null;
+  avatarUrl: string;
+}) {
+  const displayName = userName || "Your Name";
+  const handle = username ? `@${username}` : "@you";
+  return (
+    <div style={{
+      border: "1px solid var(--border)",
+      borderRadius: "var(--r-md)",
+      padding: 14,
+      background: "var(--bg-subtle)",
+      display: "flex",
+      alignItems: "flex-start",
+      gap: 12,
+    }}>
+      <Avatar name={displayName} img={avatarUrl || undefined} size={44} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", rowGap: 4 }}>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{displayName}</span>
+          {draftActive && (
+            <span style={{ position: "relative", display: "inline-flex" }}>
+              <RoleBadge role={draftRole} />
+              <span style={{
+                position: "absolute", top: -6, right: -6,
+                fontSize: 8, fontWeight: 600, letterSpacing: "0.05em",
+                padding: "1px 4px", borderRadius: 4,
+                background: "var(--accent)", color: "#fff",
+                textTransform: "uppercase",
+              }}>
+                draft
+              </span>
+            </span>
+          )}
+          {existingRoles.map(r => <RoleBadge key={r.id} role={r} />)}
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>{handle}</div>
+      </div>
     </div>
   );
 }

@@ -241,6 +241,12 @@ export const importGoogleEvents = (userId: string, daysAhead = 60) =>
 export const calendarAuthUrl = (userId: string) =>
   `${API_URL}/api/calendar/auth-url?user_id=${encodeURIComponent(userId)}`;
 
+export const exportToGoogleCalendar = (userId: string, assignmentIds: string[]) =>
+  fetchJSON<{ exported_count: number; skipped_count: number }>('/api/calendar/export', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, assignment_ids: assignmentIds }),
+  });
+
 // Social
 export const createRoom = (userId: string, roomName: string) =>
   fetchJSON<{ room_id: string; invite_code: string }>('/api/social/rooms/create', {
@@ -487,6 +493,17 @@ export const setFeaturedAchievements = (userId: string, achievementIds: string[]
     body: JSON.stringify({ achievement_ids: achievementIds }),
   });
 
+export const setFeaturedRole = (userId: string, roleId: string | null) =>
+  fetchJSON<{ updated: boolean }>(`/api/profile/${userId}/featured-role?user_id=${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ role_id: roleId }),
+  });
+
+export const exportData = (userId: string) =>
+  fetchJSON<Record<string, unknown>>(`/api/profile/${userId}/export?user_id=${encodeURIComponent(userId)}`, {
+    method: 'POST',
+  });
+
 export const updateProfile = (userId: string, data: Partial<UserProfile>) =>
   fetchJSON<{ updated: boolean }>(`/api/profile/${userId}`, {
     method: 'PATCH',
@@ -606,6 +623,34 @@ export const adminCreateCosmetic = (payload: {
 
 export const adminDeleteCosmetic = (cosmeticId: string) =>
   fetchJSON<{ deleted: boolean }>(`/api/admin/cosmetics/${encodeURIComponent(cosmeticId)}`, { method: 'DELETE' });
+
+// Careers
+export const submitJobApplication = async (data: {
+  position: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  linkedin_url: string;
+  portfolio_link?: string;
+  resume?: File | null;
+}): Promise<{ ok: boolean; id: string | null }> => {
+  if (IS_LOCAL_MODE) return { ok: true, id: null };
+  const formData = new FormData();
+  formData.append('position', data.position);
+  formData.append('full_name', data.full_name);
+  formData.append('email', data.email);
+  formData.append('phone', data.phone);
+  formData.append('linkedin_url', data.linkedin_url);
+  if (data.portfolio_link) formData.append('portfolio_link', data.portfolio_link);
+  if (data.resume) formData.append('resume', data.resume);
+
+  const res = await fetch(`${API_URL}/api/careers/apply`, { method: 'POST', body: formData });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
 
 export const uploadAvatar = (userId: string, file: File): Promise<{ avatar_url: string }> => {
   if (IS_LOCAL_MODE) return Promise.resolve({ avatar_url: URL.createObjectURL(file) });
