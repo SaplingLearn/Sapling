@@ -153,7 +153,7 @@ def google_login():
 def google_callback(code: str = Query(...), state: str = Query(None)):
     """Exchange auth code for tokens, validate @bu.edu, upsert user."""
     if not GOOGLE_AVAILABLE:
-        return RedirectResponse(f"{FRONTEND_URL}/signin?error=google_not_configured")
+        return RedirectResponse(f"{FRONTEND_URL}/auth?error=google_not_configured")
 
     state_data = _decode_state(state) if state else {}
     code_verifier = state_data.get("cv")
@@ -180,7 +180,7 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
     # Restrict to @bu.edu accounts
     if not email.endswith("@bu.edu"):
         return RedirectResponse(
-            f"{FRONTEND_URL}/signin?error=invalid_domain"
+            f"{FRONTEND_URL}/auth?error=invalid_domain"
         )
 
     # Determine user_id: check if this Google ID already exists
@@ -256,4 +256,4 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         "is_approved": "true",
         **({"auth_token": auth_token} if auth_token else {}),
     })
-    return RedirectResponse(f"{FRONTEND_URL}/signin/callback?{params}")
+    return RedirectResponse(f"{FRONTEND_URL}/auth/callback?{params}")

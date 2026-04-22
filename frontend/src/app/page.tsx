@@ -63,27 +63,25 @@ export default function LandingPage() {
   const obInitStepsRef = useRef<Set<number>>(new Set());
   const obDoneStepsRef = useRef<Set<number>>(new Set());
 
-  // Auth redirect / onboarding resume
+  // Resume onboarding if the callback stashed a pending flag.
+  // Don't auto-redirect signed-in visitors away from the landing page —
+  // they should be able to read it like anyone else.
   useEffect(() => {
-    if (userReady && isAuthenticated) {
-      const pending = sessionStorage.getItem('sapling_onboarding_pending');
-      if (pending) {
-        sessionStorage.removeItem('sapling_onboarding_pending');
-        window.scrollTo({ top: 0, behavior: 'instant' });
-        setActiveStep(1);
-        setCompleted(new Set([0]));
-        setHeroMounted(true);
-        setIntroText('hidden');
-        zoomActiveRef.current = true;
-        zoomOutroRef.current = false;
-        canvasZoomRef.current = 2.5;
-        clusterProgressRef.current = 1;
-        setOnboardingPhase('active');
-      } else {
-        router.replace('/dashboard');
-      }
-    }
-  }, [userReady, isAuthenticated, router]);
+    if (!userReady || !isAuthenticated) return;
+    const pending = sessionStorage.getItem('sapling_onboarding_pending');
+    if (!pending) return;
+    sessionStorage.removeItem('sapling_onboarding_pending');
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    setActiveStep(1);
+    setCompleted(new Set([0]));
+    setHeroMounted(true);
+    setIntroText('hidden');
+    zoomActiveRef.current = true;
+    zoomOutroRef.current = false;
+    canvasZoomRef.current = 2.5;
+    clusterProgressRef.current = 1;
+    setOnboardingPhase('active');
+  }, [userReady, isAuthenticated]);
 
   // Cleanup timeouts on unmount
   useEffect(() => {
@@ -597,10 +595,8 @@ export default function LandingPage() {
     ];
   }
 
-  const authIdle = userReady && isAuthenticated && onboardingPhase === 'idle';
-
   return (
-    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), 'Inter', sans-serif", color: 'var(--brand-text1, #1a1a1a)', background: 'transparent', opacity: authIdle ? 0 : 1, pointerEvents: authIdle ? 'none' : 'auto' }}>
+    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), 'Inter', sans-serif", color: 'var(--brand-text1, #1a1a1a)', background: 'transparent' }}>
       <div ref={ambientGlowRef} className="landing-ambient-glow" />
 
       {/* ═══ Initial load intro overlay ═══ */}
