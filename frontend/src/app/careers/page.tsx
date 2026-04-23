@@ -116,12 +116,14 @@ export default function CareersPage() {
         </h1>
 
         <p
-          className="body-serif fade-in"
+          className="fade-in"
           style={{
             fontSize: 17,
             color: 'var(--text-dim)',
             maxWidth: 500,
             margin: '0 auto',
+            fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+            fontWeight: 300,
           }}
         >
           We&apos;re a small team building tools that help students learn better.
@@ -226,11 +228,13 @@ export default function CareersPage() {
                   }}
                 >
                   <p
-                    className="body-serif"
                     style={{
                       fontSize: 14,
                       color: 'var(--text-dim)',
                       marginBottom: 16,
+                      fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+                      fontWeight: 300,
+                      lineHeight: 1.65,
                     }}
                   >
                     {job.description}
@@ -319,12 +323,13 @@ export default function CareersPage() {
             Don&apos;t see your role?
           </h3>
           <p
-            className="body-serif"
             style={{
               fontSize: 14,
               color: 'var(--text-dim)',
               maxWidth: 360,
               margin: '0 auto 22px',
+              fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+              fontWeight: 300,
             }}
           >
             We&apos;re always interested in meeting talented people. Send us a note and tell us what
