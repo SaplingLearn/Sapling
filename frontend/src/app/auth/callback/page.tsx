@@ -32,12 +32,19 @@ function CallbackInner() {
     const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
     (async () => {
       try {
-        await fetch('/api/auth/session', {
+        const sessionRes = await fetch('/api/auth/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId, ...(authToken ? { authToken } : {}) }),
         });
-      } catch {}
+        if (!sessionRes.ok) {
+          router.replace('/auth?error=signin_failed');
+          return;
+        }
+      } catch {
+        router.replace('/auth?error=signin_failed');
+        return;
+      }
       try {
         const r = await fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(userId)}`);
         const data = await r.json();
