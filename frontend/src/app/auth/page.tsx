@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { Auth } from "@/components/screens/Auth";
 
 export default function AuthPage() {
-  redirect("/");
+  return <Auth />;
 }
