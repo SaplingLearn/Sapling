@@ -40,7 +40,7 @@ export default function AboutPage() {
           padding: "64px 32px",
         }}
       >
-        <div className="fade-in" style={{ marginBottom: 48 }}>
+        <div className="fade-up anim-d0" style={{ marginBottom: 48 }}>
           <Link
             href="/"
             style={{
@@ -55,7 +55,7 @@ export default function AboutPage() {
         </div>
 
         <h1
-          className="h-serif slide-up"
+          className="h-serif fade-up anim-d1"
           style={{ fontSize: 48, marginBottom: 32, color: "var(--text)" }}
         >
           About Sapling
@@ -69,7 +69,7 @@ export default function AboutPage() {
           }}
         >
           <p
-            className="body-serif fade-in"
+            className="body-serif fade-up anim-d2"
             style={{ fontSize: 16, color: "var(--text-dim)" }}
           >
             <strong style={{ color: "var(--text)", fontWeight: 600 }}>Sapling</strong>{" "}
@@ -79,7 +79,7 @@ export default function AboutPage() {
           </p>
 
           <p
-            className="body-serif"
+            className="body-serif fade-up anim-d3"
             style={{ fontSize: 16, color: "var(--text-dim)" }}
           >
             At its core, Sapling maps your understanding as a live knowledge graph that grows with
@@ -89,7 +89,7 @@ export default function AboutPage() {
           </p>
 
           <p
-            className="body-serif"
+            className="body-serif fade-up anim-d4"
             style={{ fontSize: 16, color: "var(--text-dim)" }}
           >
             Sapling was born out of a hackathon and built by a team of four students who were
@@ -98,7 +98,7 @@ export default function AboutPage() {
             always prepared.
           </p>
 
-          <div>
+          <div className="fade-up anim-d5">
             <p
               style={{
                 fontFamily: "var(--font-sans)",
@@ -138,7 +138,7 @@ export default function AboutPage() {
           </div>
 
           <p
-            className="body-serif"
+            className="body-serif fade-up anim-d6"
             style={{ fontSize: 16, color: "var(--text-dim)" }}
           >
             Sapling is actively developed and we&apos;re always building. If something&apos;s broken or
@@ -148,14 +148,18 @@ export default function AboutPage() {
 
         <div style={{ marginTop: 56 }}>
           <p
-            className="label-micro"
+            className="label-micro fade-up anim-d7"
             style={{ color: "var(--accent)", marginBottom: 24 }}
           >
             Recognition
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-            {awards.map((award) => (
-              <div key={award.title}>
+            {awards.map((award, i) => (
+              <div
+                key={award.title}
+                className="fade-up"
+                style={{ animationDelay: `${Math.min(560 + i * 80, 720)}ms` }}
+              >
                 <p
                   style={{
                     fontFamily: "var(--font-sans)",

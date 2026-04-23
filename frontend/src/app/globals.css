@@ -200,6 +200,16 @@ body { font-size: 14px; line-height: 1.5; }
 @keyframes slideUp { from { opacity: 0; transform: translateY(12px);} to { opacity: 1; transform: none; } }
 .fade-in { animation: fadeIn var(--dur) var(--ease); }
 .slide-up { animation: slideUp var(--dur-slow) var(--ease); }
+.fade-up { animation: fadeIn 0.5s var(--ease) both; }
+.anim-d0 { animation-delay:   0ms; }
+.anim-d1 { animation-delay:  80ms; }
+.anim-d2 { animation-delay: 160ms; }
+.anim-d3 { animation-delay: 240ms; }
+.anim-d4 { animation-delay: 320ms; }
+.anim-d5 { animation-delay: 400ms; }
+.anim-d6 { animation-delay: 480ms; }
+.anim-d7 { animation-delay: 560ms; }
+.anim-d8 { animation-delay: 640ms; }
 
 @keyframes shimmer { 0% { background-position: -200px 0; } 100% { background-position: 200px 0; } }
 .skeleton {
