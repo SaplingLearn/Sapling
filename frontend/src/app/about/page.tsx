@@ -62,7 +62,6 @@ export default function AboutPage() {
         </h1>
 
         <div
-          className="fade-in"
           style={{
             display: "flex",
             flexDirection: "column",
@@ -70,7 +69,7 @@ export default function AboutPage() {
           }}
         >
           <p
-            className="body-serif"
+            className="body-serif fade-in"
             style={{ fontSize: 16, color: "var(--text-dim)" }}
           >
             <strong style={{ color: "var(--text)", fontWeight: 600 }}>Sapling</strong>{" "}
