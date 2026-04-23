@@ -29,7 +29,6 @@ function CallbackInner() {
     setActiveUser(userId, name, avatar || '');
     confirmApproved();
 
-    const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
     (async () => {
       try {
         const sessionRes = await fetch('/api/auth/session', {
@@ -46,7 +45,7 @@ function CallbackInner() {
         return;
       }
       try {
-        const r = await fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(userId)}`);
+        const r = await fetch(`/api/auth/me?user_id=${encodeURIComponent(userId)}`);
         const data = await r.json();
         if (data.onboarding_completed) {
           router.replace('/dashboard');

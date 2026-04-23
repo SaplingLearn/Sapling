@@ -13,5 +13,9 @@ compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 binding = "ASSETS"
 directory = ".open-next/assets"
 
+[vars]
+NEXT_PUBLIC_API_URL = "https://sapling-production-cb12.up.railway.app"
+BACKEND_URL = "https://sapling-production-cb12.up.railway.app"
+
 [observability]
 enabled = true

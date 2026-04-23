@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
 
   let verifiedUserId: string | null = null;
 
-  if (authToken) {
+  if (authToken && SESSION_SECRET) {
     verifiedUserId = await verifyAuthToken(authToken);
     if (!verifiedUserId) {
       return NextResponse.json({ error: 'Invalid or expired auth token' }, { status: 401 });
