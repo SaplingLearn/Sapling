@@ -29,24 +29,28 @@ function CallbackInner() {
     setActiveUser(userId, name, avatar || '');
     confirmApproved();
 
-    fetch('/api/auth/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, ...(authToken ? { authToken } : {}) }),
-    }).catch(() => {});
-
     const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
-    fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(userId)}`)
-      .then(r => r.json())
-      .then(data => {
+    (async () => {
+      try {
+        await fetch('/api/auth/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, ...(authToken ? { authToken } : {}) }),
+        });
+      } catch {}
+      try {
+        const r = await fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(userId)}`);
+        const data = await r.json();
         if (data.onboarding_completed) {
           router.replace('/dashboard');
         } else {
           sessionStorage.setItem('sapling_onboarding_pending', '1');
           router.replace('/');
         }
-      })
-      .catch(() => router.replace('/dashboard'));
+      } catch {
+        router.replace('/dashboard');
+      }
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
