@@ -1082,7 +1082,7 @@ export default function LandingPage() {
                   setBetaEmailError('');
                   setBetaSubmitting(true);
                   try {
-                    await fetch('/api/newsletter/subscribe', {
+                    await fetch(`${API_URL}/api/newsletter/subscribe`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ email: betaEmail.trim() }),
