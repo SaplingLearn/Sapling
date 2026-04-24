@@ -51,11 +51,10 @@ export default function CareersPage() {
             <img
               src="/sapling-icon.svg"
               alt="Sapling"
-              style={{ width: 24, height: 24, position: 'relative', top: -1 }}
+              style={{ width: 26, height: 26, flexShrink: 0, position: 'relative', top: -2 }}
             />
             <span
-              className="h-serif"
-              style={{ fontSize: 20, color: 'var(--text)' }}
+              style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 20, color: '#1a5c2a', letterSpacing: '-0.02em', lineHeight: 1.1 }}
             >
               Sapling
             </span>
