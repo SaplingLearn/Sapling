@@ -78,7 +78,7 @@ export default function TermsPage() {
           padding: "64px 32px",
         }}
       >
-        <div className="fade-in" style={{ marginBottom: 48 }}>
+        <div className="fade-up anim-d0" style={{ marginBottom: 48 }}>
           <Link
             href="/"
             style={{
@@ -93,20 +93,20 @@ export default function TermsPage() {
         </div>
 
         <h1
-          className="h-serif slide-up"
+          className="h-serif fade-up anim-d1"
           style={{ fontSize: 44, marginBottom: 8, color: "var(--text)" }}
         >
           Terms of Service
         </h1>
         <p
-          className="fade-in"
+          className="fade-up anim-d2"
           style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 40 }}
         >
           Last updated: March 27, 2026
         </p>
 
         <p
-          className="body-serif fade-in"
+          className="body-serif fade-up anim-d3"
           style={{ fontSize: 16, color: "var(--text-dim)", marginBottom: 40 }}
         >
           By accessing or using Sapling (&ldquo;the Service&rdquo;), you agree to be bound by these
@@ -114,8 +114,12 @@ export default function TermsPage() {
         </p>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-          {sections.map((section) => (
-            <div key={section.title}>
+          {sections.map((section, i) => (
+            <div
+              key={section.title}
+              className="fade-up"
+              style={{ animationDelay: `${Math.min(320 + i * 40, 640)}ms` }}
+            >
               <h2
                 style={{
                   fontFamily: "var(--font-sans)",
