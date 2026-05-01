@@ -235,7 +235,6 @@ export function Tree() {
         }}
       >
         <div style={{ position: "relative", flex: "0 1 260px" }}>
-          <Icon name="search" size={13} />
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}

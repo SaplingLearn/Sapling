@@ -205,7 +205,7 @@ export function Settings() {
       <div style={{ display: "flex", height: "calc(100vh - 112px)" }}>
         <div style={{ flex: 1, minWidth: 0, padding: "24px 32px", overflowY: "auto" }}>
           {tab === "profile" && settings && (
-            <div style={{ maxWidth: 640 }}>
+            <div style={{ maxWidth: 640, margin: "0 auto" }}>
               <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Profile</div>
               <div
                 className="card"
@@ -315,7 +315,7 @@ export function Settings() {
           )}
 
           {tab === "preferences" && settings && (
-            <div style={{ maxWidth: 640 }}>
+            <div style={{ maxWidth: 640, margin: "0 auto" }}>
               <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Preferences</div>
               <div
                 style={{
@@ -446,7 +446,7 @@ export function Settings() {
           )}
 
           {tab === "notifications" && settings && (
-            <div style={{ maxWidth: 640 }}>
+            <div style={{ maxWidth: 640, margin: "0 auto" }}>
               <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Notifications</div>
               {(
                 [
@@ -474,7 +474,7 @@ export function Settings() {
           )}
 
           {tab === "data" && (
-            <div style={{ maxWidth: 640 }}>
+            <div style={{ maxWidth: 640, margin: "0 auto" }}>
               <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Your Data</div>
               <div className="card" style={{ padding: "var(--pad-lg)" }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Export your data</div>
@@ -507,7 +507,7 @@ export function Settings() {
           )}
 
           {tab === "danger" && (
-            <div style={{ maxWidth: 640 }}>
+            <div style={{ maxWidth: 640, margin: "0 auto" }}>
               <div className="h-serif" style={{ fontSize: 22, marginBottom: 20, color: "var(--err)" }}>
                 Danger Zone
               </div>
@@ -622,7 +622,7 @@ function CosmeticsManager({ userId }: { userId: string }) {
   const lockedCount = catalogList.filter(c => !c.owned).length;
 
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div style={{ maxWidth: 720, margin: "0 auto" }}>
       <div className="h-serif" style={{ fontSize: 22, marginBottom: 12 }}>Cosmetics</div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)", marginBottom: 16 }}>
         <div style={{ display: "flex", gap: 4 }}>

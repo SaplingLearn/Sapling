@@ -59,7 +59,21 @@ function AuthInner() {
           overflow: "hidden",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button
+          type="button"
+          onClick={() => router.push("/")}
+          aria-label="Back to home"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            background: "transparent",
+            border: 0,
+            padding: 0,
+            color: "inherit",
+            cursor: "pointer",
+          }}
+        >
           <svg width="28" height="28" viewBox="0 0 24 24">
             <path d="M12 22 Q 5 15 5 9 Q 5 3 12 3 Q 19 3 19 9 Q 19 15 12 22 Z" fill="#fff" opacity={0.15} />
             <path
@@ -71,7 +85,7 @@ function AuthInner() {
             />
           </svg>
           <span className="h-serif" style={{ fontSize: 22, fontWeight: 500 }}>Sapling</span>
-        </div>
+        </button>
         <div>
           <div className="h-serif" style={{ fontSize: 48, fontWeight: 500, lineHeight: 1.1, maxWidth: 440 }}>
             Your mind,
@@ -83,7 +97,7 @@ function AuthInner() {
             your knowledge graph session by session.
           </div>
         </div>
-        <div style={{ fontSize: 11, opacity: 0.5 }}>Est. 2024 · Stanford, CA</div>
+        <div aria-hidden style={{ height: 1 }} />
         <svg
           style={{ position: "absolute", right: -80, bottom: -60, opacity: 0.08 }}
           width="360"
