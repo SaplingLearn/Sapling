@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 export type LayoutPref = "topnav" | "sidebar";
 export const LAYOUT_STORAGE_KEY = "sapling_layout";
-const DEFAULT: LayoutPref = "topnav";
+const DEFAULT: LayoutPref = "sidebar";
 
 function read(): LayoutPref {
   if (typeof window === "undefined") return DEFAULT;

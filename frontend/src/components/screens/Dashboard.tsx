@@ -630,7 +630,12 @@ export function Dashboard() {
   );
 
   const heroBlock = (
-    <div style={{ textAlign: "left", padding: isMobile ? "14px 4px 0" : "6px 0 0" }}>
+    <div
+      style={{
+        textAlign: useLegacyPanels && !isMobile ? "center" : "left",
+        padding: isMobile ? "14px 4px 0" : "6px 0 0",
+      }}
+    >
       <h1
         className="h-serif"
         style={{
@@ -649,7 +654,7 @@ export function Dashboard() {
           aria-hidden={!greetingDone}
           className="body-serif"
           style={{
-            margin: "8px 0 0",
+            margin: useLegacyPanels && !isMobile ? "8px auto 0" : "8px 0 0",
             maxWidth: 640,
             fontSize: 14,
             fontStyle: "italic",
@@ -934,7 +939,7 @@ export function Dashboard() {
   );
 
   return (
-    <div>
+    <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
       {isMobile && useLegacyPanels && (
         <div style={{ display: "flex", gap: 6, padding: "14px 20px 0" }}>
           {(["courses", "stats"] as const).map(t => (
@@ -962,6 +967,8 @@ export function Dashboard() {
             display: "grid", gap: 16,
             gridTemplateColumns: isMobile ? "1fr" : "minmax(240px, 280px) minmax(0, 1fr) minmax(240px, 300px)",
             alignItems: isMobile ? "start" : "stretch",
+            flex: isMobile ? "0 0 auto" : 1,
+            minHeight: 0,
           }}
         >
           {isMobile ? (
@@ -991,6 +998,8 @@ export function Dashboard() {
             display: "grid", gap: 16,
             gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(280px, 360px)",
             alignItems: isMobile ? "start" : "stretch",
+            flex: isMobile ? "0 0 auto" : 1,
+            minHeight: 0,
           }}
         >
           {mainColumn}

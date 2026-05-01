@@ -28,18 +28,17 @@ import { Icon } from "./Icon";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 
-type Entry = { href: string; label: string; icon: string };
+type Entry = { href: string; label: string };
 
-// Icon names match the ones the pre-revamp Sidebar used in components/Icon.tsx.
 const LINKS: Entry[] = [
-  { href: "/dashboard",    label: "Dashboard",    icon: "home" },
-  { href: "/learn",        label: "Learn",        icon: "brain" },
-  { href: "/tree",         label: "Tree",         icon: "tree" },
-  { href: "/study",        label: "Study",        icon: "bolt" },
-  { href: "/library",      label: "Library",      icon: "book" },
-  { href: "/calendar",     label: "Calendar",     icon: "cal" },
-  { href: "/social",       label: "Social",       icon: "users" },
-  { href: "/achievements", label: "Achievements", icon: "trophy" },
+  { href: "/dashboard",    label: "Dashboard"    },
+  { href: "/learn",        label: "Learn"        },
+  { href: "/tree",         label: "Tree"         },
+  { href: "/study",        label: "Study"        },
+  { href: "/library",      label: "Library"      },
+  { href: "/calendar",     label: "Calendar"     },
+  { href: "/social",       label: "Social"       },
+  { href: "/achievements", label: "Achievements" },
 ];
 
 export const TOP_NAV_HEIGHT = 56;
@@ -212,7 +211,6 @@ export function TopNav() {
                   if (!active) e.currentTarget.style.color = "var(--text-muted)";
                 }}
               >
-                <Icon name={l.icon} size={14} />
                 {l.label}
               </Link>
             );
@@ -324,7 +322,6 @@ function MobilePanel({ pathname }: { pathname: string }) {
             onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
           >
-            <Icon name={l.icon} size={15} />
             {l.label}
           </Link>
         );

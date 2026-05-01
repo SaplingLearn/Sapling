@@ -370,8 +370,8 @@ export function Settings() {
                     value={layoutPref}
                     onChange={(v) => setLayoutPref(v as LayoutPref)}
                     options={[
-                      { value: "topnav",  label: "Top nav (default)" },
-                      { value: "sidebar", label: "Sidebar" },
+                      { value: "sidebar", label: "Sidebar (default)" },
+                      { value: "topnav",  label: "Top nav" },
                     ]}
                   />
                 </div>
