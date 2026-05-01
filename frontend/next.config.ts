@@ -16,6 +16,11 @@ const nextConfig: NextConfig = {
       { source: "/api/:path*", destination: `${BACKEND_URL}/api/:path*` },
     ];
   },
+  async redirects() {
+    return [
+      { source: "/auth", destination: "/", permanent: false },
+    ];
+  },
 };
 
 initOpenNextCloudflareForDev();

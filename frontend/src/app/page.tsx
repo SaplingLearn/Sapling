@@ -13,6 +13,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!<>-_\\/[]{}=+*^?#_";
 
 const CLUSTER_COLORS = ['#9CA3AF', '#D97706', '#3B82F6', '#8A63D2', '#14B8A6', '#EF4444'];
+const OB_STEP_COLORS  = ['#D97706', '#8A63D2', '#3B82F6', '#14B8A6', '#EF4444'];
 const CLUSTER_SEEDS_BG = [10.0, 11.3, 12.6, 13.9, 15.2, 16.5];
 const CLUSTER_INIT_POS = [
   { ox: -222, oy: -29, oz:  15 },
@@ -92,8 +93,8 @@ export default function LandingPage() {
     if (!pending) return;
     sessionStorage.removeItem('sapling_onboarding_pending');
     window.scrollTo({ top: 0, behavior: 'instant' });
-    setActiveStep(1);
-    setCompleted(new Set([0]));
+    setActiveStep(0);
+    setCompleted(new Set());
     setHeroMounted(true);
     setIntroText('hidden');
     zoomActiveRef.current = true;
@@ -236,7 +237,6 @@ export default function LandingPage() {
 
     // OB graph — cluster centres per onboarding step
     const OB_STEP_CENTERS = [
-      { ox: -155, oy:   0, oz:   0 },
       { ox: -230, oy: -80, oz:  25 },
       { ox: -115, oy:-105, oz: -35 },
       { ox: -270, oy:  65, oz: -15 },
@@ -283,7 +283,7 @@ export default function LandingPage() {
             obNodesRef.current.push({
               ox, oy, oz, startOx: ox, startOy: oy, startOz: oz,
               migDelay: k * 60, migDur: 450,
-              color: CLUSTER_COLORS[asi],
+              color: OB_STEP_COLORS[asi],
               radius: 1 + stepRand(asi, k * 4 + 3) * 1.5,
               seed: stepRand(asi, k * 4 + 2) * 100,
               birthTime: now, stepIndex: asi, isPreview: true,
@@ -309,7 +309,7 @@ export default function LandingPage() {
                 startOy: (stepRand(si, k * 4 + 11) - 0.5) * 220,
                 startOz: (stepRand(si, k * 4 + 12) - 0.5) * 220,
                 migDelay: k * 50, migDur: 580 + stepRand(si, k * 4 + 13) * 160,
-                color: CLUSTER_COLORS[si],
+                color: OB_STEP_COLORS[si],
                 radius: 1.8 + stepRand(si, k * 4 + 3) * 3,
                 seed: stepRand(si, k * 4 + 2) * 100,
                 birthTime: now, stepIndex: si, isPreview: false,
@@ -570,6 +570,13 @@ export default function LandingPage() {
 
   // ── Onboarding phase transitions ──────────────────────────────────
   function startOnboarding() {
+    if (!userReady) return;
+    if (!isAuthenticated) {
+      setSignInError(null);
+      setSignInOpen(true);
+      sessionStorage.setItem('sapling_onboarding_pending', '1');
+      return;
+    }
     if (onboardingTimeoutRef.current) clearTimeout(onboardingTimeoutRef.current);
     introTimeoutsRef.current.forEach(clearTimeout);
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -777,22 +784,11 @@ export default function LandingPage() {
         <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6"
           style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease' }}
         >
-          <div style={{
-            opacity: heroMounted ? 1 : 0,
-            transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
-            transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 100ms',
-          }}>
-            <div className="inline-flex items-center gap-2.5 liquid-glass-subtle rounded-full px-5 py-2">
-              <div className="w-2 h-2 rounded-full bg-[#1B6C42] animate-pulse" />
-              <span className="font-jetbrains text-xs tracking-[0.25em] uppercase text-[var(--brand-text2)] font-medium">AI-Powered Learning</span>
-            </div>
-          </div>
-
           <h1 style={{
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 300ms',
-          }} className="font-playfair text-5xl sm:text-7xl md:text-8xl lg:text-[10rem] font-semibold leading-[1.15] tracking-tight mt-8 pb-8 px-4 bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient">
+          }} className="font-playfair text-5xl sm:text-7xl md:text-8xl lg:text-[10rem] font-semibold leading-[1.15] tracking-tight pb-8 px-4 bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient">
             <span>{heroText1 || '\u00A0'}</span>
           </h1>
 

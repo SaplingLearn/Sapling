@@ -7,7 +7,6 @@ import { X, ChevronRight, ChevronLeft, XCircle } from 'lucide-react';
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
 const STEPS = [
-  { id: 'google',   label: 'Account',        color: '#9CA3AF' },
   { id: 'name',     label: 'Name',           color: '#D97706' },
   { id: 'school',   label: 'School',         color: '#8A63D2' },
   { id: 'academics',label: 'Academics',      color: '#3B82F6' },
@@ -193,19 +192,13 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
 
   function canAdvance(): boolean {
     switch (activeStep) {
-      case 0: return false;
-      case 1: return formData.firstName.trim().length > 0 && formData.lastName.trim().length > 0;
-      case 2: return formData.school.trim().length > 0 && formData.year.length > 0;
-      case 3: return formData.majors.length > 0;
-      case 4: return formData.courses.length > 0;
-      case 5: return formData.style.length > 0;
+      case 0: return formData.firstName.trim().length > 0 && formData.lastName.trim().length > 0;
+      case 1: return formData.school.trim().length > 0 && formData.year.length > 0;
+      case 2: return formData.majors.length > 0;
+      case 3: return formData.courses.length > 0;
+      case 4: return formData.style.length > 0;
       default: return false;
     }
-  }
-
-  function handleGoogleSignIn() {
-    sessionStorage.setItem('sapling_onboarding_pending', 'true');
-    window.location.href = `${API_URL}/api/auth/google`;
   }
 
   function handleNext() {
@@ -311,52 +304,50 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
       </button>
 
       {/* ── Step indicator (top-left) ── */}
-      {activeStep > 0 && (
-        <div style={{ position: 'fixed', top: '28px', left: '32px', zIndex: 10 }}>
-          <div style={{
-            fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
-            fontSize: '11px', letterSpacing: '0.12em', textTransform: 'uppercase',
-            color: '#1B6C42', fontWeight: 700, marginBottom: '4px',
-          }}>
-            Step {activeStep} / {STEPS.length - 1}
-          </div>
-          <div style={{
-            fontFamily: "var(--font-playfair), 'Playfair Display', serif",
-            fontSize: '18px', fontWeight: 600, color: '#0f172a',
-            marginBottom: '10px', letterSpacing: '-0.01em',
-          }}>
-            {STEPS[activeStep].label}
-          </div>
-          {(() => {
-            const totalSteps = STEPS.length - 1;
-            const GAP = 3;
-            const totalWidth = 200;
-            const segW = (totalWidth - (totalSteps - 1) * GAP) / totalSteps;
-            const stepsDone = Math.max(0, activeStep - 1);
-            const filledW = stepsDone > 0
-              ? stepsDone * segW + (stepsDone - 1) * GAP
-              : 0;
-            return (
-              <div style={{ position: 'relative', width: `${totalWidth}px`, height: '4px' }}>
-                <div style={{ display: 'flex', gap: `${GAP}px`, position: 'absolute', inset: 0 }}>
-                  {Array.from({ length: totalSteps }, (_, i) => (
-                    <div key={i} style={{
-                      width: `${segW}px`, height: '100%', flexShrink: 0,
-                      background: 'rgba(27,108,66,0.12)', borderRadius: '99px',
-                    }} />
-                  ))}
-                </div>
-                <div style={{
-                  position: 'absolute', left: 0, top: 0, height: '100%',
-                  width: `${filledW}px`,
-                  background: '#1B6C42', borderRadius: '99px',
-                  transition: 'width 0.55s cubic-bezier(0.22,1,0.36,1)',
-                }} />
-              </div>
-            );
-          })()}
+      <div style={{ position: 'fixed', top: '28px', left: '32px', zIndex: 10 }}>
+        <div style={{
+          fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+          fontSize: '11px', letterSpacing: '0.12em', textTransform: 'uppercase',
+          color: '#1B6C42', fontWeight: 700, marginBottom: '4px',
+        }}>
+          Step {activeStep + 1} / {STEPS.length}
         </div>
-      )}
+        <div style={{
+          fontFamily: "var(--font-playfair), 'Playfair Display', serif",
+          fontSize: '18px', fontWeight: 600, color: '#0f172a',
+          marginBottom: '10px', letterSpacing: '-0.01em',
+        }}>
+          {STEPS[activeStep].label}
+        </div>
+        {(() => {
+          const totalSteps = STEPS.length;
+          const GAP = 3;
+          const totalWidth = 200;
+          const segW = (totalWidth - (totalSteps - 1) * GAP) / totalSteps;
+          const stepsDone = activeStep;
+          const filledW = stepsDone > 0
+            ? stepsDone * segW + (stepsDone - 1) * GAP
+            : 0;
+          return (
+            <div style={{ position: 'relative', width: `${totalWidth}px`, height: '4px' }}>
+              <div style={{ display: 'flex', gap: `${GAP}px`, position: 'absolute', inset: 0 }}>
+                {Array.from({ length: totalSteps }, (_, i) => (
+                  <div key={i} style={{
+                    width: `${segW}px`, height: '100%', flexShrink: 0,
+                    background: 'rgba(27,108,66,0.12)', borderRadius: '99px',
+                  }} />
+                ))}
+              </div>
+              <div style={{
+                position: 'absolute', left: 0, top: 0, height: '100%',
+                width: `${filledW}px`,
+                background: '#1B6C42', borderRadius: '99px',
+                transition: 'width 0.55s cubic-bezier(0.22,1,0.36,1)',
+              }} />
+            </div>
+          );
+        })()}
+      </div>
 
       {/* ── Scrollable content wrapper ── */}
       <div style={{
@@ -388,32 +379,6 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
 
           {activeStep === 0 && (
             <div>
-              <h3 style={headingStyle}>Let&apos;s get started</h3>
-              <p style={subtitleStyle}>Sign in with Google to create your Sapling account. A valid .edu email is required to register.</p>
-              <button
-                onClick={handleGoogleSignIn}
-                style={{
-                  ...inputStyle,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
-                  background: 'rgba(255,255,255,0.85)',
-                  border: '1px solid rgba(0,0,0,0.13)',
-                  cursor: 'pointer', fontWeight: 500, fontSize: '15px',
-                  color: '#111827', transition: 'all 0.2s',
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
-                  <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
-                  <path d="M3.964 10.706A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.038l3.007-2.332z" fill="#FBBC05"/>
-                  <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.962L3.964 7.294C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
-                </svg>
-                Continue with Google
-              </button>
-            </div>
-          )}
-
-          {activeStep === 1 && (
-            <div>
               <h3 style={headingStyle}>
                 What&apos;s your name?
               </h3>
@@ -431,7 +396,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
             </div>
           )}
 
-          {activeStep === 2 && (
+          {activeStep === 1 && (
             <div>
               <h3 style={headingStyle}>
                 Where do you study?
@@ -510,7 +475,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
             </div>
           )}
 
-          {activeStep === 3 && (
+          {activeStep === 2 && (
             <div>
               <h3 style={headingStyle}>What&apos;s your major?</h3>
               <p style={subtitleStyle}>Add your major(s) and any minor(s).</p>
@@ -601,7 +566,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
             </div>
           )}
 
-          {activeStep === 4 && (
+          {activeStep === 3 && (
             <div>
               <h3 style={headingStyle}>
                 What are you studying?
@@ -671,7 +636,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
             </div>
           )}
 
-          {activeStep === 5 && (
+          {activeStep === 4 && (
             <div>
               <h3 style={headingStyle}>
                 How do you learn best?
@@ -698,8 +663,8 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
         </div>
 
         {/* ── Navigation ── */}
-        {activeStep > 0 && (
-          <div style={{ display: 'flex', gap: '10px', marginTop: '28px', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', gap: '10px', marginTop: '28px', justifyContent: 'center' }}>
+          {activeStep > 0 && (
             <button onClick={handleBack} style={{
               display: 'flex', alignItems: 'center', gap: '5px',
               padding: '13px 22px',
@@ -712,7 +677,8 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
               <ChevronLeft style={{ width: '15px', height: '15px' }} />
               Back
             </button>
-            <button onClick={handleNext} disabled={!canAdvance()} style={{
+          )}
+          <button onClick={handleNext} disabled={!canAdvance()} style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
               padding: '13px 40px',
               background: canAdvance() ? '#1B6C42' : 'rgba(255,255,255,0.4)',
@@ -733,7 +699,6 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
               }
             </button>
           </div>
-        )}
       </div>
 
       </div>
