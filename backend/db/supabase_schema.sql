@@ -154,8 +154,8 @@ CREATE TABLE IF NOT EXISTS documents (
     file_name    TEXT NOT NULL,
     category     TEXT NOT NULL,
     summary      TEXT,
-    key_takeaways JSONB,
     flashcards   JSONB,
+    concept_notes JSONB,
     created_at   TIMESTAMPTZ DEFAULT now(),
     processed_at TIMESTAMPTZ
 );

@@ -69,28 +69,32 @@ def _extend_course_concepts(
     existing_concepts: list[str],
     doc_filename: str | None = None,
     doc_summary: str | None = None,
-    doc_takeaways: list[str] | None = None,
+    doc_concept_notes: list[dict] | None = None,
 ) -> list[str]:
     """Focused LLM call: extend an existing course concept set.
 
     The LLM is shown the course label, every concept already in the graph,
     and (when scanning a specific document) that document's stored summary
-    and key takeaways. It returns new concepts to add, avoiding duplicates.
+    and concept notes. It returns new concepts to add, avoiding duplicates.
     """
     existing_block = (
         "\n".join(f"- {c}" for c in existing_concepts) if existing_concepts else "(none yet)"
     )
     doc_block = ""
-    if doc_filename or doc_summary or doc_takeaways:
-        takeaways_block = (
-            "\n".join(f"  - {t}" for t in (doc_takeaways or [])) or "  (none)"
+    if doc_filename or doc_summary or doc_concept_notes:
+        notes_block = (
+            "\n".join(
+                f"  - {n.get('name', '?')}: {n.get('description', '')[:200]}"
+                for n in (doc_concept_notes or [])
+            )
+            or "  (none)"
         )
         doc_block = (
             "\nNew document being scanned:\n"
             f"  Title: {doc_filename or '(untitled)'}\n"
             f"  Summary: {doc_summary or '(none)'}\n"
-            "  Key takeaways:\n"
-            f"{takeaways_block}\n"
+            "  Concepts already extracted from this document:\n"
+            f"{notes_block}\n"
         )
 
     prompt = (
@@ -117,6 +121,31 @@ def _extend_course_concepts(
     return _coerce_str_list(raw.get("concepts"))
 
 
+def _coerce_concept_notes(value) -> list[dict]:
+    """Coerce LLM output into a list of {name, description} dicts.
+
+    Drops entries missing either field. Names are stripped; descriptions
+    preserve their markdown body verbatim so the frontend MarkdownChat
+    renderer can handle math, mermaid, plots, and theorem callouts.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        desc = item.get("description")
+        if not isinstance(name, str) or not isinstance(desc, str):
+            continue
+        name = name.strip()
+        desc = desc.strip()
+        if not name or not desc:
+            continue
+        out.append({"name": name, "description": desc})
+    return out
+
+
 def _process_document(filename: str, extracted_text: str) -> dict:
     """Single LLM call: classify, summarize, and extract assignments + concepts.
 
@@ -130,25 +159,32 @@ def _process_document(filename: str, extracted_text: str) -> dict:
         "{\n"
         '  "category": one of ["syllabus","lecture_notes","slides","reading","assignment","study_guide","other"],\n'
         '  "summary": "2-3 sentence overview of the document",\n'
-        '  "key_takeaways": ["...", "..."],\n'
-        '  "flashcards": [{"question": "...", "answer": "..."}],\n'
-        '  "assignments": [],\n'
-        '  "concepts": []\n'
+        '  "concept_notes": [{"name": "Concept Name", "description": "..."}],\n'
+        '  "assignments": []\n'
         "}\n"
         'If category is "syllabus", populate "assignments" with every deadline found:\n'
         '  {"title": "...", "due_date": "YYYY-MM-DD (assume 2026 if year missing)", '
         '"course_name": "...", "assignment_type": one of [homework,exam,reading,project,quiz,other], "notes": "..." or null}\n'
-        'If category is "syllabus", also populate "concepts" with 5–15 distinct high-level topics or concepts '
-        'the course will cover, drawn from the schedule, learning outcomes, or topic list. '
-        'Each concept is a short noun phrase (e.g. "Linear Regression", "Big-O Analysis"). '
-        "Use Title Case. Do not include assignment titles, week labels, or administrative items.\n"
-        'If category is "assignment", populate "concepts" with 1–8 specific topics the assignment '
-        "tests or practices, as short Title Case noun phrases. Do not include problem numbers or instructions.\n"
-        'For all other categories, "concepts" must be [].\n'
         'For non-syllabus documents, "assignments" must be [].\n'
-        '"key_takeaways" must be a JSON array of strings. "flashcards" must be a JSON array '
-        'of objects each with "question" and "answer" string fields. "concepts" must be a JSON '
-        "array of strings (no objects, no comma-separated string)."
+        "\n"
+        'Populate "concept_notes" with the document\'s key concepts. Use this for ALL categories — '
+        "this is the single takeaways list for the document.\n"
+        "  - Syllabus: 5–15 high-level course topics drawn from the schedule, learning outcomes, or topic list.\n"
+        "  - Assignment: 1–8 specific topics the assignment tests or practices.\n"
+        "  - Lecture notes / slides / reading / study_guide / other: 4–12 concepts the document covers.\n"
+        '  - "name" is a short Title Case noun phrase (e.g. "Linear Regression", "Big-O Analysis"). '
+        "Do NOT use problem numbers, week labels, or administrative items as names. The name is what "
+        "becomes the concept node in the student's knowledge graph, so it must read as a standalone topic.\n"
+        '  - "description" is a 2–4 sentence explanation of the concept written for the student. '
+        "It must be MARKDOWN and may use:\n"
+        "      • inline math `$x^2$` and display math `$$\\int f(x)\\,dx$$`\n"
+        "      • fenced ```mermaid``` blocks for diagrams\n"
+        "      • fenced ```plot``` blocks for function plots (function-plot.js JSON spec)\n"
+        "      • `:::theorem`, `:::definition`, `:::proof`, `:::lemma`, `:::example`, `:::note` directives\n"
+        "    Use these tools only when they genuinely clarify the concept; otherwise keep it prose. "
+        "Each description should align tightly with what a graph node for this concept would represent.\n"
+        "\n"
+        '"concept_notes" must be a JSON array of {"name": str, "description": str} objects.'
     )
     raw = call_gemini_json(prompt)
     if not isinstance(raw, dict):
@@ -162,13 +198,14 @@ def _process_document(filename: str, extracted_text: str) -> dict:
     if not isinstance(summary, str):
         summary = ""
 
+    concept_notes = _coerce_concept_notes(raw.get("concept_notes"))
+
     return {
         "category": category,
         "summary": summary.strip(),
-        "key_takeaways": _coerce_str_list(raw.get("key_takeaways")),
-        "flashcards": _coerce_dict_list(raw.get("flashcards")),
         "assignments": _coerce_dict_list(raw.get("assignments")),
-        "concepts": _coerce_str_list(raw.get("concepts")),
+        "concept_notes": concept_notes,
+        "concepts": [c["name"] for c in concept_notes],
     }
 
 
@@ -271,8 +308,7 @@ async def upload_document(
         "file_name": filename,
         "category": ai["category"],
         "summary": ai["summary"] or None,
-        "key_takeaways": ai["key_takeaways"],
-        "flashcards": ai["flashcards"],
+        "concept_notes": ai["concept_notes"],
         "created_at": now,
         "processed_at": now,
     }
@@ -317,7 +353,7 @@ def _scan_concepts_for_course(
     *,
     doc_filename: str | None = None,
     doc_summary: str | None = None,
-    doc_takeaways: list[str] | None = None,
+    doc_concept_notes: list[dict] | None = None,
 ) -> dict:
     """Shared scan logic. Pulls existing course concepts, asks the LLM to
     extend the set, and writes new nodes via apply_graph_update."""
@@ -331,7 +367,7 @@ def _scan_concepts_for_course(
         existing_concepts=existing_concepts,
         doc_filename=doc_filename,
         doc_summary=doc_summary,
-        doc_takeaways=doc_takeaways,
+        doc_concept_notes=doc_concept_notes,
     )
     if not concepts:
         return {"concepts": [], "added": 0, "existing": len(existing_concepts)}
@@ -364,7 +400,7 @@ def scan_document_concepts(document_id: str, body: dict = Body(...)):
     _validate_user(user_id)
 
     rows = table("documents").select(
-        "id,user_id,course_id,file_name,summary,key_takeaways",
+        "id,user_id,course_id,file_name,summary,concept_notes",
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
         limit=1,
     )
@@ -380,7 +416,7 @@ def scan_document_concepts(document_id: str, body: dict = Body(...)):
         course_id,
         doc_filename=doc.get("file_name"),
         doc_summary=doc.get("summary"),
-        doc_takeaways=doc.get("key_takeaways") or [],
+        doc_concept_notes=doc.get("concept_notes") or [],
     )
 
 

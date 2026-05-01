@@ -116,12 +116,12 @@ def _get_session_course_id(session_id: str) -> str:
 
 
 def _get_course_documents(user_id: str, course_id: str) -> list:
-    """Fetch uploaded document summaries and key takeaways for a user's course."""
+    """Fetch uploaded document summaries and concept notes for a user's course."""
     if not course_id:
         return []
     try:
         docs = table("documents").select(
-            "file_name,category,summary,key_takeaways",
+            "file_name,category,summary,concept_notes",
             filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
         )
         return docs or []
@@ -173,8 +173,19 @@ def build_system_prompt(
             lines = [f"[{(doc.get('category') or 'document').upper()}] {doc.get('file_name', '')}"]
             if doc.get("summary"):
                 lines.append(f"Summary: {doc['summary']}")
-            if doc.get("key_takeaways") and isinstance(doc["key_takeaways"], list):
-                lines.append("Key points:\n" + "\n".join(f"- {t}" for t in doc["key_takeaways"]))
+            notes = doc.get("concept_notes")
+            if notes and isinstance(notes, list):
+                concept_lines = []
+                for n in notes:
+                    if not isinstance(n, dict):
+                        continue
+                    name = n.get("name")
+                    desc = n.get("description")
+                    if not name:
+                        continue
+                    concept_lines.append(f"- {name}: {desc}" if desc else f"- {name}")
+                if concept_lines:
+                    lines.append("Key concepts:\n" + "\n".join(concept_lines))
             doc_blocks.append("\n".join(lines))
         if doc_blocks:
             parts.append(

@@ -181,7 +181,7 @@ def generate_flashcards(
         count:          Number of cards to generate.
         context:        Optional free-text context (e.g. session summary).
         documents:      List of document dicts from the DB, each with keys:
-                        file_name, category, summary, key_takeaways, flashcards.
+                        file_name, category, summary, concept_notes.
         weak_concepts:  List of concept names the student has low mastery on,
                         so Gemini can weight those more heavily.
     """
@@ -192,21 +192,19 @@ def generate_flashcards(
             parts = [f"[{doc.get('category', 'document').upper()}] {doc.get('file_name', '')}"]
             if doc.get("summary"):
                 parts.append(f"Summary: {doc['summary']}")
-            if doc.get("key_takeaways"):
-                takeaways = doc["key_takeaways"]
-                if isinstance(takeaways, list):
-                    parts.append("Key points:\n" + "\n".join(f"- {t}" for t in takeaways))
-            if doc.get("flashcards"):
-                fcs = doc["flashcards"]
-                if isinstance(fcs, list) and fcs:
-                    qa_lines = []
-                    for fc in fcs[:10]:  # cap to avoid token blowout
-                        q = fc.get("question") or fc.get("front", "")
-                        a = fc.get("answer") or fc.get("back", "")
-                        if q and a:
-                            qa_lines.append(f"  Q: {q}\n  A: {a}")
-                    if qa_lines:
-                        parts.append("Existing Q&A pairs from this document:\n" + "\n".join(qa_lines))
+            notes = doc.get("concept_notes")
+            if notes and isinstance(notes, list):
+                concept_lines = []
+                for n in notes:
+                    if not isinstance(n, dict):
+                        continue
+                    name = n.get("name")
+                    desc = n.get("description")
+                    if not name:
+                        continue
+                    concept_lines.append(f"- {name}: {desc}" if desc else f"- {name}")
+                if concept_lines:
+                    parts.append("Key concepts:\n" + "\n".join(concept_lines))
             doc_blocks.append("\n".join(parts))
 
     doc_context = ""

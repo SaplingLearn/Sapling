@@ -308,9 +308,11 @@ class TestUploadDocument:
             "category": "syllabus",
             "summary": "Course syllabus",
             "key_takeaways": [],
-            "flashcards": [],
             "assignments": [],
-            "concepts": ["Linear Regression", "Big-O Analysis", "  ", ""],
+            "concept_notes": [
+                {"name": "Linear Regression", "description": "Fits a line."},
+                {"name": "Big-O Analysis", "description": "Asymptotic growth."},
+            ],
         }
         with (
             _mock_validate_user(),
@@ -337,9 +339,11 @@ class TestUploadDocument:
             "category": "assignment",
             "summary": "Problem set 3",
             "key_takeaways": [],
-            "flashcards": [],
             "assignments": [],
-            "concepts": ["Gradient Descent", "Cross-Entropy Loss"],
+            "concept_notes": [
+                {"name": "Gradient Descent", "description": "Iterative minimization."},
+                {"name": "Cross-Entropy Loss", "description": "Classification loss."},
+            ],
         }
         with (
             _mock_validate_user(),
@@ -365,8 +369,9 @@ class TestUploadDocument:
             "category": "lecture_notes",
             "summary": "Notes",
             "key_takeaways": [],
-            "flashcards": [],
-            "concepts": ["Should be ignored"],
+            "concept_notes": [
+                {"name": "Should be ignored", "description": "..."},
+            ],
         }
         with (
             _mock_validate_user(),
@@ -386,9 +391,8 @@ class TestUploadDocument:
             "category": "syllabus",
             "summary": "Syllabus",
             "key_takeaways": [],
-            "flashcards": [],
             "assignments": [],
-            "concepts": ["Concept A"],
+            "concept_notes": [{"name": "Concept A", "description": "Body."}],
         }
         with (
             _mock_validate_user(),
@@ -454,33 +458,41 @@ class TestUploadDocument:
             "category": "not-a-real-category",
             "summary": 12345,
             "key_takeaways": "should be a list, not a string",
-            "flashcards": [{"question": "Q", "answer": "A"}, "bad", None],
             "assignments": "not a list either",
-            "concepts": "Linear Regression, Big-O",  # string instead of list
+            "concept_notes": "Linear Regression, Big-O",  # string instead of list
         }
         with patch("routes.documents.call_gemini_json", return_value=garbage):
             result = _process_document("file.pdf", "text")
 
         assert result["category"] == "other"
         assert result["summary"] == ""  # int coerced to ""
-        assert result["key_takeaways"] == []
-        assert result["flashcards"] == [{"question": "Q", "answer": "A"}]
         assert result["assignments"] == []
-        assert result["concepts"] == []  # comma-separated string is rejected
+        assert result["concept_notes"] == []
+        assert result["concepts"] == []
 
-    def test_process_document_strips_blanks_from_concepts(self):
+    def test_process_document_strips_invalid_concept_notes(self):
         ai_result = {
             "category": "syllabus",
             "summary": "S",
             "key_takeaways": [],
-            "flashcards": [],
             "assignments": [],
-            "concepts": ["A", "  B  ", "", "   ", 42, None, "C"],
+            "concept_notes": [
+                {"name": "  Linear Regression  ", "description": "Fits a line."},
+                {"name": "Big-O", "description": ""},  # empty desc dropped
+                {"name": "", "description": "no name"},  # empty name dropped
+                {"description": "no name field"},  # missing name dropped
+                "not a dict",  # wrong type dropped
+                {"name": "Cross-Entropy", "description": "Loss for classification."},
+            ],
         }
         with patch("routes.documents.call_gemini_json", return_value=ai_result):
             result = _process_document("file.pdf", "text")
 
-        assert result["concepts"] == ["A", "B", "C"]
+        assert result["concept_notes"] == [
+            {"name": "Linear Regression", "description": "Fits a line."},
+            {"name": "Cross-Entropy", "description": "Loss for classification."},
+        ]
+        assert result["concepts"] == ["Linear Regression", "Cross-Entropy"]
 
     def test_process_document_handles_non_dict_response(self):
         with patch("routes.documents.call_gemini_json", return_value=["not", "a", "dict"]):
@@ -488,6 +500,7 @@ class TestUploadDocument:
 
         assert result["category"] == "other"
         assert result["concepts"] == []
+        assert result["concept_notes"] == []
         assert result["assignments"] == []
 
     def test_falls_back_to_row_dict_when_insert_returns_empty(self):

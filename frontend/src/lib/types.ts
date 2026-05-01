@@ -133,6 +133,11 @@ export interface RoomMessageRow {
   reactions: { emoji: string; user_ids: string[] }[];
 }
 
+export interface ConceptNote {
+  name: string;
+  description: string;
+}
+
 export interface Document {
   id: string;
   user_id: string;
@@ -140,8 +145,7 @@ export interface Document {
   file_name: string;
   category: 'syllabus' | 'lecture_notes' | 'slides' | 'reading' | 'assignment' | 'study_guide' | 'other';
   summary: string | null;
-  key_takeaways: string[] | null;
-  flashcards: { question: string; answer: string }[] | null;
+  concept_notes: ConceptNote[] | null;
   created_at: string;
   processed_at: string | null;
 }

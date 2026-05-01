@@ -5,6 +5,7 @@ import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { Pill } from "../Pill";
 import { DocumentUploadModal } from "../DocumentUploadModal";
+import { MarkdownChat } from "../MarkdownChat";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -46,8 +47,7 @@ export function Library() {
   const [query, setQuery] = React.useState("");
   const [view, setView] = React.useState<View>("grid");
 
-  const isAssignment = detail?.category === "assignment";
-  useBodyScrollLock(Boolean(detail) && (isMobile || isAssignment));
+  useBodyScrollLock(Boolean(detail));
   const [modalMounted, setModalMounted] = React.useState(false);
   React.useEffect(() => setModalMounted(true), []);
 
@@ -265,13 +265,6 @@ export function Library() {
                           {d.summary}
                         </div>
                       )}
-                      {d.key_takeaways && d.key_takeaways.length > 0 && (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: "auto" }}>
-                          {d.key_takeaways.slice(0, 3).map(t => (
-                            <span key={t} className="chip chip--accent" style={{ fontSize: 10 }}>{t}</span>
-                          ))}
-                        </div>
-                      )}
                     </button>
                   );
                 })}
@@ -331,17 +324,6 @@ export function Library() {
             )}
           </div>
 
-          {detail && !isMobile && !isAssignment && (
-            <DetailPanel
-              doc={detail}
-              onClose={() => setDetail(null)}
-              onDeleted={async () => {
-                setDetail(null);
-                await load();
-                toast.success("Document deleted");
-              }}
-            />
-          )}
         </div>
       </div>
 
@@ -377,37 +359,7 @@ export function Library() {
         </aside>
       )}
 
-      {detail && isMobile && !isAssignment && (
-        <div
-          onClick={() => setDetail(null)}
-          style={{
-            position: "fixed", inset: 0, zIndex: 90, background: "rgba(19,38,16,0.35)",
-            display: "flex", flexDirection: "column", justifyContent: "flex-end",
-          }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            className="slide-up"
-            style={{
-              background: "var(--bg-panel)", borderTopLeftRadius: "var(--r-lg)", borderTopRightRadius: "var(--r-lg)",
-              padding: 0, maxHeight: "82vh", overflowY: "auto",
-            }}
-          >
-            <DetailPanel
-              doc={detail}
-              embedded
-              onClose={() => setDetail(null)}
-              onDeleted={async () => {
-                setDetail(null);
-                await load();
-                toast.success("Document deleted");
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {detail && isAssignment && modalMounted && createPortal(
+      {detail && modalMounted && createPortal(
         <div
           onClick={() => setDetail(null)}
           style={{
@@ -499,7 +451,6 @@ function DetailPanel({
 }) {
   const { userId } = useUser();
   const toast = useToast();
-  const [revealed, setRevealed] = React.useState<Set<number>>(new Set());
   const [scanState, setScanState] = React.useState<"idle" | "scanning" | "done">("idle");
   const [scanResult, setScanResult] = React.useState<{ added: number; existing: number } | null>(null);
 
@@ -536,14 +487,6 @@ function DetailPanel({
     }
   });
 
-  const reveal = (idx: number) => {
-    setRevealed(prev => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx); else next.add(idx);
-      return next;
-    });
-  };
-
   const container: React.CSSProperties = embedded
     ? { padding: 20 }
     : { width: 360, borderLeft: "1px solid var(--border)", padding: 20, background: "var(--bg-subtle)", overflowY: "auto", flexShrink: 0 };
@@ -568,37 +511,27 @@ function DetailPanel({
         </div>
       )}
 
-      {doc.key_takeaways && doc.key_takeaways.length > 0 && (
+      {doc.concept_notes && doc.concept_notes.length > 0 && (
         <div style={{ marginBottom: 16 }}>
-          <div className="label-micro" style={{ marginBottom: 6 }}>Key takeaways</div>
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {doc.key_takeaways.map((t) => (
-              <li key={t} style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 4 }}>{t}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {doc.flashcards && doc.flashcards.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div className="label-micro" style={{ marginBottom: 6 }}>Q / A</div>
-          {doc.flashcards.map((f, i) => (
-            <div
-              key={i}
-              onClick={() => reveal(i)}
-              role="button"
-              style={{
-                padding: "10px 12px", borderRadius: "var(--r-sm)",
-                border: "1px solid var(--border)", background: "var(--bg-panel)",
-                marginBottom: 6, cursor: "pointer",
-              }}
-            >
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{f.question}</div>
-              <div style={{ fontSize: 12, color: "var(--text-dim)", opacity: revealed.has(i) ? 1 : 0, filter: revealed.has(i) ? "none" : "blur(4px)", transition: "all var(--dur) var(--ease)" }}>
-                {f.answer}
+          <div className="label-micro" style={{ marginBottom: 8 }}>Key concepts</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {doc.concept_notes.map((n) => (
+              <div
+                key={n.name}
+                style={{
+                  padding: "12px 14px", borderRadius: "var(--r-sm)",
+                  border: "1px solid var(--border)", background: "var(--bg-panel)",
+                }}
+              >
+                <div className="h-serif" style={{ fontSize: 14, fontWeight: 600, marginBottom: 6, color: "var(--text)" }}>
+                  {n.name}
+                </div>
+                <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
+                  <MarkdownChat>{n.description}</MarkdownChat>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
 

@@ -30,7 +30,7 @@ interface UploadItem {
   docId?: string;
   category?: string;
   summary?: string;
-  takeaways?: string[];
+  conceptNames?: string[];
   abort?: AbortController;
 }
 
@@ -138,7 +138,11 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
         docId: resp?.id,
         category: resp?.category || "other",
         summary: resp?.summary,
-        takeaways: resp?.key_takeaways,
+        conceptNames: Array.isArray(resp?.concept_notes)
+          ? resp.concept_notes
+              .map((n: { name?: string }) => n?.name)
+              .filter((n: unknown): n is string => typeof n === "string" && n.length > 0)
+          : [],
       } : i));
     } catch (err: any) {
       clearTimeout(timeout);
@@ -362,9 +366,9 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                 {item.summary && (
                   <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>{item.summary}</div>
                 )}
-                {item.takeaways && item.takeaways.length > 0 && (
+                {item.conceptNames && item.conceptNames.length > 0 && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                    {item.takeaways.slice(0, 4).map(t => (
+                    {item.conceptNames.slice(0, 4).map(t => (
                       <span key={t} className="chip chip--accent">{t}</span>
                     ))}
                   </div>

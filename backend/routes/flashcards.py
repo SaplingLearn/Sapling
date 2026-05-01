@@ -55,13 +55,13 @@ def _get_course_documents(user_id: str, course_name: str) -> list[dict]:
         if course_rows:
             course_id = course_rows[0]["id"]
             docs = table("documents").select(
-                "file_name,category,summary,key_takeaways,flashcards",
+                "file_name,category,summary,concept_notes",
                 filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
             )
         else:
             # Topic might be a concept name — still pull all user docs as context
             docs = table("documents").select(
-                "file_name,category,summary,key_takeaways,flashcards",
+                "file_name,category,summary,concept_notes",
                 filters={"user_id": f"eq.{user_id}"},
             )
         return docs or []

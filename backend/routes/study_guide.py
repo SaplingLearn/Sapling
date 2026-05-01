@@ -31,7 +31,7 @@ def _generate_and_insert(user_id: str, course_id: str, exam_id: str) -> dict:
 
     # 2. Fetch documents for this user+course
     docs = table("documents").select(
-        "summary,key_takeaways,flashcards",
+        "summary,concept_notes",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
     )
 
@@ -40,19 +40,22 @@ def _generate_and_insert(user_id: str, course_id: str, exam_id: str) -> dict:
     for doc in docs:
         if doc.get("summary"):
             parts.append(f"Summary: {doc['summary']}")
-        key_takeaways = doc.get("key_takeaways")
-        if key_takeaways and isinstance(key_takeaways, list):
-            parts.append("Key Takeaways:\n" + "\n".join(f"- {k}" for k in key_takeaways))
-        flashcards = doc.get("flashcards")
-        if flashcards and isinstance(flashcards, list):
-            fronts = [
-                c.get("question") or c.get("front", "")
-                for c in flashcards
-                if isinstance(c, dict)
-            ]
-            fronts = [f for f in fronts if f]
-            if fronts:
-                parts.append("Flashcard Topics:\n" + "\n".join(f"- {f}" for f in fronts[:20]))
+        concept_notes = doc.get("concept_notes")
+        if concept_notes and isinstance(concept_notes, list):
+            lines = []
+            for note in concept_notes:
+                if not isinstance(note, dict):
+                    continue
+                name = note.get("name")
+                desc = note.get("description")
+                if not name:
+                    continue
+                if desc:
+                    lines.append(f"- {name}: {desc}")
+                else:
+                    lines.append(f"- {name}")
+            if lines:
+                parts.append("Key Concepts:\n" + "\n".join(lines))
 
     combined_context = "\n\n".join(parts) if parts else "No course material available."
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")

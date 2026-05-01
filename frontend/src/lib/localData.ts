@@ -130,8 +130,14 @@ const LOCAL_COURSES = COURSES.map((c, i) => ({
 }));
 
 const LOCAL_DOCUMENTS: Document[] = [
-  { id: 'd1', user_id: LOCAL_USER.id, course_id: 'c1', file_name: 'Calc2_Syllabus.pdf', category: 'syllabus', summary: 'Syllabus for Calculus II.', key_takeaways: ['Integration techniques', 'Series convergence tests'], flashcards: null, created_at: daysAgo(20), processed_at: daysAgo(20) },
-  { id: 'd2', user_id: LOCAL_USER.id, course_id: 'c3', file_name: 'Trees_Lecture.pdf', category: 'lecture_notes', summary: 'Binary trees and traversals.', key_takeaways: ['Inorder traversal', 'Tree balancing'], flashcards: null, created_at: daysAgo(5), processed_at: daysAgo(5) },
+  { id: 'd1', user_id: LOCAL_USER.id, course_id: 'c1', file_name: 'Calc2_Syllabus.pdf', category: 'syllabus', summary: 'Syllabus for Calculus II.', concept_notes: [
+    { name: 'Integration Techniques', description: 'Methods for evaluating $\\int f(x)\\,dx$, including substitution, integration by parts, and partial fractions.' },
+    { name: 'Series Convergence Tests', description: 'Tests like the ratio test and integral test for deciding whether $\\sum a_n$ converges.' },
+  ], created_at: daysAgo(20), processed_at: daysAgo(20) },
+  { id: 'd2', user_id: LOCAL_USER.id, course_id: 'c3', file_name: 'Trees_Lecture.pdf', category: 'lecture_notes', summary: 'Binary trees and traversals.', concept_notes: [
+    { name: 'Inorder Traversal', description: 'Visits the left subtree, root, then right subtree — yielding sorted output for a BST.' },
+    { name: 'Tree Balancing', description: 'Restructuring rotations (e.g. AVL, red-black) that keep tree height $O(\\log n)$.' },
+  ], created_at: daysAgo(5), processed_at: daysAgo(5) },
 ];
 
 const LOCAL_FLASHCARDS = [
