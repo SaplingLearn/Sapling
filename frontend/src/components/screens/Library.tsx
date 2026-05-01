@@ -14,6 +14,8 @@ import {
   getDocuments,
   deleteDocument,
   getCourses,
+  scanDocumentConcepts,
+  scanCourseConcepts,
   type EnrolledCourse,
 } from "@/lib/api";
 import type { Document as Doc } from "@/lib/types";
@@ -48,6 +50,34 @@ export function Library() {
   useBodyScrollLock(Boolean(detail) && (isMobile || isAssignment));
   const [modalMounted, setModalMounted] = React.useState(false);
   React.useEffect(() => setModalMounted(true), []);
+
+  const [courseScanning, setCourseScanning] = React.useState(false);
+  const courseScanCourseId =
+    courseFilter !== "all" && courseFilter !== "uncategorized" ? courseFilter : null;
+  const courseScanLabel = React.useMemo(() => {
+    if (!courseScanCourseId) return "";
+    const c = courses.find(x => x.course_id === courseScanCourseId);
+    return c ? (c.course_code || c.course_name) : "Course";
+  }, [courses, courseScanCourseId]);
+
+  const runCourseScan = React.useCallback(async () => {
+    if (!userId || !courseScanCourseId) return;
+    setCourseScanning(true);
+    try {
+      const res = await scanCourseConcepts(courseScanCourseId, userId);
+      if (res.added > 0) {
+        toast.success(`${courseScanLabel}: added ${res.added} new concept${res.added === 1 ? "" : "s"}.`);
+      } else if (res.existing > 0) {
+        toast.info(`${courseScanLabel}: graph already covers it (${res.existing} concept${res.existing === 1 ? "" : "s"}).`);
+      } else {
+        toast.info(`${courseScanLabel}: nothing to add yet.`);
+      }
+    } catch (err: any) {
+      toast.error(`Scan failed: ${String(err?.message || err)}`);
+    } finally {
+      setCourseScanning(false);
+    }
+  }, [userId, courseScanCourseId, courseScanLabel, toast]);
 
   const cats: Cat[] = ["all", "lecture_notes", "syllabus", "reading", "slides", "study_guide", "assignment"];
 
@@ -116,6 +146,17 @@ export function Library() {
                   }}
                 />
               </div>
+              {courseScanCourseId && (
+                <button
+                  className="btn btn--sm"
+                  onClick={runCourseScan}
+                  disabled={courseScanning}
+                  title={`Extend the concept graph for ${courseScanLabel}`}
+                >
+                  <Icon name="sparkle" size={13} />
+                  {courseScanning ? "Scanning…" : `Scan ${courseScanLabel}`}
+                </button>
+              )}
               <button
                 className="btn btn--sm btn--primary"
                 onClick={() => setUploadOpen(true)}
@@ -459,6 +500,33 @@ function DetailPanel({
   const { userId } = useUser();
   const toast = useToast();
   const [revealed, setRevealed] = React.useState<Set<number>>(new Set());
+  const [scanState, setScanState] = React.useState<"idle" | "scanning" | "done">("idle");
+  const [scanResult, setScanResult] = React.useState<{ added: number; existing: number } | null>(null);
+
+  React.useEffect(() => {
+    setScanState("idle");
+    setScanResult(null);
+  }, [doc.id]);
+
+  const runScan = async () => {
+    setScanState("scanning");
+    try {
+      const res = await scanDocumentConcepts(doc.id, userId);
+      setScanResult({ added: res.added, existing: res.existing });
+      setScanState("done");
+      if (res.added > 0) {
+        toast.success(`Added ${res.added} new concept${res.added === 1 ? "" : "s"} to your graph.`);
+      } else if (res.existing > 0) {
+        toast.info(`Course graph already covers this (${res.existing} concept${res.existing === 1 ? "" : "s"}).`);
+      } else {
+        toast.info("Nothing to add from this document yet.");
+      }
+    } catch (err: any) {
+      setScanState("idle");
+      toast.error(`Scan failed: ${String(err?.message || err)}`);
+    }
+  };
+
   const del = useConfirm(async () => {
     try {
       await deleteDocument(doc.id, userId);
@@ -533,6 +601,37 @@ function DetailPanel({
           ))}
         </div>
       )}
+
+      <div style={{
+        marginBottom: 10, padding: 12, borderRadius: "var(--r-sm)",
+        border: "1px solid var(--border)", background: "var(--bg-panel)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+            <div className="label-micro">Concept scan</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.4 }}>
+              {scanState === "done" && scanResult
+                ? scanResult.added > 0
+                  ? `Added ${scanResult.added} new concept${scanResult.added === 1 ? "" : "s"} on top of the existing ${scanResult.existing}.`
+                  : `Course graph already covers this (${scanResult.existing} concept${scanResult.existing === 1 ? "" : "s"}).`
+                : "Extend this course's graph using this document's summary and takeaways."}
+            </div>
+          </div>
+          <button
+            onClick={runScan}
+            disabled={scanState === "scanning"}
+            className="btn btn--sm"
+            style={{ flexShrink: 0 }}
+          >
+            <Icon name="sparkle" size={12} />
+            {scanState === "scanning"
+              ? "Scanning…"
+              : scanState === "done"
+                ? "Re-scan"
+                : "Scan"}
+          </button>
+        </div>
+      </div>
 
       <button
         onClick={del.trigger}

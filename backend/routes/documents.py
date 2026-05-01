@@ -63,6 +63,60 @@ def _coerce_dict_list(value) -> list[dict]:
     return [item for item in value if isinstance(item, dict)]
 
 
+def _extend_course_concepts(
+    *,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_takeaways: list[str] | None = None,
+) -> list[str]:
+    """Focused LLM call: extend an existing course concept set.
+
+    The LLM is shown the course label, every concept already in the graph,
+    and (when scanning a specific document) that document's stored summary
+    and key takeaways. It returns new concepts to add, avoiding duplicates.
+    """
+    existing_block = (
+        "\n".join(f"- {c}" for c in existing_concepts) if existing_concepts else "(none yet)"
+    )
+    doc_block = ""
+    if doc_filename or doc_summary or doc_takeaways:
+        takeaways_block = (
+            "\n".join(f"  - {t}" for t in (doc_takeaways or [])) or "  (none)"
+        )
+        doc_block = (
+            "\nNew document being scanned:\n"
+            f"  Title: {doc_filename or '(untitled)'}\n"
+            f"  Summary: {doc_summary or '(none)'}\n"
+            "  Key takeaways:\n"
+            f"{takeaways_block}\n"
+        )
+
+    prompt = (
+        f"You are curating the concept set for the course \"{course_label}\".\n"
+        "Concepts already in the student's graph for this course:\n"
+        f"{existing_block}\n"
+        f"{doc_block}"
+        "Return ONLY valid JSON with no markdown or backticks:\n"
+        '{ "concepts": ["...", "..."] }\n'
+        "Rules:\n"
+        "- Return between 0 and 15 NEW concepts that should be in this course's "
+        "graph but are not in the existing list above.\n"
+        "- If the existing set already covers the relevant material, return [].\n"
+        "- Each concept is a short Title Case noun phrase "
+        "(e.g. \"Linear Regression\", \"Big-O Analysis\").\n"
+        "- Do NOT repeat or paraphrase any existing concept.\n"
+        "- No assignment titles, week labels, page numbers, problem numbers, or "
+        "administrative items.\n"
+        "- concepts must be a JSON array of strings."
+    )
+    raw = call_gemini_json(prompt)
+    if not isinstance(raw, dict):
+        return []
+    return _coerce_str_list(raw.get("concepts"))
+
+
 def _process_document(filename: str, extracted_text: str) -> dict:
     """Single LLM call: classify, summarize, and extract assignments + concepts.
 
@@ -240,3 +294,102 @@ async def upload_document(
         pass
 
     return inserted[0] if inserted else row
+
+
+def _course_label(course_id: str) -> str:
+    """Best-effort human label for a course (for prompts and toasts)."""
+    rows = table("courses").select(
+        "course_code,course_name", filters={"id": f"eq.{course_id}"}, limit=1,
+    ) or []
+    if not rows:
+        return "Course"
+    row = rows[0]
+    code = (row.get("course_code") or "").strip()
+    name = (row.get("course_name") or "").strip()
+    if code and name:
+        return f"{code} — {name}"
+    return code or name or "Course"
+
+
+def _scan_concepts_for_course(
+    user_id: str,
+    course_id: str,
+    *,
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_takeaways: list[str] | None = None,
+) -> dict:
+    """Shared scan logic. Pulls existing course concepts, asks the LLM to
+    extend the set, and writes new nodes via apply_graph_update."""
+    existing_rows = table("graph_nodes").select(
+        "id,concept_name", filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+    ) or []
+    existing_concepts = [r["concept_name"] for r in existing_rows if r.get("concept_name")]
+
+    concepts = _extend_course_concepts(
+        course_label=_course_label(course_id),
+        existing_concepts=existing_concepts,
+        doc_filename=doc_filename,
+        doc_summary=doc_summary,
+        doc_takeaways=doc_takeaways,
+    )
+    if not concepts:
+        return {"concepts": [], "added": 0, "existing": len(existing_concepts)}
+
+    before_count = len(existing_rows)
+    try:
+        new_nodes = [{"concept_name": name, "initial_mastery": 0.0} for name in concepts]
+        apply_graph_update(user_id, {"new_nodes": new_nodes}, course_id=course_id)
+    except Exception:
+        logger.exception("Concept scan failed for course=%s", course_id)
+        raise HTTPException(status_code=500, detail="Concept scan failed.")
+
+    after_rows = table("graph_nodes").select(
+        "id", filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+    ) or []
+    return {
+        "concepts": concepts,
+        "added": max(0, len(after_rows) - before_count),
+        "existing": len(existing_concepts),
+    }
+
+
+@router.post("/doc/{document_id}/scan-concepts")
+def scan_document_concepts(document_id: str, body: dict = Body(...)):
+    """Extend the course's concept graph using one document's stored
+    summary + takeaways as the seed signal."""
+    user_id = body.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required.")
+    _validate_user(user_id)
+
+    rows = table("documents").select(
+        "id,user_id,course_id,file_name,summary,key_takeaways",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
+        limit=1,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    doc = rows[0]
+    course_id = doc.get("course_id")
+    if not course_id:
+        raise HTTPException(status_code=400, detail="Document is not associated with a course.")
+
+    return _scan_concepts_for_course(
+        user_id,
+        course_id,
+        doc_filename=doc.get("file_name"),
+        doc_summary=doc.get("summary"),
+        doc_takeaways=doc.get("key_takeaways") or [],
+    )
+
+
+@router.post("/course/{course_id}/scan-concepts")
+def scan_course_concepts(course_id: str, body: dict = Body(...)):
+    """Extend the course's concept graph from the course label alone
+    (and whatever is already in the graph)."""
+    user_id = body.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required.")
+    _validate_user(user_id)
+    return _scan_concepts_for_course(user_id, course_id)

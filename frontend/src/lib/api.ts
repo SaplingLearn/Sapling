@@ -357,6 +357,24 @@ export const updateDocumentCategory = (documentId: string, userId: string, categ
     body: JSON.stringify({ user_id: userId, category }),
   });
 
+export interface ScanConceptsResponse {
+  concepts: string[];
+  added: number;
+  existing: number;
+}
+
+export const scanDocumentConcepts = (documentId: string, userId: string) =>
+  fetchJSON<ScanConceptsResponse>(`/api/documents/doc/${documentId}/scan-concepts`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+export const scanCourseConcepts = (courseId: string, userId: string) =>
+  fetchJSON<ScanConceptsResponse>(`/api/documents/course/${courseId}/scan-concepts`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
 // Flashcards
 export interface GenerateFlashcardsResponse {
   flashcards: any[];
