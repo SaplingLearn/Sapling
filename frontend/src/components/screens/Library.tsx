@@ -5,6 +5,7 @@ import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { Pill } from "../Pill";
 import { DocumentUploadModal } from "../DocumentUploadModal";
+import { LibraryGridSkeleton, LibraryListSkeleton } from "../Skeleton";
 import { MarkdownChat } from "../MarkdownChat";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
@@ -19,7 +20,7 @@ import {
   scanCourseConcepts,
   type EnrolledCourse,
 } from "@/lib/api";
-import type { Document as Doc } from "@/lib/types";
+import type { Document as Doc, ConceptNote } from "@/lib/types";
 
 const catColor: Record<Doc["category"], string> = {
   lecture_notes: "var(--c-sage)",
@@ -46,6 +47,7 @@ export function Library() {
   const [detail, setDetail] = React.useState<Doc | null>(null);
   const [query, setQuery] = React.useState("");
   const [view, setView] = React.useState<View>("grid");
+  const [loading, setLoading] = React.useState(true);
 
   useBodyScrollLock(Boolean(detail));
   const [modalMounted, setModalMounted] = React.useState(false);
@@ -92,6 +94,8 @@ export function Library() {
       setCourses(crs.courses || []);
     } catch (err) {
       console.error("library load failed", err);
+    } finally {
+      setLoading(false);
     }
   }, [userId]);
 
@@ -202,6 +206,10 @@ export function Library() {
 
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
           <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
+            {loading ? (
+              view === "grid" ? <LibraryGridSkeleton /> : <LibraryListSkeleton />
+            ) : (
+              <>
             {filtered.length === 0 && (
               <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
                 <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Your library is quiet</div>
@@ -321,6 +329,8 @@ export function Library() {
                   );
                 })}
               </div>
+            )}
+              </>
             )}
           </div>
 
@@ -512,27 +522,7 @@ function DetailPanel({
       )}
 
       {doc.concept_notes && doc.concept_notes.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div className="label-micro" style={{ marginBottom: 8 }}>Key concepts</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {doc.concept_notes.map((n) => (
-              <div
-                key={n.name}
-                style={{
-                  padding: "12px 14px", borderRadius: "var(--r-sm)",
-                  border: "1px solid var(--border)", background: "var(--bg-panel)",
-                }}
-              >
-                <div className="h-serif" style={{ fontSize: 14, fontWeight: 600, marginBottom: 6, color: "var(--text)" }}>
-                  {n.name}
-                </div>
-                <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-                  <MarkdownChat>{n.description}</MarkdownChat>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <ConceptList notes={doc.concept_notes} />
       )}
 
       <div style={{
@@ -574,5 +564,104 @@ function DetailPanel({
         <Icon name="x" size={13} /> {del.armed ? "Click again to confirm" : "Delete document"}
       </button>
     </aside>
+  );
+}
+
+function ConceptList({ notes }: { notes: ConceptNote[] }) {
+  const [open, setOpen] = React.useState<Record<number, boolean>>({});
+  const allOpen = notes.every((_, i) => open[i]);
+  const toggleAll = () => {
+    if (allOpen) setOpen({});
+    else setOpen(Object.fromEntries(notes.map((_, i) => [i, true])));
+  };
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 8,
+        }}
+      >
+        <div className="label-micro">Key concepts ({notes.length})</div>
+        <button
+          onClick={toggleAll}
+          className="btn btn--ghost btn--sm"
+          style={{ fontSize: 11 }}
+        >
+          {allOpen ? "Collapse all" : "Expand all"}
+        </button>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {notes.map((n, i) => {
+          const isOpen = !!open[i];
+          return (
+            <div
+              key={`${n.name}-${i}`}
+              style={{
+                borderRadius: "var(--r-sm)",
+                border: "1px solid var(--border)",
+                background: "var(--bg-panel)",
+                overflow: "hidden",
+              }}
+            >
+              <button
+                onClick={() => setOpen(prev => ({ ...prev, [i]: !prev[i] }))}
+                aria-expanded={isOpen}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "10px 12px",
+                  background: "transparent",
+                  border: "none",
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-flex",
+                    transform: isOpen ? "rotate(90deg)" : "rotate(0deg)",
+                    transition: "transform var(--dur-fast) var(--ease)",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  <Icon name="chev" size={12} />
+                </span>
+                <span
+                  className="h-serif"
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: "var(--text)",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {n.name}
+                </span>
+              </button>
+              {isOpen && (
+                <div
+                  style={{
+                    padding: "0 12px 12px 34px",
+                    fontSize: 13,
+                    color: "var(--text-dim)",
+                    borderTop: "1px solid var(--border)",
+                    paddingTop: 10,
+                  }}
+                >
+                  <MarkdownChat>{n.description}</MarkdownChat>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

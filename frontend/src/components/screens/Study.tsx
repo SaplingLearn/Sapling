@@ -7,6 +7,7 @@ import { Icon } from "../Icon";
 import { Pill } from "../Pill";
 import { CustomSelect } from "../CustomSelect";
 import { MarkdownChat } from "../MarkdownChat";
+import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useUser } from "@/context/UserContext";
@@ -237,11 +238,7 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
           <EmptyHint title="Choose an exam" body="The guide will be generated from your course material the first time." />
         )}
 
-        {(loadingGuide || regenerating) && (
-          <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
-            Building your guide…
-          </div>
-        )}
+        {(loadingGuide || regenerating) && <StudyGuideSkeleton />}
 
         {!loadingGuide && guide && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -459,6 +456,7 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
         </div>
 
         <div style={{ flex: 1, padding: "40px 32px", display: "flex", flexDirection: "column", alignItems: "center", gap: 22, overflowY: "auto" }}>
+          {loading && <FlashcardsSkeleton />}
           {filtered.length === 0 && !loading && (
             <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "40px 0" }}>
               <div className="h-serif" style={{ fontSize: 20 }}>No cards here yet</div>

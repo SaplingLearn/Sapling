@@ -5,6 +5,7 @@ import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { Pill } from "../Pill";
 import { KnowledgeGraph } from "../KnowledgeGraph";
+import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { getGraph, getCourses, getSessions, deleteGraphNode, updateGraphNodeColor, type EnrolledCourse, type Session } from "@/lib/api";
@@ -62,6 +63,7 @@ export function Tree() {
   const [edges, setEdges] = React.useState<GraphEdge[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
+  const [loading, setLoading] = React.useState(true);
 
   const toast = useToast();
 
@@ -92,6 +94,8 @@ export function Tree() {
       setSessions(sessionsRes.sessions || []);
     } catch (err) {
       console.error("tree load failed", err);
+    } finally {
+      setLoading(false);
     }
   }, [userId]);
 
@@ -369,15 +373,19 @@ export function Tree() {
 
       <div style={{ display: "flex", height: "calc(100vh - 240px)" }}>
         <div ref={ref} style={{ flex: 1, minWidth: 0, position: "relative" }}>
-          <KnowledgeGraph
-            nodes={filteredNodes}
-            edges={filteredEdges}
-            width={size.w}
-            height={size.h}
-            highlightId={suggestId || selected?.id}
-            masteryTierFill
-            onNodeClick={(n) => setSelected(n)}
-          />
+          {loading ? (
+            <GraphPanelSkeleton />
+          ) : (
+            <KnowledgeGraph
+              nodes={filteredNodes}
+              edges={filteredEdges}
+              width={size.w}
+              height={size.h}
+              highlightId={suggestId || selected?.id}
+              masteryTierFill
+              onNodeClick={(n) => setSelected(n)}
+            />
+          )}
         </div>
         {selected && !isMobile && (
           <aside

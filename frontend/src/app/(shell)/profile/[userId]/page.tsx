@@ -3,6 +3,7 @@ import React from "react";
 import { useParams } from "next/navigation";
 import { TopBar } from "@/components/TopBar";
 import { ProfileView } from "@/components/ProfileView";
+import { ProfileSkeleton } from "@/components/Skeleton";
 import { fetchPublicProfile } from "@/lib/api";
 import type { UserProfile } from "@/lib/types";
 
@@ -30,9 +31,7 @@ export default function PublicProfilePage() {
         subtitle={profile?.username ? `@${profile.username}` : undefined}
       />
       <div style={{ padding: "20px 32px" }}>
-        {loading && (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading profile…</div>
-        )}
+        {loading && <ProfileSkeleton />}
         {error && !loading && (
           <div className="card" style={{ padding: 28, textAlign: "center", color: "var(--err)" }}>
             Couldn&apos;t load this profile. {error}

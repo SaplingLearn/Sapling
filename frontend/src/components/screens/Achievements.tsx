@@ -3,6 +3,7 @@ import React from "react";
 import { TopBar } from "../TopBar";
 import { Pill } from "../Pill";
 import { Icon } from "../Icon";
+import { AchievementsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { fetchAchievements, setFeaturedAchievements } from "@/lib/api";
@@ -123,6 +124,7 @@ export function Achievements() {
   const [filter, setFilter] = React.useState<CatFilter>("all");
   const [featuredIds, setFeaturedIds] = React.useState<string[]>([]);
   const [dragId, setDragId] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(true);
 
   const detectUnlocks = React.useCallback((next: UserAchievement[]) => {
     if (typeof window === "undefined") return;
@@ -146,6 +148,8 @@ export function Achievements() {
       detectUnlocks(e);
     } catch (err) {
       console.error("achievements load", err);
+    } finally {
+      setLoading(false);
     }
   }, [userId, detectUnlocks]);
 
@@ -214,7 +218,8 @@ export function Achievements() {
         ))}
       </div>
 
-      <div style={{ padding: "24px 32px" }}>
+      {loading && <AchievementsSkeleton />}
+      {!loading && <div style={{ padding: "24px 32px" }}>
         <div className="label-micro" style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Showcase · featured on your profile</span>
           <span style={{ color: "var(--text-muted)" }}>{featuredIds.length} / {MAX_FEATURED}</span>
@@ -298,7 +303,7 @@ export function Achievements() {
             <Card key={a.id} a={a} isEarned={false} progress={a.progress ?? null} />
           ))}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { Icon } from "../Icon";
 import { MiniStat } from "../MiniStat";
 import { KnowledgeGraph } from "../KnowledgeGraph";
 import { ManageCoursesModal } from "../ManageCoursesModal";
+import { DashboardSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useLayoutPref } from "@/lib/useLayoutPref";
@@ -371,9 +372,8 @@ export function Dashboard() {
 
   if (loading && !courses.length) {
     return (
-      <div>
-        <TopBar breadcrumb="Home / Dashboard" title="Loading…" />
-        <div style={{ padding: 32, color: "var(--text-muted)", fontSize: 13 }}>Gathering your knowledge…</div>
+      <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
+        <DashboardSkeleton />
       </div>
     );
   }

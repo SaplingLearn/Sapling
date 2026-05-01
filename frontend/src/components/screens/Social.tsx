@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Icon } from "../Icon";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
+import { SocialRoomsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
@@ -935,6 +936,7 @@ export function Social() {
   const [activeId, setActiveId] = React.useState<string | null>(null);
   const [tab, setTab] = React.useState<Tab>("chat");
   const [overview, setOverview] = React.useState<RoomOverviewData | null>(null);
+  const [loading, setLoading] = React.useState(true);
 
   const suggest = search.get("suggest");
   React.useEffect(() => { if (suggest) setTab("overview"); }, [suggest]);
@@ -948,6 +950,8 @@ export function Social() {
       setActiveId(prev => prev || list[0]?.id || null);
     } catch (err) {
       console.error("rooms load failed", err);
+    } finally {
+      setLoading(false);
     }
   }, [userId]);
 
@@ -1019,12 +1023,13 @@ export function Social() {
           </button>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
-          {rooms.length === 0 && (
+          {loading && <SocialRoomsSkeleton />}
+          {!loading && rooms.length === 0 && (
             <div style={{ padding: 12, color: "var(--text-muted)", fontSize: 12 }}>
               No rooms yet — create or join one.
             </div>
           )}
-          {rooms.map((r) => (
+          {!loading && rooms.map((r) => (
             <button
               key={r.id}
               onClick={() => { setActiveId(r.id); setTab("chat"); }}

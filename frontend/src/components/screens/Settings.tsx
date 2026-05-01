@@ -5,6 +5,7 @@ import { Icon } from "../Icon";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
 import { ProfileView } from "../ProfileView";
+import { SettingsFormSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import {
@@ -24,7 +25,7 @@ import {
 import type { UserSettings, UserProfile, UserCosmetic, CosmeticType, EquippedCosmetics } from "@/lib/types";
 import { useLayoutPref, type LayoutPref } from "@/lib/useLayoutPref";
 
-type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data" | "danger";
+type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -185,7 +186,7 @@ export function Settings() {
     }
   };
 
-  const tabs: Tab[] = ["profile", "preferences", "notifications", "data", "danger"];
+  const tabs: Tab[] = ["profile", "preferences", "notifications", "data"];
 
   return (
     <div>
@@ -204,6 +205,7 @@ export function Settings() {
       />
       <div style={{ display: "flex", height: "calc(100vh - 112px)" }}>
         <div style={{ flex: 1, minWidth: 0, padding: "24px 32px", overflowY: "auto" }}>
+          {!settings && tab !== "cosmetics" && <SettingsFormSkeleton />}
           {tab === "profile" && settings && (
             <div style={{ maxWidth: 640, margin: "0 auto" }}>
               <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Profile</div>
@@ -530,12 +532,11 @@ export function Settings() {
                   Export
                 </button>
               </div>
-            </div>
-          )}
 
-          {tab === "danger" && (
-            <div style={{ maxWidth: 640, margin: "0 auto" }}>
-              <div className="h-serif" style={{ fontSize: 22, marginBottom: 20, color: "var(--err)" }}>
+              <div
+                className="h-serif"
+                style={{ fontSize: 18, margin: "28px 0 12px", color: "var(--err)" }}
+              >
                 Danger Zone
               </div>
               <div className="card" style={{ padding: "var(--pad-lg)", borderColor: "var(--err)" }}>

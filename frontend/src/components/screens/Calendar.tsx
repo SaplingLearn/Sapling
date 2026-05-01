@@ -6,6 +6,7 @@ import { Icon } from "../Icon";
 import { Pill } from "../Pill";
 import { CustomSelect } from "../CustomSelect";
 import { DocumentUploadModal } from "../DocumentUploadModal";
+import { CalendarMonthSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
@@ -76,6 +77,7 @@ export function Calendar() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [googleEvents, setGoogleEvents] = React.useState<GoogleEvent[] | null>(null);
   const [importingGoogle, setImportingGoogle] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
 
   const load = React.useCallback(async () => {
     if (!userId) return;
@@ -90,6 +92,8 @@ export function Calendar() {
       setGoogleConnected(Boolean(s.connected));
     } catch (err) {
       console.error("calendar load failed", err);
+    } finally {
+      setLoading(false);
     }
   }, [userId]);
 
@@ -250,10 +254,11 @@ export function Calendar() {
         actions={topActions}
       />
 
-      {view === "month" && <MonthView cursor={cursor} byDate={byDate} today={today} courses={courses} />}
-      {view === "week" && <WeekView cursor={cursor} byDate={byDate} today={today} courses={courses} />}
-      {view === "day" && <DayView cursor={cursor} byDate={byDate} courses={courses} />}
-      {view === "table" && (
+      {loading && <CalendarMonthSkeleton />}
+      {!loading && view === "month" && <MonthView cursor={cursor} byDate={byDate} today={today} courses={courses} />}
+      {!loading && view === "week" && <WeekView cursor={cursor} byDate={byDate} today={today} courses={courses} />}
+      {!loading && view === "day" && <DayView cursor={cursor} byDate={byDate} courses={courses} />}
+      {!loading && view === "table" && (
         <AssignmentTable
           assignments={assignments}
           courses={courses}

@@ -5,6 +5,7 @@ import { Icon } from "../Icon";
 import { Avatar } from "../Avatar";
 import { RoleBadge } from "../RoleBadge";
 import { CustomSelect } from "../CustomSelect";
+import { AdminTableSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
@@ -111,6 +112,7 @@ function UsersTab() {
   const [query, setQuery] = React.useState("");
   const [assignFor, setAssignFor] = React.useState<string | null>(null);
   const [assignRoleId, setAssignRoleId] = React.useState<string>("");
+  const [loading, setLoading] = React.useState(true);
 
   const load = React.useCallback(async () => {
     try {
@@ -119,6 +121,8 @@ function UsersTab() {
       setRoles(r.roles || []);
     } catch (err) {
       toast.error(`Load failed: ${String(err)}`);
+    } finally {
+      setLoading(false);
     }
   }, [toast]);
 
@@ -157,6 +161,11 @@ function UsersTab() {
   };
 
   const approvedPct = users.length ? Math.round((approved / users.length) * 100) : 0;
+
+  if (loading) {
+    return <AdminTableSkeleton />;
+  }
+
   return (
     <>
       {/* Prose strip replaces the previous 3-card hero-metric layout
