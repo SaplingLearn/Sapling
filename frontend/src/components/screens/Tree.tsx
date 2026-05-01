@@ -7,7 +7,9 @@ import { Pill } from "../Pill";
 import { KnowledgeGraph } from "../KnowledgeGraph";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { getGraph, getCourses, getSessions, type EnrolledCourse, type Session } from "@/lib/api";
+import { getGraph, getCourses, getSessions, deleteGraphNode, updateGraphNodeColor, type EnrolledCourse, type Session } from "@/lib/api";
+import { useToast } from "../ToastProvider";
+import { useConfirm } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import type { GraphNode, GraphEdge } from "@/lib/data";
 
@@ -26,7 +28,7 @@ function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
     id: n.id,
     name: n.concept_name,
     subject: n.subject,
-    color: n.course_color || course?.color || "var(--c-sage)",
+    color: n.color || n.course_color || course?.color || "var(--c-sage)",
     is_subject_root: n.is_subject_root,
     mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
     mastery_score: n.mastery_score,
@@ -34,6 +36,11 @@ function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
     last_studied_at: n.last_studied_at || undefined,
   };
 }
+
+const NODE_COLOR_SWATCHES: string[] = [
+  "#4a7d5c", "#c89b5e", "#b25855", "#8a7bc4", "#5b8db8",
+  "#6f9c7c", "#d18a5e", "#a86c9e", "#7a8aa6", "#9a9a9a",
+];
 
 export function Tree() {
   const router = useRouter();
@@ -56,40 +63,41 @@ export function Tree() {
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
 
+  const toast = useToast();
+
   React.useEffect(() => {
     const ro = new ResizeObserver((e) => setSize({ w: e[0].contentRect.width, h: e[0].contentRect.height }));
     if (ref.current) ro.observe(ref.current);
     return () => ro.disconnect();
   }, [fullscreen]);
 
+  const load = React.useCallback(async () => {
+    if (!userId) return;
+    try {
+      const [graphRes, coursesRes, sessionsRes] = await Promise.all([
+        getGraph(userId),
+        getCourses(userId),
+        getSessions(userId, 50).catch(() => ({ sessions: [] })),
+      ]);
+      const cs = coursesRes.courses || [];
+      setCourses(cs);
+      setNodes((graphRes.nodes || []).map((n: ApiNode) => apiToGraphNode(n, cs)));
+      setEdges(
+        (graphRes.edges || []).map((e: ApiEdge) => ({
+          source: e.source as string,
+          target: e.target as string,
+          strength: e.strength,
+        })),
+      );
+      setSessions(sessionsRes.sessions || []);
+    } catch (err) {
+      console.error("tree load failed", err);
+    }
+  }, [userId]);
+
   React.useEffect(() => {
-    if (!userReady || !userId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const [graphRes, coursesRes, sessionsRes] = await Promise.all([
-          getGraph(userId),
-          getCourses(userId),
-          getSessions(userId, 50).catch(() => ({ sessions: [] })),
-        ]);
-        if (cancelled) return;
-        const cs = coursesRes.courses || [];
-        setCourses(cs);
-        setNodes((graphRes.nodes || []).map((n: ApiNode) => apiToGraphNode(n, cs)));
-        setEdges(
-          (graphRes.edges || []).map((e: ApiEdge) => ({
-            source: e.source as string,
-            target: e.target as string,
-            strength: e.strength,
-          })),
-        );
-        setSessions(sessionsRes.sessions || []);
-      } catch (err) {
-        console.error("tree load failed", err);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [userReady, userId]);
+    if (userReady && userId) load();
+  }, [userReady, userId, load]);
 
   // Auto-select node matching ?suggest= once data loads.
   React.useEffect(() => {
@@ -145,6 +153,30 @@ export function Tree() {
     `/learn?topic=${encodeURIComponent(n.name)}&mode=quiz${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`,
   );
 
+  const pickColor = async (n: GraphNode, color: string | null) => {
+    if (!userId) return;
+    try {
+      await updateGraphNodeColor(userId, n.id, color);
+      setNodes(prev => prev.map(x => x.id === n.id ? { ...x, color: color || x.color } : x));
+      setSelected(prev => prev && prev.id === n.id ? { ...prev, color: color || prev.color } : prev);
+      await load();
+    } catch (err: any) {
+      toast.error(`Color update failed: ${String(err?.message || err)}`);
+    }
+  };
+
+  const del = useConfirm(async () => {
+    if (!userId || !selected) return;
+    try {
+      await deleteGraphNode(userId, selected.id);
+      toast.success(`Deleted "${selected.name}".`);
+      setSelected(null);
+      await load();
+    } catch (err: any) {
+      toast.error(`Delete failed: ${String(err?.message || err)}`);
+    }
+  });
+
   const detailPanel = selected && (
     <>
       <button className="btn btn--ghost btn--sm" onClick={() => setSelected(null)} aria-label="Close detail panel">
@@ -183,6 +215,50 @@ export function Tree() {
       <button className="btn" style={{ width: "100%", marginTop: 8 }} onClick={() => onQuiz(selected)}>
         <Icon name="bolt" size={14} /> Quick quiz
       </button>
+      {!selected.is_subject_root && (
+        <div style={{ marginTop: 18 }}>
+          <div className="label-micro" style={{ marginBottom: 8 }}>Node color</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+            {NODE_COLOR_SWATCHES.map(c => (
+              <button
+                key={c}
+                onClick={() => pickColor(selected, c)}
+                aria-label={`Set color ${c}`}
+                style={{
+                  width: 22, height: 22, borderRadius: "50%", background: c,
+                  border: selected.color === c ? "2px solid var(--text)" : "1px solid var(--border)",
+                  cursor: "pointer", padding: 0,
+                }}
+              />
+            ))}
+            <button
+              onClick={() => pickColor(selected, null)}
+              title="Reset to course color"
+              style={{
+                width: 22, height: 22, borderRadius: "50%",
+                border: "1px dashed var(--border-strong)", background: "var(--bg-panel)",
+                color: "var(--text-muted)", cursor: "pointer", padding: 0, fontSize: 12,
+              }}
+            >
+              ⟲
+            </button>
+          </div>
+        </div>
+      )}
+      {!selected.is_subject_root && (
+        <button
+          onClick={del.trigger}
+          className="btn"
+          style={{
+            width: "100%", marginTop: 12,
+            background: del.armed ? "var(--err-soft)" : undefined,
+            color: del.armed ? "var(--err)" : undefined,
+            borderColor: del.armed ? "var(--err)" : undefined,
+          }}
+        >
+          <Icon name="x" size={13} /> {del.armed ? "Click again to confirm" : "Delete concept"}
+        </button>
+      )}
       {sessionsForSelected.length > 0 && (
         <div style={{ marginTop: 18 }}>
           <div className="label-micro" style={{ marginBottom: 8 }}>Sessions for this concept</div>

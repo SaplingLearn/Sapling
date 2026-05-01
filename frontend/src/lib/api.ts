@@ -69,6 +69,18 @@ export const updateCourseColor = (userId: string, courseId: string, color: strin
     { method: 'PATCH', body: JSON.stringify({ color }) }
   );
 
+export const deleteGraphNode = (userId: string, nodeId: string) =>
+  fetchJSON<{ deleted: boolean }>(
+    `/api/graph/${userId}/nodes/${encodeURIComponent(nodeId)}`,
+    { method: 'DELETE' }
+  );
+
+export const updateGraphNodeColor = (userId: string, nodeId: string, color: string | null) =>
+  fetchJSON<{ updated: boolean }>(
+    `/api/graph/${userId}/nodes/${encodeURIComponent(nodeId)}/color`,
+    { method: 'PATCH', body: JSON.stringify({ color }) }
+  );
+
 // Learn
 export const startSession = (userId: string, topic: string, mode: string, courseId?: string, useSharedContext = true) =>
   fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {

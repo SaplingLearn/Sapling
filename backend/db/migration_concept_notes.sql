@@ -12,3 +12,6 @@
 
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS concept_notes JSONB;
 ALTER TABLE documents DROP COLUMN IF EXISTS key_takeaways;
+
+-- Per-node color override on graph_nodes (overrides the course color when set).
+ALTER TABLE graph_nodes ADD COLUMN IF NOT EXISTS color TEXT;

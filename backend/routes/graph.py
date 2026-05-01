@@ -5,6 +5,7 @@ from typing import Optional
 from services.graph_service import (
     get_graph, get_recommendations,
     get_courses, add_course, delete_course, update_course_color,
+    delete_node, update_node_color,
 )
 
 router = APIRouter()
@@ -32,6 +33,10 @@ class UpdateCourseColorBody(BaseModel):
     color: str
 
 
+class UpdateNodeColorBody(BaseModel):
+    color: Optional[str] = None
+
+
 @router.get("/{user_id}/courses")
 def list_courses(user_id: str):
     return {"courses": get_courses(user_id)}
@@ -53,3 +58,21 @@ def set_course_color(user_id: str, course_id: str, body: UpdateCourseColorBody):
 @router.delete("/{user_id}/courses/{course_id}")
 def remove_course(user_id: str, course_id: str):
     return delete_course(user_id, course_id)
+
+
+# ── Node endpoints ───────────────────────────────────────────────────────────
+
+@router.delete("/{user_id}/nodes/{node_id}")
+def remove_node(user_id: str, node_id: str):
+    result = delete_node(user_id, node_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.patch("/{user_id}/nodes/{node_id}/color")
+def set_node_color(user_id: str, node_id: str, body: UpdateNodeColorBody):
+    result = update_node_color(user_id, node_id, body.color)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result

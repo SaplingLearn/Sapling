@@ -349,22 +349,6 @@ function LearnInner() {
           }}
         >
           <div className="card" style={{ padding: "var(--pad-xl)" }}>
-            <div className="label-micro" style={{ marginBottom: 8 }}>Topic</div>
-            <input
-              value={topicDraft}
-              onChange={e => setTopicDraft(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") handleStart(); }}
-              placeholder="e.g. Eigenvalue decomposition"
-              style={{
-                width: "100%",
-                padding: "12px 14px",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--r-sm)",
-                fontSize: 15,
-                background: "var(--bg-input)",
-                marginBottom: 16,
-              }}
-            />
             <div className="label-micro" style={{ marginBottom: 8 }}>Course (optional)</div>
             <CustomSelect<string>
               value={selectedCourseId}
@@ -374,6 +358,15 @@ function LearnInner() {
               ]}
               onChange={setSelectedCourseId}
               style={{ width: "100%", marginBottom: 16 }}
+            />
+            <div className="label-micro" style={{ marginBottom: 8 }}>Topic</div>
+            <TopicPicker
+              value={topicDraft}
+              onChange={setTopicDraft}
+              onSubmit={handleStart}
+              concepts={concepts}
+              courses={courses}
+              selectedCourseId={selectedCourseId}
             />
             <div className="label-micro" style={{ marginBottom: 8 }}>Mode</div>
             <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
@@ -654,6 +647,198 @@ function SessionRow({ s, onResume, onDelete }: {
       >
         {del.armed ? "Confirm" : <Icon name="x" size={12} />}
       </button>
+    </div>
+  );
+}
+
+const GENERAL_TOPIC = "Course overview — pick the next concept I should learn next.";
+
+function TopicPicker({
+  value, onChange, onSubmit, concepts, courses, selectedCourseId,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  concepts: { id: string; name: string; course_id: string | null; course_code: string | null }[];
+  courses: EnrolledCourse[];
+  selectedCourseId: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    if (open) document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const selectedCourse = useMemo(
+    () => courses.find(c => c.course_id === selectedCourseId) || null,
+    [courses, selectedCourseId],
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return concepts
+      .filter(c => !selectedCourseId || c.course_id === selectedCourseId)
+      .filter(c => !q || c.name.toLowerCase().includes(q))
+      .slice(0, 80);
+  }, [concepts, query, selectedCourseId]);
+
+  const isGeneral = value === GENERAL_TOPIC;
+  const courseLabel = selectedCourse
+    ? (selectedCourse.course_code || selectedCourse.course_name)
+    : "this course";
+  const generalLabel = selectedCourse
+    ? `General — pick what's next in ${courseLabel}`
+    : "General — pick what to study next";
+
+  const pickGeneral = () => {
+    onChange(GENERAL_TOPIC);
+    setOpen(false);
+  };
+  const pickConcept = (name: string) => {
+    onChange(name);
+    setOpen(false);
+  };
+  const pickCustom = () => {
+    const q = query.trim();
+    if (!q) return;
+    onChange(q);
+    setOpen(false);
+  };
+
+  const displayLabel = isGeneral ? generalLabel : (value || "Pick or type a topic…");
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative", marginBottom: 16 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        onKeyDown={e => { if (e.key === "Enter" && !open && value.trim()) onSubmit(); }}
+        style={{
+          width: "100%",
+          padding: "12px 14px",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-sm)",
+          fontSize: 15,
+          background: "var(--bg-input)",
+          textAlign: "left",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          color: value ? "var(--text)" : "var(--text-muted)",
+        }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {displayLabel}
+        </span>
+        <Icon name="chev" size={12} />
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0, right: 0,
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border-strong)",
+            borderRadius: "var(--r-sm)",
+            boxShadow: "var(--shadow-md)",
+            zIndex: 30,
+            maxHeight: 360,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <input
+            autoFocus
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Escape") setOpen(false);
+              if (e.key === "Enter") {
+                if (filtered.length > 0) pickConcept(filtered[0].name);
+                else if (query.trim()) pickCustom();
+              }
+            }}
+            placeholder="Search concepts or type a custom topic…"
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              fontSize: 13,
+              border: "none",
+              borderBottom: "1px solid var(--border)",
+              background: "transparent",
+              outline: "none",
+            }}
+          />
+          <div style={{ overflowY: "auto", flex: 1 }}>
+            <button
+              onClick={pickGeneral}
+              style={{
+                width: "100%", padding: "10px 12px", textAlign: "left",
+                background: isGeneral ? "var(--accent-soft)" : "transparent",
+                border: "none", cursor: "pointer", fontSize: 13,
+                display: "flex", flexDirection: "column", gap: 2,
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              <span style={{ fontWeight: 600, color: "var(--text)" }}>{generalLabel}</span>
+              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                Tutor scans your graph and chooses the next concept.
+              </span>
+            </button>
+            {filtered.length === 0 && query.trim() && (
+              <button
+                onClick={pickCustom}
+                style={{
+                  width: "100%", padding: "10px 12px", textAlign: "left",
+                  background: "transparent", border: "none", cursor: "pointer", fontSize: 13,
+                  color: "var(--text)",
+                }}
+              >
+                Use custom topic: <strong>“{query.trim()}”</strong>
+              </button>
+            )}
+            {filtered.length === 0 && !query.trim() && (
+              <div style={{ padding: "16px 12px", fontSize: 12, color: "var(--text-muted)" }}>
+                {selectedCourseId
+                  ? "No concepts in this course yet — upload a syllabus or scan to populate the graph."
+                  : "No concepts in your graph yet."}
+              </div>
+            )}
+            {filtered.map(c => {
+              const isSel = value === c.name;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => pickConcept(c.name)}
+                  style={{
+                    width: "100%", padding: "8px 12px", textAlign: "left",
+                    background: isSel ? "var(--accent-soft)" : "transparent",
+                    border: "none", cursor: "pointer", fontSize: 13,
+                    display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+                  }}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)" }}>
+                    {c.name}
+                  </span>
+                  {c.course_code && (
+                    <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>
+                      {c.course_code}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

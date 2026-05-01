@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS graph_nodes (
     last_studied_at TIMESTAMPTZ,
     subject         TEXT,
     course_id       TEXT REFERENCES courses(id),
+    color           TEXT,
     created_at      TIMESTAMPTZ DEFAULT now(),
     mastery_events  JSONB DEFAULT '[]'
 );

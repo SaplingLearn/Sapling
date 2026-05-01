@@ -147,7 +147,8 @@ def get_graph(user_id: str) -> dict:
         course_name_map[cid] = course.get("course_name", "")
 
     # Stamp each node's subject from its course_id so the frontend has a
-    # consistent key, and attach the enrollment color directly.
+    # consistent key, and attach the enrollment color directly. The per-node
+    # `color` override (if set) is left in place so the UI can prefer it.
     for n in nodes:
         cid = n.get("course_id")
         if cid and cid in course_name_map:
@@ -293,6 +294,49 @@ def update_course_nickname(user_id: str, course_id: str, nickname: str) -> dict:
     table("user_courses").update(
         {"nickname": nickname},
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+    )
+    return {"updated": True}
+
+
+def delete_node(user_id: str, node_id: str) -> dict:
+    """Delete a single graph node and its edges. Owner-scoped.
+
+    Returns 404 if the node doesn't belong to the user.
+    """
+    rows = table("graph_nodes").select(
+        "id,course_id",
+        filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"},
+        limit=1,
+    ) or []
+    if not rows:
+        return {"error": "Node not found", "deleted": False}
+    course_id = rows[0].get("course_id")
+
+    table("graph_edges").delete(filters={"user_id": f"eq.{user_id}", "source_node_id": f"eq.{node_id}"})
+    table("graph_edges").delete(filters={"user_id": f"eq.{user_id}", "target_node_id": f"eq.{node_id}"})
+    table("graph_nodes").delete(filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"})
+
+    if course_id:
+        try:
+            from services.course_context_service import update_course_context
+            update_course_context(course_id)
+        except Exception:
+            pass
+    return {"deleted": True}
+
+
+def update_node_color(user_id: str, node_id: str, color: str | None) -> dict:
+    """Set or clear the per-node color override. Pass None to reset to course default."""
+    rows = table("graph_nodes").select(
+        "id",
+        filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"},
+        limit=1,
+    ) or []
+    if not rows:
+        return {"error": "Node not found", "updated": False}
+    table("graph_nodes").update(
+        {"color": color},
+        filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"},
     )
     return {"updated": True}
 
