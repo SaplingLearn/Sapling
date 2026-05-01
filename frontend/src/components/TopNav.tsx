@@ -22,7 +22,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { useUser } from "@/context/UserContext";
@@ -50,28 +50,21 @@ function isActive(pathname: string, href: string): boolean {
 
 export function TopNav() {
   const pathname = usePathname() || "/";
-  const router = useRouter();
-  const { userName, avatarUrl, isAdmin, isAuthenticated, signOut } = useUser();
+  const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const isMobile = useIsMobile();
-  const [menuOpen, setMenuOpen] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
-  const menuRef = React.useRef<HTMLDivElement | null>(null);
   const mobileRef = React.useRef<HTMLDivElement | null>(null);
 
-  // Close menus on route change.
   React.useEffect(() => {
-    setMenuOpen(false);
     setMobileOpen(false);
   }, [pathname]);
 
-  // Click-outside + Escape to close the open menu/panel.
   React.useEffect(() => {
     const onClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
       if (mobileRef.current && !mobileRef.current.contains(e.target as Node)) setMobileOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { setMenuOpen(false); setMobileOpen(false); }
+      if (e.key === "Escape") setMobileOpen(false);
     };
     document.addEventListener("mousedown", onClick);
     document.addEventListener("keydown", onKey);
@@ -80,12 +73,6 @@ export function TopNav() {
       document.removeEventListener("keydown", onKey);
     };
   }, []);
-
-  const onSignOut = async () => {
-    setMenuOpen(false);
-    await signOut();
-    router.replace("/");
-  };
 
   return (
     <nav
@@ -220,77 +207,53 @@ export function TopNav() {
 
       <div style={{ marginLeft: isMobile ? "auto" : 0, display: "flex", alignItems: "center", gap: 8 }}>
         {isAuthenticated && (
-          <div ref={menuRef} style={{ position: "relative" }}>
-            <button
-              aria-label="Account menu"
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen(o => !o)}
+          <>
+            <Link
+              href="/settings"
+              aria-label="Settings"
+              title="Settings"
+              style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                width: 32, height: 32, borderRadius: "var(--r-sm)",
+                color: pathname.startsWith("/settings") ? "var(--text)" : "var(--text-muted)",
+                transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; e.currentTarget.style.color = "var(--text)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = pathname.startsWith("/settings") ? "var(--text)" : "var(--text-muted)"; }}
+            >
+              <Icon name="cog" size={16} />
+            </Link>
+            {isAdmin && (
+              <Link
+                href="/admin"
+                aria-label="Admin"
+                title="Admin"
+                style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 32, height: 32, borderRadius: "var(--r-sm)",
+                  color: pathname.startsWith("/admin") ? "var(--text)" : "var(--text-muted)",
+                  transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; e.currentTarget.style.color = "var(--text)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = pathname.startsWith("/admin") ? "var(--text)" : "var(--text-muted)"; }}
+              >
+                <Icon name="shield" size={16} />
+              </Link>
+            )}
+            <div
+              aria-label={userName || "Account"}
+              title={userName || "Account"}
               style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: 3, borderRadius: "var(--r-full)",
-                transition: "background var(--dur-fast) var(--ease)",
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
             >
               <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
-            </button>
-            {menuOpen && (
-              <div
-                style={{
-                  position: "absolute", top: "calc(100% + 6px)", right: 0,
-                  minWidth: 200, padding: "6px 0",
-                  background: "var(--bg-panel)", border: "1px solid var(--border)",
-                  borderRadius: "var(--r-md)", boxShadow: "var(--shadow-md)",
-                  zIndex: 100,
-                }}
-              >
-                <div style={{ padding: "8px 14px 10px", borderBottom: "1px solid var(--border)" }}>
-                  <div className="h-serif" style={{ fontSize: 14, fontWeight: 600 }}>{userName}</div>
-                </div>
-                <MenuItem href="/settings" label="Settings" icon="cog" current={pathname.startsWith("/settings")} />
-                {isAdmin && (
-                  <MenuItem href="/admin" label="Admin" icon="shield" current={pathname.startsWith("/admin")} />
-                )}
-                <button
-                  onClick={onSignOut}
-                  style={{
-                    width: "100%", padding: "8px 14px", textAlign: "left",
-                    fontSize: 13, color: "var(--text-dim)",
-                    transition: "background var(--dur-fast) var(--ease)",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                >
-                  Sign out
-                </button>
-              </div>
-            )}
-          </div>
+            </div>
+          </>
         )}
       </div>
     </nav>
-  );
-}
-
-function MenuItem({ href, label, icon, current }: { href: string; label: string; icon: string; current: boolean }) {
-  return (
-    <Link
-      href={href}
-      style={{
-        display: "flex", alignItems: "center", gap: 10,
-        padding: "8px 14px",
-        fontSize: 13, fontWeight: current ? 600 : 400,
-        color: current ? "var(--text)" : "var(--text-dim)",
-        textDecoration: "none",
-        transition: "background var(--dur-fast) var(--ease)",
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-    >
-      <Icon name={icon} size={14} />
-      {label}
-    </Link>
   );
 }
 

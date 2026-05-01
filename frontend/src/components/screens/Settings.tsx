@@ -307,6 +307,33 @@ export function Settings() {
                   />
                 </div>
               ))}
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "16px 0",
+                  gap: 20,
+                  marginTop: 8,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>Sign out</div>
+                  <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
+                    End your session on this device.
+                  </div>
+                </div>
+                <button
+                  className="btn btn--sm"
+                  onClick={async () => {
+                    await signOut();
+                    window.location.href = "/";
+                  }}
+                >
+                  <Icon name="logout" size={12} /> Sign out
+                </button>
+              </div>
             </div>
           )}
 
@@ -541,12 +568,13 @@ export function Settings() {
                 textAlign: "left",
                 padding: "8px 12px",
                 fontSize: 13,
-                background: tab === t ? "var(--accent-soft)" : "transparent",
-                color: tab === t ? "var(--accent)" : "var(--text-dim)",
+                background: tab === t ? "var(--bg-soft)" : "transparent",
+                color: tab === t ? "var(--text)" : "var(--text-dim)",
                 borderRadius: "var(--r-sm)",
                 marginBottom: 2,
                 fontWeight: tab === t ? 600 : 400,
                 textTransform: "capitalize",
+                transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
               }}
             >
               {t}
@@ -634,7 +662,7 @@ function CosmeticsManager({ userId }: { userId: string }) {
                 padding: "8px 14px", fontSize: 13,
                 fontWeight: subTab === t ? 600 : 400,
                 color: subTab === t ? "var(--text)" : "var(--text-dim)",
-                borderBottom: subTab === t ? "2px solid var(--accent)" : "2px solid transparent",
+                borderBottom: subTab === t ? "2px solid var(--text)" : "2px solid transparent",
               }}
             >
               {COSMETIC_TAB_LABELS[t]}
@@ -648,9 +676,9 @@ function CosmeticsManager({ userId }: { userId: string }) {
               onClick={() => setView(v)}
               style={{
                 padding: "4px 10px", fontSize: 11, borderRadius: "var(--r-full)",
-                background: view === v ? "var(--accent-soft)" : "transparent",
-                color: view === v ? "var(--accent)" : "var(--text-dim)",
-                border: `1px solid ${view === v ? "var(--accent-border)" : "var(--border)"}`,
+                background: view === v ? "var(--bg-soft)" : "transparent",
+                color: view === v ? "var(--text)" : "var(--text-dim)",
+                border: `1px solid var(--border)`,
                 textTransform: "capitalize",
               }}
             >

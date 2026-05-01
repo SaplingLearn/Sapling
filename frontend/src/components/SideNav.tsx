@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { useUser } from "@/context/UserContext";
@@ -58,32 +58,8 @@ function useCollapsed(): [boolean, (v: boolean) => void] {
 
 export function SideNav() {
   const pathname = usePathname() || "/";
-  const router = useRouter();
-  const { userName, avatarUrl, isAdmin, isAuthenticated, signOut } = useUser();
-  const [menuOpen, setMenuOpen] = React.useState(false);
+  const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const [collapsed, setCollapsed] = useCollapsed();
-  const menuRef = React.useRef<HTMLDivElement | null>(null);
-
-  React.useEffect(() => { setMenuOpen(false); }, [pathname]);
-
-  React.useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
-    document.addEventListener("mousedown", onClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, []);
-
-  const onSignOut = async () => {
-    setMenuOpen(false);
-    await signOut();
-    router.replace("/");
-  };
 
   const width = collapsed ? SIDE_NAV_COLLAPSED : SIDE_NAV_EXPANDED;
 
@@ -207,9 +183,7 @@ export function SideNav() {
 
       {isAuthenticated && (
         <div
-          ref={menuRef}
           style={{
-            position: "relative",
             padding: collapsed ? "10px 0 4px" : "10px 6px 4px",
             borderTop: "1px solid var(--border)",
             marginTop: 8,
@@ -223,10 +197,7 @@ export function SideNav() {
               width: "100%",
             }}
           >
-            <button
-              aria-label="Account menu"
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen(o => !o)}
+            <div
               title={collapsed ? (userName || "Account") : undefined}
               style={{
                 display: "flex",
@@ -236,13 +207,9 @@ export function SideNav() {
                 minWidth: 0,
                 padding: "6px 6px",
                 borderRadius: "var(--r-sm)",
-                background: "transparent",
-                transition: "background var(--dur-fast) var(--ease)",
                 textAlign: "left",
                 justifyContent: collapsed ? "center" : "flex-start",
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
             >
               <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
               {!collapsed && (
@@ -262,7 +229,7 @@ export function SideNav() {
                   <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Account</div>
                 </div>
               )}
-            </button>
+            </div>
             {!collapsed && (
               <button
                 type="button"
@@ -323,41 +290,6 @@ export function SideNav() {
               </span>
             </button>
           )}
-          {menuOpen && (
-            <div
-              style={{
-                position: "absolute",
-                bottom: "calc(100% + 6px)",
-                left: collapsed ? "calc(100% + 6px)" : 6,
-                right: collapsed ? "auto" : 6,
-                minWidth: collapsed ? 180 : undefined,
-                padding: "6px 0",
-                background: "var(--bg-panel)",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--r-md)",
-                boxShadow: "var(--shadow-md)",
-                zIndex: 100,
-              }}
-            >
-              <MenuItem href="/settings" label="Settings" icon="cog" />
-              {isAdmin && <MenuItem href="/admin" label="Admin" icon="shield" />}
-              <button
-                onClick={onSignOut}
-                style={{
-                  width: "100%",
-                  padding: "8px 14px",
-                  textAlign: "left",
-                  fontSize: 13,
-                  color: "var(--text-dim)",
-                  transition: "background var(--dur-fast) var(--ease)",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-              >
-                Sign out
-              </button>
-            </div>
-          )}
         </div>
       )}
     </aside>
@@ -378,11 +310,10 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         width: "100%",
         padding: collapsed ? "8px 0" : "8px 12px",
         borderRadius: "var(--r-sm)",
-        background: active ? "var(--accent-soft)" : "transparent",
-        color: active ? "var(--accent)" : "var(--text-dim)",
+        background: active ? "var(--bg-soft)" : "transparent",
+        color: active ? "var(--text)" : "var(--text-dim)",
         fontWeight: active ? 600 : 400,
         fontSize: 13,
-        borderLeft: active && !collapsed ? "2px solid var(--accent)" : "2px solid transparent",
         transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
         textDecoration: "none",
       }}
@@ -399,25 +330,3 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
   );
 }
 
-function MenuItem({ href, label, icon }: { href: string; label: string; icon: string }) {
-  return (
-    <Link
-      href={href}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "8px 14px",
-        fontSize: 13,
-        color: "var(--text-dim)",
-        textDecoration: "none",
-        transition: "background var(--dur-fast) var(--ease)",
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-    >
-      <Icon name={icon} size={14} />
-      {label}
-    </Link>
-  );
-}
