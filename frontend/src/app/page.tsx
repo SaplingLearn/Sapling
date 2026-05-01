@@ -720,7 +720,7 @@ export default function LandingPage() {
         >
           <div
             className="floating-card absolute w-48 liquid-glass rounded-2xl p-4"
-            style={{ position: 'absolute', top: '28%', left: '18%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 0.8s' }}
+            style={{ position: 'absolute', top: '28%', left: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 0.8s' }}
             data-base-rot="-6" data-float-delay="0" data-float-dur="5000"
           >
             <span className="font-jetbrains text-xs text-[#3B82F6] font-medium block mb-3">CS 101</span>
@@ -732,7 +732,7 @@ export default function LandingPage() {
 
           <div
             className="floating-card absolute w-52 liquid-glass rounded-2xl p-4"
-            style={{ position: 'absolute', top: '52%', right: '18%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.4s' }}
+            style={{ position: 'absolute', top: '52%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.4s' }}
             data-base-rot="2" data-float-delay="1600" data-float-dur="5200"
           >
             <div className="flex flex-col gap-2 text-left">
@@ -753,7 +753,7 @@ export default function LandingPage() {
 
           <div
             className="floating-card absolute w-52 liquid-glass rounded-2xl p-5"
-            style={{ position: 'absolute', top: '24%', right: '18%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
+            style={{ position: 'absolute', top: '24%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
             data-base-rot="4" data-float-delay="1000" data-float-dur="6000"
           >
             <div className="flex flex-col gap-3">
@@ -766,7 +766,7 @@ export default function LandingPage() {
 
           <div
             className="floating-card absolute w-44 liquid-glass rounded-2xl p-4 flex flex-col gap-2"
-            style={{ position: 'absolute', bottom: '34%', left: '24%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.2s' }}
+            style={{ position: 'absolute', bottom: '34%', left: '14%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.2s' }}
             data-base-rot="-6" data-float-delay="500" data-float-dur="4500"
           >
             <div className="liquid-glass-subtle rounded-xl py-2 flex items-center justify-center gap-2">
@@ -796,7 +796,7 @@ export default function LandingPage() {
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 500ms',
-          }} className="font-playfair text-2xl sm:text-3xl md:text-4xl text-[var(--brand-text2)] max-w-xl mx-auto mt-7 leading-relaxed tracking-tight font-medium">
+          }} className="font-playfair text-2xl sm:text-3xl md:text-4xl text-[var(--brand-text2)] max-w-xl mx-auto mt-2 leading-relaxed tracking-tight font-medium">
             {heroText2 || '\u00A0'}
           </p>
 
@@ -805,21 +805,13 @@ export default function LandingPage() {
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 700ms',
           }} className="flex flex-col items-center gap-4 mt-10">
-            <div className="flex flex-col sm:flex-row gap-4 items-center justify-center">
-              <button onClick={startOnboarding} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
-                Get Started
-              </button>
-              <button onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })} className="bg-white border border-black/[0.06] text-[var(--brand-text1)] px-10 py-4 rounded-full font-medium text-base shadow-[0_4px_14px_rgba(15,23,42,0.06)] hover:shadow-[0_6px_20px_rgba(15,23,42,0.08)] transition-all duration-500 hover:scale-[1.02] active:scale-[0.98]">
-                See What&apos;s Inside <span className="ml-1.5 text-black/30">↓</span>
-              </button>
-            </div>
             <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
               <button
                 onClick={() => { setBetaModalOpen(true); if (betaEverSubmitted) setBetaSubmitted(true); }}
-                className={`relative overflow-hidden group px-10 py-4 rounded-full font-medium text-base tracking-wide text-white shadow-md transition-all duration-500 hover:scale-[1.02] active:scale-[0.98] landing-btn-shimmer${betaEverSubmitted ? '' : ' beta-glow-btn'}`}
-                style={{ background: '#4a9e5c', border: 'none' }}
-                onMouseEnter={e => { e.currentTarget.style.background = '#3d8a4e'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = '#4a9e5c'; }}
+                className={`relative overflow-hidden group px-10 py-4 rounded-full font-medium text-base tracking-wide text-white shadow-[0_4px_14px_rgba(27,108,66,0.18)] hover:shadow-[0_6px_20px_rgba(27,108,66,0.28)] transition-all duration-500 hover:scale-[1.02] active:scale-[0.98] landing-btn-shimmer${betaEverSubmitted ? '' : ' beta-glow-btn'}`}
+                style={{ background: '#2D8F5C', border: 'none' }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#236F48'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#2D8F5C'; }}
               >
                 Sign up for Beta Testing
               </button>
@@ -830,7 +822,7 @@ export default function LandingPage() {
         {/* Scroll Indicator */}
         <div style={{ opacity: onboardingPhase !== 'idle' ? 0 : (heroMounted ? 1 : 0), transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 landing-animate-float-indicator flex flex-col items-center">
           <div className="w-px h-14 landing-divider-v" />
-          <span className="font-jetbrains text-xs tracking-[0.4em] text-[var(--brand-text2)] opacity-70 mt-3">SCROLL</span>
+          <span className="font-jetbrains text-xs tracking-[0.4em] text-[var(--brand-text2)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
         </div>
       </section>
 
@@ -1180,14 +1172,14 @@ export default function LandingPage() {
           }} />
           <p style={{
             position: 'relative',
-            fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+            fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif",
             fontSize: 'clamp(26px, 4vw, 50px)',
-            fontWeight: 300,
+            fontWeight: 600,
             color: '#0f172a',
             textShadow: '0 1px 2px rgba(255,255,255,0.9)',
-            letterSpacing: '0.01em',
+            letterSpacing: '-0.02em',
             textAlign: 'center',
-            lineHeight: 1.3,
+            lineHeight: 1.2,
             margin: 0,
           }}>
             Let&apos;s Learn About You...
@@ -1214,14 +1206,14 @@ export default function LandingPage() {
           }} />
           <p style={{
             position: 'relative',
-            fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+            fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif",
             fontSize: 'clamp(30px, 5vw, 62px)',
-            fontWeight: 300,
+            fontWeight: 600,
             color: '#0f172a',
             textShadow: '0 1px 2px rgba(255,255,255,0.9)',
-            letterSpacing: '0.01em',
+            letterSpacing: '-0.025em',
             textAlign: 'center',
-            lineHeight: 1.2,
+            lineHeight: 1.1,
             margin: 0,
           }}>
             Welcome to Sapling
