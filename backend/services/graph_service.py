@@ -314,124 +314,174 @@ def delete_course(user_id: str, course_id: str) -> dict:
     return {"deleted": True}
 
 
-def _node_filters(user_id: str, concept_name: str, course_id: str | None) -> dict:
-    f = {"user_id": f"eq.{user_id}", "concept_name": f"eq.{concept_name}"}
-    if course_id:
-        f["course_id"] = f"eq.{course_id}"
-    return f
+def _normalize_concept(name: str) -> str:
+    """Case-fold + collapse whitespace so dedup is tolerant of LLM casing/spacing drift."""
+    return " ".join((name or "").split()).casefold()
+
+
+def _coerce_unit(value, default: float = 0.0) -> float:
+    """Coerce an LLM-emitted scalar into a [0,1] float, tolerant of None/strings."""
+    try:
+        f = float(value if value is not None else default)
+    except (TypeError, ValueError):
+        f = default
+    return max(0.0, min(1.0, f))
 
 
 def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None = None) -> list:
     """
     Apply a graph_update dict to the DB. Returns mastery_changes list.
     If course_id is provided, all new/updated nodes will be associated with that course.
+
+    Concept dedup is case- and whitespace-insensitive: "Linear Regression",
+    "linear regression", and " Linear  Regression " all resolve to the same node.
     """
-    mastery_changes = []
+    mastery_changes: list = []
     touched_courses: set = set()
 
+    fetch_filters = {"user_id": f"eq.{user_id}"}
+    if course_id:
+        fetch_filters["course_id"] = f"eq.{course_id}"
+    existing_rows = table("graph_nodes").select(
+        "id,concept_name,mastery_score,times_studied,course_id,mastery_events",
+        filters=fetch_filters,
+    ) or []
+
+    # Normalized name → row, scoped to (user_id [, course_id]). Last write wins
+    # if duplicates pre-exist; the dedup script in db/dedup_nodes.py cleans those.
+    by_name: dict[str, dict] = {}
+    for row in existing_rows:
+        norm = _normalize_concept(row.get("concept_name") or "")
+        if norm:
+            by_name[norm] = row
+
+    inserted_in_batch: dict[str, dict] = {}
+
     for new_node in graph_update.get("new_nodes", []):
-        name = new_node.get("concept_name", "")
+        name = " ".join((new_node.get("concept_name") or "").split())
+        if not name:
+            continue
+        norm = _normalize_concept(name)
+        if norm in by_name or norm in inserted_in_batch:
+            continue
+
         node_course_id = course_id or new_node.get("course_id")
-        init_m = float(new_node.get("initial_mastery", 0.0))
-        
-        existing = table("graph_nodes").select(
-            "id",
-            filters=_node_filters(user_id, name, node_course_id),
-        )
-        
-        if not existing:
-            table("graph_nodes").insert({
-                "id": str(uuid.uuid4()),
-                "user_id": user_id,
-                "concept_name": name,
-                "mastery_score": init_m,
-                "mastery_tier": get_mastery_tier(init_m),
-                "course_id": node_course_id,
-                "mastery_events": [],
-            })
-            if node_course_id:
-                touched_courses.add(node_course_id)
+        init_m = _coerce_unit(new_node.get("initial_mastery"), 0.0)
+
+        new_id = str(uuid.uuid4())
+        table("graph_nodes").insert({
+            "id": new_id,
+            "user_id": user_id,
+            "concept_name": name,
+            "mastery_score": init_m,
+            "mastery_tier": get_mastery_tier(init_m),
+            "course_id": node_course_id,
+            "mastery_events": [],
+        })
+        # Track in-batch inserts so subsequent updated_nodes / new_edges in the
+        # same call resolve against just-created nodes.
+        inserted_in_batch[norm] = {
+            "id": new_id,
+            "concept_name": name,
+            "mastery_score": init_m,
+            "times_studied": 0,
+            "course_id": node_course_id,
+            "mastery_events": [],
+        }
+        if node_course_id:
+            touched_courses.add(node_course_id)
+
+    def _lookup(name: str) -> dict | None:
+        norm = _normalize_concept(name)
+        return by_name.get(norm) or inserted_in_batch.get(norm)
 
     for upd in graph_update.get("updated_nodes", []):
-        name = upd.get("concept_name", "")
-        delta = float(upd.get("mastery_delta", 0.0))
-        rows = table("graph_nodes").select(
-            "id,mastery_score,times_studied,course_id,mastery_events",
-            filters=_node_filters(user_id, name, course_id),
+        name = (upd.get("concept_name") or "").strip()
+        if not name:
+            continue
+        try:
+            delta = float(upd.get("mastery_delta", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            delta = 0.0
+        row = _lookup(name)
+        if not row:
+            continue
+
+        before = row["mastery_score"]
+        after = max(0.0, min(1.0, before + delta))
+
+        existing_events = row.get("mastery_events") or []
+        new_event = {
+            "ts": datetime.utcnow().isoformat(),
+            "delta": delta,
+            "reason": upd.get("reason", ""),
+            "event_type": upd.get("event_type", "interaction"),
+        }
+        updated_events = (existing_events + [new_event])[-20:]
+
+        table("graph_nodes").update(
+            {
+                "mastery_score": after,
+                "mastery_tier": get_mastery_tier(after),
+                "times_studied": (row.get("times_studied") or 0) + 1,
+                "last_studied_at": datetime.utcnow().isoformat(),
+                "mastery_events": updated_events,
+            },
+            filters={"id": f"eq.{row['id']}"},
         )
-        if rows:
-            row = rows[0]
-            before = row["mastery_score"]
-            after = max(0.0, min(1.0, before + delta))
+        mastery_changes.append({"concept": row["concept_name"], "before": before, "after": after})
 
-            existing_events = row.get("mastery_events") or []
-            new_event = {
-                "ts": datetime.utcnow().isoformat(),
-                "delta": delta,
-                "reason": upd.get("reason", ""),
-                "event_type": upd.get("event_type", "interaction"),
-            }
-            updated_events = (existing_events + [new_event])[-20:]
+        cid = row.get("course_id")
+        if cid:
+            touched_courses.add(cid)
 
-            table("graph_nodes").update(
-                {
-                    "mastery_score": after,
-                    "mastery_tier": get_mastery_tier(after),
-                    "times_studied": row["times_studied"] + 1,
-                    "last_studied_at": datetime.utcnow().isoformat(),
-                    "mastery_events": updated_events,
-                },
-                filters={"id": f"eq.{row['id']}"},
-            )
-            mastery_changes.append({"concept": name, "before": before, "after": after})
-            
-            cid = row.get("course_id")
-            if cid:
-                touched_courses.add(cid)
-                
     if mastery_changes:
         update_streak(user_id)
 
     for new_edge in graph_update.get("new_edges", []):
-        src_name = new_edge.get("source", "")
-        tgt_name = new_edge.get("target", "")
-        strength = float(new_edge.get("strength", 0.5))
+        src_name = " ".join((new_edge.get("source") or "").split())
+        tgt_name = " ".join((new_edge.get("target") or "").split())
+        if not src_name or not tgt_name:
+            continue
+        try:
+            strength = float(new_edge.get("strength", 0.5) or 0.5)
+        except (TypeError, ValueError):
+            strength = 0.5
+        strength = max(0.0, min(1.0, strength))
         relationship_type = new_edge.get("relationship_type", "related")
-        src_rows = table("graph_nodes").select(
-            "id", filters=_node_filters(user_id, src_name, course_id)
-        )
-        tgt_rows = table("graph_nodes").select(
-            "id", filters=_node_filters(user_id, tgt_name, course_id)
-        )
-        if src_rows and tgt_rows:
-            src_id = src_rows[0]["id"]
-            tgt_id = tgt_rows[0]["id"]
-            existing_edge = table("graph_edges").select(
-                "id",
-                filters={
-                    "user_id": f"eq.{user_id}",
-                    "source_node_id": f"eq.{src_id}",
-                    "target_node_id": f"eq.{tgt_id}",
-                },
-            )
-            if not existing_edge:
-                table("graph_edges").insert({
-                    "id": str(uuid.uuid4()),
-                    "user_id": user_id,
-                    "source_node_id": src_id,
-                    "target_node_id": tgt_id,
-                    "strength": strength,
-                    "relationship_type": relationship_type,
-                })
 
-    # Refresh shared course context for every course touched in this update
+        src = _lookup(src_name)
+        tgt = _lookup(tgt_name)
+        if not src or not tgt:
+            continue
+        if src["id"] == tgt["id"]:
+            continue
+
+        existing_edge = table("graph_edges").select(
+            "id",
+            filters={
+                "user_id": f"eq.{user_id}",
+                "source_node_id": f"eq.{src['id']}",
+                "target_node_id": f"eq.{tgt['id']}",
+            },
+        )
+        if not existing_edge:
+            table("graph_edges").insert({
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "source_node_id": src["id"],
+                "target_node_id": tgt["id"],
+                "strength": strength,
+                "relationship_type": relationship_type,
+            })
+
     if touched_courses:
         from services.course_context_service import update_course_context
         for cid in touched_courses:
             try:
                 update_course_context(cid)
             except Exception:
-                pass  # never block the main response for a context refresh
+                pass
 
     return mastery_changes
 

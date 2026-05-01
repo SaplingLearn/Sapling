@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
+from routes.documents import _process_document
 
 client = TestClient(app)
 
@@ -302,6 +303,106 @@ class TestUploadDocument:
         assert r.status_code == 200
         mock_save.assert_not_called()
 
+    def test_syllabus_populates_graph_concepts(self):
+        ai_result = {
+            "category": "syllabus",
+            "summary": "Course syllabus",
+            "key_takeaways": [],
+            "flashcards": [],
+            "assignments": [],
+            "concepts": ["Linear Regression", "Big-O Analysis", "  ", ""],
+        }
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="syllabus text"),
+            patch("routes.documents.call_gemini_json", return_value=ai_result),
+            patch("routes.documents.save_assignments_to_db"),
+            patch("routes.documents.apply_graph_update") as mock_apply,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "d_concept"}]
+            r = _make_upload(filename="syllabus.pdf", course_id="course-42", user_id="u1")
+
+        assert r.status_code == 200
+        mock_apply.assert_called_once()
+        args, kwargs = mock_apply.call_args
+        assert args[0] == "u1"
+        assert kwargs["course_id"] == "course-42"
+        new_nodes = args[1]["new_nodes"]
+        assert [n["concept_name"] for n in new_nodes] == ["Linear Regression", "Big-O Analysis"]
+        assert all(n["initial_mastery"] == 0.0 for n in new_nodes)
+
+    def test_assignment_populates_graph_concepts(self):
+        ai_result = {
+            "category": "assignment",
+            "summary": "Problem set 3",
+            "key_takeaways": [],
+            "flashcards": [],
+            "assignments": [],
+            "concepts": ["Gradient Descent", "Cross-Entropy Loss"],
+        }
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="pset text"),
+            patch("routes.documents.call_gemini_json", return_value=ai_result),
+            patch("routes.documents.save_assignments_to_db") as mock_save,
+            patch("routes.documents.apply_graph_update") as mock_apply,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "d_assign_concept"}]
+            r = _make_upload(filename="pset3.pdf", course_id="course-7", user_id="u1")
+
+        assert r.status_code == 200
+        mock_save.assert_not_called()
+        mock_apply.assert_called_once()
+        args, kwargs = mock_apply.call_args
+        assert args[0] == "u1"
+        assert kwargs["course_id"] == "course-7"
+        assert [n["concept_name"] for n in args[1]["new_nodes"]] == ["Gradient Descent", "Cross-Entropy Loss"]
+
+    def test_non_syllabus_non_assignment_skips_concept_population(self):
+        ai_result = {
+            "category": "lecture_notes",
+            "summary": "Notes",
+            "key_takeaways": [],
+            "flashcards": [],
+            "concepts": ["Should be ignored"],
+        }
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="notes"),
+            patch("routes.documents.call_gemini_json", return_value=ai_result),
+            patch("routes.documents.apply_graph_update") as mock_apply,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "d_no_concept"}]
+            r = _make_upload()
+
+        assert r.status_code == 200
+        mock_apply.assert_not_called()
+
+    def test_concept_population_failure_does_not_fail_upload(self):
+        ai_result = {
+            "category": "syllabus",
+            "summary": "Syllabus",
+            "key_takeaways": [],
+            "flashcards": [],
+            "assignments": [],
+            "concepts": ["Concept A"],
+        }
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.call_gemini_json", return_value=ai_result),
+            patch("routes.documents.save_assignments_to_db"),
+            patch("routes.documents.apply_graph_update", side_effect=RuntimeError("oops")),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "d_concept_fail"}]
+            r = _make_upload(filename="syllabus.pdf")
+
+        assert r.status_code == 200
+
     def test_syllabus_extraction_failure_does_not_fail_upload(self):
         """Assignment save errors must be swallowed so the upload succeeds."""
         ai_result = {
@@ -344,6 +445,50 @@ class TestUploadDocument:
 
         assert insert_call["user_id"] == "user_andres"
         assert insert_call["course_id"] == "c-99"
+
+    # ── _process_document harness ─────────────────────────────────────────────
+
+    def test_process_document_coerces_garbage_into_safe_shape(self):
+        """When the LLM emits the wrong types, _process_document normalizes them."""
+        garbage = {
+            "category": "not-a-real-category",
+            "summary": 12345,
+            "key_takeaways": "should be a list, not a string",
+            "flashcards": [{"question": "Q", "answer": "A"}, "bad", None],
+            "assignments": "not a list either",
+            "concepts": "Linear Regression, Big-O",  # string instead of list
+        }
+        with patch("routes.documents.call_gemini_json", return_value=garbage):
+            result = _process_document("file.pdf", "text")
+
+        assert result["category"] == "other"
+        assert result["summary"] == ""  # int coerced to ""
+        assert result["key_takeaways"] == []
+        assert result["flashcards"] == [{"question": "Q", "answer": "A"}]
+        assert result["assignments"] == []
+        assert result["concepts"] == []  # comma-separated string is rejected
+
+    def test_process_document_strips_blanks_from_concepts(self):
+        ai_result = {
+            "category": "syllabus",
+            "summary": "S",
+            "key_takeaways": [],
+            "flashcards": [],
+            "assignments": [],
+            "concepts": ["A", "  B  ", "", "   ", 42, None, "C"],
+        }
+        with patch("routes.documents.call_gemini_json", return_value=ai_result):
+            result = _process_document("file.pdf", "text")
+
+        assert result["concepts"] == ["A", "B", "C"]
+
+    def test_process_document_handles_non_dict_response(self):
+        with patch("routes.documents.call_gemini_json", return_value=["not", "a", "dict"]):
+            result = _process_document("file.pdf", "text")
+
+        assert result["category"] == "other"
+        assert result["concepts"] == []
+        assert result["assignments"] == []
 
     def test_falls_back_to_row_dict_when_insert_returns_empty(self):
         """If table.insert returns [], the endpoint should return the constructed row dict."""

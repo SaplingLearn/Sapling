@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { createPortal } from "react-dom";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { Pill } from "../Pill";
@@ -17,23 +18,18 @@ import {
 } from "@/lib/api";
 import type { Document as Doc } from "@/lib/types";
 
-// Color communicates learning value, not decoration. Three semantic
-// tiers replace the previous 7-color category palette:
-//  - Core (green):      the materials you study FROM (lecture notes,
-//                       slides, readings, generated study guides)
-//  - Structural (ink):  the scaffolding (syllabus)
-//  - Do-work (rust):    things to produce or submit (assignment)
 const catColor: Record<Doc["category"], string> = {
   lecture_notes: "var(--c-sage)",
-  slides:        "var(--c-sage)",
-  reading:       "var(--c-sage)",
-  study_guide:   "var(--c-sage)",
   syllabus:      "var(--c-ink)",
+  reading:       "var(--c-plum)",
+  slides:        "var(--c-amber)",
+  study_guide:   "var(--c-teal)",
   assignment:    "var(--c-rust)",
   other:         "var(--text-muted)",
 };
 
 type Cat = Doc["category"] | "all";
+type View = "grid" | "list";
 
 export function Library() {
   const toast = useToast();
@@ -46,8 +42,12 @@ export function Library() {
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [detail, setDetail] = React.useState<Doc | null>(null);
   const [query, setQuery] = React.useState("");
+  const [view, setView] = React.useState<View>("grid");
 
-  useBodyScrollLock(Boolean(detail) && isMobile);
+  const isAssignment = detail?.category === "assignment";
+  useBodyScrollLock(Boolean(detail) && (isMobile || isAssignment));
+  const [modalMounted, setModalMounted] = React.useState(false);
+  React.useEffect(() => setModalMounted(true), []);
 
   const cats: Cat[] = ["all", "lecture_notes", "syllabus", "reading", "slides", "study_guide", "assignment"];
 
@@ -79,6 +79,12 @@ export function Library() {
       return true;
     });
   }, [documents, cat, courseFilter, query]);
+
+  const courseLookup = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of courses) map[c.course_id] = c.course_code || c.course_name;
+    return map;
+  }, [courses]);
 
   const groupedByCourse = React.useMemo(() => {
     const counts: Record<string, number> = { all: documents.length, uncategorized: 0 };
@@ -122,25 +128,39 @@ export function Library() {
           }
         />
 
-        {/* Only show category pills that actually have documents,
-            plus "all" — prevents 7-pill chip spam when the user has
-            uploaded just a couple of things. */}
         <div style={{
-          padding: "14px 32px", display: "flex", gap: 10, alignItems: "center",
+          padding: "14px 32px", display: "flex", gap: 6, alignItems: "center",
           borderBottom: "1px solid var(--border)", flexWrap: "wrap",
         }}>
-          <span className="label-micro">Category</span>
-          {cats
-            .filter(c => c === "all" || documents.some(d => d.category === c))
-            .map((c) => (
-              <Pill key={c} active={cat === c} onClick={() => setCat(c)}>
-                {c.replace("_", " ")}
-              </Pill>
+          {cats.map((c) => (
+            <Pill key={c} active={cat === c} onClick={() => setCat(c)}>
+              {c.replace("_", " ")}
+            </Pill>
+          ))}
+          <div style={{ flex: 1 }} />
+          <div style={{
+            display: "flex", border: "1px solid var(--border)",
+            borderRadius: "var(--r-sm)", overflow: "hidden",
+          }}>
+            {(["grid", "list"] as View[]).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                style={{
+                  padding: "4px 10px", fontSize: 11, textTransform: "capitalize",
+                  background: view === v ? "var(--accent-soft)" : "transparent",
+                  color: view === v ? "var(--accent)" : "var(--text-dim)",
+                  border: "none", cursor: "pointer",
+                }}
+              >
+                {v}
+              </button>
             ))}
+          </div>
         </div>
 
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-          <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
             {filtered.length === 0 && (
               <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto" }}>
                 <div className="h-serif" style={{ fontSize: 22, color: "var(--text)" }}>Your library is quiet</div>
@@ -150,68 +170,127 @@ export function Library() {
                 </div>
               </div>
             )}
-            {/* Editorial list layout replaces the previous 280px card grid
-                (the "bubble panel disease" anti-pattern from .impeccable.md).
-                Each row uses type hierarchy — serif title, sans meta,
-                Spectral summary — rather than visual containers. */}
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {filtered.map((d, i) => {
-                const isSelected = detail?.id === d.id;
-                return (
-                  <button
-                    key={d.id}
-                    onClick={() => setDetail(d)}
-                    style={{
-                      display: "flex", alignItems: "flex-start", gap: 14,
-                      width: "100%", padding: "18px 4px",
-                      borderTop: i === 0 ? "none" : "1px solid var(--border)",
-                      background: isSelected ? "var(--accent-soft)" : "transparent",
-                      textAlign: "left", cursor: "pointer",
-                      transition: "background var(--dur-fast) var(--ease)",
-                    }}
-                  >
-                    <span
-                      aria-hidden
+            {view === "grid" ? (
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                gap: 16,
+              }}>
+                {filtered.map(d => {
+                  const isSelected = detail?.id === d.id;
+                  const courseLabel = courseLookup[d.course_id];
+                  return (
+                    <button
+                      key={d.id}
+                      onClick={() => setDetail(d)}
+                      className="card"
                       style={{
-                        width: 8, height: 8, borderRadius: "50%",
-                        background: catColor[d.category],
-                        marginTop: 10, flexShrink: 0,
+                        padding: "var(--pad-lg)", display: "flex", flexDirection: "column",
+                        gap: 10, textAlign: "left", cursor: "pointer",
+                        borderColor: isSelected ? "var(--accent-border)" : undefined,
+                        background: isSelected ? "var(--accent-soft)" : undefined,
+                        transition: "border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease)",
                       }}
-                    />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-                        <div className="h-serif" style={{ fontSize: 17, lineHeight: 1.25, color: "var(--text)" }}>
-                          {d.file_name}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div style={{
+                          width: 40, height: 48, borderRadius: "var(--r-sm)",
+                          background: catColor[d.category], color: "#fff",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          flexShrink: 0,
+                        }}>
+                          <Icon name="doc" size={18} />
                         </div>
-                        <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "capitalize" }}>
-                          {d.category.replace("_", " ")} · {new Date(d.created_at).toLocaleDateString()}
+                        <span className="chip" style={{ textTransform: "capitalize" }}>
+                          {d.category.replace("_", " ")}
                         </span>
                       </div>
-                      {d.summary && (
-                        <div className="body-serif" style={{
-                          fontSize: 13, color: "var(--text-dim)", marginTop: 4,
+                      <div>
+                        <div className="h-serif" style={{
+                          fontSize: 16, lineHeight: 1.3, color: "var(--text)",
                           display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                        }}>
+                          {d.file_name}
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                          {courseLabel ? `${courseLabel} · ` : ""}{new Date(d.created_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                      {d.summary && (
+                        <div style={{
+                          fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5,
+                          display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden",
                         }}>
                           {d.summary}
                         </div>
                       )}
                       {d.key_takeaways && d.key_takeaways.length > 0 && (
-                        <div style={{
-                          fontSize: 11, color: "var(--text-muted)", marginTop: 6,
-                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }}>
-                          {d.key_takeaways.slice(0, 3).join(" · ")}
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: "auto" }}>
+                          {d.key_takeaways.slice(0, 3).map(t => (
+                            <span key={t} className="chip chip--accent" style={{ fontSize: 10 }}>{t}</span>
+                          ))}
                         </div>
                       )}
-                    </div>
-                    <Icon name="chev" size={14} />
-                  </button>
-                );
-              })}
-            </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="card" style={{ padding: 0 }}>
+                {filtered.map((d, i) => {
+                  const isSelected = detail?.id === d.id;
+                  return (
+                    <button
+                      key={d.id}
+                      onClick={() => setDetail(d)}
+                      style={{
+                        width: "100%", display: "flex", alignItems: "center", gap: 16,
+                        padding: "14px 20px", textAlign: "left", cursor: "pointer",
+                        borderBottom: i < filtered.length - 1 ? "1px solid var(--border)" : "none",
+                        background: isSelected ? "var(--accent-soft)" : "transparent",
+                        border: "none", borderTop: "none", borderLeft: "none", borderRight: "none",
+                        transition: "background var(--dur-fast) var(--ease)",
+                      }}
+                    >
+                      <div style={{
+                        width: 28, height: 36, borderRadius: "var(--r-xs)",
+                        background: catColor[d.category], color: "#fff",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        flexShrink: 0,
+                      }}>
+                        <Icon name="doc" size={14} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          fontSize: 14, fontWeight: 500, color: "var(--text)",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                          {d.file_name}
+                        </div>
+                        <div style={{
+                          fontSize: 11, color: "var(--text-muted)",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                          {d.summary || "—"}
+                        </div>
+                      </div>
+                      <span className="chip" style={{ textTransform: "capitalize", flexShrink: 0 }}>
+                        {d.category.replace("_", " ")}
+                      </span>
+                      <span style={{
+                        fontSize: 11, color: "var(--text-muted)",
+                        width: 80, textAlign: "right", flexShrink: 0,
+                      }}>
+                        {new Date(d.created_at).toLocaleDateString()}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          {detail && !isMobile && (
+          {detail && !isMobile && !isAssignment && (
             <DetailPanel
               doc={detail}
               onClose={() => setDetail(null)}
@@ -257,7 +336,7 @@ export function Library() {
         </aside>
       )}
 
-      {detail && isMobile && (
+      {detail && isMobile && !isAssignment && (
         <div
           onClick={() => setDetail(null)}
           style={{
@@ -285,6 +364,39 @@ export function Library() {
             />
           </div>
         </div>
+      )}
+
+      {detail && isAssignment && modalMounted && createPortal(
+        <div
+          onClick={() => setDetail(null)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(19,38,16,0.45)",
+            zIndex: 200, display: "grid", placeItems: "center", padding: 20,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="card slide-up"
+            style={{
+              width: "min(820px, 100%)", maxHeight: "88vh",
+              overflow: "hidden", padding: 0, display: "flex", flexDirection: "column",
+            }}
+          >
+            <div style={{ overflowY: "auto" }}>
+              <DetailPanel
+                doc={detail}
+                embedded
+                onClose={() => setDetail(null)}
+                onDeleted={async () => {
+                  setDetail(null);
+                  await load();
+                  toast.success("Document deleted");
+                }}
+              />
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       <DocumentUploadModal

@@ -266,39 +266,131 @@ class TestDeleteCourse:
 
 # ── apply_graph_update ────────────────────────────────────────────────────────
 
+def _bulk_factory(existing_nodes=None, existing_edges=None):
+    """Factory that returns a fresh mock per table; bulk-fetch returns the given rows."""
+    nodes = list(existing_nodes or [])
+    edges = list(existing_edges or [])
+    mocks = {}
+
+    def factory(name):
+        if name not in mocks:
+            m = MagicMock()
+            if name == "graph_nodes":
+                m.select.return_value = nodes
+            elif name == "graph_edges":
+                m.select.return_value = edges
+            elif name == "users":
+                m.select.return_value = [{"streak_count": 0, "last_active_date": None}]
+            else:
+                m.select.return_value = []
+            m.insert.return_value = []
+            m.update.return_value = []
+            m.delete.return_value = []
+            mocks[name] = m
+        return mocks[name]
+
+    return factory, mocks
+
+
 class TestApplyGraphUpdate:
     def test_inserts_new_node(self):
-        mock = _simple_mock(select_returns=[])
+        factory, mocks = _bulk_factory(existing_nodes=[])
         graph_update = {
-            "new_nodes": [{"concept_name": "Recursion", "subject": "CS", "initial_mastery": 0.0}],
+            "new_nodes": [{"concept_name": "Recursion", "initial_mastery": 0.0}],
             "updated_nodes": [],
             "new_edges": [],
         }
-        with patch("services.graph_service.table", return_value=mock):
+        with patch("services.graph_service.table", side_effect=factory):
             result = apply_graph_update("u1", graph_update)
 
         assert result == []
-        mock.insert.assert_called()
+        mocks["graph_nodes"].insert.assert_called_once()
+        inserted = mocks["graph_nodes"].insert.call_args[0][0]
+        assert inserted["concept_name"] == "Recursion"
+        assert inserted["mastery_score"] == 0.0
+        assert inserted["mastery_tier"] == "unexplored"
 
-    def test_skips_insert_for_existing_node(self):
-        mock = _simple_mock(select_returns=[{"id": "existing_node"}])
+    def test_skips_insert_for_existing_node_case_insensitive(self):
+        existing = [
+            {"id": "n1", "concept_name": "Linear Regression", "mastery_score": 0.3,
+             "times_studied": 1, "course_id": "c1", "mastery_events": []}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        # The LLM emits the same concept with different casing/whitespace
         graph_update = {
-            "new_nodes": [{"concept_name": "Recursion", "subject": "CS", "initial_mastery": 0.0}],
+            "new_nodes": [{"concept_name": "  linear   regression ", "initial_mastery": 0.0}],
             "updated_nodes": [],
             "new_edges": [],
         }
-        with patch("services.graph_service.table", return_value=mock):
-            apply_graph_update("u1", graph_update)
+        with patch("services.graph_service.table", side_effect=factory):
+            apply_graph_update("u1", graph_update, course_id="c1")
 
-        mock.insert.assert_not_called()
+        mocks["graph_nodes"].insert.assert_not_called()
+
+    def test_dedups_within_a_single_batch(self):
+        factory, mocks = _bulk_factory(existing_nodes=[])
+        graph_update = {
+            "new_nodes": [
+                {"concept_name": "Gradient Descent", "initial_mastery": 0.0},
+                {"concept_name": "gradient descent", "initial_mastery": 0.0},
+                {"concept_name": "Gradient  Descent", "initial_mastery": 0.0},
+            ],
+            "updated_nodes": [],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            apply_graph_update("u1", graph_update, course_id="c1")
+
+        assert mocks["graph_nodes"].insert.call_count == 1
+
+    def test_skips_blank_concept_names(self):
+        factory, mocks = _bulk_factory(existing_nodes=[])
+        graph_update = {
+            "new_nodes": [
+                {"concept_name": "", "initial_mastery": 0.0},
+                {"concept_name": "   ", "initial_mastery": 0.0},
+                {"concept_name": None, "initial_mastery": 0.0},
+            ],
+            "updated_nodes": [],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            apply_graph_update("u1", graph_update, course_id="c1")
+
+        mocks["graph_nodes"].insert.assert_not_called()
+
+    def test_coerces_null_initial_mastery(self):
+        factory, mocks = _bulk_factory(existing_nodes=[])
+        graph_update = {
+            "new_nodes": [{"concept_name": "X", "initial_mastery": None}],
+            "updated_nodes": [],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            apply_graph_update("u1", graph_update, course_id="c1")
+
+        inserted = mocks["graph_nodes"].insert.call_args[0][0]
+        assert inserted["mastery_score"] == 0.0
+
+    def test_clamps_initial_mastery_above_one(self):
+        factory, mocks = _bulk_factory(existing_nodes=[])
+        graph_update = {
+            "new_nodes": [{"concept_name": "X", "initial_mastery": 5.0}],
+            "updated_nodes": [],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            apply_graph_update("u1", graph_update, course_id="c1")
+
+        inserted = mocks["graph_nodes"].insert.call_args[0][0]
+        assert inserted["mastery_score"] == 1.0
 
     def test_updates_mastery_score(self):
-        def factory(name):
-            mock = MagicMock()
-            mock.select.return_value = [{"id": "n1", "mastery_score": 0.4, "times_studied": 2, "subject": "Math"}]
-            mock.update.return_value = []
-            return mock
-
+        existing = [
+            {"id": "n1", "concept_name": "Algebra", "mastery_score": 0.4,
+             "times_studied": 2, "course_id": "c1", "mastery_events": []}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
         graph_update = {
             "new_nodes": [],
             "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": 0.2}],
@@ -306,66 +398,113 @@ class TestApplyGraphUpdate:
         }
         with patch("services.graph_service.table", side_effect=factory):
             with patch("services.course_context_service.update_course_context"):
-                result = apply_graph_update("u1", graph_update)
+                result = apply_graph_update("u1", graph_update, course_id="c1")
 
         assert len(result) == 1
         assert result[0]["before"] == pytest.approx(0.4)
-        assert result[0]["after"]  == pytest.approx(0.6)
+        assert result[0]["after"] == pytest.approx(0.6)
+        # Mastery change should reference the canonical stored name, not the LLM's
+        assert result[0]["concept"] == "Algebra"
+
+    def test_updates_existing_node_via_case_insensitive_name(self):
+        existing = [
+            {"id": "n1", "concept_name": "Linear Regression", "mastery_score": 0.3,
+             "times_studied": 1, "course_id": "c1", "mastery_events": []}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "linear regression", "mastery_delta": 0.1}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                result = apply_graph_update("u1", graph_update, course_id="c1")
+
+        assert len(result) == 1
+        assert result[0]["concept"] == "Linear Regression"
+
+    def test_can_update_node_just_inserted_in_same_call(self):
+        factory, mocks = _bulk_factory(existing_nodes=[])
+        graph_update = {
+            "new_nodes": [{"concept_name": "Eigenvectors", "initial_mastery": 0.0}],
+            "updated_nodes": [{"concept_name": "Eigenvectors", "mastery_delta": 0.1}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                result = apply_graph_update("u1", graph_update, course_id="c1")
+
+        assert len(result) == 1
+        assert result[0]["before"] == 0.0
+        assert result[0]["after"] == pytest.approx(0.1)
 
     def test_mastery_clamped_at_1(self):
-        def factory(name):
-            mock = MagicMock()
-            mock.select.return_value = [{"id": "n1", "mastery_score": 0.95, "times_studied": 5, "subject": "Math"}]
-            mock.update.return_value = []
-            return mock
-
+        existing = [
+            {"id": "n1", "concept_name": "X", "mastery_score": 0.95,
+             "times_studied": 5, "course_id": "c1", "mastery_events": []}
+        ]
+        factory, _ = _bulk_factory(existing_nodes=existing)
         graph_update = {"new_nodes": [], "updated_nodes": [{"concept_name": "X", "mastery_delta": 0.5}], "new_edges": []}
         with patch("services.graph_service.table", side_effect=factory):
             with patch("services.course_context_service.update_course_context"):
-                result = apply_graph_update("u1", graph_update)
+                result = apply_graph_update("u1", graph_update, course_id="c1")
         assert result[0]["after"] == 1.0
 
     def test_mastery_clamped_at_0(self):
-        def factory(name):
-            mock = MagicMock()
-            mock.select.return_value = [{"id": "n1", "mastery_score": 0.05, "times_studied": 0, "subject": "Math"}]
-            mock.update.return_value = []
-            return mock
-
+        existing = [
+            {"id": "n1", "concept_name": "X", "mastery_score": 0.05,
+             "times_studied": 0, "course_id": "c1", "mastery_events": []}
+        ]
+        factory, _ = _bulk_factory(existing_nodes=existing)
         graph_update = {"new_nodes": [], "updated_nodes": [{"concept_name": "X", "mastery_delta": -0.5}], "new_edges": []}
         with patch("services.graph_service.table", side_effect=factory):
             with patch("services.course_context_service.update_course_context"):
-                result = apply_graph_update("u1", graph_update)
+                result = apply_graph_update("u1", graph_update, course_id="c1")
         assert result[0]["after"] == 0.0
 
     def test_empty_update_returns_empty_list(self):
-        mock = MagicMock()
-        with patch("services.graph_service.table", return_value=mock):
+        factory, _ = _bulk_factory(existing_nodes=[])
+        with patch("services.graph_service.table", side_effect=factory):
             result = apply_graph_update("u1", {"new_nodes": [], "updated_nodes": [], "new_edges": []})
         assert result == []
 
     def test_does_not_add_duplicate_edge(self):
-        def factory(name):
-            mock = MagicMock()
-            if name == "graph_nodes":
-                mock.select.return_value = [{"id": "n1"}]
-            elif name == "graph_edges":
-                # Edge already exists
-                mock.select.return_value = [{"id": "e1"}]
-            return mock
-
+        existing_nodes = [
+            {"id": "n1", "concept_name": "A", "mastery_score": 0.0,
+             "times_studied": 0, "course_id": "c1", "mastery_events": []},
+            {"id": "n2", "concept_name": "B", "mastery_score": 0.0,
+             "times_studied": 0, "course_id": "c1", "mastery_events": []},
+        ]
+        factory, mocks = _bulk_factory(
+            existing_nodes=existing_nodes,
+            existing_edges=[{"id": "e1"}],
+        )
         graph_update = {
             "new_nodes": [],
             "updated_nodes": [],
             "new_edges": [{"source": "A", "target": "B", "strength": 0.7}],
         }
         with patch("services.graph_service.table", side_effect=factory):
-            apply_graph_update("u1", graph_update)
+            apply_graph_update("u1", graph_update, course_id="c1")
 
-        # Confirm no edge insert was called (edge already existed)
-        # We can't directly assert on the edge mock here without more setup,
-        # but the function should return without error
-        assert True
+        mocks["graph_edges"].insert.assert_not_called()
+
+    def test_skips_self_edges(self):
+        existing_nodes = [
+            {"id": "n1", "concept_name": "A", "mastery_score": 0.0,
+             "times_studied": 0, "course_id": "c1", "mastery_events": []},
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing_nodes)
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [],
+            "new_edges": [{"source": "A", "target": "a", "strength": 0.7}],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            apply_graph_update("u1", graph_update, course_id="c1")
+
+        mocks["graph_edges"].insert.assert_not_called()
 
 
 # ── get_recommendations ───────────────────────────────────────────────────────

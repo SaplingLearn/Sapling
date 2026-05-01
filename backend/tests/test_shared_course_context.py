@@ -293,8 +293,8 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
         # patch it at the source module so the import resolves to our mock.
         node_tbl = MagicMock()
         node_tbl.select.return_value = [
-            {"id": "n1", "mastery_score": 0.4, "times_studied": 2,
-             "subject": "CS101", "course_id": "course-1", "mastery_events": []}
+            {"id": "n1", "concept_name": "Loops", "mastery_score": 0.4,
+             "times_studied": 2, "course_id": "course-1", "mastery_events": []}
         ]
 
         def _table(name):
@@ -322,7 +322,8 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
         """A failure in update_course_context must never surface to the caller."""
         node_tbl = MagicMock()
         node_tbl.select.return_value = [
-            {"id": "n1", "mastery_score": 0.4, "times_studied": 2, "course_id": "c1", "subject": "CS101"}
+            {"id": "n1", "concept_name": "Loops", "mastery_score": 0.4,
+             "times_studied": 2, "course_id": "c1", "mastery_events": []}
         ]
 
         def _table(name):
@@ -343,11 +344,12 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
 
     @patch("services.graph_service.table")
     @patch("services.course_context_service.update_course_context")
-    def test_no_context_call_for_general_subject(self, mock_update_ctx, mock_table):
-        """Nodes with subject='General' should NOT trigger a context refresh."""
+    def test_no_context_call_for_node_without_course(self, mock_update_ctx, mock_table):
+        """Nodes with no course_id should NOT trigger a context refresh."""
         node_tbl = MagicMock()
         node_tbl.select.return_value = [
-            {"id": "n1", "mastery_score": 0.4, "times_studied": 0, "subject": "General"}
+            {"id": "n1", "concept_name": "GenericConcept", "mastery_score": 0.4,
+             "times_studied": 0, "course_id": None, "mastery_events": []}
         ]
 
         def _table(name):

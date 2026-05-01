@@ -16,7 +16,7 @@ The graph update format:
 <graph_update>
 {
   "new_nodes": [
-    { "concept_name": "string", "subject": "string", "initial_mastery": 0.0 }
+    { "concept_name": "string", "initial_mastery": 0.0 }
   ],
   "updated_nodes": [
     { "concept_name": "string", "mastery_delta": -0.1, "reason": "string", "event_type": "confusion" }
@@ -29,7 +29,9 @@ The graph update format:
 </graph_update>
 
 Graph update rules:
+- Concept names: when referring to a concept that already exists in the Current Knowledge Graph above, use its EXACT concept_name string (same casing, same wording). For genuinely new concepts, use a concise Title Case noun phrase (e.g. "Linear Regression"). Never invent a new variant for an existing concept.
 - Add new_nodes only for concepts meaningfully discussed, not just mentioned in passing
+- initial_mastery must be a number between 0.0 and 1.0 (use 0.0 for unexplored)
 - mastery_delta per exchange: +0.05 partial understanding, +0.10 clear demonstration, -0.05 confusion, -0.10 fundamental misunderstanding
 - event_type must be one of: "correct" (clear demonstration), "partial" (partial understanding), "confusion" (student is confused), "misconception" (fundamental misunderstanding)
 - Create edges when a connection between concepts is made or demonstrated

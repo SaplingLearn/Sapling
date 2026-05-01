@@ -15,6 +15,7 @@ from db.connection import table
 from services.extraction_service import extract_text_from_file
 from services.gemini_service import call_gemini_json
 from services.calendar_service import save_assignments_to_db
+from services.graph_service import apply_graph_update
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +43,32 @@ def _validate_user(user_id: str) -> None:
         raise HTTPException(status_code=403, detail="Invalid user.")
 
 
+def _coerce_str_list(value) -> list[str]:
+    """Coerce LLM output into a list[str], dropping non-strings and blanks."""
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            s = item.strip()
+            if s:
+                out.append(s)
+    return out
+
+
+def _coerce_dict_list(value) -> list[dict]:
+    """Coerce LLM output into a list[dict]."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
 def _process_document(filename: str, extracted_text: str) -> dict:
-    """Single LLM call: classify, summarize, and extract assignments if syllabus."""
+    """Single LLM call: classify, summarize, and extract assignments + concepts.
+
+    Returns a normalized shape with all fields validated and coerced — callers
+    can trust the types without further isinstance checks.
+    """
     prompt = (
         f"You are processing a student document titled '{filename}'.\n"
         f"Content: {extracted_text[:12000]}\n"
@@ -53,17 +78,44 @@ def _process_document(filename: str, extracted_text: str) -> dict:
         '  "summary": "2-3 sentence overview of the document",\n'
         '  "key_takeaways": ["...", "..."],\n'
         '  "flashcards": [{"question": "...", "answer": "..."}],\n'
-        '  "assignments": []\n'
+        '  "assignments": [],\n'
+        '  "concepts": []\n'
         "}\n"
         'If category is "syllabus", populate "assignments" with every deadline found:\n'
         '  {"title": "...", "due_date": "YYYY-MM-DD (assume 2026 if year missing)", '
         '"course_name": "...", "assignment_type": one of [homework,exam,reading,project,quiz,other], "notes": "..." or null}\n'
-        "For non-syllabus documents, assignments must be []."
+        'If category is "syllabus", also populate "concepts" with 5–15 distinct high-level topics or concepts '
+        'the course will cover, drawn from the schedule, learning outcomes, or topic list. '
+        'Each concept is a short noun phrase (e.g. "Linear Regression", "Big-O Analysis"). '
+        "Use Title Case. Do not include assignment titles, week labels, or administrative items.\n"
+        'If category is "assignment", populate "concepts" with 1–8 specific topics the assignment '
+        "tests or practices, as short Title Case noun phrases. Do not include problem numbers or instructions.\n"
+        'For all other categories, "concepts" must be [].\n'
+        'For non-syllabus documents, "assignments" must be [].\n'
+        '"key_takeaways" must be a JSON array of strings. "flashcards" must be a JSON array '
+        'of objects each with "question" and "answer" string fields. "concepts" must be a JSON '
+        "array of strings (no objects, no comma-separated string)."
     )
-    result = call_gemini_json(prompt)
-    if result.get("category") not in VALID_CATEGORIES:
-        result["category"] = "other"
-    return result
+    raw = call_gemini_json(prompt)
+    if not isinstance(raw, dict):
+        raw = {}
+
+    category = raw.get("category")
+    if category not in VALID_CATEGORIES:
+        category = "other"
+
+    summary = raw.get("summary")
+    if not isinstance(summary, str):
+        summary = ""
+
+    return {
+        "category": category,
+        "summary": summary.strip(),
+        "key_takeaways": _coerce_str_list(raw.get("key_takeaways")),
+        "flashcards": _coerce_dict_list(raw.get("flashcards")),
+        "assignments": _coerce_dict_list(raw.get("assignments")),
+        "concepts": _coerce_str_list(raw.get("concepts")),
+    }
 
 
 @router.get("/user/{user_id}")
@@ -138,16 +190,23 @@ async def upload_document(
     # ── AI: classify, summarize, and extract assignments (single call) ─────────
     ai = _process_document(filename, extracted_text)
 
-    if ai.get("category") == "syllabus":
+    if ai["category"] == "syllabus" and ai["assignments"]:
         try:
-            assignments = ai.get("assignments") or []
-            filtered = [a for a in assignments if isinstance(a, dict)]
-            for a in filtered:
+            for a in ai["assignments"]:
                 a["course_id"] = course_id
-            if filtered:
-                save_assignments_to_db(user_id, filtered)
+            save_assignments_to_db(user_id, ai["assignments"])
         except Exception:
             logger.exception("Assignment save failed for '%s' (best-effort)", filename)
+
+    if ai["category"] in ("syllabus", "assignment") and ai["concepts"]:
+        try:
+            new_nodes = [
+                {"concept_name": name, "initial_mastery": 0.0}
+                for name in ai["concepts"]
+            ]
+            apply_graph_update(user_id, {"new_nodes": new_nodes}, course_id=course_id)
+        except Exception:
+            logger.exception("Concept population failed for '%s' (best-effort)", filename)
 
     # ── Persist to documents table ────────────────────────────────────────────
     now = datetime.now(timezone.utc).isoformat()
@@ -156,10 +215,10 @@ async def upload_document(
         "user_id": user_id,
         "course_id": course_id,
         "file_name": filename,
-        "category": ai.get("category", "other"),
-        "summary": ai.get("summary"),
-        "key_takeaways": ai.get("key_takeaways"),
-        "flashcards": ai.get("flashcards"),
+        "category": ai["category"],
+        "summary": ai["summary"] or None,
+        "key_takeaways": ai["key_takeaways"],
+        "flashcards": ai["flashcards"],
         "created_at": now,
         "processed_at": now,
     }
