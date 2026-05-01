@@ -1,13 +1,10 @@
 import type { Metadata } from 'next';
+import React from 'react';
 import { Spectral, DM_Sans, Inter, Playfair_Display, JetBrains_Mono } from 'next/font/google';
-import './globals.css';
-import { Suspense } from 'react';
 import { UserProvider } from '@/context/UserContext';
-import Navbar from '@/components/Navbar';
-import ErrorBoundary from '@/components/ErrorBoundary';
-import FeedbackFlow from '@/components/FeedbackFlow';
-import SessionFeedbackGlobal from '@/components/SessionFeedbackGlobal';
-import ToastProvider from '@/components/ToastProvider';
+import { ToastProvider } from '@/components/ToastProvider';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import './globals.css';
 
 const spectral = Spectral({
   subsets: ['latin'],
@@ -54,16 +51,18 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${spectral.variable} ${dmSans.variable} ${inter.variable} ${playfairDisplay.variable} ${jetbrainsMono.variable}`}>
+    <html
+      lang="en"
+      data-accent="sage"
+      data-density="compact"
+      className={`${spectral.variable} ${dmSans.variable} ${inter.variable} ${playfairDisplay.variable} ${jetbrainsMono.variable}`}
+    >
       <body>
-        <UserProvider>
-          <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-            <Navbar />
-            <main style={{ flex: 1 }}><ErrorBoundary><ToastProvider>{children}</ToastProvider></ErrorBoundary></main>
-            <Suspense fallback={null}><FeedbackFlow /></Suspense>
-            <Suspense fallback={null}><SessionFeedbackGlobal /></Suspense>
-          </div>
-        </UserProvider>
+        <ErrorBoundary>
+          <ToastProvider>
+            <UserProvider>{children}</UserProvider>
+          </ToastProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );

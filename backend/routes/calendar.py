@@ -165,6 +165,41 @@ def get_all_assignments(user_id: str):
     return {"assignments": assignments}
 
 
+@router.patch("/assignments/{assignment_id}")
+def update_assignment(assignment_id: str, body: dict):
+    user_id = body.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+
+    existing = table("assignments").select(
+        "id", filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}, limit=1,
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    allowed = {"title", "course_id", "due_date", "assignment_type", "notes"}
+    patch = {k: v for k, v in body.items() if k in allowed}
+    if not patch:
+        return {"updated": False}
+
+    if "course_id" in patch and patch["course_id"] == "":
+        patch["course_id"] = None
+
+    table("assignments").update(patch, filters={"id": f"eq.{assignment_id}"})
+    return {"updated": True}
+
+
+@router.delete("/assignments/{assignment_id}")
+def delete_assignment(assignment_id: str, user_id: str = Query(...)):
+    existing = table("assignments").select(
+        "id", filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}, limit=1,
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    table("assignments").delete(filters={"id": f"eq.{assignment_id}"})
+    return {"deleted": True}
+
+
 @router.post("/suggest-study-blocks")
 def suggest_study_blocks(body: StudyBlockBody):
     today = datetime.utcnow().strftime("%Y-%m-%d")

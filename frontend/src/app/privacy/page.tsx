@@ -88,41 +88,119 @@ const sections = [
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-[#F4F7F5] flex flex-col">
-      <div className="flex-1 max-w-3xl mx-auto px-8 py-16 w-full">
-        <div className="flex items-center gap-2 mb-12 fade-up anim-d0">
-          <Link href="/" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: "var(--bg)",
+        color: "var(--text)",
+      }}
+    >
+      <div
+        style={{
+          flex: 1,
+          width: "100%",
+          maxWidth: 720,
+          margin: "0 auto",
+          padding: "64px 32px",
+        }}
+      >
+        <div className="fade-up anim-d0" style={{ marginBottom: 48 }}>
+          <Link
+            href="/"
+            style={{
+              fontSize: 13,
+              color: "var(--text-muted)",
+              textDecoration: "none",
+              transition: "color var(--dur-fast) var(--ease)",
+            }}
+          >
             ← Back to Sapling
           </Link>
         </div>
 
-        <h1 className="text-4xl font-semibold text-gray-900 mb-2 fade-up anim-d1">Privacy Policy</h1>
-        <p className="text-sm text-gray-400 mb-10 fade-up anim-d2">Last updated: March 27, 2026</p>
-
-        <p className="text-gray-600 leading-relaxed mb-10 fade-up anim-d3">
-          This Privacy Policy explains how Sapling ("we," "us," or "our") collects, uses, and protects your information when you use our Service.
+        <h1
+          className="h-serif fade-up anim-d1"
+          style={{ fontSize: 44, marginBottom: 8, color: "var(--text)" }}
+        >
+          Privacy Policy
+        </h1>
+        <p
+          className="fade-up anim-d2"
+          style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 40 }}
+        >
+          Last updated: March 27, 2026
         </p>
 
-        <div className="space-y-8">
+        <p
+          className="body-serif fade-up anim-d3"
+          style={{ fontSize: 16, color: "var(--text-dim)", marginBottom: 40 }}
+        >
+          This Privacy Policy explains how Sapling (&ldquo;we,&rdquo; &ldquo;us,&rdquo; or &ldquo;our&rdquo;) collects,
+          uses, and protects your information when you use our Service.
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
           {sections.map((section, i) => (
-            <div key={section.title} className="fade-up" style={{ animationDelay: `${Math.min(320 + i * 40, 640)}ms` }}>
-              <h2 className="text-base font-semibold text-gray-900 mb-2">{section.title}</h2>
+            <div
+              key={section.title}
+              className="fade-up"
+              style={{ animationDelay: `${Math.min(320 + i * 40, 640)}ms` }}
+            >
+              <h2
+                style={{
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 15,
+                  fontWeight: 600,
+                  color: "var(--text)",
+                  marginBottom: 8,
+                  letterSpacing: "-0.005em",
+                }}
+              >
+                {section.title}
+              </h2>
 
               {section.body && (
-                <p className="text-gray-600 leading-relaxed mb-3">
+                <p
+                  className="body-serif"
+                  style={{ fontSize: 15, color: "var(--text-dim)", marginBottom: 12 }}
+                >
                   {section.body}
                   {section.link && (
-                    <a href={section.link.href} className="text-green-700 hover:underline">{section.link.label}</a>
+                    <a
+                      href={section.link.href}
+                      style={{ color: "var(--accent)", textDecoration: "none" }}
+                    >
+                      {section.link.label}
+                    </a>
                   )}
                   {section.bodySuffix}
                 </p>
               )}
 
               {section.list && (
-                <ul className="space-y-1.5 pl-4">
+                <ul
+                  style={{
+                    paddingLeft: 16,
+                    listStyle: "none",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                  }}
+                >
                   {section.list.map((item, i) => (
-                    <li key={i} className="flex gap-2 text-gray-600">
-                      <span className="text-gray-400 mt-0.5">•</span>
+                    <li
+                      key={i}
+                      className="body-serif"
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        fontSize: 15,
+                        color: "var(--text-dim)",
+                      }}
+                    >
+                      <span style={{ color: "var(--text-muted)", marginTop: 2 }}>•</span>
                       <span>{item}</span>
                     </li>
                   ))}
@@ -130,14 +208,41 @@ export default function PrivacyPage() {
               )}
 
               {section.subsections && (
-                <div className="space-y-4">
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                   {section.subsections.map((sub) => (
                     <div key={sub.label}>
-                      <p className="text-sm font-medium text-gray-700 mb-1.5">{sub.label}</p>
-                      <ul className="space-y-1.5 pl-4">
+                      <p
+                        style={{
+                          fontFamily: "var(--font-sans)",
+                          fontSize: 13,
+                          fontWeight: 500,
+                          color: "var(--text)",
+                          marginBottom: 6,
+                        }}
+                      >
+                        {sub.label}
+                      </p>
+                      <ul
+                        style={{
+                          paddingLeft: 16,
+                          listStyle: "none",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 6,
+                        }}
+                      >
                         {sub.list.map((item, i) => (
-                          <li key={i} className="flex gap-2 text-gray-600">
-                            <span className="text-gray-400 mt-0.5">•</span>
+                          <li
+                            key={i}
+                            className="body-serif"
+                            style={{
+                              display: "flex",
+                              gap: 8,
+                              fontSize: 15,
+                              color: "var(--text-dim)",
+                            }}
+                          >
+                            <span style={{ color: "var(--text-muted)", marginTop: 2 }}>•</span>
                             <span>{item}</span>
                           </li>
                         ))}
@@ -148,12 +253,32 @@ export default function PrivacyPage() {
               )}
 
               {section.highlights && (
-                <ul className="space-y-2 pl-4">
+                <ul
+                  style={{
+                    paddingLeft: 16,
+                    listStyle: "none",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                  }}
+                >
                   {section.highlights.map((h) => (
-                    <li key={h.label} className="flex gap-2 text-gray-600">
-                      <span className="text-gray-400 mt-0.5">•</span>
+                    <li
+                      key={h.label}
+                      className="body-serif"
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        fontSize: 15,
+                        color: "var(--text-dim)",
+                      }}
+                    >
+                      <span style={{ color: "var(--text-muted)", marginTop: 2 }}>•</span>
                       <span>
-                        <strong className="text-gray-800">{h.label}</strong> {h.text}
+                        <strong style={{ color: "var(--text)", fontWeight: 600 }}>
+                          {h.label}
+                        </strong>{" "}
+                        {h.text}
                       </span>
                     </li>
                   ))}
@@ -163,16 +288,47 @@ export default function PrivacyPage() {
           ))}
         </div>
 
-        <div className="mt-12 pt-8 border-t border-gray-200 text-sm text-gray-400">
+        <div
+          style={{
+            marginTop: 48,
+            paddingTop: 32,
+            borderTop: "1px solid var(--border)",
+            fontSize: 13,
+            color: "var(--text-muted)",
+          }}
+        >
           © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
         </div>
       </div>
 
-      <footer className="border-t border-gray-200 bg-[#E9EFED] py-8 px-8">
-        <div className="max-w-3xl mx-auto flex flex-wrap justify-center gap-6 text-sm text-gray-500">
-          <Link href="/about" className="hover:text-gray-900 transition-colors">About</Link>
-          <Link href="/terms" className="hover:text-gray-900 transition-colors">Terms of Service</Link>
-          <Link href="/privacy" className="hover:text-gray-900 transition-colors">Privacy Policy</Link>
+      <footer
+        style={{
+          borderTop: "1px solid var(--border)",
+          background: "var(--bg-subtle)",
+          padding: "32px",
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 720,
+            margin: "0 auto",
+            display: "flex",
+            flexWrap: "wrap",
+            justifyContent: "center",
+            gap: 24,
+            fontSize: 13,
+            color: "var(--text-muted)",
+          }}
+        >
+          <Link href="/about" style={{ color: "inherit", textDecoration: "none" }}>
+            About
+          </Link>
+          <Link href="/terms" style={{ color: "inherit", textDecoration: "none" }}>
+            Terms of Service
+          </Link>
+          <Link href="/privacy" style={{ color: "inherit", textDecoration: "none" }}>
+            Privacy Policy
+          </Link>
         </div>
       </footer>
     </div>

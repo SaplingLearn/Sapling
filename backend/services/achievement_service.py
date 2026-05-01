@@ -12,6 +12,11 @@ def _count_rows(table_name: str, filters: dict) -> int:
     return len(rows) if rows else 0
 
 
+def get_user_stat(user_id: str, trigger_type: str) -> int:
+    """Public wrapper around the internal stat lookup."""
+    return _get_user_stat(user_id, trigger_type)
+
+
 def _get_user_stat(user_id: str, trigger_type: str) -> int:
     """Evaluate the current value for a trigger type."""
     if trigger_type == "login_streak":

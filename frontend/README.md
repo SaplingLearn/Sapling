@@ -1,36 +1,30 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sapling — New Frontend
 
-## Getting Started
+A redesigned Next.js frontend for Sapling based on the `Sapling Rebuild` design prototype.
 
-First, run the development server:
+Visual system: warm paper neutrals, botanical green accent, serif display (Fraunces) + humanist sans (Inter), JetBrains Mono accents. Supports light/dark, accent themes (sage/forest/moss/ink/terracotta), density (compact/balanced/spacious), typography pairings, and three knowledge graph variants (orb/constellation/organism).
+
+## Run
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd new_frontend
+npm install
+npm run dev     # http://localhost:3001
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Backend rewrites go to `http://localhost:5000` by default (override via `BACKEND_URL`).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Layout
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `src/app/` — App Router routes. The shell (sidebar + top bar) wraps every route except `auth` and `onboarding`, which are full-bleed.
+- `src/components/` — shared UI primitives and per-screen components.
+- `src/lib/data.ts` — mock data mirroring the design bundle. Swap for real API calls when wiring up.
+- `src/lib/tweaks.tsx` — runtime design-token context (theme/accent/type/density/layout/graph).
 
-## Learn More
+## Routes
 
-To learn more about Next.js, take a look at the following resources:
+`/dashboard` `/learn` `/tree` `/study` `/library` `/calendar` `/social` `/achievements` `/settings` `/admin` — wrapped by the shell layout.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`/auth` `/onboarding` — full-bleed.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+A floating Tweaks panel (bottom-left) lets you switch themes live. A Report button (bottom-right) opens the feedback modal.

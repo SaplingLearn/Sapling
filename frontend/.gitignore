@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+.env*.local
+*.log
+.DS_Store
+tsconfig.tsbuildinfo
+
+# Cloudflare / OpenNext build artifacts
+.open-next
+.wrangler
+

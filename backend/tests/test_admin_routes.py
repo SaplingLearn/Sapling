@@ -171,3 +171,46 @@ class TestApproveUser:
 
         assert r.status_code == 200
         assert r.json()["approved"] is True
+
+
+# ── GET /api/admin/roles ───────────────────────────────────────────────────
+
+class TestListRoles:
+    def test_returns_roles_sorted(self):
+        rows = [{"id": "r1", "name": "Admin", "slug": "admin", "display_priority": 100}]
+        with _mock_admin(), patch("routes.admin.table") as t:
+            t.return_value.select.return_value = rows
+            r = client.get("/api/admin/roles")
+        assert r.status_code == 200
+        assert r.json() == {"roles": rows}
+
+    def test_empty_list(self):
+        with _mock_admin(), patch("routes.admin.table") as t:
+            t.return_value.select.return_value = []
+            r = client.get("/api/admin/roles")
+        assert r.status_code == 200
+        assert r.json() == {"roles": []}
+
+
+# ── GET /api/admin/achievements ────────────────────────────────────────────
+
+class TestListAchievements:
+    def test_returns_achievements(self):
+        rows = [{"id": "a1", "name": "First", "slug": "first", "category": "milestone", "rarity": "common", "is_secret": False}]
+        with _mock_admin(), patch("routes.admin.table") as t:
+            t.return_value.select.return_value = rows
+            r = client.get("/api/admin/achievements")
+        assert r.status_code == 200
+        assert r.json() == {"achievements": rows}
+
+
+# ── GET /api/admin/cosmetics ───────────────────────────────────────────────
+
+class TestListCosmetics:
+    def test_returns_cosmetics(self):
+        rows = [{"id": "c1", "type": "avatar_frame", "name": "Gold Frame", "slug": "gold", "rarity": "rare"}]
+        with _mock_admin(), patch("routes.admin.table") as t:
+            t.return_value.select.return_value = rows
+            r = client.get("/api/admin/cosmetics")
+        assert r.status_code == 200
+        assert r.json() == {"cosmetics": rows}

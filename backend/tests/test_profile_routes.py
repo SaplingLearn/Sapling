@@ -309,3 +309,169 @@ class TestGetRoles:
         assert r.status_code == 200
         assert len(r.json()["roles"]) == 1
         assert r.json()["roles"][0]["role"]["slug"] == "admin"
+
+
+# ── GET /api/profile/username/check ────────────────────────────────────────
+
+class TestCheckUsername:
+    def test_available_when_no_existing_row(self):
+        with patch("routes.profile.table") as t:
+            t.return_value.select.return_value = []
+            r = client.get("/api/profile/username/check?username=freshname")
+        assert r.status_code == 200
+        assert r.json() == {"available": True}
+
+    def test_taken_when_different_user_holds_it(self):
+        with patch("routes.profile.table") as t:
+            t.return_value.select.return_value = [{"id": "other_user"}]
+            r = client.get("/api/profile/username/check?username=taken")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["available"] is False
+        assert body["reason"] == "taken"
+
+    def test_available_when_held_by_self(self):
+        with patch("routes.profile.table") as t:
+            t.return_value.select.return_value = [{"id": USER_ID}]
+            r = client.get(f"/api/profile/username/check?username=mine&user_id={USER_ID}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["available"] is True
+        assert body["reason"] == "self"
+
+    def test_invalid_format_short(self):
+        r = client.get("/api/profile/username/check?username=ab")
+        assert r.status_code == 200
+        assert r.json() == {"available": False, "reason": "invalid"}
+
+    def test_invalid_format_special_chars(self):
+        r = client.get("/api/profile/username/check?username=bad-name!")
+        assert r.status_code == 200
+        assert r.json() == {"available": False, "reason": "invalid"}
+
+
+# ── GET /api/profile/{user_id}/cosmetics/catalog ───────────────────────────
+
+class TestGetCosmeticsCatalog:
+    def test_groups_by_type_with_owned_flag(self):
+        all_cosmetics = [
+            {"id": "c1", "type": "avatar_frame", "name": "Gold",   "slug": "gold",   "rarity": "rare",   "unlock_source": "achievement:streak_7"},
+            {"id": "c2", "type": "avatar_frame", "name": "Silver", "slug": "silver", "rarity": "common", "unlock_source": None},
+            {"id": "c3", "type": "title",        "name": "MVP",    "slug": "mvp",    "rarity": "epic",   "unlock_source": "shop"},
+        ]
+        owned = [{"cosmetic_id": "c1"}]
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "cosmetics":
+                m.select.return_value = all_cosmetics
+            elif name == "user_cosmetics":
+                m.select.return_value = owned
+            elif name == "user_settings":
+                m.select.return_value = [{"user_id": USER_ID}]
+            else:
+                m.select.return_value = []
+            return m
+
+        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+            r = client.get(f"/api/profile/{USER_ID}/cosmetics/catalog?user_id={USER_ID}")
+
+        assert r.status_code == 200
+        catalog = r.json()["catalog"]
+        frames = catalog["avatar_frame"]
+        by_slug = {c["slug"]: c for c in frames}
+        assert by_slug["gold"]["owned"] is True
+        assert by_slug["silver"]["owned"] is False
+        assert catalog["title"][0]["owned"] is False
+        # Buckets missing items should still be present as empty arrays.
+        assert catalog["banner"] == []
+        assert catalog["name_color"] == []
+
+
+# ── GET /api/profile/{user_id}/achievements (progress enrichment) ──────────
+
+class TestAchievementProgress:
+    def test_locked_achievement_carries_progress(self):
+        all_achs = [{
+            "id": "a1", "name": "Streak 7", "slug": "streak_7",
+            "description": "7 day streak", "icon": None,
+            "category": "activity", "rarity": "uncommon", "is_secret": False,
+        }]
+        triggers = [{"achievement_id": "a1", "trigger_type": "login_streak", "trigger_threshold": 7}]
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = all_achs
+            elif name == "user_achievements":
+                m.select.return_value = []  # nothing earned yet
+            elif name == "achievement_triggers":
+                m.select.return_value = triggers
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.profile.table", side_effect=table_side_effect), \
+             patch("routes.profile.get_user_stat", return_value=3):
+            r = client.get(f"/api/profile/{USER_ID}/achievements")
+
+        assert r.status_code == 200
+        available = r.json()["available"]
+        assert len(available) == 1
+        assert available[0]["progress"] == {"current": 3, "target": 7}
+
+    def test_progress_clamps_to_target(self):
+        all_achs = [{
+            "id": "a1", "name": "Docs 5", "slug": "documents_5",
+            "description": "5 docs", "icon": None,
+            "category": "milestone", "rarity": "common", "is_secret": False,
+        }]
+        triggers = [{"achievement_id": "a1", "trigger_type": "documents_uploaded", "trigger_threshold": 5}]
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = all_achs
+            elif name == "user_achievements":
+                m.select.return_value = []
+            elif name == "achievement_triggers":
+                m.select.return_value = triggers
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.profile.table", side_effect=table_side_effect), \
+             patch("routes.profile.get_user_stat", return_value=42):
+            r = client.get(f"/api/profile/{USER_ID}/achievements")
+
+        assert r.status_code == 200
+        assert r.json()["available"][0]["progress"] == {"current": 5, "target": 5}
+
+    def test_secret_locked_has_no_progress(self):
+        all_achs = [{
+            "id": "a1", "name": "Hidden", "slug": "hidden",
+            "description": "Secret", "icon": None,
+            "category": "special", "rarity": "rare", "is_secret": True,
+        }]
+        triggers = [{"achievement_id": "a1", "trigger_type": "login_streak", "trigger_threshold": 100}]
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = all_achs
+            elif name == "user_achievements":
+                m.select.return_value = []
+            elif name == "achievement_triggers":
+                m.select.return_value = triggers
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.profile.table", side_effect=table_side_effect), \
+             patch("routes.profile.get_user_stat", return_value=1):
+            r = client.get(f"/api/profile/{USER_ID}/achievements")
+
+        assert r.status_code == 200
+        out = r.json()["available"][0]
+        assert out["name"] == "Secret Achievement"
+        assert out["progress"] is None

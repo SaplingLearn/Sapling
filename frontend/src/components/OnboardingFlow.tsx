@@ -294,15 +294,14 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
         opacity: visible ? 1 : 0,
         transition: 'opacity 600ms cubic-bezier(0.22,1,0.36,1)',
         pointerEvents: visible ? 'auto' : 'none',
-        display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
+        overflowY: 'auto',
       }}
     >
       {/* ── Close ── */}
       <button
         onClick={onClose}
         style={{
-          position: 'absolute', top: '28px', right: '32px', zIndex: 10,
+          position: 'fixed', top: '28px', right: '32px', zIndex: 10,
           color: 'rgba(0,0,0,0.28)', background: 'none', border: 'none',
           padding: '8px', display: 'flex', cursor: 'pointer',
           transition: 'color 0.2s ease',
@@ -313,7 +312,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
 
       {/* ── Step indicator (top-left) ── */}
       {activeStep > 0 && (
-        <div style={{ position: 'absolute', top: '28px', left: '32px', zIndex: 10 }}>
+        <div style={{ position: 'fixed', top: '28px', left: '32px', zIndex: 10 }}>
           <div style={{
             fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
             fontSize: '11px', letterSpacing: '0.12em', textTransform: 'uppercase',
@@ -333,8 +332,9 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
             const GAP = 3;
             const totalWidth = 200;
             const segW = (totalWidth - (totalSteps - 1) * GAP) / totalSteps;
-            const filledW = activeStep > 0
-              ? activeStep * segW + (activeStep - 1) * GAP
+            const stepsDone = Math.max(0, activeStep - 1);
+            const filledW = stepsDone > 0
+              ? stepsDone * segW + (stepsDone - 1) * GAP
               : 0;
             return (
               <div style={{ position: 'relative', width: `${totalWidth}px`, height: '4px' }}>
@@ -357,6 +357,15 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
           })()}
         </div>
       )}
+
+      {/* ── Scrollable content wrapper ── */}
+      <div style={{
+        minHeight: '100%',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        padding: '96px 0 64px',
+        boxSizing: 'border-box',
+      }}>
 
       {/* ── Centered step dot + label ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '18px' }}>
@@ -727,6 +736,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
         )}
       </div>
 
+      </div>
     </div>
   );
 }

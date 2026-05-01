@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   motion,
   useScroll,
@@ -490,8 +490,8 @@ function StepIndicator({ scrollYProgress, activeStep }: {
   scrollYProgress: MotionValue<number>;
   activeStep: number;
 }) {
-  const bar1H = useTransform(scrollYProgress, [0, 0.38], ['0%', '100%']);
-  const bar2H = useTransform(scrollYProgress, [0.38, 0.72], ['0%', '100%']);
+  const bar1H = useTransform(scrollYProgress, [0, 0.36], ['0%', '100%']);
+  const bar2H = useTransform(scrollYProgress, [0.36, 0.70], ['0%', '100%']);
 
   return (
     <div className="absolute top-1/2 -translate-y-1/2 flex flex-col items-center z-20 hidden sm:flex" style={{ right: 'clamp(1rem, 2vw, 2rem)', gap: 'clamp(0.375rem, 0.6vw, 0.5rem)' }}>
@@ -537,11 +537,16 @@ const STEPS = [
   },
 ];
 
-// scroll input ranges (matching the non-overlapping windows we tuned)
+// Sequential scroll windows. Each step is only visible in exactly one range,
+// and adjacent ranges share their endpoint so there's never a frame where two
+// steps have opacity > 0.
 const TEXT_RANGES = [
-  { in: [0, 0.05, 0.28, 0.38], yIn: [30, 0, 0, -30] },
-  { in: [0.38, 0.48, 0.62, 0.72], yIn: [30, 0, 0, -30] },
-  { in: [0.72, 0.82, 1, 1], yIn: [30, 0, 0, 0] },
+  // Step 1: visible from 0 → 0.30, fade out 0.30 → 0.36
+  { in: [0, 0.30, 0.36, 1], yIn: [0, 0, -30, -30], opacityIn: [1, 1, 0, 0] },
+  // Step 2: fade in 0.36 → 0.42, visible, fade out 0.64 → 0.70
+  { in: [0.36, 0.42, 0.64, 0.70], yIn: [30, 0, 0, -30], opacityIn: [0, 1, 1, 0] },
+  // Step 3: fade in 0.70 → 0.76, visible to end
+  { in: [0, 0.70, 0.76, 1], yIn: [30, 30, 0, 0], opacityIn: [0, 0, 1, 1] },
 ];
 
 const BG_COLORS = [
@@ -561,23 +566,35 @@ export default function HowItWorks() {
   const [activeStep, setActiveStep] = useState(1);
   const [showStep2Graph, setShowStep2Graph] = useState(false);
   useMotionValueEvent(scrollYProgress, 'change', (v) => {
-    setActiveStep(v < 0.38 ? 1 : v < 0.72 ? 2 : 3);
+    setActiveStep(v < 0.36 ? 1 : v < 0.70 ? 2 : 3);
     setShowStep2Graph(v > 0.55);
   });
 
+  // Sync state with current scroll on mount. useMotionValueEvent only fires on
+  // *change*, so if the page mounts with a non-zero scroll (hot reload, scroll
+  // restoration, deep link), activeStep would be stuck at useState(1) while the
+  // text opacities reflect the real scroll. That desync is what made the
+  // section look like it "starts at step 2."
+  useEffect(() => {
+    const v = scrollYProgress.get();
+    setActiveStep(v < 0.36 ? 1 : v < 0.70 ? 2 : 3);
+    setShowStep2Graph(v > 0.55);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Text
-  const textOpacities = TEXT_RANGES.map(r => useTransform(scrollYProgress, r.in, [0, 1, 1, 0])); // eslint-disable-line react-hooks/rules-of-hooks
+  const textOpacities = TEXT_RANGES.map(r => useTransform(scrollYProgress, r.in, r.opacityIn)); // eslint-disable-line react-hooks/rules-of-hooks
   const textYs = TEXT_RANGES.map(r => useTransform(scrollYProgress, r.in, r.yIn)); // eslint-disable-line react-hooks/rules-of-hooks
 
-  const panelOpacity = useTransform(scrollYProgress, [0, 0.05, 0.82, 1], [0, 1, 1, 0]);
+  const panelOpacity = useTransform(scrollYProgress, [0, 0.001, 0.82, 1], [1, 1, 1, 0]);
 
   // Background
-  const bgColor = useTransform(scrollYProgress, [0, 0.38, 0.72, 1], BG_COLORS);
+  const bgColor = useTransform(scrollYProgress, [0, 0.36, 0.70, 1], BG_COLORS);
 
   const SaplingComponents = [SeedSVG, SproutSVG, TreeSVG];
 
   return (
-    <section ref={containerRef} id="how-it-works" className="landing-section relative" style={{ height: '340vh' }}>
+    <section ref={containerRef} id="how-it-works" className="landing-section relative" style={{ height: '340vh', position: 'relative' }}>
       <motion.div className="sticky top-0 h-screen w-full overflow-hidden" style={{ backgroundColor: bgColor }}>
         <div className="h-full max-w-[1600px] mx-auto flex flex-col lg:flex-row items-center" style={{ padding: 'clamp(1rem, 4vh, 2.5rem) clamp(1.25rem, 4vw, 4.5rem)', gap: 'clamp(2rem, 5vw, 8rem)' }}>
 

@@ -1,45 +1,40 @@
-'use client';
+"use client";
 
-import Avatar from '@/components/Avatar';
+import React from "react";
+import type { Cosmetic } from "@/lib/types";
+import { Avatar } from "@/components/Avatar";
 
-interface Props {
-  frameUrl?: string;
-  frameSlug?: string;
-  userId: string;
+interface AvatarFrameProps {
   name: string;
   size?: number;
-  avatarUrl?: string;
-  className?: string;
+  img?: string;
+  color?: string;
+  frame?: Cosmetic | null;
 }
 
-export default function AvatarFrame({ frameUrl, frameSlug, userId, name, size = 32, avatarUrl, className }: Props) {
-  if (!frameUrl) {
-    return <Avatar userId={userId} name={name} size={size} avatarUrl={avatarUrl} className={className} />;
-  }
-
+export function AvatarFrame({ name, size = 48, img, color, frame }: AvatarFrameProps) {
+  const overlay = size * 0.25;
   return (
-    <div
-      className={className}
-      style={{
-        position: 'relative',
-        width: size,
-        height: size,
-        flexShrink: 0,
-      }}
-    >
-      <Avatar userId={userId} name={name} size={size} avatarUrl={avatarUrl} />
-      <img
-        src={frameUrl}
-        alt=""
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: '100%',
-          height: '100%',
-          pointerEvents: 'none',
-          objectFit: 'contain',
-        }}
-      />
+    <div style={{ position: "relative", width: size + overlay, height: size + overlay, display: "inline-block" }}>
+      <div style={{ position: "absolute", top: overlay / 2, left: overlay / 2 }}>
+        <Avatar name={name} size={size} img={img} color={color} />
+      </div>
+      {frame?.asset_url && (
+        <img
+          src={frame.asset_url}
+          alt=""
+          aria-hidden
+          referrerPolicy="no-referrer"
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none",
+            objectFit: "contain",
+          }}
+        />
+      )}
     </div>
   );
 }

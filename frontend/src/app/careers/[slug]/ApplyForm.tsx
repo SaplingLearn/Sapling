@@ -5,35 +5,34 @@ import Link from 'next/link';
 import { type Job, DEPT_COLORS } from '../jobs';
 import { submitJobApplication } from '@/lib/api';
 
-const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
+const FOOTER_LINKS = [
+  { label: 'Home', href: '/' },
+  { label: 'About', href: '/about' },
+  { label: 'Careers', href: '/careers' },
+  { label: 'Terms of Service', href: '/terms' },
+  { label: 'Privacy Policy', href: '/privacy' },
+];
 
-const PANEL: React.CSSProperties = {
-  background: '#ffffff',
-  border: '1px solid rgba(107, 114, 128, 0.15)',
-  borderRadius: '12px',
-  boxShadow: '0 2px 10px rgba(26, 92, 42, 0.07), 0 1px 3px rgba(26, 92, 42, 0.04)',
-};
-
-const INPUT: React.CSSProperties = {
+const INPUT_STYLE: React.CSSProperties = {
   width: '100%',
-  background: '#f8fbf8',
-  border: '1px solid rgba(107, 114, 128, 0.18)',
-  borderRadius: '8px',
+  background: 'var(--bg-input)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--r-sm)',
   padding: '10px 14px',
-  fontSize: '14px',
-  color: '#111827',
-  fontFamily: UI_FONT,
+  fontSize: 14,
+  color: 'var(--text)',
+  fontFamily: 'var(--font-sans)',
   outline: 'none',
   boxSizing: 'border-box',
-  transition: 'border-color 0.15s',
+  transition: 'border-color var(--dur-fast) var(--ease)',
 };
 
-const LABEL: React.CSSProperties = {
+const LABEL_STYLE: React.CSSProperties = {
   display: 'block',
-  fontSize: '13px',
+  fontSize: 13,
   fontWeight: 500,
-  color: '#374151',
-  marginBottom: '6px',
+  color: 'var(--text)',
+  marginBottom: 6,
 };
 
 export default function ApplyForm({ job }: { job: Job | null }) {
@@ -48,10 +47,24 @@ export default function ApplyForm({ job }: { job: Job | null }) {
 
   if (!job) {
     return (
-      <div style={{ minHeight: '100vh', background: '#E9EFED', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: UI_FONT }}>
+      <div
+        style={{
+          minHeight: '100vh',
+          background: 'var(--bg)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontFamily: 'var(--font-sans)',
+        }}
+      >
         <div style={{ textAlign: 'center' }}>
-          <p style={{ color: '#6b7280', fontSize: '14px' }}>Role not found.</p>
-          <Link href="/careers" style={{ color: '#1a5c2a', fontSize: '13px', marginTop: '12px', display: 'block' }}>← Back to opportunities</Link>
+          <p style={{ color: 'var(--text-dim)', fontSize: 14 }}>Role not found.</p>
+          <Link
+            href="/careers"
+            style={{ color: 'var(--accent)', fontSize: 13, marginTop: 12, display: 'block' }}
+          >
+            ← Back to opportunities
+          </Link>
         </div>
       </div>
     );
@@ -98,211 +111,305 @@ export default function ApplyForm({ job }: { job: Job | null }) {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: '#E9EFED', fontFamily: UI_FONT }}>
-
-      {/* ── Header ── */}
-      <header style={{
-        borderBottom: '1px solid rgba(107,114,128,0.12)',
-        background: 'rgba(255,255,255,0.72)',
-        backdropFilter: 'blur(20px) saturate(1.5)',
-        WebkitBackdropFilter: 'blur(20px) saturate(1.5)',
-        position: 'sticky',
-        top: 0,
-        zIndex: 50,
-      }}>
-        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px', height: '52px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
-            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '26px', height: '26px', flexShrink: 0, position: 'relative', top: '-2px' }} />
-            <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: '#1a5c2a', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+    <div
+      style={{
+        minHeight: '100vh',
+        background: 'var(--bg)',
+        color: 'var(--text)',
+        fontFamily: 'var(--font-sans)',
+      }}
+    >
+      <header
+        style={{
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-topbar)',
+          position: 'sticky',
+          top: 0,
+          zIndex: 50,
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 1280,
+            margin: '0 auto',
+            padding: '0 24px',
+            height: 52,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <Link
+            href="/"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none' }}
+          >
+            <img
+              src="/sapling-icon.svg"
+              alt="Sapling"
+              style={{ width: 24, height: 24, position: 'relative', top: -1 }}
+            />
+            <span className="h-serif" style={{ fontSize: 20, color: 'var(--text)' }}>
               Sapling
             </span>
           </Link>
           <Link
             href="/careers"
-            style={{ fontSize: '13px', color: '#6b7280', textDecoration: 'none' }}
-            onMouseEnter={e => (e.currentTarget.style.color = '#111827')}
-            onMouseLeave={e => (e.currentTarget.style.color = '#6b7280')}
+            style={{ fontSize: 13, color: 'var(--text-muted)', textDecoration: 'none' }}
           >
             ← Back to opportunities
           </Link>
         </div>
       </header>
 
-      {/* ── Content ── */}
-      <section style={{ maxWidth: '760px', margin: '0 auto', padding: '56px 24px 96px' }}>
-
-        {/* Job context */}
-        <div className="fade-up anim-d1" style={{ marginBottom: '32px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
-            <h1 style={{
-              fontFamily: "var(--font-playfair), 'Playfair Display', serif",
-              fontSize: '28px', fontWeight: 700, color: '#111827',
-              letterSpacing: '-0.02em', margin: 0,
-            }}>
+      <section style={{ maxWidth: 760, margin: '0 auto', padding: '56px 24px 96px' }}>
+        <div className="fade-in" style={{ marginBottom: 32 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 8,
+              flexWrap: 'wrap',
+            }}
+          >
+            <h1
+              className="h-serif"
+              style={{ fontSize: 32, color: 'var(--text)', margin: 0 }}
+            >
               {job.title}
             </h1>
             {dept && (
-              <span style={{
-                fontSize: '11px', fontWeight: 500, padding: '2px 9px', borderRadius: '999px',
-                background: dept.bg, color: dept.text, border: `1px solid ${dept.border}`,
-              }}>
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 500,
+                  padding: '2px 9px',
+                  borderRadius: 'var(--r-full)',
+                  background: dept.bg,
+                  color: dept.text,
+                  border: `1px solid ${dept.border}`,
+                }}
+              >
                 {job.department}
               </span>
             )}
           </div>
-          <p style={{ fontSize: '13px', color: '#9ca3af', margin: 0 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
             {job.location} · {job.type}
           </p>
         </div>
 
-        {/* Form panel */}
-        <div className="fade-up anim-d2" style={PANEL}>
+        <div className="card fade-in">
           {submitted ? (
             <div style={{ padding: '56px 32px', textAlign: 'center' }}>
-              <div style={{
-                width: '48px', height: '48px', borderRadius: '50%',
-                background: 'rgba(26,92,42,0.08)', border: '1px solid rgba(26,92,42,0.18)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                margin: '0 auto 16px',
-              }}>
-                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#1a5c2a" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: '50%',
+                  background: 'var(--accent-soft)',
+                  border: '1px solid var(--accent-border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 16px',
+                }}
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="var(--accent)"
+                  strokeWidth={2.5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <h2 style={{ fontFamily: "var(--font-spectral), 'Spectral', serif", fontSize: '20px', fontWeight: 600, color: '#111827', marginBottom: '8px' }}>
+              <h2 className="h-serif" style={{ fontSize: 22, color: 'var(--text)', marginBottom: 8 }}>
                 Application submitted
               </h2>
-              <p style={{ fontSize: '13px', color: '#6b7280', lineHeight: 1.6, maxWidth: '320px', margin: '0 auto 24px' }}>
+              <p
+                className="body-serif"
+                style={{
+                  fontSize: 14,
+                  color: 'var(--text-dim)',
+                  maxWidth: 320,
+                  margin: '0 auto 24px',
+                }}
+              >
                 Thanks for applying to Sapling. We&apos;ll review your application and reach out soon.
               </p>
               <Link
                 href="/careers"
                 style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '6px',
-                  fontSize: '13px', color: '#1a5c2a', textDecoration: 'none', fontWeight: 500,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 13,
+                  color: 'var(--accent)',
+                  textDecoration: 'none',
+                  fontWeight: 500,
                 }}
               >
                 ← Back to opportunities
               </Link>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} style={{ padding: '32px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-                {/* Full Name */}
+            <form onSubmit={handleSubmit} style={{ padding: 32 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                 <div>
-                  <label style={LABEL}>Full Name <span style={{ color: '#dc2626' }}>*</span></label>
+                  <label style={LABEL_STYLE}>
+                    Full Name <span style={{ color: 'var(--err)' }}>*</span>
+                  </label>
                   <input
                     type="text"
                     required
                     placeholder="Jane Smith"
                     value={form.name}
-                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    style={INPUT}
-                    onFocus={e => (e.currentTarget.style.borderColor = 'rgba(26,92,42,0.4)')}
-                    onBlur={e => (e.currentTarget.style.borderColor = 'rgba(107,114,128,0.18)')}
+                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                    style={INPUT_STYLE}
                   />
                 </div>
 
-                {/* Email */}
                 <div>
-                  <label style={LABEL}>Email <span style={{ color: '#dc2626' }}>*</span></label>
+                  <label style={LABEL_STYLE}>
+                    Email <span style={{ color: 'var(--err)' }}>*</span>
+                  </label>
                   <input
                     type="email"
                     required
                     placeholder="jane@university.edu"
                     value={form.email}
-                    onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                    style={INPUT}
-                    onFocus={e => (e.currentTarget.style.borderColor = 'rgba(26,92,42,0.4)')}
-                    onBlur={e => (e.currentTarget.style.borderColor = 'rgba(107,114,128,0.18)')}
+                    onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                    style={INPUT_STYLE}
                   />
                 </div>
 
-                {/* Phone */}
                 <div>
-                  <label style={LABEL}>Phone Number</label>
+                  <label style={LABEL_STYLE}>Phone Number</label>
                   <input
                     type="tel"
                     placeholder="+1 (555) 000-0000"
                     value={form.phone}
-                    onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-                    style={INPUT}
-                    onFocus={e => (e.currentTarget.style.borderColor = 'rgba(26,92,42,0.4)')}
-                    onBlur={e => (e.currentTarget.style.borderColor = 'rgba(107,114,128,0.18)')}
+                    onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                    style={INPUT_STYLE}
                   />
                 </div>
 
-                {/* LinkedIn */}
                 <div>
-                  <label style={LABEL}>LinkedIn Profile <span style={{ color: '#dc2626' }}>*</span></label>
+                  <label style={LABEL_STYLE}>
+                    LinkedIn Profile <span style={{ color: 'var(--err)' }}>*</span>
+                  </label>
                   <input
                     type="url"
                     required
                     placeholder="https://linkedin.com/in/yourprofile"
                     value={form.linkedin}
-                    onChange={e => setForm(f => ({ ...f, linkedin: e.target.value }))}
-                    style={INPUT}
-                    onFocus={e => (e.currentTarget.style.borderColor = 'rgba(26,92,42,0.4)')}
-                    onBlur={e => (e.currentTarget.style.borderColor = 'rgba(107,114,128,0.18)')}
+                    onChange={(e) => setForm((f) => ({ ...f, linkedin: e.target.value }))}
+                    style={INPUT_STYLE}
                   />
                 </div>
 
-                {/* Portfolio */}
                 <div>
-                  <label style={LABEL}>Portfolio Link</label>
+                  <label style={LABEL_STYLE}>Portfolio Link</label>
                   <input
                     type="url"
                     placeholder="https://yourportfolio.com"
                     value={form.portfolio}
-                    onChange={e => setForm(f => ({ ...f, portfolio: e.target.value }))}
-                    style={INPUT}
-                    onFocus={e => (e.currentTarget.style.borderColor = 'rgba(26,92,42,0.4)')}
-                    onBlur={e => (e.currentTarget.style.borderColor = 'rgba(107,114,128,0.18)')}
+                    onChange={(e) => setForm((f) => ({ ...f, portfolio: e.target.value }))}
+                    style={INPUT_STYLE}
                   />
                 </div>
 
-                {/* Resume */}
                 <div>
-                  <label style={LABEL}>Resume <span style={{ color: '#dc2626' }}>*</span></label>
+                  <label style={LABEL_STYLE}>
+                    Resume <span style={{ color: 'var(--err)' }}>*</span>
+                  </label>
                   <div
                     onClick={() => fileInputRef.current?.click()}
-                    onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragging(true);
+                    }}
                     onDragLeave={() => setDragging(false)}
                     onDrop={handleDrop}
                     style={{
-                      border: `1.5px dashed ${dragging ? 'rgba(26,92,42,0.5)' : 'rgba(107,114,128,0.25)'}`,
-                      borderRadius: '8px',
+                      border: `1.5px dashed ${
+                        dragging ? 'var(--accent)' : 'var(--border-strong)'
+                      }`,
+                      borderRadius: 'var(--r-sm)',
                       padding: '28px 20px',
                       textAlign: 'center',
                       cursor: 'pointer',
-                      background: dragging ? 'rgba(26,92,42,0.03)' : '#f8fbf8',
-                      transition: 'all 0.15s',
+                      background: dragging ? 'var(--accent-soft)' : 'var(--bg-input)',
+                      transition: 'all var(--dur-fast) var(--ease)',
                     }}
                   >
                     {resumeFile ? (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="#1a5c2a" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 8,
+                        }}
+                      >
+                        <svg
+                          width="16"
+                          height="16"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="var(--accent)"
+                          strokeWidth={2}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
                           <path d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
                         </svg>
-                        <span style={{ fontSize: '13px', color: '#1a5c2a', fontWeight: 500 }}>{resumeFile.name}</span>
+                        <span style={{ fontSize: 13, color: 'var(--accent)', fontWeight: 500 }}>
+                          {resumeFile.name}
+                        </span>
                         <button
                           type="button"
-                          onClick={e => { e.stopPropagation(); setResumeFile(null); }}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '0 2px', fontSize: '14px', lineHeight: 1 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setResumeFile(null);
+                          }}
+                          style={{
+                            color: 'var(--text-muted)',
+                            padding: '0 2px',
+                            fontSize: 14,
+                            lineHeight: 1,
+                          }}
                         >
                           ×
                         </button>
                       </div>
                     ) : (
                       <>
-                        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#9ca3af" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto 8px', display: 'block' }}>
+                        <svg
+                          width="20"
+                          height="20"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="var(--text-muted)"
+                          strokeWidth={1.5}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          style={{ margin: '0 auto 8px', display: 'block' }}
+                        >
                           <path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                         </svg>
-                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 2px' }}>
-                          <span style={{ fontWeight: 500, color: '#1a5c2a' }}>Click to upload</span> or drag and drop
+                        <p style={{ fontSize: 13, color: 'var(--text-dim)', margin: '0 0 2px' }}>
+                          <span style={{ fontWeight: 500, color: 'var(--accent)' }}>
+                            Click to upload
+                          </span>{' '}
+                          or drag and drop
                         </p>
-                        <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>PDF only</p>
+                        <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>PDF only</p>
                       </>
                     )}
                     <input
@@ -314,56 +421,93 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                     />
                   </div>
                 </div>
-
               </div>
 
-              {/* Privacy consent */}
-              <div style={{ marginTop: '20px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+              <div
+                style={{
+                  marginTop: 20,
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 10,
+                }}
+              >
                 <input
                   type="checkbox"
                   id="privacy-consent"
                   required
                   checked={agreedToPrivacy}
-                  onChange={e => setAgreedToPrivacy(e.target.checked)}
-                  style={{ marginTop: '2px', accentColor: '#1a5c2a', cursor: 'pointer', flexShrink: 0 }}
+                  onChange={(e) => setAgreedToPrivacy(e.target.checked)}
+                  style={{
+                    marginTop: 2,
+                    accentColor: 'var(--accent)',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
                 />
-                <label htmlFor="privacy-consent" style={{ fontSize: '13px', color: '#6b7280', lineHeight: 1.5, cursor: 'pointer' }}>
+                <label
+                  htmlFor="privacy-consent"
+                  style={{
+                    fontSize: 13,
+                    color: 'var(--text-dim)',
+                    lineHeight: 1.5,
+                    cursor: 'pointer',
+                  }}
+                >
                   I have read and agree to Sapling&apos;s{' '}
-                  <Link href="/privacy" target="_blank" style={{ color: '#1a5c2a', textDecoration: 'underline' }}>
+                  <Link
+                    href="/privacy"
+                    target="_blank"
+                    style={{ color: 'var(--accent)', textDecoration: 'underline' }}
+                  >
                     Privacy Policy
                   </Link>
                   , including how my application data is collected and used.
                 </label>
               </div>
 
-              {/* Submit */}
-              <div style={{ marginTop: '28px', paddingTop: '24px', borderTop: '1px solid rgba(107,114,128,0.10)' }}>
+              <div
+                style={{
+                  marginTop: 28,
+                  paddingTop: 24,
+                  borderTop: '1px solid var(--border)',
+                }}
+              >
                 {submitError && (
-                  <p style={{ fontSize: '13px', color: '#dc2626', marginBottom: '12px', textAlign: 'center' }}>
+                  <p
+                    style={{
+                      fontSize: 13,
+                      color: 'var(--err)',
+                      marginBottom: 12,
+                      textAlign: 'center',
+                    }}
+                  >
                     {submitError}
                   </p>
                 )}
                 <button
                   type="submit"
                   disabled={submitting}
+                  className="btn btn--primary"
                   style={{
                     width: '100%',
-                    background: submitting ? '#4a9e6d' : '#1B6C42', color: 'white',
-                    border: 'none', borderRadius: '8px',
+                    justifyContent: 'center',
                     padding: '12px 20px',
-                    fontSize: '14px', fontWeight: 500,
-                    fontFamily: UI_FONT,
-                    cursor: submitting ? 'default' : 'pointer',
-                    transition: 'background 0.15s',
+                    fontSize: 14,
                     opacity: submitting ? 0.8 : 1,
+                    cursor: submitting ? 'default' : 'pointer',
                   }}
-                  onMouseEnter={e => { if (!submitting) e.currentTarget.style.background = '#155A35'; }}
-                  onMouseLeave={e => { if (!submitting) e.currentTarget.style.background = '#1B6C42'; }}
                 >
                   {submitting ? 'Submitting…' : 'Submit Application'}
                 </button>
-                <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', marginTop: '10px' }}>
-                  Fields marked <span style={{ color: '#dc2626' }}>*</span> are required
+                <p
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                    textAlign: 'center',
+                    marginTop: 10,
+                  }}
+                >
+                  Fields marked <span style={{ color: 'var(--err)' }}>*</span> are required
                 </p>
               </div>
             </form>
@@ -371,35 +515,54 @@ export default function ApplyForm({ job }: { job: Job | null }) {
         </div>
       </section>
 
-      {/* ── Footer ── */}
-      <footer style={{ borderTop: '1px solid rgba(107,114,128,0.12)', background: '#E9EFED', padding: '48px 32px' }}>
-        <div style={{ maxWidth: '1280px', margin: '0 auto', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '24px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '20px', height: '20px' }} />
-            <span style={{ fontSize: '14px', fontWeight: 300, letterSpacing: '0.03em', color: '#6b7280' }}>Sapling · © 2026</span>
+      <footer
+        style={{
+          borderTop: '1px solid var(--border)',
+          background: 'var(--bg-subtle)',
+          padding: '48px 32px',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 1280,
+            margin: '0 auto',
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 24,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 20, height: 20 }} />
+            <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>Sapling · © 2026</span>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '24px' }}>
-            {[
-              { label: 'Home', href: '/' },
-              { label: 'About', href: '/about' },
-              { label: 'Careers', href: '/careers' },
-              { label: 'Terms of Service', href: '/terms' },
-              { label: 'Privacy Policy', href: '/privacy' },
-            ].map(({ label, href }) => (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>
+            {FOOTER_LINKS.map(({ label, href }) => (
               <Link
                 key={label}
                 href={href}
-                style={{ fontSize: '14px', color: '#6b7280', textDecoration: 'none', transition: 'color 0.15s' }}
-                onMouseEnter={e => (e.currentTarget.style.color = '#111827')}
-                onMouseLeave={e => (e.currentTarget.style.color = '#6b7280')}
+                style={{
+                  fontSize: 14,
+                  color: 'var(--text-muted)',
+                  textDecoration: 'none',
+                }}
               >
                 {label}
               </Link>
             ))}
           </div>
         </div>
-        <div style={{ maxWidth: '1280px', margin: '0 auto', marginTop: '32px', paddingTop: '24px', borderTop: '1px solid rgba(107,114,128,0.10)', textAlign: 'center' }}>
-          <p style={{ fontSize: '12px', color: '#9ca3af', fontWeight: 300, letterSpacing: '0.03em' }}>
+        <div
+          style={{
+            maxWidth: 1280,
+            margin: '32px auto 0',
+            paddingTop: 24,
+            borderTop: '1px solid var(--border)',
+            textAlign: 'center',
+          }}
+        >
+          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
             © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
           </p>
         </div>

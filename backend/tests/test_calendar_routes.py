@@ -189,3 +189,77 @@ class TestDisconnect:
             r = client.delete("/api/calendar/disconnect/user_andres")
         assert r.status_code == 200
         assert r.json() == {"disconnected": True}
+
+
+# ── PATCH /api/calendar/assignments/{id} ─────────────────────────────────────
+
+class TestUpdateAssignment:
+    def test_updates_whitelisted_fields(self):
+        with patch("routes.calendar.table") as t:
+            t.return_value.select.return_value = [{"id": "a1"}]
+            t.return_value.update.return_value = [{}]
+            r = client.patch(
+                "/api/calendar/assignments/a1",
+                json={"user_id": "u1", "title": "New title", "due_date": "2026-06-01", "ignored": "x"},
+            )
+        assert r.status_code == 200
+        assert r.json() == {"updated": True}
+
+    def test_missing_user_id_returns_400(self):
+        r = client.patch("/api/calendar/assignments/a1", json={"title": "No user"})
+        assert r.status_code == 400
+
+    def test_unknown_assignment_returns_404(self):
+        with patch("routes.calendar.table") as t:
+            t.return_value.select.return_value = []
+            r = client.patch(
+                "/api/calendar/assignments/missing",
+                json={"user_id": "u1", "title": "x"},
+            )
+        assert r.status_code == 404
+
+    def test_empty_course_id_is_nulled(self):
+        captured = {}
+        def table_side_effect(name):
+            m = MagicMock()
+            m.select.return_value = [{"id": "a1"}]
+            def _update(patch, filters=None):
+                captured["patch"] = patch
+                return [{}]
+            m.update.side_effect = _update
+            return m
+        with patch("routes.calendar.table", side_effect=table_side_effect):
+            r = client.patch(
+                "/api/calendar/assignments/a1",
+                json={"user_id": "u1", "course_id": ""},
+            )
+        assert r.status_code == 200
+        assert captured["patch"]["course_id"] is None
+
+    def test_no_valid_fields_returns_updated_false(self):
+        with patch("routes.calendar.table") as t:
+            t.return_value.select.return_value = [{"id": "a1"}]
+            r = client.patch(
+                "/api/calendar/assignments/a1",
+                json={"user_id": "u1", "made_up": "x"},
+            )
+        assert r.status_code == 200
+        assert r.json() == {"updated": False}
+
+
+# ── DELETE /api/calendar/assignments/{id} ────────────────────────────────────
+
+class TestDeleteAssignment:
+    def test_deletes_assignment(self):
+        with patch("routes.calendar.table") as t:
+            t.return_value.select.return_value = [{"id": "a1"}]
+            t.return_value.delete.return_value = []
+            r = client.delete("/api/calendar/assignments/a1?user_id=u1")
+        assert r.status_code == 200
+        assert r.json() == {"deleted": True}
+
+    def test_missing_returns_404(self):
+        with patch("routes.calendar.table") as t:
+            t.return_value.select.return_value = []
+            r = client.delete("/api/calendar/assignments/a1?user_id=u1")
+        assert r.status_code == 404

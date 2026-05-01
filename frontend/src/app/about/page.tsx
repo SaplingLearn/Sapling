@@ -1,84 +1,242 @@
 import Link from "next/link";
 
+const differentiators = [
+  "Your knowledge graph is yours. It updates in real time based on your actual performance, not just what you've clicked through.",
+  "Three distinct teaching modes mean you're never locked into one way of learning.",
+  "Study rooms let you learn alongside classmates and see how your mastery compares, anonymously and collaboratively.",
+  "Everything from syllabus tracking to exam study guides is powered by Gemini, so the busywork of getting organized is handled for you.",
+];
+
+const awards = [
+  {
+    title: "Best AI Tutor in Education",
+    org: "Boston University Civic Hacks 2026 · BU Spark! & Wheelock College of Education",
+    body: "Recognized among competing teams at BU's annual civic hackathon for building the most impactful AI-driven learning experience. Sapling was awarded for its approach to personalized, student-centered tutoring, bridging the gap between artificial intelligence and meaningful education.",
+  },
+  {
+    title: "Code & Tell Winner",
+    org: "BU Spark!",
+    body: "Selected by BU Spark! as a standout project at their Code & Tell showcase, where student builders present real-world applications to faculty, mentors, and industry judges. Sapling was chosen for its technical depth and its vision for the future of how students learn.",
+  },
+];
+
 export default function AboutPage() {
   return (
-    <div className="min-h-screen bg-[#F4F7F5] flex flex-col">
-      <div className="flex-1 max-w-3xl mx-auto px-8 py-16 w-full">
-        <div className="flex items-center gap-2 mb-12">
-          <Link href="/" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: "var(--bg)",
+        color: "var(--text)",
+      }}
+    >
+      <div
+        style={{
+          flex: 1,
+          width: "100%",
+          maxWidth: 720,
+          margin: "0 auto",
+          padding: "64px 32px",
+        }}
+      >
+        <div className="fade-up anim-d0" style={{ marginBottom: 48 }}>
+          <Link
+            href="/"
+            style={{
+              fontSize: 13,
+              color: "var(--text-muted)",
+              textDecoration: "none",
+              transition: "color var(--dur-fast) var(--ease)",
+            }}
+          >
             ← Back to Sapling
           </Link>
         </div>
 
-        <h1 className="text-4xl font-semibold text-gray-900 mb-8">About Sapling</h1>
+        <h1
+          className="h-serif fade-up anim-d1"
+          style={{ fontSize: 48, marginBottom: 32, color: "var(--text)" }}
+        >
+          About Sapling
+        </h1>
 
-        <div className="prose prose-gray max-w-none space-y-6 text-gray-600 leading-relaxed">
-          <p>
-            <strong className="text-gray-900">Sapling</strong> is an AI-powered study companion built by students, for students. We believe that learning shouldn't be passive. It should adapt to you, challenge you, and show you exactly where you stand.
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 24,
+          }}
+        >
+          <p
+            className="body-serif fade-up anim-d2"
+            style={{ fontSize: 16, color: "var(--text-dim)" }}
+          >
+            <strong style={{ color: "var(--text)", fontWeight: 600 }}>Sapling</strong>{" "}
+            is an AI-powered study companion built by students, for students. We believe that
+            learning shouldn&apos;t be passive. It should adapt to you, challenge you, and show you
+            exactly where you stand.
           </p>
 
-          <p>
-            At its core, Sapling maps your understanding as a live knowledge graph that grows with every session, quiz, and document you interact with. Paired with an AI tutor that can reason with you Socratically, explain concepts directly, or flip the table and have you teach back, Sapling meets you wherever you are in your learning journey.
+          <p
+            className="body-serif fade-up anim-d3"
+            style={{ fontSize: 16, color: "var(--text-dim)" }}
+          >
+            At its core, Sapling maps your understanding as a live knowledge graph that grows with
+            every session, quiz, and document you interact with. Paired with an AI tutor that can
+            reason with you Socratically, explain concepts directly, or flip the table and have
+            you teach back, Sapling meets you wherever you are in your learning journey.
           </p>
 
-          <p>
-            Sapling was born out of a hackathon and built by a team of four students who were frustrated with static study tools that don't actually know what you know. We wanted something that feels less like a flashcard app and more like a study partner who's always prepared.
+          <p
+            className="body-serif fade-up anim-d4"
+            style={{ fontSize: 16, color: "var(--text-dim)" }}
+          >
+            Sapling was born out of a hackathon and built by a team of four students who were
+            frustrated with static study tools that don&apos;t actually know what you know. We wanted
+            something that feels less like a flashcard app and more like a study partner who&apos;s
+            always prepared.
           </p>
 
-          <div>
-            <p className="font-medium text-gray-900 mb-3">What makes Sapling different:</p>
-            <ul className="space-y-2 list-none pl-0">
-              {[
-                "Your knowledge graph is yours. It updates in real time based on your actual performance, not just what you've clicked through.",
-                "Three distinct teaching modes mean you're never locked into one way of learning.",
-                "Study rooms let you learn alongside classmates and see how your mastery compares, anonymously and collaboratively.",
-                "Everything from syllabus tracking to exam study guides is powered by Gemini, so the busywork of getting organized is handled for you.",
-              ].map((item, i) => (
-                <li key={i} className="flex gap-3">
-                  <span className="text-green-600 mt-0.5">•</span>
+          <div className="fade-up anim-d5">
+            <p
+              style={{
+                fontFamily: "var(--font-sans)",
+                fontSize: 15,
+                fontWeight: 600,
+                color: "var(--text)",
+                marginBottom: 12,
+              }}
+            >
+              What makes Sapling different:
+            </p>
+            <ul
+              style={{
+                listStyle: "none",
+                padding: 0,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              {differentiators.map((item, i) => (
+                <li
+                  key={i}
+                  className="body-serif"
+                  style={{
+                    display: "flex",
+                    gap: 12,
+                    fontSize: 15,
+                    color: "var(--text-dim)",
+                  }}
+                >
+                  <span style={{ color: "var(--accent)", marginTop: 2 }}>•</span>
                   <span>{item}</span>
                 </li>
               ))}
             </ul>
           </div>
 
-          <p>
-            Sapling is actively developed and we're always building. If something's broken or you have an idea, there's a feedback button in the navbar and we actually read those.
+          <p
+            className="body-serif fade-up anim-d6"
+            style={{ fontSize: 16, color: "var(--text-dim)" }}
+          >
+            Sapling is actively developed and we&apos;re always building. If something&apos;s broken or
+            you have an idea, there&apos;s a feedback button in the navbar and we actually read those.
           </p>
         </div>
 
-        {/* Awards */}
-        <div className="mt-14">
-          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-green-700 mb-6">Recognition</p>
-          <div className="space-y-8">
-            <div>
-              <p className="font-semibold text-gray-900 text-base">Best AI Tutor in Education</p>
-              <p className="text-xs text-green-700 font-medium mt-0.5">Boston University Civic Hacks 2026 · BU Spark! & Wheelock College of Education</p>
-              <p className="text-gray-600 text-sm mt-2 leading-relaxed">
-                Recognized among competing teams at BU's annual civic hackathon for building the most impactful AI-driven learning experience. Sapling was awarded for its approach to personalized, student-centered tutoring, bridging the gap between artificial intelligence and meaningful education.
-              </p>
-            </div>
-
-            <div>
-              <p className="font-semibold text-gray-900 text-base">Code & Tell Winner</p>
-              <p className="text-xs text-green-700 font-medium mt-0.5">BU Spark!</p>
-              <p className="text-gray-600 text-sm mt-2 leading-relaxed">
-                Selected by BU Spark! as a standout project at their Code & Tell showcase, where student builders present real-world applications to faculty, mentors, and industry judges. Sapling was chosen for its technical depth and its vision for the future of how students learn.
-              </p>
-            </div>
+        <div style={{ marginTop: 56 }}>
+          <p
+            className="label-micro fade-up anim-d7"
+            style={{ color: "var(--accent)", marginBottom: 24 }}
+          >
+            Recognition
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+            {awards.map((award, i) => (
+              <div
+                key={award.title}
+                className="fade-up"
+                style={{ animationDelay: `${Math.min(560 + i * 80, 720)}ms` }}
+              >
+                <p
+                  style={{
+                    fontFamily: "var(--font-sans)",
+                    fontSize: 16,
+                    fontWeight: 600,
+                    color: "var(--text)",
+                  }}
+                >
+                  {award.title}
+                </p>
+                <p
+                  style={{
+                    fontFamily: "var(--font-sans)",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: "var(--accent)",
+                    marginTop: 2,
+                  }}
+                >
+                  {award.org}
+                </p>
+                <p
+                  className="body-serif"
+                  style={{
+                    fontSize: 14,
+                    color: "var(--text-dim)",
+                    marginTop: 8,
+                  }}
+                >
+                  {award.body}
+                </p>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="mt-12 pt-8 border-t border-gray-200 text-sm text-gray-400">
+        <div
+          style={{
+            marginTop: 48,
+            paddingTop: 32,
+            borderTop: "1px solid var(--border)",
+            fontSize: 13,
+            color: "var(--text-muted)",
+          }}
+        >
           Built by Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez © 2026
         </div>
       </div>
 
-      <footer className="border-t border-gray-200 bg-[#E9EFED] py-8 px-8">
-        <div className="max-w-3xl mx-auto flex flex-wrap justify-center gap-6 text-sm text-gray-500">
-          <Link href="/about" className="hover:text-gray-900 transition-colors">About</Link>
-          <Link href="/terms" className="hover:text-gray-900 transition-colors">Terms of Service</Link>
-          <Link href="/privacy" className="hover:text-gray-900 transition-colors">Privacy Policy</Link>
+      <footer
+        style={{
+          borderTop: "1px solid var(--border)",
+          background: "var(--bg-subtle)",
+          padding: "32px",
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 720,
+            margin: "0 auto",
+            display: "flex",
+            flexWrap: "wrap",
+            justifyContent: "center",
+            gap: 24,
+            fontSize: 13,
+            color: "var(--text-muted)",
+          }}
+        >
+          <Link href="/about" style={{ color: "inherit", textDecoration: "none" }}>
+            About
+          </Link>
+          <Link href="/terms" style={{ color: "inherit", textDecoration: "none" }}>
+            Terms of Service
+          </Link>
+          <Link href="/privacy" style={{ color: "inherit", textDecoration: "none" }}>
+            Privacy Policy
+          </Link>
         </div>
       </footer>
     </div>
