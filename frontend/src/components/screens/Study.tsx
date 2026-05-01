@@ -179,38 +179,7 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
 
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-      {!isMobile && (
-        <aside style={{
-          width: 260, borderRight: "1px solid var(--border)", background: "var(--bg-subtle)",
-          padding: 16, overflowY: "auto", flexShrink: 0,
-        }}>
-          <div className="label-micro" style={{ marginBottom: 10 }}>Recent guides</div>
-          {recent.length === 0 && (
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No generated guides yet.</div>
-          )}
-          {recent.slice(0, 20).map(r => (
-            <button
-              key={r.id}
-              onClick={() => openRecent(r)}
-              style={{
-                width: "100%", textAlign: "left", padding: "10px 12px",
-                borderRadius: "var(--r-sm)", marginBottom: 6,
-                background: r.course_id === courseId && r.exam_id === examId ? "var(--bg-panel)" : "transparent",
-                border: r.course_id === courseId && r.exam_id === examId ? "1px solid var(--border)" : "1px solid transparent",
-              }}
-            >
-              <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {r.exam_title || "Untitled exam"}
-              </div>
-              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
-                {r.course_name} · {new Date(r.generated_at).toLocaleDateString()}
-              </div>
-            </button>
-          ))}
-        </aside>
-      )}
-
-      <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
+      <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "24px 32px" }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
           <div style={{ minWidth: 220 }}>
             <div className="label-micro" style={{ marginBottom: 4 }}>Course</div>
@@ -318,6 +287,36 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
           </div>
         )}
       </div>
+      {!isMobile && (
+        <aside style={{
+          width: 260, borderLeft: "1px solid var(--border)", background: "var(--bg-subtle)",
+          padding: 16, overflowY: "auto", flexShrink: 0,
+        }}>
+          <div className="label-micro" style={{ marginBottom: 10 }}>Recent guides</div>
+          {recent.length === 0 && (
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No generated guides yet.</div>
+          )}
+          {recent.slice(0, 20).map(r => (
+            <button
+              key={r.id}
+              onClick={() => openRecent(r)}
+              style={{
+                width: "100%", textAlign: "left", padding: "10px 12px",
+                borderRadius: "var(--r-sm)", marginBottom: 6,
+                background: r.course_id === courseId && r.exam_id === examId ? "var(--bg-panel)" : "transparent",
+                border: r.course_id === courseId && r.exam_id === examId ? "1px solid var(--border)" : "1px solid transparent",
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.exam_title || "Untitled exam"}
+              </div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
+                {r.course_name} · {new Date(r.generated_at).toLocaleDateString()}
+              </div>
+            </button>
+          ))}
+        </aside>
+      )}
     </div>
   );
 }
@@ -438,30 +437,6 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
 
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-      {!isMobile && (
-        <aside style={{
-          width: 220, borderRight: "1px solid var(--border)", background: "var(--bg-subtle)",
-          padding: 16, overflowY: "auto", flexShrink: 0,
-        }}>
-          <div className="label-micro" style={{ marginBottom: 10 }}>Course</div>
-          <CourseFilterRow
-            label="All courses"
-            active={courseId === "all"}
-            onClick={() => { setCourseId("all"); setTopicFilter("all"); }}
-          />
-          {courses.map(c => (
-            <CourseFilterRow
-              key={c.course_id}
-              label={c.course_code || c.course_name}
-              subLabel={c.course_code ? c.course_name : undefined}
-              color={c.color || undefined}
-              active={courseId === c.course_id}
-              onClick={() => { setCourseId(c.course_id); setTopicFilter("all"); }}
-            />
-          ))}
-        </aside>
-      )}
-
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <div style={{ padding: "14px 32px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
           <Pill active={topicFilter === "all"} onClick={() => setTopicFilter("all")}>All topics</Pill>
@@ -557,6 +532,29 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
           )}
         </div>
       </div>
+      {!isMobile && (
+        <aside style={{
+          width: 220, borderLeft: "1px solid var(--border)", background: "var(--bg-subtle)",
+          padding: 16, overflowY: "auto", flexShrink: 0,
+        }}>
+          <div className="label-micro" style={{ marginBottom: 10 }}>Course</div>
+          <CourseFilterRow
+            label="All courses"
+            active={courseId === "all"}
+            onClick={() => { setCourseId("all"); setTopicFilter("all"); }}
+          />
+          {courses.map(c => (
+            <CourseFilterRow
+              key={c.course_id}
+              label={c.course_code || c.course_name}
+              subLabel={c.course_code ? c.course_name : undefined}
+              color={c.color || undefined}
+              active={courseId === c.course_id}
+              onClick={() => { setCourseId(c.course_id); setTopicFilter("all"); }}
+            />
+          ))}
+        </aside>
+      )}
     </div>
   );
 }

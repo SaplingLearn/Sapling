@@ -963,46 +963,6 @@ export function Social() {
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>
-      <aside style={{
-        width: 260, borderRight: "1px solid var(--border)", background: "var(--bg-subtle)",
-        display: "flex", flexDirection: "column",
-      }}>
-        <div style={{ padding: "18px 16px", borderBottom: "1px solid var(--border)" }}>
-          <div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>Study Rooms</div>
-          <CreateJoinBar onDone={load} />
-          <button
-            className="btn btn--sm"
-            style={{ marginTop: 8, width: "100%" }}
-            onClick={() => setTab("directory")}
-          >
-            <Icon name="users" size={12} /> Browse directory
-          </button>
-        </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
-          {rooms.length === 0 && (
-            <div style={{ padding: 12, color: "var(--text-muted)", fontSize: 12 }}>
-              No rooms yet — create or join one.
-            </div>
-          )}
-          {rooms.map((r) => (
-            <button
-              key={r.id}
-              onClick={() => { setActiveId(r.id); setTab("chat"); }}
-              style={{
-                width: "100%", padding: "10px 12px",
-                borderRadius: "var(--r-md)", textAlign: "left",
-                background: activeId === r.id && tab !== "directory" ? "var(--bg-panel)" : "transparent",
-                border: activeId === r.id && tab !== "directory" ? "1px solid var(--border)" : "1px solid transparent",
-                marginBottom: 4, display: "flex", flexDirection: "column", gap: 2,
-              }}
-            >
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.member_count} members</div>
-            </button>
-          ))}
-        </div>
-      </aside>
-
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {tab === "directory" ? <SchoolDirectory /> : active ? (
           <>
@@ -1043,6 +1003,45 @@ export function Social() {
           </div>
         )}
       </div>
+      <aside style={{
+        width: 260, borderLeft: "1px solid var(--border)", background: "var(--bg-subtle)",
+        display: "flex", flexDirection: "column", flexShrink: 0,
+      }}>
+        <div style={{ padding: "18px 16px", borderBottom: "1px solid var(--border)" }}>
+          <div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>Study Rooms</div>
+          <CreateJoinBar onDone={load} />
+          <button
+            className="btn btn--sm"
+            style={{ marginTop: 8, width: "100%" }}
+            onClick={() => setTab("directory")}
+          >
+            <Icon name="users" size={12} /> Browse directory
+          </button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
+          {rooms.length === 0 && (
+            <div style={{ padding: 12, color: "var(--text-muted)", fontSize: 12 }}>
+              No rooms yet — create or join one.
+            </div>
+          )}
+          {rooms.map((r) => (
+            <button
+              key={r.id}
+              onClick={() => { setActiveId(r.id); setTab("chat"); }}
+              style={{
+                width: "100%", padding: "10px 12px",
+                borderRadius: "var(--r-md)", textAlign: "left",
+                background: activeId === r.id && tab !== "directory" ? "var(--bg-panel)" : "transparent",
+                border: activeId === r.id && tab !== "directory" ? "1px solid var(--border)" : "1px solid transparent",
+                marginBottom: 4, display: "flex", flexDirection: "column", gap: 2,
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.member_count} members</div>
+            </button>
+          ))}
+        </div>
+      </aside>
     </div>
   );
 }

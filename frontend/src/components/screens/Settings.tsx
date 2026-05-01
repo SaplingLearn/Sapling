@@ -203,37 +203,7 @@ export function Settings() {
         }
       />
       <div style={{ display: "flex", height: "calc(100vh - 112px)" }}>
-        <div
-          style={{
-            width: 200,
-            borderRight: "1px solid var(--border)",
-            padding: "18px 12px",
-            background: "var(--bg-subtle)",
-          }}
-        >
-          {tabs.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "8px 12px",
-                fontSize: 13,
-                background: tab === t ? "var(--accent-soft)" : "transparent",
-                color: tab === t ? "var(--accent)" : "var(--text-dim)",
-                borderRadius: "var(--r-sm)",
-                marginBottom: 2,
-                fontWeight: tab === t ? 600 : 400,
-                textTransform: "capitalize",
-              }}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-        <div style={{ flex: 1, padding: "24px 32px", overflowY: "auto" }}>
+        <div style={{ flex: 1, minWidth: 0, padding: "24px 32px", overflowY: "auto" }}>
           {tab === "profile" && settings && (
             <div style={{ maxWidth: 640 }}>
               <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Profile</div>
@@ -550,6 +520,38 @@ export function Settings() {
               </div>
             </div>
           )}
+        </div>
+        <div
+          style={{
+            width: 200,
+            flexShrink: 0,
+            borderLeft: "1px solid var(--border)",
+            padding: "18px 12px",
+            background: "var(--bg-subtle)",
+            overflowY: "auto",
+          }}
+        >
+          {tabs.map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "8px 12px",
+                fontSize: 13,
+                background: tab === t ? "var(--accent-soft)" : "transparent",
+                color: tab === t ? "var(--accent)" : "var(--text-dim)",
+                borderRadius: "var(--r-sm)",
+                marginBottom: 2,
+                fontWeight: tab === t ? 600 : 400,
+                textTransform: "capitalize",
+              }}
+            >
+              {t}
+            </button>
+          ))}
         </div>
       </div>
 

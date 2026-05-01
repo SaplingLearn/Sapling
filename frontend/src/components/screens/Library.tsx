@@ -91,38 +91,6 @@ export function Library() {
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>
-      {!isMobile && (
-        <aside style={{
-          width: 240, borderRight: "1px solid var(--border)",
-          background: "var(--bg-subtle)", padding: 16, overflowY: "auto",
-        }}>
-          <div className="label-micro" style={{ marginBottom: 10 }}>Courses</div>
-          <CourseRow
-            label="All"
-            count={groupedByCourse.all || 0}
-            active={courseFilter === "all"}
-            onClick={() => setCourseFilter("all")}
-          />
-          <CourseRow
-            label="Uncategorized"
-            count={groupedByCourse.uncategorized || 0}
-            active={courseFilter === "uncategorized"}
-            onClick={() => setCourseFilter("uncategorized")}
-          />
-          {courses.map(c => (
-            <CourseRow
-              key={c.course_id}
-              label={c.course_code || c.course_name}
-              subLabel={c.course_code ? c.course_name : undefined}
-              color={c.color || undefined}
-              count={groupedByCourse[c.course_id] || 0}
-              active={courseFilter === c.course_id}
-              onClick={() => setCourseFilter(c.course_id)}
-            />
-          ))}
-        </aside>
-      )}
-
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <TopBar
           breadcrumb="Home / Library"
@@ -256,6 +224,38 @@ export function Library() {
           )}
         </div>
       </div>
+
+      {!isMobile && (
+        <aside style={{
+          width: 240, borderLeft: "1px solid var(--border)", flexShrink: 0,
+          background: "var(--bg-subtle)", padding: 16, overflowY: "auto",
+        }}>
+          <div className="label-micro" style={{ marginBottom: 10 }}>Courses</div>
+          <CourseRow
+            label="All"
+            count={groupedByCourse.all || 0}
+            active={courseFilter === "all"}
+            onClick={() => setCourseFilter("all")}
+          />
+          <CourseRow
+            label="Uncategorized"
+            count={groupedByCourse.uncategorized || 0}
+            active={courseFilter === "uncategorized"}
+            onClick={() => setCourseFilter("uncategorized")}
+          />
+          {courses.map(c => (
+            <CourseRow
+              key={c.course_id}
+              label={c.course_code || c.course_name}
+              subLabel={c.course_code ? c.course_name : undefined}
+              color={c.color || undefined}
+              count={groupedByCourse[c.course_id] || 0}
+              active={courseFilter === c.course_id}
+              onClick={() => setCourseFilter(c.course_id)}
+            />
+          ))}
+        </aside>
+      )}
 
       {detail && isMobile && (
         <div
