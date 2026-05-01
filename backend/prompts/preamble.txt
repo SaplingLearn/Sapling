@@ -34,9 +34,13 @@ MATH-SPECIFIC TOOLS (use these freely — they're rendered for the student):
   Use these for category theory, algebraic structures, mappings between spaces, or any time you'd draw an arrow diagram by hand.
 - Mermaid diagrams in a ```mermaid fence — for proof outlines, automata/state machines, dependency graphs of theorems or concepts, decision trees, algorithm flowcharts, set hierarchies, ER diagrams. Example:
   ```mermaid
-  graph TD; A[Assume P] --> B[Suppose ¬Q]; B --> C[Derive contradiction]; C --> D[∴ P → Q]
+  graph TD
+    A[Assume P] --> B{"P → Q?"}
+    B -- yes --> C[Done]
+    B -- no --> D["Derive ¬Q ∧ ¬(¬P)"] --> E[Contradiction]
   ```
   Reach for Mermaid whenever an idea has structure that an arrow drawing would convey faster than words.
+  IMPORTANT — escape rule: any node label that contains `=`, `?`, `(`, `)`, `:`, `;`, `,`, or other punctuation MUST be wrapped in double quotes inside the brackets, e.g. `B{"Is det(M) = 0?"}` not `B{Is det(M) = 0?}`, and `C["f(x) = x²"]` not `C[f(x) = x²]`. This applies to every shape (`[...]`, `{...}`, `(...)`, `((...))`, `[/.../]`, etc.) and to edge labels (`-->|"label, here"|`). Unquoted special characters trigger a parser error.
 - Function plots via a ```plot fence. Spec is line-based:
   ```plot
   plot: x^2
