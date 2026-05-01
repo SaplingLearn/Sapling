@@ -358,24 +358,34 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
         boxSizing: 'border-box',
       }}>
 
-      {/* ── Centered step dot + label ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '18px' }}>
-        <span style={{
-          display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0,
-          background: activeColor, boxShadow: `0 0 8px ${activeColor}cc`,
-        }} />
-        <span style={{
-          fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace",
-          fontSize: '10px', letterSpacing: '0.28em', textTransform: 'uppercase',
-          color: activeColor, fontWeight: 500,
-        }}>
-          {STEPS[activeStep].label}
-        </span>
-      </div>
-
       {/* ── Content column ── */}
       <div style={{ width: '100%', maxWidth: '440px', padding: '0 28px' }}>
-        <div key={activeStep} style={{ animation: 'ob-card-in 0.38s cubic-bezier(0.22,1,0.36,1) both', position: 'relative', zIndex: 1 }}>
+        <div key={activeStep} style={{
+          animation: 'ob-card-in 0.38s cubic-bezier(0.22,1,0.36,1) both',
+          position: 'relative',
+          zIndex: 1,
+          background: 'rgba(255,255,255,0.72)',
+          backdropFilter: 'blur(18px)',
+          WebkitBackdropFilter: 'blur(18px)',
+          border: `1px solid ${activeColor}33`,
+          borderRadius: '20px',
+          padding: '28px 28px 24px',
+          boxShadow: `0 20px 60px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.06), 0 0 0 1px rgba(255,255,255,0.5) inset, 0 -1px 0 0 ${activeColor}20 inset`,
+        }}>
+          {/* ── Step dot + label ── */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '20px' }}>
+            <span style={{
+              display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0,
+              background: activeColor, boxShadow: `0 0 8px ${activeColor}cc`,
+            }} />
+            <span style={{
+              fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace",
+              fontSize: '10px', letterSpacing: '0.28em', textTransform: 'uppercase',
+              color: activeColor, fontWeight: 500,
+            }}>
+              {STEPS[activeStep].label}
+            </span>
+          </div>
 
           {activeStep === 0 && (
             <div>
@@ -660,7 +670,6 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
               </div>
             </div>
           )}
-        </div>
 
         {/* ── Navigation ── */}
         <div style={{ display: 'flex', gap: '10px', marginTop: '28px', justifyContent: 'center' }}>
@@ -699,6 +708,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
               }
             </button>
           </div>
+        </div>
       </div>
 
       </div>
