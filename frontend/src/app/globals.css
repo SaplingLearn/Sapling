@@ -13,8 +13,8 @@
  * so the hierarchy is doing the work, not decoration.
  */
 :root {
-  --font-display: 'Playfair Display', 'Spectral', Georgia, serif;
-  --font-serif: 'Spectral', 'Playfair Display', Georgia, serif;
+  --font-display: 'Playfair Display', 'Spectral', georgia, serif;
+  --font-serif: 'Spectral', 'Playfair Display', georgia, serif;
   --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 
@@ -196,11 +196,11 @@ body { font-size: 14px; line-height: 1.5; }
   text-transform: uppercase; color: var(--text-muted);
 }
 
-@keyframes fadeIn { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: none; } }
-@keyframes slideUp { from { opacity: 0; transform: translateY(12px);} to { opacity: 1; transform: none; } }
-.fade-in { animation: fadeIn var(--dur) var(--ease); }
-.slide-up { animation: slideUp var(--dur-slow) var(--ease); }
-.fade-up { animation: fadeIn 0.5s var(--ease); animation-fill-mode: both; }
+@keyframes fade-in { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: none; } }
+@keyframes slide-up { from { opacity: 0; transform: translateY(12px);} to { opacity: 1; transform: none; } }
+.fade-in { animation: fade-in var(--dur) var(--ease); }
+.slide-up { animation: slide-up var(--dur-slow) var(--ease); }
+.fade-up { animation: fade-in 0.5s var(--ease); animation-fill-mode: both; }
 .anim-d0 { animation-delay:   0ms; }
 .anim-d1 { animation-delay:  80ms; }
 .anim-d2 { animation-delay: 160ms; }
@@ -669,10 +669,11 @@ html.dark textarea {
 
 
 /* ══════════════════════════════════════════════════════════════════
-   LANDING + ONBOARDING THEME (scoped to .landing-page only)
-   Restores the main-branch color system, button look, mesh bg, and
-   glass/floating-card effects for the public marketing surface
-   WITHOUT touching the signed-in app shell tokens.
+   PRE-AUTH (sign-in / landing) THEME — scoped to .landing-page only.
+   This block themes the public, pre-auth surface (currently rendered
+   as the sign-in entry page) and intentionally does NOT touch the
+   signed-in app shell tokens. To be revisited and consolidated with
+   the rest of the design system in a follow-up pass.
    ══════════════════════════════════════════════════════════════════ */
 .landing-page {
   /* Brand mesh (main palette). */
