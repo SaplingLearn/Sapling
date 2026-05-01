@@ -82,7 +82,7 @@ export function SideNav() {
   const onSignOut = async () => {
     setMenuOpen(false);
     await signOut();
-    router.replace("/auth");
+    router.replace("/");
   };
 
   const width = collapsed ? SIDE_NAV_COLLAPSED : SIDE_NAV_EXPANDED;

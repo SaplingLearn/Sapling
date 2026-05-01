@@ -84,7 +84,7 @@ export function TopNav() {
   const onSignOut = async () => {
     setMenuOpen(false);
     await signOut();
-    router.replace("/auth");
+    router.replace("/");
   };
 
   return (

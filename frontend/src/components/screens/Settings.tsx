@@ -179,7 +179,7 @@ export function Settings() {
     try {
       await deleteAccount(userId, conf);
       await signOut();
-      window.location.href = "/auth";
+      window.location.href = "/";
     } catch (err) {
       alert(String(err));
     }

@@ -16,7 +16,7 @@ Backend rewrites go to `http://localhost:5000` by default (override via `BACKEND
 
 ## Layout
 
-- `src/app/` — App Router routes. The shell (sidebar + top bar) wraps every route except `auth` and `onboarding`, which are full-bleed.
+- `src/app/` — App Router routes. The shell (sidebar + top bar) wraps every route except `onboarding`, which is full-bleed. Sign-in is a modal triggered from the landing page.
 - `src/components/` — shared UI primitives and per-screen components.
 - `src/lib/data.ts` — mock data mirroring the design bundle. Swap for real API calls when wiring up.
 - `src/lib/tweaks.tsx` — runtime design-token context (theme/accent/type/density/layout/graph).
@@ -25,6 +25,6 @@ Backend rewrites go to `http://localhost:5000` by default (override via `BACKEND
 
 `/dashboard` `/learn` `/tree` `/study` `/library` `/calendar` `/social` `/achievements` `/settings` `/admin` — wrapped by the shell layout.
 
-`/auth` `/onboarding` — full-bleed.
+`/onboarding` — full-bleed.
 
 A floating Tweaks panel (bottom-left) lets you switch themes live. A Report button (bottom-right) opens the feedback modal.

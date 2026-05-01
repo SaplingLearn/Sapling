@@ -18,11 +18,11 @@ function CallbackInner() {
     const error = searchParams.get('error');
 
     if (error === 'not_approved' || approvedParam === 'false') {
-      router.replace('/auth?error=not_approved');
+      router.replace('/?error=not_approved');
       return;
     }
     if (approvedParam !== 'true' || !userId || !name) {
-      router.replace('/auth?error=signin_failed');
+      router.replace('/?error=signin_failed');
       return;
     }
 
@@ -37,11 +37,11 @@ function CallbackInner() {
           body: JSON.stringify({ userId, ...(authToken ? { authToken } : {}) }),
         });
         if (!sessionRes.ok) {
-          router.replace('/auth?error=signin_failed');
+          router.replace('/?error=signin_failed');
           return;
         }
       } catch {
-        router.replace('/auth?error=signin_failed');
+        router.replace('/?error=signin_failed');
         return;
       }
       try {

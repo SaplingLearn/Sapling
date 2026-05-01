@@ -6,6 +6,7 @@ import { useUser } from '@/context/UserContext';
 import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } from 'lucide-react';
 import OnboardingFlow from '@/components/OnboardingFlow';
 import HowItWorks from '@/components/HowItWorks';
+import SignInModal from '@/components/SignInModal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
@@ -33,6 +34,8 @@ export default function LandingPage() {
   const [introText, setIntroText] = useState<'hidden' | 'in' | 'out'>('hidden');
   const [outroText, setOutroText] = useState<'hidden' | 'in' | 'out'>('hidden');
   const [outroOverlay, setOutroOverlay] = useState(false);
+  const [signInOpen, setSignInOpen] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
   const [betaModalOpen, setBetaModalOpen] = useState(false);
   const [betaModalClosing, setBetaModalClosing] = useState(false);
   const [betaEmail, setBetaEmail] = useState('');
@@ -129,6 +132,21 @@ export default function LandingPage() {
       window.history.scrollRestoration = 'manual';
     }
     window.scrollTo({ top: 0, behavior: 'instant' });
+  }, []);
+
+  // If we landed here from an auth callback error or middleware redirect,
+  // surface the message in the sign-in modal and clean the param from the URL.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get('error');
+    if (!err) return;
+    setSignInError(err);
+    setSignInOpen(true);
+    params.delete('error');
+    const qs = params.toString();
+    const next = window.location.pathname + (qs ? `?${qs}` : '');
+    window.history.replaceState({}, '', next);
   }, []);
 
   // Sync refs from state
@@ -673,7 +691,7 @@ export default function LandingPage() {
             <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: '#1a5c2a', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Sapling</span>
           </div>
           <div className="flex items-center">
-            <button onClick={() => router.push('/auth')} className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
+            <button onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
             <button onClick={startOnboarding} className="relative overflow-hidden group bg-[#1B6C42] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
               Get Started
             </button>
@@ -1236,6 +1254,13 @@ export default function LandingPage() {
           setCompleted={setCompleted}
         />
       )}
+
+      {/* ═══ Sign-in modal ═══ */}
+      <SignInModal
+        open={signInOpen}
+        onClose={() => { setSignInOpen(false); setSignInError(null); }}
+        errorCode={signInError}
+      />
     </div>
   );
 }

@@ -96,7 +96,7 @@ export function Onboarding() {
 
   useEffect(() => {
     if (!userReady) return;
-    if (!isAuthenticated) router.replace("/auth");
+    if (!isAuthenticated) router.replace("/");
   }, [userReady, isAuthenticated, router]);
 
   const setField = useCallback(<K extends keyof Draft>(key: K, value: Draft[K]) => {
@@ -113,7 +113,7 @@ export function Onboarding() {
 
   const close = useCallback(async () => {
     await signOut();
-    router.replace("/auth");
+    router.replace("/");
   }, [signOut, router]);
 
   useEffect(() => {
