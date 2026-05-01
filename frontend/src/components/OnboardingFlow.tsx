@@ -303,6 +303,49 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
         <X style={{ width: '22px', height: '22px' }} strokeWidth={1.5} />
       </button>
 
+      {/* ── Dev step jumper ── */}
+      {process.env.NODE_ENV === 'development' && (
+        <div style={{
+          position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)',
+          zIndex: 100, display: 'flex', alignItems: 'center', gap: '6px',
+          padding: '6px 10px',
+          background: 'rgba(15,23,42,0.82)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
+          borderRadius: '14px',
+          border: '1px solid rgba(255,255,255,0.08)',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+        }}>
+          <span style={{
+            fontSize: '9px', letterSpacing: '0.18em', textTransform: 'uppercase',
+            color: 'rgba(255,255,255,0.45)', fontWeight: 600,
+            fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace",
+            paddingRight: '4px', borderRight: '1px solid rgba(255,255,255,0.1)',
+            marginRight: '2px',
+          }}>
+            Dev
+          </span>
+          {STEPS.map((s, i) => (
+            <button
+              key={s.id}
+              onClick={() => setActiveStep(i)}
+              title={s.label}
+              style={{
+                padding: '5px 11px', fontSize: '11px', fontWeight: 600,
+                fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace",
+                background: activeStep === i ? s.color : 'rgba(255,255,255,0.07)',
+                color: activeStep === i ? '#ffffff' : 'rgba(255,255,255,0.7)',
+                border: 'none', borderRadius: '8px', cursor: 'pointer',
+                transition: 'all 0.18s ease',
+                boxShadow: activeStep === i ? `0 0 12px ${s.color}88` : 'none',
+              }}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ── Step indicator (top-left) ── */}
       <div style={{ position: 'fixed', top: '28px', left: '32px', zIndex: 10 }}>
         <div style={{
