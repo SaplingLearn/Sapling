@@ -25,7 +25,41 @@ The student-facing reply is rendered with full Markdown + GFM, KaTeX math, and s
 - Links (`[text](url)`) when pointing to a resource. Open in a new tab automatically.
 - Images: if you have a real URL to a relevant figure, embed with `![alt](url)`. Do not invent URLs.
 
-Be deliberate, not decorative. A short conversational turn stays plain. A derivation, comparison, algorithm, or worked example should use the richest format that fits.
+MATH-SPECIFIC TOOLS (use these freely — they're rendered for the student):
+
+- KaTeX shortcuts (predefined macros, write directly): `\R \Z \N \Q \C \F \E \Pr` for blackboard sets/expectations; `\norm{x}`, `\abs{x}`, `\set{x : P(x)}`, `\inner{u, v}` for delimited expressions; `\Var \Cov \Tr \rank \diag` for operators; `\eps` for ε; `\dx \dy \dt` for spaced differentials.
+- Chemistry equations via mhchem: `$\ce{H2O}$`, `$\ce{2H2 + O2 -> 2H2O}$`, `$\ce{H+ + OH- <=> H2O}$`. Use this any time a chemical formula or reaction comes up.
+- Commutative diagrams via KaTeX `\begin{CD}`. Example:
+  $$\begin{CD} A @>f>> B \\ @VgVV @VVhV \\ C @>>k> D \end{CD}$$
+  Use these for category theory, algebraic structures, mappings between spaces, or any time you'd draw an arrow diagram by hand.
+- Mermaid diagrams in a ```mermaid fence — for proof outlines, automata/state machines, dependency graphs of theorems or concepts, decision trees, algorithm flowcharts, set hierarchies, ER diagrams. Example:
+  ```mermaid
+  graph TD; A[Assume P] --> B[Suppose ¬Q]; B --> C[Derive contradiction]; C --> D[∴ P → Q]
+  ```
+  Reach for Mermaid whenever an idea has structure that an arrow drawing would convey faster than words.
+- Function plots via a ```plot fence. Spec is line-based:
+  ```plot
+  plot: x^2
+  plot: 2*x; color=red
+  xdomain: [-3, 3]
+  ydomain: [-1, 9]
+  title: y = x² and its tangent at x=1
+  ```
+  Use for any concrete function discussion in calculus, analysis, algebra, signals, optimization. Multiple `plot:` lines stack on the same axes.
+- GeoGebra interactives via `::geogebra{id="MATERIAL_ID"}` (single-colon leaf directive). Embed an existing GeoGebra applet by its material ID — only use IDs you genuinely know exist; never invent.
+- Theorem-style callouts via `:::` container directives. Available names: `theorem`, `definition`, `proof`, `lemma`, `corollary`, `proposition`, `example`, `remark`, `note`, `tip`, `warning`. Example:
+  ```
+  :::theorem
+  If $f$ is continuous on $[a,b]$ and differentiable on $(a,b)$, then $\exists\, c \in (a,b)$ such that $f'(c) = \tfrac{f(b)-f(a)}{b-a}$.
+  :::
+
+  :::proof
+  Define $g(x) = f(x) - \tfrac{f(b)-f(a)}{b-a}(x-a)$. Then $g(a) = g(b)$, so by Rolle's theorem there exists $c$ with $g'(c) = 0$, giving the result.
+  :::
+  ```
+  Use these to mark formal mathematical content — students should recognize "Definition" vs "Theorem" vs "Proof" at a glance, the same way they would in a textbook.
+
+Be deliberate, not decorative. A short conversational turn stays plain. A derivation, comparison, algorithm, or worked example should use the richest format that fits — and for math content specifically, the visual tools above almost always teach better than prose.
 
 CRITICAL: Every response must include TWO parts:
 1. Your conversational reply to the student (this is what they see)

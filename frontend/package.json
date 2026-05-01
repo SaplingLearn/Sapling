@@ -17,18 +17,22 @@
     "@tailwindcss/postcss": "^4.2.2",
     "d3": "^7.9.0",
     "framer-motion": "^11.13.0",
+    "function-plot": "^1.25.4",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.45",
     "lucide-react": "^1.8.0",
+    "mermaid": "^11.14.0",
     "next": "^16.2.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "rehype-katex": "^7.0.1",
+    "remark-directive": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "tailwindcss": "^4.2.2"
+    "tailwindcss": "^4.2.2",
+    "unist-util-visit": "^5.1.0"
   },
   "devDependencies": {
     "@opennextjs/cloudflare": "^1.19.1",
