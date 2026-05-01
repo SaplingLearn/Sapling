@@ -17,17 +17,41 @@ function CallbackInner() {
     const authToken = searchParams.get('auth_token');
     const error = searchParams.get('error');
 
+    const isPopup =
+      typeof window !== 'undefined' &&
+      !!window.opener &&
+      window.opener !== window;
+
+    const postToOpener = (payload: Record<string, unknown>): boolean => {
+      if (!isPopup) return false;
+      try {
+        window.opener.postMessage(
+          { type: 'sapling_signin', ...payload },
+          window.location.origin,
+        );
+      } catch {}
+      try { window.close(); } catch {}
+      return true;
+    };
+
+    const fail = (errCode: string) => {
+      if (postToOpener({ success: false, error: errCode })) return;
+      router.replace(`/?error=${encodeURIComponent(errCode)}`);
+    };
+
     if (error === 'not_approved' || approvedParam === 'false') {
-      router.replace('/?error=not_approved');
+      fail('not_approved');
       return;
     }
     if (approvedParam !== 'true' || !userId || !name) {
-      router.replace('/?error=signin_failed');
+      fail(error || 'signin_failed');
       return;
     }
 
-    setActiveUser(userId, name, avatar || '');
-    confirmApproved();
+    if (!isPopup) {
+      setActiveUser(userId, name, avatar || '');
+      confirmApproved();
+    }
 
     (async () => {
       try {
@@ -37,24 +61,36 @@ function CallbackInner() {
           body: JSON.stringify({ userId, ...(authToken ? { authToken } : {}) }),
         });
         if (!sessionRes.ok) {
-          router.replace('/?error=signin_failed');
+          fail('signin_failed');
           return;
         }
       } catch {
-        router.replace('/?error=signin_failed');
+        fail('signin_failed');
         return;
       }
+
+      let onboardingCompleted = true;
       try {
         const r = await fetch(`/api/auth/me?user_id=${encodeURIComponent(userId)}`);
         const data = await r.json();
-        if (data.onboarding_completed) {
-          router.replace('/dashboard');
-        } else {
-          sessionStorage.setItem('sapling_onboarding_pending', '1');
-          router.replace('/');
-        }
+        onboardingCompleted = !!data.onboarding_completed;
       } catch {
+        onboardingCompleted = true;
+      }
+
+      if (postToOpener({
+        success: true,
+        userId,
+        name,
+        avatar: avatar || '',
+        onboardingCompleted,
+      })) return;
+
+      if (onboardingCompleted) {
         router.replace('/dashboard');
+      } else {
+        sessionStorage.setItem('sapling_onboarding_pending', '1');
+        router.replace('/');
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
