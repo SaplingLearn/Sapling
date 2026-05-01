@@ -125,19 +125,6 @@ export function SideNav() {
             >
               Sapling
             </span>
-            <span
-              style={{
-                fontSize: 9,
-                fontWeight: 600,
-                color: "#1a5c2a",
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                opacity: 0.7,
-                lineHeight: 1,
-              }}
-            >
-              Closed Alpha
-            </span>
           </div>
         )}
       </Link>

@@ -128,7 +128,7 @@ export function TopNav() {
       {/* Logo — ported verbatim from the pre-revamp Navbar
           (main@929658f:frontend/src/components/Navbar.tsx:213-231):
           /sapling-icon.svg + Spectral "Sapling" with a soft green
-          text-shadow, "Closed Alpha" underneath. */}
+          text-shadow. */}
       <Link href="/dashboard" style={{ display: "flex", alignItems: "center", gap: "2px", textDecoration: "none" }}>
         <img
           src="/sapling-icon.svg"
@@ -157,19 +157,6 @@ export function TopNav() {
             }}
           >
             Sapling
-          </span>
-          <span
-            style={{
-              fontSize: "9px",
-              fontWeight: 600,
-              color: "#1a5c2a",
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              opacity: 0.7,
-              lineHeight: 1,
-            }}
-          >
-            Closed Alpha
           </span>
         </div>
       </Link>
