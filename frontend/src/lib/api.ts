@@ -416,6 +416,65 @@ export const deleteFlashcard = (userId: string, cardId: string) =>
     { method: 'DELETE' },
   );
 
+// Flashcard import
+export interface ImportCard { front: string; back: string }
+export interface ImportParseResponse { cards: ImportCard[]; errors: { row: number; message: string }[] }
+export interface ImportCommitResponse { inserted: number; skipped_duplicates: number }
+export interface ImportGenerateResponse { cards: ImportCard[] }
+
+export const importParse = (
+  userId: string,
+  source: "anki" | "xlsx" | "url" | "ocr",
+  payload: string,
+  options: Record<string, unknown> = {},
+) =>
+  fetchJSON<ImportParseResponse>(`/api/flashcards/import/parse`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, source, payload, options }),
+  });
+
+export const importCommit = (
+  userId: string,
+  courseId: string | null,
+  topic: string,
+  cards: ImportCard[],
+  dedup = true,
+) =>
+  fetchJSON<ImportCommitResponse>(`/api/flashcards/import/commit`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, course_id: courseId, topic, cards, dedup }),
+  });
+
+export const importGenerate = (
+  userId: string,
+  args:
+    | { source: "paste"; text: string; count: number; difficulty: "recall" | "application" | "conceptual" }
+    | { source: "library_doc"; documentId: string; count: number; difficulty: "recall" | "application" | "conceptual" },
+) =>
+  fetchJSON<ImportGenerateResponse>(`/api/flashcards/import/generate`, {
+    method: "POST",
+    body: JSON.stringify({
+      user_id: userId,
+      source: args.source,
+      text: args.source === "paste" ? args.text : undefined,
+      document_id: args.source === "library_doc" ? args.documentId : undefined,
+      count: args.count,
+      difficulty: args.difficulty,
+    }),
+  });
+
+export const importCleanup = (userId: string, cards: ImportCard[]) =>
+  fetchJSON<{ cards: ImportCard[] }>(`/api/flashcards/import/cleanup`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, cards }),
+  });
+
+export const importCloze = (userId: string, paragraph: string) =>
+  fetchJSON<{ cards: ImportCard[] }>(`/api/flashcards/import/cloze`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, paragraph }),
+  });
+
 // Study Guide
 export interface StudyGuideTopic {
   name: string;

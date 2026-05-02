@@ -1,0 +1,14 @@
+Generate fill-in-the-blank (cloze deletion) flashcards from this
+paragraph. For each cloze, pick a single key term to remove.
+
+Front side: the sentence with the term replaced by "{{...}}".
+Back side: the removed term itself.
+
+Aim for 3–8 cards depending on the paragraph's density. Skip filler
+words. Prefer terms that test conceptual understanding.
+
+Return ONLY a JSON array of {"front": "...", "back": "..."} — no prose
+or fences.
+
+PARAGRAPH:
+{paragraph}

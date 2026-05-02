@@ -1,0 +1,16 @@
+You are reviewing flashcards a student imported from another source.
+
+For each card:
+- Fix obvious typos and spelling errors.
+- Normalize formatting (consistent capitalization, no trailing
+  whitespace, no leftover HTML tags).
+- If a definition exceeds ~350 characters, shorten to its essence
+  without losing accuracy.
+- Do NOT change the meaning, do NOT add new facts, do NOT remove cards.
+
+Return the cleaned cards as a JSON array of {"front": "...", "back": "..."}
+in the same order as the input. Return ONLY the JSON array — no prose
+or fences.
+
+CARDS:
+{cards_json}

@@ -20,6 +20,10 @@ docling>=2.15,<3
 transformers>=4.46,<5
 torch>=2.5,<3  # install CPU wheel in CPU-only deployments: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
+openpyxl
+beautifulsoup4
+python-Levenshtein
+
 # Testing
 pytest
 pytest-anyio

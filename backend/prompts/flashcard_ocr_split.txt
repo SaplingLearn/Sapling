@@ -1,0 +1,11 @@
+You are extracting flashcards from OCR'd notes.
+
+Input below is markdown extracted from a photo of a student's notes.
+Identify question/answer or term/definition pairs and return them as a
+JSON array of {"front": "...", "back": "..."} objects. If a section is
+prose without clear pairs, generate sensible recall flashcards from it.
+
+Return ONLY the JSON array — no surrounding prose or markdown fences.
+
+INPUT:
+{markdown}

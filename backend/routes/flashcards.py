@@ -1,13 +1,30 @@
 from __future__ import annotations
 
+import base64
 import uuid
 from datetime import datetime
+from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from db.connection import table
 from services.gemini_service import generate_flashcards as _generate
+from services.auth_guard import require_self, get_session_user_id
+from services.achievement_service import check_achievements
+from services.flashcard_import_service import (
+    dedup_against_existing,
+    check_rate_limit,
+    parse_xlsx,
+    parse_anki_apkg,
+    scrape_quizlet_url,
+    extract_cards_from_image,
+    QuizletBlocked,
+    gemini_generate_cards,
+    gemini_cleanup_cards,
+    gemini_cloze,
+)
 
 router = APIRouter()
 
@@ -25,6 +42,45 @@ class FlashcardRatingBody(BaseModel):
     user_id: str
     card_id: str
     rating: int  # 1 = forgot, 2 = hard, 3 = easy
+
+
+class CardInput(BaseModel):
+    front: str
+    back: str
+
+
+class ImportParseBody(BaseModel):
+    user_id: str
+    source: Literal["anki", "xlsx", "url", "ocr"]
+    payload: str  # base64 for files, plain text for url; filename in options
+    options: dict = {}
+
+
+class ImportCommitBody(BaseModel):
+    user_id: str
+    course_id: str | None = None
+    topic: str
+    cards: list[CardInput]
+    dedup: bool = True
+
+
+class ImportGenerateBody(BaseModel):
+    user_id: str
+    source: Literal["paste", "library_doc"]
+    text: str | None = None
+    document_id: str | None = None
+    count: int = 25
+    difficulty: Literal["recall", "application", "conceptual"] = "recall"
+
+
+class ImportCleanupBody(BaseModel):
+    user_id: str
+    cards: list[CardInput]
+
+
+class ImportClozeBody(BaseModel):
+    user_id: str
+    paragraph: str
 
 
 # ── Context helpers ────────────────────────────────────────────────────────────
@@ -229,3 +285,167 @@ def delete_card(card_id: str, user_id: str):
 
     table("flashcards").delete(filters={"id": f"eq.{card_id}"})
     return {"ok": True}
+
+
+# ── Import routes ──────────────────────────────────────────────────────────────
+
+_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+@router.post("/import/commit")
+def import_commit(body: ImportCommitBody, request: Request):
+    require_self(body.user_id, request)
+
+    cards = [{"front": c.front, "back": c.back} for c in body.cards]
+    skipped_count = 0
+
+    if body.dedup:
+        keep, skipped = dedup_against_existing(
+            body.user_id, body.course_id, cards, topic=body.topic
+        )
+        cards = keep
+        skipped_count = len(skipped)
+
+    now = datetime.utcnow().isoformat()
+    rows = [
+        {
+            "id": str(uuid.uuid4()),
+            "user_id": body.user_id,
+            "topic": body.topic,
+            "course_id": body.course_id,
+            "front": c["front"],
+            "back": c["back"],
+            "times_reviewed": 0,
+            "last_reviewed_at": None,
+            "created_at": now,
+        }
+        for c in cards
+    ]
+
+    if rows:
+        try:
+            table("flashcards").insert(rows)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Insert failed: {e}")
+
+    try:
+        check_achievements(body.user_id, "flashcards_created", {"count": len(rows)})
+    except Exception:
+        pass
+
+    return {"inserted": len(rows), "skipped_duplicates": skipped_count}
+
+
+@router.post("/import/parse")
+def import_parse(body: ImportParseBody, request: Request):
+    require_self(body.user_id, request)
+
+    if body.source in ("anki", "xlsx", "ocr"):
+        try:
+            file_bytes = base64.b64decode(body.payload, validate=True)
+        except Exception:
+            raise HTTPException(status_code=400, detail="payload must be valid base64")
+        if len(file_bytes) > _MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="File exceeds 5MB limit")
+
+        try:
+            if body.source == "xlsx":
+                cards = parse_xlsx(file_bytes)
+            elif body.source == "anki":
+                cards = parse_anki_apkg(file_bytes)
+            else:  # ocr
+                filename = (body.options or {}).get("filename", "image.png")
+                cards = extract_cards_from_image(file_bytes, filename=filename)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Parser error: {e}")
+        return {"cards": cards, "errors": []}
+
+    if body.source == "url":
+        try:
+            cards = scrape_quizlet_url(body.payload)
+        except QuizletBlocked as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return {"cards": cards, "errors": []}
+
+    raise HTTPException(status_code=400, detail=f"Unsupported source: {body.source}")
+
+
+@router.post("/import/generate")
+def import_generate(body: ImportGenerateBody, request: Request):
+    require_self(body.user_id, request)
+
+    retry = check_rate_limit(body.user_id)
+    if retry is not None:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": f"Rate limit hit. Try again in {retry}s."},
+            headers={"Retry-After": str(retry)},
+        )
+
+    if body.source == "paste":
+        if not body.text:
+            raise HTTPException(status_code=400, detail="`text` is required for paste source")
+        source_text = body.text
+    else:  # library_doc
+        if not body.document_id:
+            raise HTTPException(status_code=400, detail="`document_id` is required for library_doc source")
+        rows = table("documents").select(
+            "id,user_id,summary,concept_notes,file_name",
+            filters={"id": f"eq.{body.document_id}", "user_id": f"eq.{body.user_id}"},
+            limit=1,
+        )
+        if not rows:
+            raise HTTPException(status_code=404, detail="Document not found")
+        doc = rows[0]
+        parts = [doc.get("summary") or "", str(doc.get("concept_notes") or {})]
+        source_text = "\n\n".join(p for p in parts if p)
+
+    try:
+        cards = gemini_generate_cards(source_text, count=body.count, difficulty=body.difficulty)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+
+    return {"cards": cards}
+
+
+@router.post("/import/cleanup")
+def import_cleanup(body: ImportCleanupBody, request: Request):
+    require_self(body.user_id, request)
+
+    retry = check_rate_limit(body.user_id)
+    if retry is not None:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": f"Rate limit hit. Try again in {retry}s."},
+            headers={"Retry-After": str(retry)},
+        )
+
+    cards = [{"front": c.front, "back": c.back} for c in body.cards]
+    try:
+        out = gemini_cleanup_cards(cards)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+    return {"cards": out}
+
+
+@router.post("/import/cloze")
+def import_cloze(body: ImportClozeBody, request: Request):
+    require_self(body.user_id, request)
+
+    retry = check_rate_limit(body.user_id)
+    if retry is not None:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": f"Rate limit hit. Try again in {retry}s."},
+            headers={"Retry-After": str(retry)},
+        )
+
+    try:
+        cards = gemini_cloze(body.paragraph)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+    return {"cards": cards}

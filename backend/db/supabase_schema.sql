@@ -280,6 +280,7 @@ CREATE TABLE IF NOT EXISTS flashcards (
     id               TEXT PRIMARY KEY,
     user_id          TEXT NOT NULL REFERENCES users(id),
     topic            TEXT NOT NULL,
+    course_id        TEXT REFERENCES courses(id),
     front            TEXT NOT NULL,
     back             TEXT NOT NULL,
     times_reviewed   INTEGER DEFAULT 0,
@@ -289,6 +290,7 @@ CREATE TABLE IF NOT EXISTS flashcards (
 );
 
 CREATE INDEX IF NOT EXISTS idx_flashcards_user_topic ON flashcards(user_id, topic);
+CREATE INDEX IF NOT EXISTS idx_flashcards_user_course ON flashcards(user_id, course_id);
 
 -- Feedback
 CREATE TABLE IF NOT EXISTS feedback (

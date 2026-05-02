@@ -1,0 +1,18 @@
+You are creating high-quality flashcards from study material.
+
+DIFFICULTY: {difficulty}
+- recall: short, atomic facts (one term -> one definition).
+- application: cards that ask the student to apply a concept to a scenario.
+- conceptual: cards that probe relationships, "why" and "how", trade-offs.
+
+COUNT: {count}
+
+Return EXACTLY {count} flashcards as a JSON array of
+{"front": "...", "back": "..."} objects. Front is the question or term,
+back is the answer. Keep each side <= 350 characters. Prefer plain
+markdown — no HTML.
+
+Return ONLY the JSON array — no surrounding prose or fences.
+
+SOURCE:
+{source}

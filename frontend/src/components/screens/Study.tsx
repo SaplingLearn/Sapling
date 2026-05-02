@@ -21,11 +21,13 @@ import {
   generateFlashcards,
   rateFlashcard,
   deleteFlashcard,
+  getDocuments,
   type EnrolledCourse,
   type StudyGuideContent,
   type StudyGuideExam,
   type StudyGuideCacheEntry,
 } from "@/lib/api";
+import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
 
 type Mode = "guide" | "cards";
 
@@ -331,6 +333,15 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
   const [loading, setLoading] = React.useState(false);
   const [generating, setGenerating] = React.useState(false);
   const [docsUsed, setDocsUsed] = React.useState<number | null>(null);
+  const [importOpen, setImportOpen] = React.useState(false);
+  const [docs, setDocs] = React.useState<{ id: string; file_name: string; category?: string }[]>([]);
+
+  React.useEffect(() => {
+    if (!userId) return;
+    getDocuments(userId)
+      .then(r => setDocs(r.documents || []))
+      .catch(() => setDocs([]));
+  }, [userId]);
 
   const load = React.useCallback(async () => {
     if (!userId) return;
@@ -447,6 +458,13 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
             </span>
           )}
           <button
+            className="btn btn--sm"
+            onClick={() => setImportOpen(true)}
+            disabled={!userId}
+          >
+            <Icon name="up" size={12} /> Import
+          </button>
+          <button
             className="btn btn--sm btn--primary"
             onClick={generate}
             disabled={generating || !userId}
@@ -553,6 +571,15 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
           ))}
         </aside>
       )}
+      <FlashcardImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        courses={courses}
+        defaultCourseId={courseId !== "all" ? courseId : courses[0]?.course_id}
+        defaultTopic={topicFilter !== "all" ? topicFilter : ""}
+        documents={docs}
+        onImported={() => { load(); }}
+      />
     </div>
   );
 }
