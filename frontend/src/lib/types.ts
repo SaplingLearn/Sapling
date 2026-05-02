@@ -259,3 +259,63 @@ export interface UserSettings {
   profile_visibility: string;
   activity_status_visible: boolean;
 }
+
+// ── Gradebook ────────────────────────────────────────────────────────────────
+
+export interface LetterScaleTier {
+  min: number;
+  letter: string;
+}
+
+export interface GradeCategory {
+  id: string;
+  name: string;
+  weight: number;
+  sort_order: number;
+  category_grade?: number | null;  // 0–1, server-computed; only on detail
+}
+
+export interface GradedAssignment {
+  id: string;
+  title: string;
+  course_id: string;
+  category_id: string | null;
+  points_possible: number | null;
+  points_earned: number | null;
+  due_date: string | null;
+  assignment_type: string | null;
+  notes: string | null;
+  source: "manual" | "syllabus" | "gradescope";
+}
+
+export interface GradebookCourseSummary {
+  course_id: string;
+  course_code: string;
+  course_name: string;
+  semester: string;
+  percent: number | null;
+  letter: string | null;
+  graded_count: number;
+  total_count: number;
+}
+
+export interface GradebookSummary {
+  courses: GradebookCourseSummary[];
+}
+
+export interface GradebookCourse {
+  course_id: string;
+  course_code: string;
+  course_name: string;
+  semester: string;
+  percent: number | null;
+  letter: string | null;
+  letter_scale: LetterScaleTier[] | null;
+  categories: GradeCategory[];
+  assignments: GradedAssignment[];
+}
+
+export interface ExtractedSyllabusCategory {
+  name: string;
+  weight: number;
+}
