@@ -98,3 +98,54 @@ def get_summary(request: Request, user_id: str = Query(...), semester: str = Que
             "total_count": len(course_assigns),
         })
     return {"courses": out}
+
+
+@router.get("/courses/{course_id}")
+def get_course(course_id: str, request: Request, user_id: str = Query(...)):
+    """Full gradebook for one course: categories, assignments, computed grade."""
+    require_self(user_id, request)
+
+    enrollment = table("user_courses").select(
+        "course_id,letter_scale,courses!inner(id,course_code,course_name,semester)",
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+        limit=1,
+    )
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Course not in your gradebook")
+    course = enrollment[0]["courses"]
+    letter_scale = enrollment[0].get("letter_scale")
+
+    cats = table("course_categories").select(
+        "*",
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+        order="sort_order.asc",
+    )
+    assigns = table("assignments").select(
+        "*",
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+        order="due_date.asc",
+    )
+
+    # Per-category grade for the UI.
+    by_cat: dict[str, list] = {c["id"]: [] for c in cats}
+    for a in assigns:
+        cid = a.get("category_id")
+        if cid in by_cat:
+            by_cat[cid].append(a)
+    for c in cats:
+        c["category_grade"] = gradebook_service.category_grade(by_cat[c["id"]])
+
+    percent = gradebook_service.current_grade(cats, assigns)
+    letter = gradebook_service.letter_for(percent, letter_scale)
+
+    return {
+        "course_id": course["id"],
+        "course_code": course["course_code"],
+        "course_name": course["course_name"],
+        "semester": course["semester"],
+        "percent": percent,
+        "letter": letter,
+        "letter_scale": letter_scale,
+        "categories": cats,
+        "assignments": assigns,
+    }
