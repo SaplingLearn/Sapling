@@ -248,3 +248,79 @@ class TestLetterScale:
         with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
             r = client.patch("/api/gradebook/courses/cs161/scale", json=body)
         assert r.status_code == 400
+
+
+# ── POST /syllabus/apply ─────────────────────────────────────────────────────
+
+class TestSyllabusApply:
+    def test_replaces_categories_and_inserts_assignments(self):
+        rows = {
+            "user_courses": [{"id": "uc1", "course_id": "cs161", "letter_scale": None,
+                               "courses": {"id": "cs161", "course_code": "CS 161",
+                                           "course_name": "Intro CS", "semester": "Spring 2026"}}],
+            "documents": [{"id": "doc1", "user_id": "u1"}],
+            "course_categories": [],
+            "assignments": [],
+        }
+        body = {
+            "user_id": "u1",
+            "course_id": "cs161",
+            "doc_id": "doc1",
+            "categories": [
+                {"name": "Exams", "weight": 60, "sort_order": 0},
+                {"name": "P-Sets", "weight": 40, "sort_order": 1},
+            ],
+            "assignments": [
+                {"title": "Midterm 1", "due_date": "2026-03-10",
+                 "assignment_type": "exam", "notes": None},
+                {"title": "P-Set 1", "due_date": "2026-02-01",
+                 "assignment_type": "homework", "notes": None},
+            ],
+        }
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.post("/api/gradebook/syllabus/apply", json=body)
+        assert r.status_code == 200
+        out = r.json()
+        assert "course" in out
+
+    def test_rejects_when_weights_dont_sum_to_100(self):
+        rows = {"user_courses": [{"id": "uc1"}], "documents": [{"id": "doc1", "user_id": "u1"}]}
+        body = {
+            "user_id": "u1",
+            "course_id": "cs161",
+            "doc_id": "doc1",
+            "categories": [
+                {"name": "Exams", "weight": 60, "sort_order": 0},
+                {"name": "P-Sets", "weight": 30, "sort_order": 1},
+            ],
+            "assignments": [],
+        }
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.post("/api/gradebook/syllabus/apply", json=body)
+        assert r.status_code == 400
+
+    def test_rejects_unknown_course(self):
+        rows = {"user_courses": [], "documents": [{"id": "doc1", "user_id": "u1"}]}
+        body = {
+            "user_id": "u1",
+            "course_id": "cs999",
+            "doc_id": "doc1",
+            "categories": [{"name": "X", "weight": 100, "sort_order": 0}],
+            "assignments": [],
+        }
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.post("/api/gradebook/syllabus/apply", json=body)
+        assert r.status_code == 404
+
+    def test_rejects_doc_owned_by_other_user(self):
+        rows = {"user_courses": [{"id": "uc1"}], "documents": [{"id": "doc1", "user_id": "other"}]}
+        body = {
+            "user_id": "u1",
+            "course_id": "cs161",
+            "doc_id": "doc1",
+            "categories": [{"name": "X", "weight": 100, "sort_order": 0}],
+            "assignments": [],
+        }
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.post("/api/gradebook/syllabus/apply", json=body)
+        assert r.status_code == 403

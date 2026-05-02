@@ -275,6 +275,95 @@ def delete_assignment_route(assignment_id: str, request: Request, user_id: str =
     return {"deleted": True}
 
 
+@router.post("/syllabus/apply")
+def apply_syllabus(body: SyllabusApplyBody, request: Request):
+    """Apply user-confirmed extracted categories + assignments to a course.
+
+    - Validates weights sum to 100 (±0.5).
+    - Validates the user owns the course AND the document.
+    - Wipes existing categories for (user, course); inserts new ones.
+    - Inserts assignments with source='syllabus', dedupes by (course_id, title, due_date).
+    - Sets user_courses.syllabus_doc_id.
+    - Returns the refreshed course detail.
+    """
+    require_self(body.user_id, request)
+    if not _user_owns_course(body.user_id, body.course_id):
+        raise HTTPException(status_code=404, detail="Course not in your gradebook")
+
+    doc_rows = table("documents").select(
+        "id,user_id",
+        filters={"id": f"eq.{body.doc_id}"},
+        limit=1,
+    )
+    if not doc_rows or doc_rows[0]["user_id"] != body.user_id:
+        raise HTTPException(status_code=403, detail="Document not yours")
+
+    total = sum(c.weight for c in body.categories)
+    if body.categories and abs(total - 100.0) > 0.5:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Category weights must sum to 100% (got {total:g}%)",
+        )
+
+    # Wipe + replace categories.
+    table("course_categories").delete(filters={
+        "user_id": f"eq.{body.user_id}",
+        "course_id": f"eq.{body.course_id}",
+    })
+    new_cats = [
+        {
+            "id": str(uuid.uuid4()),
+            "user_id": body.user_id,
+            "course_id": body.course_id,
+            "name": c.name,
+            "weight": c.weight,
+            "sort_order": c.sort_order,
+        }
+        for c in body.categories
+    ]
+    if new_cats:
+        table("course_categories").insert(new_cats)
+
+    # Dedupe assignments by (course_id, title, due_date).
+    existing = table("assignments").select(
+        "title,due_date",
+        filters={"user_id": f"eq.{body.user_id}", "course_id": f"eq.{body.course_id}"},
+    )
+    seen = {(e.get("title", ""), e.get("due_date") or "") for e in existing}
+    new_assigns = []
+    for a in body.assignments:
+        title = a.get("title", "")
+        due = a.get("due_date") or ""
+        if (title, due) in seen:
+            continue
+        seen.add((title, due))
+        new_assigns.append({
+            "id": str(uuid.uuid4()),
+            "user_id": body.user_id,
+            "course_id": body.course_id,
+            "title": title,
+            "due_date": a.get("due_date"),
+            "assignment_type": a.get("assignment_type"),
+            "notes": a.get("notes"),
+            "category_id": None,
+            "points_possible": None,
+            "points_earned": None,
+            "source": "syllabus",
+        })
+    if new_assigns:
+        table("assignments").insert(new_assigns)
+
+    # Stamp the doc id on the enrollment.
+    table("user_courses").update(
+        {"syllabus_doc_id": body.doc_id},
+        filters={"user_id": f"eq.{body.user_id}", "course_id": f"eq.{body.course_id}"},
+    )
+
+    # Return the refreshed course payload so the client can swap state in.
+    refreshed = get_course(body.course_id, request, user_id=body.user_id)
+    return {"course": refreshed}
+
+
 @router.patch("/courses/{course_id}/scale")
 def set_letter_scale(course_id: str, body: SetLetterScaleBody, request: Request):
     require_self(body.user_id, request)
