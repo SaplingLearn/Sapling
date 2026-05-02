@@ -61,3 +61,34 @@ def category_grade(items: Iterable[AssignmentRow]) -> Optional[float]:
     if total_possible == 0:
         return None
     return total_earned / total_possible
+
+
+def current_grade(
+    categories: list[CategoryRow],
+    assignments: Iterable[AssignmentRow],
+) -> Optional[float]:
+    """Return the 0–100 current grade across all categories, or None.
+
+    For each category with at least one graded item, computes the
+    category_grade and weights it by the category's weight. Categories
+    with no graded items drop out — total weight is renormalized so the
+    contributing weights sum to 100.
+    """
+    by_cat: dict[str, list[AssignmentRow]] = {c["id"]: [] for c in categories}
+    for a in assignments:
+        cid = a.get("category_id")
+        if cid in by_cat:
+            by_cat[cid].append(a)
+
+    total_weight = 0.0
+    weighted_sum = 0.0
+    for cat in categories:
+        grade = category_grade(by_cat[cat["id"]])
+        if grade is None:
+            continue
+        total_weight += float(cat["weight"])
+        weighted_sum += grade * float(cat["weight"])
+
+    if total_weight == 0:
+        return None
+    return (weighted_sum / total_weight) * 100.0
