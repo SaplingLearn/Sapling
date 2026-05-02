@@ -149,3 +149,64 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
         "categories": cats,
         "assignments": assigns,
     }
+
+
+@router.post("/courses/{course_id}/categories")
+def create_category(course_id: str, body: CreateCategoryBody, request: Request):
+    require_self(body.user_id, request)
+    if not _user_owns_course(body.user_id, course_id):
+        raise HTTPException(status_code=404, detail="Course not in your gradebook")
+    new_id = str(uuid.uuid4())
+    inserted = table("course_categories").insert({
+        "id": new_id,
+        "user_id": body.user_id,
+        "course_id": course_id,
+        "name": body.name,
+        "weight": body.weight,
+        "sort_order": 0,
+    })
+    return {"category": inserted[0] if inserted else None}
+
+
+@router.patch("/courses/{course_id}/categories")
+def bulk_update_categories(course_id: str, body: BulkUpdateCategoriesBody, request: Request):
+    require_self(body.user_id, request)
+    if not _user_owns_course(body.user_id, course_id):
+        raise HTTPException(status_code=404, detail="Course not in your gradebook")
+
+    total = sum(c.weight for c in body.categories)
+    if abs(total - 100.0) > 0.5:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Category weights must sum to 100% (got {total:g}%)",
+        )
+
+    saved = []
+    for c in body.categories:
+        if c.id:
+            updated = table("course_categories").update(
+                {"name": c.name, "weight": c.weight, "sort_order": c.sort_order},
+                filters={"id": f"eq.{c.id}", "user_id": f"eq.{body.user_id}"},
+            )
+            saved.extend(updated)
+        else:
+            new = table("course_categories").insert({
+                "id": str(uuid.uuid4()),
+                "user_id": body.user_id,
+                "course_id": course_id,
+                "name": c.name,
+                "weight": c.weight,
+                "sort_order": c.sort_order,
+            })
+            saved.extend(new)
+    return {"categories": saved}
+
+
+@router.delete("/categories/{category_id}")
+def delete_category(category_id: str, request: Request, user_id: str = Query(...)):
+    require_self(user_id, request)
+    cat = _user_owns_category(user_id, category_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    table("course_categories").delete(filters={"id": f"eq.{category_id}"})
+    return {"deleted": True}

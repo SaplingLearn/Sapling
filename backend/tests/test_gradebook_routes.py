@@ -110,3 +110,60 @@ class TestCourseDetail:
         with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
             r = client.get("/api/gradebook/courses/nope", params={"user_id": "u1"})
         assert r.status_code == 404
+
+
+# ── Categories CRUD ──────────────────────────────────────────────────────────
+
+class TestCategories:
+    def test_create_one_category(self):
+        rows = {"user_courses": [{"id": "uc1"}]}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.post(
+                "/api/gradebook/courses/cs161/categories",
+                json={"user_id": "u1", "name": "Exams", "weight": 40},
+            )
+        assert r.status_code == 200
+        assert r.json()["category"]["name"] == "Exams"
+
+    def test_create_rejects_unknown_course(self):
+        rows = {"user_courses": []}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.post(
+                "/api/gradebook/courses/cs999/categories",
+                json={"user_id": "u1", "name": "Exams", "weight": 40},
+            )
+        assert r.status_code == 404
+
+    def test_bulk_update_validates_weight_total(self):
+        rows = {"user_courses": [{"id": "uc1"}]}
+        body = {
+            "user_id": "u1",
+            "categories": [
+                {"id": "exams", "name": "Exams", "weight": 60, "sort_order": 0},
+                {"id": "psets", "name": "P-Sets", "weight": 30, "sort_order": 1},
+            ],
+        }
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.patch("/api/gradebook/courses/cs161/categories", json=body)
+        assert r.status_code == 400
+        assert "100" in r.json()["detail"].lower() or "weight" in r.json()["detail"].lower()
+
+    def test_bulk_update_accepts_total_100(self):
+        rows = {"user_courses": [{"id": "uc1"}]}
+        body = {
+            "user_id": "u1",
+            "categories": [
+                {"id": "exams", "name": "Exams", "weight": 60, "sort_order": 0},
+                {"id": "psets", "name": "P-Sets", "weight": 40, "sort_order": 1},
+            ],
+        }
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.patch("/api/gradebook/courses/cs161/categories", json=body)
+        assert r.status_code == 200
+        assert len(r.json()["categories"]) == 2
+
+    def test_delete_orphans_assignments(self):
+        rows = {"course_categories": [{"id": "exams", "user_id": "u1", "course_id": "cs161"}]}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.delete("/api/gradebook/categories/exams", params={"user_id": "u1"})
+        assert r.status_code == 200
