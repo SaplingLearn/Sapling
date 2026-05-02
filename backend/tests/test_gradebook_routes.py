@@ -167,3 +167,52 @@ class TestCategories:
         with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
             r = client.delete("/api/gradebook/categories/exams", params={"user_id": "u1"})
         assert r.status_code == 200
+
+
+# ── Assignments CRUD ─────────────────────────────────────────────────────────
+
+class TestAssignments:
+    def test_create_assignment_minimal(self):
+        rows = {"user_courses": [{"id": "uc1"}]}
+        body = {"user_id": "u1", "course_id": "cs161", "title": "Midterm 1"}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.post("/api/gradebook/assignments", json=body)
+        assert r.status_code == 200
+        a = r.json()["assignment"]
+        assert a["title"] == "Midterm 1"
+        assert a["source"] == "manual"
+
+    def test_create_rejects_unknown_course(self):
+        rows = {"user_courses": []}
+        body = {"user_id": "u1", "course_id": "cs999", "title": "X"}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.post("/api/gradebook/assignments", json=body)
+        assert r.status_code == 404
+
+    def test_create_rejects_zero_points_possible(self):
+        rows = {"user_courses": [{"id": "uc1"}]}
+        body = {"user_id": "u1", "course_id": "cs161", "title": "X",
+                "points_possible": 0}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.post("/api/gradebook/assignments", json=body)
+        assert r.status_code == 422  # Pydantic gt=0 validation
+
+    def test_update_grade_inline(self):
+        rows = {"assignments": [{"id": "a1", "user_id": "u1", "course_id": "cs161"}]}
+        body = {"user_id": "u1", "points_earned": 87}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.patch("/api/gradebook/assignments/a1", json=body)
+        assert r.status_code == 200
+
+    def test_update_404_when_not_owner(self):
+        rows = {"assignments": []}
+        body = {"user_id": "u1", "points_earned": 87}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.patch("/api/gradebook/assignments/a1", json=body)
+        assert r.status_code == 404
+
+    def test_delete_assignment(self):
+        rows = {"assignments": [{"id": "a1", "user_id": "u1"}]}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.delete("/api/gradebook/assignments/a1", params={"user_id": "u1"})
+        assert r.status_code == 200

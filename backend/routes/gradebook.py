@@ -210,3 +210,66 @@ def delete_category(category_id: str, request: Request, user_id: str = Query(...
         raise HTTPException(status_code=404, detail="Category not found")
     table("course_categories").delete(filters={"id": f"eq.{category_id}"})
     return {"deleted": True}
+
+
+def _user_owns_assignment(user_id: str, assignment_id: str) -> dict | None:
+    rows = table("assignments").select(
+        "*",
+        filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"},
+        limit=1,
+    )
+    return rows[0] if rows else None
+
+
+@router.post("/assignments")
+def create_assignment(body: CreateAssignmentBody, request: Request):
+    require_self(body.user_id, request)
+    if not _user_owns_course(body.user_id, body.course_id):
+        raise HTTPException(status_code=404, detail="Course not in your gradebook")
+    if body.category_id and not _user_owns_category(body.user_id, body.category_id):
+        raise HTTPException(status_code=400, detail="Category not in your gradebook")
+
+    new_id = str(uuid.uuid4())
+    inserted = table("assignments").insert({
+        "id": new_id,
+        "user_id": body.user_id,
+        "course_id": body.course_id,
+        "title": body.title,
+        "category_id": body.category_id,
+        "points_possible": body.points_possible,
+        "points_earned": body.points_earned,
+        "due_date": body.due_date,
+        "assignment_type": body.assignment_type,
+        "notes": body.notes,
+        "source": "manual",
+    })
+    return {"assignment": inserted[0] if inserted else None}
+
+
+@router.patch("/assignments/{assignment_id}")
+def update_assignment_route(assignment_id: str, body: UpdateAssignmentBody, request: Request):
+    require_self(body.user_id, request)
+    if not _user_owns_assignment(body.user_id, assignment_id):
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    if body.category_id and not _user_owns_category(body.user_id, body.category_id):
+        raise HTTPException(status_code=400, detail="Category not in your gradebook")
+
+    patch_data = body.model_dump(exclude_unset=True, exclude={"user_id"})
+    if not patch_data:
+        return {"updated": False}
+    table("assignments").update(
+        patch_data,
+        filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{body.user_id}"},
+    )
+    return {"updated": True}
+
+
+@router.delete("/assignments/{assignment_id}")
+def delete_assignment_route(assignment_id: str, request: Request, user_id: str = Query(...)):
+    require_self(user_id, request)
+    if not _user_owns_assignment(user_id, assignment_id):
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    table("assignments").delete(
+        filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"},
+    )
+    return {"deleted": True}
