@@ -8,6 +8,7 @@ import { useToast } from "@/components/ToastProvider";
 import { getGradebookSummary, getCourses } from "@/lib/api";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GradebookCourseSummary } from "@/lib/types";
+import { SyllabusUploadFlow } from "@/components/Gradebook/SyllabusUploadFlow";
 
 export function GradebookLanding() {
   const { userId, userReady } = useUser();
@@ -17,6 +18,7 @@ export function GradebookLanding() {
   const [selected, setSelected] = React.useState<string>("");
   const [courses, setCourses] = React.useState<GradebookCourseSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [uploadOpen, setUploadOpen] = React.useState(false);
 
   React.useEffect(() => {
     if (!userId) return;
@@ -49,19 +51,21 @@ export function GradebookLanding() {
       <TopBar
         title="Gradebook"
         actions={
-          <Link
-            href={`/gradebook?upload=1`}
+          <button
+            type="button"
+            onClick={() => setUploadOpen(true)}
             style={{
               padding: "6px 12px",
               borderRadius: "var(--r-sm)",
               background: "var(--accent)",
               color: "#fff",
               fontSize: 13,
-              textDecoration: "none",
+              border: 0,
+              cursor: "pointer",
             }}
           >
             Upload syllabus
-          </Link>
+          </button>
         }
       />
       <main style={{ padding: 32 }}>
@@ -120,6 +124,14 @@ export function GradebookLanding() {
           </div>
         )}
       </main>
+
+      {userId && (
+        <SyllabusUploadFlow
+          open={uploadOpen}
+          userId={userId}
+          onClose={() => setUploadOpen(false)}
+        />
+      )}
     </>
   );
 }
