@@ -9,6 +9,7 @@ ALTER TABLE assignments
   ADD COLUMN IF NOT EXISTS source           TEXT DEFAULT 'manual';
 
 -- Allow null due_date so manually created graded items don't have to invent one.
+-- Safe to re-run: DROP NOT NULL is a no-op on PG 14+ when the constraint is already absent.
 ALTER TABLE assignments
   ALTER COLUMN due_date DROP NOT NULL;
 

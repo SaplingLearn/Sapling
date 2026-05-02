@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS user_courses (
     nickname        TEXT,
     enrolled_at     TIMESTAMPTZ DEFAULT now(),
     letter_scale    JSONB,
-    syllabus_doc_id TEXT, -- FK to documents(id) added post-migration (forward ref)
+    syllabus_doc_id TEXT, -- FK declared after documents block
     UNIQUE (user_id, course_id)
 );
 
@@ -180,6 +180,18 @@ CREATE TABLE IF NOT EXISTS documents (
     created_at   TIMESTAMPTZ DEFAULT now(),
     processed_at TIMESTAMPTZ
 );
+
+-- Wire user_courses.syllabus_doc_id → documents(id) now that documents exists.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'user_courses_syllabus_doc_id_fkey'
+  ) THEN
+    ALTER TABLE user_courses
+      ADD CONSTRAINT user_courses_syllabus_doc_id_fkey
+      FOREIGN KEY (syllabus_doc_id) REFERENCES documents(id);
+  END IF;
+END $$;
 
 -- Study guides
 CREATE TABLE IF NOT EXISTS study_guides (
