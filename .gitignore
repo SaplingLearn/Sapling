@@ -60,3 +60,6 @@ Thumbs.db
 # symlink dir so only the real files are versioned.
 /skills/
 
+# ---- Worktrees ----
+.worktrees/
+
