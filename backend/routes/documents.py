@@ -160,12 +160,16 @@ def _process_document(filename: str, extracted_text: str) -> dict:
         '  "category": one of ["syllabus","lecture_notes","slides","reading","assignment","study_guide","other"],\n'
         '  "summary": "2-3 sentence overview of the document",\n'
         '  "concept_notes": [{"name": "Concept Name", "description": "..."}],\n'
+        '  "categories": [],\n'
         '  "assignments": []\n'
         "}\n"
         'If category is "syllabus", populate "assignments" with every deadline found:\n'
         '  {"title": "...", "due_date": "YYYY-MM-DD (assume 2026 if year missing)", '
         '"course_name": "...", "assignment_type": one of [homework,exam,reading,project,quiz,other], "notes": "..." or null}\n'
         'For non-syllabus documents, "assignments" must be [].\n'
+        'If category is "syllabus", also populate "categories" with the grading-weight buckets:\n'
+        '  {"name": "Exams", "weight": 40}  // weight passes through verbatim, do not normalize\n'
+        'For non-syllabus documents, "categories" must be [].\n'
         "\n"
         'Populate "concept_notes" with the document\'s key concepts. Use this for ALL categories — '
         "this is the single takeaways list for the document.\n"
@@ -200,9 +204,18 @@ def _process_document(filename: str, extracted_text: str) -> dict:
 
     concept_notes = _coerce_concept_notes(raw.get("concept_notes"))
 
+    categories = _coerce_dict_list(raw.get("categories"))
+    clean_categories = []
+    for c in categories:
+        name = c.get("name")
+        weight = c.get("weight")
+        if isinstance(name, str) and name.strip() and isinstance(weight, (int, float)):
+            clean_categories.append({"name": name.strip(), "weight": float(weight)})
+
     return {
         "category": category,
         "summary": summary.strip(),
+        "categories": clean_categories,
         "assignments": _coerce_dict_list(raw.get("assignments")),
         "concept_notes": concept_notes,
         "concepts": [c["name"] for c in concept_notes],
@@ -329,7 +342,9 @@ async def upload_document(
     except Exception:
         pass
 
-    return inserted[0] if inserted else row
+    response = dict(inserted[0] if inserted else row)
+    response["categories"] = ai.get("categories", [])
+    return response
 
 
 def _course_label(course_id: str) -> str:
