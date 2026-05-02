@@ -46,16 +46,32 @@ CREATE TABLE IF NOT EXISTS courses (
 
 -- Enrollment join table (user ↔ canonical course)
 CREATE TABLE IF NOT EXISTS user_courses (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES users(id),
-    course_id   TEXT NOT NULL REFERENCES courses(id),
-    color       TEXT,
-    nickname    TEXT,
-    enrolled_at TIMESTAMPTZ DEFAULT now(),
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id),
+    course_id       TEXT NOT NULL REFERENCES courses(id),
+    color           TEXT,
+    nickname        TEXT,
+    enrolled_at     TIMESTAMPTZ DEFAULT now(),
+    letter_scale    JSONB,
+    syllabus_doc_id TEXT, -- FK to documents(id) added post-migration (forward ref)
     UNIQUE (user_id, course_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_courses_user_id ON user_courses(user_id);
+
+-- Per-(user, course) grading categories with weights
+CREATE TABLE IF NOT EXISTS course_categories (
+    id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    user_id     TEXT NOT NULL REFERENCES users(id),
+    course_id   TEXT NOT NULL REFERENCES courses(id),
+    name        TEXT NOT NULL,
+    weight      NUMERIC NOT NULL,
+    sort_order  INTEGER DEFAULT 0,
+    created_at  TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_course_categories_user_course
+  ON course_categories(user_id, course_id);
 
 -- Knowledge graph nodes
 CREATE TABLE IF NOT EXISTS graph_nodes (
@@ -132,16 +148,20 @@ CREATE TABLE IF NOT EXISTS quiz_context (
     UNIQUE (user_id, concept_node_id)
 );
 
--- Assignments (from syllabus extraction or manual entry)
+-- Assignments (from syllabus extraction or manual entry; gradebook-aware)
 CREATE TABLE IF NOT EXISTS assignments (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL REFERENCES users(id),
     title           TEXT NOT NULL,
     course_id       TEXT REFERENCES courses(id),
-    due_date        TEXT NOT NULL,
+    due_date        TEXT,
     assignment_type TEXT,
     notes           TEXT,
     google_event_id TEXT,
+    category_id     TEXT REFERENCES course_categories(id) ON DELETE SET NULL,
+    points_possible NUMERIC,
+    points_earned   NUMERIC,
+    source          TEXT DEFAULT 'manual',
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 
