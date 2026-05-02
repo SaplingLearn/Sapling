@@ -5,7 +5,8 @@ import { verifySession } from '@/lib/sessionToken'
 const PROTECTED = [
   '/dashboard', '/learn', '/study', '/tree',
   '/library', '/calendar', '/social',
-  '/settings', '/achievements', '/admin'
+  '/settings', '/achievements', '/admin',
+  '/gradebook', '/course-planner'
 ]
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL
@@ -68,6 +69,7 @@ export const config = {
     '/tree/:path*', '/library/:path*',
     '/calendar/:path*', '/social/:path*',
     '/settings/:path*', '/achievements/:path*',
-    '/admin/:path*'
+    '/admin/:path*',
+    '/gradebook/:path*', '/course-planner/:path*'
   ]
 }

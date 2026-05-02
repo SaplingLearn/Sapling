@@ -33,6 +33,13 @@ const SECTIONS: { label: string; items: Entry[] }[] = [
       { href: "/achievements", label: "Achievements", icon: "trophy" },
     ],
   },
+  {
+    label: "Tools",
+    items: [
+      { href: "/gradebook",      label: "Gradebook",      icon: "doc" },
+      { href: "/course-planner", label: "Course Planner", icon: "pencil" },
+    ],
+  },
 ];
 
 export const SIDE_NAV_EXPANDED = 232;
