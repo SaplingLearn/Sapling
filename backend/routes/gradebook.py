@@ -273,3 +273,28 @@ def delete_assignment_route(assignment_id: str, request: Request, user_id: str =
         filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"},
     )
     return {"deleted": True}
+
+
+@router.patch("/courses/{course_id}/scale")
+def set_letter_scale(course_id: str, body: SetLetterScaleBody, request: Request):
+    require_self(body.user_id, request)
+    if not _user_owns_course(body.user_id, course_id):
+        raise HTTPException(status_code=404, detail="Course not in your gradebook")
+
+    scale_payload = None
+    if body.scale is not None:
+        prev_min = float("inf")
+        for tier in body.scale:
+            if tier.min > prev_min:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Letter scale tiers must be ordered descending by min",
+                )
+            prev_min = tier.min
+        scale_payload = [tier.model_dump() for tier in body.scale]
+
+    table("user_courses").update(
+        {"letter_scale": scale_payload},
+        filters={"user_id": f"eq.{body.user_id}", "course_id": f"eq.{course_id}"},
+    )
+    return {"updated": True, "letter_scale": scale_payload}

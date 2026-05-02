@@ -216,3 +216,35 @@ class TestAssignments:
         with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
             r = client.delete("/api/gradebook/assignments/a1", params={"user_id": "u1"})
         assert r.status_code == 200
+
+
+# ── PATCH /courses/{course_id}/scale ─────────────────────────────────────────
+
+class TestLetterScale:
+    def test_set_custom_scale(self):
+        rows = {"user_courses": [{"id": "uc1"}]}
+        body = {"user_id": "u1", "scale": [
+            {"min": 90, "letter": "A"},
+            {"min": 80, "letter": "B"},
+            {"min": 0,  "letter": "F"},
+        ]}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.patch("/api/gradebook/courses/cs161/scale", json=body)
+        assert r.status_code == 200
+
+    def test_clear_scale_with_null(self):
+        rows = {"user_courses": [{"id": "uc1"}]}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.patch("/api/gradebook/courses/cs161/scale",
+                             json={"user_id": "u1", "scale": None})
+        assert r.status_code == 200
+
+    def test_rejects_non_monotonic_scale(self):
+        rows = {"user_courses": [{"id": "uc1"}]}
+        body = {"user_id": "u1", "scale": [
+            {"min": 80, "letter": "A"},
+            {"min": 90, "letter": "B"},  # B requires higher than A — invalid
+        ]}
+        with _mock_self(), patch("routes.gradebook.table", side_effect=_mock_table_rows(rows)):
+            r = client.patch("/api/gradebook/courses/cs161/scale", json=body)
+        assert r.status_code == 400
