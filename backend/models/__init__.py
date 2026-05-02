@@ -323,3 +323,64 @@ class CreateCosmeticBody(BaseModel):
     css_value: Optional[str] = None
     rarity: str = "common"
     unlock_source: Optional[str] = None
+
+
+# ── Gradebook ────────────────────────────────────────────────────────────────
+
+class CategoryItem(BaseModel):
+    id: Optional[str] = None              # null on create
+    name: str
+    weight: float = Field(ge=0, le=100)
+    sort_order: int = 0
+
+
+class CreateCategoryBody(BaseModel):
+    user_id: str
+    name: str
+    weight: float = Field(ge=0, le=100)
+
+
+class BulkUpdateCategoriesBody(BaseModel):
+    user_id: str
+    categories: list[CategoryItem]        # full replacement set
+
+
+class CreateAssignmentBody(BaseModel):
+    user_id: str
+    course_id: str
+    title: str
+    category_id: Optional[str] = None
+    points_possible: Optional[float] = Field(default=None, gt=0)
+    points_earned: Optional[float] = Field(default=None, ge=0)
+    due_date: Optional[str] = None
+    assignment_type: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class UpdateAssignmentBody(BaseModel):
+    user_id: str
+    title: Optional[str] = None
+    category_id: Optional[str] = None
+    points_possible: Optional[float] = Field(default=None, gt=0)
+    points_earned: Optional[float] = Field(default=None, ge=0)
+    due_date: Optional[str] = None
+    assignment_type: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LetterScaleTier(BaseModel):
+    min: float = Field(ge=0, le=100)
+    letter: str
+
+
+class SetLetterScaleBody(BaseModel):
+    user_id: str
+    scale: Optional[list[LetterScaleTier]] = None  # null clears the override
+
+
+class SyllabusApplyBody(BaseModel):
+    user_id: str
+    course_id: str
+    doc_id: str
+    categories: list[CategoryItem]
+    assignments: list[dict]               # uses the same shape as syllabus extraction
