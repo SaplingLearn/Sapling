@@ -39,3 +39,25 @@ DEFAULT_LETTER_SCALE: list[tuple[float, str]] = [
     (60.0, "D-"),
     (0.0,  "F"),
 ]
+
+
+def category_grade(items: Iterable[AssignmentRow]) -> Optional[float]:
+    """Return the 0–1 grade for one category, or None if no graded items.
+
+    A graded item has both points_possible (> 0) and points_earned (not None).
+    Sums earned / sums possible across graded items.
+    """
+    total_possible = 0.0
+    total_earned = 0.0
+    for item in items:
+        possible = item.get("points_possible")
+        earned = item.get("points_earned")
+        if possible is None or earned is None:
+            continue
+        if possible <= 0:
+            continue
+        total_possible += float(possible)
+        total_earned += float(earned)
+    if total_possible == 0:
+        return None
+    return total_earned / total_possible
