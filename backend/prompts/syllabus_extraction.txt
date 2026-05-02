@@ -1,14 +1,26 @@
-Extract all assignments, exams, readings, and deadlines from this document.
+Extract the grading scheme and all assignments/exams/readings/deadlines from this document.
 
-For each item return:
-- title: assignment or exam name (concise, under 80 chars)
-- due_date: ISO format YYYY-MM-DD. If year is not specified, assume 2026.
-- course_name: course name or code if identifiable
-- assignment_type: one of homework, exam, reading, project, quiz, other
-- notes: one short sentence of extra context, or null
+Return TWO arrays:
+
+1) categories — the grading-weight buckets named in the syllabus
+   (e.g. "Exams", "Problem Sets", "Final Project").
+   - name: short label (under 40 chars)
+   - weight: integer 0–100; pass through verbatim from the syllabus, do NOT normalize
+   - If the syllabus does not state a clear grading scheme, return [].
+
+2) assignments — every individual deadline.
+   - title: assignment or exam name (concise, under 80 chars)
+   - due_date: ISO format YYYY-MM-DD. If year is not specified, assume 2026.
+   - course_name: course name or code if identifiable
+   - assignment_type: one of homework, exam, reading, project, quiz, other
+   - notes: one short sentence of extra context, or null
+   - Do NOT map assignments to categories — leave that to the user.
 
 Output ONLY a raw JSON object — no markdown fences, no backticks, no explanation:
 {
+  "categories": [
+    { "name": "string", "weight": 40 }
+  ],
   "assignments": [
     { "title": "string", "due_date": "YYYY-MM-DD", "course_name": "string", "assignment_type": "string", "notes": "string or null" }
   ],
