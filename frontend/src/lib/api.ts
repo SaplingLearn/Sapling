@@ -2,6 +2,8 @@ import type {
   RoomMessageRow, RoomOverviewData,
   UserProfile, UserSettings, UserRole, UserAchievement, Achievement,
   UserCosmetic, CosmeticType, Role, Cosmetic, RarityTier, AchievementCategory,
+  GradebookSummary, GradebookCourse, GradeCategory, GradedAssignment, LetterScaleTier,
+  ExtractedSyllabusCategory,
 } from '@/lib/types';
 
 import { handleLocalRequest } from '@/lib/localData';
@@ -751,4 +753,121 @@ export const uploadAvatar = (userId: string, file: File): Promise<{ avatar_url: 
     if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
     return r.json();
   });
+};
+
+// ── Gradebook ────────────────────────────────────────────────────────────────
+
+export const getGradebookSummary = (userId: string, semester: string) =>
+  fetchJSON<GradebookSummary>(
+    `/api/gradebook/summary?user_id=${encodeURIComponent(userId)}&semester=${encodeURIComponent(semester)}`,
+  );
+
+export const getGradebookCourse = (userId: string, courseId: string) =>
+  fetchJSON<GradebookCourse>(
+    `/api/gradebook/courses/${encodeURIComponent(courseId)}?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const createCategory = (
+  userId: string,
+  courseId: string,
+  name: string,
+  weight: number,
+) =>
+  fetchJSON<{ category: GradeCategory }>(
+    `/api/gradebook/courses/${encodeURIComponent(courseId)}/categories`,
+    { method: 'POST', body: JSON.stringify({ user_id: userId, name, weight }) },
+  );
+
+export const bulkUpdateCategories = (
+  userId: string,
+  courseId: string,
+  categories: { id?: string; name: string; weight: number; sort_order: number }[],
+) =>
+  fetchJSON<{ categories: GradeCategory[] }>(
+    `/api/gradebook/courses/${encodeURIComponent(courseId)}/categories`,
+    { method: 'PATCH', body: JSON.stringify({ user_id: userId, categories }) },
+  );
+
+export const deleteCategory = (userId: string, categoryId: string) =>
+  fetchJSON<{ deleted: true }>(
+    `/api/gradebook/categories/${encodeURIComponent(categoryId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const createGradedAssignment = (
+  userId: string,
+  courseId: string,
+  fields: Partial<Omit<GradedAssignment, 'id' | 'course_id' | 'source'>> & { title: string },
+) =>
+  fetchJSON<{ assignment: GradedAssignment }>('/api/gradebook/assignments', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, course_id: courseId, ...fields }),
+  });
+
+export const updateGradedAssignment = (
+  userId: string,
+  assignmentId: string,
+  fields: Partial<Omit<GradedAssignment, 'id' | 'course_id' | 'source'>>,
+) =>
+  fetchJSON<{ updated: boolean }>(
+    `/api/gradebook/assignments/${encodeURIComponent(assignmentId)}`,
+    { method: 'PATCH', body: JSON.stringify({ user_id: userId, ...fields }) },
+  );
+
+export const deleteGradedAssignment = (userId: string, assignmentId: string) =>
+  fetchJSON<{ deleted: true }>(
+    `/api/gradebook/assignments/${encodeURIComponent(assignmentId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const setLetterScale = (
+  userId: string,
+  courseId: string,
+  scale: LetterScaleTier[] | null,
+) =>
+  fetchJSON<{ updated: true; letter_scale: LetterScaleTier[] | null }>(
+    `/api/gradebook/courses/${encodeURIComponent(courseId)}/scale`,
+    { method: 'PATCH', body: JSON.stringify({ user_id: userId, scale }) },
+  );
+
+export const applySyllabus = (payload: {
+  userId: string;
+  courseId: string;
+  docId: string;
+  categories: { name: string; weight: number; sort_order: number }[];
+  assignments: { title: string; due_date: string | null; assignment_type: string | null; notes: string | null }[];
+}) =>
+  fetchJSON<{ course: GradebookCourse }>('/api/gradebook/syllabus/apply', {
+    method: 'POST',
+    body: JSON.stringify({
+      user_id: payload.userId,
+      course_id: payload.courseId,
+      doc_id: payload.docId,
+      categories: payload.categories,
+      assignments: payload.assignments,
+    }),
+  });
+
+// Typed helper for syllabus uploads — wraps the existing FormData-based
+// uploadDocument and narrows the response. Existing callers of uploadDocument
+// remain untouched.
+export interface UploadSyllabusResponse {
+  id: string;
+  doc_id?: string;
+  category: string;
+  summary: string | null;
+  categories: ExtractedSyllabusCategory[];
+  assignments: { title: string; due_date: string | null; assignment_type: string | null; notes: string | null }[];
+}
+export const uploadSyllabus = (input: {
+  userId: string;
+  courseId: string;
+  file: File;
+}): Promise<UploadSyllabusResponse> => {
+  const fd = new FormData();
+  fd.append('user_id', input.userId);
+  fd.append('course_id', input.courseId);
+  fd.append('category', 'syllabus');
+  fd.append('file', input.file);
+  return uploadDocument(fd);
 };
