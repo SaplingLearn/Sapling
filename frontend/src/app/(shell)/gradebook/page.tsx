@@ -1,11 +1,6 @@
 "use client";
-import { TopBar } from "@/components/TopBar";
+import { GradebookLanding } from "@/components/screens/Gradebook/Landing";
 
 export default function GradebookPage() {
-  return (
-    <>
-      <TopBar title="Gradebook" />
-      <main style={{ padding: 32 }} />
-    </>
-  );
+  return <GradebookLanding />;
 }
