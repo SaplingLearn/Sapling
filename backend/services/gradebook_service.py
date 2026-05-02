@@ -92,3 +92,23 @@ def current_grade(
     if total_weight == 0:
         return None
     return (weighted_sum / total_weight) * 100.0
+
+
+def letter_for(percent: Optional[float], scale: Optional[list[dict]]) -> Optional[str]:
+    """Map a 0–100 percentage to a letter using the given scale (or default).
+
+    Custom scale shape: [{"min": 90, "letter": "A"}, ...] sorted descending
+    by min during evaluation. None percent → None letter.
+    """
+    if percent is None:
+        return None
+    if scale:
+        ordered = sorted(scale, key=lambda x: -float(x.get("min", 0)))
+        for tier in ordered:
+            if percent >= float(tier["min"]):
+                return str(tier["letter"])
+        return None
+    for floor, letter in DEFAULT_LETTER_SCALE:
+        if percent >= floor:
+            return letter
+    return None

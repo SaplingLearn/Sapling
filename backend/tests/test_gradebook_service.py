@@ -75,3 +75,27 @@ class TestCurrentGrade:
             {"category_id": "exams", "points_possible": 100, "points_earned": 90},
         ]
         assert svc.current_grade(cats, assignments) == pytest.approx(90.0)
+
+
+# ── letter_for ───────────────────────────────────────────────────────────────
+
+class TestLetterFor:
+    def test_uses_default_scale_when_none_provided(self):
+        assert svc.letter_for(95.0, None) == "A"
+        assert svc.letter_for(91.0, None) == "A-"
+        assert svc.letter_for(72.5, None) == "C-"
+        assert svc.letter_for(40.0, None) == "F"
+
+    def test_returns_none_when_grade_is_none(self):
+        assert svc.letter_for(None, None) is None
+
+    def test_uses_custom_scale_when_provided(self):
+        # A custom course where 90+ is an A and there is no minus tier.
+        scale = [{"min": 90, "letter": "A"}, {"min": 80, "letter": "B"}, {"min": 0, "letter": "F"}]
+        assert svc.letter_for(95.0, scale) == "A"
+        assert svc.letter_for(85.0, scale) == "B"
+        assert svc.letter_for(50.0, scale) == "F"
+
+    def test_handles_boundary_exactly(self):
+        assert svc.letter_for(93.0, None) == "A"
+        assert svc.letter_for(92.999, None) == "A-"
