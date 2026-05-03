@@ -25,7 +25,7 @@ from config import (
     SESSION_SECRET,
 )
 from db.connection import table
-from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
+from services.encryption import encrypt, encrypt_if_present
 from services.auth_guard import get_session_user_id
 
 try:
