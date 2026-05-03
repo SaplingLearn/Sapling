@@ -102,8 +102,6 @@ function LearnInner() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [sending, setSending] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [draftSeed, setDraftSeed] = useState<string | undefined>(undefined);
-  const [draftSeedKey, setDraftSeedKey] = useState(0);
 
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
@@ -284,8 +282,6 @@ function LearnInner() {
       if (res.reply) {
         setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply }]);
       }
-      setDraftSeed(`Continue in ${newMode} mode on ${topic}…`);
-      setDraftSeedKey(k => k + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Mode switch failed.");
       setMode(prev);
@@ -596,8 +592,6 @@ function LearnInner() {
               onSend={send}
               onAction={handleAction}
               disabled={sending || starting}
-              draftSeed={draftSeed}
-              draftSeedKey={draftSeedKey}
             />
           </div>
         )}
