@@ -11,6 +11,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from db.connection import table
 from services.auth_guard import require_self
+from services.encryption import decrypt_if_present, decrypt_json
 from services.gemini_service import call_gemini_json
 
 router = APIRouter()
@@ -32,16 +33,24 @@ def _generate_and_insert(user_id: str, course_id: str, exam_id: str) -> dict:
 
     # 2. Fetch documents for this user+course
     docs = table("documents").select(
-        "summary,concept_notes",  # ENCRYPTED LATER
+        "summary,concept_notes",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-    )
+    ) or []
 
     # 3. Build combined context
     parts: list[str] = []
     for doc in docs:
-        if doc.get("summary"):  # ENCRYPTED LATER
-            parts.append(f"Summary: {doc['summary']}")  # ENCRYPTED LATER
-        concept_notes = doc.get("concept_notes")  # ENCRYPTED LATER
+        summary = decrypt_if_present(doc.get("summary"))
+        if summary:
+            parts.append(f"Summary: {summary}")
+        notes_raw = doc.get("concept_notes")
+        if isinstance(notes_raw, str):
+            try:
+                concept_notes = decrypt_json(notes_raw)
+            except Exception:
+                concept_notes = notes_raw
+        else:
+            concept_notes = notes_raw
         if concept_notes and isinstance(concept_notes, list):
             lines = []
             for note in concept_notes:
