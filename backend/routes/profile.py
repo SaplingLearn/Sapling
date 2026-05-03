@@ -9,6 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
 
 from db.connection import table
+from services.encryption import encrypt_if_present, decrypt_if_present
 from models import (
     UpdateProfileBody,
     UpdateSettingsBody,
@@ -26,16 +27,19 @@ router = APIRouter()
 
 def _get_user_or_404(user_id: str) -> dict:
     rows = table("users").select(
-        "id,username,name,first_name,last_name,email,avatar_url,school,major,year,majors,minors,bio,location,website,streak_count,created_at",  # ENCRYPTED LATER
+        "id,username,name,first_name,last_name,email,avatar_url,school,major,year,majors,minors,bio,location,website,streak_count,created_at",
         filters={"id": f"eq.{user_id}"},
     )
     if not rows:
         raise HTTPException(status_code=404, detail="User not found")
-    return rows[0]
+    row = rows[0]
+    for col in ("name", "first_name", "last_name", "email", "bio", "location"):
+        row[col] = decrypt_if_present(row.get(col))
+    return row
 
 
 _SETTINGS_COLS = (
-    "user_id,username,display_name,bio,location,website,"  # ENCRYPTED LATER
+    "user_id,username,display_name,bio,location,website,"
     "profile_visibility,activity_status_visible,"
     "notification_email,notification_push,notification_in_app,"
     "theme,font_size,accent_color,"
@@ -46,11 +50,15 @@ _SETTINGS_COLS = (
 
 def _get_or_create_settings(user_id: str) -> dict:
     rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
-    if rows:
-        return rows[0]
-    table("user_settings").insert({"user_id": user_id})
-    rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
-    return rows[0] if rows else {"user_id": user_id}
+    if not rows:
+        table("user_settings").insert({"user_id": user_id})
+        rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
+    if not rows:
+        return {"user_id": user_id}
+    row = rows[0]
+    for col in ("bio", "location"):
+        row[col] = decrypt_if_present(row.get(col))
+    return row
 
 
 def _get_user_roles(user_id: str) -> list:
@@ -176,7 +184,7 @@ def get_public_profile(user_id: str):
 
     profile = {
         "id": user["id"],
-        "name": user.get("name", ""),  # ENCRYPTED LATER
+        "name": user.get("name", ""),
         "username": user.get("username"),
         "avatar_url": user.get("avatar_url"),
         "created_at": user.get("created_at"),
@@ -190,14 +198,14 @@ def get_public_profile(user_id: str):
 
     # Respect profile visibility
     if settings.get("profile_visibility") != "private":
-        profile["bio"] = user.get("bio")  # ENCRYPTED LATER
-        profile["location"] = user.get("location")  # ENCRYPTED LATER
+        profile["bio"] = user.get("bio")
+        profile["location"] = user.get("location")
         profile["website"] = user.get("website")
         profile["featured_achievements"] = _get_featured_achievements(user_id)
         profile["stats"] = _get_user_stats(user_id)
     else:
-        profile["bio"] = None  # ENCRYPTED LATER
-        profile["location"] = None  # ENCRYPTED LATER
+        profile["bio"] = None
+        profile["location"] = None
         profile["website"] = None
         profile["featured_achievements"] = []
         profile["stats"] = {}
@@ -226,11 +234,11 @@ def update_profile(user_id: str, body: UpdateProfileBody, request: Request):
     if body.display_name is not None:
         updates_settings["display_name"] = body.display_name
     if body.bio is not None:
-        updates_user["bio"] = body.bio  # ENCRYPTED LATER
-        updates_settings["bio"] = body.bio  # ENCRYPTED LATER
+        updates_user["bio"] = encrypt_if_present(body.bio)
+        updates_settings["bio"] = encrypt_if_present(body.bio)
     if body.location is not None:
-        updates_user["location"] = body.location  # ENCRYPTED LATER
-        updates_settings["location"] = body.location  # ENCRYPTED LATER
+        updates_user["location"] = encrypt_if_present(body.location)
+        updates_settings["location"] = encrypt_if_present(body.location)
     if body.website is not None:
         updates_user["website"] = body.website
         updates_settings["website"] = body.website
@@ -578,8 +586,8 @@ def export_data(user_id: str, request: Request):
     )
 
     return {
-        "user": user,  # ENCRYPTED LATER
-        "settings": settings,  # ENCRYPTED LATER
+        "user": user,
+        "settings": settings,
         "roles": roles,
         "achievements": earned or [],
         "cosmetics": owned_cosmetics or [],
