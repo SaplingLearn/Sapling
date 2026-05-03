@@ -9,6 +9,7 @@ from config import get_mastery_tier
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from services.auth_guard import require_self
+from services.encryption import decrypt_if_present
 from services.gemini_service import call_gemini_json
 from services.graph_service import get_graph, update_streak
 from services.quiz_context_service import get_quiz_context, save_quiz_context
@@ -186,9 +187,9 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     node2_rows = table("graph_nodes").select(
         "concept_name", filters={"id": f"eq.{concept_node_id}"}
     )
-    user_rows = table("users").select("name", filters={"id": f"eq.{user_id}"})  # ENCRYPTED LATER
+    user_rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
     concept_name = node2_rows[0]["concept_name"] if node2_rows else "Unknown"
-    student_name = user_rows[0]["name"] if user_rows else "Student"  # ENCRYPTED LATER
+    student_name = decrypt_if_present(user_rows[0]["name"]) if user_rows else "Student"
 
     existing_ctx = get_quiz_context(user_id, concept_node_id)
     ctx_prompt = (
