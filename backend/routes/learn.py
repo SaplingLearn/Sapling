@@ -5,10 +5,12 @@ import json
 import os
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from db.connection import table
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody
+from services.auth_guard import require_self, get_session_user_id
+from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.gemini_service import call_gemini_multiturn, extract_graph_update
 from services.graph_service import get_graph, apply_graph_update
 
@@ -123,8 +125,13 @@ def _get_course_documents(user_id: str, course_id: str) -> list:
         docs = table("documents").select(
             "file_name,category,summary,concept_notes",
             filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-        )
-        return docs or []
+        ) or []
+        for d in docs:
+            d["summary"] = decrypt_if_present(d.get("summary"))
+            notes_raw = d.get("concept_notes")
+            if isinstance(notes_raw, str):
+                d["concept_notes"] = decrypt_json(notes_raw)
+        return docs
     except Exception:
         return []
 
@@ -215,7 +222,7 @@ def get_conversation_history(session_id: str) -> list:
         filters={"session_id": f"eq.{session_id}"},
         order="created_at.asc",
     )
-    return [{"role": r["role"], "content": r["content"]} for r in rows]
+    return [{"role": r["role"], "content": decrypt_if_present(r["content"])} for r in rows]
 
 
 def save_message(session_id: str, role: str, content: str, graph_update: dict = None):
@@ -223,7 +230,7 @@ def save_message(session_id: str, role: str, content: str, graph_update: dict = 
         "id": str(uuid.uuid4()),
         "session_id": session_id,
         "role": role,
-        "content": content,
+        "content": encrypt_if_present(content),
         "graph_update_json": graph_update if graph_update else None,
         "created_at": datetime.utcnow().isoformat(),
     })
@@ -231,7 +238,9 @@ def save_message(session_id: str, role: str, content: str, graph_update: dict = 
 
 def get_user_name(user_id: str) -> str:
     rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
-    return rows[0]["name"] if rows else "Student"
+    if not rows:
+        return "Student"
+    return decrypt_if_present(rows[0]["name"]) or "Student"
 
 
 def _consume_pending(session_id: str, user_id: str) -> None:
@@ -262,7 +271,8 @@ def _ensure_session_ready(session_id: str, user_id: str) -> None:
 
 
 @router.post("/start-session")
-def start_session(body: StartSessionBody):
+def start_session(body: StartSessionBody, request: Request):
+    require_self(body.user_id, request)
     session_id = str(uuid.uuid4())
 
     student_name = get_user_name(body.user_id)
@@ -308,7 +318,8 @@ def start_session(body: StartSessionBody):
 
 
 @router.post("/chat")
-def chat(body: ChatBody):
+def chat(body: ChatBody, request: Request):
+    require_self(body.user_id, request)
     _consume_pending(body.session_id, body.user_id)
     save_message(body.session_id, "user", body.message)
 
@@ -340,7 +351,11 @@ def chat(body: ChatBody):
 
 
 @router.post("/end-session")
-def end_session(body: EndSessionBody):
+def end_session(body: EndSessionBody, request: Request):
+    if body.user_id:
+        require_self(body.user_id, request)
+    else:
+        body.user_id = get_session_user_id(request)
     if body.session_id in PENDING_SESSIONS:
         pending = PENDING_SESSIONS[body.session_id]
         if body.user_id and pending["user_id"] != body.user_id:
@@ -403,7 +418,7 @@ def end_session(body: EndSessionBody):
     }
 
     table("sessions").update(
-        {"summary_json": summary},
+        {"summary_json": encrypt_json(summary)},
         filters={"id": f"eq.{body.session_id}"},
     )
 
@@ -420,9 +435,10 @@ def end_session(body: EndSessionBody):
 
 
 @router.get("/sessions/{user_id}")
-def list_sessions(user_id: str, limit: int = 10):
+def list_sessions(user_id: str, request: Request, limit: int = 10):
+    require_self(user_id, request)
     sessions = table("sessions").select(
-        "*",
+        "id,user_id,topic,mode,course_id,started_at,ended_at",
         filters={"user_id": f"eq.{user_id}"},
         order="started_at.desc",
         limit=limit,
@@ -444,22 +460,35 @@ def list_sessions(user_id: str, limit: int = 10):
 
 
 @router.delete("/sessions/{session_id}")
-def delete_session(session_id: str, user_id: str | None = Query(None)):
+def delete_session(session_id: str, request: Request, user_id: str | None = Query(None)):
+    if user_id:
+        require_self(user_id, request)
+    else:
+        user_id = get_session_user_id(request)
     if session_id in PENDING_SESSIONS:
         pending = PENDING_SESSIONS[session_id]
-        if user_id and pending["user_id"] != user_id:
+        if pending["user_id"] != user_id:
             raise HTTPException(status_code=403, detail="Session user mismatch")
         PENDING_SESSIONS.pop(session_id, None)
         return {"deleted": True}
+    # Verify the session belongs to the authenticated user before deleting
+    owner_rows = table("sessions").select(
+        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
+    )
+    if owner_rows and owner_rows[0].get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Session user mismatch")
     table("messages").delete({"session_id": f"eq.{session_id}"})
     table("sessions").delete({"id": f"eq.{session_id}"})
     return {"deleted": True}
 
 
 @router.get("/sessions/{session_id}/resume")
-def resume_session(session_id: str):
+def resume_session(session_id: str, request: Request):
+    user_id = get_session_user_id(request)
     if session_id in PENDING_SESSIONS:
         p = PENDING_SESSIONS[session_id]
+        if p["user_id"] != user_id:
+            raise HTTPException(status_code=403, detail="Session user mismatch")
         now = datetime.utcnow().isoformat()
         return {
             "session": {
@@ -487,6 +516,8 @@ def resume_session(session_id: str):
     )
     if not session_rows:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session_rows[0].get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Session user mismatch")
 
     msgs = table("messages").select(
         "id,role,content,created_at",
@@ -495,12 +526,15 @@ def resume_session(session_id: str):
     )
     return {
         "session": session_rows[0],
-        "messages": msgs,
+        "messages": [
+            {**m, "content": decrypt_if_present(m["content"])} for m in msgs
+        ],
     }
 
 
 @router.post("/action")
-def action(body: ActionBody):
+def action(body: ActionBody, request: Request):
+    require_self(body.user_id, request)
     _ensure_session_ready(body.session_id, body.user_id)
     action_prompts = {
         "hint": "The student asked for a hint. Give a small scaffold or clue without giving away the answer.",
@@ -535,7 +569,8 @@ def action(body: ActionBody):
 
 
 @router.post("/mode-switch")
-def mode_switch(body: ModeSwitchBody):
+def mode_switch(body: ModeSwitchBody, request: Request):
+    require_self(body.user_id, request)
     _ensure_session_ready(body.session_id, body.user_id)
     student_name = get_user_name(body.user_id).split()[0]
     session_rows = table("sessions").select(

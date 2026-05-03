@@ -181,7 +181,7 @@ class TestResumeSession:
             return mock
 
         with patch("routes.learn.table", side_effect=factory):
-            r = client.get("/api/learn/sessions/s1/resume")
+            r = client.get("/api/learn/sessions/s1/resume?user_id=u1")
 
         assert r.status_code == 200
         assert r.json()["session"]["topic"] == "Loops"

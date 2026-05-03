@@ -57,13 +57,15 @@ class TestImportCommit:
         assert r.json()["skipped_duplicates"] == 1
 
     def test_rejects_other_users(self):
+        from services.auth_guard import _real_require_self
         body = {
             "user_id": "u1",
             "course_id": "c1",
             "topic": "Bio",
             "cards": [{"front": "F", "back": "B"}],
         }
-        with patch("services.auth_guard.get_session_user_id", return_value="u2"):
+        with patch("routes.flashcards.require_self", _real_require_self), \
+             patch("services.auth_guard.get_session_user_id", return_value="u2"):
             r = client.post("/api/flashcards/import/commit", json=body)
         assert r.status_code == 403
 

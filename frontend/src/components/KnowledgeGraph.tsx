@@ -40,8 +40,6 @@ type Props = {
   variant?: GraphVariant;
   highlightId?: string;
   onNodeClick?: (n: GraphNode) => void;
-  /** Opt-in: fill nodes using mastery-tier color palette instead of course color. */
-  masteryTierFill?: boolean;
   /** Pause simulation when graph is off-screen (default: true). */
   pauseWhenOffscreen?: boolean;
   /** Partner concept mastery, matched to this graph's nodes by name. Renders an outline ring per match. */
@@ -52,13 +50,46 @@ type Props = {
   comparisonLabel?: string;
 };
 
-const TIER_COLORS: Record<string, string> = {
-  mastered: "#4a7d5c",
-  learning: "#c89b5e",
-  struggling: "#b25855",
-  unexplored: "#9a9a9a",
-  subject_root: "#8a7bc4",
-};
+// Deterministic per-node shade derived from the course color + node id.
+// Keeps each course visually unified while giving every node its own tone,
+// and produces identical output across pages because it depends only on the
+// stable inputs (no per-screen overrides).
+function hashId(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const r = parseInt(m[1].slice(0, 2), 16) / 255;
+  const g = parseInt(m[1].slice(2, 4), 16) / 255;
+  const b = parseInt(m[1].slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2;
+  let h = 0, s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+    else if (max === g) h = ((b - r) / d + 2) * 60;
+    else h = ((r - g) / d + 4) * 60;
+  }
+  return { h, s: s * 100, l: l * 100 };
+}
+
+function shadeFor(baseHex: string, nodeId: string): string {
+  const hsl = hexToHsl(baseHex);
+  if (!hsl) return baseHex;
+  const seed = hashId(nodeId);
+  const dh = (seed % 51) - 25;
+  const ds = ((seed >> 5) % 17) - 8;
+  const dl = ((seed >> 10) % 25) - 12;
+  const h = (hsl.h + dh + 360) % 360;
+  const s = Math.max(20, Math.min(85, hsl.s + ds));
+  const l = Math.max(28, Math.min(62, hsl.l + dl));
+  return `hsl(${h.toFixed(0)} ${s.toFixed(0)}% ${l.toFixed(0)}%)`;
+}
 
 type DragState =
   | { kind: "node"; nodeId: string; pointerId: number }
@@ -68,7 +99,7 @@ type DragState =
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 3;
 
-export function KnowledgeGraph({
+function KnowledgeGraphImpl({
   nodes,
   edges,
   width = 600,
@@ -76,7 +107,6 @@ export function KnowledgeGraph({
   variant = "organism",
   highlightId,
   onNodeClick,
-  masteryTierFill = false,
   pauseWhenOffscreen = true,
   comparison = null,
   comparisonColor = "#8a7bc4",
@@ -190,14 +220,13 @@ export function KnowledgeGraph({
   const masteryOpacity = (tier: GraphNode["mastery_tier"]) =>
     ({ mastered: 1, learning: 0.78, struggling: 0.55, unexplored: 0.28 })[tier] || 0.6;
   const nodeRadius = (n: GraphNode) => (n.is_subject_root ? 22 : 8 + (n.mastery_score || 0) * 12);
-  const courseColor = (n?: GraphNode) => n?.color || "var(--c-sage)";
-  const fillFor = (n: GraphNode) => {
-    if (masteryTierFill) {
-      if (n.is_subject_root) return TIER_COLORS.subject_root;
-      return TIER_COLORS[n.mastery_tier] || courseColor(n);
-    }
-    return courseColor(n);
+  const courseColor = (n?: GraphNode) => {
+    if (!n) return "var(--c-sage)";
+    const base = n.color || "var(--c-sage)";
+    if (n.is_subject_root) return base;
+    return shadeFor(base, n.id);
   };
+  const fillFor = (n: GraphNode) => courseColor(n);
 
   // ── Pause simulation when offscreen ─────────────────────────────────────
   React.useEffect(() => {
@@ -612,3 +641,5 @@ export function KnowledgeGraph({
     </div>
   );
 }
+
+export const KnowledgeGraph = React.memo(KnowledgeGraphImpl);

@@ -1,15 +1,17 @@
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from db.connection import table
 from models import OnboardingBody
+from services.auth_guard import require_self
+from services.encryption import encrypt_if_present
 
 router = APIRouter()
 
 
 @router.get("/courses")
-def search_courses(q: str = Query("", min_length=0)):
+def search_courses(request: Request, q: str = Query("", min_length=0)):
     """Search courses by name or code. Returns all if q is empty."""
     filters = {}
     if q.strip():
@@ -25,8 +27,9 @@ def search_courses(q: str = Query("", min_length=0)):
 
 
 @router.post("/profile")
-def save_onboarding_profile(body: OnboardingBody):
+def save_onboarding_profile(body: OnboardingBody, request: Request):
     """Save the onboarding form data for an existing user."""
+    require_self(body.user_id, request)
 
     # Verify user exists
     user = table("users").select("id", filters={"id": f"eq.{body.user_id}"})
@@ -37,9 +40,9 @@ def save_onboarding_profile(body: OnboardingBody):
     name = f"{body.first_name} {body.last_name}".strip()
     table("users").update(
         {
-            "name": name,
-            "first_name": body.first_name,
-            "last_name": body.last_name,
+            "name": encrypt_if_present(name),
+            "first_name": encrypt_if_present(body.first_name),
+            "last_name": encrypt_if_present(body.last_name),
             "year": body.year,
             "majors": body.majors,
             "minors": body.minors,

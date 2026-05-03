@@ -536,7 +536,7 @@ class TestQuizPromptAugmentation(unittest.TestCase):
         mock_gemini.return_value = {"questions": []}
 
         from routes.quiz import generate_quiz
-        generate_quiz(self._make_generate_body())
+        generate_quiz(self._make_generate_body(), MagicMock())
 
         actual_prompt = mock_gemini.call_args[0][0]
         self.assertIn("Dangling pointers", actual_prompt)
@@ -560,7 +560,7 @@ class TestQuizPromptAugmentation(unittest.TestCase):
         mock_gemini.return_value = {"questions": []}
 
         from routes.quiz import generate_quiz
-        generate_quiz(self._make_generate_body())
+        generate_quiz(self._make_generate_body(), MagicMock())
 
         actual_prompt = mock_gemini.call_args[0][0]
         self.assertNotIn("Common misconceptions seen across the class", actual_prompt)
@@ -592,7 +592,7 @@ class TestQuizPromptAugmentation(unittest.TestCase):
         mock_gemini.return_value = {"questions": []}
 
         from routes.quiz import generate_quiz
-        generate_quiz(self._make_generate_body())
+        generate_quiz(self._make_generate_body(), MagicMock())
 
         actual_prompt = mock_gemini.call_args[0][0]
         self.assertIn("mistake_9", actual_prompt)
@@ -615,7 +615,7 @@ class TestQuizPromptAugmentation(unittest.TestCase):
 
         with patch("services.course_context_service.get_course_context") as mock_ctx:
             from routes.quiz import generate_quiz
-            generate_quiz(self._make_generate_body())
+            generate_quiz(self._make_generate_body(), MagicMock())
             mock_ctx.assert_not_called()
 
 

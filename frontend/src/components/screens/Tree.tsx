@@ -8,7 +8,7 @@ import { KnowledgeGraph } from "../KnowledgeGraph";
 import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { getGraph, getCourses, getSessions, deleteGraphNode, updateGraphNodeColor, type EnrolledCourse, type Session } from "@/lib/api";
+import { getGraph, getCourses, getSessions, deleteGraphNode, type EnrolledCourse, type Session } from "@/lib/api";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
@@ -29,7 +29,7 @@ function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
     id: n.id,
     name: n.concept_name,
     subject: n.subject,
-    color: n.color || n.course_color || course?.color || "var(--c-sage)",
+    color: n.course_color || course?.color || "var(--c-sage)",
     is_subject_root: n.is_subject_root,
     mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
     mastery_score: n.mastery_score,
@@ -37,11 +37,6 @@ function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
     last_studied_at: n.last_studied_at || undefined,
   };
 }
-
-const NODE_COLOR_SWATCHES: string[] = [
-  "#4a7d5c", "#c89b5e", "#b25855", "#8a7bc4", "#5b8db8",
-  "#6f9c7c", "#d18a5e", "#a86c9e", "#7a8aa6", "#9a9a9a",
-];
 
 export function Tree() {
   const router = useRouter();
@@ -157,18 +152,6 @@ export function Tree() {
     `/learn?topic=${encodeURIComponent(n.name)}&mode=quiz${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`,
   );
 
-  const pickColor = async (n: GraphNode, color: string | null) => {
-    if (!userId) return;
-    try {
-      await updateGraphNodeColor(userId, n.id, color);
-      setNodes(prev => prev.map(x => x.id === n.id ? { ...x, color: color || x.color } : x));
-      setSelected(prev => prev && prev.id === n.id ? { ...prev, color: color || prev.color } : prev);
-      await load();
-    } catch (err: any) {
-      toast.error(`Color update failed: ${String(err?.message || err)}`);
-    }
-  };
-
   const del = useConfirm(async () => {
     if (!userId || !selected) return;
     try {
@@ -219,36 +202,6 @@ export function Tree() {
       <button className="btn" style={{ width: "100%", marginTop: 8 }} onClick={() => onQuiz(selected)}>
         <Icon name="bolt" size={14} /> Quick quiz
       </button>
-      {!selected.is_subject_root && (
-        <div style={{ marginTop: 18 }}>
-          <div className="label-micro" style={{ marginBottom: 8 }}>Node color</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-            {NODE_COLOR_SWATCHES.map(c => (
-              <button
-                key={c}
-                onClick={() => pickColor(selected, c)}
-                aria-label={`Set color ${c}`}
-                style={{
-                  width: 22, height: 22, borderRadius: "50%", background: c,
-                  border: selected.color === c ? "2px solid var(--text)" : "1px solid var(--border)",
-                  cursor: "pointer", padding: 0,
-                }}
-              />
-            ))}
-            <button
-              onClick={() => pickColor(selected, null)}
-              title="Reset to course color"
-              style={{
-                width: 22, height: 22, borderRadius: "50%",
-                border: "1px dashed var(--border-strong)", background: "var(--bg-panel)",
-                color: "var(--text-muted)", cursor: "pointer", padding: 0, fontSize: 12,
-              }}
-            >
-              ⟲
-            </button>
-          </div>
-        </div>
-      )}
       {!selected.is_subject_root && (
         <button
           onClick={del.trigger}
@@ -382,7 +335,6 @@ export function Tree() {
               width={size.w}
               height={size.h}
               highlightId={suggestId || selected?.id}
-              masteryTierFill
               onNodeClick={(n) => setSelected(n)}
             />
           )}
@@ -467,7 +419,6 @@ function FullscreenGraph({
         edges={edges}
         width={size.w}
         height={size.h}
-        masteryTierFill
         highlightId={highlightId}
         onNodeClick={onNodeClick}
       />

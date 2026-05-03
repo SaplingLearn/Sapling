@@ -60,4 +60,4 @@ Lint: # TODO: no lint command defined (no ruff/flake8/black config in repo).
 
 ## Gotchas
 
-- (none recorded yet — add as discovered)
+- Column-level encryption is on for sensitive columns (`users.name`/`first_name`/`last_name`/`bio`/`location`, Google OAuth tokens, `messages.content`, `room_messages.text`, `sessions.summary_json`, `documents.summary` + `concept_notes`, gradebook + calendar assignment notes/points). Helpers live in `backend/services/encryption.py`; use `encrypt_if_present` at write boundaries and `decrypt_if_present` / `decrypt_numeric` at read boundaries (including before injecting into AI prompts). `ENCRYPTION_KEY` must be set (32 bytes as 64 hex chars; generate via `python -c "import secrets; print(secrets.token_hex(32))"`).

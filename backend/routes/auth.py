@@ -13,7 +13,7 @@ import secrets
 import time as _time
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
 from config import (
@@ -25,12 +25,14 @@ from config import (
     SESSION_SECRET,
 )
 from db.connection import table
+from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
+from services.auth_guard import get_session_user_id
 
 try:
     from google_auth_oauthlib.flow import Flow
     from googleapiclient.discovery import build
     from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
+    from google.auth.transport.requests import Request as GoogleAuthRequest
     GOOGLE_AVAILABLE = True
 except ImportError:
     GOOGLE_AVAILABLE = False
@@ -72,9 +74,10 @@ def _generate_pkce_pair():
 
 
 @router.get("/me")
-def get_me(user_id: str = Query(...)):
+def get_me(request: Request):
     """Return approval and onboarding status for a given user_id."""
-    user = table("users").select("id,is_approved,onboarding_completed,username", filters={"id": f"eq.{user_id}"})
+    user_id = get_session_user_id(request)
+    user = table("users").select("id,is_approved,onboarding_completed,username,name,avatar_url", filters={"id": f"eq.{user_id}"})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -124,6 +127,8 @@ def get_me(user_id: str = Query(...)):
         "is_approved": bool(user[0]["is_approved"]),
         "onboarding_completed": bool(user[0].get("onboarding_completed", False)),
         "username": user[0].get("username"),
+        "name": decrypt_if_present(user[0].get("name")) or "",
+        "avatar_url": user[0].get("avatar_url") or "",
         "roles": roles,
         "equipped_cosmetics": equipped_cosmetics,
         "is_admin": is_admin,
@@ -190,47 +195,38 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         is_approved = existing[0]["is_approved"]
         # Update name/avatar in case they changed
         table("users").update(
-            {"name": name, "first_name": first_name, "last_name": last_name, "avatar_url": avatar_url, "email": email},
+            {
+                "name": encrypt_if_present(name),
+                "first_name": encrypt_if_present(first_name),
+                "last_name": encrypt_if_present(last_name),
+                "avatar_url": avatar_url,
+                "email": encrypt_if_present(email),
+            },
             filters={"id": f"eq.{user_id}"},
         )
     else:
-        # Check if a user with this email exists (migration from old system)
-        email_match = table("users").select("id,is_approved", filters={"email": f"eq.{email}"})
-        if email_match:
-            user_id = email_match[0]["id"]
-            is_approved = email_match[0]["is_approved"]
-            table("users").update(
-                {
-                    "google_id": google_id,
-                    "name": name,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "avatar_url": avatar_url,
-                    "auth_provider": "google",
-                },
-                filters={"id": f"eq.{user_id}"},
-            )
-        else:
-            # Create new user
-            user_id = f"user_{google_id}"
-            is_approved = False
-            table("users").insert({
-                "id": user_id,
-                "name": name,
-                "first_name": first_name,
-                "last_name": last_name,
-                "email": email,
-                "google_id": google_id,
-                "avatar_url": avatar_url,
-                "auth_provider": "google",
-            })
+        # Email-based account merge is disabled because emails are now encrypted
+        # with random nonces; equality lookups by plaintext email cannot match.
+        # New sign-ins for users without a google_id always create a fresh row.
+        user_id = f"user_{google_id}"
+        is_approved = False
+        table("users").insert({
+            "id": user_id,
+            "name": encrypt_if_present(name),
+            "first_name": encrypt_if_present(first_name),
+            "last_name": encrypt_if_present(last_name),
+            "email": encrypt_if_present(email),
+            "google_id": google_id,
+            "avatar_url": avatar_url,
+            "auth_provider": "google",
+        })
 
     # Store OAuth tokens (calendar access included)
     table("oauth_tokens").upsert(
         {
             "user_id": user_id,
-            "access_token": creds.token,
-            "refresh_token": creds.refresh_token or "",
+            "access_token": encrypt(creds.token),
+            "refresh_token": encrypt_if_present(creds.refresh_token),
             "expires_at": creds.expiry.isoformat() if creds.expiry else "",
         },
         on_conflict="user_id",
@@ -251,7 +247,6 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
 
     params = urlencode({
         "user_id": user_id,
-        "name": name,
         "avatar": avatar_url,
         "is_approved": "true",
         **({"auth_token": auth_token} if auth_token else {}),

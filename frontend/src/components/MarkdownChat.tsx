@@ -389,7 +389,13 @@ const COMPONENTS: Components = {
   } as unknown as Components),
 };
 
-export function MarkdownChat({ children, components }: { children: string; components?: Components }) {
+export const MarkdownChat = React.memo(function MarkdownChat({
+  children,
+  components,
+}: {
+  children: string;
+  components?: Components;
+}) {
   return (
     <div style={{ lineHeight: 1.55 }}>
       <ReactMarkdown
@@ -405,4 +411,4 @@ export function MarkdownChat({ children, components }: { children: string; compo
       </ReactMarkdown>
     </div>
   );
-}
+});

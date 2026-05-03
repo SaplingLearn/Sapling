@@ -10,13 +10,15 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException, Request, UploadFile
 from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from db.connection import table
+from services.auth_guard import get_session_user_id, require_self
+from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
-from services.gemini_service import call_gemini_json
+from services.gemini_service import MODEL_LITE, call_gemini_json
 from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
 from services.course_context_service import update_course_context
@@ -128,7 +130,7 @@ def _extend_course_concepts(
         "administrative items.\n"
         "- concepts must be a JSON array of strings."
     )
-    raw = call_gemini_json(prompt)
+    raw = call_gemini_json(prompt, model=MODEL_LITE)
     if not isinstance(raw, dict):
         return []
     return _coerce_str_list(raw.get("concepts"))
@@ -236,33 +238,40 @@ def _process_document(filename: str, extracted_text: str) -> dict:
 
 
 @router.get("/user/{user_id}")
-def list_documents(user_id: str):
+def list_documents(user_id: str, request: Request):
+    require_self(user_id, request)
     _validate_user(user_id)
-    docs = table("documents").select("*", filters={"user_id": f"eq.{user_id}"}, order="created_at.desc")
+    docs = table("documents").select(
+        "id,user_id,course_id,file_name,category,summary,concept_notes,created_at,processed_at",
+        filters={"user_id": f"eq.{user_id}"},
+        order="created_at.desc",
+    ) or []
+    for d in docs:
+        d["summary"] = decrypt_if_present(d.get("summary"))
+        notes_raw = d.get("concept_notes")
+        if isinstance(notes_raw, str):
+            d["concept_notes"] = decrypt_json(notes_raw)
     return {"documents": docs}
 
 
 @router.delete("/doc/{document_id}")
-def delete_document(document_id: str, user_id: str | None = None):
+def delete_document(document_id: str, request: Request, user_id: str | None = None):
     if user_id:
+        require_self(user_id, request)
         _validate_user(user_id)
-        # Ensure the document belongs to the requesting user
-        docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
-        if not docs:
-            raise HTTPException(status_code=404, detail="Document not found.")
-    table("documents").delete(filters={"id": f"eq.{document_id}"})
+    else:
+        user_id = get_session_user_id(request)
+    # Ensure the document belongs to the requesting user
+    docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
+    if not docs:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    table("documents").delete(filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"})
     return {"deleted": True}
 
 
 @router.patch("/doc/{document_id}")
-def update_document(document_id: str, body: dict = Body(...)):
+def update_document(document_id: str, request: Request, body: dict = Body(...)):
     """Update mutable fields on a document (currently only category)."""
-    user_id = body.get("user_id")
-    if user_id:
-        _validate_user(user_id)
-        docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
-        if not docs:
-            raise HTTPException(status_code=404, detail="Document not found.")
     category = body.get("category")
     if category and category not in VALID_CATEGORIES:
         raise HTTPException(status_code=400, detail=f"Invalid category '{category}'.")
@@ -271,7 +280,16 @@ def update_document(document_id: str, body: dict = Body(...)):
         updates["category"] = category
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update.")
-    updated = table("documents").update(updates, filters={"id": f"eq.{document_id}"})
+    user_id = body.get("user_id")
+    if user_id:
+        require_self(user_id, request)
+        _validate_user(user_id)
+    else:
+        user_id = get_session_user_id(request)
+    docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
+    if not docs:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    updated = table("documents").update(updates, filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"})
     return updated[0] if updated else {"id": document_id, **updates}
 
 
@@ -285,6 +303,9 @@ def _persist_document(
     """Insert a documents row from an orchestrator result.
 
     Shared by both upload_document_sync and the streaming upload_document.
+    summary + concept_notes are encrypted at the insert boundary; the
+    returned row carries the plaintext shape so callers can pass it
+    straight back to the client without an extra decrypt step.
     Returns (document_id, full_row).
     """
     now = datetime.now(timezone.utc).isoformat()
@@ -292,19 +313,22 @@ def _persist_document(
         {"name": c.name, "description": c.description}
         for c in result.concepts.concepts
     ]
+    summary = result.summary.abstract or None
     row = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
         "course_id": course_id,
         "file_name": filename,
         "category": result.classification.category,
-        "summary": result.summary.abstract or None,
-        "concept_notes": concept_notes,
+        "summary": encrypt_if_present(summary),
+        "concept_notes": encrypt_json(concept_notes) if concept_notes is not None else None,
         "created_at": now,
         "processed_at": now,
     }
     inserted = table("documents").insert(row)
     full_row = inserted[0] if inserted else row
+    full_row["summary"] = summary
+    full_row["concept_notes"] = concept_notes
     return full_row["id"], full_row
 
 
@@ -357,12 +381,14 @@ def _graph_backstop(*, user_id: str, course_id: str, filename: str,
 @router.post("/upload/sync")
 async def upload_document_sync(
     background_tasks: BackgroundTasks,
+    request: Request,
     file: UploadFile = File(...),
     course_id: str = Form(...),
     user_id: str = Form(...),
 ):
     """Non-streaming JSON upload. Original behavior preserved here so any
     frontend that hasn't migrated to the SSE /upload route keeps working."""
+    require_self(user_id, request)
     _validate_user(user_id)
 
     # ── Validation ────────────────────────────────────────────────────────────
@@ -437,6 +463,7 @@ async def upload_document_sync(
 
 @router.post("/upload")
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     course_id: str = Form(...),
     user_id: str = Form(...),
@@ -449,6 +476,7 @@ async def upload_document(
     stream opens. Errors during the stream surface as type='error' SSE
     events; the client should NOT auto-retry against this route.
     """
+    require_self(user_id, request)
     _validate_user(user_id)
 
     filename = file.filename or ""
@@ -718,8 +746,8 @@ async def _legacy_upload_pipeline(
         "course_id": course_id,
         "file_name": filename,
         "category": ai["category"],
-        "summary": ai["summary"] or None,
-        "concept_notes": ai["concept_notes"],
+        "summary": encrypt_if_present(ai["summary"] or None),
+        "concept_notes": encrypt_json(ai["concept_notes"]) if ai["concept_notes"] is not None else None,
         "created_at": now,
         "processed_at": now,
     }
@@ -735,6 +763,10 @@ async def _legacy_upload_pipeline(
             _check_upload_achievements, user_id))
 
     response = dict(inserted[0] if inserted else row)
+    response["summary"] = decrypt_if_present(response.get("summary"))
+    notes_raw = response.get("concept_notes")
+    if isinstance(notes_raw, str):
+        response["concept_notes"] = decrypt_json(notes_raw)
     response["categories"] = ai.get("categories", [])
     return response
 
@@ -798,12 +830,13 @@ def _scan_concepts_for_course(
 
 
 @router.post("/doc/{document_id}/scan-concepts")
-def scan_document_concepts(document_id: str, body: dict = Body(...)):
+def scan_document_concepts(document_id: str, request: Request, body: dict = Body(...)):
     """Extend the course's concept graph using one document's stored
     summary + takeaways as the seed signal."""
     user_id = body.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
+    require_self(user_id, request)
     _validate_user(user_id)
 
     rows = table("documents").select(
@@ -818,21 +851,32 @@ def scan_document_concepts(document_id: str, body: dict = Body(...)):
     if not course_id:
         raise HTTPException(status_code=400, detail="Document is not associated with a course.")
 
+    doc_summary = decrypt_if_present(doc.get("summary"))
+    notes_raw = doc.get("concept_notes")
+    if isinstance(notes_raw, str):
+        try:
+            doc_concept_notes = decrypt_json(notes_raw)
+        except Exception:
+            doc_concept_notes = []
+    else:
+        doc_concept_notes = notes_raw or []
+
     return _scan_concepts_for_course(
         user_id,
         course_id,
         doc_filename=doc.get("file_name"),
-        doc_summary=doc.get("summary"),
-        doc_concept_notes=doc.get("concept_notes") or [],
+        doc_summary=doc_summary,
+        doc_concept_notes=doc_concept_notes
     )
 
 
 @router.post("/course/{course_id}/scan-concepts")
-def scan_course_concepts(course_id: str, body: dict = Body(...)):
+def scan_course_concepts(course_id: str, request: Request, body: dict = Body(...)):
     """Extend the course's concept graph from the course label alone
     (and whatever is already in the graph)."""
     user_id = body.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
+    require_self(user_id, request)
     _validate_user(user_id)
     return _scan_concepts_for_course(user_id, course_id)

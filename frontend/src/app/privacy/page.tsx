@@ -1,5 +1,13 @@
 import Link from "next/link";
 
+const FOOTER_LINKS = [
+  { label: "Home", href: "/" },
+  { label: "About", href: "/about" },
+  { label: "Careers", href: "/careers" },
+  { label: "Terms of Service", href: "/terms" },
+  { label: "Privacy Policy", href: "/privacy" },
+];
+
 const sections = [
   {
     title: "1. Information We Collect",
@@ -60,7 +68,13 @@ const sections = [
   },
   {
     title: "6. Security",
-    body: "We take reasonable technical measures to protect your data, including encrypted connections and access-controlled database infrastructure via Supabase. No system is completely secure, and we cannot guarantee absolute security.",
+    body: "We take reasonable technical and organizational measures to protect your data:",
+    highlights: [
+      { label: "In transit:", text: "traffic between your browser and our servers is encrypted using HTTPS/TLS." },
+      { label: "At rest (application layer):", text: "certain sensitive fields are encrypted by our backend using AES-256-GCM before they are written to the database. This currently covers your profile name, bio, and location; Google OAuth tokens; document summaries and AI-generated concept notes; tutoring chat messages; study room messages; tutoring session summaries; gradebook assignment scores and notes; and calendar assignment notes." },
+      { label: "At rest (storage layer):", text: "our database provider (Supabase) enforces access controls and applies its own encryption at rest at the storage layer." },
+    ],
+    bodyAfter: "The encryption keys used for application-layer encryption are managed by Sapling, which means we — and the AI and infrastructure providers described in Section 4 — can technically decrypt your data when required to operate the Service. This is not end-to-end encryption. No system is completely secure, and we cannot guarantee absolute security.",
   },
   {
     title: "7. Children's Privacy",
@@ -97,29 +111,66 @@ export default function PrivacyPage() {
         color: "var(--text)",
       }}
     >
+      <header
+        style={{
+          borderBottom: "1px solid var(--border)",
+          background: "var(--bg-topbar)",
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 1280,
+            margin: "0 auto",
+            padding: "0 24px",
+            height: 52,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <Link
+            href="/"
+            style={{ display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+          >
+            <img
+              src="/sapling-icon.svg"
+              alt="Sapling"
+              style={{ width: 26, height: 26, flexShrink: 0, position: "relative", top: -2 }}
+            />
+            <span
+              style={{
+                fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
+                fontWeight: 700,
+                fontSize: 20,
+                color: "#1a5c2a",
+                letterSpacing: "-0.02em",
+                lineHeight: 1.1,
+              }}
+            >
+              Sapling
+            </span>
+          </Link>
+          <Link
+            href="/"
+            style={{ fontSize: 13, color: "var(--text-muted)", textDecoration: "none" }}
+          >
+            ← Back to home
+          </Link>
+        </div>
+      </header>
+
       <div
         style={{
           flex: 1,
           width: "100%",
-          maxWidth: 720,
+          maxWidth: 880,
           margin: "0 auto",
           padding: "64px 32px",
         }}
       >
-        <div className="fade-up anim-d0" style={{ marginBottom: 48 }}>
-          <Link
-            href="/"
-            style={{
-              fontSize: 13,
-              color: "var(--text-muted)",
-              textDecoration: "none",
-              transition: "color var(--dur-fast) var(--ease)",
-            }}
-          >
-            ← Back to Sapling
-          </Link>
-        </div>
-
         <h1
           className="h-serif fade-up anim-d1"
           style={{ fontSize: 44, marginBottom: 8, color: "var(--text)" }}
@@ -130,7 +181,7 @@ export default function PrivacyPage() {
           className="fade-up anim-d2"
           style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 40 }}
         >
-          Last updated: March 27, 2026
+          Last updated: May 3, 2026
         </p>
 
         <p
@@ -284,51 +335,71 @@ export default function PrivacyPage() {
                   ))}
                 </ul>
               )}
+
+              {section.bodyAfter && (
+                <p
+                  className="body-serif"
+                  style={{ fontSize: 15, color: "var(--text-dim)", marginTop: 12 }}
+                >
+                  {section.bodyAfter}
+                </p>
+              )}
             </div>
           ))}
         </div>
 
-        <div
-          style={{
-            marginTop: 48,
-            paddingTop: 32,
-            borderTop: "1px solid var(--border)",
-            fontSize: 13,
-            color: "var(--text-muted)",
-          }}
-        >
-          © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
-        </div>
       </div>
 
       <footer
         style={{
           borderTop: "1px solid var(--border)",
           background: "var(--bg-subtle)",
-          padding: "32px",
+          padding: "48px 32px",
         }}
       >
         <div
           style={{
-            maxWidth: 720,
+            maxWidth: 1280,
             margin: "0 auto",
             display: "flex",
             flexWrap: "wrap",
-            justifyContent: "center",
+            alignItems: "center",
+            justifyContent: "space-between",
             gap: 24,
-            fontSize: 13,
-            color: "var(--text-muted)",
           }}
         >
-          <Link href="/about" style={{ color: "inherit", textDecoration: "none" }}>
-            About
-          </Link>
-          <Link href="/terms" style={{ color: "inherit", textDecoration: "none" }}>
-            Terms of Service
-          </Link>
-          <Link href="/privacy" style={{ color: "inherit", textDecoration: "none" }}>
-            Privacy Policy
-          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 20, height: 20 }} />
+            <span style={{ fontSize: 14, color: "var(--text-muted)" }}>Sapling · © 2026</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 24 }}>
+            {FOOTER_LINKS.map(({ label, href }) => (
+              <Link
+                key={label}
+                href={href}
+                style={{
+                  fontSize: 14,
+                  color: "var(--text-muted)",
+                  textDecoration: "none",
+                }}
+              >
+                {label}
+              </Link>
+            ))}
+          </div>
+        </div>
+        <div
+          style={{
+            maxWidth: 1280,
+            margin: "32px auto 0",
+            paddingTop: 24,
+            borderTop: "1px solid var(--border)",
+            textAlign: "center",
+          }}
+        >
+          <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
+          </p>
         </div>
       </footer>
     </div>

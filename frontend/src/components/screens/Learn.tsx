@@ -2,6 +2,7 @@
 
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { CustomSelect } from "../CustomSelect";
@@ -99,8 +100,8 @@ function LearnInner() {
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
-  const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [starting, setStarting] = useState(false);
 
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
@@ -169,6 +170,7 @@ function LearnInner() {
     }
     setTopic(t);
     setMessages([{ id: msgId(), role: "assistant", content: "", loading: true }]);
+    setStarting(true);
     try {
       const res = await startSession(userId, t, mode, selectedCourseId || undefined, sharedCtx);
       setSessionId(res.session_id);
@@ -176,6 +178,8 @@ function LearnInner() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't start session.");
       setMessages([]);
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -185,6 +189,7 @@ function LearnInner() {
       setSessionId(s.id);
       setTopic(s.topic);
       setMode(normalizeMode(s.mode));
+      setSelectedCourseId(s.course_id || "");
       setMessages(
         (res.messages ?? []).map(m => ({
           id: msgId(),
@@ -208,11 +213,9 @@ function LearnInner() {
     }
   };
 
-  const send = async () => {
-    if (!input.trim() || !sessionId || !userId) return;
-    const userText = input;
+  const send = useCallback(async (userText: string) => {
+    if (!userText.trim() || !sessionId || !userId) return;
     const chatMode = CHAT_MODES.includes(mode) ? mode : "socratic";
-    setInput("");
     setMessages(m => [
       ...m,
       { id: msgId(), role: "user", content: userText },
@@ -235,7 +238,7 @@ function LearnInner() {
     } finally {
       setSending(false);
     }
-  };
+  }, [sessionId, userId, mode, sharedCtx]);
 
   const handleAction = async (action: "hint" | "confused" | "skip") => {
     if (!sessionId || !userId) return;
@@ -280,7 +283,6 @@ function LearnInner() {
       if (res.reply) {
         setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply }]);
       }
-      setInput(`Continue in ${newMode} mode on ${topic}…`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Mode switch failed.");
       setMode(prev);
@@ -316,6 +318,14 @@ function LearnInner() {
     setTopicDraft("");
   };
 
+  const handleBackToLearn = () => {
+    setSessionId(null);
+    setMessages([]);
+    setTopic("");
+    setTopicDraft("");
+    router.replace(`/learn?mode=${mode}`, { scroll: false });
+  };
+
   const startNextFromSummary = (concept: string) => {
     setSummary(null);
     setSessionId(null);
@@ -327,10 +337,98 @@ function LearnInner() {
 
   const modeOptions = useMemo(() => MODES.map(m => ({ value: m.id, label: m.name, description: m.tip })), []);
 
+  const suggestParam = searchParams.get("suggest");
+  const highlightId = useMemo(() => {
+    // Pre-revamp Learn honored ?suggest=<concept> from the Dashboard
+    // "Learn next" suggestion; restore that here, falling back to the
+    // current topic if no suggestion is active.
+    const suggestMatch = suggestParam
+      ? graphNodes.find(n => n.name.toLowerCase() === suggestParam.trim().toLowerCase())
+      : null;
+    if (suggestMatch) return suggestMatch.id;
+    return graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id;
+  }, [suggestParam, graphNodes, topic]);
+
+  const handleNodeClick = useCallback((n: GraphNode) => {
+    if (!n.is_subject_root) {
+      router.replace(`/learn?topic=${encodeURIComponent(n.name)}&mode=${mode}`, { scroll: false });
+    }
+  }, [router, mode]);
+
+  const topicNode = useMemo(
+    () => graphNodes.find(n => n.id === highlightId),
+    [graphNodes, highlightId],
+  );
+
+  const neighborIds = useMemo(() => {
+    if (!topicNode) return new Set<string>();
+    const ids = new Set<string>();
+    for (const e of graphEdges) {
+      if (e.source === topicNode.id) ids.add(e.target as string);
+      else if (e.target === topicNode.id) ids.add(e.source as string);
+    }
+    return ids;
+  }, [topicNode, graphEdges]);
+
+  const cardCourseId = topicNode?.course_id || selectedCourseId || null;
+
+  const progressItems = useMemo(() => {
+    if (topicNode && neighborIds.size > 0) {
+      return graphNodes
+        .filter(n => neighborIds.has(n.id) && !n.is_subject_root)
+        .slice(0, 6)
+        .map(n => ({ name: n.name, complete: n.mastery_tier === "mastered" }));
+    }
+    if (cardCourseId) {
+      return graphNodes
+        .filter(n => n.course_id === cardCourseId && !n.is_subject_root)
+        .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
+        .slice(0, 6)
+        .map(n => ({ name: n.name, complete: n.mastery_tier === "mastered" }));
+    }
+    return [];
+  }, [graphNodes, neighborIds, topicNode, cardCourseId]);
+
+  const relatedItems = useMemo(() => {
+    if (topicNode) {
+      return graphNodes
+        .filter(n =>
+          n.id !== topicNode.id &&
+          !n.is_subject_root &&
+          !neighborIds.has(n.id) &&
+          n.course_id === topicNode.course_id,
+        )
+        .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
+        .slice(0, 4)
+        .map(n => n.name);
+    }
+    if (cardCourseId) {
+      const topicLower = topic.trim().toLowerCase();
+      return graphNodes
+        .filter(n =>
+          !n.is_subject_root &&
+          n.course_id === cardCourseId &&
+          n.name.toLowerCase() !== topicLower,
+        )
+        .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
+        .slice(0, 4)
+        .map(n => n.name);
+    }
+    return [];
+  }, [graphNodes, neighborIds, topicNode, cardCourseId, topic]);
+
+  const startSessionFromConcept = useCallback((concept: string) => {
+    setSessionId(null);
+    setMessages([]);
+    setTopicDraft(concept);
+    setTopic(concept);
+    router.replace(`/learn?topic=${encodeURIComponent(concept)}&mode=${mode}`, { scroll: false });
+  }, [router, mode]);
+
   // ────────── Entry screen (no active session) ──────────
-  if (!sessionId && mode !== "quiz") {
+  if (!sessionId && !starting && mode !== "quiz") {
     return (
-      <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
+      <div className="fade-in" style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
         <DisclaimerModal />
         <TopBar
           breadcrumb="Learn"
@@ -448,48 +546,6 @@ function LearnInner() {
   return (
     <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
       <DisclaimerModal />
-      <TopBar
-        breadcrumb={`Learn / ${topic}`}
-        title={topic}
-        subtitle={`${mode} tutor · ${messages.length} msgs`}
-        actions={
-          <>
-            <AIDisclaimerChip />
-            <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
-            <button
-              className={endConfirm.armed ? "btn btn--danger btn--sm" : "btn btn--sm"}
-              onClick={endConfirm.trigger}
-              title={endConfirm.armed ? "Click again to confirm" : "End session"}
-            >
-              {endConfirm.armed ? "Confirm end" : "End session"}
-            </button>
-          </>
-        }
-      />
-
-      <div style={{ display: "flex", gap: 6, padding: "10px 32px", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
-        {MODES.filter(m => m.id !== "quiz").map(m => (
-          <button
-            key={m.id}
-            onClick={() => handleModeSwitch(m.id)}
-            style={{
-              padding: "6px 14px",
-              borderRadius: "var(--r-full)",
-              fontSize: 12,
-              fontWeight: 500,
-              background: mode === m.id ? "var(--accent)" : "var(--bg-subtle)",
-              color: mode === m.id ? "var(--accent-fg)" : "var(--text-dim)",
-              border: mode === m.id ? "1px solid var(--accent)" : "1px solid var(--border)",
-            }}
-          >
-            {m.name}
-          </button>
-        ))}
-        <div style={{ flex: 1 }} />
-        <button className="btn btn--sm" onClick={() => handleModeSwitch("quiz")}>
-          <Icon name="bolt" size={12} /> Quick quiz
-        </button>
-      </div>
 
       {isMobile && (
         <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
@@ -516,13 +572,52 @@ function LearnInner() {
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {(!isMobile || mobileTab === "chat") && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+            <TopBar
+              breadcrumb={<BackToLearnLink onClick={handleBackToLearn} />}
+              title={topic}
+              subtitle={`${mode} tutor · ${messages.length} msgs`}
+              actions={
+                <>
+                  <AIDisclaimerChip />
+                  <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
+                  <button
+                    className={endConfirm.armed ? "btn btn--danger btn--sm" : "btn btn--sm"}
+                    onClick={endConfirm.trigger}
+                    title={endConfirm.armed ? "Click again to confirm" : "End session"}
+                  >
+                    {endConfirm.armed ? "Confirm end" : "End session"}
+                  </button>
+                </>
+              }
+            />
+            <div style={{ display: "flex", gap: 6, padding: "10px 32px", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
+              {MODES.filter(m => m.id !== "quiz").map(m => (
+                <button
+                  key={m.id}
+                  onClick={() => handleModeSwitch(m.id)}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: "var(--r-full)",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    background: mode === m.id ? "var(--accent)" : "var(--bg-subtle)",
+                    color: mode === m.id ? "var(--accent-fg)" : "var(--text-dim)",
+                    border: mode === m.id ? "1px solid var(--accent)" : "1px solid var(--border)",
+                  }}
+                >
+                  {m.name}
+                </button>
+              ))}
+              <div style={{ flex: 1 }} />
+              <button className="btn btn--sm" onClick={() => handleModeSwitch("quiz")}>
+                <Icon name="bolt" size={12} /> Quick quiz
+              </button>
+            </div>
             <ChatPanel
               messages={messages}
-              input={input}
-              onInputChange={setInput}
               onSend={send}
               onAction={handleAction}
-              disabled={sending}
+              disabled={sending || starting}
             />
           </div>
         )}
@@ -556,22 +651,8 @@ function LearnInner() {
                   width={isMobile ? 320 : 280}
                   height={280}
                   variant="organism"
-                  highlightId={(() => {
-                    // Pre-revamp Learn honored ?suggest=<concept> from the Dashboard
-                    // "Learn next" suggestion; restore that here, falling back to the
-                    // current topic if no suggestion is active.
-                    const suggest = searchParams.get("suggest");
-                    const suggestMatch = suggest
-                      ? graphNodes.find(n => n.name.toLowerCase() === suggest.trim().toLowerCase())
-                      : null;
-                    if (suggestMatch) return suggestMatch.id;
-                    return graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id;
-                  })()}
-                  onNodeClick={(n) => {
-                    if (!n.is_subject_root) {
-                      router.replace(`/learn?topic=${encodeURIComponent(n.name)}&mode=${mode}`, { scroll: false });
-                    }
-                  }}
+                  highlightId={highlightId}
+                  onNodeClick={handleNodeClick}
                 />
               </div>
             )}
@@ -591,6 +672,10 @@ function LearnInner() {
                 {sharedCtx ? "Class intel: on" : "Class intel: off"}
               </div>
             </div>
+            {progressItems.length > 0 && <ProgressCard items={progressItems} />}
+            {relatedItems.length > 0 && (
+              <RelatedConceptsCard items={relatedItems} onSelect={startSessionFromConcept} />
+            )}
           </aside>
         )}
       </div>
@@ -603,6 +688,42 @@ function LearnInner() {
         />
       )}
     </div>
+  );
+}
+
+function BackToLearnLink({ onClick }: { onClick: () => void }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "0 0 4px",
+        background: "transparent",
+        border: "none",
+        cursor: "pointer",
+        fontFamily: "var(--font-sans)",
+        fontSize: 13,
+        fontWeight: 400,
+        letterSpacing: "normal",
+        textTransform: "none",
+        color: hover ? "var(--accent)" : "var(--text-muted)",
+        transition: "color var(--dur-fast) var(--ease)",
+      }}
+    >
+      <ChevronLeft
+        size={14}
+        style={{
+          transform: hover ? "translateX(-2px)" : "translateX(0)",
+          transition: "transform var(--dur-fast) var(--ease)",
+        }}
+      />
+      Back to Learn
+    </button>
   );
 }
 
@@ -647,6 +768,76 @@ function SessionRow({ s, onResume, onDelete }: {
       >
         {del.armed ? "Confirm" : <Icon name="x" size={12} />}
       </button>
+    </div>
+  );
+}
+
+function ProgressCard({ items }: { items: { name: string; complete: boolean }[] }) {
+  return (
+    <div className="card" style={{ padding: 12 }}>
+      <div className="label-micro" style={{ marginBottom: 8 }}>Progress</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+        {items.map(item => (
+          <div key={item.name} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: "50%",
+                flexShrink: 0,
+                background: item.complete ? "var(--accent)" : "transparent",
+                border: item.complete ? "1px solid var(--accent)" : "1.5px solid var(--border-strong)",
+              }}
+            />
+            <span
+              style={{
+                fontSize: 12,
+                color: item.complete ? "var(--text)" : "var(--text-dim)",
+                lineHeight: 1.3,
+              }}
+            >
+              {item.name}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RelatedConceptsCard({
+  items,
+  onSelect,
+}: {
+  items: string[];
+  onSelect: (name: string) => void;
+}) {
+  return (
+    <div className="card" style={{ padding: 12 }}>
+      <div className="label-micro" style={{ marginBottom: 8 }}>Related</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {items.map(name => (
+          <button
+            key={name}
+            onClick={() => onSelect(name)}
+            style={{
+              padding: "5px 10px",
+              borderRadius: "var(--r-full)",
+              fontSize: 12,
+              fontWeight: 500,
+              border: "1px solid var(--border)",
+              background: "transparent",
+              color: "var(--text-dim)",
+              cursor: "pointer",
+              transition: "background 120ms",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-subtle)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+          >
+            {name}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

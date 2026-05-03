@@ -48,7 +48,7 @@ export async function middleware(request: NextRequest) {
     try {
       res = await fetch(
         `${API_URL}/api/auth/me?user_id=${encodeURIComponent(session.userId)}`,
-        { signal: controller.signal },
+        { signal: controller.signal, headers: { Cookie: `sapling_session=${token}` } },
       )
     } finally {
       clearTimeout(timeout)

@@ -9,6 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
 
 from db.connection import table
+from services.encryption import encrypt_if_present, decrypt_if_present
 from models import (
     UpdateProfileBody,
     UpdateSettingsBody,
@@ -25,19 +26,39 @@ router = APIRouter()
 
 
 def _get_user_or_404(user_id: str) -> dict:
-    rows = table("users").select("*", filters={"id": f"eq.{user_id}"})
+    rows = table("users").select(
+        "id,username,name,first_name,last_name,email,avatar_url,school,major,year,majors,minors,bio,location,website,streak_count,created_at",
+        filters={"id": f"eq.{user_id}"},
+    )
     if not rows:
         raise HTTPException(status_code=404, detail="User not found")
-    return rows[0]
+    row = rows[0]
+    for col in ("name", "first_name", "last_name", "email", "bio", "location"):
+        row[col] = decrypt_if_present(row.get(col))
+    return row
+
+
+_SETTINGS_COLS = (
+    "user_id,username,display_name,bio,location,website,"
+    "profile_visibility,activity_status_visible,"
+    "notification_email,notification_push,notification_in_app,"
+    "theme,font_size,accent_color,"
+    "equipped_avatar_frame_id,equipped_banner_id,equipped_name_color_id,equipped_title_id,"
+    "featured_role_id,featured_achievement_ids,updated_at"
+)
 
 
 def _get_or_create_settings(user_id: str) -> dict:
-    rows = table("user_settings").select("*", filters={"user_id": f"eq.{user_id}"})
-    if rows:
-        return rows[0]
-    table("user_settings").insert({"user_id": user_id})
-    rows = table("user_settings").select("*", filters={"user_id": f"eq.{user_id}"})
-    return rows[0] if rows else {"user_id": user_id}
+    rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
+    if not rows:
+        table("user_settings").insert({"user_id": user_id})
+        rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
+    if not rows:
+        return {"user_id": user_id}
+    row = rows[0]
+    for col in ("bio", "location"):
+        row[col] = decrypt_if_present(row.get(col))
+    return row
 
 
 def _get_user_roles(user_id: str) -> list:
@@ -66,13 +87,19 @@ def _get_equipped_cosmetics(settings: dict) -> dict:
     for slot, col in slot_map.items():
         cosmetic_id = settings.get(col)
         if cosmetic_id:
-            rows = table("cosmetics").select("*", filters={"id": f"eq.{cosmetic_id}"})
+            rows = table("cosmetics").select(
+                "id,type,name,slug,asset_url,css_value,rarity",
+                filters={"id": f"eq.{cosmetic_id}"},
+            )
             if rows:
                 equipped[slot] = rows[0]
     # Featured role
     featured_role_id = settings.get("featured_role_id")
     if featured_role_id:
-        rows = table("roles").select("*", filters={"id": f"eq.{featured_role_id}"})
+        rows = table("roles").select(
+            "id,name,slug,color,icon,description,is_staff_assigned,is_earnable,display_priority",
+            filters={"id": f"eq.{featured_role_id}"},
+        )
         if rows:
             equipped["featured_role"] = rows[0]
     return equipped
@@ -207,11 +234,11 @@ def update_profile(user_id: str, body: UpdateProfileBody, request: Request):
     if body.display_name is not None:
         updates_settings["display_name"] = body.display_name
     if body.bio is not None:
-        updates_user["bio"] = body.bio
-        updates_settings["bio"] = body.bio
+        updates_user["bio"] = encrypt_if_present(body.bio)
+        updates_settings["bio"] = encrypt_if_present(body.bio)
     if body.location is not None:
-        updates_user["location"] = body.location
-        updates_settings["location"] = body.location
+        updates_user["location"] = encrypt_if_present(body.location)
+        updates_settings["location"] = encrypt_if_present(body.location)
     if body.website is not None:
         updates_user["website"] = body.website
         updates_settings["website"] = body.website
@@ -255,21 +282,22 @@ def update_settings(user_id: str, body: UpdateSettingsBody, request: Request):
     require_self(user_id, request)
     _get_or_create_settings(user_id)
 
-    updates = {}
-    for field in [
+    # Whitelist: only these fields may be patched via this endpoint.
+    # EXCLUDES bio/location (encrypted later, set via /profile patch) and any
+    # role/admin/approval fields to prevent privilege escalation.
+    ALLOWED = {
         "profile_visibility", "activity_status_visible",
         "notification_email", "notification_push", "notification_in_app",
         "theme", "font_size", "accent_color",
-    ]:
-        val = getattr(body, field)
-        if val is not None:
-            updates[field] = val
+    }
+    incoming = body.model_dump(exclude_none=True)
+    updates = {k: v for k, v in incoming.items() if k in ALLOWED}
 
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
 
-    return table("user_settings").select("*", filters={"user_id": f"eq.{user_id}"})[0]
+    return table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})[0]
 
 
 # ── Equip Cosmetic ───────────────────────────────────────────────────────────
@@ -388,7 +416,9 @@ def set_featured_achievements(user_id: str, body: SetFeaturedAchievementsBody, r
 
 @router.get("/{user_id}/achievements")
 def get_achievements(user_id: str):
-    all_achs = table("achievements").select("*")
+    all_achs = table("achievements").select(
+        "id,name,slug,description,icon,category,rarity,is_secret"
+    )
     if not all_achs:
         return {"earned": [], "available": []}
 

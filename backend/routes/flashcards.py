@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -13,6 +14,7 @@ from db.connection import table
 from services.gemini_service import generate_flashcards as _generate
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
+from services.encryption import decrypt_if_present, decrypt_json
 from services.flashcard_import_service import (
     dedup_against_existing,
     check_rate_limit,
@@ -92,8 +94,13 @@ def _get_session_summary(session_id: str) -> str:
         )
         if not rows or not rows[0].get("summary_json"):
             return ""
-        import json
-        return json.dumps(rows[0]["summary_json"])
+        raw = rows[0]["summary_json"]
+        if isinstance(raw, str):
+            try:
+                return json.dumps(decrypt_json(raw))
+            except Exception:
+                return raw
+        return json.dumps(raw)
     except Exception:
         return ""
 
@@ -104,7 +111,6 @@ def _get_course_documents(user_id: str, course_name: str) -> list[dict]:
     matching `course_name`. Falls back to all user documents if no course match.
     """
     try:
-        # Find the course_id for this course name
         course_rows = table("courses").select(
             "id", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{course_name}"}, limit=1
         )
@@ -115,12 +121,17 @@ def _get_course_documents(user_id: str, course_name: str) -> list[dict]:
                 filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
             )
         else:
-            # Topic might be a concept name — still pull all user docs as context
             docs = table("documents").select(
                 "file_name,category,summary,concept_notes",
                 filters={"user_id": f"eq.{user_id}"},
             )
-        return docs or []
+        docs = docs or []
+        for d in docs:
+            d["summary"] = decrypt_if_present(d.get("summary"))
+            notes_raw = d.get("concept_notes")
+            if isinstance(notes_raw, str):
+                d["concept_notes"] = decrypt_json(notes_raw)
+        return docs
     except Exception:
         return []
 
@@ -154,11 +165,13 @@ def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @router.post("/generate")
-def generate(body: GenerateFlashcardsBody):
+def generate(body: GenerateFlashcardsBody, request: Request):
     """
     Generate AI flashcards grounded in the student's actual course material.
     Pulls library documents + weak concepts from the knowledge graph automatically.
     """
+    require_self(body.user_id, request)
+
     # 1. Session summary (optional extra context)
     context = ""
     if body.session_id:
@@ -223,7 +236,9 @@ def generate(body: GenerateFlashcardsBody):
 
 
 @router.get("/user/{user_id}")
-def get_flashcards(user_id: str, topic: str | None = None):
+def get_flashcards(user_id: str, request: Request, topic: str | None = None):
+    require_self(user_id, request)
+
     if not user_id:
         return {"flashcards": []}
 
@@ -233,7 +248,8 @@ def get_flashcards(user_id: str, topic: str | None = None):
 
     try:
         rows = table("flashcards").select(
-            "*", filters=filters, order="created_at.desc"
+            "id,user_id,topic,course_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at",
+            filters=filters, order="created_at.desc"
         )
         return {"flashcards": rows or []}
     except Exception as e:
@@ -244,7 +260,9 @@ def get_flashcards(user_id: str, topic: str | None = None):
 
 
 @router.post("/rate")
-def rate_card(body: FlashcardRatingBody):
+def rate_card(body: FlashcardRatingBody, request: Request):
+    require_self(body.user_id, request)
+
     try:
         rows = table("flashcards").select(
             "id,times_reviewed",
@@ -270,7 +288,9 @@ def rate_card(body: FlashcardRatingBody):
 
 
 @router.delete("/{card_id}")
-def delete_card(card_id: str, user_id: str):
+def delete_card(card_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
+
     try:
         rows = table("flashcards").select(
             "id",
@@ -401,7 +421,16 @@ def import_generate(body: ImportGenerateBody, request: Request):
         if not rows:
             raise HTTPException(status_code=404, detail="Document not found")
         doc = rows[0]
-        parts = [doc.get("summary") or "", str(doc.get("concept_notes") or {})]
+        doc_summary = decrypt_if_present(doc.get("summary")) or ""
+        notes_raw = doc.get("concept_notes")
+        if isinstance(notes_raw, str):
+            try:
+                doc_notes = decrypt_json(notes_raw)
+            except Exception:
+                doc_notes = notes_raw
+        else:
+            doc_notes = notes_raw or {}
+        parts = [doc_summary, str(doc_notes)]
         source_text = "\n\n".join(p for p in parts if p)
 
     try:
