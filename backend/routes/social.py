@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from db.connection import table
 from models import CreateRoomBody, JoinRoomBody, MatchBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
 from services.auth_guard import require_self, get_session_user_id
+from services.encryption import decrypt_if_present
 from services.graph_service import get_graph
 from services.matching_service import find_study_matches
 from services.gemini_service import call_gemini
@@ -104,17 +105,21 @@ def room_overview(room_id: str, request: Request):
     members = []
     if member_ids:
         user_rows = table("users").select(
-            "id,name", filters={"id": f"in.({','.join(member_ids)})"}  # ENCRYPTED LATER
+            "id,name", filters={"id": f"in.({','.join(member_ids)})"}
         )
         for u in user_rows:
-            members.append({"user_id": u["id"], "name": u["name"], "graph": get_graph(u["id"])})  # ENCRYPTED LATER
+            members.append({
+                "user_id": u["id"],
+                "name": decrypt_if_present(u["name"]),
+                "graph": get_graph(u["id"]),
+            })
 
     member_summaries = []
     for m in members:
         nodes = m["graph"]["nodes"]
         mastered = [n["concept_name"] for n in nodes if n["mastery_tier"] == "mastered"]
         struggling = [n["concept_name"] for n in nodes if n["mastery_tier"] == "struggling"]
-        member_summaries.append(f"{m['name']}: mastered {mastered}, struggling with {struggling}")  # ENCRYPTED LATER
+        member_summaries.append(f"{m['name']}: mastered {mastered}, struggling with {struggling}")
 
     ai_summary = get_cached_summary(room_id, member_summaries)
     if ai_summary is None:
@@ -151,8 +156,8 @@ def room_activity(room_id: str, request: Request):
     user_ids = list(set(a["user_id"] for a in activity_rows))
     user_name_map = {}
     if user_ids:
-        user_rows = table("users").select("id,name", filters={"id": f"in.({','.join(user_ids)})"})  # ENCRYPTED LATER
-        user_name_map = {u["id"]: u["name"] for u in user_rows}  # ENCRYPTED LATER
+        user_rows = table("users").select("id,name", filters={"id": f"in.({','.join(user_ids)})"})
+        user_name_map = {u["id"]: decrypt_if_present(u["name"]) for u in user_rows}
 
     activities = [
         {
@@ -176,9 +181,9 @@ def match_partners(room_id: str, body: MatchBody, request: Request):
 
     members_with_graphs = []
     if member_ids:
-        user_rows = table("users").select("id,name", filters={"id": f"in.({','.join(member_ids)})"})  # ENCRYPTED LATER
+        user_rows = table("users").select("id,name", filters={"id": f"in.({','.join(member_ids)})"})
         members_with_graphs = [
-            {"user_id": u["id"], "name": u["name"], "graph": get_graph(u["id"])}  # ENCRYPTED LATER
+            {"user_id": u["id"], "name": decrypt_if_present(u["name"]), "graph": get_graph(u["id"])}
             for u in user_rows
         ]
 
@@ -211,21 +216,21 @@ def school_match(body: MatchBody, request: Request):
     excl_list = list(excluded_ids)
 
     school_users = table("users").select(
-        "id,name",  # ENCRYPTED LATER
+        "id,name",
         filters={"id": f"not.in.({','.join(excl_list)})"},
     )
 
     members_with_graphs = [
-        {"user_id": u["id"], "name": u["name"], "graph": get_graph(u["id"])}  # ENCRYPTED LATER
+        {"user_id": u["id"], "name": decrypt_if_present(u["name"]), "graph": get_graph(u["id"])}
         for u in school_users
     ]
 
     requester_graph = get_graph(body.user_id)
-    requester_rows = table("users").select("name", filters={"id": f"eq.{body.user_id}"})  # ENCRYPTED LATER
-    requester_name = requester_rows[0]["name"] if requester_rows else body.user_id  # ENCRYPTED LATER
+    requester_rows = table("users").select("name", filters={"id": f"eq.{body.user_id}"})
+    requester_name = decrypt_if_present(requester_rows[0]["name"]) if requester_rows else body.user_id
 
     all_members = [
-        {"user_id": body.user_id, "name": requester_name, "graph": requester_graph}  # ENCRYPTED LATER
+        {"user_id": body.user_id, "name": requester_name, "graph": requester_graph}
     ] + members_with_graphs
 
     try:
@@ -413,7 +418,7 @@ def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody, req
 def get_students(request: Request):
     """Return a lightweight profile for every user in the DB."""
     user_id = get_session_user_id(request)
-    users = table("users").select("id,name,streak_count")  # ENCRYPTED LATER
+    users = table("users").select("id,name,streak_count")
     courses_rows = table("courses").select("user_id,course_name")
     nodes_rows = table("graph_nodes").select("user_id,mastery_tier,concept_name,mastery_score")
 
@@ -443,7 +448,7 @@ def get_students(request: Request):
     students = [
         {
             "user_id": u["id"],
-            "name": u["name"],  # ENCRYPTED LATER
+            "name": decrypt_if_present(u["name"]),
             "streak": u.get("streak_count") or 0,
             "courses": sorted(courses_by_user[u["id"]]),
             "stats": dict(mastery_by_user[u["id"]]),
@@ -451,5 +456,5 @@ def get_students(request: Request):
         }
         for u in users
     ]
-    students.sort(key=lambda s: s["name"])  # ENCRYPTED LATER
+    students.sort(key=lambda s: (s["name"] or ""))
     return {"students": students}
