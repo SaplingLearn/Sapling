@@ -335,7 +335,6 @@ export function Tree() {
               width={size.w}
               height={size.h}
               highlightId={suggestId || selected?.id}
-              masteryTierFill
               onNodeClick={(n) => setSelected(n)}
             />
           )}
@@ -420,7 +419,6 @@ function FullscreenGraph({
         edges={edges}
         width={size.w}
         height={size.h}
-        masteryTierFill
         highlightId={highlightId}
         onNodeClick={onNodeClick}
       />

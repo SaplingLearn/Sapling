@@ -40,8 +40,6 @@ type Props = {
   variant?: GraphVariant;
   highlightId?: string;
   onNodeClick?: (n: GraphNode) => void;
-  /** Opt-in: fill nodes using mastery-tier color palette instead of course color. */
-  masteryTierFill?: boolean;
   /** Pause simulation when graph is off-screen (default: true). */
   pauseWhenOffscreen?: boolean;
   /** Partner concept mastery, matched to this graph's nodes by name. Renders an outline ring per match. */
@@ -50,14 +48,6 @@ type Props = {
   comparisonColor?: string;
   /** Label for the legend/tooltip — usually the partner's display name. */
   comparisonLabel?: string;
-};
-
-const TIER_COLORS: Record<string, string> = {
-  mastered: "#4a7d5c",
-  learning: "#c89b5e",
-  struggling: "#b25855",
-  unexplored: "#9a9a9a",
-  subject_root: "#8a7bc4",
 };
 
 // Deterministic per-node shade derived from the course color + node id.
@@ -117,7 +107,6 @@ export function KnowledgeGraph({
   variant = "organism",
   highlightId,
   onNodeClick,
-  masteryTierFill = false,
   pauseWhenOffscreen = true,
   comparison = null,
   comparisonColor = "#8a7bc4",
@@ -237,13 +226,7 @@ export function KnowledgeGraph({
     if (n.is_subject_root) return base;
     return shadeFor(base, n.id);
   };
-  const fillFor = (n: GraphNode) => {
-    if (masteryTierFill) {
-      if (n.is_subject_root) return TIER_COLORS.subject_root;
-      return TIER_COLORS[n.mastery_tier] || courseColor(n);
-    }
-    return courseColor(n);
-  };
+  const fillFor = (n: GraphNode) => courseColor(n);
 
   // ── Pause simulation when offscreen ─────────────────────────────────────
   React.useEffect(() => {
