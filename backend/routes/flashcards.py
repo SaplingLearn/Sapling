@@ -13,6 +13,7 @@ from db.connection import table
 from services.gemini_service import generate_flashcards as _generate
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
+from services.encryption import decrypt_if_present, decrypt_json
 from services.flashcard_import_service import (
     dedup_against_existing,
     check_rate_limit,
@@ -104,23 +105,30 @@ def _get_course_documents(user_id: str, course_name: str) -> list[dict]:
     matching `course_name`. Falls back to all user documents if no course match.
     """
     try:
-        # Find the course_id for this course name
         course_rows = table("courses").select(
             "id", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{course_name}"}, limit=1
         )
         if course_rows:
             course_id = course_rows[0]["id"]
             docs = table("documents").select(
-                "file_name,category,summary,concept_notes",  # ENCRYPTED LATER
+                "file_name,category,summary,concept_notes",
                 filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
             )
         else:
-            # Topic might be a concept name — still pull all user docs as context
             docs = table("documents").select(
-                "file_name,category,summary,concept_notes",  # ENCRYPTED LATER
+                "file_name,category,summary,concept_notes",
                 filters={"user_id": f"eq.{user_id}"},
             )
-        return docs or []
+        docs = docs or []
+        for d in docs:
+            d["summary"] = decrypt_if_present(d.get("summary"))
+            notes_raw = d.get("concept_notes")
+            if isinstance(notes_raw, str):
+                try:
+                    d["concept_notes"] = decrypt_json(notes_raw)
+                except Exception:
+                    pass
+        return docs
     except Exception:
         return []
 
@@ -403,14 +411,23 @@ def import_generate(body: ImportGenerateBody, request: Request):
         if not body.document_id:
             raise HTTPException(status_code=400, detail="`document_id` is required for library_doc source")
         rows = table("documents").select(
-            "id,user_id,summary,concept_notes,file_name",  # ENCRYPTED LATER
+            "id,user_id,summary,concept_notes,file_name",
             filters={"id": f"eq.{body.document_id}", "user_id": f"eq.{body.user_id}"},
             limit=1,
         )
         if not rows:
             raise HTTPException(status_code=404, detail="Document not found")
         doc = rows[0]
-        parts = [doc.get("summary") or "", str(doc.get("concept_notes") or {})]  # ENCRYPTED LATER
+        doc_summary = decrypt_if_present(doc.get("summary")) or ""
+        notes_raw = doc.get("concept_notes")
+        if isinstance(notes_raw, str):
+            try:
+                doc_notes = decrypt_json(notes_raw)
+            except Exception:
+                doc_notes = notes_raw
+        else:
+            doc_notes = notes_raw or {}
+        parts = [doc_summary, str(doc_notes)]
         source_text = "\n\n".join(p for p in parts if p)
 
     try:
