@@ -13,7 +13,7 @@ import secrets
 import time as _time
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
 from config import (
@@ -25,12 +25,13 @@ from config import (
     SESSION_SECRET,
 )
 from db.connection import table
+from services.auth_guard import get_session_user_id
 
 try:
     from google_auth_oauthlib.flow import Flow
     from googleapiclient.discovery import build
     from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
+    from google.auth.transport.requests import Request as GoogleAuthRequest
     GOOGLE_AVAILABLE = True
 except ImportError:
     GOOGLE_AVAILABLE = False
@@ -72,8 +73,9 @@ def _generate_pkce_pair():
 
 
 @router.get("/me")
-def get_me(user_id: str = Query(...)):
+def get_me(request: Request):
     """Return approval and onboarding status for a given user_id."""
+    user_id = get_session_user_id(request)
     user = table("users").select("id,is_approved,onboarding_completed,username", filters={"id": f"eq.{user_id}"})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -167,18 +169,18 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
     service = build("oauth2", "v2", credentials=creds)
     user_info = service.userinfo().get().execute()
 
-    email = user_info.get("email", "")
+    email = user_info.get("email", "")  # ENCRYPTED LATER
     google_id = user_info.get("id", "")
-    name = user_info.get("name", "")
+    name = user_info.get("name", "")  # ENCRYPTED LATER
     avatar_url = user_info.get("picture", "")
 
     # Split Google display name into first/last for the new columns
-    name_parts = name.split(None, 1)
-    first_name = name_parts[0] if name_parts else ""
-    last_name = name_parts[1] if len(name_parts) > 1 else ""
+    name_parts = name.split(None, 1)  # ENCRYPTED LATER
+    first_name = name_parts[0] if name_parts else ""  # ENCRYPTED LATER
+    last_name = name_parts[1] if len(name_parts) > 1 else ""  # ENCRYPTED LATER
 
     # Restrict to @bu.edu accounts
-    if not email.endswith("@bu.edu"):
+    if not email.endswith("@bu.edu"):  # ENCRYPTED LATER
         return RedirectResponse(
             f"{FRONTEND_URL}/auth?error=invalid_domain"
         )
@@ -190,21 +192,21 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         is_approved = existing[0]["is_approved"]
         # Update name/avatar in case they changed
         table("users").update(
-            {"name": name, "first_name": first_name, "last_name": last_name, "avatar_url": avatar_url, "email": email},
+            {"name": name, "first_name": first_name, "last_name": last_name, "avatar_url": avatar_url, "email": email},  # ENCRYPTED LATER
             filters={"id": f"eq.{user_id}"},
         )
     else:
         # Check if a user with this email exists (migration from old system)
-        email_match = table("users").select("id,is_approved", filters={"email": f"eq.{email}"})
+        email_match = table("users").select("id,is_approved", filters={"email": f"eq.{email}"})  # ENCRYPTED LATER
         if email_match:
             user_id = email_match[0]["id"]
             is_approved = email_match[0]["is_approved"]
             table("users").update(
                 {
                     "google_id": google_id,
-                    "name": name,
-                    "first_name": first_name,
-                    "last_name": last_name,
+                    "name": name,  # ENCRYPTED LATER
+                    "first_name": first_name,  # ENCRYPTED LATER
+                    "last_name": last_name,  # ENCRYPTED LATER
                     "avatar_url": avatar_url,
                     "auth_provider": "google",
                 },
@@ -216,10 +218,10 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
             is_approved = False
             table("users").insert({
                 "id": user_id,
-                "name": name,
-                "first_name": first_name,
-                "last_name": last_name,
-                "email": email,
+                "name": name,  # ENCRYPTED LATER
+                "first_name": first_name,  # ENCRYPTED LATER
+                "last_name": last_name,  # ENCRYPTED LATER
+                "email": email,  # ENCRYPTED LATER
                 "google_id": google_id,
                 "avatar_url": avatar_url,
                 "auth_provider": "google",
@@ -229,8 +231,8 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
     table("oauth_tokens").upsert(
         {
             "user_id": user_id,
-            "access_token": creds.token,
-            "refresh_token": creds.refresh_token or "",
+            "access_token": creds.token,  # ENCRYPTED LATER
+            "refresh_token": creds.refresh_token or "",  # ENCRYPTED LATER
             "expires_at": creds.expiry.isoformat() if creds.expiry else "",
         },
         on_conflict="user_id",
@@ -251,7 +253,7 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
 
     params = urlencode({
         "user_id": user_id,
-        "name": name,
+        "name": name,  # ENCRYPTED LATER
         "avatar": avatar_url,
         "is_approved": "true",
         **({"auth_token": auth_token} if auth_token else {}),

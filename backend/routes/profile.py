@@ -25,18 +25,31 @@ router = APIRouter()
 
 
 def _get_user_or_404(user_id: str) -> dict:
-    rows = table("users").select("*", filters={"id": f"eq.{user_id}"})
+    rows = table("users").select(
+        "id,username,name,first_name,last_name,email,avatar_url,school,major,year,majors,minors,bio,location,website,streak_count,created_at",  # ENCRYPTED LATER
+        filters={"id": f"eq.{user_id}"},
+    )
     if not rows:
         raise HTTPException(status_code=404, detail="User not found")
     return rows[0]
 
 
+_SETTINGS_COLS = (
+    "user_id,username,display_name,bio,location,website,"  # ENCRYPTED LATER
+    "profile_visibility,activity_status_visible,"
+    "notification_email,notification_push,notification_in_app,"
+    "theme,font_size,accent_color,"
+    "equipped_avatar_frame_id,equipped_banner_id,equipped_name_color_id,equipped_title_id,"
+    "featured_role_id,featured_achievement_ids,updated_at"
+)
+
+
 def _get_or_create_settings(user_id: str) -> dict:
-    rows = table("user_settings").select("*", filters={"user_id": f"eq.{user_id}"})
+    rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
     if rows:
         return rows[0]
     table("user_settings").insert({"user_id": user_id})
-    rows = table("user_settings").select("*", filters={"user_id": f"eq.{user_id}"})
+    rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
     return rows[0] if rows else {"user_id": user_id}
 
 
@@ -66,13 +79,19 @@ def _get_equipped_cosmetics(settings: dict) -> dict:
     for slot, col in slot_map.items():
         cosmetic_id = settings.get(col)
         if cosmetic_id:
-            rows = table("cosmetics").select("*", filters={"id": f"eq.{cosmetic_id}"})
+            rows = table("cosmetics").select(
+                "id,type,name,slug,asset_url,css_value,rarity",
+                filters={"id": f"eq.{cosmetic_id}"},
+            )
             if rows:
                 equipped[slot] = rows[0]
     # Featured role
     featured_role_id = settings.get("featured_role_id")
     if featured_role_id:
-        rows = table("roles").select("*", filters={"id": f"eq.{featured_role_id}"})
+        rows = table("roles").select(
+            "id,name,slug,color,icon,description,is_staff_assigned,is_earnable,display_priority",
+            filters={"id": f"eq.{featured_role_id}"},
+        )
         if rows:
             equipped["featured_role"] = rows[0]
     return equipped
@@ -157,7 +176,7 @@ def get_public_profile(user_id: str):
 
     profile = {
         "id": user["id"],
-        "name": user.get("name", ""),
+        "name": user.get("name", ""),  # ENCRYPTED LATER
         "username": user.get("username"),
         "avatar_url": user.get("avatar_url"),
         "created_at": user.get("created_at"),
@@ -171,14 +190,14 @@ def get_public_profile(user_id: str):
 
     # Respect profile visibility
     if settings.get("profile_visibility") != "private":
-        profile["bio"] = user.get("bio")
-        profile["location"] = user.get("location")
+        profile["bio"] = user.get("bio")  # ENCRYPTED LATER
+        profile["location"] = user.get("location")  # ENCRYPTED LATER
         profile["website"] = user.get("website")
         profile["featured_achievements"] = _get_featured_achievements(user_id)
         profile["stats"] = _get_user_stats(user_id)
     else:
-        profile["bio"] = None
-        profile["location"] = None
+        profile["bio"] = None  # ENCRYPTED LATER
+        profile["location"] = None  # ENCRYPTED LATER
         profile["website"] = None
         profile["featured_achievements"] = []
         profile["stats"] = {}
@@ -207,11 +226,11 @@ def update_profile(user_id: str, body: UpdateProfileBody, request: Request):
     if body.display_name is not None:
         updates_settings["display_name"] = body.display_name
     if body.bio is not None:
-        updates_user["bio"] = body.bio
-        updates_settings["bio"] = body.bio
+        updates_user["bio"] = body.bio  # ENCRYPTED LATER
+        updates_settings["bio"] = body.bio  # ENCRYPTED LATER
     if body.location is not None:
-        updates_user["location"] = body.location
-        updates_settings["location"] = body.location
+        updates_user["location"] = body.location  # ENCRYPTED LATER
+        updates_settings["location"] = body.location  # ENCRYPTED LATER
     if body.website is not None:
         updates_user["website"] = body.website
         updates_settings["website"] = body.website
@@ -255,21 +274,22 @@ def update_settings(user_id: str, body: UpdateSettingsBody, request: Request):
     require_self(user_id, request)
     _get_or_create_settings(user_id)
 
-    updates = {}
-    for field in [
+    # Whitelist: only these fields may be patched via this endpoint.
+    # EXCLUDES bio/location (encrypted later, set via /profile patch) and any
+    # role/admin/approval fields to prevent privilege escalation.
+    ALLOWED = {
         "profile_visibility", "activity_status_visible",
         "notification_email", "notification_push", "notification_in_app",
         "theme", "font_size", "accent_color",
-    ]:
-        val = getattr(body, field)
-        if val is not None:
-            updates[field] = val
+    }
+    incoming = body.model_dump(exclude_none=True)
+    updates = {k: v for k, v in incoming.items() if k in ALLOWED}
 
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
 
-    return table("user_settings").select("*", filters={"user_id": f"eq.{user_id}"})[0]
+    return table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})[0]
 
 
 # ── Equip Cosmetic ───────────────────────────────────────────────────────────
@@ -388,7 +408,9 @@ def set_featured_achievements(user_id: str, body: SetFeaturedAchievementsBody, r
 
 @router.get("/{user_id}/achievements")
 def get_achievements(user_id: str):
-    all_achs = table("achievements").select("*")
+    all_achs = table("achievements").select(
+        "id,name,slug,description,icon,category,rarity,is_secret"
+    )
     if not all_achs:
         return {"earned": [], "available": []}
 
@@ -556,8 +578,8 @@ def export_data(user_id: str, request: Request):
     )
 
     return {
-        "user": user,
-        "settings": settings,
+        "user": user,  # ENCRYPTED LATER
+        "settings": settings,  # ENCRYPTED LATER
         "roles": roles,
         "achievements": earned or [],
         "cosmetics": owned_cosmetics or [],

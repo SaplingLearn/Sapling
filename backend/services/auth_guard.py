@@ -52,16 +52,17 @@ def _decode_session(request: Request) -> dict:
 
 
 def get_session_user_id(request: Request) -> str:
-    """Get the authenticated user_id from the request, or fall back to query param."""
-    # For dev/alpha: accept user_id from query params as the codebase currently does
-    user_id = request.query_params.get("user_id")
-    if user_id:
-        return user_id
+    """Get the authenticated user_id from a verified session token. No fallbacks."""
     try:
         payload = _decode_session(request)
-        return payload["user_id"]
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    user_id = payload.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user_id
 
 
 def require_self(user_id: str, request: Request) -> None:

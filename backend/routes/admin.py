@@ -36,7 +36,7 @@ def list_roles(request: Request):
 def create_role(body: CreateRoleBody, request: Request):
     require_admin(request)
     result = table("roles").insert({
-        "name": body.name,
+        "name": body.name,  # ENCRYPTED LATER
         "slug": body.slug,
         "color": body.color,
         "icon": body.icon,
@@ -51,7 +51,7 @@ def create_role(body: CreateRoleBody, request: Request):
 @router.patch("/roles/{role_id}")
 def update_role(role_id: str, request: Request, body: dict = {}):
     require_admin(request)
-    allowed = {"name", "color", "icon", "description", "is_staff_assigned", "is_earnable", "display_priority"}
+    allowed = {"name", "color", "icon", "description", "is_staff_assigned", "is_earnable", "display_priority"}  # ENCRYPTED LATER
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
@@ -101,7 +101,7 @@ def list_achievements(request: Request):
 def create_achievement(body: CreateAchievementBody, request: Request):
     require_admin(request)
     result = table("achievements").insert({
-        "name": body.name,
+        "name": body.name,  # ENCRYPTED LATER
         "slug": body.slug,
         "description": body.description,
         "icon": body.icon,
@@ -115,7 +115,7 @@ def create_achievement(body: CreateAchievementBody, request: Request):
 @router.patch("/achievements/{achievement_id}")
 def update_achievement(achievement_id: str, request: Request, body: dict = {}):
     require_admin(request)
-    allowed = {"name", "description", "icon", "category", "rarity", "is_secret"}
+    allowed = {"name", "description", "icon", "category", "rarity", "is_secret"}  # ENCRYPTED LATER
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
@@ -179,7 +179,7 @@ def create_cosmetic(body: CreateCosmeticBody, request: Request):
     require_admin(request)
     result = table("cosmetics").insert({
         "type": body.type,
-        "name": body.name,
+        "name": body.name,  # ENCRYPTED LATER
         "slug": body.slug,
         "asset_url": body.asset_url,
         "css_value": body.css_value,
@@ -192,7 +192,7 @@ def create_cosmetic(body: CreateCosmeticBody, request: Request):
 @router.patch("/cosmetics/{cosmetic_id}")
 def update_cosmetic(cosmetic_id: str, request: Request, body: dict = {}):
     require_admin(request)
-    allowed = {"name", "asset_url", "css_value", "rarity", "unlock_source"}
+    allowed = {"name", "asset_url", "css_value", "rarity", "unlock_source"}  # ENCRYPTED LATER
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
@@ -212,14 +212,14 @@ def delete_cosmetic(cosmetic_id: str, request: Request):
 @router.get("/users")
 def list_users(request: Request):
     require_admin(request)
-    users = table("users").select("id,name,email,is_approved,created_at")
+    users = table("users").select("id,name,email,is_approved,created_at")  # ENCRYPTED LATER
     if not users:
         return {"users": []}
 
     # Attach roles to each user
     for user in users:
         roles = table("user_roles").select(
-            "roles(id,name,slug,color)",
+            "roles(id,name,slug,color)",  # ENCRYPTED LATER
             filters={"user_id": f"eq.{user['id']}"},
         )
         user["roles"] = [r.get("roles", {}) for r in roles] if roles else []

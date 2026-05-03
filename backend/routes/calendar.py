@@ -9,6 +9,7 @@ import json
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import Request as FastAPIRequest
 
 from config import (
     GOOGLE_CLIENT_ID,
@@ -17,6 +18,7 @@ from config import (
 )
 from db.connection import table
 from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
+from services.auth_guard import require_self, get_session_user_id
 from services.calendar_service import extract_assignments_from_file, insert_new_assignments
 
 try:
@@ -35,8 +37,8 @@ router = APIRouter()
 
 def _get_refreshed_credentials(token_row: dict) -> "Credentials":
     creds = Credentials(
-        token=token_row["access_token"],
-        refresh_token=token_row["refresh_token"],
+        token=token_row["access_token"],  # ENCRYPTED LATER
+        refresh_token=token_row["refresh_token"],  # ENCRYPTED LATER
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
         token_uri="https://oauth2.googleapis.com/token",
@@ -59,7 +61,7 @@ def _get_refreshed_credentials(token_row: dict) -> "Credentials":
         creds.refresh(Request())
         table("oauth_tokens").update(
             {
-                "access_token": creds.token,
+                "access_token": creds.token,  # ENCRYPTED LATER
                 "expires_at": creds.expiry.isoformat() if creds.expiry else "",
             },
             filters={"user_id": f"eq.{token_row['user_id']}"},
@@ -71,7 +73,10 @@ def _get_refreshed_credentials(token_row: dict) -> "Credentials":
 def _require_google_creds(user_id: str) -> "Credentials":
     if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=400, detail="Google Calendar not configured")
-    token_rows = table("oauth_tokens").select("*", filters={"user_id": f"eq.{user_id}"})
+    token_rows = table("oauth_tokens").select(
+        "user_id,access_token,refresh_token,expires_at",  # ENCRYPTED LATER
+        filters={"user_id": f"eq.{user_id}"},
+    )
     if not token_rows:
         raise HTTPException(
             status_code=401,
@@ -83,7 +88,11 @@ def _require_google_creds(user_id: str) -> "Credentials":
 # ── Syllabus extraction ───────────────────────────────────────────────────────
 
 @router.post("/extract")
-async def extract(file: UploadFile = File(...), user_id: str = Form(None)):
+async def extract(request: FastAPIRequest, file: UploadFile = File(...), user_id: str = Form(None)):
+    if user_id:
+        require_self(user_id, request)
+    else:
+        user_id = get_session_user_id(request)
     file_bytes = await file.read()
     filename = file.filename or "upload"
     content_type = file.content_type or "application/octet-stream"
@@ -97,14 +106,15 @@ async def extract(file: UploadFile = File(...), user_id: str = Form(None)):
 # ── Assignment CRUD ───────────────────────────────────────────────────────────
 
 @router.post("/save")
-def save_assignments(body: SaveAssignmentsBody):
+def save_assignments(body: SaveAssignmentsBody, request: FastAPIRequest):
+    require_self(body.user_id, request)
     payload = [
         {
             "title": a.title,
             "course_id": a.course_id,
             "due_date": a.due_date,
             "assignment_type": a.assignment_type,
-            "notes": a.notes,
+            "notes": a.notes,  # ENCRYPTED LATER
         }
         for a in body.assignments
     ]
@@ -113,10 +123,11 @@ def save_assignments(body: SaveAssignmentsBody):
 
 
 @router.get("/upcoming/{user_id}")
-def get_upcoming(user_id: str):
+def get_upcoming(user_id: str, request: FastAPIRequest):
+    require_self(user_id, request)
     today = datetime.utcnow().strftime("%Y-%m-%d")
     rows = table("assignments").select(
-        "*,courses!left(course_code,course_name)",
+        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,course_code,course_name,courses!left(course_code,course_name)",  # ENCRYPTED LATER (notes)
         filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
         order="due_date.asc",
         limit=20,
@@ -130,7 +141,7 @@ def get_upcoming(user_id: str):
             "title": r["title"],
             "due_date": r["due_date"],
             "assignment_type": r.get("assignment_type"),
-            "notes": r.get("notes"),
+            "notes": r.get("notes"),  # ENCRYPTED LATER
             "google_event_id": r.get("google_event_id"),
             "course_id": r.get("course_id"),
             "course_code": course.get("course_code") or r.get("course_code") or "",
@@ -140,10 +151,11 @@ def get_upcoming(user_id: str):
 
 
 @router.get("/all/{user_id}")
-def get_all_assignments(user_id: str):
+def get_all_assignments(user_id: str, request: FastAPIRequest):
     """Return all assignments for a user (past and future) for the calendar view."""
+    require_self(user_id, request)
     rows = table("assignments").select(
-        "*,courses!left(course_code,course_name)",
+        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,course_code,course_name,courses!left(course_code,course_name)",  # ENCRYPTED LATER (notes)
         filters={"user_id": f"eq.{user_id}"},
         order="due_date.asc",
     )
@@ -156,7 +168,7 @@ def get_all_assignments(user_id: str):
             "title": r["title"],
             "due_date": r["due_date"],
             "assignment_type": r.get("assignment_type"),
-            "notes": r.get("notes"),
+            "notes": r.get("notes"),  # ENCRYPTED LATER
             "google_event_id": r.get("google_event_id"),
             "course_id": r.get("course_id"),
             "course_code": course.get("course_code") or r.get("course_code") or "",
@@ -166,10 +178,11 @@ def get_all_assignments(user_id: str):
 
 
 @router.patch("/assignments/{assignment_id}")
-def update_assignment(assignment_id: str, body: dict):
+def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
     user_id = body.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
+    require_self(user_id, request)
 
     existing = table("assignments").select(
         "id", filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}, limit=1,
@@ -177,8 +190,9 @@ def update_assignment(assignment_id: str, body: dict):
     if not existing:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    allowed = {"title", "course_id", "due_date", "assignment_type", "notes"}
-    patch = {k: v for k, v in body.items() if k in allowed}
+    # Whitelist non-sensitive fields. `notes` is excluded — ENCRYPTED LATER.
+    ALLOWED = {"title", "course_id", "due_date", "assignment_type"}
+    patch = {k: v for k, v in body.items() if k in ALLOWED}
     if not patch:
         return {"updated": False}
 
@@ -190,7 +204,8 @@ def update_assignment(assignment_id: str, body: dict):
 
 
 @router.delete("/assignments/{assignment_id}")
-def delete_assignment(assignment_id: str, user_id: str = Query(...)):
+def delete_assignment(assignment_id: str, request: FastAPIRequest, user_id: str = Query(...)):
+    require_self(user_id, request)
     existing = table("assignments").select(
         "id", filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}, limit=1,
     )
@@ -201,10 +216,11 @@ def delete_assignment(assignment_id: str, user_id: str = Query(...)):
 
 
 @router.post("/suggest-study-blocks")
-def suggest_study_blocks(body: StudyBlockBody):
+def suggest_study_blocks(body: StudyBlockBody, request: FastAPIRequest):
+    require_self(body.user_id, request)
     today = datetime.utcnow().strftime("%Y-%m-%d")
     assignments = table("assignments").select(
-        "*,courses!left(course_code,course_name)",
+        "id,title,due_date,course_code,course_name,courses!left(course_code,course_name)",
         filters={"user_id": f"eq.{body.user_id}", "due_date": f"gte.{today}"},
         order="due_date.asc",
     )
@@ -225,17 +241,20 @@ def suggest_study_blocks(body: StudyBlockBody):
 
 
 @router.get("/status/{user_id}")
-def calendar_status(user_id: str):
+def calendar_status(user_id: str, request: FastAPIRequest):
+    require_self(user_id, request)
     rows = table("oauth_tokens").select(
-        "access_token,expires_at", filters={"user_id": f"eq.{user_id}"}
+        "access_token,expires_at",  # ENCRYPTED LATER (access_token)
+        filters={"user_id": f"eq.{user_id}"},
     )
-    if not rows or not rows[0]["access_token"]:
+    if not rows or not rows[0]["access_token"]:  # ENCRYPTED LATER
         return {"connected": False}
     return {"connected": True, "expires_at": rows[0]["expires_at"]}
 
 
 @router.delete("/disconnect/{user_id}")
-def disconnect(user_id: str):
+def disconnect(user_id: str, request: FastAPIRequest):
+    require_self(user_id, request)
     table("oauth_tokens").delete({"user_id": f"eq.{user_id}"})
     return {"disconnected": True}
 
@@ -245,9 +264,11 @@ def disconnect(user_id: str):
 @router.get("/import/{user_id}")
 def import_from_google(
     user_id: str,
+    request: FastAPIRequest,
     max_results: int = Query(50, ge=1, le=250),
     days_ahead: int = Query(30, ge=1, le=365),
 ):
+    require_self(user_id, request)
     creds = _require_google_creds(user_id)
     service = build("calendar", "v3", credentials=creds)
     now = datetime.now(timezone.utc)
@@ -286,12 +307,13 @@ def import_from_google(
 # ── Sync (push all unsynced assignments to Google) ────────────────────────────
 
 @router.post("/sync")
-def sync_to_google(body: SyncBody):
+def sync_to_google(body: SyncBody, request: FastAPIRequest):
+    require_self(body.user_id, request)
     creds = _require_google_creds(body.user_id)
     service = build("calendar", "v3", credentials=creds)
 
     unsynced = table("assignments").select(
-        "*,courses!left(course_code,course_name)",
+        "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",  # ENCRYPTED LATER (notes)
         filters={
             "user_id": f"eq.{body.user_id}",
             "google_event_id": "is.null",
@@ -299,7 +321,7 @@ def sync_to_google(body: SyncBody):
     )
     # Also catch empty-string google_event_id
     unsynced += table("assignments").select(
-        "*,courses!left(course_code,course_name)",
+        "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",  # ENCRYPTED LATER (notes)
         filters={
             "user_id": f"eq.{body.user_id}",
             "google_event_id": "eq.",
@@ -310,15 +332,15 @@ def sync_to_google(body: SyncBody):
     for a in unsynced:
         if not a.get("due_date"):
             continue
-            
+
         course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
         course_code = course.get("course_code") or a.get("course_code") or ""
         course_name = course.get("course_name") or a.get("course_name") or ""
         course_label = f"[{course_code}] " if course_code else (f"{course_name}: " if course_name else "")
-        
+
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
-            "description": a.get("notes") or "",
+            "description": a.get("notes") or "",  # ENCRYPTED LATER
             "start": {"date": a["due_date"]},
             "end": {"date": a["due_date"]},
         }
@@ -335,14 +357,18 @@ def sync_to_google(body: SyncBody):
 # ── Export (push selected assignments to Google) ──────────────────────────────
 
 @router.post("/export")
-def export_to_google(body: ExportBody):
+def export_to_google(body: ExportBody, request: FastAPIRequest):
+    require_self(body.user_id, request)
     creds = _require_google_creds(body.user_id)
     service = build("calendar", "v3", credentials=creds)
 
     exported = 0
     skipped = 0
     for aid in body.assignment_ids:
-        rows = table("assignments").select("*,courses!left(course_code,course_name)", filters={"id": f"eq.{aid}"})
+        rows = table("assignments").select(
+            "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",  # ENCRYPTED LATER (notes)
+            filters={"id": f"eq.{aid}"},
+        )
         if not rows:
             continue
         a = rows[0]
@@ -358,7 +384,7 @@ def export_to_google(body: ExportBody):
 
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
-            "description": a.get("notes") or "",
+            "description": a.get("notes") or "",  # ENCRYPTED LATER
             "start": {"date": a["due_date"]},
             "end": {"date": a["due_date"]},
         }

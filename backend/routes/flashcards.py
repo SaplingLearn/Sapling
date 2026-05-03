@@ -111,13 +111,13 @@ def _get_course_documents(user_id: str, course_name: str) -> list[dict]:
         if course_rows:
             course_id = course_rows[0]["id"]
             docs = table("documents").select(
-                "file_name,category,summary,concept_notes",
+                "file_name,category,summary,concept_notes",  # ENCRYPTED LATER
                 filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
             )
         else:
             # Topic might be a concept name — still pull all user docs as context
             docs = table("documents").select(
-                "file_name,category,summary,concept_notes",
+                "file_name,category,summary,concept_notes",  # ENCRYPTED LATER
                 filters={"user_id": f"eq.{user_id}"},
             )
         return docs or []
@@ -154,11 +154,13 @@ def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @router.post("/generate")
-def generate(body: GenerateFlashcardsBody):
+def generate(body: GenerateFlashcardsBody, request: Request):
     """
     Generate AI flashcards grounded in the student's actual course material.
     Pulls library documents + weak concepts from the knowledge graph automatically.
     """
+    require_self(body.user_id, request)
+
     # 1. Session summary (optional extra context)
     context = ""
     if body.session_id:
@@ -223,7 +225,9 @@ def generate(body: GenerateFlashcardsBody):
 
 
 @router.get("/user/{user_id}")
-def get_flashcards(user_id: str, topic: str | None = None):
+def get_flashcards(user_id: str, request: Request, topic: str | None = None):
+    require_self(user_id, request)
+
     if not user_id:
         return {"flashcards": []}
 
@@ -233,7 +237,8 @@ def get_flashcards(user_id: str, topic: str | None = None):
 
     try:
         rows = table("flashcards").select(
-            "*", filters=filters, order="created_at.desc"
+            "id,user_id,topic,course_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at",
+            filters=filters, order="created_at.desc"
         )
         return {"flashcards": rows or []}
     except Exception as e:
@@ -244,7 +249,9 @@ def get_flashcards(user_id: str, topic: str | None = None):
 
 
 @router.post("/rate")
-def rate_card(body: FlashcardRatingBody):
+def rate_card(body: FlashcardRatingBody, request: Request):
+    require_self(body.user_id, request)
+
     try:
         rows = table("flashcards").select(
             "id,times_reviewed",
@@ -270,7 +277,9 @@ def rate_card(body: FlashcardRatingBody):
 
 
 @router.delete("/{card_id}")
-def delete_card(card_id: str, user_id: str):
+def delete_card(card_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
+
     try:
         rows = table("flashcards").select(
             "id",
@@ -394,14 +403,14 @@ def import_generate(body: ImportGenerateBody, request: Request):
         if not body.document_id:
             raise HTTPException(status_code=400, detail="`document_id` is required for library_doc source")
         rows = table("documents").select(
-            "id,user_id,summary,concept_notes,file_name",
+            "id,user_id,summary,concept_notes,file_name",  # ENCRYPTED LATER
             filters={"id": f"eq.{body.document_id}", "user_id": f"eq.{body.user_id}"},
             limit=1,
         )
         if not rows:
             raise HTTPException(status_code=404, detail="Document not found")
         doc = rows[0]
-        parts = [doc.get("summary") or "", str(doc.get("concept_notes") or {})]
+        parts = [doc.get("summary") or "", str(doc.get("concept_notes") or {})]  # ENCRYPTED LATER
         source_text = "\n\n".join(p for p in parts if p)
 
     try:

@@ -9,9 +9,10 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile
 
 from db.connection import table
+from services.auth_guard import get_session_user_id, require_self
 from services.extraction_service import extract_text_from_file
 from services.gemini_service import call_gemini_json
 from services.calendar_service import save_assignments_to_db
@@ -223,33 +224,35 @@ def _process_document(filename: str, extracted_text: str) -> dict:
 
 
 @router.get("/user/{user_id}")
-def list_documents(user_id: str):
+def list_documents(user_id: str, request: Request):
+    require_self(user_id, request)
     _validate_user(user_id)
-    docs = table("documents").select("*", filters={"user_id": f"eq.{user_id}"}, order="created_at.desc")
+    docs = table("documents").select(
+        "id,user_id,course_id,file_name,category,summary,concept_notes,created_at,processed_at",  # ENCRYPTED LATER
+        filters={"user_id": f"eq.{user_id}"},
+        order="created_at.desc",
+    )
     return {"documents": docs}
 
 
 @router.delete("/doc/{document_id}")
-def delete_document(document_id: str, user_id: str | None = None):
+def delete_document(document_id: str, request: Request, user_id: str | None = None):
     if user_id:
+        require_self(user_id, request)
         _validate_user(user_id)
-        # Ensure the document belongs to the requesting user
-        docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
-        if not docs:
-            raise HTTPException(status_code=404, detail="Document not found.")
-    table("documents").delete(filters={"id": f"eq.{document_id}"})
+    else:
+        user_id = get_session_user_id(request)
+    # Ensure the document belongs to the requesting user
+    docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
+    if not docs:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    table("documents").delete(filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"})
     return {"deleted": True}
 
 
 @router.patch("/doc/{document_id}")
-def update_document(document_id: str, body: dict = Body(...)):
+def update_document(document_id: str, request: Request, body: dict = Body(...)):
     """Update mutable fields on a document (currently only category)."""
-    user_id = body.get("user_id")
-    if user_id:
-        _validate_user(user_id)
-        docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
-        if not docs:
-            raise HTTPException(status_code=404, detail="Document not found.")
     category = body.get("category")
     if category and category not in VALID_CATEGORIES:
         raise HTTPException(status_code=400, detail=f"Invalid category '{category}'.")
@@ -258,16 +261,27 @@ def update_document(document_id: str, body: dict = Body(...)):
         updates["category"] = category
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update.")
-    updated = table("documents").update(updates, filters={"id": f"eq.{document_id}"})
+    user_id = body.get("user_id")
+    if user_id:
+        require_self(user_id, request)
+        _validate_user(user_id)
+    else:
+        user_id = get_session_user_id(request)
+    docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
+    if not docs:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    updated = table("documents").update(updates, filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"})
     return updated[0] if updated else {"id": document_id, **updates}
 
 
 @router.post("/upload")
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     course_id: str = Form(...),
     user_id: str = Form(...),
 ):
+    require_self(user_id, request)
     _validate_user(user_id)
 
     # ── Validation ────────────────────────────────────────────────────────────
@@ -320,8 +334,8 @@ async def upload_document(
         "course_id": course_id,
         "file_name": filename,
         "category": ai["category"],
-        "summary": ai["summary"] or None,
-        "concept_notes": ai["concept_notes"],
+        "summary": ai["summary"] or None,  # ENCRYPTED LATER
+        "concept_notes": ai["concept_notes"],  # ENCRYPTED LATER
         "created_at": now,
         "processed_at": now,
     }
@@ -406,16 +420,17 @@ def _scan_concepts_for_course(
 
 
 @router.post("/doc/{document_id}/scan-concepts")
-def scan_document_concepts(document_id: str, body: dict = Body(...)):
+def scan_document_concepts(document_id: str, request: Request, body: dict = Body(...)):
     """Extend the course's concept graph using one document's stored
     summary + takeaways as the seed signal."""
     user_id = body.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
+    require_self(user_id, request)
     _validate_user(user_id)
 
     rows = table("documents").select(
-        "id,user_id,course_id,file_name,summary,concept_notes",
+        "id,user_id,course_id,file_name,summary,concept_notes",  # ENCRYPTED LATER
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
         limit=1,
     )
@@ -430,17 +445,18 @@ def scan_document_concepts(document_id: str, body: dict = Body(...)):
         user_id,
         course_id,
         doc_filename=doc.get("file_name"),
-        doc_summary=doc.get("summary"),
-        doc_concept_notes=doc.get("concept_notes") or [],
+        doc_summary=doc.get("summary"),  # ENCRYPTED LATER
+        doc_concept_notes=doc.get("concept_notes") or [],  # ENCRYPTED LATER
     )
 
 
 @router.post("/course/{course_id}/scan-concepts")
-def scan_course_concepts(course_id: str, body: dict = Body(...)):
+def scan_course_concepts(course_id: str, request: Request, body: dict = Body(...)):
     """Extend the course's concept graph from the course label alone
     (and whatever is already in the graph)."""
     user_id = body.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required.")
+    require_self(user_id, request)
     _validate_user(user_id)
     return _scan_concepts_for_course(user_id, course_id)

@@ -3,10 +3,11 @@ import random
 import string
 from collections import defaultdict
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from db.connection import table
 from models import CreateRoomBody, JoinRoomBody, MatchBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
+from services.auth_guard import require_self, get_session_user_id
 from services.graph_service import get_graph
 from services.matching_service import find_study_matches
 from services.gemini_service import call_gemini
@@ -16,7 +17,8 @@ router = APIRouter()
 
 
 @router.post("/rooms/create")
-def create_room(body: CreateRoomBody):
+def create_room(body: CreateRoomBody, request: Request):
+    require_self(body.user_id, request)
     invite_code = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
     room_id = str(uuid.uuid4())
     table("rooms").insert({
@@ -31,9 +33,11 @@ def create_room(body: CreateRoomBody):
 
 
 @router.post("/rooms/join")
-def join_room(body: JoinRoomBody):
+def join_room(body: JoinRoomBody, request: Request):
+    require_self(body.user_id, request)
     room_rows = table("rooms").select(
-        "*", filters={"invite_code": f"eq.{body.invite_code.strip().upper()}"}
+        "id,name,topic,course,owner_id,created_by,invite_code,created_at,updated_at,is_public",
+        filters={"invite_code": f"eq.{body.invite_code.strip().upper()}"},
     )
     if not room_rows:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -60,13 +64,17 @@ def join_room(body: JoinRoomBody):
 
 
 @router.get("/rooms/{user_id}")
-def get_user_rooms(user_id: str):
+def get_user_rooms(user_id: str, request: Request):
+    require_self(user_id, request)
     memberships = table("room_members").select("room_id", filters={"user_id": f"eq.{user_id}"})
     room_ids = [m["room_id"] for m in memberships]
     if not room_ids:
         return {"rooms": []}
 
-    rooms = table("rooms").select("*", filters={"id": f"in.({','.join(room_ids)})"})
+    rooms = table("rooms").select(
+        "id,name,topic,course,owner_id,created_by,invite_code,created_at,updated_at,is_public",
+        filters={"id": f"in.({','.join(room_ids)})"},
+    )
     for room in rooms:
         members = table("room_members").select("user_id", filters={"room_id": f"eq.{room['id']}"})
         room["member_count"] = len(members)
@@ -74,8 +82,18 @@ def get_user_rooms(user_id: str):
 
 
 @router.get("/rooms/{room_id}/overview")
-def room_overview(room_id: str, viewer_id: str = Query("user_john")):
-    room_rows = table("rooms").select("*", filters={"id": f"eq.{room_id}"})
+def room_overview(room_id: str, request: Request):
+    viewer_id = get_session_user_id(request)
+    membership = table("room_members").select(
+        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{viewer_id}"}
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+
+    room_rows = table("rooms").select(
+        "id,name,topic,course,owner_id,created_by,invite_code,created_at,updated_at,is_public",
+        filters={"id": f"eq.{room_id}"},
+    )
     if not room_rows:
         raise HTTPException(status_code=404, detail="Room not found")
     room = room_rows[0]
@@ -86,17 +104,17 @@ def room_overview(room_id: str, viewer_id: str = Query("user_john")):
     members = []
     if member_ids:
         user_rows = table("users").select(
-            "id,name", filters={"id": f"in.({','.join(member_ids)})"}
+            "id,name", filters={"id": f"in.({','.join(member_ids)})"}  # ENCRYPTED LATER
         )
         for u in user_rows:
-            members.append({"user_id": u["id"], "name": u["name"], "graph": get_graph(u["id"])})
+            members.append({"user_id": u["id"], "name": u["name"], "graph": get_graph(u["id"])})  # ENCRYPTED LATER
 
     member_summaries = []
     for m in members:
         nodes = m["graph"]["nodes"]
         mastered = [n["concept_name"] for n in nodes if n["mastery_tier"] == "mastered"]
         struggling = [n["concept_name"] for n in nodes if n["mastery_tier"] == "struggling"]
-        member_summaries.append(f"{m['name']}: mastered {mastered}, struggling with {struggling}")
+        member_summaries.append(f"{m['name']}: mastered {mastered}, struggling with {struggling}")  # ENCRYPTED LATER
 
     ai_summary = get_cached_summary(room_id, member_summaries)
     if ai_summary is None:
@@ -115,9 +133,16 @@ def room_overview(room_id: str, viewer_id: str = Query("user_john")):
 
 
 @router.get("/rooms/{room_id}/activity")
-def room_activity(room_id: str):
+def room_activity(room_id: str, request: Request):
+    viewer_id = get_session_user_id(request)
+    membership = table("room_members").select(
+        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{viewer_id}"}
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+
     activity_rows = table("room_activity").select(
-        "*",
+        "id,room_id,user_id,activity_type,concept_name,detail,created_at",
         filters={"room_id": f"eq.{room_id}"},
         order="created_at.desc",
         limit=20,
@@ -126,8 +151,8 @@ def room_activity(room_id: str):
     user_ids = list(set(a["user_id"] for a in activity_rows))
     user_name_map = {}
     if user_ids:
-        user_rows = table("users").select("id,name", filters={"id": f"in.({','.join(user_ids)})"})
-        user_name_map = {u["id"]: u["name"] for u in user_rows}
+        user_rows = table("users").select("id,name", filters={"id": f"in.({','.join(user_ids)})"})  # ENCRYPTED LATER
+        user_name_map = {u["id"]: u["name"] for u in user_rows}  # ENCRYPTED LATER
 
     activities = [
         {
@@ -144,15 +169,16 @@ def room_activity(room_id: str):
 
 
 @router.post("/rooms/{room_id}/match")
-def match_partners(room_id: str, body: MatchBody):
+def match_partners(room_id: str, body: MatchBody, request: Request):
+    require_self(body.user_id, request)
     member_id_rows = table("room_members").select("user_id", filters={"room_id": f"eq.{room_id}"})
     member_ids = [m["user_id"] for m in member_id_rows]
 
     members_with_graphs = []
     if member_ids:
-        user_rows = table("users").select("id,name", filters={"id": f"in.({','.join(member_ids)})"})
+        user_rows = table("users").select("id,name", filters={"id": f"in.({','.join(member_ids)})"})  # ENCRYPTED LATER
         members_with_graphs = [
-            {"user_id": u["id"], "name": u["name"], "graph": get_graph(u["id"])}
+            {"user_id": u["id"], "name": u["name"], "graph": get_graph(u["id"])}  # ENCRYPTED LATER
             for u in user_rows
         ]
 
@@ -164,10 +190,11 @@ def match_partners(room_id: str, body: MatchBody):
 
 
 @router.post("/school-match")
-def school_match(body: MatchBody):
+def school_match(body: MatchBody, request: Request):
     """
     Match the requesting user against all users NOT in any of their study rooms.
     """
+    require_self(body.user_id, request)
     user_room_rows = table("room_members").select(
         "room_id", filters={"user_id": f"eq.{body.user_id}"}
     )
@@ -184,21 +211,21 @@ def school_match(body: MatchBody):
     excl_list = list(excluded_ids)
 
     school_users = table("users").select(
-        "id,name",
+        "id,name",  # ENCRYPTED LATER
         filters={"id": f"not.in.({','.join(excl_list)})"},
     )
 
     members_with_graphs = [
-        {"user_id": u["id"], "name": u["name"], "graph": get_graph(u["id"])}
+        {"user_id": u["id"], "name": u["name"], "graph": get_graph(u["id"])}  # ENCRYPTED LATER
         for u in school_users
     ]
 
     requester_graph = get_graph(body.user_id)
-    requester_rows = table("users").select("name", filters={"id": f"eq.{body.user_id}"})
-    requester_name = requester_rows[0]["name"] if requester_rows else body.user_id
+    requester_rows = table("users").select("name", filters={"id": f"eq.{body.user_id}"})  # ENCRYPTED LATER
+    requester_name = requester_rows[0]["name"] if requester_rows else body.user_id  # ENCRYPTED LATER
 
     all_members = [
-        {"user_id": body.user_id, "name": requester_name, "graph": requester_graph}
+        {"user_id": body.user_id, "name": requester_name, "graph": requester_graph}  # ENCRYPTED LATER
     ] + members_with_graphs
 
     try:
@@ -210,15 +237,20 @@ def school_match(body: MatchBody):
 
 
 @router.post("/rooms/{room_id}/leave")
-def leave_room(room_id: str, body: LeaveRoomBody):
+def leave_room(room_id: str, body: LeaveRoomBody, request: Request):
+    require_self(body.user_id, request)
     table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"})
     invalidate_summary(room_id)
     return {"left": True}
 
 
 @router.delete("/rooms/{room_id}/members/{member_id}")
-def kick_member(room_id: str, member_id: str, requester_id: str = Query(...)):
-    room_rows = table("rooms").select("*", filters={"id": f"eq.{room_id}"})
+def kick_member(room_id: str, member_id: str, request: Request, requester_id: str = Query(...)):
+    require_self(requester_id, request)
+    room_rows = table("rooms").select(
+        "id,name,topic,course,owner_id,created_by,invite_code,created_at,updated_at,is_public",
+        filters={"id": f"eq.{room_id}"},
+    )
     if not room_rows:
         raise HTTPException(status_code=404, detail="Room not found")
     if room_rows[0]["created_by"] != requester_id:
@@ -229,7 +261,14 @@ def kick_member(room_id: str, member_id: str, requester_id: str = Query(...)):
 
 
 @router.get("/rooms/{room_id}/messages")
-def get_room_messages(room_id: str, before: str | None = None, limit: int = 50):
+def get_room_messages(room_id: str, request: Request, before: str | None = None, limit: int = 50):
+    viewer_id = get_session_user_id(request)
+    membership = table("room_members").select(
+        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{viewer_id}"}
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+
     from datetime import datetime
     limit = max(1, min(200, limit))
     filters = {"room_id": f"eq.{room_id}"}
@@ -243,7 +282,7 @@ def get_room_messages(room_id: str, before: str | None = None, limit: int = 50):
         filters["created_at"] = f"lt.{before}"
     # Fetch newest-first so the slice covers the page we need, then reverse to ascending.
     rows = table("room_messages").select(
-        "*",
+        "id,room_id,user_id,user_name,text,image_url,reply_to_id,is_deleted,edited_at,created_at",
         filters=filters,
         order="created_at.desc",
         limit=limit,
@@ -257,7 +296,7 @@ def get_room_messages(room_id: str, before: str | None = None, limit: int = 50):
 
     # Fetch reactions for all messages in one query
     reaction_rows = table("room_reactions").select(
-        "*", filters={"message_id": f"in.({','.join(msg_ids)})"}
+        "id,message_id,user_id,emoji", filters={"message_id": f"in.({','.join(msg_ids)})"}
     ) if msg_ids else []
 
     reactions_by_msg: dict = {}
@@ -296,7 +335,14 @@ def get_room_messages(room_id: str, before: str | None = None, limit: int = 50):
 
 
 @router.post("/rooms/{room_id}/messages")
-def send_room_message(room_id: str, body: SendMessageBody):
+def send_room_message(room_id: str, body: SendMessageBody, request: Request):
+    require_self(body.user_id, request)
+    membership = table("room_members").select(
+        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"}
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+
     row = table("room_messages").insert({
         "room_id": room_id,
         "user_id": body.user_id,
@@ -317,7 +363,8 @@ def send_room_message(room_id: str, body: SendMessageBody):
 
 
 @router.delete("/rooms/{room_id}/messages/{message_id}")
-def delete_room_message(room_id: str, message_id: str, user_id: str = Query(...)):
+def delete_room_message(room_id: str, message_id: str, request: Request, user_id: str = Query(...)):
+    require_self(user_id, request)
     rows = table("room_messages").select("user_id", filters={"id": f"eq.{message_id}"})
     if not rows:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -328,7 +375,8 @@ def delete_room_message(room_id: str, message_id: str, user_id: str = Query(...)
 
 
 @router.patch("/rooms/{room_id}/messages/{message_id}")
-def edit_room_message(room_id: str, message_id: str, body: EditMessageBody):
+def edit_room_message(room_id: str, message_id: str, body: EditMessageBody, request: Request):
+    require_self(body.user_id, request)
     rows = table("room_messages").select("user_id,is_deleted", filters={"id": f"eq.{message_id}"})
     if not rows:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -345,7 +393,8 @@ def edit_room_message(room_id: str, message_id: str, body: EditMessageBody):
 
 
 @router.post("/rooms/{room_id}/messages/{message_id}/reactions")
-def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody):
+def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody, request: Request):
+    require_self(body.user_id, request)
     existing = table("room_reactions").select(
         "id", filters={"message_id": f"eq.{message_id}", "user_id": f"eq.{body.user_id}", "emoji": f"eq.{body.emoji}"}
     )
@@ -361,9 +410,10 @@ def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody):
 
 
 @router.get("/students")
-def get_students():
+def get_students(request: Request):
     """Return a lightweight profile for every user in the DB."""
-    users = table("users").select("id,name,streak_count")
+    user_id = get_session_user_id(request)
+    users = table("users").select("id,name,streak_count")  # ENCRYPTED LATER
     courses_rows = table("courses").select("user_id,course_name")
     nodes_rows = table("graph_nodes").select("user_id,mastery_tier,concept_name,mastery_score")
 
@@ -393,7 +443,7 @@ def get_students():
     students = [
         {
             "user_id": u["id"],
-            "name": u["name"],
+            "name": u["name"],  # ENCRYPTED LATER
             "streak": u.get("streak_count") or 0,
             "courses": sorted(courses_by_user[u["id"]]),
             "stats": dict(mastery_by_user[u["id"]]),
@@ -401,5 +451,5 @@ def get_students():
         }
         for u in users
     ]
-    students.sort(key=lambda s: s["name"])
+    students.sort(key=lambda s: s["name"])  # ENCRYPTED LATER
     return {"students": students}
