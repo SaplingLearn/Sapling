@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from db.connection import table
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody
 from services.auth_guard import require_self, get_session_user_id
+from services.encryption import decrypt_if_present, decrypt_json
 from services.gemini_service import call_gemini_multiturn, extract_graph_update
 from services.graph_service import get_graph, apply_graph_update
 
@@ -122,10 +123,18 @@ def _get_course_documents(user_id: str, course_id: str) -> list:
         return []
     try:
         docs = table("documents").select(
-            "file_name,category,summary,concept_notes",  # ENCRYPTED LATER
+            "file_name,category,summary,concept_notes",
             filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-        )
-        return docs or []
+        ) or []
+        for d in docs:
+            d["summary"] = decrypt_if_present(d.get("summary"))
+            notes_raw = d.get("concept_notes")
+            if isinstance(notes_raw, str):
+                try:
+                    d["concept_notes"] = decrypt_json(notes_raw)
+                except Exception:
+                    pass
+        return docs
     except Exception:
         return []
 
@@ -172,9 +181,9 @@ def build_system_prompt(
         doc_blocks = []
         for doc in documents:
             lines = [f"[{(doc.get('category') or 'document').upper()}] {doc.get('file_name', '')}"]
-            if doc.get("summary"):  # ENCRYPTED LATER
-                lines.append(f"Summary: {doc['summary']}")  # ENCRYPTED LATER
-            notes = doc.get("concept_notes")  # ENCRYPTED LATER
+            if doc.get("summary"):
+                lines.append(f"Summary: {doc['summary']}")
+            notes = doc.get("concept_notes")
             if notes and isinstance(notes, list):
                 concept_lines = []
                 for n in notes:
@@ -231,8 +240,10 @@ def save_message(session_id: str, role: str, content: str, graph_update: dict = 
 
 
 def get_user_name(user_id: str) -> str:
-    rows = table("users").select("name", filters={"id": f"eq.{user_id}"})  # ENCRYPTED LATER
-    return rows[0]["name"] if rows else "Student"  # ENCRYPTED LATER
+    rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
+    if not rows:
+        return "Student"
+    return decrypt_if_present(rows[0]["name"]) or "Student"
 
 
 def _consume_pending(session_id: str, user_id: str) -> None:
