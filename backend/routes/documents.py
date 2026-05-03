@@ -13,6 +13,7 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadF
 
 from db.connection import table
 from services.auth_guard import get_session_user_id, require_self
+from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
 from services.gemini_service import call_gemini_json
 from services.calendar_service import save_assignments_to_db
@@ -228,10 +229,18 @@ def list_documents(user_id: str, request: Request):
     require_self(user_id, request)
     _validate_user(user_id)
     docs = table("documents").select(
-        "id,user_id,course_id,file_name,category,summary,concept_notes,created_at,processed_at",  # ENCRYPTED LATER
+        "id,user_id,course_id,file_name,category,summary,concept_notes,created_at,processed_at",
         filters={"user_id": f"eq.{user_id}"},
         order="created_at.desc",
-    )
+    ) or []
+    for d in docs:
+        d["summary"] = decrypt_if_present(d.get("summary"))
+        notes_raw = d.get("concept_notes")
+        if isinstance(notes_raw, str):
+            try:
+                d["concept_notes"] = decrypt_json(notes_raw)
+            except Exception:
+                pass
     return {"documents": docs}
 
 
@@ -334,8 +343,8 @@ async def upload_document(
         "course_id": course_id,
         "file_name": filename,
         "category": ai["category"],
-        "summary": ai["summary"] or None,  # ENCRYPTED LATER
-        "concept_notes": ai["concept_notes"],  # ENCRYPTED LATER
+        "summary": encrypt_if_present(ai["summary"] or None),
+        "concept_notes": encrypt_json(ai["concept_notes"]) if ai["concept_notes"] is not None else None,
         "created_at": now,
         "processed_at": now,
     }
@@ -357,6 +366,13 @@ async def upload_document(
         pass
 
     response = dict(inserted[0] if inserted else row)
+    response["summary"] = decrypt_if_present(response.get("summary"))
+    notes_raw = response.get("concept_notes")
+    if isinstance(notes_raw, str):
+        try:
+            response["concept_notes"] = decrypt_json(notes_raw)
+        except Exception:
+            pass
     response["categories"] = ai.get("categories", [])
     return response
 
@@ -430,7 +446,7 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     _validate_user(user_id)
 
     rows = table("documents").select(
-        "id,user_id,course_id,file_name,summary,concept_notes",  # ENCRYPTED LATER
+        "id,user_id,course_id,file_name,summary,concept_notes",
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
         limit=1,
     )
@@ -441,12 +457,22 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     if not course_id:
         raise HTTPException(status_code=400, detail="Document is not associated with a course.")
 
+    doc_summary = decrypt_if_present(doc.get("summary"))
+    notes_raw = doc.get("concept_notes")
+    if isinstance(notes_raw, str):
+        try:
+            doc_concept_notes = decrypt_json(notes_raw)
+        except Exception:
+            doc_concept_notes = []
+    else:
+        doc_concept_notes = notes_raw or []
+
     return _scan_concepts_for_course(
         user_id,
         course_id,
         doc_filename=doc.get("file_name"),
-        doc_summary=doc.get("summary"),  # ENCRYPTED LATER
-        doc_concept_notes=doc.get("concept_notes") or [],  # ENCRYPTED LATER
+        doc_summary=doc_summary,
+        doc_concept_notes=doc_concept_notes
     )
 
 
