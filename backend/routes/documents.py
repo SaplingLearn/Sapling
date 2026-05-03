@@ -5,17 +5,30 @@ Document upload, AI processing, and library storage.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException, UploadFile
+from sse_starlette.sse import EventSourceResponse
+from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from db.connection import table
 from services.extraction_service import extract_text_from_file
 from services.gemini_service import call_gemini_json
 from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
+from services.course_context_service import update_course_context
+from services.achievement_service import check_achievements
+from services.agent_events import SaplingEvent, map_to_sapling_event, sapling_event_to_sse
+from agents import WORKER_LIMITS, ORCHESTRATOR_LIMITS
+from agents.classifier import classifier_agent
+from agents.summary import summary_agent
+from agents.concept_extraction import concept_extraction_agent
+from agents.syllabus_extraction import syllabus_extraction_agent
+from agents.deps import SaplingDeps
+from agents.document import document_agent, process_document, DocumentProcessingResult
 
 logger = logging.getLogger(__name__)
 
@@ -262,12 +275,94 @@ def update_document(document_id: str, body: dict = Body(...)):
     return updated[0] if updated else {"id": document_id, **updates}
 
 
-@router.post("/upload")
-async def upload_document(
+def _persist_document(
+    *,
+    user_id: str,
+    course_id: str,
+    filename: str,
+    result: DocumentProcessingResult,
+) -> tuple[str, dict]:
+    """Insert a documents row from an orchestrator result.
+
+    Shared by both upload_document_sync and the streaming upload_document.
+    Returns (document_id, full_row).
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    concept_notes = [
+        {"name": c.name, "description": c.description}
+        for c in result.concepts.concepts
+    ]
+    row = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "course_id": course_id,
+        "file_name": filename,
+        "category": result.classification.category,
+        "summary": result.summary.abstract or None,
+        "concept_notes": concept_notes,
+        "created_at": now,
+        "processed_at": now,
+    }
+    inserted = table("documents").insert(row)
+    full_row = inserted[0] if inserted else row
+    return full_row["id"], full_row
+
+
+def _save_orchestrator_syllabus(*, user_id: str, course_id: str, filename: str,
+                                result: DocumentProcessingResult) -> None:
+    """Map SyllabusAssignment -> legacy assignments shape and persist.
+
+    Drops entries with due_date=None per the no-invent contract.
+    Best-effort: any error is logged and swallowed.
+    """
+    if not (result.classification.is_syllabus and result.syllabus
+            and result.syllabus.assignments):
+        return
+    legacy: list[dict] = []
+    for a in result.syllabus.assignments:
+        if a.due_date is None:
+            continue
+        legacy.append({
+            "title": a.title,
+            "due_date": a.due_date.isoformat(),
+            "course_id": course_id,
+            "course_name": result.syllabus.course_title,
+            "assignment_type": "other",
+            "notes": a.description,
+        })
+    if legacy:
+        try:
+            save_assignments_to_db(user_id, legacy)
+        except Exception:
+            logger.exception("Assignment save failed for '%s' (best-effort)", filename)
+
+
+def _graph_backstop(*, user_id: str, course_id: str, filename: str,
+                    result: DocumentProcessingResult) -> None:
+    """Apply graph update if the orchestrator skipped its tool call."""
+    if result.graph_updated:
+        return
+    if result.classification.category not in ("syllabus", "assignment"):
+        return
+    try:
+        new_nodes = [
+            {"concept_name": c.name, "initial_mastery": 0.0}
+            for c in result.concepts.concepts
+        ]
+        apply_graph_update(user_id, {"new_nodes": new_nodes}, course_id=course_id)
+    except Exception:
+        logger.exception("Graph backstop failed for '%s' (best-effort)", filename)
+
+
+@router.post("/upload/sync")
+async def upload_document_sync(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     course_id: str = Form(...),
     user_id: str = Form(...),
 ):
+    """Non-streaming JSON upload. Original behavior preserved here so any
+    frontend that hasn't migrated to the SSE /upload route keeps working."""
     _validate_user(user_id)
 
     # ── Validation ────────────────────────────────────────────────────────────
@@ -288,9 +383,312 @@ async def upload_document(
             detail="File exceeds the 15 MB limit. Please upload a smaller file.",
         )
 
-    # ── Text extraction ───────────────────────────────────────────────────────
     extracted_text = extract_text_from_file(file_bytes, filename, file.content_type or "")
 
+    # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
+    request_id = str(uuid.uuid4())
+    deps = SaplingDeps(
+        user_id=user_id,
+        course_id=course_id,
+        supabase=None,
+        request_id=request_id,
+    )
+    try:
+        result: DocumentProcessingResult = await process_document(extracted_text, deps)
+    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+        logger.warning(
+            "Agent guardrails tripped for '%s'; falling back to legacy",
+            filename, exc_info=e,
+        )
+        return await _legacy_upload_pipeline(
+            filename=filename, extracted_text=extracted_text,
+            course_id=course_id, user_id=user_id,
+            background_tasks=background_tasks,
+        )
+    except Exception:
+        logger.exception(
+            "Unexpected agent failure for '%s'; falling back to legacy",
+            filename,
+        )
+        return await _legacy_upload_pipeline(
+            filename=filename, extracted_text=extracted_text,
+            course_id=course_id, user_id=user_id,
+            background_tasks=background_tasks,
+        )
+
+    _save_orchestrator_syllabus(user_id=user_id, course_id=course_id,
+                                filename=filename, result=result)
+    _graph_backstop(user_id=user_id, course_id=course_id,
+                    filename=filename, result=result)
+    _, full_row = _persist_document(user_id=user_id, course_id=course_id,
+                                    filename=filename, result=result)
+
+    background_tasks.add_task(_invalidate_study_guide_cache, user_id, course_id)
+    background_tasks.add_task(update_course_context, course_id)
+    background_tasks.add_task(_check_upload_achievements, user_id)
+
+    response = dict(full_row)
+    # categories (grading-weight buckets) aren't extracted by the orchestrator
+    # yet — keep the field present for response-shape compatibility with the
+    # legacy pipeline by returning an empty list.
+    response["categories"] = []
+    return response
+
+
+@router.post("/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    course_id: str = Form(...),
+    user_id: str = Form(...),
+):
+    """Streaming SSE upload. Emits status/progress/result/error events
+    while the orchestrator pipeline runs, then a final 'done' status with
+    the persisted document_id once side-effects complete.
+
+    Validation/extraction errors fail with normal HTTP 4xx before the
+    stream opens. Errors during the stream surface as type='error' SSE
+    events; the client should NOT auto-retry against this route.
+    """
+    _validate_user(user_id)
+
+    filename = file.filename or ""
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS and file.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext or file.content_type}'. Only PDF, DOCX, and PPTX are accepted.",
+        )
+
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail="File exceeds the 15 MB limit. Please upload a smaller file.",
+        )
+
+    extracted_text = extract_text_from_file(file_bytes, filename, file.content_type or "")
+    request_id = str(uuid.uuid4())
+    deps = SaplingDeps(
+        user_id=user_id,
+        course_id=course_id,
+        supabase=None,
+        request_id=request_id,
+    )
+
+    async def event_stream():
+        try:
+            yield sapling_event_to_sse(SaplingEvent(
+                type="status", step="start",
+                message="Document received. Processing...",
+            ))
+
+            # ── Phase 1: classifier (serial gate) ─────────────────────────────
+            yield sapling_event_to_sse(SaplingEvent(
+                type="progress", step="classify",
+                message="Classifying document...",
+            ))
+            cls_run = await classifier_agent.run(
+                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+            )
+            classification = cls_run.output
+            yield sapling_event_to_sse(SaplingEvent(
+                type="progress", step="classified",
+                message=f"Classified as {classification.category}.",
+                data={
+                    "category": classification.category,
+                    "is_syllabus": classification.is_syllabus,
+                },
+            ))
+
+            # ── Phase 2: workers in parallel ──────────────────────────────────
+            yield sapling_event_to_sse(SaplingEvent(
+                type="progress", step="extract",
+                message="Extracting summary, concepts"
+                        + (" and syllabus" if classification.is_syllabus else "")
+                        + " in parallel...",
+            ))
+            summary_task = summary_agent.run(
+                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+            )
+            concepts_task = concept_extraction_agent.run(
+                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+            )
+            if classification.is_syllabus:
+                syllabus_task = syllabus_extraction_agent.run(
+                    extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+                )
+                summary_r, concepts_r, syllabus_r = await asyncio.gather(
+                    summary_task, concepts_task, syllabus_task,
+                )
+                summary = summary_r.output
+                concepts = concepts_r.output
+                syllabus = syllabus_r.output
+            else:
+                summary_r, concepts_r = await asyncio.gather(summary_task, concepts_task)
+                summary = summary_r.output
+                concepts = concepts_r.output
+                syllabus = None
+            yield sapling_event_to_sse(SaplingEvent(
+                type="progress", step="extracted",
+                message=f"Extracted {len(concepts.concepts)} concept(s).",
+            ))
+
+            # ── Phase 3: orchestrator graph update (stream tool events) ──────
+            graph_updated = False
+            concept_names = [c.name for c in concepts.concepts]
+            async for ev in document_agent.run_stream_events(
+                f"Merge these concepts into the student's course graph: {concept_names}",
+                deps=deps,
+                usage_limits=ORCHESTRATOR_LIMITS,
+            ):
+                mapped = map_to_sapling_event(ev)
+                if mapped is None:
+                    continue
+                if mapped.type == "result":
+                    # Skip — agent's FinalResultEvent carries
+                    # GraphUpdateConfirmation, not the full result the
+                    # client wants. We emit our own 'result' below with
+                    # the deterministically-composed DocumentProcessingResult.
+                    if mapped.data:
+                        graph_updated = bool(mapped.data.get("graph_updated"))
+                    continue
+                yield sapling_event_to_sse(mapped)
+
+            # ── Compose final result + emit ──────────────────────────────────
+            final_output = DocumentProcessingResult(
+                classification=classification,
+                summary=summary,
+                concepts=concepts,
+                syllabus=syllabus,
+                graph_updated=graph_updated,
+            )
+            yield sapling_event_to_sse(SaplingEvent(
+                type="result", step="finalize",
+                message="Processing complete.",
+                data=final_output.model_dump(mode="json"),
+            ))
+
+            # ── Post-roll: side effects + persistence ─────────────────────────
+            _save_orchestrator_syllabus(user_id=user_id, course_id=course_id,
+                                        filename=filename, result=final_output)
+            _graph_backstop(user_id=user_id, course_id=course_id,
+                            filename=filename, result=final_output)
+            doc_id, _ = _persist_document(user_id=user_id, course_id=course_id,
+                                          filename=filename, result=final_output)
+
+            # BackgroundTasks runs after response close — useless for SSE since
+            # the stream IS the response. Use create_task for fire-and-forget.
+            # The wrapped sync helpers already swallow their own exceptions.
+            asyncio.create_task(asyncio.to_thread(
+                _invalidate_study_guide_cache, user_id, course_id))
+            asyncio.create_task(asyncio.to_thread(
+                update_course_context, course_id))
+            asyncio.create_task(asyncio.to_thread(
+                _check_upload_achievements, user_id))
+
+            yield sapling_event_to_sse(SaplingEvent(
+                type="status", step="done",
+                message="Saved.",
+                data={"document_id": doc_id},
+            ))
+        except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+            logger.warning(
+                "Agent guardrails tripped during stream for '%s'; falling back",
+                filename, exc_info=e,
+            )
+            yield sapling_event_to_sse(SaplingEvent(
+                type="error", step="fallback",
+                message="Agent guardrails tripped; using legacy pipeline.",
+            ))
+            async for sse_event in _stream_legacy_fallback(
+                filename=filename, extracted_text=extracted_text,
+                course_id=course_id, user_id=user_id,
+            ):
+                yield sse_event
+        except Exception as e:
+            logger.exception("Unexpected streaming failure for '%s'", filename)
+            yield sapling_event_to_sse(SaplingEvent(
+                type="error", step="fallback",
+                message=str(e),
+            ))
+            async for sse_event in _stream_legacy_fallback(
+                filename=filename, extracted_text=extracted_text,
+                course_id=course_id, user_id=user_id,
+            ):
+                yield sse_event
+
+    return EventSourceResponse(event_stream())
+
+
+async def _stream_legacy_fallback(
+    *, filename: str, extracted_text: str, course_id: str, user_id: str,
+):
+    """Run _legacy_upload_pipeline and yield SSE result/done events.
+
+    Used by the streaming /upload route's exception handlers to deliver
+    a document via the legacy path even when the agent pipeline trips.
+    Streaming visibility is lost (the legacy path is single-shot), but
+    the client still receives a usable result.
+    """
+    try:
+        legacy_response = await _legacy_upload_pipeline(
+            filename=filename, extracted_text=extracted_text,
+            course_id=course_id, user_id=user_id,
+        )
+    except Exception:
+        logger.exception("Legacy fallback also failed for '%s'", filename)
+        return
+    yield sapling_event_to_sse(SaplingEvent(
+        type="result", step="finalize",
+        message="Processing complete (legacy fallback).",
+        data=legacy_response,
+    ))
+    yield sapling_event_to_sse(SaplingEvent(
+        type="status", step="done",
+        message="Saved.",
+        data={"document_id": legacy_response.get("id")},
+    ))
+
+
+def _invalidate_study_guide_cache(user_id: str, course_id: str) -> None:
+    """Background task: delete cached study guides so they regenerate fresh."""
+    try:
+        table("study_guides").delete(
+            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
+        )
+    except Exception:
+        logger.exception(
+            "Failed to invalidate study guides cache for user=%s course=%s",
+            user_id, course_id,
+        )
+
+
+def _check_upload_achievements(user_id: str) -> None:
+    """Background task: best-effort achievement check."""
+    try:
+        check_achievements(user_id, "documents_uploaded", {})
+    except Exception:
+        pass
+
+
+async def _legacy_upload_pipeline(
+    *,
+    filename: str,
+    extracted_text: str,
+    course_id: str,
+    user_id: str,
+    background_tasks: BackgroundTasks | None = None,
+) -> dict:
+    """The pre-orchestrator upload pipeline, kept as a fallback per ADR-0001.
+
+    Verbatim copy of the previous upload_document body from text-extraction
+    onward. File validation already happened in the caller, so this function
+    starts at the AI processing step.
+
+    background_tasks is optional: in streaming-fallback contexts there is
+    no FastAPI BackgroundTasks to attach to (the response IS the stream),
+    so post-roll work is fired via asyncio.create_task instead.
+    """
     # ── AI: classify, summarize, and extract assignments (single call) ─────────
     ai = _process_document(filename, extracted_text)
 
@@ -327,20 +725,14 @@ async def upload_document(
     }
     inserted = table("documents").insert(row)
 
-    # Invalidate any cached study guides for this user+course so they regenerate fresh
-    try:
-        table("study_guides").delete(
-            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
-        )
-    except Exception:
-        logger.exception("Failed to invalidate study guides cache for user=%s course=%s", user_id, course_id)
-
-    # Check for achievements after successful upload
-    try:
-        from services.achievement_service import check_achievements
-        check_achievements(user_id, "documents_uploaded", {})
-    except Exception:
-        pass
+    if background_tasks is not None:
+        background_tasks.add_task(_invalidate_study_guide_cache, user_id, course_id)
+        background_tasks.add_task(_check_upload_achievements, user_id)
+    else:
+        asyncio.create_task(asyncio.to_thread(
+            _invalidate_study_guide_cache, user_id, course_id))
+        asyncio.create_task(asyncio.to_thread(
+            _check_upload_achievements, user_id))
 
     response = dict(inserted[0] if inserted else row)
     response["categories"] = ai.get("categories", [])

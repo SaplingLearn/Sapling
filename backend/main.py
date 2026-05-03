@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import logfire
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,14 @@ load_dotenv(Path(__file__).with_name(".env"))
 
 RECOST_PROJECT_ID = "eaf22d10-840d-494f-8513-2dcef769ace1"
 recost_api_key = os.getenv("RECOST_API_KEY")
+
+# Logfire: free local traces during dev; sends to logfire.pydantic.dev only
+# if LOGFIRE_TOKEN is set. Safe to leave on in all environments.
+logfire.configure(
+    send_to_logfire="if-token-present",
+    service_name="sapling-backend",
+)
+logfire.instrument_pydantic_ai()
 
 app = FastAPI(title="Sapling API", version="1.0.0")
 
