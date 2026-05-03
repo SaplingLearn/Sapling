@@ -21,6 +21,7 @@ from models import (
 )
 from services import gradebook_service
 from services.auth_guard import require_self
+from services.encryption import encrypt_if_present, decrypt_if_present, decrypt_numeric
 
 router = APIRouter()
 
@@ -67,9 +68,13 @@ def get_summary(request: Request, user_id: str = Query(...), semester: str = Que
         filters={"user_id": f"eq.{user_id}", "course_id": in_clause},
     )
     assigns = table("assignments").select(
-        "id,course_id,category_id,points_possible,points_earned",  # ENCRYPTED LATER
+        "id,course_id,category_id,points_possible,points_earned",
         filters={"user_id": f"eq.{user_id}", "course_id": in_clause},
     )
+
+    for a in assigns:
+        a["points_possible"] = decrypt_numeric(a.get("points_possible"))
+        a["points_earned"] = decrypt_numeric(a.get("points_earned"))
 
     cats_by_course: dict[str, list] = {cid: [] for cid in course_ids}
     for c in cats:
@@ -84,7 +89,7 @@ def get_summary(request: Request, user_id: str = Query(...), semester: str = Que
         course = e["courses"]
         course_assigns = assigns_by_course[cid]
         graded = [a for a in course_assigns
-                  if a.get("points_possible") and a.get("points_earned") is not None]  # ENCRYPTED LATER
+                  if a.get("points_possible") and a.get("points_earned") is not None]
         percent = gradebook_service.current_grade(cats_by_course[cid], course_assigns)
         letter = gradebook_service.letter_for(percent, e.get("letter_scale"))
         out.append({
@@ -121,10 +126,14 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
         order="sort_order.asc",
     )
     assigns = table("assignments").select(
-        "id,user_id,course_id,category_id,title,due_date,assignment_type,points_possible,points_earned,notes,source",  # ENCRYPTED LATER
+        "id,user_id,course_id,category_id,title,due_date,assignment_type,points_possible,points_earned,notes,source",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
         order="due_date.asc",
     )
+    for a in assigns:
+        a["points_possible"] = decrypt_numeric(a.get("points_possible"))
+        a["points_earned"] = decrypt_numeric(a.get("points_earned"))
+        a["notes"] = decrypt_if_present(a.get("notes"))
 
     # Per-category grade for the UI.
     by_cat: dict[str, list] = {c["id"]: [] for c in cats}
@@ -236,11 +245,11 @@ def create_assignment(body: CreateAssignmentBody, request: Request):
         "course_id": body.course_id,
         "title": body.title,
         "category_id": body.category_id,
-        "points_possible": body.points_possible,  # ENCRYPTED LATER
-        "points_earned": body.points_earned,  # ENCRYPTED LATER
+        "points_possible": encrypt_if_present(body.points_possible),
+        "points_earned": encrypt_if_present(body.points_earned),
         "due_date": body.due_date,
         "assignment_type": body.assignment_type,
-        "notes": body.notes,  # ENCRYPTED LATER
+        "notes": encrypt_if_present(body.notes),
         "source": "manual",
     })
     return {"assignment": inserted[0] if inserted else None}
@@ -256,11 +265,11 @@ def update_assignment_route(assignment_id: str, body: UpdateAssignmentBody, requ
 
     incoming = body.model_dump(exclude_unset=True, exclude={"user_id"})
     ALLOWED = {"title", "category_id", "due_date", "assignment_type"}
-    ENCRYPTED_FIELDS = {"points_possible", "points_earned", "notes"}  # ENCRYPTED LATER
+    ENCRYPTED_FIELDS = {"points_possible", "points_earned", "notes"}
     patch_data = {k: v for k, v in incoming.items() if k in ALLOWED}
     for k in ENCRYPTED_FIELDS:
         if k in incoming:
-            patch_data[k] = incoming[k]  # ENCRYPTED LATER
+            patch_data[k] = encrypt_if_present(incoming[k])
     if not patch_data:
         return {"updated": False}
     table("assignments").update(
@@ -350,10 +359,10 @@ def apply_syllabus(body: SyllabusApplyBody, request: Request):
             "title": title,
             "due_date": a.get("due_date"),
             "assignment_type": a.get("assignment_type"),
-            "notes": a.get("notes"),  # ENCRYPTED LATER
+            "notes": encrypt_if_present(a.get("notes")),
             "category_id": None,
-            "points_possible": None,  # ENCRYPTED LATER
-            "points_earned": None,  # ENCRYPTED LATER
+            "points_possible": None,
+            "points_earned": None,
             "source": "syllabus",
         })
     if new_assigns:
