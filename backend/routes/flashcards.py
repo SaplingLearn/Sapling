@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -93,8 +94,13 @@ def _get_session_summary(session_id: str) -> str:
         )
         if not rows or not rows[0].get("summary_json"):
             return ""
-        import json
-        return json.dumps(rows[0]["summary_json"])
+        raw = rows[0]["summary_json"]
+        if isinstance(raw, str):
+            try:
+                return json.dumps(decrypt_json(raw))
+            except Exception:
+                return raw
+        return json.dumps(raw)
     except Exception:
         return ""
 

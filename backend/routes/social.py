@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from db.connection import table
 from models import CreateRoomBody, JoinRoomBody, MatchBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
 from services.auth_guard import require_self, get_session_user_id
-from services.encryption import decrypt_if_present
+from services.encryption import encrypt_if_present, decrypt_if_present
 from services.graph_service import get_graph
 from services.matching_service import find_study_matches
 from services.gemini_service import call_gemini
@@ -325,13 +325,14 @@ def get_room_messages(room_id: str, request: Request, before: str | None = None,
             reply_map[rr["id"]] = {
                 "id": rr["id"],
                 "user_name": rr["user_name"],
-                "text": None if rr.get("is_deleted") else rr.get("text"),
+                "text": None if rr.get("is_deleted") else decrypt_if_present(rr.get("text")),
             }
 
     enriched = []
     for r in rows:
         mid = r["id"]
         emoji_map = reactions_by_msg.get(mid, {})
+        r["text"] = decrypt_if_present(r.get("text"))
         r["reactions"] = [{"emoji": e, "user_ids": uids} for e, uids in emoji_map.items()]
         r["reply_to"] = reply_map.get(r.get("reply_to_id")) if r.get("reply_to_id") else None
         enriched.append(r)
@@ -352,10 +353,13 @@ def send_room_message(room_id: str, body: SendMessageBody, request: Request):
         "room_id": room_id,
         "user_id": body.user_id,
         "user_name": body.user_name,
-        "text": body.text or None,
+        "text": encrypt_if_present(body.text or None),
         "image_url": body.image_url or None,
         "reply_to_id": body.reply_to_id or None,
     })
+
+    if row:
+        row[0]["text"] = decrypt_if_present(row[0].get("text"))
 
     # Check for achievements after message send
     try:
@@ -391,7 +395,7 @@ def edit_room_message(room_id: str, message_id: str, body: EditMessageBody, requ
         raise HTTPException(status_code=400, detail="Cannot edit a deleted message")
     from datetime import datetime, timezone
     table("room_messages").update(
-        {"text": body.text, "edited_at": datetime.now(timezone.utc).isoformat()},
+        {"text": encrypt_if_present(body.text), "edited_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{message_id}"},
     )
     return {"edited": True}

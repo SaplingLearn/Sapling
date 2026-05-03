@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from db.connection import table
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody
 from services.auth_guard import require_self, get_session_user_id
-from services.encryption import decrypt_if_present, decrypt_json
+from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.gemini_service import call_gemini_multiturn, extract_graph_update
 from services.graph_service import get_graph, apply_graph_update
 
@@ -225,7 +225,7 @@ def get_conversation_history(session_id: str) -> list:
         filters={"session_id": f"eq.{session_id}"},
         order="created_at.asc",
     )
-    return [{"role": r["role"], "content": r["content"]} for r in rows]
+    return [{"role": r["role"], "content": decrypt_if_present(r["content"])} for r in rows]
 
 
 def save_message(session_id: str, role: str, content: str, graph_update: dict = None):
@@ -233,7 +233,7 @@ def save_message(session_id: str, role: str, content: str, graph_update: dict = 
         "id": str(uuid.uuid4()),
         "session_id": session_id,
         "role": role,
-        "content": content,
+        "content": encrypt_if_present(content),
         "graph_update_json": graph_update if graph_update else None,
         "created_at": datetime.utcnow().isoformat(),
     })
@@ -421,7 +421,7 @@ def end_session(body: EndSessionBody, request: Request):
     }
 
     table("sessions").update(
-        {"summary_json": summary},
+        {"summary_json": encrypt_json(summary)},
         filters={"id": f"eq.{body.session_id}"},
     )
 
