@@ -11,8 +11,7 @@ function CallbackInner() {
 
   useEffect(() => {
     const userId = searchParams.get('user_id');
-    const name = searchParams.get('name');
-    const avatar = searchParams.get('avatar');
+    const avatarParam = searchParams.get('avatar');
     const approvedParam = searchParams.get('is_approved');
     const authToken = searchParams.get('auth_token');
     const error = searchParams.get('error');
@@ -43,14 +42,9 @@ function CallbackInner() {
       fail('not_approved');
       return;
     }
-    if (approvedParam !== 'true' || !userId || !name) {
+    if (approvedParam !== 'true' || !userId) {
       fail(error || 'signin_failed');
       return;
-    }
-
-    if (!isPopup) {
-      setActiveUser(userId, name, avatar || '');
-      confirmApproved();
     }
 
     (async () => {
@@ -70,19 +64,28 @@ function CallbackInner() {
       }
 
       let onboardingCompleted = true;
+      let name = '';
+      let avatar = avatarParam || '';
       try {
-        const r = await fetch(`/api/auth/me?user_id=${encodeURIComponent(userId)}`);
+        const r = await fetch('/api/auth/me');
         const data = await r.json();
         onboardingCompleted = !!data.onboarding_completed;
+        name = data.name || '';
+        avatar = data.avatar_url || avatar;
       } catch {
         onboardingCompleted = true;
+      }
+
+      if (!isPopup) {
+        setActiveUser(userId, name, avatar);
+        confirmApproved();
       }
 
       if (postToOpener({
         success: true,
         userId,
         name,
-        avatar: avatar || '',
+        avatar,
         onboardingCompleted,
       })) return;
 

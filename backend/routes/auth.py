@@ -25,7 +25,7 @@ from config import (
     SESSION_SECRET,
 )
 from db.connection import table
-from services.encryption import encrypt, encrypt_if_present
+from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
 from services.auth_guard import get_session_user_id
 
 try:
@@ -77,7 +77,7 @@ def _generate_pkce_pair():
 def get_me(request: Request):
     """Return approval and onboarding status for a given user_id."""
     user_id = get_session_user_id(request)
-    user = table("users").select("id,is_approved,onboarding_completed,username", filters={"id": f"eq.{user_id}"})
+    user = table("users").select("id,is_approved,onboarding_completed,username,name,avatar_url", filters={"id": f"eq.{user_id}"})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -127,6 +127,8 @@ def get_me(request: Request):
         "is_approved": bool(user[0]["is_approved"]),
         "onboarding_completed": bool(user[0].get("onboarding_completed", False)),
         "username": user[0].get("username"),
+        "name": decrypt_if_present(user[0].get("name")) or "",
+        "avatar_url": user[0].get("avatar_url") or "",
         "roles": roles,
         "equipped_cosmetics": equipped_cosmetics,
         "is_admin": is_admin,
