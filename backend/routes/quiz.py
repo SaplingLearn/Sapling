@@ -10,7 +10,7 @@ from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from services.auth_guard import require_self
 from services.encryption import decrypt_if_present
-from services.gemini_service import call_gemini_json
+from services.gemini_service import MODEL_LITE, call_gemini_json
 from services.graph_service import get_graph, update_streak
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 
@@ -85,7 +85,7 @@ def generate_quiz(body: GenerateQuizBody, request: Request):
                 prompt += "\n\n" + "\n\n".join(addendum_parts)
 
     try:
-        result = call_gemini_json(prompt)
+        result = call_gemini_json(prompt, model=MODEL_LITE)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
@@ -204,7 +204,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     def _update_context(prompt: str, uid: str, node_id: str):
         try:
-            new_ctx = call_gemini_json(prompt)
+            new_ctx = call_gemini_json(prompt, model=MODEL_LITE)
             save_quiz_context(uid, node_id, new_ctx)
         except Exception:
             pass

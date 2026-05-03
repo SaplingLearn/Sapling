@@ -18,29 +18,33 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 
 ## Features
 
-* **Live Knowledge Graph** — Your understanding is visualized as a growing node graph. Mastery scores update dynamically after every session and quiz.
-* **Three Teaching Modes** — Socratic (guided reasoning), Expository (direct explanation), and TeachBack (you explain, Sapling corrects).
+* **Live Knowledge Graph** — Your understanding is visualized as a growing node graph. Mastery scores update dynamically after every session and quiz, with per-course color shading and mastery-based opacity.
+* **Three Teaching Modes** — Socratic (guided reasoning), Expository (direct explanation), and TeachBack (you explain, Sapling corrects). Chat supports inline math (KaTeX), Mermaid diagrams, function plots, and theorem callouts.
 * **Adaptive Quizzes** — AI-generated quizzes targeting your weakest concepts, with difficulty scaling based on your performance.
-* **Flashcards** — Generate AI flashcards per course, study by topic with spaced-repetition ratings (Easy / Hard / Forgot), and track review history.
+* **Flashcards** — Generate AI flashcards per course, or import them from paste, file (CSV/Markdown/Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (Easy / Hard / Forgot).
+* **Gradebook** — Track your real-world grade per course. Categories + weights, per-assignment scores, per-course letter-scale overrides, and current grade calculation. Upload a syllabus and Sapling extracts categories and assignments automatically.
 * **Study Guide** — Generate a Gemini-powered exam study guide from your uploaded course materials. Guides are cached per exam and can be regenerated at any time.
 * **Class Intelligence** — Aggregates anonymized class-wide patterns to surface common misconceptions and weak areas, personalizing your sessions.
 * **Calendar & Syllabus Tracking** — Paste your syllabus and Sapling extracts assignments, deadlines, and topics automatically.
-* **Document Library** — Upload PDFs and notes; Sapling extracts summaries, key takeaways, and flashcard topics to enrich your knowledge graph and study guides.
+* **Document Library** — Upload PDFs and notes; Sapling extracts summaries, key concept notes, and flashcard topics to enrich your knowledge graph and study guides. Concept notes can be re-scanned manually per doc or per course.
 * **Study Rooms** — Invite classmates, compare knowledge graphs, and track relative mastery across your group.
 * **Room Chat** — Real-time text chat with avatars inside each study room.
 * **User Profiles** — Public profiles with academic info, bio, featured achievements, and equipped cosmetics.
 * **Achievements & Cosmetics** — Unlock achievements by hitting milestones (sessions, quizzes, streaks). Equip cosmetic rewards like avatar frames, name colors, and title flairs.
 * **Roles & Admin Panel** — Role-based access control with an admin panel for user approval, role assignment, and content management.
-* **Onboarding Flow** — Multi-step onboarding that collects school, major, year, and courses after first sign-in.
-* **Feedback & Issue Reporting** — Submit session feedback or report bugs directly from the app via the Navbar.
+* **Onboarding Flow** — Multi-step onboarding that collects school, major, year, and courses after first sign-in. Sign-in itself is a popup-based Google OAuth flow launched from the landing page.
+* **Newsletter** — Beta-list signup directly from the landing page.
+* **Feedback & Issue Reporting** — Submit session feedback or report bugs directly from the app.
 
 ## Tech Stack
 
 * **Frontend** — Next.js (TypeScript) with D3.js for interactive graph visualization
 * **Backend** — FastAPI (Python) serving a REST API with structured Gemini prompts
-* **AI** — Google Gemini for tutoring, quiz generation, graph updates, and syllabus extraction
+* **AI** — Google Gemini for tutoring, quiz generation, graph updates, and syllabus extraction. `gemini-2.5-flash` for chat / document understanding; `gemini-2.5-flash-lite` for short structured tasks (quiz generation, concept suggestions)
 * **OCR** — Docling (layout-aware PDF → Markdown) with GOT-OCR 2.0 fallback for math/handwriting; Tesseract retained as a legacy fallback
 * **Database** — Supabase (PostgreSQL) for all persistent data
+* **Encryption** — AES-256-GCM column-level encryption (via the `cryptography` library) for user PII, document summaries/concept notes, OAuth tokens, chat messages, and gradebook notes
+* **Deploy** — Frontend on Cloudflare Workers via `@opennextjs/cloudflare`
 
 ## Usage
 
@@ -50,7 +54,7 @@ cd backend
 python3 -m venv venv
 source venv/bin/activate   # fish: source venv/bin/activate.fish
 pip install -r requirements.txt
-cp .env.example .env       # fill in GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY
+cp .env.example .env       # fill in GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, ENCRYPTION_KEY
 python3 main.py            # → http://localhost:5000
 ```
 
@@ -82,9 +86,26 @@ npm run dev                # → http://localhost:3000
 
 **Flashcards**
 - `POST` `/api/flashcards/generate` — Generate flashcards for a topic
+- `POST` `/api/flashcards/import/parse` — Parse cards from paste, file, URL, or photo (no save)
+- `POST` `/api/flashcards/import/generate` — AI-generate cards from a topic / prompt
+- `POST` `/api/flashcards/import/cleanup` — Clean up parsed cards before commit
+- `POST` `/api/flashcards/import/cloze` — Convert sentences into cloze-deletion cards
+- `POST` `/api/flashcards/import/commit` — Commit parsed cards to the user's deck
 - `GET`  `/api/flashcards/user/{user_id}` — Fetch a user's flashcards
 - `POST` `/api/flashcards/rate` — Rate a card (Easy / Hard / Forgot)
 - `DELETE` `/api/flashcards/{card_id}` — Delete a card
+
+**Gradebook**
+- `GET`   `/api/gradebook/summary` — Per-course grade summary across the user's courses (filter by `semester`)
+- `GET`   `/api/gradebook/courses/{course_id}` — Full gradebook for a course (categories, assignments, current grade)
+- `POST`  `/api/gradebook/courses/{course_id}/categories` — Create a category
+- `PATCH` `/api/gradebook/courses/{course_id}/categories` — Bulk-update categories (weights, names)
+- `DELETE` `/api/gradebook/categories/{category_id}` — Delete a category
+- `POST`  `/api/gradebook/assignments` — Create an assignment
+- `PATCH` `/api/gradebook/assignments/{assignment_id}` — Update an assignment (grade, weight, due date)
+- `DELETE` `/api/gradebook/assignments/{assignment_id}` — Delete an assignment
+- `PATCH` `/api/gradebook/courses/{course_id}/scale` — Override the per-course letter-grade scale
+- `POST`  `/api/gradebook/syllabus/apply` — Apply a parsed syllabus (replaces categories, dedupes assignments)
 
 **Study Guide**
 - `GET`  `/api/study-guide/{user_id}/guide` — Get (or generate) a study guide for an exam
@@ -150,6 +171,9 @@ npm run dev                # → http://localhost:3000
 - `POST` `/api/feedback/feedback` — Submit session or general feedback
 - `POST` `/api/feedback/issue-reports` — Submit a bug/issue report
 
+**Newsletter**
+- `POST` `/api/newsletter/subscribe` — Add an email to the beta / newsletter list
+
 ## Environment Variables
 
 **`backend/.env`**
@@ -159,6 +183,7 @@ npm run dev                # → http://localhost:3000
 | `GEMINI_API_KEY` | ✅ | Google Gemini API key |
 | `SUPABASE_URL` | ✅ | Your Supabase project URL |
 | `SUPABASE_SERVICE_KEY` | ✅ | Supabase service role key |
+| `ENCRYPTION_KEY` | ✅ | AES-256-GCM key for column-level encryption (32 bytes as 64 hex chars; generate with `python -c "import secrets; print(secrets.token_hex(32))"`) |
 | `PORT` | — | Backend port (default `5000`) |
 | `FRONTEND_URL` | — | Allowed CORS origin (default `http://localhost:3000`) |
 | `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (for sign-in and Calendar) |

@@ -18,7 +18,8 @@ _client = genai.Client(
     api_key=GEMINI_API_KEY or "dummy-key-for-import",
     http_options=types.HttpOptions(timeout=_HTTP_TIMEOUT_MS),
 )
-_MODEL = "gemini-2.5-flash"
+MODEL_DEFAULT = "gemini-2.5-flash"
+MODEL_LITE = "gemini-2.5-flash-lite"
 
 
 def _strip_backtick_fencing(text: str) -> str:
@@ -59,7 +60,7 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False) -> str:
+def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False, model: str = MODEL_DEFAULT) -> str:
     """Single-turn call to Gemini with a plain string prompt."""
     for attempt in range(retries + 1):
         try:
@@ -70,7 +71,7 @@ def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False) -> str:
                 **({"response_mime_type": "application/json"} if json_mode else {}),
             )
             response = _client.models.generate_content(
-                model=_MODEL,
+                model=model,
                 contents=prompt,
                 config=config,
             )
@@ -85,7 +86,7 @@ def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False) -> str:
             raise
 
 
-def call_gemini_multiturn(system_prompt: str, history: list[dict], user_message: str, retries: int = 1) -> str:
+def call_gemini_multiturn(system_prompt: str, history: list[dict], user_message: str, retries: int = 1, model: str = MODEL_DEFAULT) -> str:
     """
     Multi-turn call to Gemini using native chat history.
 
@@ -113,7 +114,7 @@ def call_gemini_multiturn(system_prompt: str, history: list[dict], user_message:
                 system_instruction=system_prompt,
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             )
-            chat = _client.chats.create(model=_MODEL, config=config, history=gemini_history)
+            chat = _client.chats.create(model=model, config=config, history=gemini_history)
             response = chat.send_message(user_message)
             if not response.text:
                 raise ValueError("Gemini returned empty response (content may have been filtered)")
@@ -126,8 +127,8 @@ def call_gemini_multiturn(system_prompt: str, history: list[dict], user_message:
             raise
 
 
-def call_gemini_json(prompt: str):
-    raw = call_gemini(prompt, json_mode=True)
+def call_gemini_json(prompt: str, model: str = MODEL_DEFAULT):
+    raw = call_gemini(prompt, json_mode=True, model=model)
     try:
         return json.loads(raw)
     except json.JSONDecodeError:

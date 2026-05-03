@@ -15,7 +15,7 @@ from db.connection import table
 from services.auth_guard import get_session_user_id, require_self
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
-from services.gemini_service import call_gemini_json
+from services.gemini_service import MODEL_LITE, call_gemini_json
 from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
 
@@ -117,7 +117,7 @@ def _extend_course_concepts(
         "administrative items.\n"
         "- concepts must be a JSON array of strings."
     )
-    raw = call_gemini_json(prompt)
+    raw = call_gemini_json(prompt, model=MODEL_LITE)
     if not isinstance(raw, dict):
         return []
     return _coerce_str_list(raw.get("concepts"))
