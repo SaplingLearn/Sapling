@@ -7,6 +7,7 @@ services:
       - ./backend/.env
     environment:
       FRONTEND_URL: http://localhost:3000
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
 
   frontend:
     build:
