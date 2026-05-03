@@ -33,6 +33,8 @@ class TestGetRoomMessages:
                 m.select.return_value = desc_rows
             elif name == "room_reactions":
                 m.select.return_value = []
+            elif name == "room_members":
+                m.select.return_value = [{"user_id": "user_andres"}]
             else:
                 m.select.return_value = []
             return m
@@ -54,6 +56,8 @@ class TestGetRoomMessages:
                 m.select.return_value = list(reversed(rows))  # DB returns desc
             elif name == "room_reactions":
                 m.select.return_value = []
+            elif name == "room_members":
+                m.select.return_value = [{"user_id": "user_andres"}]
             else:
                 m.select.return_value = []
             return m
@@ -78,6 +82,8 @@ class TestGetRoomMessages:
                 m.select.side_effect = _select
             elif name == "room_reactions":
                 m.select.return_value = []
+            elif name == "room_members":
+                m.select.return_value = [{"user_id": "user_andres"}]
             else:
                 m.select.return_value = []
             return m
@@ -101,8 +107,14 @@ class TestGetRoomMessages:
                 assert r.status_code == 400, f"expected 400 for before={bad!r}"
 
     def test_empty_room_returns_no_more(self):
-        with patch("routes.social.table") as t:
-            t.return_value.select.return_value = []
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "room_members":
+                m.select.return_value = [{"user_id": "user_andres"}]
+            else:
+                m.select.return_value = []
+            return m
+        with patch("routes.social.table", side_effect=table_side_effect):
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages")
         assert r.status_code == 200
         assert r.json() == {"messages": [], "has_more": False}
@@ -118,6 +130,8 @@ class TestGetRoomMessages:
                 m.select.side_effect = _select
             elif name == "room_reactions":
                 m.select.return_value = []
+            elif name == "room_members":
+                m.select.return_value = [{"user_id": "user_andres"}]
             else:
                 m.select.return_value = []
             return m
@@ -139,6 +153,8 @@ class TestGetRoomMessages:
                 m.select.side_effect = _select
             elif name == "room_reactions":
                 m.select.return_value = []
+            elif name == "room_members":
+                m.select.return_value = [{"user_id": "user_andres"}]
             else:
                 m.select.return_value = []
             return m

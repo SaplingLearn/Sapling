@@ -7,9 +7,11 @@ Study guide generation and caching.
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from db.connection import table
+from services.auth_guard import require_self
+from services.encryption import decrypt_if_present, decrypt_json
 from services.gemini_service import call_gemini_json
 
 router = APIRouter()
@@ -19,7 +21,7 @@ def _generate_and_insert(user_id: str, course_id: str, exam_id: str) -> dict:
     """Generate a study guide, insert it into study_guides, and return {content, generated_at}."""
     # 1. Fetch exam info
     exams = table("assignments").select(
-        "title,due_date",
+        "id,user_id,title,due_date,assignment_type,course_id",
         filters={"id": f"eq.{exam_id}", "user_id": f"eq.{user_id}"},
         limit=1,
     )
@@ -33,14 +35,22 @@ def _generate_and_insert(user_id: str, course_id: str, exam_id: str) -> dict:
     docs = table("documents").select(
         "summary,concept_notes",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-    )
+    ) or []
 
     # 3. Build combined context
     parts: list[str] = []
     for doc in docs:
-        if doc.get("summary"):
-            parts.append(f"Summary: {doc['summary']}")
-        concept_notes = doc.get("concept_notes")
+        summary = decrypt_if_present(doc.get("summary"))
+        if summary:
+            parts.append(f"Summary: {summary}")
+        notes_raw = doc.get("concept_notes")
+        if isinstance(notes_raw, str):
+            try:
+                concept_notes = decrypt_json(notes_raw)
+            except Exception:
+                concept_notes = notes_raw
+        else:
+            concept_notes = notes_raw
         if concept_notes and isinstance(concept_notes, list):
             lines = []
             for note in concept_notes:
@@ -104,7 +114,8 @@ def _generate_and_insert(user_id: str, course_id: str, exam_id: str) -> dict:
 
 
 @router.get("/{user_id}/cached")
-def get_cached_guides(user_id: str):
+def get_cached_guides(user_id: str, request: Request):
+    require_self(user_id, request)
     guides = table("study_guides").select(
         "id,course_id,exam_id,generated_at,content",
         filters={"user_id": f"eq.{user_id}"},
@@ -134,7 +145,8 @@ def get_cached_guides(user_id: str):
 
 
 @router.get("/{user_id}/courses")
-def get_courses(user_id: str):
+def get_courses(user_id: str, request: Request):
+    require_self(user_id, request)
     courses = table("courses").select(
         "id,course_name,color",
         filters={"user_id": f"eq.{user_id}"},
@@ -143,7 +155,8 @@ def get_courses(user_id: str):
 
 
 @router.get("/{user_id}/exams")
-def get_exams(user_id: str, course_id: str = Query(...)):
+def get_exams(user_id: str, request: Request, course_id: str = Query(...)):
+    require_self(user_id, request)
     all_assignments = table("assignments").select(
         "id,title,due_date,assignment_type",
         filters={"user_id": f"eq.{user_id}"},
@@ -164,11 +177,13 @@ def get_exams(user_id: str, course_id: str = Query(...)):
 @router.get("/{user_id}/guide")
 def get_guide(
     user_id: str,
+    request: Request,
     course_id: str = Query(...),
     exam_id: str = Query(...),
 ):
+    require_self(user_id, request)
     cached = table("study_guides").select(
-        "*",
+        "id,user_id,course_id,exam_id,content,generated_at",
         filters={
             "user_id": f"eq.{user_id}",
             "course_id": f"eq.{course_id}",
@@ -185,12 +200,13 @@ def get_guide(
 
 
 @router.post("/regenerate")
-def regenerate_guide(body: dict = Body(...)):
+def regenerate_guide(request: Request, body: dict = Body(...)):
     user_id = body.get("user_id")
     course_id = body.get("course_id")
     exam_id = body.get("exam_id")
     if not user_id or not course_id or not exam_id:
         raise HTTPException(status_code=400, detail="user_id, course_id, and exam_id are required.")
+    require_self(user_id, request)
 
     table("study_guides").delete(
         filters={

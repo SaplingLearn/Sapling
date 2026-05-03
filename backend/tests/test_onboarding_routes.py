@@ -75,11 +75,12 @@ class TestSaveOnboardingProfile:
         assert len(data["courses_linked"]) == 2
 
         # User profile was updated
+        from services.encryption import decrypt
         tables["users"].update.assert_called_once()
         update_data = tables["users"].update.call_args[0][0]
-        assert update_data["first_name"] == "Jose"
-        assert update_data["last_name"] == "Cruz"
-        assert update_data["name"] == "Jose Cruz"
+        assert decrypt(update_data["first_name"]) == "Jose"
+        assert decrypt(update_data["last_name"]) == "Cruz"
+        assert decrypt(update_data["name"]) == "Jose Cruz"
         assert update_data["year"] == "junior"
         assert update_data["majors"] == ["Computer Science"]
         assert update_data["minors"] == ["Mathematics"]

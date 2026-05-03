@@ -3,11 +3,13 @@ import json
 import os
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from config import get_mastery_tier
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
+from services.auth_guard import require_self
+from services.encryption import decrypt_if_present
 from services.gemini_service import call_gemini_json
 from services.graph_service import get_graph, update_streak
 from services.quiz_context_service import get_quiz_context, save_quiz_context
@@ -23,7 +25,8 @@ def _load_prompt(name: str) -> str:
 
 
 @router.post("/generate")
-def generate_quiz(body: GenerateQuizBody):
+def generate_quiz(body: GenerateQuizBody, request: Request):
+    require_self(body.user_id, request)
     node_rows = table("graph_nodes").select("*", filters={"id": f"eq.{body.concept_node_id}"})
     if not node_rows:
         raise HTTPException(status_code=404, detail="Concept node not found")
@@ -99,7 +102,7 @@ def generate_quiz(body: GenerateQuizBody):
 
 
 @router.post("/submit")
-def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks):
+def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request: Request):
     attempt_rows = table("quiz_attempts").select("*", filters={"id": f"eq.{body.quiz_id}"})
     if not attempt_rows:
         raise HTTPException(status_code=404, detail="Quiz not found")
@@ -109,6 +112,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks):
     if isinstance(questions, str):
         questions = json.loads(questions)
     user_id = attempt["user_id"]
+    require_self(user_id, request)
     concept_node_id = attempt["concept_node_id"]
 
     answer_map = {str(a.question_id): a.selected_label for a in body.answers}
@@ -185,7 +189,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks):
     )
     user_rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
     concept_name = node2_rows[0]["concept_name"] if node2_rows else "Unknown"
-    student_name = user_rows[0]["name"] if user_rows else "Student"
+    student_name = decrypt_if_present(user_rows[0]["name"]) if user_rows else "Student"
 
     existing_ctx = get_quiz_context(user_id, concept_node_id)
     ctx_prompt = (

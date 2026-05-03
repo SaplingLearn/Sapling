@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { signSession, SESSION_MAX_AGE } from '@/lib/sessionToken';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
 const SESSION_SECRET = process.env.SESSION_SECRET;
 
 async function verifyAuthToken(token: string): Promise<string | null> {
@@ -47,38 +46,17 @@ async function verifyAuthToken(token: string): Promise<string | null> {
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { userId, authToken } = body as { userId?: string; authToken?: string };
+  const { authToken } = body as { authToken?: string };
 
   let verifiedUserId: string | null = null;
 
-  if (authToken && SESSION_SECRET) {
-    verifiedUserId = await verifyAuthToken(authToken);
-    if (!verifiedUserId) {
-      return NextResponse.json({ error: 'Invalid or expired auth token' }, { status: 401 });
-    }
-  } else {
-    if (!API_URL) {
-      return NextResponse.json({ error: 'NEXT_PUBLIC_API_URL not configured' }, { status: 500 });
-    }
-    if (!userId || typeof userId !== 'string') {
-      return NextResponse.json({ error: 'Missing userId' }, { status: 400 });
-    }
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-      let res: Response;
-      try {
-        res = await fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal });
-      } finally {
-        clearTimeout(timeout);
-      }
-      if (!res.ok) return NextResponse.json({ error: 'User not found' }, { status: 401 });
-      const data = await res.json();
-      if (data.is_approved !== true) return NextResponse.json({ error: 'Not approved' }, { status: 403 });
-      verifiedUserId = userId;
-    } catch {
-      return NextResponse.json({ error: 'Backend unreachable' }, { status: 502 });
-    }
+  if (!authToken || !SESSION_SECRET) {
+    return NextResponse.json({ error: 'authToken is required' }, { status: 400 });
+  }
+
+  verifiedUserId = await verifyAuthToken(authToken);
+  if (!verifiedUserId) {
+    return NextResponse.json({ error: 'Invalid or expired auth token' }, { status: 401 });
   }
 
   try {

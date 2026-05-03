@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from db.connection import table
+from services.encryption import decrypt_if_present
 from models import (
     CreateRoleBody,
     AssignRoleBody,
@@ -216,8 +217,9 @@ def list_users(request: Request):
     if not users:
         return {"users": []}
 
-    # Attach roles to each user
     for user in users:
+        user["name"] = decrypt_if_present(user.get("name"))
+        user["email"] = decrypt_if_present(user.get("email"))
         roles = table("user_roles").select(
             "roles(id,name,slug,color)",
             filters={"user_id": f"eq.{user['id']}"},

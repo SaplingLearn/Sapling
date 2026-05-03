@@ -11,6 +11,7 @@ pillow
 pypdf
 pypdfium2
 httpx
+cryptography>=42,<46
 mammoth
 python-pptx
 recost
