@@ -99,7 +99,7 @@ type DragState =
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 3;
 
-export function KnowledgeGraph({
+function KnowledgeGraphImpl({
   nodes,
   edges,
   width = 600,
@@ -641,3 +641,5 @@ export function KnowledgeGraph({
     </div>
   );
 }
+
+export const KnowledgeGraph = React.memo(KnowledgeGraphImpl);

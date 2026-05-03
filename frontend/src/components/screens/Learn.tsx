@@ -99,8 +99,10 @@ function LearnInner() {
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
-  const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [draftSeed, setDraftSeed] = useState<string | undefined>(undefined);
+  const [draftSeedKey, setDraftSeedKey] = useState(0);
 
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
@@ -169,6 +171,7 @@ function LearnInner() {
     }
     setTopic(t);
     setMessages([{ id: msgId(), role: "assistant", content: "", loading: true }]);
+    setStarting(true);
     try {
       const res = await startSession(userId, t, mode, selectedCourseId || undefined, sharedCtx);
       setSessionId(res.session_id);
@@ -176,6 +179,8 @@ function LearnInner() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't start session.");
       setMessages([]);
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -208,11 +213,9 @@ function LearnInner() {
     }
   };
 
-  const send = async () => {
-    if (!input.trim() || !sessionId || !userId) return;
-    const userText = input;
+  const send = useCallback(async (userText: string) => {
+    if (!userText.trim() || !sessionId || !userId) return;
     const chatMode = CHAT_MODES.includes(mode) ? mode : "socratic";
-    setInput("");
     setMessages(m => [
       ...m,
       { id: msgId(), role: "user", content: userText },
@@ -235,7 +238,7 @@ function LearnInner() {
     } finally {
       setSending(false);
     }
-  };
+  }, [sessionId, userId, mode, sharedCtx]);
 
   const handleAction = async (action: "hint" | "confused" | "skip") => {
     if (!sessionId || !userId) return;
@@ -280,7 +283,8 @@ function LearnInner() {
       if (res.reply) {
         setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply }]);
       }
-      setInput(`Continue in ${newMode} mode on ${topic}…`);
+      setDraftSeed(`Continue in ${newMode} mode on ${topic}…`);
+      setDraftSeedKey(k => k + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Mode switch failed.");
       setMode(prev);
@@ -327,8 +331,26 @@ function LearnInner() {
 
   const modeOptions = useMemo(() => MODES.map(m => ({ value: m.id, label: m.name, description: m.tip })), []);
 
+  const suggestParam = searchParams.get("suggest");
+  const highlightId = useMemo(() => {
+    // Pre-revamp Learn honored ?suggest=<concept> from the Dashboard
+    // "Learn next" suggestion; restore that here, falling back to the
+    // current topic if no suggestion is active.
+    const suggestMatch = suggestParam
+      ? graphNodes.find(n => n.name.toLowerCase() === suggestParam.trim().toLowerCase())
+      : null;
+    if (suggestMatch) return suggestMatch.id;
+    return graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id;
+  }, [suggestParam, graphNodes, topic]);
+
+  const handleNodeClick = useCallback((n: GraphNode) => {
+    if (!n.is_subject_root) {
+      router.replace(`/learn?topic=${encodeURIComponent(n.name)}&mode=${mode}`, { scroll: false });
+    }
+  }, [router, mode]);
+
   // ────────── Entry screen (no active session) ──────────
-  if (!sessionId && mode !== "quiz") {
+  if (!sessionId && !starting && mode !== "quiz") {
     return (
       <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
         <DisclaimerModal />
@@ -518,11 +540,11 @@ function LearnInner() {
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
             <ChatPanel
               messages={messages}
-              input={input}
-              onInputChange={setInput}
               onSend={send}
               onAction={handleAction}
-              disabled={sending}
+              disabled={sending || starting}
+              draftSeed={draftSeed}
+              draftSeedKey={draftSeedKey}
             />
           </div>
         )}
@@ -556,22 +578,8 @@ function LearnInner() {
                   width={isMobile ? 320 : 280}
                   height={280}
                   variant="organism"
-                  highlightId={(() => {
-                    // Pre-revamp Learn honored ?suggest=<concept> from the Dashboard
-                    // "Learn next" suggestion; restore that here, falling back to the
-                    // current topic if no suggestion is active.
-                    const suggest = searchParams.get("suggest");
-                    const suggestMatch = suggest
-                      ? graphNodes.find(n => n.name.toLowerCase() === suggest.trim().toLowerCase())
-                      : null;
-                    if (suggestMatch) return suggestMatch.id;
-                    return graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id;
-                  })()}
-                  onNodeClick={(n) => {
-                    if (!n.is_subject_root) {
-                      router.replace(`/learn?topic=${encodeURIComponent(n.name)}&mode=${mode}`, { scroll: false });
-                    }
-                  }}
+                  highlightId={highlightId}
+                  onNodeClick={handleNodeClick}
                 />
               </div>
             )}

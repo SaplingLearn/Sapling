@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { MarkdownChat } from "./MarkdownChat";
 
@@ -14,24 +14,25 @@ export interface ChatMsg {
 
 interface ChatPanelProps {
   messages: ChatMsg[];
-  input: string;
-  onInputChange: (v: string) => void;
-  onSend: () => void;
+  onSend: (text: string) => void;
   onAction?: (action: "hint" | "confused" | "skip") => void;
   disabled?: boolean;
   placeholder?: string;
   header?: React.ReactNode;
+  // Optional seed for the input. Bump `draftSeedKey` to apply.
+  draftSeed?: string;
+  draftSeedKey?: number;
 }
 
 export function ChatPanel({
   messages,
-  input,
-  onInputChange,
   onSend,
   onAction,
   disabled,
   placeholder = "Ask or respond…",
   header,
+  draftSeed,
+  draftSeedKey,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -63,81 +64,126 @@ export function ChatPanel({
         {messages.map(m => <Message key={m.id} m={m} />)}
       </div>
 
-      <div
-        style={{
-          padding: "12px 32px 20px",
-          borderTop: "1px solid var(--border)",
-          background: "var(--bg-panel)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
-        {onAction && (
-          <div style={{ display: "flex", gap: 6 }}>
-            <button className="btn btn--sm" onClick={() => onAction("hint")} disabled={disabled} title="Ask for a small nudge">
-              <Icon name="sparkle" size={12} /> Hint
-            </button>
-            <button className="btn btn--sm" onClick={() => onAction("confused")} disabled={disabled} title="Say you're stuck">
-              <Icon name="bolt" size={12} /> I&apos;m confused
-            </button>
-            <button className="btn btn--sm" onClick={() => onAction("skip")} disabled={disabled} title="Skip this concept">
-              <Icon name="chev" size={12} /> Skip
-            </button>
-          </div>
-        )}
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            alignItems: "flex-end",
-            background: "var(--bg-subtle)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-lg)",
-            padding: "10px 14px",
-          }}
-        >
-          <textarea
-            value={input}
-            onChange={e => onInputChange(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                onSend();
-              }
-            }}
-            disabled={disabled}
-            placeholder={placeholder}
-            style={{
-              flex: 1,
-              resize: "none",
-              border: 0,
-              background: "transparent",
-              fontSize: 14,
-              lineHeight: 1.5,
-              outline: "none",
-              padding: "6px 0",
-              fontFamily: "var(--font-sans)",
-              maxHeight: 160,
-              minHeight: 36,
-            }}
-            rows={1}
-          />
-          <button
-            className="btn btn--primary btn--sm"
-            onClick={onSend}
-            disabled={disabled || !input.trim()}
-            aria-label="Send"
-          >
-            <Icon name="send" size={14} />
-          </button>
-        </div>
-      </div>
+      <ChatInputBar
+        onSend={onSend}
+        onAction={onAction}
+        disabled={disabled}
+        placeholder={placeholder}
+        draftSeed={draftSeed}
+        draftSeedKey={draftSeedKey}
+      />
     </div>
   );
 }
 
-function Message({ m }: { m: ChatMsg }) {
+interface ChatInputBarProps {
+  onSend: (text: string) => void;
+  onAction?: (action: "hint" | "confused" | "skip") => void;
+  disabled?: boolean;
+  placeholder: string;
+  draftSeed?: string;
+  draftSeedKey?: number;
+}
+
+const ChatInputBar = React.memo(function ChatInputBar({
+  onSend,
+  onAction,
+  disabled,
+  placeholder,
+  draftSeed,
+  draftSeedKey,
+}: ChatInputBarProps) {
+  const [text, setText] = useState<string>(draftSeed ?? "");
+
+  // Apply seed when parent bumps the key (e.g. after a mode switch).
+  useEffect(() => {
+    if (draftSeedKey === undefined) return;
+    setText(draftSeed ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftSeedKey]);
+
+  const submit = () => {
+    const trimmed = text.trim();
+    if (!trimmed || disabled) return;
+    onSend(trimmed);
+    setText("");
+  };
+
+  return (
+    <div
+      style={{
+        padding: "12px 32px 20px",
+        borderTop: "1px solid var(--border)",
+        background: "var(--bg-panel)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      {onAction && (
+        <div style={{ display: "flex", gap: 6 }}>
+          <button className="btn btn--sm" onClick={() => onAction("hint")} disabled={disabled} title="Ask for a small nudge">
+            <Icon name="sparkle" size={12} /> Hint
+          </button>
+          <button className="btn btn--sm" onClick={() => onAction("confused")} disabled={disabled} title="Say you're stuck">
+            <Icon name="bolt" size={12} /> I&apos;m confused
+          </button>
+          <button className="btn btn--sm" onClick={() => onAction("skip")} disabled={disabled} title="Skip this concept">
+            <Icon name="chev" size={12} /> Skip
+          </button>
+        </div>
+      )}
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "flex-end",
+          background: "var(--bg-subtle)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-lg)",
+          padding: "10px 14px",
+        }}
+      >
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          disabled={disabled}
+          placeholder={placeholder}
+          style={{
+            flex: 1,
+            resize: "none",
+            border: 0,
+            background: "transparent",
+            fontSize: 14,
+            lineHeight: 1.5,
+            outline: "none",
+            padding: "6px 0",
+            fontFamily: "var(--font-sans)",
+            maxHeight: 160,
+            minHeight: 36,
+          }}
+          rows={1}
+        />
+        <button
+          className="btn btn--primary btn--sm"
+          onClick={submit}
+          disabled={disabled || !text.trim()}
+          aria-label="Send"
+        >
+          <Icon name="send" size={14} />
+        </button>
+      </div>
+    </div>
+  );
+});
+
+const Message = React.memo(function Message({ m }: { m: ChatMsg }) {
   const isUser = m.role === "user";
   return (
     <div
@@ -196,4 +242,4 @@ function Message({ m }: { m: ChatMsg }) {
       </div>
     </div>
   );
-}
+});
