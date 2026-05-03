@@ -226,7 +226,7 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         {
             "user_id": user_id,
             "access_token": encrypt(creds.token),
-            "refresh_token": encrypt(creds.refresh_token or ""),
+            "refresh_token": encrypt_if_present(creds.refresh_token),
             "expires_at": creds.expiry.isoformat() if creds.expiry else "",
         },
         on_conflict="user_id",

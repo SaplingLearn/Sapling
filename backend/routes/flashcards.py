@@ -130,10 +130,7 @@ def _get_course_documents(user_id: str, course_name: str) -> list[dict]:
             d["summary"] = decrypt_if_present(d.get("summary"))
             notes_raw = d.get("concept_notes")
             if isinstance(notes_raw, str):
-                try:
-                    d["concept_notes"] = decrypt_json(notes_raw)
-                except Exception:
-                    pass
+                d["concept_notes"] = decrypt_json(notes_raw)
         return docs
     except Exception:
         return []

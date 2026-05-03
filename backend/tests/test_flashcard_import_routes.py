@@ -57,7 +57,7 @@ class TestImportCommit:
         assert r.json()["skipped_duplicates"] == 1
 
     def test_rejects_other_users(self):
-        from services.auth_guard import require_self as _real_require_self
+        from services.auth_guard import _real_require_self
         body = {
             "user_id": "u1",
             "course_id": "c1",

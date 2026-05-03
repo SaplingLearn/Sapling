@@ -53,7 +53,16 @@ def _bypass_session_auth(monkeypatch):
             return None
         return _checker
 
+    auth_guard._real_require_self = auth_guard.require_self
+    auth_guard._real_get_session_user_id = auth_guard.get_session_user_id
+    auth_guard._real_require_admin = auth_guard.require_admin
+    auth_guard._real_require_role = auth_guard.require_role
+
     monkeypatch.setattr(auth_guard, "_decode_session", _decode_session_stub)
+    monkeypatch.setattr(auth_guard, "require_self", _require_self_stub)
+    monkeypatch.setattr(auth_guard, "get_session_user_id", _get_session_user_id_stub)
+    monkeypatch.setattr(auth_guard, "require_admin", _require_admin_stub)
+    monkeypatch.setattr(auth_guard, "require_role", _require_role_stub)
 
     for mod_name in list(sys.modules):
         if not mod_name.startswith("routes."):

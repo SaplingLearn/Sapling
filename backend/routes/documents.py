@@ -237,10 +237,7 @@ def list_documents(user_id: str, request: Request):
         d["summary"] = decrypt_if_present(d.get("summary"))
         notes_raw = d.get("concept_notes")
         if isinstance(notes_raw, str):
-            try:
-                d["concept_notes"] = decrypt_json(notes_raw)
-            except Exception:
-                pass
+            d["concept_notes"] = decrypt_json(notes_raw)
     return {"documents": docs}
 
 
@@ -369,10 +366,7 @@ async def upload_document(
     response["summary"] = decrypt_if_present(response.get("summary"))
     notes_raw = response.get("concept_notes")
     if isinstance(notes_raw, str):
-        try:
-            response["concept_notes"] = decrypt_json(notes_raw)
-        except Exception:
-            pass
+        response["concept_notes"] = decrypt_json(notes_raw)
     response["categories"] = ai.get("categories", [])
     return response
 

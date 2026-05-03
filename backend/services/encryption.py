@@ -114,4 +114,11 @@ def encrypt_json(value: dict | list) -> str:
 
 
 def decrypt_json(value: str) -> dict | list:
-    return json.loads(decrypt(value))
+    try:
+        return json.loads(decrypt(value))
+    except Exception as e:
+        logger.warning("decrypt_json fallback to plaintext: %s", e)
+        try:
+            return json.loads(value)
+        except Exception:
+            raise e
