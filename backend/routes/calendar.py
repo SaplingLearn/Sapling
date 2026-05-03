@@ -20,6 +20,7 @@ from db.connection import table
 from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
 from services.auth_guard import require_self, get_session_user_id
 from services.calendar_service import extract_assignments_from_file, insert_new_assignments
+from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
 
 try:
     from google_auth_oauthlib.flow import Flow
@@ -37,8 +38,8 @@ router = APIRouter()
 
 def _get_refreshed_credentials(token_row: dict) -> "Credentials":
     creds = Credentials(
-        token=token_row["access_token"],  # ENCRYPTED LATER
-        refresh_token=token_row["refresh_token"],  # ENCRYPTED LATER
+        token=decrypt(token_row["access_token"]),
+        refresh_token=decrypt(token_row["refresh_token"]),
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
         token_uri="https://oauth2.googleapis.com/token",
@@ -61,7 +62,7 @@ def _get_refreshed_credentials(token_row: dict) -> "Credentials":
         creds.refresh(Request())
         table("oauth_tokens").update(
             {
-                "access_token": creds.token,  # ENCRYPTED LATER
+                "access_token": encrypt(creds.token),
                 "expires_at": creds.expiry.isoformat() if creds.expiry else "",
             },
             filters={"user_id": f"eq.{token_row['user_id']}"},
@@ -74,7 +75,7 @@ def _require_google_creds(user_id: str) -> "Credentials":
     if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=400, detail="Google Calendar not configured")
     token_rows = table("oauth_tokens").select(
-        "user_id,access_token,refresh_token,expires_at",  # ENCRYPTED LATER
+        "user_id,access_token,refresh_token,expires_at",
         filters={"user_id": f"eq.{user_id}"},
     )
     if not token_rows:
@@ -114,7 +115,7 @@ def save_assignments(body: SaveAssignmentsBody, request: FastAPIRequest):
             "course_id": a.course_id,
             "due_date": a.due_date,
             "assignment_type": a.assignment_type,
-            "notes": a.notes,  # ENCRYPTED LATER
+            "notes": encrypt_if_present(a.notes),
         }
         for a in body.assignments
     ]
@@ -127,7 +128,7 @@ def get_upcoming(user_id: str, request: FastAPIRequest):
     require_self(user_id, request)
     today = datetime.utcnow().strftime("%Y-%m-%d")
     rows = table("assignments").select(
-        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,course_code,course_name,courses!left(course_code,course_name)",  # ENCRYPTED LATER (notes)
+        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,course_code,course_name,courses!left(course_code,course_name)",
         filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
         order="due_date.asc",
         limit=20,
@@ -141,7 +142,7 @@ def get_upcoming(user_id: str, request: FastAPIRequest):
             "title": r["title"],
             "due_date": r["due_date"],
             "assignment_type": r.get("assignment_type"),
-            "notes": r.get("notes"),  # ENCRYPTED LATER
+            "notes": decrypt_if_present(r.get("notes")),
             "google_event_id": r.get("google_event_id"),
             "course_id": r.get("course_id"),
             "course_code": course.get("course_code") or r.get("course_code") or "",
@@ -155,7 +156,7 @@ def get_all_assignments(user_id: str, request: FastAPIRequest):
     """Return all assignments for a user (past and future) for the calendar view."""
     require_self(user_id, request)
     rows = table("assignments").select(
-        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,course_code,course_name,courses!left(course_code,course_name)",  # ENCRYPTED LATER (notes)
+        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,course_code,course_name,courses!left(course_code,course_name)",
         filters={"user_id": f"eq.{user_id}"},
         order="due_date.asc",
     )
@@ -168,7 +169,7 @@ def get_all_assignments(user_id: str, request: FastAPIRequest):
             "title": r["title"],
             "due_date": r["due_date"],
             "assignment_type": r.get("assignment_type"),
-            "notes": r.get("notes"),  # ENCRYPTED LATER
+            "notes": decrypt_if_present(r.get("notes")),
             "google_event_id": r.get("google_event_id"),
             "course_id": r.get("course_id"),
             "course_code": course.get("course_code") or r.get("course_code") or "",
@@ -190,7 +191,7 @@ def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
     if not existing:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    # Whitelist non-sensitive fields. `notes` is excluded — ENCRYPTED LATER.
+    # Whitelist non-sensitive fields. `notes` is excluded; edit notes via /save flow.
     ALLOWED = {"title", "course_id", "due_date", "assignment_type"}
     patch = {k: v for k, v in body.items() if k in ALLOWED}
     if not patch:
@@ -244,10 +245,10 @@ def suggest_study_blocks(body: StudyBlockBody, request: FastAPIRequest):
 def calendar_status(user_id: str, request: FastAPIRequest):
     require_self(user_id, request)
     rows = table("oauth_tokens").select(
-        "access_token,expires_at",  # ENCRYPTED LATER (access_token)
+        "access_token,expires_at",
         filters={"user_id": f"eq.{user_id}"},
     )
-    if not rows or not rows[0]["access_token"]:  # ENCRYPTED LATER
+    if not rows or not rows[0].get("access_token"):
         return {"connected": False}
     return {"connected": True, "expires_at": rows[0]["expires_at"]}
 
@@ -313,7 +314,7 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
     service = build("calendar", "v3", credentials=creds)
 
     unsynced = table("assignments").select(
-        "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",  # ENCRYPTED LATER (notes)
+        "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",
         filters={
             "user_id": f"eq.{body.user_id}",
             "google_event_id": "is.null",
@@ -321,7 +322,7 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
     )
     # Also catch empty-string google_event_id
     unsynced += table("assignments").select(
-        "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",  # ENCRYPTED LATER (notes)
+        "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",
         filters={
             "user_id": f"eq.{body.user_id}",
             "google_event_id": "eq.",
@@ -340,7 +341,7 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
 
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
-            "description": a.get("notes") or "",  # ENCRYPTED LATER
+            "description": decrypt_if_present(a.get("notes")) or "",
             "start": {"date": a["due_date"]},
             "end": {"date": a["due_date"]},
         }
@@ -366,7 +367,7 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
     skipped = 0
     for aid in body.assignment_ids:
         rows = table("assignments").select(
-            "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",  # ENCRYPTED LATER (notes)
+            "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",
             filters={"id": f"eq.{aid}"},
         )
         if not rows:
@@ -384,7 +385,7 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
 
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
-            "description": a.get("notes") or "",  # ENCRYPTED LATER
+            "description": decrypt_if_present(a.get("notes")) or "",
             "start": {"date": a["due_date"]},
             "end": {"date": a["due_date"]},
         }
