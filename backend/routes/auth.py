@@ -25,6 +25,7 @@ from config import (
     SESSION_SECRET,
 )
 from db.connection import table
+from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
 from services.auth_guard import get_session_user_id
 
 try:
@@ -169,18 +170,18 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
     service = build("oauth2", "v2", credentials=creds)
     user_info = service.userinfo().get().execute()
 
-    email = user_info.get("email", "")  # ENCRYPTED LATER
+    email = user_info.get("email", "")
     google_id = user_info.get("id", "")
-    name = user_info.get("name", "")  # ENCRYPTED LATER
+    name = user_info.get("name", "")
     avatar_url = user_info.get("picture", "")
 
     # Split Google display name into first/last for the new columns
-    name_parts = name.split(None, 1)  # ENCRYPTED LATER
-    first_name = name_parts[0] if name_parts else ""  # ENCRYPTED LATER
-    last_name = name_parts[1] if len(name_parts) > 1 else ""  # ENCRYPTED LATER
+    name_parts = name.split(None, 1)
+    first_name = name_parts[0] if name_parts else ""
+    last_name = name_parts[1] if len(name_parts) > 1 else ""
 
     # Restrict to @bu.edu accounts
-    if not email.endswith("@bu.edu"):  # ENCRYPTED LATER
+    if not email.endswith("@bu.edu"):
         return RedirectResponse(
             f"{FRONTEND_URL}/auth?error=invalid_domain"
         )
@@ -192,47 +193,38 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         is_approved = existing[0]["is_approved"]
         # Update name/avatar in case they changed
         table("users").update(
-            {"name": name, "first_name": first_name, "last_name": last_name, "avatar_url": avatar_url, "email": email},  # ENCRYPTED LATER
+            {
+                "name": encrypt_if_present(name),
+                "first_name": encrypt_if_present(first_name),
+                "last_name": encrypt_if_present(last_name),
+                "avatar_url": avatar_url,
+                "email": encrypt_if_present(email),
+            },
             filters={"id": f"eq.{user_id}"},
         )
     else:
-        # Check if a user with this email exists (migration from old system)
-        email_match = table("users").select("id,is_approved", filters={"email": f"eq.{email}"})  # ENCRYPTED LATER
-        if email_match:
-            user_id = email_match[0]["id"]
-            is_approved = email_match[0]["is_approved"]
-            table("users").update(
-                {
-                    "google_id": google_id,
-                    "name": name,  # ENCRYPTED LATER
-                    "first_name": first_name,  # ENCRYPTED LATER
-                    "last_name": last_name,  # ENCRYPTED LATER
-                    "avatar_url": avatar_url,
-                    "auth_provider": "google",
-                },
-                filters={"id": f"eq.{user_id}"},
-            )
-        else:
-            # Create new user
-            user_id = f"user_{google_id}"
-            is_approved = False
-            table("users").insert({
-                "id": user_id,
-                "name": name,  # ENCRYPTED LATER
-                "first_name": first_name,  # ENCRYPTED LATER
-                "last_name": last_name,  # ENCRYPTED LATER
-                "email": email,  # ENCRYPTED LATER
-                "google_id": google_id,
-                "avatar_url": avatar_url,
-                "auth_provider": "google",
-            })
+        # Email-based account merge is disabled because emails are now encrypted
+        # with random nonces; equality lookups by plaintext email cannot match.
+        # New sign-ins for users without a google_id always create a fresh row.
+        user_id = f"user_{google_id}"
+        is_approved = False
+        table("users").insert({
+            "id": user_id,
+            "name": encrypt_if_present(name),
+            "first_name": encrypt_if_present(first_name),
+            "last_name": encrypt_if_present(last_name),
+            "email": encrypt_if_present(email),
+            "google_id": google_id,
+            "avatar_url": avatar_url,
+            "auth_provider": "google",
+        })
 
     # Store OAuth tokens (calendar access included)
     table("oauth_tokens").upsert(
         {
             "user_id": user_id,
-            "access_token": creds.token,  # ENCRYPTED LATER
-            "refresh_token": creds.refresh_token or "",  # ENCRYPTED LATER
+            "access_token": encrypt(creds.token),
+            "refresh_token": encrypt(creds.refresh_token or ""),
             "expires_at": creds.expiry.isoformat() if creds.expiry else "",
         },
         on_conflict="user_id",
@@ -253,7 +245,6 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
 
     params = urlencode({
         "user_id": user_id,
-        "name": name,  # ENCRYPTED LATER
         "avatar": avatar_url,
         "is_approved": "true",
         **({"auth_token": auth_token} if auth_token else {}),
