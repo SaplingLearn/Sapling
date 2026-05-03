@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from db.connection import table
 from models import OnboardingBody
 from services.auth_guard import require_self
+from services.encryption import encrypt_if_present
 
 router = APIRouter()
 
@@ -36,12 +37,12 @@ def save_onboarding_profile(body: OnboardingBody, request: Request):
         raise HTTPException(status_code=404, detail="User not found")
 
     # Update user profile fields
-    name = f"{body.first_name} {body.last_name}".strip()  # ENCRYPTED LATER
+    name = f"{body.first_name} {body.last_name}".strip()
     table("users").update(
         {
-            "name": name,  # ENCRYPTED LATER
-            "first_name": body.first_name,  # ENCRYPTED LATER
-            "last_name": body.last_name,  # ENCRYPTED LATER
+            "name": encrypt_if_present(name),
+            "first_name": encrypt_if_present(body.first_name),
+            "last_name": encrypt_if_present(body.last_name),
             "year": body.year,
             "majors": body.majors,
             "minors": body.minors,
