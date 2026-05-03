@@ -1,5 +1,13 @@
 import Link from "next/link";
 
+const FOOTER_LINKS = [
+  { label: "Home", href: "/" },
+  { label: "About", href: "/about" },
+  { label: "Careers", href: "/careers" },
+  { label: "Terms of Service", href: "/terms" },
+  { label: "Privacy Policy", href: "/privacy" },
+];
+
 const differentiators = [
   "Your knowledge graph is yours. It updates in real time based on your actual performance, not just what you've clicked through.",
   "Three distinct teaching modes mean you're never locked into one way of learning.",
@@ -31,29 +39,66 @@ export default function AboutPage() {
         color: "var(--text)",
       }}
     >
+      <header
+        style={{
+          borderBottom: "1px solid var(--border)",
+          background: "var(--bg-topbar)",
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 1280,
+            margin: "0 auto",
+            padding: "0 24px",
+            height: 52,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <Link
+            href="/"
+            style={{ display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+          >
+            <img
+              src="/sapling-icon.svg"
+              alt="Sapling"
+              style={{ width: 26, height: 26, flexShrink: 0, position: "relative", top: -2 }}
+            />
+            <span
+              style={{
+                fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
+                fontWeight: 700,
+                fontSize: 20,
+                color: "#1a5c2a",
+                letterSpacing: "-0.02em",
+                lineHeight: 1.1,
+              }}
+            >
+              Sapling
+            </span>
+          </Link>
+          <Link
+            href="/"
+            style={{ fontSize: 13, color: "var(--text-muted)", textDecoration: "none" }}
+          >
+            ← Back to home
+          </Link>
+        </div>
+      </header>
+
       <div
         style={{
           flex: 1,
           width: "100%",
-          maxWidth: 720,
+          maxWidth: 880,
           margin: "0 auto",
           padding: "64px 32px",
         }}
       >
-        <div className="fade-up anim-d0" style={{ marginBottom: 48 }}>
-          <Link
-            href="/"
-            style={{
-              fontSize: 13,
-              color: "var(--text-muted)",
-              textDecoration: "none",
-              transition: "color var(--dur-fast) var(--ease)",
-            }}
-          >
-            ← Back to Sapling
-          </Link>
-        </div>
-
         <h1
           className="h-serif fade-up anim-d1"
           style={{ fontSize: 48, marginBottom: 32, color: "var(--text)" }}
@@ -213,30 +258,52 @@ export default function AboutPage() {
         style={{
           borderTop: "1px solid var(--border)",
           background: "var(--bg-subtle)",
-          padding: "32px",
+          padding: "48px 32px",
         }}
       >
         <div
           style={{
-            maxWidth: 720,
+            maxWidth: 1280,
             margin: "0 auto",
             display: "flex",
             flexWrap: "wrap",
-            justifyContent: "center",
+            alignItems: "center",
+            justifyContent: "space-between",
             gap: 24,
-            fontSize: 13,
-            color: "var(--text-muted)",
           }}
         >
-          <Link href="/about" style={{ color: "inherit", textDecoration: "none" }}>
-            About
-          </Link>
-          <Link href="/terms" style={{ color: "inherit", textDecoration: "none" }}>
-            Terms of Service
-          </Link>
-          <Link href="/privacy" style={{ color: "inherit", textDecoration: "none" }}>
-            Privacy Policy
-          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 20, height: 20 }} />
+            <span style={{ fontSize: 14, color: "var(--text-muted)" }}>Sapling · © 2026</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 24 }}>
+            {FOOTER_LINKS.map(({ label, href }) => (
+              <Link
+                key={label}
+                href={href}
+                style={{
+                  fontSize: 14,
+                  color: "var(--text-muted)",
+                  textDecoration: "none",
+                }}
+              >
+                {label}
+              </Link>
+            ))}
+          </div>
+        </div>
+        <div
+          style={{
+            maxWidth: 1280,
+            margin: "32px auto 0",
+            paddingTop: 24,
+            borderTop: "1px solid var(--border)",
+            textAlign: "center",
+          }}
+        >
+          <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
+          </p>
         </div>
       </footer>
     </div>
