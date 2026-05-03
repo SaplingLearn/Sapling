@@ -189,6 +189,7 @@ function LearnInner() {
       setSessionId(s.id);
       setTopic(s.topic);
       setMode(normalizeMode(s.mode));
+      setSelectedCourseId(s.course_id || "");
       setMessages(
         (res.messages ?? []).map(m => ({
           id: msgId(),
@@ -369,27 +370,52 @@ function LearnInner() {
     return ids;
   }, [topicNode, graphEdges]);
 
+  const cardCourseId = topicNode?.course_id || selectedCourseId || null;
+
   const progressItems = useMemo(() => {
-    if (!topicNode) return [];
-    return graphNodes
-      .filter(n => neighborIds.has(n.id) && !n.is_subject_root)
-      .slice(0, 6)
-      .map(n => ({ name: n.name, complete: n.mastery_tier === "mastered" }));
-  }, [graphNodes, neighborIds, topicNode]);
+    if (topicNode && neighborIds.size > 0) {
+      return graphNodes
+        .filter(n => neighborIds.has(n.id) && !n.is_subject_root)
+        .slice(0, 6)
+        .map(n => ({ name: n.name, complete: n.mastery_tier === "mastered" }));
+    }
+    if (cardCourseId) {
+      return graphNodes
+        .filter(n => n.course_id === cardCourseId && !n.is_subject_root)
+        .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
+        .slice(0, 6)
+        .map(n => ({ name: n.name, complete: n.mastery_tier === "mastered" }));
+    }
+    return [];
+  }, [graphNodes, neighborIds, topicNode, cardCourseId]);
 
   const relatedItems = useMemo(() => {
-    if (!topicNode) return [] as string[];
-    return graphNodes
-      .filter(n =>
-        n.id !== topicNode.id &&
-        !n.is_subject_root &&
-        !neighborIds.has(n.id) &&
-        n.course_id === topicNode.course_id,
-      )
-      .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
-      .slice(0, 4)
-      .map(n => n.name);
-  }, [graphNodes, neighborIds, topicNode]);
+    if (topicNode) {
+      return graphNodes
+        .filter(n =>
+          n.id !== topicNode.id &&
+          !n.is_subject_root &&
+          !neighborIds.has(n.id) &&
+          n.course_id === topicNode.course_id,
+        )
+        .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
+        .slice(0, 4)
+        .map(n => n.name);
+    }
+    if (cardCourseId) {
+      const topicLower = topic.trim().toLowerCase();
+      return graphNodes
+        .filter(n =>
+          !n.is_subject_root &&
+          n.course_id === cardCourseId &&
+          n.name.toLowerCase() !== topicLower,
+        )
+        .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
+        .slice(0, 4)
+        .map(n => n.name);
+    }
+    return [];
+  }, [graphNodes, neighborIds, topicNode, cardCourseId, topic]);
 
   const startSessionFromConcept = useCallback((concept: string) => {
     setSessionId(null);
