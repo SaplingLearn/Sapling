@@ -216,6 +216,7 @@ class TestListCosmetics:
 class TestUnapproveUser:
     def test_unapproves_user(self):
         with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
              patch("routes.admin.log_admin_action") as audit:
             t.return_value.update.return_value = [{}]
             r = client.patch("/api/admin/users/u1/unapprove?user_id=admin1")
@@ -223,10 +224,13 @@ class TestUnapproveUser:
         assert r.json()["unapproved"] is True
         audit.assert_called_once()
         assert audit.call_args.kwargs["action"] == "user.unapprove"
+        assert audit.call_args.kwargs["target_id"] == "u1"
+        assert audit.call_args.kwargs["actor_id"] == "admin1"
 
     def test_cannot_unapprove_self(self):
-        with patch("routes.admin.get_session_user_id", return_value="u1"), \
-             _mock_admin():
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"):
             r = client.patch("/api/admin/users/u1/unapprove?user_id=u1")
         assert r.status_code == 409
         assert "yourself" in r.json()["detail"].lower()
+        t.return_value.update.assert_not_called()
