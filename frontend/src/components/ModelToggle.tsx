@@ -27,8 +27,47 @@ export function ModelToggle({
   onChange: (v: ModelPref) => void;
 }) {
   const [tooltip, setTooltip] = useState(false);
-  // Fast is the default; Smart is the opt-in upgrade, so it gets the highlight.
-  const isSmart = pref === "smart";
+  const options: {
+    value: ModelPref;
+    label: string;
+    color: string;
+    soft: string;
+    border: string;
+  }[] = [
+    {
+      value: "fast",
+      label: "Fast",
+      color: "#3B82F6",
+      soft: "rgba(59, 130, 246, 0.12)",
+      border: "rgba(59, 130, 246, 0.35)",
+    },
+    {
+      value: "smart",
+      label: "Smart",
+      color: "#8A63D2",
+      soft: "rgba(138, 99, 210, 0.14)",
+      border: "rgba(138, 99, 210, 0.4)",
+    },
+  ];
+
+  const activeIndex = pref === "smart" ? 1 : 0;
+  const active = options[activeIndex];
+
+  const segmentStyle = (isActive: boolean, color: string): React.CSSProperties => ({
+    width: 56,
+    padding: "4px 0",
+    fontSize: 12,
+    fontWeight: isActive ? 600 : 500,
+    textAlign: "center",
+    border: "none",
+    background: "transparent",
+    color: isActive ? color : "var(--text-dim)",
+    cursor: "pointer",
+    borderRadius: "var(--r-full)",
+    position: "relative",
+    zIndex: 1,
+    transition: "color var(--dur-fast) var(--ease)",
+  });
 
   return (
     <div
@@ -38,49 +77,49 @@ export function ModelToggle({
       onFocus={() => setTooltip(true)}
       onBlur={() => setTooltip(false)}
     >
-      <button
-        role="switch"
-        aria-checked={isSmart}
-        aria-label={`Tutor model — ${isSmart ? "Smart: stronger reasoning, slower" : "Fast: quicker replies, default"}`}
-        onClick={() => onChange(isSmart ? "fast" : "smart")}
-        className="btn btn--sm"
+      <div
+        role="radiogroup"
+        aria-label="Tutor model"
         style={{
-          padding: "5px 10px",
-          background: isSmart ? "var(--accent-soft)" : "var(--bg-subtle)",
-          color: isSmart ? "var(--accent)" : "var(--text-dim)",
-          borderColor: isSmart ? "var(--accent-border)" : "var(--border)",
-          fontSize: 12,
+          position: "relative",
           display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
+          padding: 2,
+          background: "var(--bg-subtle)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-full)",
         }}
       >
         <span
           aria-hidden
           style={{
-            width: 24,
-            height: 12,
+            position: "absolute",
+            top: 2,
+            left: 2,
+            width: 56,
+            height: "calc(100% - 4px)",
             borderRadius: "var(--r-full)",
-            background: isSmart ? "var(--accent)" : "var(--border-strong)",
-            position: "relative",
-            transition: "background var(--dur-fast) var(--ease)",
+            background: active.soft,
+            border: `1px solid ${active.border}`,
+            transform: `translateX(${activeIndex * 56}px)`,
+            transition:
+              "transform var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)",
           }}
-        >
-          <span
-            style={{
-              position: "absolute",
-              top: 1,
-              left: isSmart ? 13 : 1,
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              background: "#fff",
-              transition: "left var(--dur-fast) var(--ease)",
-            }}
-          />
-        </span>
-        {isSmart ? "Smart" : "Fast"}
-      </button>
+        />
+        {options.map((opt) => {
+          const isActive = pref === opt.value;
+          return (
+            <button
+              key={opt.value}
+              role="radio"
+              aria-checked={isActive}
+              onClick={() => onChange(opt.value)}
+              style={segmentStyle(isActive, opt.color)}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
       {tooltip && (
         <div
           role="tooltip"
@@ -103,8 +142,8 @@ export function ModelToggle({
           <strong style={{ color: "var(--text)", display: "block", marginBottom: 4 }}>
             Tutor model
           </strong>
-          Fast is the default — quicker replies. Flip on Smart for stronger reasoning when you
-          want depth and don&apos;t mind waiting.
+          Fast is the default — quicker replies. Switch to Smart for stronger reasoning when
+          you want depth and don&apos;t mind waiting.
         </div>
       )}
     </div>

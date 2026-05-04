@@ -22,18 +22,20 @@ export function AIDisclaimerChip() {
             display: "inline-flex",
             alignItems: "center",
             gap: 4,
-            padding: "3px 9px",
-            background: "var(--bg-soft)",
+            padding: "5px 12px",
+            background: "var(--bg-subtle)",
             border: "1px solid var(--border)",
-            borderRadius: 20,
+            borderRadius: "var(--r-full)",
             cursor: "pointer",
-            fontSize: 11,
+            fontSize: 12,
             color: "var(--text-dim)",
             fontWeight: 500,
             letterSpacing: "0.02em",
+            lineHeight: 1.2,
           }}
         >
-          AI Guidelines
+          <span aria-hidden style={{ fontSize: 10, opacity: 0.85 }}>✦</span>
+          AI-assisted
         </button>
 
         {tooltipVisible && (
