@@ -11,7 +11,7 @@ from db.connection import table
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody
 from services.auth_guard import require_self, get_session_user_id
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
-from services.gemini_service import call_gemini_multiturn, extract_graph_update
+from services.gemini_service import MODEL_SMART, call_gemini_multiturn, extract_graph_update
 from services.graph_service import get_graph, apply_graph_update
 
 router = APIRouter()
@@ -293,7 +293,7 @@ def start_session(body: StartSessionBody, request: Request):
     )
 
     try:
-        raw = call_gemini_multiturn(system_prompt, [], user_message)
+        raw = call_gemini_multiturn(system_prompt, [], user_message, model=MODEL_SMART)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
@@ -339,7 +339,7 @@ def chat(body: ChatBody, request: Request):
     )
 
     try:
-        raw = call_gemini_multiturn(system_prompt, history, body.message)
+        raw = call_gemini_multiturn(system_prompt, history, body.message, model=MODEL_SMART)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
@@ -558,7 +558,7 @@ def action(body: ActionBody, request: Request):
     action_message = f"[ACTION: {action_prompts.get(body.action_type, '')}]"
 
     try:
-        raw = call_gemini_multiturn(system_prompt, history, action_message)
+        raw = call_gemini_multiturn(system_prompt, history, action_message, model=MODEL_SMART)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
