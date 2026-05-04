@@ -488,3 +488,66 @@ class TestAchievementAudits:
             })
         assert r.status_code == 200
         assert audit.call_args.kwargs["action"] == "trigger.create"
+
+
+class TestRoleCosmeticLinks:
+    def test_list_links_for_role(self):
+        rows = [{"role_id": "rA", "cosmetic_id": "c1"}]
+        with _mock_admin(), patch("routes.admin.table") as t:
+            t.return_value.select.return_value = rows
+            r = client.get("/api/admin/roles/rA/cosmetics")
+        assert r.status_code == 200
+        assert r.json() == {"links": rows}
+
+    def test_link(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.upsert.return_value = [{"role_id": "rA", "cosmetic_id": "c1"}]
+            r = client.post("/api/admin/roles/cosmetics",
+                            json={"role_id": "rA", "cosmetic_id": "c1"})
+        assert r.status_code == 200
+        assert r.json()["linked"] is True
+        assert audit.call_args.kwargs["action"] == "role_cosmetic.link"
+
+    def test_unlink(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.delete.return_value = [{}]
+            r = client.request("DELETE", "/api/admin/roles/cosmetics",
+                               json={"role_id": "rA", "cosmetic_id": "c1"})
+        assert r.status_code == 200
+        assert r.json()["unlinked"] is True
+        assert audit.call_args.kwargs["action"] == "role_cosmetic.unlink"
+
+
+class TestCosmeticAudits:
+    def test_create_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.insert.return_value = [{"id": "c9"}]
+            r = client.post("/api/admin/cosmetics", json={
+                "type": "avatar_frame", "name": "Z", "slug": "z", "rarity": "common",
+            })
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "cosmetic.create"
+
+    def test_update_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.update.return_value = [{}]
+            r = client.patch("/api/admin/cosmetics/c1", json={"name": "Z2"})
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "cosmetic.update"
+
+    def test_delete_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.delete.return_value = [{}]
+            r = client.delete("/api/admin/cosmetics/c1")
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "cosmetic.delete"

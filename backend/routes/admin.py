@@ -19,6 +19,7 @@ from models import (
     GrantAchievementBody,
     CreateCosmeticBody,
     LinkAchievementCosmeticBody,
+    LinkRoleCosmeticBody,
 )
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
@@ -126,6 +127,48 @@ def revoke_role(body: RevokeRoleBody, request: Request):
         payload={"user_id": body.user_id},
     )
     return {"revoked": True}
+
+
+@router.get("/roles/{role_id}/cosmetics")
+def list_role_cosmetics(role_id: str, request: Request):
+    require_admin(request)
+    rows = table("role_cosmetics").select(
+        "role_id,cosmetic_id",
+        filters={"role_id": f"eq.{role_id}"},
+    )
+    return {"links": rows or []}
+
+
+@router.post("/roles/cosmetics")
+def link_role_cosmetic(body: LinkRoleCosmeticBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    table("role_cosmetics").upsert(
+        {"role_id": body.role_id, "cosmetic_id": body.cosmetic_id},
+        on_conflict="role_id,cosmetic_id",
+    )
+    log_admin_action(
+        actor_id=actor, action="role_cosmetic.link",
+        target_type="role_cosmetic", target_id=body.role_id,
+        payload={"cosmetic_id": body.cosmetic_id},
+    )
+    return {"linked": True}
+
+
+@router.delete("/roles/cosmetics")
+def unlink_role_cosmetic(body: LinkRoleCosmeticBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    table("role_cosmetics").delete(filters={
+        "role_id": f"eq.{body.role_id}",
+        "cosmetic_id": f"eq.{body.cosmetic_id}",
+    })
+    log_admin_action(
+        actor_id=actor, action="role_cosmetic.unlink",
+        target_type="role_cosmetic", target_id=body.role_id,
+        payload={"cosmetic_id": body.cosmetic_id},
+    )
+    return {"unlinked": True}
 
 
 @router.delete("/roles/{role_id}")
@@ -332,6 +375,7 @@ def list_cosmetics(request: Request):
 @router.post("/cosmetics")
 def create_cosmetic(body: CreateCosmeticBody, request: Request):
     require_admin(request)
+    actor = get_session_user_id(request)
     result = table("cosmetics").insert({
         "type": body.type,
         "name": body.name,
@@ -341,24 +385,39 @@ def create_cosmetic(body: CreateCosmeticBody, request: Request):
         "rarity": body.rarity,
         "unlock_source": body.unlock_source,
     })
+    log_admin_action(
+        actor_id=actor, action="cosmetic.create",
+        target_type="cosmetic", target_id=result[0]["id"] if result else None,
+        payload={"slug": body.slug, "name": body.name, "type": body.type},
+    )
     return {"cosmetic": result[0] if result else None}
 
 
 @router.patch("/cosmetics/{cosmetic_id}")
 def update_cosmetic(cosmetic_id: str, request: Request, body: dict = {}):
     require_admin(request)
+    actor = get_session_user_id(request)
     allowed = {"name", "asset_url", "css_value", "rarity", "unlock_source"}
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
     table("cosmetics").update(updates, filters={"id": f"eq.{cosmetic_id}"})
+    log_admin_action(
+        actor_id=actor, action="cosmetic.update",
+        target_type="cosmetic", target_id=cosmetic_id, payload=updates,
+    )
     return {"updated": True}
 
 
 @router.delete("/cosmetics/{cosmetic_id}")
 def delete_cosmetic(cosmetic_id: str, request: Request):
     require_admin(request)
+    actor = get_session_user_id(request)
     table("cosmetics").delete(filters={"id": f"eq.{cosmetic_id}"})
+    log_admin_action(
+        actor_id=actor, action="cosmetic.delete",
+        target_type="cosmetic", target_id=cosmetic_id,
+    )
     return {"deleted": True}
 
 
