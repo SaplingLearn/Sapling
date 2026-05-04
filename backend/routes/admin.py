@@ -489,4 +489,36 @@ def revoke_allowlist(body: AllowlistEmailBody, request: Request):
         target_type="allowlist", target_id=body.email,
         payload={"email": body.email},
     )
+
+
+# ── Audit log ────────────────────────────────────────────────────────────────
+
+@router.get("/audit")
+def list_audit(
+    request: Request,
+    page: int = 1,
+    page_size: int = 50,
+    action: Optional[str] = None,
+    target_type: Optional[str] = None,
+    actor_id: Optional[str] = None,
+):
+    require_admin(request)
+    page = max(1, int(page))
+    page_size = max(1, min(200, int(page_size)))
+    offset = (page - 1) * page_size
+    filters: dict = {}
+    if action:
+        filters["action"] = f"eq.{action}"
+    if target_type:
+        filters["target_type"] = f"eq.{target_type}"
+    if actor_id:
+        filters["actor_id"] = f"eq.{actor_id}"
+    rows, total = table("admin_audit_log").select_with_count(
+        columns="id,actor_id,action,target_type,target_id,payload,created_at",
+        filters=filters or None,
+        order="created_at.desc",
+        limit=page_size,
+        offset=offset,
+    )
+    return {"entries": rows, "total": total, "page": page, "page_size": page_size}
     return {"email": rows[0]}

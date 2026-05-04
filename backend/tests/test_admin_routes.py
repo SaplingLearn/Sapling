@@ -572,3 +572,28 @@ class TestAllowlistAudits:
             r = client.post("/api/admin/allowlist/revoke", json={"email": "A@B.c"})
         assert r.status_code == 200
         assert audit.call_args.kwargs["action"] == "allowlist.revoke"
+
+
+class TestAuditLogRead:
+    def test_returns_paginated_audit_with_filters(self):
+        rows = [
+            {"id": "1", "actor_id": "admin1", "action": "user.approve",
+             "target_type": "user", "target_id": "u1", "payload": {},
+             "created_at": "2026-05-04T00:00:00Z"},
+        ]
+        with _mock_admin(), patch("routes.admin.table") as t:
+            t.return_value.select_with_count.return_value = (rows, 1)
+            r = client.get("/api/admin/audit?action=user.approve&page=1&page_size=10")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["entries"] == rows
+        assert body["total"] == 1
+        assert body["page"] == 1
+        assert body["page_size"] == 10
+
+    def test_caps_page_size(self):
+        with _mock_admin(), patch("routes.admin.table") as t:
+            t.return_value.select_with_count.return_value = ([], 0)
+            r = client.get("/api/admin/audit?page_size=9999")
+        assert r.status_code == 200
+        assert r.json()["page_size"] == 200
