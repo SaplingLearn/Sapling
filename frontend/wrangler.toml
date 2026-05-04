@@ -16,6 +16,7 @@ directory = ".open-next/assets"
 [vars]
 NEXT_PUBLIC_API_URL = "https://api.saplinglearn.com"
 BACKEND_URL = "https://api.saplinglearn.com"
+COOKIE_DOMAIN = ".saplinglearn.com"
 
 [observability]
 enabled = true
