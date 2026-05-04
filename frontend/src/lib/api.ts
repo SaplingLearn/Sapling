@@ -191,7 +191,7 @@ export const getAllAssignments = (userId: string) =>
 export const extractSyllabus = (formData: FormData, userId?: string): Promise<any> => {
   if (IS_LOCAL_MODE) return Promise.resolve({ assignments: [] });
   if (userId) formData.set('user_id', userId);
-  return fetch(`${API_URL}/api/calendar/extract`, { method: 'POST', body: formData })
+  return fetch(`${API_URL}/api/calendar/extract`, { method: 'POST', body: formData, credentials: 'include' })
     .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(String(data?.detail || `HTTP ${r.status}`)); return data; });
 };
 
@@ -359,7 +359,7 @@ export const uploadDocument = (formData: FormData, signal?: AbortSignal): Promis
   // that don't care about progress events stay one-line. The streaming /upload
   // route is exposed separately via uploadDocumentStream below.
   if (IS_LOCAL_MODE) return Promise.resolve({ id: 'local-doc', status: 'processed' });
-  return fetch(`${API_URL}/api/documents/upload/sync`, { method: 'POST', body: formData, signal })
+  return fetch(`${API_URL}/api/documents/upload/sync`, { method: 'POST', body: formData, signal, credentials: 'include' })
     .then(async r => { if (!r.ok) { const e = await r.text(); throw new Error(e || `HTTP ${r.status}`); } return r.json(); });
 };
 
@@ -793,7 +793,7 @@ export const uploadAvatar = (userId: string, file: File): Promise<{ avatar_url: 
   const fd = new FormData();
   fd.append('file', file);
   return fetch(`${API_URL}/api/profile/${encodeURIComponent(userId)}/avatar?user_id=${encodeURIComponent(userId)}`, {
-    method: 'POST', body: fd,
+    method: 'POST', body: fd, credentials: 'include',
   }).then(async r => {
     if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
     return r.json();
