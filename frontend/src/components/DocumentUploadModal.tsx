@@ -16,7 +16,7 @@ import {
 } from "@/lib/api";
 
 const MAX_FILES = 5;
-const MAX_SIZE = 15 * 1024 * 1024;
+const MAX_SIZE = 100 * 1024 * 1024;
 const ALLOWED = /\.(pdf|docx|pptx)$/i;
 const UPLOAD_TIMEOUT_MS = 4 * 60 * 1000;
 
@@ -112,7 +112,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
           return false;
         }
         if (f.size > MAX_SIZE) {
-          toast.error(`${f.name}: exceeds the 15 MB limit.`);
+          toast.error(`${f.name}: exceeds the 100 MB limit.`);
           return false;
         }
         return true;
@@ -320,7 +320,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
               {dragging ? "Drop to add files" : "Drag & drop up to 5 files"}
             </div>
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
-              PDF, DOCX, PPTX · max 15 MB each
+              PDF, DOCX, PPTX · max 100 MB each
             </div>
             <label className="btn btn--primary btn--sm">
               <Icon name="up" size={12} /> Browse

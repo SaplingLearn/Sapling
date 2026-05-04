@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx"}
 ALLOWED_CONTENT_TYPES = {
@@ -502,7 +502,7 @@ async def upload_document_sync(
     if len(file_bytes) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,
-            detail="File exceeds the 15 MB limit. Please upload a smaller file.",
+            detail="File exceeds the 100 MB limit. Please upload a smaller file.",
         )
 
     extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
