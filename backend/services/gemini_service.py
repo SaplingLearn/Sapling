@@ -107,13 +107,16 @@ def call_gemini_multiturn(system_prompt: str, history: list[dict], user_message:
         for msg in history
     ]
 
+    # gemini-2.5-pro requires thinking (budget=0 is rejected); flash allows
+    # disabling it for latency. Use dynamic thinking (-1) on pro, off on flash.
+    thinking_budget = -1 if "pro" in model else 0
     for attempt in range(retries + 1):
         try:
             config = types.GenerateContentConfig(
                 temperature=0.7,
                 max_output_tokens=16384,
                 system_instruction=system_prompt,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
             )
             chat = _client.chats.create(model=model, config=config, history=gemini_history)
             response = chat.send_message(user_message)
