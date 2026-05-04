@@ -48,15 +48,22 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const { authToken } = body as { authToken?: string };
 
-  let verifiedUserId: string | null = null;
-
-  if (!authToken || !SESSION_SECRET) {
+  if (!SESSION_SECRET) {
+    return NextResponse.json(
+      { error: 'SESSION_SECRET is not configured on the frontend deployment' },
+      { status: 500 },
+    );
+  }
+  if (!authToken) {
     return NextResponse.json({ error: 'authToken is required' }, { status: 400 });
   }
 
-  verifiedUserId = await verifyAuthToken(authToken);
+  const verifiedUserId = await verifyAuthToken(authToken);
   if (!verifiedUserId) {
-    return NextResponse.json({ error: 'Invalid or expired auth token' }, { status: 401 });
+    return NextResponse.json(
+      { error: 'Invalid or expired auth token (SESSION_SECRET likely does not match the backend)' },
+      { status: 401 },
+    );
   }
 
   try {
