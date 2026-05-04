@@ -10,14 +10,19 @@ import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
 import {
-  adminFetchUsers, adminApproveUser,
+  adminFetchUsers, adminApproveUser, adminUnapproveUser,
   adminListRoles, adminCreateRole, adminDeleteRole, adminAssignRole, adminRevokeRole,
   adminListAchievements, adminCreateAchievement, adminDeleteAchievement, adminGrantAchievement,
   adminListCosmetics, adminCreateCosmetic, adminDeleteCosmetic,
+  adminListTriggers, adminCreateTrigger, adminUpdateTrigger, adminDeleteTrigger,
+  adminListAchievementCosmetics, adminLinkAchievementCosmetic, adminUnlinkAchievementCosmetic,
+  adminListRoleCosmetics, adminLinkRoleCosmetic, adminUnlinkRoleCosmetic,
+  adminListAllowlist, adminApproveAllowlist, adminRevokeAllowlist,
+  adminAuditLog, adminAnalyticsOverview,
   IS_LOCAL_MODE,
 } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
-import type { Role, Achievement, Cosmetic, CosmeticType, RarityTier, AchievementCategory } from "@/lib/types";
+import type { Role, Achievement, Cosmetic, CosmeticType, RarityTier, AchievementCategory, AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview } from "@/lib/types";
 
 type Tab = "users" | "allowlist" | "roles" | "achievements" | "cosmetics" | "analytics" | "audit";
 type AdminUser = {
@@ -912,9 +917,142 @@ const checkLabel: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-dim)",
 };
 
-// ── Allowlist (stub — implemented in Task 22) ────────────────────────────────
+// ── Allowlist ────────────────────────────────────────────────────────────────
 function AllowlistTab() {
-  return <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>;
+  const toast = useToast();
+  const [emails, setEmails] = React.useState<AllowlistEmail[]>([]);
+  const [query, setQuery] = React.useState("");
+  const [newEmail, setNewEmail] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+
+  const load = React.useCallback(async () => {
+    try {
+      const r = await adminListAllowlist();
+      setEmails(r.emails || []);
+    } catch (err) {
+      toast.error(`Load failed: ${String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const filtered = query
+    ? emails.filter(e => e.email.toLowerCase().includes(query.toLowerCase()))
+    : emails;
+  const approved = emails.filter(e => e.approved_at).length;
+  const pending = emails.length - approved;
+
+  const add = async () => {
+    const e = newEmail.trim().toLowerCase();
+    if (!e) return;
+    setBusy(true);
+    try {
+      await adminApproveAllowlist(e);
+      setNewEmail("");
+      toast.success("Email allowlisted");
+      await load();
+    } catch (err) {
+      toast.error(`Add failed: ${String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = async (row: AllowlistEmail) => {
+    try {
+      if (row.approved_at) {
+        await adminRevokeAllowlist(row.email);
+        toast.success("Allowlist revoked");
+      } else {
+        await adminApproveAllowlist(row.email);
+        toast.success("Email allowlisted");
+      }
+      await load();
+    } catch (err) {
+      toast.error(`Update failed: ${String(err)}`);
+    }
+  };
+
+  if (loading) return <AdminTableSkeleton />;
+
+  return (
+    <>
+      <div className="body-serif" style={{ fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680 }}>
+        <span style={{ color: "var(--text)" }}>{emails.length}</span> address{emails.length === 1 ? "" : "es"} · {" "}
+        <span style={{ color: "var(--accent)" }}>{approved} approved</span>
+        {pending > 0 && <> · <span style={{ color: "var(--warn)" }}>{pending} unapproved signups</span></>}
+      </div>
+      <div className="card" style={{ padding: 0 }}>
+        <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
+          <div style={{ position: "relative", flex: 1, maxWidth: 300 }}>
+            <div style={{ position: "absolute", left: 10, top: 8, color: "var(--text-muted)" }}>
+              <Icon name="search" size={14} />
+            </div>
+            <input
+              placeholder="Search emails…"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              style={{
+                width: "100%", padding: "7px 12px 7px 32px",
+                border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
+                fontSize: 13, background: "var(--bg-input)",
+              }}
+            />
+          </div>
+          <input
+            placeholder="someone@bu.edu"
+            value={newEmail}
+            onChange={e => setNewEmail(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") add(); }}
+            style={{ ...fieldStyle, maxWidth: 240 }}
+          />
+          <button className="btn btn--primary btn--sm" onClick={add} disabled={busy || !newEmail.trim()}>
+            {busy ? "Adding…" : "Allowlist"}
+          </button>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: "var(--bg-subtle)" }}>
+              {["Email", "Status", "Submitted", "Approved", ""].map(h => (
+                <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map(row => (
+              <tr key={row.id} style={{ borderTop: "1px solid var(--border)" }}>
+                <td style={{ padding: "10px 16px", fontWeight: 500 }}>{row.email}</td>
+                <td style={{ padding: "10px 16px" }}>
+                  <span className={`chip ${row.approved_at ? "chip--accent" : "chip--warn"}`}>
+                    {row.approved_at ? "approved" : "signup"}
+                  </span>
+                </td>
+                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                  {row.created_at ? new Date(row.created_at).toLocaleDateString() : "—"}
+                </td>
+                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                  {row.approved_at ? new Date(row.approved_at).toLocaleDateString() : "—"}
+                </td>
+                <td style={{ padding: "10px 16px", textAlign: "right" }}>
+                  <button
+                    className={`btn btn--sm ${row.approved_at ? "btn--ghost" : "btn--primary"}`}
+                    onClick={() => toggle(row)}
+                  >
+                    {row.approved_at ? "Revoke" : "Approve"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
 }
 
 // ── Audit (stub — implemented in Task 27) ────────────────────────────────────
