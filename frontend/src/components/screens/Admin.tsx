@@ -1376,7 +1376,102 @@ function AllowlistTab() {
   );
 }
 
-// ── Audit (stub — implemented in Task 27) ────────────────────────────────────
+// ── Audit ─────────────────────────────────────────────────────────────────────
 function AuditTab() {
-  return <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>;
+  const toast = useToast();
+  const [entries, setEntries] = React.useState<AdminAuditEntry[]>([]);
+  const [page, setPage] = React.useState(1);
+  const [pageSize] = React.useState(50);
+  const [total, setTotal] = React.useState(0);
+  const [actionFilter, setActionFilter] = React.useState<string>("");
+  const [targetFilter, setTargetFilter] = React.useState<string>("");
+  const [loading, setLoading] = React.useState(true);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await adminAuditLog({
+        page, page_size: pageSize,
+        action: actionFilter || undefined,
+        target_type: targetFilter || undefined,
+      });
+      setEntries(r.entries || []);
+      setTotal(r.total || 0);
+    } catch (err) {
+      toast.error(`Audit load failed: ${String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, pageSize, actionFilter, targetFilter, toast]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (loading && entries.length === 0) return <AdminTableSkeleton />;
+
+  return (
+    <>
+      <div className="body-serif" style={{ fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680 }}>
+        <span style={{ color: "var(--text)" }}>{total}</span> recorded action{total === 1 ? "" : "s"}
+      </div>
+      <div className="card" style={{ padding: 0 }}>
+        <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
+          <input
+            placeholder="action (e.g. user.approve)"
+            value={actionFilter}
+            onChange={e => { setActionFilter(e.target.value); setPage(1); }}
+            style={{ ...fieldStyle, maxWidth: 220 }}
+          />
+          <input
+            placeholder="target_type (e.g. user)"
+            value={targetFilter}
+            onChange={e => { setTargetFilter(e.target.value); setPage(1); }}
+            style={{ ...fieldStyle, maxWidth: 220 }}
+          />
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: "var(--bg-subtle)" }}>
+              {["When", "Actor", "Action", "Target", "Payload"].map(h => (
+                <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map(e => (
+              <tr key={e.id} style={{ borderTop: "1px solid var(--border)" }}>
+                <td style={{ padding: "10px 16px", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                  {new Date(e.created_at).toLocaleString()}
+                </td>
+                <td style={{ padding: "10px 16px", fontFamily: "var(--font-mono)", fontSize: 12 }}>{e.actor_id}</td>
+                <td style={{ padding: "10px 16px" }}>
+                  <span className="chip">{e.action}</span>
+                </td>
+                <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>
+                  <span className="chip">{e.target_type}</span>
+                  <span style={{ marginLeft: 6, fontFamily: "var(--font-mono)", fontSize: 12 }}>{e.target_id || "—"}</span>
+                </td>
+                <td style={{ padding: "10px 16px", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)", maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    title={JSON.stringify(e.payload)}>
+                  {Object.keys(e.payload || {}).length ? JSON.stringify(e.payload) : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)",
+        }}>
+          <div>Page {page} of {totalPages}</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn btn--sm btn--ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
+            <button className="btn btn--sm btn--ghost" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
 }
