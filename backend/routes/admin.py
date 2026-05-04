@@ -15,6 +15,7 @@ from models import (
     RevokeRoleBody,
     CreateAchievementBody,
     CreateAchievementTriggerBody,
+    UpdateAchievementTriggerBody,
     GrantAchievementBody,
     CreateCosmeticBody,
 )
@@ -212,6 +213,37 @@ def create_trigger(body: CreateAchievementTriggerBody, request: Request):
         "trigger_threshold": body.trigger_threshold,
     })
     return {"trigger": result[0] if result else None}
+
+
+@router.get("/achievements/{achievement_id}/triggers")
+def list_triggers(achievement_id: str, request: Request):
+    require_admin(request)
+    rows = table("achievement_triggers").select(
+        "id,achievement_id,trigger_type,trigger_threshold",
+        filters={"achievement_id": f"eq.{achievement_id}"},
+    )
+    return {"triggers": rows or []}
+
+
+@router.patch("/achievements/triggers/{trigger_id}")
+def update_trigger(trigger_id: str, body: UpdateAchievementTriggerBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    table("achievement_triggers").update(updates, filters={"id": f"eq.{trigger_id}"})
+    log_admin_action(actor_id=actor, action="trigger.update", target_type="trigger", target_id=trigger_id, payload=updates)
+    return {"updated": True}
+
+
+@router.delete("/achievements/triggers/{trigger_id}")
+def delete_trigger(trigger_id: str, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    table("achievement_triggers").delete(filters={"id": f"eq.{trigger_id}"})
+    log_admin_action(actor_id=actor, action="trigger.delete", target_type="trigger", target_id=trigger_id)
+    return {"deleted": True}
 
 
 # ── Cosmetics ────────────────────────────────────────────────────────────────

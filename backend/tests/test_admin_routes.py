@@ -365,3 +365,39 @@ class TestRoleCreateUpdateAudits:
             r = client.patch("/api/admin/roles/rA", json={"color": "#000"})
         assert r.status_code == 200
         assert audit.call_args.kwargs["action"] == "role.update"
+
+
+class TestTriggers:
+    def test_list_returns_triggers_for_achievement(self):
+        rows = [{"id": "t1", "achievement_id": "a1", "trigger_type": "login_streak", "trigger_threshold": 7}]
+        with _mock_admin(), patch("routes.admin.table") as t:
+            t.return_value.select.return_value = rows
+            r = client.get("/api/admin/achievements/a1/triggers")
+        assert r.status_code == 200
+        assert r.json() == {"triggers": rows}
+
+    def test_update_trigger(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.update.return_value = [{}]
+            r = client.patch("/api/admin/achievements/triggers/t1",
+                             json={"trigger_threshold": 14})
+        assert r.status_code == 200
+        assert r.json()["updated"] is True
+        assert audit.call_args.kwargs["action"] == "trigger.update"
+
+    def test_update_trigger_rejects_empty(self):
+        with _mock_admin(), patch("routes.admin.get_session_user_id", return_value="u1"):
+            r = client.patch("/api/admin/achievements/triggers/t1", json={})
+        assert r.status_code == 400
+
+    def test_delete_trigger(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.delete.return_value = [{}]
+            r = client.delete("/api/admin/achievements/triggers/t1")
+        assert r.status_code == 200
+        assert r.json()["deleted"] is True
+        assert audit.call_args.kwargs["action"] == "trigger.delete"
