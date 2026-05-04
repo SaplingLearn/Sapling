@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS admin_audit_log (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    actor_id     TEXT NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+    actor_id     TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     action       TEXT NOT NULL,           -- e.g. 'user.approve', 'role.assign'
     target_type  TEXT NOT NULL,           -- 'user' | 'role' | 'achievement' | 'cosmetic' | 'allowlist' | 'trigger' | 'role_cosmetic' | 'achievement_cosmetic'
     target_id    TEXT,                    -- nullable for actions without a single target
