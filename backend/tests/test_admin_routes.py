@@ -148,6 +148,7 @@ class TestListUsersPaginated:
             p.return_value = {"users": [], "total": 0, "page": 1, "page_size": 50}
             r = client.get("/api/admin/users")
         assert r.status_code == 200
+        assert r.json() == {"users": [], "total": 0, "page": 1, "page_size": 50}
         p.assert_called_once_with(q=None, page=1, page_size=50)
 
 
