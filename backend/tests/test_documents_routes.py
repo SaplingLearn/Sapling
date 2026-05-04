@@ -10,8 +10,10 @@ Tests cover:
 All Gemini calls, DB access, and file-extraction are mocked.
 """
 import io
+import json
+from types import SimpleNamespace
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
@@ -143,6 +145,66 @@ def _make_upload(
         files={"file": (filename, io.BytesIO(content), content_type)},
         data={"course_id": course_id, "user_id": user_id},
     )
+
+
+class TestProcessDocumentHelper:
+    """Direct unit tests for _process_document.
+
+    These bypass the FastAPI route entirely (they call the helper
+    directly), so they must NOT be inside TestUploadDocument or they
+    needlessly trip the orchestrator-fallback autouse fixture.
+    """
+
+    def test_coerces_garbage_into_safe_shape(self):
+        """When the LLM emits the wrong types, _process_document normalizes them."""
+        garbage = {
+            "category": "not-a-real-category",
+            "summary": 12345,
+            "key_takeaways": "should be a list, not a string",
+            "assignments": "not a list either",
+            "concept_notes": "Linear Regression, Big-O",  # string instead of list
+        }
+        with patch("routes.documents.call_gemini_json", return_value=garbage):
+            result = _process_document("file.pdf", "text")
+
+        assert result["category"] == "other"
+        assert result["summary"] == ""  # int coerced to ""
+        assert result["assignments"] == []
+        assert result["concept_notes"] == []
+        assert result["concepts"] == []
+
+    def test_strips_invalid_concept_notes(self):
+        ai_result = {
+            "category": "syllabus",
+            "summary": "S",
+            "key_takeaways": [],
+            "assignments": [],
+            "concept_notes": [
+                {"name": "  Linear Regression  ", "description": "Fits a line."},
+                {"name": "Big-O", "description": ""},  # empty desc dropped
+                {"name": "", "description": "no name"},  # empty name dropped
+                {"description": "no name field"},  # missing name dropped
+                "not a dict",  # wrong type dropped
+                {"name": "Cross-Entropy", "description": "Loss for classification."},
+            ],
+        }
+        with patch("routes.documents.call_gemini_json", return_value=ai_result):
+            result = _process_document("file.pdf", "text")
+
+        assert result["concept_notes"] == [
+            {"name": "Linear Regression", "description": "Fits a line."},
+            {"name": "Cross-Entropy", "description": "Loss for classification."},
+        ]
+        assert result["concepts"] == ["Linear Regression", "Cross-Entropy"]
+
+    def test_handles_non_dict_response(self):
+        with patch("routes.documents.call_gemini_json", return_value=["not", "a", "dict"]):
+            result = _process_document("file.pdf", "text")
+
+        assert result["category"] == "other"
+        assert result["concepts"] == []
+        assert result["concept_notes"] == []
+        assert result["assignments"] == []
 
 
 class TestUploadDocument:
@@ -470,59 +532,6 @@ class TestUploadDocument:
         assert insert_call["user_id"] == "user_andres"
         assert insert_call["course_id"] == "c-99"
 
-    # ── _process_document harness ─────────────────────────────────────────────
-
-    def test_process_document_coerces_garbage_into_safe_shape(self):
-        """When the LLM emits the wrong types, _process_document normalizes them."""
-        garbage = {
-            "category": "not-a-real-category",
-            "summary": 12345,
-            "key_takeaways": "should be a list, not a string",
-            "assignments": "not a list either",
-            "concept_notes": "Linear Regression, Big-O",  # string instead of list
-        }
-        with patch("routes.documents.call_gemini_json", return_value=garbage):
-            result = _process_document("file.pdf", "text")
-
-        assert result["category"] == "other"
-        assert result["summary"] == ""  # int coerced to ""
-        assert result["assignments"] == []
-        assert result["concept_notes"] == []
-        assert result["concepts"] == []
-
-    def test_process_document_strips_invalid_concept_notes(self):
-        ai_result = {
-            "category": "syllabus",
-            "summary": "S",
-            "key_takeaways": [],
-            "assignments": [],
-            "concept_notes": [
-                {"name": "  Linear Regression  ", "description": "Fits a line."},
-                {"name": "Big-O", "description": ""},  # empty desc dropped
-                {"name": "", "description": "no name"},  # empty name dropped
-                {"description": "no name field"},  # missing name dropped
-                "not a dict",  # wrong type dropped
-                {"name": "Cross-Entropy", "description": "Loss for classification."},
-            ],
-        }
-        with patch("routes.documents.call_gemini_json", return_value=ai_result):
-            result = _process_document("file.pdf", "text")
-
-        assert result["concept_notes"] == [
-            {"name": "Linear Regression", "description": "Fits a line."},
-            {"name": "Cross-Entropy", "description": "Loss for classification."},
-        ]
-        assert result["concepts"] == ["Linear Regression", "Cross-Entropy"]
-
-    def test_process_document_handles_non_dict_response(self):
-        with patch("routes.documents.call_gemini_json", return_value=["not", "a", "dict"]):
-            result = _process_document("file.pdf", "text")
-
-        assert result["category"] == "other"
-        assert result["concepts"] == []
-        assert result["concept_notes"] == []
-        assert result["assignments"] == []
-
     def test_falls_back_to_row_dict_when_insert_returns_empty(self):
         """If table.insert returns [], the endpoint should return the constructed row dict."""
         ai_result = {
@@ -670,6 +679,36 @@ class TestUploadDocumentOrchestrator:
         assert [c["name"] for c in cats] == ["Exams", "Homework", "Final"]
         assert [c["weight"] for c in cats] == [40.0, 30.0, 30.0]
 
+    def test_syllabus_grading_categories_pass_through_points_based(self):
+        """Weights > 100 (points-based grading) flow through unchanged.
+
+        The contract is "stated weight verbatim — do not normalize", so a
+        rubric like 'Final 200 points, Midterm 150 points' must reach the
+        frontend as 200.0 and 150.0, not normalized to percent.
+        """
+        result = _make_orchestrator_result(
+            category="syllabus",
+            is_syllabus=True,
+            grading_categories=[
+                {"name": "Final", "weight": 200},
+                {"name": "Midterm", "weight": 150},
+                {"name": "Quizzes", "weight": 50},
+            ],
+        )
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.save_assignments_to_db"),
+            patch("routes.documents.apply_graph_update"),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "s_pts"}]
+            r = _make_upload(filename="syllabus.pdf")
+        assert r.status_code == 200
+        cats = r.json()["categories"]
+        assert [c["weight"] for c in cats] == [200.0, 150.0, 50.0]
+
     def test_syllabus_assignments_with_due_dates_persist(self):
         from datetime import date
         result = _make_orchestrator_result(
@@ -761,3 +800,159 @@ class TestUploadDocumentOrchestrator:
             r = _make_upload()
         assert r.status_code == 200
         mock_apply.assert_not_called()
+
+
+# ── POST /api/documents/upload — streaming SSE route ────────────────────────
+
+def _parse_sse_stream(raw: bytes) -> list[dict]:
+    """Parse an EventSourceResponse byte stream into a list of {event, data} dicts.
+
+    SSE wire format: blank-line separated blocks; each block has lines like
+    `event: <name>` and `data: <json>`. Comments and empty lines are skipped.
+    """
+    text = raw.decode("utf-8")
+    events: list[dict] = []
+    cur: dict = {}
+    for line in text.splitlines():
+        if not line.strip():
+            if cur:
+                events.append(cur)
+                cur = {}
+            continue
+        if line.startswith(":"):
+            continue
+        if ":" not in line:
+            continue
+        field, _, value = line.partition(":")
+        cur[field.strip()] = value.lstrip()
+    if cur:
+        events.append(cur)
+    return events
+
+
+class TestUploadDocumentStreaming:
+    """Coverage for the SSE streaming /upload route.
+
+    Mocks each agent's .run / .run_stream_events at the routes.documents
+    seam so the test stays deterministic without hitting Gemini.
+    """
+
+    def _mock_agent_runs(self, *, is_syllabus: bool = False):
+        """Build a context-manager stack patching every agent the route calls."""
+        from agents.classifier import DocumentClassification
+        from agents.summary import Summary
+        from agents.concept_extraction import Concept, ConceptList
+        from agents.syllabus_extraction import SyllabusAssignments
+
+        cls = DocumentClassification(
+            category="lecture_notes" if not is_syllabus else "syllabus",
+            is_syllabus=is_syllabus, confidence=0.9, rationale="test",
+        )
+        summary = Summary(
+            headline="h", abstract="abstract.",
+            key_points=["a", "b", "c"],
+        )
+        concepts = ConceptList(concepts=[
+            Concept(name="Backprop", description="d", importance=0.9),
+        ])
+        syllabus = SyllabusAssignments(
+            course_title=None, instructor=None,
+            assignments=[], grading_categories=[],
+        ) if is_syllabus else None
+
+        async def _empty_stream(*_a, **_kw):
+            # The route iterates run_stream_events() but never relies on
+            # its events — graph_updated stays False (route-side default)
+            # when no FinalResultEvent flows through.
+            if False:
+                yield  # pragma: no cover — async generator marker
+            return
+
+        cls_run = AsyncMock(return_value=SimpleNamespace(output=cls))
+        sum_run = AsyncMock(return_value=SimpleNamespace(output=summary))
+        cpt_run = AsyncMock(return_value=SimpleNamespace(output=concepts))
+        syl_run = AsyncMock(return_value=SimpleNamespace(output=syllabus))
+
+        return (
+            patch("routes.documents.classifier_agent.run", cls_run),
+            patch("routes.documents.summary_agent.run", sum_run),
+            patch("routes.documents.concept_extraction_agent.run", cpt_run),
+            patch("routes.documents.syllabus_extraction_agent.run", syl_run),
+            patch("routes.documents.document_agent.run_stream_events", _empty_stream),
+        )
+
+    def test_emits_full_event_sequence_on_happy_path(self):
+        """status:start → progress:classify → progress:classified →
+        progress:extract → progress:extracted → result:finalize →
+        status:done with document_id."""
+        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            patch("routes.documents.table") as t,
+            patch("routes.documents._spawn_post_roll"),  # avoid stray asyncio.create_task in tests
+        ):
+            t.return_value.insert.return_value = [{"id": "stream-1"}]
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                assert r.status_code == 200
+                body = r.read()
+
+        events = _parse_sse_stream(body)
+        types_steps = [(e["event"], json.loads(e["data"])["step"]) for e in events]
+        assert types_steps == [
+            ("status", "start"),
+            ("progress", "classify"),
+            ("progress", "classified"),
+            ("progress", "extract"),
+            ("progress", "extracted"),
+            ("result", "finalize"),
+            ("status", "done"),
+        ]
+        # Final 'done' carries the persisted document_id.
+        done = json.loads(events[-1]["data"])
+        assert done["data"]["document_id"] == "stream-1"
+
+    def test_includes_syllabus_event_when_is_syllabus(self):
+        """progress:extract message mentions syllabus when classifier flags it."""
+        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs(is_syllabus=True)
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            patch("routes.documents.save_assignments_to_db"),
+            patch("routes.documents.apply_graph_update"),
+            patch("routes.documents.table") as t,
+            patch("routes.documents._spawn_post_roll"),
+        ):
+            t.return_value.insert.return_value = [{"id": "stream-syl"}]
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("syllabus.pdf", io.BytesIO(b"%PDF-1.4 s"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                assert r.status_code == 200
+                body = r.read()
+
+        events = _parse_sse_stream(body)
+        extract_events = [
+            json.loads(e["data"]) for e in events
+            if e.get("event") == "progress" and json.loads(e["data"])["step"] == "extract"
+        ]
+        assert len(extract_events) == 1
+        assert "syllabus" in extract_events[0]["message"]
+
+    def test_validation_error_returns_4xx_before_stream_opens(self):
+        """File-type rejection should fail with HTTP 400, not enter the SSE loop."""
+        with _mock_validate_user():
+            r = client.post(
+                "/api/documents/upload",
+                files={"file": ("notes.txt", io.BytesIO(b"hi"), "text/plain")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            )
+        assert r.status_code == 400
+        assert "Unsupported file type" in r.json()["detail"]
