@@ -102,7 +102,7 @@ class TestSelectWithCount:
     def test_returns_rows_and_total_when_count_exact(self):
         fake = MagicMock()
         fake.json.return_value = [{"id": "1"}]
-        fake.headers = {"Content-Range": "0-0/42"}
+        fake.headers = {"content-range": "0-0/42"}  # httpx lowercases response headers
         fake.raise_for_status = MagicMock()
 
         with patch("db.connection._client") as c:
