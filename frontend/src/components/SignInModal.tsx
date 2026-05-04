@@ -1,10 +1,11 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { IS_LOCAL_MODE } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
+const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
 
 const ERROR_COPY: Record<string, string> = {
   not_approved: "Your account is pending approval. We'll email you once an admin lets you in.",
@@ -29,24 +30,47 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
   const [closing, setClosing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(false);
+  const popupRef = useRef<Window | null>(null);
+  const channelRef = useRef<BroadcastChannel | null>(null);
+  const watchdogRef = useRef<number | null>(null);
+
+  const cleanupPopupListeners = useCallback(() => {
+    if (channelRef.current) {
+      try { channelRef.current.close(); } catch {}
+      channelRef.current = null;
+    }
+    if (watchdogRef.current !== null) {
+      window.clearTimeout(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+    // Best effort — COOP may have severed the handle, but harmless to try.
+    if (popupRef.current) {
+      try { popupRef.current.close(); } catch {}
+      popupRef.current = null;
+    }
+  }, []);
 
   const close = useCallback(() => {
+    cleanupPopupListeners();
     setClosing(true);
     setTimeout(() => {
       setClosing(false);
       onClose();
     }, 200);
-  }, [onClose]);
+  }, [onClose, cleanupPopupListeners]);
 
   useEffect(() => {
     if (!open) {
       setWaiting(false);
+      cleanupPopupListeners();
       return;
     }
     setLocalError(null);
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = ""; };
-  }, [open]);
+  }, [open, cleanupPopupListeners]);
+
+  useEffect(() => () => cleanupPopupListeners(), [cleanupPopupListeners]);
 
   useEffect(() => {
     if (!open) return;
@@ -74,8 +98,79 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       setLocalError("google_not_configured");
       return;
     }
+
+    // BroadcastChannel-based popup flow. We don't depend on window.opener:
+    // COOP severs the opener handle the moment the popup hops to a
+    // cross-origin URL (Railway, then Google). Instead the callback page
+    // broadcasts the result on a per-attempt channel keyed by popup_id.
+    const supportsPopup =
+      typeof BroadcastChannel !== "undefined" &&
+      typeof crypto !== "undefined" &&
+      typeof crypto.randomUUID === "function";
+
+    if (!supportsPopup) {
+      setWaiting(true);
+      window.location.href = `${API_URL}/api/auth/google`;
+      return;
+    }
+
+    const popupId = crypto.randomUUID();
+    const url = `${API_URL}/api/auth/google?popup_id=${encodeURIComponent(popupId)}`;
+
+    cleanupPopupListeners();
+    const channel = new BroadcastChannel(`sapling_signin:${popupId}`);
+    channelRef.current = channel;
+    channel.onmessage = (event: MessageEvent) => {
+      const data = event.data as {
+        type?: string; success?: boolean; error?: string;
+        userId?: string; name?: string; avatar?: string;
+        onboardingCompleted?: boolean;
+      } | null;
+      if (!data || data.type !== "sapling_signin") return;
+      cleanupPopupListeners();
+      setWaiting(false);
+      if (data.success && data.userId && data.name) {
+        setActiveUser(data.userId, data.name, data.avatar || "");
+        confirmApproved();
+        if (data.onboardingCompleted) {
+          router.replace("/dashboard");
+        } else {
+          sessionStorage.setItem("sapling_onboarding_pending", "1");
+        }
+        onClose();
+      } else {
+        setLocalError(data.error || "signin_failed");
+      }
+    };
+
+    const w = 520;
+    const h = 640;
+    const left = Math.max(0, window.screenX + (window.outerWidth - w) / 2);
+    const top = Math.max(0, window.screenY + (window.outerHeight - h) / 2);
+    const features = `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
+    const popup = window.open(url, "sapling_signin", features);
+    if (!popup || popup.closed) {
+      // Pop-up blocker / user setting. Fall back to same-tab redirect.
+      cleanupPopupListeners();
+      setWaiting(true);
+      window.location.href = url;
+      return;
+    }
+    popupRef.current = popup;
+    try { popup.focus(); } catch {}
     setWaiting(true);
-    window.location.href = `${API_URL}/api/auth/google`;
+
+    // We can't reliably observe popup.closed under COOP, so set a watchdog
+    // that resets the modal if the user abandons the flow.
+    watchdogRef.current = window.setTimeout(() => {
+      cleanupPopupListeners();
+      setWaiting(false);
+    }, POPUP_TIMEOUT_MS);
+  };
+
+  const cancelSignIn = () => {
+    cleanupPopupListeners();
+    setWaiting(false);
   };
 
   return (
@@ -180,6 +275,26 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           </svg>
           {waiting ? "Waiting for Google…" : "Continue with Google"}
         </button>
+
+        {waiting && (
+          <button
+            type="button"
+            onClick={cancelSignIn}
+            style={{
+              marginTop: 10,
+              width: "100%",
+              padding: "6px 0",
+              background: "none",
+              border: "none",
+              color: "#6b7280",
+              fontSize: 12.5,
+              cursor: "pointer",
+              fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
+            }}
+          >
+            Cancel
+          </button>
+        )}
 
         <p style={{ margin: "16px 0 0", fontSize: 11.5, color: "#6b7280", textAlign: "center", lineHeight: 1.5 }}>
           By signing in, you agree to the{" "}

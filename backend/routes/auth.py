@@ -136,7 +136,7 @@ def get_me(request: Request):
 
 
 @router.get("/google")
-def google_login():
+def google_login(popup_id: str = Query(None)):
     """Redirect to Google consent screen with identity + calendar scopes."""
     if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=400, detail="Google OAuth not configured")
@@ -144,10 +144,13 @@ def google_login():
     code_verifier, code_challenge = _generate_pkce_pair()
     flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
+    state_payload = {"action": "signin", "cv": code_verifier}
+    if popup_id:
+        state_payload["popup_id"] = popup_id
     auth_url, _ = flow.authorization_url(
         prompt="consent",
         access_type="offline",
-        state=_encode_state({"action": "signin", "cv": code_verifier}),
+        state=_encode_state(state_payload),
         code_challenge=code_challenge,
         code_challenge_method="S256",
     )
@@ -157,11 +160,20 @@ def google_login():
 @router.get("/google/callback")
 def google_callback(code: str = Query(...), state: str = Query(None)):
     """Exchange auth code for tokens, validate @bu.edu, upsert user."""
-    if not GOOGLE_AVAILABLE:
-        return RedirectResponse(f"{FRONTEND_URL}/auth?error=google_not_configured")
-
     state_data = _decode_state(state) if state else {}
     code_verifier = state_data.get("cv")
+    popup_id = state_data.get("popup_id")
+
+    def _fail_redirect(error_code: str, fallback_path: str = "/auth") -> RedirectResponse:
+        # In popup mode, route failures through /auth/callback so the popup
+        # can broadcast the error and self-close instead of stranding the opener.
+        if popup_id:
+            params = urlencode({"error": error_code, "popup_id": popup_id})
+            return RedirectResponse(f"{FRONTEND_URL}/auth/callback?{params}")
+        return RedirectResponse(f"{FRONTEND_URL}{fallback_path}?error={error_code}")
+
+    if not GOOGLE_AVAILABLE:
+        return _fail_redirect("google_not_configured")
 
     flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
@@ -184,9 +196,7 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
 
     # Restrict to @bu.edu accounts
     if not email.endswith("@bu.edu"):
-        return RedirectResponse(
-            f"{FRONTEND_URL}/auth?error=invalid_domain"
-        )
+        return _fail_redirect("invalid_domain")
 
     # Determine user_id: check if this Google ID already exists
     existing = table("users").select("id,is_approved", filters={"google_id": f"eq.{google_id}"})
@@ -233,6 +243,8 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
     )
 
     if not is_approved:
+        if popup_id:
+            return _fail_redirect("not_approved")
         return RedirectResponse(f"{FRONTEND_URL}/pending")
 
     # Build a short-lived HMAC token so the frontend can verify this redirect
@@ -250,5 +262,6 @@ def google_callback(code: str = Query(...), state: str = Query(None)):
         "avatar": avatar_url,
         "is_approved": "true",
         **({"auth_token": auth_token} if auth_token else {}),
+        **({"popup_id": popup_id} if popup_id else {}),
     })
     return RedirectResponse(f"{FRONTEND_URL}/auth/callback?{params}")
