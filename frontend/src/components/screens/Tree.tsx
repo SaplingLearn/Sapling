@@ -247,7 +247,6 @@ export function Tree() {
   return (
     <div>
       <TopBar
-        breadcrumb="Home / Tree"
         title="Your Knowledge Tree"
         subtitle="The living map of what you've learned, organized by course."
         actions={

@@ -133,7 +133,6 @@ export function Library() {
     <div style={{ display: "flex", height: "100vh" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <TopBar
-          breadcrumb="Home / Library"
           title="Library"
           subtitle={`${documents.length} document${documents.length === 1 ? "" : "s"} · auto-extracted summaries and takeaways`}
           actions={

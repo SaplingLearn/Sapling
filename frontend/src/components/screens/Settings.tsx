@@ -191,7 +191,6 @@ export function Settings() {
   return (
     <div>
       <TopBar
-        breadcrumb="Home / Settings"
         title="Settings"
         subtitle="Profile, preferences, and account"
         actions={

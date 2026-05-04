@@ -26,7 +26,6 @@ export default function PublicProfilePage() {
   return (
     <div>
       <TopBar
-        breadcrumb="Home / Profile"
         title={profile?.name || (loading ? "Loading…" : "Profile")}
         subtitle={profile?.username ? `@${profile.username}` : undefined}
       />

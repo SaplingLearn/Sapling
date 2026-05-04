@@ -208,7 +208,6 @@ export function Achievements() {
   return (
     <div>
       <TopBar
-        breadcrumb="Home / Achievements"
         title="Achievements"
         subtitle={`${earned.length} earned · ${available.length} in progress`}
       />
