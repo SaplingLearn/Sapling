@@ -132,15 +132,35 @@ def _make_upload(
     course_id="course-1",
     user_id="u1",
 ):
-    """Helper: build a multipart upload request."""
+    """Helper: build a multipart upload request.
+
+    Targets /upload/sync so the response is a single JSON dict (the
+    legacy contract). The streaming /upload route is exercised
+    separately in stream-specific tests.
+    """
     return client.post(
-        "/api/documents/upload",
+        "/api/documents/upload/sync",
         files={"file": (filename, io.BytesIO(content), content_type)},
         data={"course_id": course_id, "user_id": user_id},
     )
 
 
 class TestUploadDocument:
+    @pytest.fixture(autouse=True)
+    def _force_legacy_pipeline(self):
+        """Route every upload-test through _legacy_upload_pipeline.
+
+        These tests assert against the legacy AI shape (call_gemini_json
+        return value, apply_graph_update calls keyed off concept_notes).
+        Forcing process_document to raise sends the route into its
+        documented fallback, which is exactly the legacy code path the
+        existing mocks were written for.
+        """
+        with patch(
+            "routes.documents.process_document",
+            side_effect=RuntimeError("force legacy fallback for tests"),
+        ):
+            yield
     # ── File-type validation ───────────────────────────────────────────────────
 
     def test_rejects_unsupported_extension(self):
@@ -522,3 +542,222 @@ class TestUploadDocument:
 
         assert r.status_code == 200
         assert r.json()["file_name"] == "notes.pdf"
+
+
+# ── POST /api/documents/upload/sync — orchestrator success path ─────────────
+
+def _make_orchestrator_result(
+    *,
+    category="lecture_notes",
+    is_syllabus=False,
+    summary_abstract="A concise overview.",
+    concept_names=None,
+    syllabus_assignments=None,
+    grading_categories=None,
+    course_title=None,
+    graph_updated=False,
+):
+    """Build a DocumentProcessingResult with sensible defaults for tests."""
+    from agents.classifier import DocumentClassification
+    from agents.summary import Summary
+    from agents.concept_extraction import Concept, ConceptList
+    from agents.syllabus_extraction import (
+        SyllabusAssignment, SyllabusAssignments, GradingCategory,
+    )
+    from agents.document import DocumentProcessingResult
+
+    classification = DocumentClassification(
+        category=category, is_syllabus=is_syllabus,
+        confidence=0.9, rationale="test",
+    )
+    summary = Summary(
+        headline="Test doc",
+        abstract=summary_abstract,
+        key_points=["a", "b", "c"],
+    )
+    concepts = ConceptList(concepts=[
+        Concept(name=n, description="d", importance=0.5)
+        for n in (concept_names or ["Concept A"])
+    ])
+    syllabus = None
+    if is_syllabus:
+        syllabus = SyllabusAssignments(
+            course_title=course_title,
+            instructor=None,
+            assignments=[
+                SyllabusAssignment(**a) for a in (syllabus_assignments or [])
+            ],
+            grading_categories=[
+                GradingCategory(**c) for c in (grading_categories or [])
+            ],
+        )
+    return DocumentProcessingResult(
+        classification=classification,
+        summary=summary,
+        concepts=concepts,
+        syllabus=syllabus,
+        graph_updated=graph_updated,
+    )
+
+
+class TestUploadDocumentOrchestrator:
+    """Coverage for the orchestrator success path of /upload/sync.
+
+    Mocks process_document to RETURN a DocumentProcessingResult (vs the
+    legacy-fallback class above which raises). This exercises
+    _persist_document, _save_orchestrator_syllabus, _graph_backstop,
+    and _grading_categories_from in routes/documents.py.
+    """
+
+    def test_returns_persisted_row_for_lecture_notes(self):
+        result = _make_orchestrator_result(
+            category="lecture_notes",
+            concept_names=["Backpropagation", "Chain Rule"],
+        )
+        row = {"id": "doc-1", "file_name": "notes.pdf", "category": "lecture_notes"}
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [row]
+            r = _make_upload(filename="notes.pdf")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["category"] == "lecture_notes"
+        assert body["file_name"] == "notes.pdf"
+        assert body["categories"] == []  # non-syllabus → empty grading buckets
+
+    def test_persists_summary_plaintext_in_response(self):
+        """Response carries plaintext summary even though insert encrypts."""
+        result = _make_orchestrator_result(
+            summary_abstract="Plain English summary.",
+        )
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = []
+            r = _make_upload()
+        assert r.status_code == 200
+        assert r.json()["summary"] == "Plain English summary."
+
+    def test_syllabus_grading_categories_pass_through_to_response(self):
+        result = _make_orchestrator_result(
+            category="syllabus",
+            is_syllabus=True,
+            grading_categories=[
+                {"name": "Exams", "weight": 40},
+                {"name": "Homework", "weight": 30},
+                {"name": "Final", "weight": 30},
+            ],
+        )
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.save_assignments_to_db"),
+            patch("routes.documents.apply_graph_update"),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "s1"}]
+            r = _make_upload(filename="syllabus.pdf")
+        assert r.status_code == 200
+        cats = r.json()["categories"]
+        assert [c["name"] for c in cats] == ["Exams", "Homework", "Final"]
+        assert [c["weight"] for c in cats] == [40.0, 30.0, 30.0]
+
+    def test_syllabus_assignments_with_due_dates_persist(self):
+        from datetime import date
+        result = _make_orchestrator_result(
+            category="syllabus",
+            is_syllabus=True,
+            course_title="CS 188",
+            syllabus_assignments=[
+                {"title": "PS1", "due_date": date(2026, 4, 1), "description": None},
+                {"title": "Midterm", "due_date": None, "description": None},  # dropped
+            ],
+        )
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.save_assignments_to_db") as mock_save,
+            patch("routes.documents.apply_graph_update"),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "s2"}]
+            r = _make_upload(filename="syllabus.pdf", course_id="c-7")
+        assert r.status_code == 200
+        # Only the dated assignment survives the no-invent contract.
+        mock_save.assert_called_once()
+        saved_user, saved_assignments = mock_save.call_args.args
+        assert saved_user == "u1"
+        assert len(saved_assignments) == 1
+        assert saved_assignments[0]["title"] == "PS1"
+        assert saved_assignments[0]["due_date"] == "2026-04-01"
+        assert saved_assignments[0]["course_id"] == "c-7"
+
+    def test_graph_backstop_fires_when_orchestrator_skipped_tool(self):
+        """If graph_updated=False and category is syllabus/assignment, the
+        route applies the graph update procedurally."""
+        result = _make_orchestrator_result(
+            category="assignment",
+            concept_names=["Linear Regression", "Gradient Descent"],
+            graph_updated=False,
+        )
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.apply_graph_update") as mock_apply,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "a1"}]
+            r = _make_upload(filename="pset.pdf", course_id="c-9")
+        assert r.status_code == 200
+        mock_apply.assert_called_once()
+        args, kwargs = mock_apply.call_args
+        assert args[0] == "u1"
+        assert kwargs["course_id"] == "c-9"
+        assert [n["concept_name"] for n in args[1]["new_nodes"]] == [
+            "Linear Regression", "Gradient Descent"
+        ]
+
+    def test_graph_backstop_skipped_when_orchestrator_already_updated(self):
+        result = _make_orchestrator_result(
+            category="assignment",
+            concept_names=["Stuff"],
+            graph_updated=True,
+        )
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.apply_graph_update") as mock_apply,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "a2"}]
+            r = _make_upload(filename="pset.pdf")
+        assert r.status_code == 200
+        mock_apply.assert_not_called()
+
+    def test_lecture_notes_skip_graph_backstop(self):
+        """Backstop only fires for syllabus/assignment categories."""
+        result = _make_orchestrator_result(
+            category="lecture_notes", concept_names=["X"], graph_updated=False,
+        )
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.apply_graph_update") as mock_apply,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "l1"}]
+            r = _make_upload()
+        assert r.status_code == 200
+        mock_apply.assert_not_called()

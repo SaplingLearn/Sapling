@@ -31,6 +31,7 @@ logfire.configure(
 logfire.instrument_pydantic_ai()
 
 app = FastAPI(title="Sapling API", version="1.0.0")
+logfire.instrument_fastapi(app)
 
 if recost_api_key and RecostMiddleware is not None:
     app.add_middleware(

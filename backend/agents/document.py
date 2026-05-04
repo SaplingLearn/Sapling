@@ -36,17 +36,15 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.providers.google import GoogleProvider
 
 from agents import WORKER_LIMITS, ORCHESTRATOR_LIMITS
+from agents._providers import google_model
 from agents.deps import SaplingDeps
 from agents.classifier import classifier_agent, DocumentClassification
 from agents.summary import summary_agent, Summary
 from agents.concept_extraction import concept_extraction_agent, ConceptList
 from agents.syllabus_extraction import syllabus_extraction_agent, SyllabusAssignments
 from agents.tools.graph import apply_graph_update_tool
-from config import GEMINI_API_KEY
 
 
 class DocumentProcessingResult(BaseModel):
@@ -84,10 +82,8 @@ class GraphUpdateConfirmation(BaseModel):
     )
 
 
-_provider = GoogleProvider(api_key=GEMINI_API_KEY or "dummy-key-for-import")
-
 document_agent = Agent[SaplingDeps, GraphUpdateConfirmation](
-    model=GoogleModel("gemini-2.5-pro", provider=_provider),
+    model=google_model("gemini-2.5-pro"),
     deps_type=SaplingDeps,
     output_type=GraphUpdateConfirmation,
     system_prompt=(

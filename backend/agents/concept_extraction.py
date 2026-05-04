@@ -9,11 +9,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.providers.google import GoogleProvider
 
+from agents._providers import google_model
 from agents.deps import SaplingDeps
-from config import GEMINI_API_KEY
 
 
 class Concept(BaseModel):
@@ -35,10 +33,8 @@ class ConceptList(BaseModel):
     )
 
 
-_provider = GoogleProvider(api_key=GEMINI_API_KEY or "dummy-key-for-import")
-
 concept_extraction_agent = Agent[SaplingDeps, ConceptList](
-    model=GoogleModel("gemini-2.5-flash", provider=_provider),
+    model=google_model("gemini-2.5-flash"),
     deps_type=SaplingDeps,
     output_type=ConceptList,
     system_prompt=(

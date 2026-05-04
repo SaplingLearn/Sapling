@@ -11,11 +11,9 @@ from datetime import date
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, PromptedOutput
-from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.providers.google import GoogleProvider
 
+from agents._providers import google_model
 from agents.deps import SaplingDeps
-from config import GEMINI_API_KEY
 
 
 class SyllabusAssignment(BaseModel):
@@ -29,13 +27,29 @@ class SyllabusAssignment(BaseModel):
     weight_pct: float | None = Field(default=None, ge=0.0, le=100.0)
 
 
+class GradingCategory(BaseModel):
+    """A grading-weight bucket from the syllabus (e.g. 'Exams: 40%')."""
+
+    name: str = Field(max_length=100)
+    weight: float = Field(
+        ge=0.0,
+        description="Stated weight verbatim from the syllabus — points or "
+                    "percent, do NOT normalize.",
+    )
+
+
 class SyllabusAssignments(BaseModel):
     course_title: str | None = Field(default=None, max_length=300)
     instructor: str | None = Field(default=None, max_length=200)
     assignments: list[SyllabusAssignment] = Field(max_length=50)
+    grading_categories: list[GradingCategory] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Top-level grading-weight buckets (e.g. Exams 40%, "
+                    "Homework 30%). Empty if the syllabus does not state "
+                    "a weight breakdown.",
+    )
 
-
-_provider = GoogleProvider(api_key=GEMINI_API_KEY or "dummy-key-for-import")
 
 # Gemini's native structured-output API rejects this schema with
 # "too many states for serving" because of the date format on
@@ -43,7 +57,7 @@ _provider = GoogleProvider(api_key=GEMINI_API_KEY or "dummy-key-for-import")
 # Pydantic types/constraints (date parsing, ge/le on weight_pct) and
 # moves schema enforcement into the prompt + local validation.
 syllabus_extraction_agent = Agent[SaplingDeps, SyllabusAssignments](
-    model=GoogleModel("gemini-2.5-flash", provider=_provider),
+    model=google_model("gemini-2.5-flash"),
     deps_type=SaplingDeps,
     output_type=PromptedOutput(SyllabusAssignments),
     system_prompt=(
@@ -57,6 +71,11 @@ syllabus_extraction_agent = Agent[SaplingDeps, SyllabusAssignments](
         "calendar date. For RELATIVE terms ('Week 3', 'before "
         "midterm', 'end of unit 2'), leave null. Do NOT invent dates "
         "— that's a downstream concern.\n\n"
+        "grading_categories: extract the top-level grading-weight "
+        "buckets stated by the syllabus (e.g. 'Exams 40%', "
+        "'Homework 30%', 'Participation 10%'). weight passes through "
+        "verbatim — do not normalize percent vs points. Empty list "
+        "is valid when the syllabus does not state a breakdown.\n\n"
         "Fill course_title and instructor if shown at the top of the "
         "syllabus, else null. Empty assignments list is valid."
     ),

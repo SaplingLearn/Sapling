@@ -23,12 +23,6 @@ class GraphUpdateInput(BaseModel):
         description="Concept names to merge into the user's knowledge "
                     "graph for the current course."
     )
-    relationships: list[str] = Field(
-        default_factory=list,
-        description="Optional natural-language relationships (e.g. 'X "
-                    "is a prerequisite of Y'). Currently passed through "
-                    "but not yet wired into graph_service edges.",
-    )
 
 
 async def apply_graph_update_tool(

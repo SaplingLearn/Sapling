@@ -332,6 +332,22 @@ def _persist_document(
     return full_row["id"], full_row
 
 
+def _grading_categories_from(result: DocumentProcessingResult) -> list[dict]:
+    """Map orchestrator GradingCategory -> legacy {name, weight} shape.
+
+    Returns [] for non-syllabus documents or when the syllabus did not
+    state a grading breakdown — matches the legacy pipeline's contract
+    so the frontend's category-rendering branch sees the same shape.
+    """
+    if not (result.classification.is_syllabus and result.syllabus
+            and result.syllabus.grading_categories):
+        return []
+    return [
+        {"name": c.name, "weight": float(c.weight)}
+        for c in result.syllabus.grading_categories
+    ]
+
+
 def _save_orchestrator_syllabus(*, user_id: str, course_id: str, filename: str,
                                 result: DocumentProcessingResult) -> None:
     """Map SyllabusAssignment -> legacy assignments shape and persist.
@@ -454,10 +470,7 @@ async def upload_document_sync(
     background_tasks.add_task(_check_upload_achievements, user_id)
 
     response = dict(full_row)
-    # categories (grading-weight buckets) aren't extracted by the orchestrator
-    # yet — keep the field present for response-shape compatibility with the
-    # legacy pipeline by returning an empty list.
-    response["categories"] = []
+    response["categories"] = _grading_categories_from(result)
     return response
 
 
@@ -573,10 +586,11 @@ async def upload_document(
                 if mapped is None:
                     continue
                 if mapped.type == "result":
-                    # Skip — agent's FinalResultEvent carries
-                    # GraphUpdateConfirmation, not the full result the
-                    # client wants. We emit our own 'result' below with
-                    # the deterministically-composed DocumentProcessingResult.
+                    # The agent's FinalResultEvent carries
+                    # GraphUpdateConfirmation, not the full pipeline
+                    # output. Pull graph_updated off it for the composed
+                    # result, then suppress the event — the client gets
+                    # our deterministic 'result' below instead.
                     if mapped.data:
                         graph_updated = bool(mapped.data.get("graph_updated"))
                     continue
@@ -605,14 +619,14 @@ async def upload_document(
                                           filename=filename, result=final_output)
 
             # BackgroundTasks runs after response close — useless for SSE since
-            # the stream IS the response. Use create_task for fire-and-forget.
-            # The wrapped sync helpers already swallow their own exceptions.
-            asyncio.create_task(asyncio.to_thread(
-                _invalidate_study_guide_cache, user_id, course_id))
-            asyncio.create_task(asyncio.to_thread(
-                update_course_context, course_id))
-            asyncio.create_task(asyncio.to_thread(
-                _check_upload_achievements, user_id))
+            # the stream IS the response. _spawn_post_roll uses create_task
+            # but attaches a done-callback so exceptions land in the log
+            # instead of disappearing.
+            _spawn_post_roll(
+                ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, course_id),
+                ("update_course_context", update_course_context, course_id),
+                ("check_upload_achievements", _check_upload_achievements, user_id),
+            )
 
             yield sapling_event_to_sse(SaplingEvent(
                 type="status", step="done",
@@ -633,11 +647,11 @@ async def upload_document(
                 course_id=course_id, user_id=user_id,
             ):
                 yield sse_event
-        except Exception as e:
+        except Exception:
             logger.exception("Unexpected streaming failure for '%s'", filename)
             yield sapling_event_to_sse(SaplingEvent(
                 type="error", step="fallback",
-                message=str(e),
+                message="Unexpected error during processing; using legacy pipeline.",
             ))
             async for sse_event in _stream_legacy_fallback(
                 filename=filename, extracted_text=extracted_text,
@@ -656,7 +670,9 @@ async def _stream_legacy_fallback(
     Used by the streaming /upload route's exception handlers to deliver
     a document via the legacy path even when the agent pipeline trips.
     Streaming visibility is lost (the legacy path is single-shot), but
-    the client still receives a usable result.
+    the client still receives a usable result. If the legacy path also
+    fails, we yield a terminal error event so the client doesn't see a
+    silent EOF mid-stream.
     """
     try:
         legacy_response = await _legacy_upload_pipeline(
@@ -665,6 +681,14 @@ async def _stream_legacy_fallback(
         )
     except Exception:
         logger.exception("Legacy fallback also failed for '%s'", filename)
+        yield sapling_event_to_sse(SaplingEvent(
+            type="error", step="failed",
+            message="Document processing failed. Please try again.",
+        ))
+        yield sapling_event_to_sse(SaplingEvent(
+            type="status", step="done",
+            message="Failed.",
+        ))
         return
     yield sapling_event_to_sse(SaplingEvent(
         type="result", step="finalize",
@@ -697,6 +721,25 @@ def _check_upload_achievements(user_id: str) -> None:
         check_achievements(user_id, "documents_uploaded", {})
     except Exception:
         pass
+
+
+def _spawn_post_roll(*tasks: tuple) -> None:
+    """Fire-and-forget post-roll work for SSE / non-FastAPI-BackgroundTasks
+    contexts. Each tuple is (label, callable, *args). Exceptions in the
+    spawned task are logged via a done-callback so they don't disappear
+    silently the way bare asyncio.create_task(...) lets them.
+    """
+    for label, fn, *args in tasks:
+        task = asyncio.create_task(asyncio.to_thread(fn, *args))
+        task.add_done_callback(lambda t, _label=label: _log_post_roll_exc(t, _label))
+
+
+def _log_post_roll_exc(task: "asyncio.Task", label: str) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Post-roll task '%s' failed: %s", label, exc, exc_info=exc)
 
 
 async def _legacy_upload_pipeline(
@@ -755,12 +798,14 @@ async def _legacy_upload_pipeline(
 
     if background_tasks is not None:
         background_tasks.add_task(_invalidate_study_guide_cache, user_id, course_id)
+        background_tasks.add_task(update_course_context, course_id)
         background_tasks.add_task(_check_upload_achievements, user_id)
     else:
-        asyncio.create_task(asyncio.to_thread(
-            _invalidate_study_guide_cache, user_id, course_id))
-        asyncio.create_task(asyncio.to_thread(
-            _check_upload_achievements, user_id))
+        _spawn_post_roll(
+            ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, course_id),
+            ("update_course_context", update_course_context, course_id),
+            ("check_upload_achievements", _check_upload_achievements, user_id),
+        )
 
     response = dict(inserted[0] if inserted else row)
     response["summary"] = decrypt_if_present(response.get("summary"))
