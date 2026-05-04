@@ -41,6 +41,7 @@ export function ModelToggle({
       <button
         role="switch"
         aria-checked={isSmart}
+        aria-label={`Tutor model — ${isSmart ? "Smart: stronger reasoning, slower" : "Fast: quicker replies, default"}`}
         onClick={() => onChange(isSmart ? "fast" : "smart")}
         className="btn btn--sm"
         style={{

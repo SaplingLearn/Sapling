@@ -108,14 +108,16 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       typeof crypto !== "undefined" &&
       typeof crypto.randomUUID === "function";
 
+    const sameTabUrl = `${API_URL}/api/auth/google`;
+
     if (!supportsPopup) {
       setWaiting(true);
-      window.location.href = `${API_URL}/api/auth/google`;
+      window.location.href = sameTabUrl;
       return;
     }
 
     const popupId = crypto.randomUUID();
-    const url = `${API_URL}/api/auth/google?popup_id=${encodeURIComponent(popupId)}`;
+    const popupUrl = `${API_URL}/api/auth/google?popup_id=${encodeURIComponent(popupId)}`;
 
     cleanupPopupListeners();
     const channel = new BroadcastChannel(`sapling_signin:${popupId}`);
@@ -129,8 +131,8 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       if (!data || data.type !== "sapling_signin") return;
       cleanupPopupListeners();
       setWaiting(false);
-      if (data.success && data.userId && data.name) {
-        setActiveUser(data.userId, data.name, data.avatar || "");
+      if (data.success && data.userId) {
+        setActiveUser(data.userId, data.name || "", data.avatar || "");
         confirmApproved();
         if (data.onboardingCompleted) {
           router.replace("/dashboard");
@@ -148,12 +150,12 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
     const left = Math.max(0, window.screenX + (window.outerWidth - w) / 2);
     const top = Math.max(0, window.screenY + (window.outerHeight - h) / 2);
     const features = `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
-    const popup = window.open(url, "sapling_signin", features);
+    const popup = window.open(popupUrl, "sapling_signin", features);
     if (!popup || popup.closed) {
       // Pop-up blocker / user setting. Fall back to same-tab redirect.
       cleanupPopupListeners();
       setWaiting(true);
-      window.location.href = url;
+      window.location.href = sameTabUrl;
       return;
     }
     popupRef.current = popup;

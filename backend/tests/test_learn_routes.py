@@ -279,3 +279,38 @@ class TestModeSwitch:
                 call for call in t.call_args_list if call.args and call.args[0] == "messages"
             ]
         assert len(insert_calls) >= 1
+
+
+# ── _resolve_tutor_model ──────────────────────────────────────────────────────
+
+class TestResolveTutorModel:
+    def test_none_returns_default(self):
+        from routes.learn import _resolve_tutor_model
+        from services.gemini_service import MODEL_DEFAULT
+        assert _resolve_tutor_model(None) == MODEL_DEFAULT
+
+    def test_empty_string_returns_default(self):
+        from routes.learn import _resolve_tutor_model
+        from services.gemini_service import MODEL_DEFAULT
+        assert _resolve_tutor_model("") == MODEL_DEFAULT
+
+    def test_fast_returns_default(self):
+        from routes.learn import _resolve_tutor_model
+        from services.gemini_service import MODEL_DEFAULT
+        assert _resolve_tutor_model("fast") == MODEL_DEFAULT
+
+    def test_smart_returns_smart(self):
+        from routes.learn import _resolve_tutor_model
+        from services.gemini_service import MODEL_SMART
+        assert _resolve_tutor_model("smart") == MODEL_SMART
+
+    def test_uppercase_fast_returns_default(self):
+        # Lookup is case-sensitive: only lowercase keys hit the map.
+        from routes.learn import _resolve_tutor_model
+        from services.gemini_service import MODEL_DEFAULT
+        assert _resolve_tutor_model("FAST") == MODEL_DEFAULT
+
+    def test_garbage_returns_default(self):
+        from routes.learn import _resolve_tutor_model
+        from services.gemini_service import MODEL_DEFAULT
+        assert _resolve_tutor_model("garbage") == MODEL_DEFAULT
