@@ -6,12 +6,13 @@ import { Icon } from "./Icon";
 import { CustomSelect } from "./CustomSelect";
 import { useToast } from "./ToastProvider";
 import {
-  uploadDocument,
+  uploadDocumentStream,
   updateDocumentCategory,
   addCourse,
   onboardingCoursesSearch,
   type EnrolledCourse,
   type OnboardingCourse,
+  type UploadEvent,
 } from "@/lib/api";
 
 const MAX_FILES = 5;
@@ -32,6 +33,15 @@ interface UploadItem {
   summary?: string;
   conceptNames?: string[];
   abort?: AbortController;
+  /** Latest progress message from the SSE stream (visible while uploading). */
+  progress?: string;
+  /**
+   * X-Request-ID minted for the current upload attempt. Captured before the
+   * stream starts so a failed row can surface a "Reference: …" line for
+   * support, and so retries can mint a fresh ID (the backend's idempotency
+   * cache would otherwise short-circuit on the failed one).
+   */
+  requestId?: string;
 }
 
 interface Props {
@@ -124,34 +134,74 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     }
     const ac = new AbortController();
     const timeout = setTimeout(() => ac.abort(), UPLOAD_TIMEOUT_MS);
-    setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: "uploading", abort: ac } : i));
+    // Mint a fresh request_id per attempt so retries don't collide with the
+    // backend's idempotency cache (which keys on X-Request-ID).
+    const requestId =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    setItems(prev => prev.map(i => i.id === item.id ? {
+      ...i, status: "uploading", abort: ac, progress: "Starting upload…", requestId,
+    } : i));
     try {
       const fd = new FormData();
       fd.append("file", item.file);
       fd.append("course_id", item.courseId);
       fd.append("user_id", userId);
-      const resp = await uploadDocument(fd, ac.signal);
+      const resp = await uploadDocumentStream(fd, (ev: UploadEvent) => {
+        // Mirror backend SaplingEvent.message into the row's live label.
+        if (ev.type === "status" && ev.step === "done") return; // final state covered below
+
+        // Capture any backend-supplied request_id (matches what we sent, but
+        // some events may carry the canonical one if the backend re-issues).
+        const evRid = (ev.data as { request_id?: unknown } | undefined)?.request_id;
+        if (typeof evRid === "string" && evRid.length > 0) {
+          setItems(prev => prev.map(i => i.id === item.id ? { ...i, requestId: evRid } : i));
+        }
+
+        if (ev.type === "error") {
+          // Two flavors of error event from the streaming route:
+          //   step === "fallback" — orchestrator tripped, legacy path will run.
+          //                         Degraded mode, NOT a terminal failure.
+          //   step === "failed"   — terminal failure from _stream_legacy_fallback.
+          // Anything else we treat as informational and skip toasting to avoid
+          // double-firing alongside the catch-block toast.
+          if (ev.step === "fallback") {
+            toast.warn(`Switching to fallback: ${ev.message}`);
+          } else if (ev.step === "failed") {
+            toast.error(`Upload failed: ${ev.message}`);
+          }
+          setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: ev.message } : i));
+          return;
+        }
+
+        setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: ev.message } : i));
+      }, ac.signal, requestId);
       clearTimeout(timeout);
       setItems(prev => prev.map(i => i.id === item.id ? {
         ...i,
         status: "processed",
+        progress: undefined,
         docId: resp?.id,
-        category: resp?.category || "other",
-        summary: resp?.summary,
-        conceptNames: Array.isArray(resp?.concept_notes)
-          ? resp.concept_notes
-              .map((n: { name?: string }) => n?.name)
-              .filter((n: unknown): n is string => typeof n === "string" && n.length > 0)
-          : [],
+        category: resp?.classification?.category || resp?.category || "other",
+        summary: resp?.summary?.abstract ?? resp?.summary,
+        conceptNames: extractConceptNames(resp),
       } : i));
     } catch (err: any) {
       clearTimeout(timeout);
       const aborted = ac.signal.aborted;
+      const errorMsg = aborted
+        ? "Processing took longer than 4 minutes — try a smaller file."
+        : String(err?.message || err);
       setItems(prev => prev.map(i => i.id === item.id ? {
         ...i,
         status: aborted ? "aborted" : "error",
-        error: aborted ? "Processing took longer than 4 minutes — try a smaller file." : String(err?.message || err),
+        progress: undefined,
+        error: errorMsg,
       } : i));
+      // Toast on terminal stream failure (the catch covers cases where the
+      // SSE stream throws or aborts, distinct from in-band error events).
+      if (!aborted) toast.error(`Upload failed: ${errorMsg}`);
     }
   };
 
@@ -162,6 +212,29 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   const reanalyze = (item: UploadItem) => {
     setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: "pending", error: undefined } : i));
     void startUpload({ ...item, status: "pending" });
+  };
+
+  /**
+   * Retry a failed or aborted upload. Resets the row to a clean "pending"
+   * state — including clearing the previous requestId so startUpload mints
+   * a fresh one (the old one would short-circuit in the backend's
+   * idempotency cache).
+   */
+  const retry = (item: UploadItem) => {
+    setItems(prev => prev.map(i => i.id === item.id ? {
+      ...i,
+      status: "pending",
+      error: undefined,
+      progress: undefined,
+      requestId: undefined,
+    } : i));
+    void startUpload({
+      ...item,
+      status: "pending",
+      error: undefined,
+      progress: undefined,
+      requestId: undefined,
+    });
   };
 
   const setItemField = (id: string, updater: (prev: UploadItem) => UploadItem) => {
@@ -362,7 +435,25 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                       </button>
                     </>
                   )}
+                  {(item.status === "error" || item.status === "aborted") && (
+                    <button className="btn btn--ghost btn--sm" onClick={() => retry(item)}>
+                      <Icon name="sparkle" size={12} /> Retry
+                    </button>
+                  )}
                 </div>
+                {item.status === "uploading" && item.progress && (
+                  <div
+                    aria-live="polite"
+                    style={{
+                      fontSize: 12,
+                      color: "var(--text-muted)",
+                      fontStyle: "italic",
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {item.progress}
+                  </div>
+                )}
                 {item.summary && (
                   <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>{item.summary}</div>
                 )}
@@ -375,6 +466,27 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                 )}
                 {item.error && (
                   <div style={{ fontSize: 11, color: "var(--err)" }}>{item.error}</div>
+                )}
+                {item.status === "error" && item.requestId && (
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", gap: 6, alignItems: "center" }}>
+                    <span>Reference: {item.requestId.slice(0, 8)}…</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const rid = item.requestId || "";
+                        if (navigator.clipboard) {
+                          navigator.clipboard.writeText(rid).then(
+                            () => toast.info("Copied"),
+                            () => toast.error("Couldn't copy"),
+                          );
+                        }
+                      }}
+                      className="btn btn--ghost btn--sm"
+                      style={{ padding: "0 6px", fontSize: 10 }}
+                    >
+                      copy
+                    </button>
+                  </div>
                 )}
               </div>
             ))}
@@ -405,6 +517,27 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     </div>,
     document.body,
   );
+}
+
+/**
+ * Pull concept names out of either the orchestrator result shape
+ * ({ concepts: { concepts: [{ name, ... }] } }) or the legacy fallback
+ * shape ({ concept_notes: [{ name }] }). Returns at most a flat string[].
+ */
+function extractConceptNames(resp: any): string[] {
+  const fromOrchestrator = resp?.concepts?.concepts;
+  if (Array.isArray(fromOrchestrator)) {
+    return fromOrchestrator
+      .map((c: { name?: unknown }) => c?.name)
+      .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
+  }
+  const fromLegacy = resp?.concept_notes;
+  if (Array.isArray(fromLegacy)) {
+    return fromLegacy
+      .map((n: { name?: unknown }) => n?.name)
+      .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
+  }
+  return [];
 }
 
 function StatusBadge({ status }: { status: UploadStatus }) {

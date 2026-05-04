@@ -191,7 +191,7 @@ export const getAllAssignments = (userId: string) =>
 export const extractSyllabus = (formData: FormData, userId?: string): Promise<any> => {
   if (IS_LOCAL_MODE) return Promise.resolve({ assignments: [] });
   if (userId) formData.set('user_id', userId);
-  return fetch(`${API_URL}/api/calendar/extract`, { method: 'POST', body: formData })
+  return fetch(`${API_URL}/api/calendar/extract`, { method: 'POST', body: formData, credentials: 'include' })
     .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(String(data?.detail || `HTTP ${r.status}`)); return data; });
 };
 
@@ -355,10 +355,60 @@ export const deleteDocument = (documentId: string, userId?: string) =>
   fetchJSON<{ deleted: boolean }>(`/api/documents/doc/${documentId}${userId ? `?user_id=${encodeURIComponent(userId)}` : ''}`, { method: 'DELETE' });
 
 export const uploadDocument = (formData: FormData, signal?: AbortSignal): Promise<any> => {
+  // Non-streaming JSON upload. Hits /upload/sync (legacy contract) so callers
+  // that don't care about progress events stay one-line. The streaming /upload
+  // route is exposed separately via uploadDocumentStream below.
   if (IS_LOCAL_MODE) return Promise.resolve({ id: 'local-doc', status: 'processed' });
-  return fetch(`${API_URL}/api/documents/upload`, { method: 'POST', body: formData, signal })
+  return fetch(`${API_URL}/api/documents/upload/sync`, { method: 'POST', body: formData, signal, credentials: 'include' })
     .then(async r => { if (!r.ok) { const e = await r.text(); throw new Error(e || `HTTP ${r.status}`); } return r.json(); });
 };
+
+// Streaming upload — emits SaplingEvent SSE events while the orchestrator runs.
+// Event types match backend/services/agent_events.py::SaplingEvent.
+export type UploadEventType = 'status' | 'progress' | 'result' | 'error';
+
+export interface UploadEvent {
+  type: UploadEventType;
+  step: string;
+  message: string;
+  data?: Record<string, unknown> | null;
+}
+
+export async function uploadDocumentStream(
+  formData: FormData,
+  onEvent: (event: UploadEvent) => void,
+  signal?: AbortSignal,
+  requestId?: string,
+): Promise<any> {
+  if (IS_LOCAL_MODE) {
+    onEvent({ type: 'status', step: 'done', message: 'Saved.' });
+    return { id: 'local-doc', status: 'processed' };
+  }
+  const { streamSSE } = await import('./sse');
+  let finalDoc: any = null;
+  const headers: Record<string, string> = {};
+  if (requestId) headers['X-Request-ID'] = requestId;
+  for await (const e of streamSSE<UploadEvent>(
+    `${API_URL}/api/documents/upload`,
+    { method: 'POST', body: formData, signal, credentials: 'include', headers },
+  )) {
+    onEvent(e.data);
+    if (e.event === 'result') {
+      // result.data carries the full DocumentProcessingResult (orchestrator)
+      // OR the legacy-fallback persisted row. Both expose `id`/`document_id`.
+      finalDoc = e.data.data ?? null;
+    }
+    if (e.event === 'status' && e.data.step === 'done') {
+      // The done event carries { document_id } when the row persisted.
+      const docIdFromDone = (e.data.data as { document_id?: string } | undefined)?.document_id;
+      if (docIdFromDone && finalDoc && typeof finalDoc === 'object' && !('id' in finalDoc)) {
+        finalDoc = { ...finalDoc, id: docIdFromDone };
+      }
+    }
+  }
+  if (!finalDoc) throw new Error('Upload stream ended without a result event.');
+  return finalDoc;
+}
 
 export const updateDocumentCategory = (documentId: string, userId: string, category: string) =>
   fetchJSON<{ id: string; category: string }>(`/api/documents/doc/${documentId}`, {
@@ -743,7 +793,7 @@ export const uploadAvatar = (userId: string, file: File): Promise<{ avatar_url: 
   const fd = new FormData();
   fd.append('file', file);
   return fetch(`${API_URL}/api/profile/${encodeURIComponent(userId)}/avatar?user_id=${encodeURIComponent(userId)}`, {
-    method: 'POST', body: fd,
+    method: 'POST', body: fd, credentials: 'include',
   }).then(async r => {
     if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
     return r.json();

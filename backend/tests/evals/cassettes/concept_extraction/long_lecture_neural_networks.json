@@ -1,0 +1,49 @@
+{
+  "concepts": [
+    {
+      "description": "Backpropagation is the algorithm used to efficiently compute the gradients of the loss function with respect to the weights of the network, applying the chain rule layer by layer.",
+      "importance": 1.0,
+      "name": "Backpropagation"
+    },
+    {
+      "description": "These are the foundational architecture in neural networks, where information flows in one direction from input to output layers without cycles.",
+      "importance": 1.0,
+      "name": "Feedforward Networks"
+    },
+    {
+      "description": "This is an optimization algorithm used to train neural networks, where model parameters are updated using gradients computed from small random subsets of the training data called mini-batches.",
+      "importance": 0.95,
+      "name": "Stochastic Gradient Descent with Mini-batches"
+    },
+    {
+      "description": "Batch normalization is a technique that normalizes the inputs of each layer, helping to stabilize and speed up the training of deep neural networks by mitigating vanishing/exploding gradients and allowing higher learning rates.",
+      "importance": 0.9,
+      "name": "Batch Normalization"
+    },
+    {
+      "description": "Functions like ReLU, sigmoid, and tanh are applied to the output of each neuron to introduce non-linearity, enabling neural networks to learn complex patterns.",
+      "importance": 0.9,
+      "name": "Activation Functions"
+    },
+    {
+      "description": "The softmax function is used in the output layer of a neural network for multi-class classification, converting raw scores into probabilities that sum to one.",
+      "importance": 0.85,
+      "name": "Softmax Output"
+    },
+    {
+      "description": "Cross-entropy loss is a common loss function used in classification tasks, measuring the performance of a classification model whose output is a probability value between 0 and 1.",
+      "importance": 0.85,
+      "name": "Cross-Entropy Loss"
+    },
+    {
+      "description": "Methods such as L2 weight decay and dropout are employed to prevent neural networks from overfitting the training data, improving their generalization ability to unseen examples.",
+      "importance": 0.8,
+      "name": "Regularization Techniques"
+    },
+    {
+      "description": "These are issues encountered during training deep neural networks where gradients become either extremely small (vanishing) or extremely large (exploding), hindering effective learning.",
+      "importance": 0.75,
+      "name": "Vanishing and Exploding Gradients"
+    }
+  ]
+}
