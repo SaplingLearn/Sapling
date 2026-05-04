@@ -156,12 +156,16 @@ class TestListUsersPaginated:
 
 class TestApproveUser:
     def test_approves_user(self):
-        with _mock_admin(), patch("routes.admin.table") as t:
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action") as audit:
             t.return_value.update.return_value = [{}]
             r = client.patch("/api/admin/users/u1/approve?user_id=admin1")
 
         assert r.status_code == 200
         assert r.json()["approved"] is True
+        audit.assert_called_once()
+        assert audit.call_args.kwargs["action"] == "user.approve"
 
 
 # ── GET /api/admin/roles ───────────────────────────────────────────────────
@@ -205,3 +209,24 @@ class TestListCosmetics:
             r = client.get("/api/admin/cosmetics")
         assert r.status_code == 200
         assert r.json() == {"cosmetics": rows}
+
+
+# ── PATCH /api/admin/users/{id}/unapprove ──────────────────────────────────
+
+class TestUnapproveUser:
+    def test_unapproves_user(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.update.return_value = [{}]
+            r = client.patch("/api/admin/users/u1/unapprove?user_id=admin1")
+        assert r.status_code == 200
+        assert r.json()["unapproved"] is True
+        audit.assert_called_once()
+        assert audit.call_args.kwargs["action"] == "user.unapprove"
+
+    def test_cannot_unapprove_self(self):
+        with patch("routes.admin.get_session_user_id", return_value="u1"), \
+             _mock_admin():
+            r = client.patch("/api/admin/users/u1/unapprove?user_id=u1")
+        assert r.status_code == 409
+        assert "yourself" in r.json()["detail"].lower()

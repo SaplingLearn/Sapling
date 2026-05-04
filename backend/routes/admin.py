@@ -18,7 +18,8 @@ from models import (
     GrantAchievementBody,
     CreateCosmeticBody,
 )
-from services.auth_guard import require_admin
+from services.admin_audit import log_admin_action
+from services.auth_guard import require_admin, get_session_user_id
 from services.achievement_service import check_achievements
 from services.users_search import paginate_users
 
@@ -225,5 +226,18 @@ def list_users(
 @router.patch("/users/{user_id}/approve")
 def approve_user(user_id: str, request: Request):
     require_admin(request)
+    actor = get_session_user_id(request)
     table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
+    log_admin_action(actor_id=actor, action="user.approve", target_type="user", target_id=user_id)
     return {"approved": True}
+
+
+@router.patch("/users/{user_id}/unapprove")
+def unapprove_user(user_id: str, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    if user_id == actor:
+        raise HTTPException(status_code=409, detail="You cannot unapprove yourself.")
+    table("users").update({"is_approved": False}, filters={"id": f"eq.{user_id}"})
+    log_admin_action(actor_id=actor, action="user.unapprove", target_type="user", target_id=user_id)
+    return {"unapproved": True}
