@@ -483,6 +483,74 @@ function AchievementsTab() {
   const [grant, setGrant] = React.useState<{ userId: string; achievementId: string }>({ userId: "", achievementId: "" });
   const [granting, setGranting] = React.useState(false);
 
+  const [openId, setOpenId] = React.useState<string | null>(null);
+  const [triggers, setTriggers] = React.useState<AchievementTrigger[]>([]);
+  const [linkedCosmeticIds, setLinkedCosmeticIds] = React.useState<string[]>([]);
+  const [allCosmetics, setAllCosmetics] = React.useState<Cosmetic[]>([]);
+  const [newTrigger, setNewTrigger] = React.useState({ trigger_type: "", trigger_threshold: 1 });
+
+  const loadDetails = React.useCallback(async (id: string) => {
+    try {
+      const [t, l, c] = await Promise.all([
+        adminListTriggers(id),
+        adminListAchievementCosmetics(id),
+        allCosmetics.length ? Promise.resolve({ cosmetics: allCosmetics }) : adminListCosmetics(),
+      ]);
+      setTriggers(t.triggers || []);
+      setLinkedCosmeticIds((l.links || []).map(x => x.cosmetic_id));
+      if (!allCosmetics.length) setAllCosmetics(c.cosmetics || []);
+    } catch (err) {
+      toast.error(`Detail load failed: ${String(err)}`);
+    }
+  }, [allCosmetics, toast]);
+
+  const toggleOpen = (id: string) => {
+    if (openId === id) { setOpenId(null); return; }
+    setOpenId(id);
+    loadDetails(id);
+  };
+
+  const addTrigger = async (id: string) => {
+    if (!newTrigger.trigger_type.trim()) { toast.warn("Trigger type required."); return; }
+    try {
+      await adminCreateTrigger({
+        achievement_id: id,
+        trigger_type: newTrigger.trigger_type.trim(),
+        trigger_threshold: newTrigger.trigger_threshold,
+      });
+      setNewTrigger({ trigger_type: "", trigger_threshold: 1 });
+      await loadDetails(id);
+      toast.success("Trigger added");
+    } catch (err) { toast.error(`Add failed: ${String(err)}`); }
+  };
+
+  const updateTriggerInline = async (tid: string, patch: Partial<AchievementTrigger>, achId: string) => {
+    try {
+      await adminUpdateTrigger(tid, {
+        ...(patch.trigger_type !== undefined ? { trigger_type: patch.trigger_type } : {}),
+        ...(patch.trigger_threshold !== undefined ? { trigger_threshold: patch.trigger_threshold } : {}),
+      });
+      await loadDetails(achId);
+    } catch (err) { toast.error(`Update failed: ${String(err)}`); }
+  };
+
+  const deleteTriggerInline = async (tid: string, achId: string) => {
+    try {
+      await adminDeleteTrigger(tid);
+      await loadDetails(achId);
+      toast.success("Trigger deleted");
+    } catch (err) { toast.error(`Delete failed: ${String(err)}`); }
+  };
+
+  const toggleCosmetic = async (achId: string, cosmeticId: string) => {
+    const linked = linkedCosmeticIds.includes(cosmeticId);
+    try {
+      if (linked) await adminUnlinkAchievementCosmetic(achId, cosmeticId);
+      else        await adminLinkAchievementCosmetic(achId, cosmeticId);
+      await loadDetails(achId);
+    } catch (err) { toast.error(`Link toggle failed: ${String(err)}`); }
+  };
+
   const load = async () => {
     try {
       const [r, u] = await Promise.all([adminListAchievements(), adminFetchUsers()]);
@@ -624,6 +692,67 @@ function AchievementsTab() {
             }
             sub={a.description || a.slug}
             onDelete={() => del(a.id)}
+            onExpand={() => toggleOpen(a.id)}
+            expanded={openId === a.id}
+            expandedContent={
+              <div style={{ display: "grid", gap: 14 }}>
+                <div>
+                  <div className="label-micro" style={{ marginBottom: 6 }}>Triggers · {triggers.length}</div>
+                  {triggers.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>None.</div>}
+                  {triggers.map(t => (
+                    <div key={t.id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                      <input
+                        value={t.trigger_type}
+                        onChange={e => updateTriggerInline(t.id, { trigger_type: e.target.value }, a.id)}
+                        style={{ ...fieldStyle, flex: 1 }}
+                      />
+                      <input
+                        type="number"
+                        value={t.trigger_threshold}
+                        onChange={e => updateTriggerInline(t.id, { trigger_threshold: Number(e.target.value) || 0 }, a.id)}
+                        style={{ ...fieldStyle, width: 80 }}
+                      />
+                      <button className="btn btn--sm btn--ghost" onClick={() => deleteTriggerInline(t.id, a.id)}>×</button>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+                    <input
+                      placeholder="trigger_type (e.g. login_streak)"
+                      value={newTrigger.trigger_type}
+                      onChange={e => setNewTrigger(v => ({ ...v, trigger_type: e.target.value }))}
+                      style={{ ...fieldStyle, flex: 1 }}
+                    />
+                    <input
+                      type="number"
+                      value={newTrigger.trigger_threshold}
+                      onChange={e => setNewTrigger(v => ({ ...v, trigger_threshold: Number(e.target.value) || 0 }))}
+                      style={{ ...fieldStyle, width: 80 }}
+                    />
+                    <button className="btn btn--sm btn--primary" onClick={() => addTrigger(a.id)}>Add</button>
+                  </div>
+                </div>
+                <div>
+                  <div className="label-micro" style={{ marginBottom: 6 }}>Linked cosmetics</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {allCosmetics.map(c => {
+                      const on = linkedCosmeticIds.includes(c.id);
+                      return (
+                        <button
+                          key={c.id}
+                          className={`chip ${on ? "chip--accent" : ""}`}
+                          onClick={() => toggleCosmetic(a.id, c.id)}
+                          style={{ cursor: "pointer", border: on ? undefined : "1px dashed var(--border)" }}
+                          title={`${c.type} · ${c.rarity}`}
+                        >
+                          {c.name}
+                        </button>
+                      );
+                    })}
+                    {allCosmetics.length === 0 && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No cosmetics defined yet.</span>}
+                  </div>
+                </div>
+              </div>
+            }
           />
         ))}
       </div>
@@ -850,31 +979,46 @@ function AnalyticsTab() {
 // ── Shared row + input helpers ───────────────────────────────────────────────
 
 function CatalogRow({
-  left, middle, sub, onDelete,
+  left, middle, sub, onDelete, onExpand, expanded, expandedContent,
 }: {
   left: React.ReactNode;
   middle: React.ReactNode;
   sub?: string;
   onDelete: () => void;
+  onExpand?: () => void;
+  expanded?: boolean;
+  expandedContent?: React.ReactNode;
 }) {
   const del = useConfirm(onDelete);
   return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 12,
-      padding: "10px 16px", borderTop: "1px solid var(--border)",
-    }}>
-      <div style={{ flexShrink: 0 }}>{left}</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13 }}>{middle}</div>
-        {sub && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>}
+    <div>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "10px 16px", borderTop: "1px solid var(--border)",
+      }}>
+        <div style={{ flexShrink: 0 }}>{left}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13 }}>{middle}</div>
+          {sub && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>}
+        </div>
+        {onExpand && (
+          <button className="btn btn--sm btn--ghost" onClick={onExpand}>
+            {expanded ? "Hide" : "Manage"}
+          </button>
+        )}
+        <button
+          className={`btn btn--sm ${del.armed ? "btn--danger" : "btn--ghost"}`}
+          onClick={del.trigger}
+          style={del.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
+        >
+          {del.armed ? "Click again" : <Icon name="x" size={12} />}
+        </button>
       </div>
-      <button
-        className={`btn btn--sm ${del.armed ? "btn--danger" : "btn--ghost"}`}
-        onClick={del.trigger}
-        style={del.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
-      >
-        {del.armed ? "Click again" : <Icon name="x" size={12} />}
-      </button>
+      {expanded && expandedContent && (
+        <div style={{ padding: "10px 16px 14px 56px", borderTop: "1px dashed var(--border)", background: "var(--bg-subtle)" }}>
+          {expandedContent}
+        </div>
+      )}
     </div>
   );
 }
