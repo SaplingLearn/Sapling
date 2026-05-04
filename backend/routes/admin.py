@@ -151,6 +151,7 @@ def list_achievements(request: Request):
 @router.post("/achievements")
 def create_achievement(body: CreateAchievementBody, request: Request):
     require_admin(request)
+    actor = get_session_user_id(request)
     result = table("achievements").insert({
         "name": body.name,
         "slug": body.slug,
@@ -160,17 +161,27 @@ def create_achievement(body: CreateAchievementBody, request: Request):
         "rarity": body.rarity,
         "is_secret": body.is_secret,
     })
+    log_admin_action(
+        actor_id=actor, action="achievement.create", target_type="achievement",
+        target_id=result[0]["id"] if result else None,
+        payload={"slug": body.slug, "name": body.name},
+    )
     return {"achievement": result[0] if result else None}
 
 
 @router.patch("/achievements/{achievement_id}")
 def update_achievement(achievement_id: str, request: Request, body: dict = {}):
     require_admin(request)
+    actor = get_session_user_id(request)
     allowed = {"name", "description", "icon", "category", "rarity", "is_secret"}
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
     table("achievements").update(updates, filters={"id": f"eq.{achievement_id}"})
+    log_admin_action(
+        actor_id=actor, action="achievement.update", target_type="achievement",
+        target_id=achievement_id, payload=updates,
+    )
     return {"updated": True}
 
 
@@ -193,13 +204,19 @@ def unlink_achievement_cosmetic(body: LinkAchievementCosmeticBody, request: Requ
 @router.delete("/achievements/{achievement_id}")
 def delete_achievement(achievement_id: str, request: Request):
     require_admin(request)
+    actor = get_session_user_id(request)
     table("achievements").delete(filters={"id": f"eq.{achievement_id}"})
+    log_admin_action(
+        actor_id=actor, action="achievement.delete", target_type="achievement",
+        target_id=achievement_id,
+    )
     return {"deleted": True}
 
 
 @router.post("/achievements/grant")
 def grant_achievement(body: GrantAchievementBody, request: Request):
     require_admin(request)
+    actor = get_session_user_id(request)
     # Check if already earned
     existing = table("user_achievements").select(
         "achievement_id",
@@ -214,6 +231,10 @@ def grant_achievement(body: GrantAchievementBody, request: Request):
         "earned_at": datetime.now(timezone.utc).isoformat(),
         "is_featured": False,
     })
+    log_admin_action(
+        actor_id=actor, action="achievement.grant", target_type="achievement",
+        target_id=body.achievement_id, payload={"user_id": body.user_id},
+    )
 
     # Trigger linked cosmetics via achievement service
     check_achievements(body.user_id, "manual_admin_grant", {})
@@ -224,11 +245,21 @@ def grant_achievement(body: GrantAchievementBody, request: Request):
 @router.post("/achievements/triggers")
 def create_trigger(body: CreateAchievementTriggerBody, request: Request):
     require_admin(request)
+    actor = get_session_user_id(request)
     result = table("achievement_triggers").insert({
         "achievement_id": body.achievement_id,
         "trigger_type": body.trigger_type,
         "trigger_threshold": body.trigger_threshold,
     })
+    log_admin_action(
+        actor_id=actor, action="trigger.create", target_type="trigger",
+        target_id=result[0]["id"] if result else None,
+        payload={
+            "achievement_id": body.achievement_id,
+            "trigger_type": body.trigger_type,
+            "trigger_threshold": body.trigger_threshold,
+        },
+    )
     return {"trigger": result[0] if result else None}
 
 

@@ -433,3 +433,58 @@ class TestAchievementCosmeticLinks:
         assert r.status_code == 200
         assert r.json()["unlinked"] is True
         assert audit.call_args.kwargs["action"] == "achievement_cosmetic.unlink"
+
+
+class TestAchievementAudits:
+    def test_create_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.insert.return_value = [{"id": "a9"}]
+            r = client.post("/api/admin/achievements", json={
+                "name": "Z", "slug": "z", "category": "milestone", "rarity": "common",
+            })
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "achievement.create"
+
+    def test_update_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.update.return_value = [{}]
+            r = client.patch("/api/admin/achievements/a1", json={"name": "Z2"})
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "achievement.update"
+
+    def test_delete_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.delete.return_value = [{}]
+            r = client.delete("/api/admin/achievements/a1")
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "achievement.delete"
+
+    def test_grant_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit, \
+             patch("routes.admin.check_achievements", return_value=[]):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{}]
+            r = client.post("/api/admin/achievements/grant", json={
+                "user_id": "u2", "achievement_id": "a1",
+            })
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "achievement.grant"
+
+    def test_create_trigger_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.insert.return_value = [{"id": "t1"}]
+            r = client.post("/api/admin/achievements/triggers", json={
+                "achievement_id": "a1", "trigger_type": "login_streak", "trigger_threshold": 7,
+            })
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "trigger.create"
