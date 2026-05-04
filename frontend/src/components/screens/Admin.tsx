@@ -1026,17 +1026,97 @@ function CosmeticsTab() {
 // ── Analytics ────────────────────────────────────────────────────────────────
 
 function AnalyticsTab() {
-  const [users, setUsers] = React.useState<AdminUser[]>([]);
-  React.useEffect(() => { adminFetchUsers().then(r => setUsers(r.users || [])).catch(() => {}); }, []);
-  const approved = users.filter(u => u.is_approved).length;
+  const toast = useToast();
+  const [data, setData] = React.useState<AnalyticsOverview | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let alive = true;
+    adminAnalyticsOverview()
+      .then(r => { if (alive) setData(r); })
+      .catch(err => toast.error(`Analytics load failed: ${String(err)}`))
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [toast]);
+
+  if (loading) return <AdminTableSkeleton />;
+  if (!data) return null;
+
+  const { totals, signups_by_day, approvals_by_day, role_counts } = data;
+
   return (
-    <div className="card" style={{ padding: "var(--pad-lg)" }}>
-      <div className="label-micro">Overview</div>
-      <div className="h-serif" style={{ fontSize: 24, marginTop: 6 }}>{users.length} users</div>
-      <div style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 8 }}>
-        {approved} approved · {users.length - approved} pending
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14 }}>
+        <MetricCard label="Users" value={totals.users} />
+        <MetricCard label="Approved" value={totals.approved} accent />
+        <MetricCard label="Pending" value={totals.pending} warn={totals.pending > 0} />
+        <MetricCard label="Admins" value={totals.admins} />
+      </div>
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div className="label-micro" style={{ marginBottom: 10 }}>Signups · last 30 days</div>
+        <Sparkline points={signups_by_day} accent />
+      </div>
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div className="label-micro" style={{ marginBottom: 10 }}>Approvals · last 30 days</div>
+        <Sparkline points={approvals_by_day} />
+      </div>
+      <div className="card" style={{ padding: 0 }}>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+          <div className="label-micro">Role membership · {role_counts.length}</div>
+        </div>
+        {role_counts.length === 0 && (
+          <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+            Nobody has any roles yet.
+          </div>
+        )}
+        {role_counts.map(rc => (
+          <div key={rc.slug} style={{
+            display: "flex", alignItems: "center", gap: 12,
+            padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 13,
+          }}>
+            <span style={{
+              display: "inline-block", width: 10, height: 10, borderRadius: 3,
+              background: rc.color, border: "1px solid var(--border)",
+            }} />
+            <span style={{ flex: 1, fontWeight: 500 }}>{rc.name}</span>
+            <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>{rc.count}</span>
+          </div>
+        ))}
       </div>
     </div>
+  );
+}
+
+function MetricCard({ label, value, accent, warn }: { label: string; value: number; accent?: boolean; warn?: boolean }) {
+  const color = accent ? "var(--accent)" : warn ? "var(--warn)" : "var(--text)";
+  return (
+    <div className="card" style={{ padding: "var(--pad-lg)" }}>
+      <div className="label-micro">{label}</div>
+      <div className="h-serif" style={{ fontSize: 32, marginTop: 4, color }}>{value}</div>
+    </div>
+  );
+}
+
+function Sparkline({ points, accent }: { points: { date: string; count: number }[]; accent?: boolean }) {
+  if (points.length === 0) return <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No data.</div>;
+  const w = 600, h = 80, pad = 4;
+  const max = Math.max(1, ...points.map(p => p.count));
+  const stepX = (w - pad * 2) / Math.max(1, points.length - 1);
+  const path = points.map((p, i) => {
+    const x = pad + i * stepX;
+    const y = h - pad - (p.count / max) * (h - pad * 2);
+    return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+  }).join(" ");
+  const stroke = accent ? "var(--accent)" : "var(--text-dim)";
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: "100%", height: 80 }}>
+      <path d={path} fill="none" stroke={stroke} strokeWidth={2} />
+      {points.map((p, i) => (
+        <circle key={p.date} cx={pad + i * stepX} cy={h - pad - (p.count / max) * (h - pad * 2)} r={2} fill={stroke}>
+          <title>{`${p.date}: ${p.count}`}</title>
+        </circle>
+      ))}
+    </svg>
   );
 }
 
