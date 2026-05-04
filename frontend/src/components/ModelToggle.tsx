@@ -83,10 +83,13 @@ export function ModelToggle({
         style={{
           position: "relative",
           display: "inline-flex",
+          height: 28,
           padding: 2,
+          alignItems: "center",
           background: "var(--bg-subtle)",
           border: "1px solid var(--border)",
           borderRadius: "var(--r-full)",
+          boxSizing: "border-box",
         }}
       >
         <span

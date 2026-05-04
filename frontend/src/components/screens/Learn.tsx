@@ -580,9 +580,10 @@ function LearnInner() {
               subtitle={`${mode} tutor · ${messages.length} msgs`}
               actions={
                 <>
-                  <AIDisclaimerChip />
-                  <ModelToggle pref={modelPref} onChange={setModelPref} />
                   <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
+                  <button className="btn btn--sm" onClick={() => handleModeSwitch("quiz")}>
+                    <Icon name="bolt" size={12} /> Quick quiz
+                  </button>
                   <button
                     className={endConfirm.armed ? "btn btn--danger btn--sm" : "btn btn--sm"}
                     onClick={endConfirm.trigger}
@@ -612,9 +613,8 @@ function LearnInner() {
                 </button>
               ))}
               <div style={{ flex: 1 }} />
-              <button className="btn btn--sm" onClick={() => handleModeSwitch("quiz")}>
-                <Icon name="bolt" size={12} /> Quick quiz
-              </button>
+              <AIDisclaimerChip />
+              <ModelToggle pref={modelPref} onChange={setModelPref} />
             </div>
             <ChatPanel
               messages={messages}
