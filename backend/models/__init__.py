@@ -285,7 +285,6 @@ class CreateRoleBody(BaseModel):
 class AssignRoleBody(BaseModel):
     user_id: str
     role_id: str
-    granted_by: Optional[str] = None
 
 
 class RevokeRoleBody(BaseModel):

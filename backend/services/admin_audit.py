@@ -28,4 +28,8 @@ def log_admin_action(
     try:
         table("admin_audit_log").insert(row)
     except Exception:  # noqa: BLE001 — audit failures must not break the action
-        log.exception("admin_audit_log write failed: %s", row)
+        log.exception(
+            "admin_audit_log write failed action=%s target_type=%s",
+            action,
+            target_type,
+        )

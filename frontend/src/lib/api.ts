@@ -738,10 +738,10 @@ export const adminUnapproveUser = (userId: string) =>
   fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
 
 // Admin — roles
-export const adminAssignRole = (userId: string, roleId: string, grantedBy?: string) =>
+export const adminAssignRole = (userId: string, roleId: string) =>
   fetchJSON<{ assigned: boolean }>('/api/admin/roles/assign', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, role_id: roleId, granted_by: grantedBy }),
+    body: JSON.stringify({ user_id: userId, role_id: roleId }),
   });
 
 export const adminRevokeRole = (userId: string, roleId: string) =>

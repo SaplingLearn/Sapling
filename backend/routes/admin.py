@@ -93,7 +93,7 @@ def update_role(role_id: str, request: Request, body: dict = {}):
 def assign_role(body: AssignRoleBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
-    granted_by = body.granted_by or actor
+    granted_by = actor
     table("user_roles").upsert(
         {
             "user_id": body.user_id,
@@ -554,7 +554,6 @@ def analytics_overview(request: Request):
     today = datetime.now(timezone.utc).date()
     window = [today - timedelta(days=i) for i in range(29, -1, -1)]
     by_day_signups: Counter = Counter()
-    by_day_approvals: Counter = Counter()
     for u in users:
         ca = u.get("created_at") or ""
         try:
@@ -563,8 +562,21 @@ def analytics_overview(request: Request):
             continue
         if d in window:
             by_day_signups[d.isoformat()] += 1
-            if u.get("is_approved"):
-                by_day_approvals[d.isoformat()] += 1
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    approval_events = table("admin_audit_log").select(
+        "created_at",
+        filters={"action": "eq.user.approve", "created_at": f"gte.{cutoff}"},
+    ) or []
+    by_day_approvals: Counter = Counter()
+    for ev in approval_events:
+        ca = ev.get("created_at") or ""
+        try:
+            d = datetime.fromisoformat(ca.replace("Z", "+00:00")).date()
+        except ValueError:
+            continue
+        if d in window:
+            by_day_approvals[d.isoformat()] += 1
 
     signups_by_day = [{"date": d.isoformat(), "count": by_day_signups.get(d.isoformat(), 0)} for d in window]
     approvals_by_day = [{"date": d.isoformat(), "count": by_day_approvals.get(d.isoformat(), 0)} for d in window]

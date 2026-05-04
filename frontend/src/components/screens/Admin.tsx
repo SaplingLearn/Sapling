@@ -103,7 +103,6 @@ export function Admin() {
 
 function UsersTab() {
   const toast = useToast();
-  const { userId: me } = useUser();
   const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [roles, setRoles] = React.useState<Role[]>([]);
   const [query, setQuery] = React.useState("");
@@ -147,7 +146,7 @@ function UsersTab() {
   const assign = async (uid: string) => {
     if (!assignRoleId) return;
     try {
-      await adminAssignRole(uid, assignRoleId, me);
+      await adminAssignRole(uid, assignRoleId);
       toast.success("Role assigned");
       setAssignFor(null);
       setAssignRoleId("");
@@ -488,14 +487,18 @@ function AchievementsTab() {
   const [linkedCosmeticIds, setLinkedCosmeticIds] = React.useState<string[]>([]);
   const [allCosmetics, setAllCosmetics] = React.useState<Cosmetic[]>([]);
   const [newTrigger, setNewTrigger] = React.useState({ trigger_type: "", trigger_threshold: 1 });
+  const detailsRequestRef = React.useRef(0);
+  const openIdRef = React.useRef<string | null>(null);
 
   const loadDetails = React.useCallback(async (id: string) => {
+    const requestId = ++detailsRequestRef.current;
     try {
       const [t, l, c] = await Promise.all([
         adminListTriggers(id),
         adminListAchievementCosmetics(id),
         allCosmetics.length ? Promise.resolve({ cosmetics: allCosmetics }) : adminListCosmetics(),
       ]);
+      if (detailsRequestRef.current !== requestId || openIdRef.current !== id) return;
       setTriggers(t.triggers || []);
       setLinkedCosmeticIds((l.links || []).map(x => x.cosmetic_id));
       if (!allCosmetics.length) setAllCosmetics(c.cosmetics || []);
@@ -505,7 +508,14 @@ function AchievementsTab() {
   }, [allCosmetics, toast]);
 
   const toggleOpen = (id: string) => {
-    if (openId === id) { setOpenId(null); return; }
+    if (openId === id) {
+      openIdRef.current = null;
+      setOpenId(null);
+      return;
+    }
+    openIdRef.current = id;
+    setTriggers([]);
+    setLinkedCosmeticIds([]);
     setOpenId(id);
     loadDetails(id);
   };
