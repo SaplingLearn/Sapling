@@ -20,6 +20,7 @@ from models import (
     CreateCosmeticBody,
     LinkAchievementCosmeticBody,
     LinkRoleCosmeticBody,
+    AllowlistEmailBody,
 )
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
@@ -452,3 +453,40 @@ def unapprove_user(user_id: str, request: Request):
     table("users").update({"is_approved": False}, filters={"id": f"eq.{user_id}"})
     log_admin_action(actor_id=actor, action="user.unapprove", target_type="user", target_id=user_id)
     return {"unapproved": True}
+
+
+# ── Newsletter Allowlist ──────────────────────────────────────────────────────
+
+@router.post("/allowlist/approve")
+def approve_allowlist(body: AllowlistEmailBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    rows = table("newsletter_emails").upsert(
+        {"email": body.email, "approved_at": now_iso},
+        on_conflict="email",
+    )
+    log_admin_action(
+        actor_id=actor, action="allowlist.approve",
+        target_type="allowlist", target_id=body.email,
+        payload={"email": body.email},
+    )
+    return {"email": rows[0] if rows else None}
+
+
+@router.post("/allowlist/revoke")
+def revoke_allowlist(body: AllowlistEmailBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    rows = table("newsletter_emails").update(
+        {"approved_at": None},
+        filters={"email": f"eq.{body.email}"},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Email not found")
+    log_admin_action(
+        actor_id=actor, action="allowlist.revoke",
+        target_type="allowlist", target_id=body.email,
+        payload={"email": body.email},
+    )
+    return {"email": rows[0]}

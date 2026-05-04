@@ -551,3 +551,24 @@ class TestCosmeticAudits:
             r = client.delete("/api/admin/cosmetics/c1")
         assert r.status_code == 200
         assert audit.call_args.kwargs["action"] == "cosmetic.delete"
+
+
+class TestAllowlistAudits:
+    def test_approve_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.upsert.return_value = [{"email": "a@b.c"}]
+            r = client.post("/api/admin/allowlist/approve", json={"email": "A@B.c"})
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "allowlist.approve"
+        assert audit.call_args.kwargs["payload"]["email"] == "A@B.c"
+
+    def test_revoke_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.update.return_value = [{"email": "a@b.c"}]
+            r = client.post("/api/admin/allowlist/revoke", json={"email": "A@B.c"})
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "allowlist.revoke"

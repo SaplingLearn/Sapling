@@ -402,3 +402,9 @@ class SyllabusApplyBody(BaseModel):
     doc_id: str
     categories: list[CategoryItem]
     assignments: list[dict]               # uses the same shape as syllabus extraction
+
+
+# ── Newsletter & Allowlist (Admin) ──────────────────────────────────────────
+
+class AllowlistEmailBody(BaseModel):
+    email: str
