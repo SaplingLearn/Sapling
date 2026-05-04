@@ -1,8 +1,40 @@
-# 0011: Durable execution via DBOS (deferred design)
+# 0011: Durable execution via DBOS (partial: optional shim shipped)
 
-- Status: proposed (deferred — design only, no implementation)
+- Status: partial (optional shim shipped, default off)
 - Date: 2026-05-04
 - Supersedes: none
+
+## Update (2026-05-04)
+
+`backend/services/durable.py` shipped with `@workflow` and `@step`
+decorators that:
+
+- Activate as real DBOS decorators when `DBOS_ENABLED=true` AND the
+  `dbos` package is importable AND `DBOS_DATABASE_URL` is set.
+- Otherwise no-op as identity passthroughs — code runs identically to
+  before this ADR.
+
+`@durable_workflow` is applied to `agents.document.process_document`, so
+flipping the flag turns the upload pipeline into a checkpointed DBOS
+workflow without further code changes in the route layer. Activation
+procedure for operators:
+
+1. `pip install dbos` (added to a future `requirements-durable.txt`,
+   not in the default requirements).
+2. Provision a Postgres for DBOS metadata (cannot reuse Supabase RLS
+   tables; needs its own schema).
+3. Set `DBOS_ENABLED=true` and `DBOS_DATABASE_URL=postgres://…`.
+4. Run DBOS migrations (`dbos migrate`).
+5. Restart the FastAPI workers; `services.durable.is_durable()` should
+   return True at startup.
+
+Idempotency keys (per ADR 0009 + the `documents.request_id` migration
+in this PR) compose with DBOS — a workflow that crashes mid-flight and
+restarts will re-check the idempotency cache before re-running.
+
+The original deferred-design notes below remain accurate for the parts
+that haven't shipped (test coverage, real production validation,
+monitoring of resume behavior).
 
 ## Context
 

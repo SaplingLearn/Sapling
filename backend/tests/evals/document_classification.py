@@ -1,7 +1,7 @@
 """pydantic-evals cases for the document classifier agent.
 
-Run as evals (loads pydantic-evals; hits live Gemini):
-    python -m tests.evals.document_classification
+Run as evals (default mode = replay; SAPLING_EVAL_MODE=record|live for others):
+    python tests/evals/document_classification.py
 
 Cases cover the seven-category taxonomy in agents/classifier.py and the
 is_syllabus boolean. The original 10 hand-picked smoke cases are kept
@@ -28,14 +28,16 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Allow `python -m tests.evals.document_classification` from backend/.
+# Allow `python tests/evals/document_classification.py` from backend/.
+# Add backend/ for `agents.*` and tests/evals/ for sibling `_replay`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 from agents.classifier import classifier_agent, DocumentClassification
-from agents.deps import SaplingDeps
+from _replay import run_with_cassette  # noqa: E402  (sibling, sys.path-injected)
 
 
 @dataclass
@@ -409,16 +411,22 @@ CASES: list[Case[str, str]] = [
 ]
 
 
+# Map eval inputs to case names so the (input-only) task callable can look
+# up the cassette key. Inputs in this suite are unique strings, so this
+# is a deterministic, collision-free lookup.
+_INPUT_TO_NAME: dict[str, str] = {case.inputs: case.name for case in CASES}
+
+
 async def _run(case_input: str) -> DocumentClassification:
-    """Adapter: run the agent and unwrap the typed output for evaluation."""
-    deps = SaplingDeps(
-        user_id="eval-user",
-        course_id="eval-course",
-        supabase=None,
-        request_id="eval",
+    """Adapter: route through the cassette layer (record/replay/live)."""
+    case_name = _INPUT_TO_NAME.get(case_input, "unknown")
+    return await run_with_cassette(
+        dataset="document_classification",
+        case_name=case_name,
+        agent=classifier_agent,
+        case_input=case_input,
+        output_model=DocumentClassification,
     )
-    result = await classifier_agent.run(case_input, deps=deps)
-    return result.output
 
 
 def make_dataset() -> Dataset[str, str]:
@@ -430,6 +438,6 @@ def make_dataset() -> Dataset[str, str]:
 
 
 if __name__ == "__main__":
-    dataset = make_dataset()
-    report = asyncio.run(dataset.evaluate(_run))
-    report.print(include_input=False, include_output=True)
+    from _replay import cli_main  # noqa: E402
+
+    cli_main(make_dataset, _run)

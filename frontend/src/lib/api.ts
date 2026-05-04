@@ -377,6 +377,7 @@ export async function uploadDocumentStream(
   formData: FormData,
   onEvent: (event: UploadEvent) => void,
   signal?: AbortSignal,
+  requestId?: string,
 ): Promise<any> {
   if (IS_LOCAL_MODE) {
     onEvent({ type: 'status', step: 'done', message: 'Saved.' });
@@ -384,9 +385,11 @@ export async function uploadDocumentStream(
   }
   const { streamSSE } = await import('./sse');
   let finalDoc: any = null;
+  const headers: Record<string, string> = {};
+  if (requestId) headers['X-Request-ID'] = requestId;
   for await (const e of streamSSE<UploadEvent>(
     `${API_URL}/api/documents/upload`,
-    { method: 'POST', body: formData, signal, credentials: 'include' },
+    { method: 'POST', body: formData, signal, credentials: 'include', headers },
   )) {
     onEvent(e.data);
     if (e.event === 'result') {

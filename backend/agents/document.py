@@ -44,6 +44,7 @@ from agents.summary import summary_agent, Summary
 from agents.concept_extraction import concept_extraction_agent, ConceptList
 from agents.syllabus_extraction import syllabus_extraction_agent, SyllabusAssignments
 from agents.tools.graph import apply_concepts_to_graph
+from services.durable import workflow as durable_workflow
 
 
 class DocumentProcessingResult(BaseModel):
@@ -106,6 +107,7 @@ async def _run_workers(text: str, deps: SaplingDeps) -> _WorkerResults:
     )
 
 
+@durable_workflow
 async def process_document(text: str, deps: SaplingDeps) -> DocumentProcessingResult:
     """Run workers in parallel, then merge concepts into the graph directly.
 
@@ -113,6 +115,10 @@ async def process_document(text: str, deps: SaplingDeps) -> DocumentProcessingRe
     outputs. The graph merge is a plain async function call — no orchestrator
     agent — because it has no decisions to make beyond passing the
     already-extracted concept names through.
+
+    Wrapped in `@durable_workflow` from services.durable: a no-op when
+    DBOS_ENABLED is unset (the default), a real DBOS workflow when the
+    operator opts in. See ADR 0011 for the activation procedure.
     """
     workers = await _run_workers(text, deps)
     concept_names = [c.name for c in workers.concepts.concepts]

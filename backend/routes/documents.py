@@ -7,8 +7,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
+
+# Feature flag — when true, the streaming /upload route runs OCR off the
+# request critical path via asyncio.to_thread, so the SSE stream opens
+# immediately and the user sees a `progress:extracting_text` event while
+# OCR runs in a thread instead of blocking the route.
+#
+# This is the lightweight version of ADR 0010's two-phase upload — it
+# moves OCR off the synchronous request path WITHOUT requiring a queue
+# or a separate worker tier. Crash recovery still depends on DBOS
+# (services/durable.py) being enabled.
+#
+# Default off until validated under production load. Flip via env var:
+#   OCR_ASYNC_ENABLED=true
+OCR_ASYNC_ENABLED = os.getenv("OCR_ASYNC_ENABLED", "false").lower() == "true"
 
 from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException, Request, UploadFile
 from sse_starlette.sse import EventSourceResponse
@@ -24,6 +39,7 @@ from services.graph_service import apply_graph_update
 from services.course_context_service import update_course_context
 from services.achievement_service import check_achievements
 from services.agent_events import SaplingEvent, sapling_event_to_sse
+from services.request_context import current_request_id
 from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
 from agents.summary import summary_agent
@@ -294,12 +310,45 @@ def update_document(document_id: str, request: Request, body: dict = Body(...)):
     return updated[0] if updated else {"id": document_id, **updates}
 
 
+def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
+    """Return an existing documents row for this user + request_id, if any.
+
+    The request_id column may not exist in older schemas — catch that and
+    return None so deployments can ship the code before the migration runs.
+    Defensive against non-list return shapes (mocked DBs, partial errors)
+    so a misbehaving Supabase response can't masquerade as a cache hit.
+    """
+    try:
+        rows = table("documents").select(
+            "id,user_id,course_id,file_name,category,summary,concept_notes,created_at,processed_at",
+            filters={"user_id": f"eq.{user_id}", "request_id": f"eq.{request_id}"},
+            limit=1,
+        )
+    except Exception:
+        return None
+    if not isinstance(rows, list) or not rows:
+        return None
+    first = rows[0]
+    if not isinstance(first, dict):
+        return None
+    row = dict(first)
+    row["summary"] = decrypt_if_present(row.get("summary"))
+    notes_raw = row.get("concept_notes")
+    if isinstance(notes_raw, str):
+        try:
+            row["concept_notes"] = decrypt_json(notes_raw)
+        except Exception:
+            row["concept_notes"] = []
+    return row
+
+
 def _persist_document(
     *,
     user_id: str,
     course_id: str,
     filename: str,
     result: DocumentProcessingResult,
+    request_id: str | None = None,
 ) -> tuple[str, dict]:
     """Insert a documents row from an orchestrator result.
 
@@ -307,7 +356,8 @@ def _persist_document(
     summary + concept_notes are encrypted at the insert boundary; the
     returned row carries the plaintext shape so callers can pass it
     straight back to the client without an extra decrypt step.
-    Returns (document_id, full_row).
+    ``request_id`` (when provided) is stored verbatim for idempotent
+    replay detection. Returns (document_id, full_row).
     """
     now = datetime.now(timezone.utc).isoformat()
     concept_notes = [
@@ -326,7 +376,18 @@ def _persist_document(
         "created_at": now,
         "processed_at": now,
     }
-    inserted = table("documents").insert(row)
+    if request_id:
+        row["request_id"] = request_id
+    try:
+        inserted = table("documents").insert(row)
+    except Exception:
+        # Schema may not yet have the request_id column; retry without it
+        # so deployments can ship the code before the migration runs.
+        if "request_id" in row:
+            row.pop("request_id", None)
+            inserted = table("documents").insert(row)
+        else:
+            raise
     full_row = inserted[0] if inserted else row
     full_row["summary"] = summary
     full_row["concept_notes"] = concept_notes
@@ -429,7 +490,23 @@ async def upload_document_sync(
     extracted_text = extract_text_from_file(file_bytes, filename, file.content_type or "")
 
     # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
-    request_id = str(uuid.uuid4())
+    # Unify with the middleware-stamped request ID so agent traces and
+    # client-facing error payloads share the same correlation key.
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or current_request_id()
+        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
+    )
+
+    # Idempotency: if the client retries with the same X-Request-ID,
+    # short-circuit to the previously persisted document instead of
+    # re-running the orchestrator.
+    existing = _existing_doc_by_request_id(user_id, request_id)
+    if existing:
+        response = dict(existing)
+        response.setdefault("categories", [])
+        return response
+
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id,
@@ -447,6 +524,7 @@ async def upload_document_sync(
             filename=filename, extracted_text=extracted_text,
             course_id=course_id, user_id=user_id,
             background_tasks=background_tasks,
+            request_id=request_id,
         )
     except Exception:
         logger.exception(
@@ -457,6 +535,7 @@ async def upload_document_sync(
             filename=filename, extracted_text=extracted_text,
             course_id=course_id, user_id=user_id,
             background_tasks=background_tasks,
+            request_id=request_id,
         )
 
     _save_orchestrator_syllabus(user_id=user_id, course_id=course_id,
@@ -464,7 +543,8 @@ async def upload_document_sync(
     _graph_backstop(user_id=user_id, course_id=course_id,
                     filename=filename, result=result)
     _, full_row = _persist_document(user_id=user_id, course_id=course_id,
-                                    filename=filename, result=result)
+                                    filename=filename, result=result,
+                                    request_id=request_id)
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, course_id)
     background_tasks.add_task(update_course_context, course_id)
@@ -508,12 +588,13 @@ async def upload_document(
             detail="File exceeds the 15 MB limit. Please upload a smaller file.",
         )
 
-    extracted_text = extract_text_from_file(file_bytes, filename, file.content_type or "")
-    request_id = str(uuid.uuid4())
-    # Middleware stamps every request with an ID; prefer it for client-facing
-    # error correlation. Fall back to the freshly-minted agent ID if the
-    # middleware was somehow bypassed (e.g. test client that didn't traverse it).
-    mw_request_id = getattr(request.state, "request_id", None) or request_id
+    # Unify the agent-trace request_id with the middleware-stamped one so
+    # SSE error payloads and Logfire spans share a single correlation key.
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or current_request_id()
+        or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
+    )
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id,
@@ -521,12 +602,55 @@ async def upload_document(
         request_id=request_id,
     )
 
+    # OCR strategy: with OCR_ASYNC_ENABLED, run extraction inside the SSE
+    # context so the stream opens immediately and the user sees a
+    # progress:extracting_text event while OCR runs in a thread. Default
+    # behavior is unchanged (synchronous extraction before stream opens)
+    # so existing tests and clients keep working.
+    extracted_text: str | None = (
+        None if OCR_ASYNC_ENABLED
+        else extract_text_from_file(file_bytes, filename, file.content_type or "")
+    )
+
     async def event_stream():
+        nonlocal extracted_text
         try:
             yield sapling_event_to_sse(SaplingEvent(
                 type="status", step="start",
                 message="Document received. Processing...",
             ))
+
+            # Idempotency: a client retry with the same X-Request-ID
+            # should not re-run the orchestrator. Emit a result+done pair
+            # built from the previously persisted row instead.
+            existing = _existing_doc_by_request_id(user_id, request_id)
+            if existing:
+                yield sapling_event_to_sse(SaplingEvent(
+                    type="result", step="finalize",
+                    message="Already processed (idempotent replay).",
+                    data=existing,
+                ))
+                yield sapling_event_to_sse(SaplingEvent(
+                    type="status", step="done",
+                    message="Saved.",
+                    data={"document_id": existing.get("id"), "request_id": request_id},
+                ))
+                return
+
+            # ── Phase 0: text extraction (when OCR_ASYNC_ENABLED) ─────────────
+            if extracted_text is None:
+                yield sapling_event_to_sse(SaplingEvent(
+                    type="progress", step="extracting_text",
+                    message="Extracting text from document...",
+                ))
+                extracted_text = await asyncio.to_thread(
+                    extract_text_from_file, file_bytes, filename,
+                    file.content_type or "",
+                )
+                yield sapling_event_to_sse(SaplingEvent(
+                    type="progress", step="extracted_text",
+                    message=f"Extracted {len(extracted_text):,} chars.",
+                ))
 
             # ── Phase 1: classifier (serial gate) ─────────────────────────────
             yield sapling_event_to_sse(SaplingEvent(
@@ -612,7 +736,8 @@ async def upload_document(
             _graph_backstop(user_id=user_id, course_id=course_id,
                             filename=filename, result=final_output)
             doc_id, _ = _persist_document(user_id=user_id, course_id=course_id,
-                                          filename=filename, result=final_output)
+                                          filename=filename, result=final_output,
+                                          request_id=request_id)
 
             # BackgroundTasks runs after response close — useless for SSE since
             # the stream IS the response. _spawn_post_roll uses create_task
@@ -637,12 +762,12 @@ async def upload_document(
             yield sapling_event_to_sse(SaplingEvent(
                 type="error", step="fallback",
                 message="Agent guardrails tripped; using legacy pipeline.",
-                data={"request_id": mw_request_id},
+                data={"request_id": request_id},
             ))
             async for sse_event in _stream_legacy_fallback(
                 filename=filename, extracted_text=extracted_text,
                 course_id=course_id, user_id=user_id,
-                request_id=mw_request_id,
+                request_id=request_id,
             ):
                 yield sse_event
         except Exception:
@@ -650,12 +775,12 @@ async def upload_document(
             yield sapling_event_to_sse(SaplingEvent(
                 type="error", step="fallback",
                 message="Unexpected error during processing; using legacy pipeline.",
-                data={"request_id": mw_request_id},
+                data={"request_id": request_id},
             ))
             async for sse_event in _stream_legacy_fallback(
                 filename=filename, extracted_text=extracted_text,
                 course_id=course_id, user_id=user_id,
-                request_id=mw_request_id,
+                request_id=request_id,
             ):
                 yield sse_event
 
@@ -666,21 +791,29 @@ async def _stream_legacy_fallback(
     *, filename: str, extracted_text: str, course_id: str, user_id: str,
     request_id: str | None = None,
 ):
-    """Run _legacy_upload_pipeline and yield SSE result/done events.
+    """Run _legacy_upload_pipeline and yield SSE progress/result/done events.
 
     Used by the streaming /upload route's exception handlers to deliver
     a document via the legacy path even when the agent pipeline trips.
-    Streaming visibility is lost (the legacy path is single-shot), but
-    the client still receives a usable result. If the legacy path also
-    fails, we yield a terminal error event so the client doesn't see a
-    silent EOF mid-stream. ``request_id`` is the middleware-stamped
-    correlation ID — included in any error event so callers can match
-    the failure to a Logfire span.
+    The legacy path is a single-shot Gemini call so we cannot observe
+    its internal phases — instead we emit a synthetic ``progress`` event
+    before kicking it off so the UI doesn't sit on a blank spinner for
+    the legacy call's wall-clock latency. If the legacy path also fails,
+    we yield a terminal error event so the client doesn't see a silent
+    EOF mid-stream. ``request_id`` is the middleware-stamped correlation
+    ID — included in any error event so callers can match the failure
+    to a Logfire span, and threaded into the legacy insert so a retry
+    with the same X-Request-ID is deduped.
     """
+    yield sapling_event_to_sse(SaplingEvent(
+        type="progress", step="fallback_processing",
+        message="Falling back to single-call pipeline. Processing document...",
+    ))
     try:
         legacy_response = await _legacy_upload_pipeline(
             filename=filename, extracted_text=extracted_text,
             course_id=course_id, user_id=user_id,
+            request_id=request_id,
         )
     except Exception:
         logger.exception("Legacy fallback also failed for '%s'", filename)
@@ -753,6 +886,7 @@ async def _legacy_upload_pipeline(
     course_id: str,
     user_id: str,
     background_tasks: BackgroundTasks | None = None,
+    request_id: str | None = None,
 ) -> dict:
     """The pre-orchestrator upload pipeline, kept as a fallback per ADR-0001.
 
@@ -763,6 +897,10 @@ async def _legacy_upload_pipeline(
     background_tasks is optional: in streaming-fallback contexts there is
     no FastAPI BackgroundTasks to attach to (the response IS the stream),
     so post-roll work is fired via asyncio.create_task instead.
+
+    ``request_id`` (when provided) is stored on the documents row so a
+    client retry with the same X-Request-ID can short-circuit instead of
+    re-running the pipeline.
     """
     # ── AI: classify, summarize, and extract assignments (single call) ─────────
     ai = _process_document(filename, extracted_text)
@@ -798,7 +936,18 @@ async def _legacy_upload_pipeline(
         "created_at": now,
         "processed_at": now,
     }
-    inserted = table("documents").insert(row)
+    if request_id:
+        row["request_id"] = request_id
+    try:
+        inserted = table("documents").insert(row)
+    except Exception:
+        # Schema may not yet have the request_id column; retry without it
+        # so deployments can ship the code before the migration runs.
+        if "request_id" in row:
+            row.pop("request_id", None)
+            inserted = table("documents").insert(row)
+        else:
+            raise
 
     if background_tasks is not None:
         background_tasks.add_task(_invalidate_study_guide_cache, user_id, course_id)

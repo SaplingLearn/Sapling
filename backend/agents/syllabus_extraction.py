@@ -7,6 +7,7 @@ routes/documents.py and services/calendar_service.py.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import date
 
 from pydantic import BaseModel, Field
@@ -51,6 +52,30 @@ class SyllabusAssignments(BaseModel):
     )
 
 
+# Content-addressed prompt version: a 12-char sha256 prefix of the system
+# prompt body. Surfaced on every run via Agent(metadata=...).
+_SYSTEM_PROMPT = (
+    "Parse a course syllabus into structured deliverables.\n\n"
+    "Extract every named deliverable with a deadline (homework, "
+    "exams, projects, readings, quizzes). title <80 chars. "
+    "weight_pct is the stated grade weight (e.g. 'Final 30%' -> "
+    "30.0) or null. description: one short sentence of context, "
+    "or null.\n\n"
+    "due_date: set ONLY when the syllabus gives a concrete "
+    "calendar date. For RELATIVE terms ('Week 3', 'before "
+    "midterm', 'end of unit 2'), leave null. Do NOT invent dates "
+    "— that's a downstream concern.\n\n"
+    "grading_categories: extract the top-level grading-weight "
+    "buckets stated by the syllabus (e.g. 'Exams 40%', "
+    "'Homework 30%', 'Participation 10%'). weight passes through "
+    "verbatim — do not normalize percent vs points. Empty list "
+    "is valid when the syllabus does not state a breakdown.\n\n"
+    "Fill course_title and instructor if shown at the top of the "
+    "syllabus, else null. Empty assignments list is valid."
+)
+_PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+
+
 # Gemini's native structured-output API rejects this schema with
 # "too many states for serving" because of the date format on
 # due_date plus the nested assignment list. PromptedOutput keeps the
@@ -60,23 +85,6 @@ syllabus_extraction_agent = Agent[SaplingDeps, SyllabusAssignments](
     model=model_for("syllabus"),
     deps_type=SaplingDeps,
     output_type=PromptedOutput(SyllabusAssignments),
-    system_prompt=(
-        "Parse a course syllabus into structured deliverables.\n\n"
-        "Extract every named deliverable with a deadline (homework, "
-        "exams, projects, readings, quizzes). title <80 chars. "
-        "weight_pct is the stated grade weight (e.g. 'Final 30%' -> "
-        "30.0) or null. description: one short sentence of context, "
-        "or null.\n\n"
-        "due_date: set ONLY when the syllabus gives a concrete "
-        "calendar date. For RELATIVE terms ('Week 3', 'before "
-        "midterm', 'end of unit 2'), leave null. Do NOT invent dates "
-        "— that's a downstream concern.\n\n"
-        "grading_categories: extract the top-level grading-weight "
-        "buckets stated by the syllabus (e.g. 'Exams 40%', "
-        "'Homework 30%', 'Participation 10%'). weight passes through "
-        "verbatim — do not normalize percent vs points. Empty list "
-        "is valid when the syllabus does not state a breakdown.\n\n"
-        "Fill course_title and instructor if shown at the top of the "
-        "syllabus, else null. Empty assignments list is valid."
-    ),
+    system_prompt=_SYSTEM_PROMPT,
+    metadata={"prompt_version": _PROMPT_HASH, "agent": "syllabus_extraction"},
 )

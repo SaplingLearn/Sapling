@@ -1,7 +1,7 @@
 """pydantic-evals cases for the summary agent.
 
-Run as evals (loads pydantic-evals; hits live Gemini):
-    python -m tests.evals.document_summary
+Run as evals (default mode = replay; SAPLING_EVAL_MODE=record|live for others):
+    python tests/evals/document_summary.py
 
 Add cases here when production produces a bad summary. Do NOT edit
 existing cases to make them pass.
@@ -22,14 +22,16 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Allow `python -m tests.evals.document_summary` from backend/.
+# Allow `python tests/evals/document_summary.py` from backend/.
+# Add backend/ for `agents.*` and tests/evals/ for sibling `_replay`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
-from agents.deps import SaplingDeps
 from agents.summary import Summary, summary_agent
+from _replay import run_with_cassette  # noqa: E402  (sibling, sys.path-injected)
 
 
 @dataclass
@@ -260,16 +262,19 @@ CASES: list[Case[str, None]] = [
 ]
 
 
+_INPUT_TO_NAME: dict[str, str] = {case.inputs: case.name for case in CASES}
+
+
 async def _run(case_input: str) -> Summary:
-    """Adapter: run the agent and unwrap the typed output for evaluation."""
-    deps = SaplingDeps(
-        user_id="eval-user",
-        course_id="eval-course",
-        supabase=None,
-        request_id="eval",
+    """Adapter: route through the cassette layer (record/replay/live)."""
+    case_name = _INPUT_TO_NAME.get(case_input, "unknown")
+    return await run_with_cassette(
+        dataset="document_summary",
+        case_name=case_name,
+        agent=summary_agent,
+        case_input=case_input,
+        output_model=Summary,
     )
-    result = await summary_agent.run(case_input, deps=deps)
-    return result.output
 
 
 def make_dataset() -> Dataset[str, None]:
@@ -286,6 +291,6 @@ def make_dataset() -> Dataset[str, None]:
 
 
 if __name__ == "__main__":
-    dataset = make_dataset()
-    report = asyncio.run(dataset.evaluate(_run))
-    report.print(include_input=False, include_output=True)
+    from _replay import cli_main  # noqa: E402
+
+    cli_main(make_dataset, _run)

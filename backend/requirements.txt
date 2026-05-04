@@ -35,7 +35,7 @@ pydantic-ai-slim[google]>=0.0.20
 logfire[fastapi]>=2.0
 sse-starlette>=2.0
 
-# Optional (evals only — not loaded at runtime). Install with:
-#   pip install 'pydantic-evals>=0.0.5'
-# Required by backend/tests/evals/document_classification.py.
-# pydantic-evals>=0.0.5
+# Eval suite (record-and-replay, see backend/tests/evals/_replay.py).
+# Used by `python -m tests.evals.*` and the .github/workflows/evals.yml job.
+# Not imported at runtime by any production code path.
+pydantic-evals>=0.0.5

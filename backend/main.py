@@ -15,6 +15,7 @@ from routes import graph, learn, quiz, calendar, social, extract, auth, document
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.newsletter import router as newsletter_router
+from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services.request_context import RequestIDMiddleware, current_request_id
 
 try:
@@ -29,9 +30,22 @@ recost_api_key = os.getenv("RECOST_API_KEY")
 
 # Logfire: free local traces during dev; sends to logfire.pydantic.dev only
 # if LOGFIRE_TOKEN is set. Safe to leave on in all environments.
+#
+# Scrubbing: Pydantic AI's instrumentation writes the full prompt text and
+# model output to span attributes (gen_ai.prompt, all_messages_events,
+# input/output.value, ...). For Sapling those carry user-uploaded document
+# text — names, emails, student work — which we never want exfiltrated to
+# logfire.pydantic.dev. ``scrub_value`` redacts those paths before egress,
+# keeping a sha256 fingerprint of the body for debugging. ``EXTRA_PATTERNS``
+# ensures the callback fires for prompt/completion/messages attribute names
+# in addition to Logfire's built-in pattern set (password, secret, ...).
 logfire.configure(
     send_to_logfire="if-token-present",
     service_name="sapling-backend",
+    scrubbing=logfire.ScrubbingOptions(
+        callback=scrub_value,
+        extra_patterns=list(EXTRA_PATTERNS),
+    ),
 )
 logfire.instrument_pydantic_ai()
 

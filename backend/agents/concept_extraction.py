@@ -7,6 +7,8 @@ registers this as a tool) and the achievements pipeline.
 
 from __future__ import annotations
 
+import hashlib
+
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
@@ -33,21 +35,28 @@ class ConceptList(BaseModel):
     )
 
 
+# Content-addressed prompt version: a 12-char sha256 prefix of the system
+# prompt body. Surfaced on every run via Agent(metadata=...).
+_SYSTEM_PROMPT = (
+    "You extract key concepts from a student document. Each concept "
+    "becomes a node in the student's knowledge graph and must read "
+    "as a standalone topic.\n\n"
+    "- name: short Title Case noun phrase ('Linear Regression', "
+    "'Big-O Analysis'). Never a problem number, week label, or "
+    "administrative item.\n"
+    "- description: 1-2 sentences in the document's context.\n"
+    "- importance in [0, 1]; order the list by importance desc.\n"
+    "- 1-30 concepts. Prefer 4-12 for lectures/readings/study "
+    "guides, up to ~15 for whole-course syllabi, 1-8 for narrow "
+    "assignments."
+)
+_PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+
+
 concept_extraction_agent = Agent[SaplingDeps, ConceptList](
     model=model_for("concepts"),
     deps_type=SaplingDeps,
     output_type=ConceptList,
-    system_prompt=(
-        "You extract key concepts from a student document. Each concept "
-        "becomes a node in the student's knowledge graph and must read "
-        "as a standalone topic.\n\n"
-        "- name: short Title Case noun phrase ('Linear Regression', "
-        "'Big-O Analysis'). Never a problem number, week label, or "
-        "administrative item.\n"
-        "- description: 1-2 sentences in the document's context.\n"
-        "- importance in [0, 1]; order the list by importance desc.\n"
-        "- 1-30 concepts. Prefer 4-12 for lectures/readings/study "
-        "guides, up to ~15 for whole-course syllabi, 1-8 for narrow "
-        "assignments."
-    ),
+    system_prompt=_SYSTEM_PROMPT,
+    metadata={"prompt_version": _PROMPT_HASH, "agent": "concept_extraction"},
 )

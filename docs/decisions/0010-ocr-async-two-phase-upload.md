@@ -1,8 +1,30 @@
-# 0010: OCR async / two-phase upload (deferred design)
+# 0010: OCR async / two-phase upload (partial: feature flag shipped)
 
-- Status: proposed (deferred — design only, no implementation)
+- Status: partial (in-process async behind feature flag; full two-phase deferred)
 - Date: 2026-05-04
 - Supersedes: none
+
+## Update (2026-05-04)
+
+A lightweight version shipped behind the `OCR_ASYNC_ENABLED` env var:
+
+- When false (default), behavior is unchanged — `extract_text_from_file`
+  runs synchronously before the SSE stream opens.
+- When true, the SSE stream opens immediately, emits a
+  `progress:extracting_text` event, runs OCR via `asyncio.to_thread` so
+  it doesn't block the event loop, then emits `progress:extracted_text`
+  and continues with the classifier/workers pipeline.
+
+This delivers most of the user-visible benefit (no blank spinner before
+classification starts) without requiring queue infrastructure. The full
+two-phase upload — separate `POST /upload` returning 202 + `GET
+/upload/<id>/events` for the live stream — remains deferred per the
+original design below, since it needs a worker tier to survive crashes
+and a documents.processing_status state machine.
+
+The current flag is safe: a worker crash during OCR still loses the
+upload, same as today, but no worse. Pair with ADR 0011 (DBOS) for
+crash recovery.
 
 ## Context
 

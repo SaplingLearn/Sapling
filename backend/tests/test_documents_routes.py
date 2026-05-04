@@ -992,3 +992,91 @@ class TestRequestIDPropagation:
         assert "request_id" in body
         # Same ID in header and body.
         assert body["request_id"] == r.headers.get("X-Request-ID")
+
+
+# ── Idempotency: X-Request-ID dedupe across upload retries ──────────────────
+
+class TestUploadIdempotency:
+    """A double-clicked upload (same X-Request-ID, two POSTs) must not run
+    the orchestrator twice. The route looks up documents.request_id and
+    short-circuits with the previously persisted row.
+
+    These tests live as a sibling of TestUploadDocument so the legacy-
+    fallback autouse fixture there doesn't shadow process_document here.
+    """
+
+    def test_sync_replay_returns_same_doc_without_reprocessing(self):
+        existing = {
+            "id": "doc-existing",
+            "user_id": "u1",
+            "course_id": "c-1",
+            "file_name": "notes.pdf",
+            "category": "lecture_notes",
+            "summary": None,
+            "concept_notes": [],
+            "created_at": "2026-01-01T00:00:00Z",
+            "processed_at": "2026-01-01T00:00:00Z",
+        }
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.process_document") as proc,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = [existing]
+            r = client.post(
+                "/api/documents/upload/sync",
+                files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+                headers={"X-Request-ID": "trace-replay-1"},
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["id"] == "doc-existing"
+        assert body["categories"] == []
+        # Orchestrator must not have been called on the replay.
+        proc.assert_not_called()
+
+    def test_streaming_replay_emits_done_without_reprocessing(self):
+        existing = {
+            "id": "doc-existing-stream",
+            "user_id": "u1",
+            "course_id": "c-1",
+            "file_name": "notes.pdf",
+            "category": "lecture_notes",
+            "summary": None,
+            "concept_notes": [],
+            "created_at": "2026-01-01T00:00:00Z",
+            "processed_at": "2026-01-01T00:00:00Z",
+        }
+        cls_run = AsyncMock()
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.classifier_agent.run", cls_run),
+            patch("routes.documents.table") as t,
+            patch("routes.documents._spawn_post_roll"),
+        ):
+            t.return_value.select.return_value = [existing]
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+                headers={"X-Request-ID": "trace-replay-stream-1"},
+            ) as r:
+                assert r.status_code == 200
+                body = r.read()
+        # Orchestrator's classifier must not have been called on the replay.
+        cls_run.assert_not_called()
+        events = _parse_sse_stream(body)
+        types_steps = [(e["event"], json.loads(e["data"])["step"]) for e in events]
+        assert types_steps == [
+            ("status", "start"),
+            ("result", "finalize"),
+            ("status", "done"),
+        ]
+        result_evt = json.loads(events[1]["data"])
+        assert result_evt["data"]["id"] == "doc-existing-stream"
+        done_evt = json.loads(events[-1]["data"])
+        assert done_evt["data"]["document_id"] == "doc-existing-stream"
+        assert done_evt["data"]["request_id"] == "trace-replay-stream-1"
