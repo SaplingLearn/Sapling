@@ -8,7 +8,7 @@ import type {
 
 import { handleLocalRequest } from '@/lib/localData';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 export const IS_LOCAL_MODE = process.env.NEXT_PUBLIC_LOCAL_MODE === 'true';
 
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
@@ -16,6 +16,7 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
     return handleLocalRequest(path, options) as T;
   }
   const res = await fetch(`${API_URL}${path}`, {
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   });

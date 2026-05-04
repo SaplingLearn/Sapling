@@ -71,8 +71,8 @@ export async function POST(request: NextRequest) {
     const response = NextResponse.json({ ok: true });
     response.cookies.set('sapling_session', token, {
       httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'none',
+      secure: true,
       path: '/',
       maxAge: SESSION_MAX_AGE,
     });
@@ -86,8 +86,8 @@ export async function DELETE() {
   const response = NextResponse.json({ ok: true });
   response.cookies.set('sapling_session', '', {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'none',
+    secure: true,
     path: '/',
     maxAge: 0,
   });

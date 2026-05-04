@@ -3,6 +3,7 @@
 import { Suspense, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
+import { API_URL } from '@/lib/api';
 
 function CallbackInner() {
   const searchParams = useSearchParams();
@@ -51,6 +52,7 @@ function CallbackInner() {
       try {
         const sessionRes = await fetch('/api/auth/session', {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId, ...(authToken ? { authToken } : {}) }),
         });
@@ -67,7 +69,7 @@ function CallbackInner() {
       let name = '';
       let avatar = avatarParam || '';
       try {
-        const r = await fetch('/api/auth/me');
+        const r = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
         const data = await r.json();
         onboardingCompleted = !!data.onboarding_completed;
         name = data.name || '';
