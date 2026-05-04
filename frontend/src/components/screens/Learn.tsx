@@ -9,6 +9,7 @@ import { CustomSelect } from "../CustomSelect";
 import { ChatPanel, type ChatMsg } from "../ChatPanel";
 import { SessionSummary } from "../SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../SharedContextToggle";
+import { ModelToggle, useModelPref } from "../ModelToggle";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { QuizPanel } from "../QuizPanel";
@@ -89,6 +90,7 @@ function LearnInner() {
   const isMobile = useIsMobile();
 
   const [sharedCtx, setSharedCtx] = useSharedContext();
+  const [modelPref, setModelPref] = useModelPref();
 
   const initialTopic = searchParams.get("topic") ?? "";
   const initialMode = normalizeMode(searchParams.get("mode"));
@@ -172,7 +174,7 @@ function LearnInner() {
     setMessages([{ id: msgId(), role: "assistant", content: "", loading: true }]);
     setStarting(true);
     try {
-      const res = await startSession(userId, t, mode, selectedCourseId || undefined, sharedCtx);
+      const res = await startSession(userId, t, mode, selectedCourseId || undefined, sharedCtx, modelPref);
       setSessionId(res.session_id);
       setMessages([{ id: msgId(), role: "assistant", content: res.initial_message || "Let's begin." }]);
     } catch (err) {
@@ -223,7 +225,7 @@ function LearnInner() {
     ]);
     setSending(true);
     try {
-      const res = await sendChat(sessionId, userId, userText, chatMode, sharedCtx);
+      const res = await sendChat(sessionId, userId, userText, chatMode, sharedCtx, modelPref);
       setMessages(m => {
         const next = [...m];
         next[next.length - 1] = { id: next[next.length - 1].id, role: "assistant", content: res.reply || "" };
@@ -238,7 +240,7 @@ function LearnInner() {
     } finally {
       setSending(false);
     }
-  }, [sessionId, userId, mode, sharedCtx]);
+  }, [sessionId, userId, mode, sharedCtx, modelPref]);
 
   const handleAction = async (action: "hint" | "confused" | "skip") => {
     if (!sessionId || !userId) return;
@@ -251,7 +253,7 @@ function LearnInner() {
     ]);
     setSending(true);
     try {
-      const res = await learnAction(sessionId, userId, action, chatMode, sharedCtx);
+      const res = await learnAction(sessionId, userId, action, chatMode, sharedCtx, modelPref);
       setMessages(m => {
         const next = [...m];
         next[next.length - 1] = { id: next[next.length - 1].id, role: "assistant", content: res.reply || "" };
@@ -579,6 +581,7 @@ function LearnInner() {
               actions={
                 <>
                   <AIDisclaimerChip />
+                  <ModelToggle pref={modelPref} onChange={setModelPref} />
                   <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
                   <button
                     className={endConfirm.armed ? "btn btn--danger btn--sm" : "btn btn--sm"}
