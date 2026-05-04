@@ -65,12 +65,21 @@ def update_role(role_id: str, request: Request, body: dict = {}):
 @router.post("/roles/assign")
 def assign_role(body: AssignRoleBody, request: Request):
     require_admin(request)
-    table("user_roles").insert({
-        "user_id": body.user_id,
-        "role_id": body.role_id,
-        "granted_by": body.granted_by,
-        "granted_at": datetime.now(timezone.utc).isoformat(),
-    })
+    actor = get_session_user_id(request)
+    granted_by = body.granted_by or actor
+    table("user_roles").upsert(
+        {
+            "user_id": body.user_id,
+            "role_id": body.role_id,
+            "granted_by": granted_by,
+            "granted_at": datetime.now(timezone.utc).isoformat(),
+        },
+        on_conflict="user_id,role_id",
+    )
+    log_admin_action(
+        actor_id=actor, action="role.assign", target_type="role", target_id=body.role_id,
+        payload={"user_id": body.user_id, "granted_by": granted_by},
+    )
     return {"assigned": True}
 
 

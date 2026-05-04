@@ -234,3 +234,31 @@ class TestUnapproveUser:
         assert r.status_code == 409
         assert "yourself" in r.json()["detail"].lower()
         t.return_value.update.assert_not_called()
+
+
+class TestAssignRoleIdempotent:
+    def test_reassign_same_role_returns_200(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            t.return_value.upsert.return_value = [{}]
+            r = client.post("/api/admin/roles/assign", json={
+                "user_id": "u1", "role_id": "r1", "granted_by": "admin1",
+            })
+        assert r.status_code == 200
+        assert r.json()["assigned"] is True
+        # Must use upsert, not insert.
+        assert t.return_value.upsert.called
+        assert not t.return_value.insert.called
+
+    def test_granted_by_defaults_to_session_user(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            t.return_value.upsert.return_value = [{}]
+            r = client.post("/api/admin/roles/assign", json={
+                "user_id": "u1", "role_id": "r1",
+            })
+        assert r.status_code == 200
+        upsert_payload = t.return_value.upsert.call_args.args[0]
+        assert upsert_payload["granted_by"] == "admin1"
