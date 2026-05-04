@@ -19,7 +19,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import type { Role, Achievement, Cosmetic, CosmeticType, RarityTier, AchievementCategory } from "@/lib/types";
 
-type Tab = "users" | "roles" | "achievements" | "cosmetics" | "analytics";
+type Tab = "users" | "allowlist" | "roles" | "achievements" | "cosmetics" | "analytics" | "audit";
 type AdminUser = {
   id: string;
   name: string;
@@ -62,7 +62,7 @@ export function Admin() {
     );
   }
 
-  const tabs: Tab[] = ["users", "roles", "achievements", "cosmetics", "analytics"];
+  const tabs: Tab[] = ["users", "allowlist", "roles", "achievements", "cosmetics", "analytics", "audit"];
 
   return (
     <div>
@@ -93,10 +93,12 @@ export function Admin() {
       </div>
       <div style={{ padding: "24px 32px" }}>
         {tab === "users" && <UsersTab />}
+        {tab === "allowlist" && <AllowlistTab />}
         {tab === "roles" && <RolesTab />}
         {tab === "achievements" && <AchievementsTab />}
         {tab === "cosmetics" && <CosmeticsTab />}
         {tab === "analytics" && <AnalyticsTab />}
+        {tab === "audit" && <AuditTab />}
       </div>
     </div>
   );
@@ -909,3 +911,13 @@ const fieldStyle: React.CSSProperties = {
 const checkLabel: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-dim)",
 };
+
+// ── Allowlist (stub — implemented in Task 22) ────────────────────────────────
+function AllowlistTab() {
+  return <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>;
+}
+
+// ── Audit (stub — implemented in Task 27) ────────────────────────────────────
+function AuditTab() {
+  return <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)" }}>Loading…</div>;
+}
