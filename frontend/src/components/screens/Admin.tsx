@@ -10,26 +10,21 @@ import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
 import {
-  adminFetchUsers, adminApproveUser,
+  adminFetchUsers, adminApproveUser, adminUnapproveUser,
   adminListRoles, adminCreateRole, adminDeleteRole, adminAssignRole, adminRevokeRole,
   adminListAchievements, adminCreateAchievement, adminDeleteAchievement, adminGrantAchievement,
   adminListCosmetics, adminCreateCosmetic, adminDeleteCosmetic,
+  adminListTriggers, adminCreateTrigger, adminUpdateTrigger, adminDeleteTrigger,
+  adminListAchievementCosmetics, adminLinkAchievementCosmetic, adminUnlinkAchievementCosmetic,
+  adminListRoleCosmetics, adminLinkRoleCosmetic, adminUnlinkRoleCosmetic,
+  adminListAllowlist, adminApproveAllowlist, adminRevokeAllowlist,
+  adminAuditLog, adminAnalyticsOverview,
   IS_LOCAL_MODE,
 } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
-import type { Role, Achievement, Cosmetic, CosmeticType, RarityTier, AchievementCategory } from "@/lib/types";
+import type { Role, Achievement, Cosmetic, CosmeticType, RarityTier, AchievementCategory, AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
 
-type Tab = "users" | "roles" | "achievements" | "cosmetics" | "analytics";
-type AdminUser = {
-  id: string;
-  name: string;
-  email: string;
-  is_approved: boolean;
-  is_admin?: boolean;
-  last_sign_in?: string | null;
-  created_at?: string;
-  roles?: Role[];
-};
+type Tab = "users" | "allowlist" | "roles" | "achievements" | "cosmetics" | "analytics" | "audit";
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
 const ACH_CATS: AchievementCategory[] = ["activity", "social", "milestone", "special"];
@@ -62,7 +57,7 @@ export function Admin() {
     );
   }
 
-  const tabs: Tab[] = ["users", "roles", "achievements", "cosmetics", "analytics"];
+  const tabs: Tab[] = ["users", "allowlist", "roles", "achievements", "cosmetics", "analytics", "audit"];
 
   return (
     <div>
@@ -93,10 +88,12 @@ export function Admin() {
       </div>
       <div style={{ padding: "24px 32px" }}>
         {tab === "users" && <UsersTab />}
+        {tab === "allowlist" && <AllowlistTab />}
         {tab === "roles" && <RolesTab />}
         {tab === "achievements" && <AchievementsTab />}
         {tab === "cosmetics" && <CosmeticsTab />}
         {tab === "analytics" && <AnalyticsTab />}
+        {tab === "audit" && <AuditTab />}
       </div>
     </div>
   );
@@ -110,32 +107,42 @@ function UsersTab() {
   const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [roles, setRoles] = React.useState<Role[]>([]);
   const [query, setQuery] = React.useState("");
+  const [committedQuery, setCommittedQuery] = React.useState("");
+  const [page, setPage] = React.useState(1);
+  const [pageSize] = React.useState(50);
+  const [total, setTotal] = React.useState(0);
   const [assignFor, setAssignFor] = React.useState<string | null>(null);
   const [assignRoleId, setAssignRoleId] = React.useState<string>("");
   const [loading, setLoading] = React.useState(true);
 
   const load = React.useCallback(async () => {
+    setLoading(true);
     try {
-      const [u, r] = await Promise.all([adminFetchUsers(), adminListRoles()]);
+      const [u, r] = await Promise.all([
+        adminFetchUsers({ q: committedQuery || undefined, page, page_size: pageSize }),
+        adminListRoles(),
+      ]);
       setUsers(u.users || []);
+      setTotal(u.total || 0);
       setRoles(r.roles || []);
     } catch (err) {
       toast.error(`Load failed: ${String(err)}`);
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [committedQuery, page, pageSize, toast]);
 
   React.useEffect(() => { load(); }, [load]);
 
-  const filtered = query
-    ? users.filter(u =>
-        (u.name || "").toLowerCase().includes(query.toLowerCase()) ||
-        (u.email || "").toLowerCase().includes(query.toLowerCase()))
-    : users;
+  React.useEffect(() => {
+    const id = window.setTimeout(() => {
+      setCommittedQuery(query);
+      setPage(1);
+    }, 350);
+    return () => window.clearTimeout(id);
+  }, [query]);
 
   const approved = users.filter(u => u.is_approved).length;
-  const pending = users.length - approved;
 
   const assign = async (uid: string) => {
     if (!assignRoleId) return;
@@ -160,23 +167,35 @@ function UsersTab() {
     }
   };
 
-  const approvedPct = users.length ? Math.round((approved / users.length) * 100) : 0;
+  const approve = async (uid: string) => {
+    try { await adminApproveUser(uid); await load(); }
+    catch (err) { toast.error(`Approve failed: ${String(err)}`); }
+  };
 
-  if (loading) {
+  const unapprove = async (uid: string) => {
+    try {
+      await adminUnapproveUser(uid);
+      toast.success("Approval revoked");
+      await load();
+    } catch (err) {
+      toast.error(`Unapprove failed: ${String(err)}`);
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  if (loading && users.length === 0) {
     return <AdminTableSkeleton />;
   }
 
   return (
     <>
-      {/* Prose strip replaces the previous 3-card hero-metric layout
-          (anti-pattern: big-number + small-label + gradient accent). */}
       <div className="body-serif" style={{
         fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680,
       }}>
-        <span style={{ color: "var(--text)" }}>{users.length}</span> student{users.length === 1 ? "" : "s"} · {" "}
-        <span style={{ color: "var(--accent)" }}>{approved} approved</span>
-        {users.length > 0 && <span> ({approvedPct}%)</span>}
-        {pending > 0 && <> · <span style={{ color: "var(--warn)" }}>{pending} waiting</span></>}
+        <span style={{ color: "var(--text)" }}>{total}</span> student{total === 1 ? "" : "s"} · {" "}
+        <span style={{ color: "var(--accent)" }}>{approved} approved on this page</span>
+        {committedQuery && <> · <span style={{ color: "var(--text-muted)" }}>filter "{committedQuery}"</span></>}
       </div>
       <div className="card" style={{ padding: 0 }}>
         <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
@@ -199,7 +218,7 @@ function UsersTab() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: "var(--bg-subtle)" }}>
-              {["User", "Email", "Roles", "Status", "Joined", ""].map(h => (
+              {["User", "Email", "Roles", "Status", "Last seen", "Joined", ""].map(h => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
                   {h}
                 </th>
@@ -207,7 +226,7 @@ function UsersTab() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(u => (
+            {users.map(u => (
               <tr key={u.id} style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={{ padding: "10px 16px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -261,13 +280,24 @@ function UsersTab() {
                   </span>
                 </td>
                 <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                  {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}
+                </td>
+                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
                   {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
                 </td>
                 <td style={{ padding: "10px 16px", textAlign: "right" }}>
-                  {!u.is_approved && (
+                  {u.is_approved ? (
+                    <button
+                      className="btn btn--sm btn--ghost"
+                      onClick={() => unapprove(u.id)}
+                      title="Revoke approval"
+                    >
+                      Unapprove
+                    </button>
+                  ) : (
                     <button
                       className="btn btn--sm btn--primary"
-                      onClick={async () => { await adminApproveUser(u.id); load(); }}
+                      onClick={() => approve(u.id)}
                     >
                       Approve
                     </button>
@@ -277,6 +307,16 @@ function UsersTab() {
             ))}
           </tbody>
         </table>
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)",
+        }}>
+          <div>Page {page} of {totalPages} · {total} total</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn btn--sm btn--ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
+            <button className="btn btn--sm btn--ghost" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
+          </div>
+        </div>
       </div>
     </>
   );
@@ -443,6 +483,74 @@ function AchievementsTab() {
   const [grant, setGrant] = React.useState<{ userId: string; achievementId: string }>({ userId: "", achievementId: "" });
   const [granting, setGranting] = React.useState(false);
 
+  const [openId, setOpenId] = React.useState<string | null>(null);
+  const [triggers, setTriggers] = React.useState<AchievementTrigger[]>([]);
+  const [linkedCosmeticIds, setLinkedCosmeticIds] = React.useState<string[]>([]);
+  const [allCosmetics, setAllCosmetics] = React.useState<Cosmetic[]>([]);
+  const [newTrigger, setNewTrigger] = React.useState({ trigger_type: "", trigger_threshold: 1 });
+
+  const loadDetails = React.useCallback(async (id: string) => {
+    try {
+      const [t, l, c] = await Promise.all([
+        adminListTriggers(id),
+        adminListAchievementCosmetics(id),
+        allCosmetics.length ? Promise.resolve({ cosmetics: allCosmetics }) : adminListCosmetics(),
+      ]);
+      setTriggers(t.triggers || []);
+      setLinkedCosmeticIds((l.links || []).map(x => x.cosmetic_id));
+      if (!allCosmetics.length) setAllCosmetics(c.cosmetics || []);
+    } catch (err) {
+      toast.error(`Detail load failed: ${String(err)}`);
+    }
+  }, [allCosmetics, toast]);
+
+  const toggleOpen = (id: string) => {
+    if (openId === id) { setOpenId(null); return; }
+    setOpenId(id);
+    loadDetails(id);
+  };
+
+  const addTrigger = async (id: string) => {
+    if (!newTrigger.trigger_type.trim()) { toast.warn("Trigger type required."); return; }
+    try {
+      await adminCreateTrigger({
+        achievement_id: id,
+        trigger_type: newTrigger.trigger_type.trim(),
+        trigger_threshold: newTrigger.trigger_threshold,
+      });
+      setNewTrigger({ trigger_type: "", trigger_threshold: 1 });
+      await loadDetails(id);
+      toast.success("Trigger added");
+    } catch (err) { toast.error(`Add failed: ${String(err)}`); }
+  };
+
+  const updateTriggerInline = async (tid: string, patch: Partial<AchievementTrigger>, achId: string) => {
+    try {
+      await adminUpdateTrigger(tid, {
+        ...(patch.trigger_type !== undefined ? { trigger_type: patch.trigger_type } : {}),
+        ...(patch.trigger_threshold !== undefined ? { trigger_threshold: patch.trigger_threshold } : {}),
+      });
+      await loadDetails(achId);
+    } catch (err) { toast.error(`Update failed: ${String(err)}`); }
+  };
+
+  const deleteTriggerInline = async (tid: string, achId: string) => {
+    try {
+      await adminDeleteTrigger(tid);
+      await loadDetails(achId);
+      toast.success("Trigger deleted");
+    } catch (err) { toast.error(`Delete failed: ${String(err)}`); }
+  };
+
+  const toggleCosmetic = async (achId: string, cosmeticId: string) => {
+    const linked = linkedCosmeticIds.includes(cosmeticId);
+    try {
+      if (linked) await adminUnlinkAchievementCosmetic(achId, cosmeticId);
+      else        await adminLinkAchievementCosmetic(achId, cosmeticId);
+      await loadDetails(achId);
+    } catch (err) { toast.error(`Link toggle failed: ${String(err)}`); }
+  };
+
   const load = async () => {
     try {
       const [r, u] = await Promise.all([adminListAchievements(), adminFetchUsers()]);
@@ -584,6 +692,67 @@ function AchievementsTab() {
             }
             sub={a.description || a.slug}
             onDelete={() => del(a.id)}
+            onExpand={() => toggleOpen(a.id)}
+            expanded={openId === a.id}
+            expandedContent={
+              <div style={{ display: "grid", gap: 14 }}>
+                <div>
+                  <div className="label-micro" style={{ marginBottom: 6 }}>Triggers · {triggers.length}</div>
+                  {triggers.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>None.</div>}
+                  {triggers.map(t => (
+                    <div key={t.id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                      <input
+                        value={t.trigger_type}
+                        onChange={e => updateTriggerInline(t.id, { trigger_type: e.target.value }, a.id)}
+                        style={{ ...fieldStyle, flex: 1 }}
+                      />
+                      <input
+                        type="number"
+                        value={t.trigger_threshold}
+                        onChange={e => updateTriggerInline(t.id, { trigger_threshold: Number(e.target.value) || 0 }, a.id)}
+                        style={{ ...fieldStyle, width: 80 }}
+                      />
+                      <button className="btn btn--sm btn--ghost" onClick={() => deleteTriggerInline(t.id, a.id)}>×</button>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+                    <input
+                      placeholder="trigger_type (e.g. login_streak)"
+                      value={newTrigger.trigger_type}
+                      onChange={e => setNewTrigger(v => ({ ...v, trigger_type: e.target.value }))}
+                      style={{ ...fieldStyle, flex: 1 }}
+                    />
+                    <input
+                      type="number"
+                      value={newTrigger.trigger_threshold}
+                      onChange={e => setNewTrigger(v => ({ ...v, trigger_threshold: Number(e.target.value) || 0 }))}
+                      style={{ ...fieldStyle, width: 80 }}
+                    />
+                    <button className="btn btn--sm btn--primary" onClick={() => addTrigger(a.id)}>Add</button>
+                  </div>
+                </div>
+                <div>
+                  <div className="label-micro" style={{ marginBottom: 6 }}>Linked cosmetics</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {allCosmetics.map(c => {
+                      const on = linkedCosmeticIds.includes(c.id);
+                      return (
+                        <button
+                          key={c.id}
+                          className={`chip ${on ? "chip--accent" : ""}`}
+                          onClick={() => toggleCosmetic(a.id, c.id)}
+                          style={{ cursor: "pointer", border: on ? undefined : "1px dashed var(--border)" }}
+                          title={`${c.type} · ${c.rarity}`}
+                        >
+                          {c.name}
+                        </button>
+                      );
+                    })}
+                    {allCosmetics.length === 0 && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No cosmetics defined yet.</span>}
+                  </div>
+                </div>
+              </div>
+            }
           />
         ))}
       </div>
@@ -604,6 +773,47 @@ function CosmeticsTab() {
   const [saving, setSaving] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
   const fileRef = React.useRef<HTMLInputElement | null>(null);
+
+  const [openId, setOpenId] = React.useState<string | null>(null);
+  const [allRoles, setAllRoles] = React.useState<Role[]>([]);
+  const [linkedRoleIdsByCosmetic, setLinkedRoleIdsByCosmetic] = React.useState<Record<string, string[]>>({});
+
+  const ensureRoles = React.useCallback(async () => {
+    if (allRoles.length) return;
+    try { setAllRoles((await adminListRoles()).roles || []); }
+    catch (err) { toast.error(`Roles load failed: ${String(err)}`); }
+  }, [allRoles.length, toast]);
+
+  const loadLinks = async (cosmeticId: string) => {
+    await ensureRoles();
+    try {
+      // Build linked roles list by checking each role's cosmetic links.
+      const roles = allRoles.length ? allRoles : (await adminListRoles()).roles || [];
+      if (!allRoles.length) setAllRoles(roles);
+      const all = await Promise.all(roles.map(r => adminListRoleCosmetics(r.id).then(x => ({ r, x }))));
+      const linked = all
+        .filter(({ x }) => x.links.some(l => l.cosmetic_id === cosmeticId))
+        .map(({ r }) => r.id);
+      setLinkedRoleIdsByCosmetic(prev => ({ ...prev, [cosmeticId]: linked }));
+    } catch (err) {
+      toast.error(`Link load failed: ${String(err)}`);
+    }
+  };
+
+  const toggleRoleLink = async (roleId: string, cosmeticId: string) => {
+    const linked = linkedRoleIdsByCosmetic[cosmeticId] || [];
+    try {
+      if (linked.includes(roleId)) await adminUnlinkRoleCosmetic(roleId, cosmeticId);
+      else                          await adminLinkRoleCosmetic(roleId, cosmeticId);
+      await loadLinks(cosmeticId);
+    } catch (err) { toast.error(`Toggle failed: ${String(err)}`); }
+  };
+
+  const toggleOpen = async (id: string) => {
+    if (openId === id) { setOpenId(null); return; }
+    setOpenId(id);
+    await loadLinks(id);
+  };
 
   const load = async () => {
     try {
@@ -781,6 +991,29 @@ function CosmeticsTab() {
                 }
                 sub={c.slug}
                 onDelete={() => del(c.id)}
+                onExpand={() => toggleOpen(c.id)}
+                expanded={openId === c.id}
+                expandedContent={
+                  <div>
+                    <div className="label-micro" style={{ marginBottom: 6 }}>Roles that grant this</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {allRoles.map(r => {
+                        const on = (linkedRoleIdsByCosmetic[c.id] || []).includes(r.id);
+                        return (
+                          <button
+                            key={r.id}
+                            className={`chip ${on ? "chip--accent" : ""}`}
+                            onClick={() => toggleRoleLink(r.id, c.id)}
+                            style={{ cursor: "pointer", border: on ? undefined : "1px dashed var(--border)" }}
+                          >
+                            {r.name}
+                          </button>
+                        );
+                      })}
+                      {allRoles.length === 0 && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No roles defined yet.</span>}
+                    </div>
+                  </div>
+                }
               />
             ))}
           </div>
@@ -793,48 +1026,143 @@ function CosmeticsTab() {
 // ── Analytics ────────────────────────────────────────────────────────────────
 
 function AnalyticsTab() {
-  const [users, setUsers] = React.useState<AdminUser[]>([]);
-  React.useEffect(() => { adminFetchUsers().then(r => setUsers(r.users || [])).catch(() => {}); }, []);
-  const approved = users.filter(u => u.is_approved).length;
+  const toast = useToast();
+  const [data, setData] = React.useState<AnalyticsOverview | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let alive = true;
+    adminAnalyticsOverview()
+      .then(r => { if (alive) setData(r); })
+      .catch(err => toast.error(`Analytics load failed: ${String(err)}`))
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [toast]);
+
+  if (loading) return <AdminTableSkeleton />;
+  if (!data) return null;
+
+  const { totals, signups_by_day, approvals_by_day, role_counts } = data;
+
   return (
-    <div className="card" style={{ padding: "var(--pad-lg)" }}>
-      <div className="label-micro">Overview</div>
-      <div className="h-serif" style={{ fontSize: 24, marginTop: 6 }}>{users.length} users</div>
-      <div style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 8 }}>
-        {approved} approved · {users.length - approved} pending
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14 }}>
+        <MetricCard label="Users" value={totals.users} />
+        <MetricCard label="Approved" value={totals.approved} accent />
+        <MetricCard label="Pending" value={totals.pending} warn={totals.pending > 0} />
+        <MetricCard label="Admins" value={totals.admins} />
+      </div>
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div className="label-micro" style={{ marginBottom: 10 }}>Signups · last 30 days</div>
+        <Sparkline points={signups_by_day} accent />
+      </div>
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div className="label-micro" style={{ marginBottom: 10 }}>Approvals · last 30 days</div>
+        <Sparkline points={approvals_by_day} />
+      </div>
+      <div className="card" style={{ padding: 0 }}>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+          <div className="label-micro">Role membership · {role_counts.length}</div>
+        </div>
+        {role_counts.length === 0 && (
+          <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+            Nobody has any roles yet.
+          </div>
+        )}
+        {role_counts.map(rc => (
+          <div key={rc.slug} style={{
+            display: "flex", alignItems: "center", gap: 12,
+            padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 13,
+          }}>
+            <span style={{
+              display: "inline-block", width: 10, height: 10, borderRadius: 3,
+              background: rc.color, border: "1px solid var(--border)",
+            }} />
+            <span style={{ flex: 1, fontWeight: 500 }}>{rc.name}</span>
+            <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>{rc.count}</span>
+          </div>
+        ))}
       </div>
     </div>
+  );
+}
+
+function MetricCard({ label, value, accent, warn }: { label: string; value: number; accent?: boolean; warn?: boolean }) {
+  const color = accent ? "var(--accent)" : warn ? "var(--warn)" : "var(--text)";
+  return (
+    <div className="card" style={{ padding: "var(--pad-lg)" }}>
+      <div className="label-micro">{label}</div>
+      <div className="h-serif" style={{ fontSize: 32, marginTop: 4, color }}>{value}</div>
+    </div>
+  );
+}
+
+function Sparkline({ points, accent }: { points: { date: string; count: number }[]; accent?: boolean }) {
+  if (points.length === 0) return <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No data.</div>;
+  const w = 600, h = 80, pad = 4;
+  const max = Math.max(1, ...points.map(p => p.count));
+  const stepX = (w - pad * 2) / Math.max(1, points.length - 1);
+  const path = points.map((p, i) => {
+    const x = pad + i * stepX;
+    const y = h - pad - (p.count / max) * (h - pad * 2);
+    return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+  }).join(" ");
+  const stroke = accent ? "var(--accent)" : "var(--text-dim)";
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: "100%", height: 80 }}>
+      <path d={path} fill="none" stroke={stroke} strokeWidth={2} />
+      {points.map((p, i) => (
+        <circle key={p.date} cx={pad + i * stepX} cy={h - pad - (p.count / max) * (h - pad * 2)} r={2} fill={stroke}>
+          <title>{`${p.date}: ${p.count}`}</title>
+        </circle>
+      ))}
+    </svg>
   );
 }
 
 // ── Shared row + input helpers ───────────────────────────────────────────────
 
 function CatalogRow({
-  left, middle, sub, onDelete,
+  left, middle, sub, onDelete, onExpand, expanded, expandedContent,
 }: {
   left: React.ReactNode;
   middle: React.ReactNode;
   sub?: string;
   onDelete: () => void;
+  onExpand?: () => void;
+  expanded?: boolean;
+  expandedContent?: React.ReactNode;
 }) {
   const del = useConfirm(onDelete);
   return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 12,
-      padding: "10px 16px", borderTop: "1px solid var(--border)",
-    }}>
-      <div style={{ flexShrink: 0 }}>{left}</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13 }}>{middle}</div>
-        {sub && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>}
+    <div>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "10px 16px", borderTop: "1px solid var(--border)",
+      }}>
+        <div style={{ flexShrink: 0 }}>{left}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13 }}>{middle}</div>
+          {sub && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>}
+        </div>
+        {onExpand && (
+          <button className="btn btn--sm btn--ghost" onClick={onExpand}>
+            {expanded ? "Hide" : "Manage"}
+          </button>
+        )}
+        <button
+          className={`btn btn--sm ${del.armed ? "btn--danger" : "btn--ghost"}`}
+          onClick={del.trigger}
+          style={del.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
+        >
+          {del.armed ? "Click again" : <Icon name="x" size={12} />}
+        </button>
       </div>
-      <button
-        className={`btn btn--sm ${del.armed ? "btn--danger" : "btn--ghost"}`}
-        onClick={del.trigger}
-        style={del.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
-      >
-        {del.armed ? "Click again" : <Icon name="x" size={12} />}
-      </button>
+      {expanded && expandedContent && (
+        <div style={{ padding: "10px 16px 14px 56px", borderTop: "1px dashed var(--border)", background: "var(--bg-subtle)" }}>
+          {expandedContent}
+        </div>
+      )}
     </div>
   );
 }
@@ -909,3 +1237,241 @@ const fieldStyle: React.CSSProperties = {
 const checkLabel: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-dim)",
 };
+
+// ── Allowlist ────────────────────────────────────────────────────────────────
+function AllowlistTab() {
+  const toast = useToast();
+  const [emails, setEmails] = React.useState<AllowlistEmail[]>([]);
+  const [query, setQuery] = React.useState("");
+  const [newEmail, setNewEmail] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+
+  const load = React.useCallback(async () => {
+    try {
+      const r = await adminListAllowlist();
+      setEmails(r.emails || []);
+    } catch (err) {
+      toast.error(`Load failed: ${String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const filtered = query
+    ? emails.filter(e => e.email.toLowerCase().includes(query.toLowerCase()))
+    : emails;
+  const approved = emails.filter(e => e.approved_at).length;
+  const pending = emails.length - approved;
+
+  const add = async () => {
+    const e = newEmail.trim().toLowerCase();
+    if (!e) return;
+    setBusy(true);
+    try {
+      await adminApproveAllowlist(e);
+      setNewEmail("");
+      toast.success("Email allowlisted");
+      await load();
+    } catch (err) {
+      toast.error(`Add failed: ${String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = async (row: AllowlistEmail) => {
+    try {
+      if (row.approved_at) {
+        await adminRevokeAllowlist(row.email);
+        toast.success("Allowlist revoked");
+      } else {
+        await adminApproveAllowlist(row.email);
+        toast.success("Email allowlisted");
+      }
+      await load();
+    } catch (err) {
+      toast.error(`Update failed: ${String(err)}`);
+    }
+  };
+
+  if (loading) return <AdminTableSkeleton />;
+
+  return (
+    <>
+      <div className="body-serif" style={{ fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680 }}>
+        <span style={{ color: "var(--text)" }}>{emails.length}</span> address{emails.length === 1 ? "" : "es"} · {" "}
+        <span style={{ color: "var(--accent)" }}>{approved} approved</span>
+        {pending > 0 && <> · <span style={{ color: "var(--warn)" }}>{pending} unapproved signups</span></>}
+      </div>
+      <div className="card" style={{ padding: 0 }}>
+        <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
+          <div style={{ position: "relative", flex: 1, maxWidth: 300 }}>
+            <div style={{ position: "absolute", left: 10, top: 8, color: "var(--text-muted)" }}>
+              <Icon name="search" size={14} />
+            </div>
+            <input
+              placeholder="Search emails…"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              style={{
+                width: "100%", padding: "7px 12px 7px 32px",
+                border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
+                fontSize: 13, background: "var(--bg-input)",
+              }}
+            />
+          </div>
+          <input
+            placeholder="someone@bu.edu"
+            value={newEmail}
+            onChange={e => setNewEmail(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") add(); }}
+            style={{ ...fieldStyle, maxWidth: 240 }}
+          />
+          <button className="btn btn--primary btn--sm" onClick={add} disabled={busy || !newEmail.trim()}>
+            {busy ? "Adding…" : "Allowlist"}
+          </button>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: "var(--bg-subtle)" }}>
+              {["Email", "Status", "Submitted", "Approved", ""].map(h => (
+                <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map(row => (
+              <tr key={row.id} style={{ borderTop: "1px solid var(--border)" }}>
+                <td style={{ padding: "10px 16px", fontWeight: 500 }}>{row.email}</td>
+                <td style={{ padding: "10px 16px" }}>
+                  <span className={`chip ${row.approved_at ? "chip--accent" : "chip--warn"}`}>
+                    {row.approved_at ? "approved" : "signup"}
+                  </span>
+                </td>
+                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                  {row.created_at ? new Date(row.created_at).toLocaleDateString() : "—"}
+                </td>
+                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                  {row.approved_at ? new Date(row.approved_at).toLocaleDateString() : "—"}
+                </td>
+                <td style={{ padding: "10px 16px", textAlign: "right" }}>
+                  <button
+                    className={`btn btn--sm ${row.approved_at ? "btn--ghost" : "btn--primary"}`}
+                    onClick={() => toggle(row)}
+                  >
+                    {row.approved_at ? "Revoke" : "Approve"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+// ── Audit ─────────────────────────────────────────────────────────────────────
+function AuditTab() {
+  const toast = useToast();
+  const [entries, setEntries] = React.useState<AdminAuditEntry[]>([]);
+  const [page, setPage] = React.useState(1);
+  const [pageSize] = React.useState(50);
+  const [total, setTotal] = React.useState(0);
+  const [actionFilter, setActionFilter] = React.useState<string>("");
+  const [targetFilter, setTargetFilter] = React.useState<string>("");
+  const [loading, setLoading] = React.useState(true);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await adminAuditLog({
+        page, page_size: pageSize,
+        action: actionFilter || undefined,
+        target_type: targetFilter || undefined,
+      });
+      setEntries(r.entries || []);
+      setTotal(r.total || 0);
+    } catch (err) {
+      toast.error(`Audit load failed: ${String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, pageSize, actionFilter, targetFilter, toast]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (loading && entries.length === 0) return <AdminTableSkeleton />;
+
+  return (
+    <>
+      <div className="body-serif" style={{ fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680 }}>
+        <span style={{ color: "var(--text)" }}>{total}</span> recorded action{total === 1 ? "" : "s"}
+      </div>
+      <div className="card" style={{ padding: 0 }}>
+        <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
+          <input
+            placeholder="action (e.g. user.approve)"
+            value={actionFilter}
+            onChange={e => { setActionFilter(e.target.value); setPage(1); }}
+            style={{ ...fieldStyle, maxWidth: 220 }}
+          />
+          <input
+            placeholder="target_type (e.g. user)"
+            value={targetFilter}
+            onChange={e => { setTargetFilter(e.target.value); setPage(1); }}
+            style={{ ...fieldStyle, maxWidth: 220 }}
+          />
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: "var(--bg-subtle)" }}>
+              {["When", "Actor", "Action", "Target", "Payload"].map(h => (
+                <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map(e => (
+              <tr key={e.id} style={{ borderTop: "1px solid var(--border)" }}>
+                <td style={{ padding: "10px 16px", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                  {new Date(e.created_at).toLocaleString()}
+                </td>
+                <td style={{ padding: "10px 16px", fontFamily: "var(--font-mono)", fontSize: 12 }}>{e.actor_id}</td>
+                <td style={{ padding: "10px 16px" }}>
+                  <span className="chip">{e.action}</span>
+                </td>
+                <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>
+                  <span className="chip">{e.target_type}</span>
+                  <span style={{ marginLeft: 6, fontFamily: "var(--font-mono)", fontSize: 12 }}>{e.target_id || "—"}</span>
+                </td>
+                <td style={{ padding: "10px 16px", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)", maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    title={JSON.stringify(e.payload)}>
+                  {Object.keys(e.payload || {}).length ? JSON.stringify(e.payload) : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)",
+        }}>
+          <div>Page {page} of {totalPages}</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn btn--sm btn--ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
+            <button className="btn btn--sm btn--ghost" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}

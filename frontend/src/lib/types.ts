@@ -203,6 +203,7 @@ export interface Cosmetic {
   asset_url?: string;
   css_value?: string;
   rarity: RarityTier;
+  unlock_source?: string | null;
 }
 
 export interface UserCosmetic {
@@ -318,4 +319,74 @@ export interface GradebookCourse {
 export interface ExtractedSyllabusCategory {
   name: string;
   weight: number;
+}
+
+// ── Admin portal ─────────────────────────────────────────────────────────────
+
+export interface AllowlistEmail {
+  id: string;
+  email: string;
+  created_at: string;
+  approved_at: string | null;
+}
+
+export interface AchievementTrigger {
+  id: string;
+  achievement_id: string;
+  trigger_type: string;
+  trigger_threshold: number;
+}
+
+export interface AdminAuditEntry {
+  id: string;
+  actor_id: string;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AnalyticsTotals {
+  users: number;
+  approved: number;
+  pending: number;
+  admins: number;
+}
+
+export interface AnalyticsDayPoint {
+  date: string;     // YYYY-MM-DD
+  count: number;
+}
+
+export interface AnalyticsRoleCount {
+  slug: string;
+  name: string;
+  color: string;
+  count: number;
+}
+
+export interface AnalyticsOverview {
+  totals: AnalyticsTotals;
+  signups_by_day: AnalyticsDayPoint[];
+  approvals_by_day: AnalyticsDayPoint[];
+  role_counts: AnalyticsRoleCount[];
+}
+
+export interface AdminUserListItem {
+  id: string;
+  name: string;
+  email: string;
+  is_approved: boolean;
+  is_admin?: boolean;
+  last_sign_in_at: string | null;
+  created_at: string;
+  roles: Role[];
+}
+
+export interface PaginatedUsers {
+  users: AdminUserListItem[];
+  total: number;
+  page: number;
+  page_size: number;
 }

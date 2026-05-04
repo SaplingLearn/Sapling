@@ -4,6 +4,7 @@ import type {
   UserCosmetic, CosmeticType, Role, Cosmetic, RarityTier, AchievementCategory,
   GradebookSummary, GradebookCourse, GradeCategory, GradedAssignment, LetterScaleTier,
   ExtractedSyllabusCategory,
+  AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
 } from '@/lib/types';
 
 import { handleLocalRequest } from '@/lib/localData';
@@ -720,13 +721,23 @@ export const deleteAccount = (userId: string, confirmation: string) =>
     body: JSON.stringify({ confirmation }),
   });
 
-// Admin
-export const adminFetchUsers = () =>
-  fetchJSON<{ users: any[] }>('/api/admin/users');
+// Admin — users
+export const adminFetchUsers = (params?: { q?: string; page?: number; page_size?: number }) => {
+  const qp = new URLSearchParams();
+  if (params?.q) qp.set('q', params.q);
+  if (params?.page) qp.set('page', String(params.page));
+  if (params?.page_size) qp.set('page_size', String(params.page_size));
+  const suffix = qp.toString() ? `?${qp.toString()}` : '';
+  return fetchJSON<PaginatedUsers>(`/api/admin/users${suffix}`);
+};
 
 export const adminApproveUser = (userId: string) =>
   fetchJSON<{ approved: boolean }>(`/api/admin/users/${userId}/approve`, { method: 'PATCH' });
 
+export const adminUnapproveUser = (userId: string) =>
+  fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
+
+// Admin — roles
 export const adminAssignRole = (userId: string, roleId: string, grantedBy?: string) =>
   fetchJSON<{ assigned: boolean }>('/api/admin/roles/assign', {
     method: 'POST',
@@ -755,6 +766,24 @@ export const adminCreateRole = (payload: {
 export const adminDeleteRole = (roleId: string) =>
   fetchJSON<{ deleted: boolean }>(`/api/admin/roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' });
 
+export const adminListRoleCosmetics = (roleId: string) =>
+  fetchJSON<{ links: { role_id: string; cosmetic_id: string }[] }>(
+    `/api/admin/roles/${encodeURIComponent(roleId)}/cosmetics`,
+  );
+
+export const adminLinkRoleCosmetic = (roleId: string, cosmeticId: string) =>
+  fetchJSON<{ linked: boolean }>('/api/admin/roles/cosmetics', {
+    method: 'POST',
+    body: JSON.stringify({ role_id: roleId, cosmetic_id: cosmeticId }),
+  });
+
+export const adminUnlinkRoleCosmetic = (roleId: string, cosmeticId: string) =>
+  fetchJSON<{ unlinked: boolean }>('/api/admin/roles/cosmetics', {
+    method: 'DELETE',
+    body: JSON.stringify({ role_id: roleId, cosmetic_id: cosmeticId }),
+  });
+
+// Admin — achievements
 export const adminListAchievements = () =>
   fetchJSON<{ achievements: Achievement[] }>('/api/admin/achievements');
 
@@ -776,6 +805,46 @@ export const adminGrantAchievement = (userId: string, achievementId: string) =>
     body: JSON.stringify({ user_id: userId, achievement_id: achievementId }),
   });
 
+export const adminListTriggers = (achievementId: string) =>
+  fetchJSON<{ triggers: AchievementTrigger[] }>(
+    `/api/admin/achievements/${encodeURIComponent(achievementId)}/triggers`,
+  );
+
+export const adminCreateTrigger = (payload: {
+  achievement_id: string; trigger_type: string; trigger_threshold: number;
+}) =>
+  fetchJSON<{ trigger: AchievementTrigger }>('/api/admin/achievements/triggers', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const adminUpdateTrigger = (triggerId: string, patch: Partial<{ trigger_type: string; trigger_threshold: number }>) =>
+  fetchJSON<{ updated: boolean }>(`/api/admin/achievements/triggers/${encodeURIComponent(triggerId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+
+export const adminDeleteTrigger = (triggerId: string) =>
+  fetchJSON<{ deleted: boolean }>(`/api/admin/achievements/triggers/${encodeURIComponent(triggerId)}`, { method: 'DELETE' });
+
+export const adminListAchievementCosmetics = (achievementId: string) =>
+  fetchJSON<{ links: { achievement_id: string; cosmetic_id: string }[] }>(
+    `/api/admin/achievements/${encodeURIComponent(achievementId)}/cosmetics`,
+  );
+
+export const adminLinkAchievementCosmetic = (achievementId: string, cosmeticId: string) =>
+  fetchJSON<{ linked: boolean }>('/api/admin/achievements/cosmetics', {
+    method: 'POST',
+    body: JSON.stringify({ achievement_id: achievementId, cosmetic_id: cosmeticId }),
+  });
+
+export const adminUnlinkAchievementCosmetic = (achievementId: string, cosmeticId: string) =>
+  fetchJSON<{ unlinked: boolean }>('/api/admin/achievements/cosmetics', {
+    method: 'DELETE',
+    body: JSON.stringify({ achievement_id: achievementId, cosmetic_id: cosmeticId }),
+  });
+
+// Admin — cosmetics
 export const adminListCosmetics = () =>
   fetchJSON<{ cosmetics: Cosmetic[] }>('/api/admin/cosmetics');
 
@@ -791,6 +860,42 @@ export const adminCreateCosmetic = (payload: {
 
 export const adminDeleteCosmetic = (cosmeticId: string) =>
   fetchJSON<{ deleted: boolean }>(`/api/admin/cosmetics/${encodeURIComponent(cosmeticId)}`, { method: 'DELETE' });
+
+// Admin — allowlist
+export const adminListAllowlist = () =>
+  fetchJSON<{ emails: AllowlistEmail[] }>('/api/admin/allowlist');
+
+export const adminApproveAllowlist = (email: string) =>
+  fetchJSON<{ email: AllowlistEmail }>('/api/admin/allowlist/approve', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+
+export const adminRevokeAllowlist = (email: string) =>
+  fetchJSON<{ email: AllowlistEmail }>('/api/admin/allowlist/revoke', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+
+// Admin — audit
+export const adminAuditLog = (params?: {
+  page?: number; page_size?: number; action?: string; target_type?: string; actor_id?: string;
+}) => {
+  const qp = new URLSearchParams();
+  if (params?.page) qp.set('page', String(params.page));
+  if (params?.page_size) qp.set('page_size', String(params.page_size));
+  if (params?.action) qp.set('action', params.action);
+  if (params?.target_type) qp.set('target_type', params.target_type);
+  if (params?.actor_id) qp.set('actor_id', params.actor_id);
+  const suffix = qp.toString() ? `?${qp.toString()}` : '';
+  return fetchJSON<{ entries: AdminAuditEntry[]; total: number; page: number; page_size: number }>(
+    `/api/admin/audit${suffix}`,
+  );
+};
+
+// Admin — analytics
+export const adminAnalyticsOverview = () =>
+  fetchJSON<AnalyticsOverview>('/api/admin/analytics/overview');
 
 // Careers
 export const submitJobApplication = async (data: {

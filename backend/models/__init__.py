@@ -316,6 +316,21 @@ class GrantAchievementBody(BaseModel):
     achievement_id: str
 
 
+class UpdateAchievementTriggerBody(BaseModel):
+    trigger_type: Optional[str] = None
+    trigger_threshold: Optional[int] = None
+
+
+class LinkAchievementCosmeticBody(BaseModel):
+    achievement_id: str
+    cosmetic_id: str
+
+
+class LinkRoleCosmeticBody(BaseModel):
+    role_id: str
+    cosmetic_id: str
+
+
 # ── Cosmetics (Admin) ────────────────────────────────────────────────────────
 
 class CreateCosmeticBody(BaseModel):
@@ -387,3 +402,9 @@ class SyllabusApplyBody(BaseModel):
     doc_id: str
     categories: list[CategoryItem]
     assignments: list[dict]               # uses the same shape as syllabus extraction
+
+
+# ── Newsletter & Allowlist (Admin) ──────────────────────────────────────────
+
+class AllowlistEmailBody(BaseModel):
+    email: str
