@@ -5,13 +5,17 @@ Covers:
 - Mastery score update formula (scoring math)
 - POST /api/quiz/submit — answer grading and result shape
 - POST /api/quiz/submit — 404 when quiz not found
+- POST /api/quiz/generate — agent success path (quiz_agent.run mocked)
+- POST /api/quiz/generate — agent failure falls back to legacy
 """
 import pytest
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
+from agents.quiz import Quiz, QuizQuestion
 
 client = TestClient(app)
 
@@ -234,3 +238,264 @@ class TestSubmitQuiz:
 
         assert r.status_code == 200
         assert r.json()["score"] == 2
+
+
+# ── POST /api/quiz/generate ──────────────────────────────────────────────────
+
+
+def _generate_table_factory(*, course_id: str = "course1", concept_name: str = "Loops"):
+    """Return a table factory that satisfies generate_quiz's DB reads."""
+
+    def factory(name):
+        mock = MagicMock()
+        if name == "graph_nodes":
+            mock.select.return_value = [{
+                "id": "node1",
+                "course_id": course_id,
+                "concept_name": concept_name,
+                "mastery_score": 0.5,
+            }]
+        elif name == "quiz_attempts":
+            mock.insert.return_value = [{"id": "quiz-generated"}]
+        else:
+            mock.select.return_value = []
+            mock.insert.return_value = []
+        return mock
+
+    return factory
+
+
+class TestQuizAgentSuccess:
+    """Happy path: quiz_agent.run returns a Quiz, route persists + responds."""
+
+    def test_returns_agent_output_in_legacy_wire_shape(self):
+        fake_quiz = Quiz(questions=[
+            QuizQuestion(
+                question="What is 2+2?",
+                type="multiple_choice",
+                difficulty="easy",
+                options=["3", "4", "5", "6"],
+                correct_answer="4",
+                explanation="Basic arithmetic.",
+                concept="Arithmetic",
+            ),
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+            ),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 1,
+                "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200
+        data = r.json()
+        assert "quiz_id" in data
+        assert isinstance(data["questions"], list)
+        assert len(data["questions"]) == 1
+
+        q = data["questions"][0]
+        # Wire format must match the legacy shape submit_quiz expects.
+        assert q["id"] == 1
+        assert q["question"] == "What is 2+2?"
+        assert q["explanation"] == "Basic arithmetic."
+        assert q["concept_tested"] == "Arithmetic"
+        assert q["difficulty"] == "easy"
+        assert isinstance(q["options"], list)
+        assert len(q["options"]) == 4
+        # Each option has label/text/correct.
+        labels = [o["label"] for o in q["options"]]
+        assert labels == ["A", "B", "C", "D"]
+        # Exactly one correct option, and it's the one whose text == "4".
+        correct = [o for o in q["options"] if o["correct"]]
+        assert len(correct) == 1
+        assert correct[0]["text"] == "4"
+
+    def test_short_answer_question_keeps_grading_compatibility(self):
+        """short_answer questions get a synthetic options list so submit_quiz
+        (which assumes options[].correct exists) keeps grading."""
+        fake_quiz = Quiz(questions=[
+            QuizQuestion(
+                question="Define a closure.",
+                type="short_answer",
+                difficulty="medium",
+                options=[],
+                correct_answer="A function bundled with its surrounding state.",
+                explanation="Lexical scope retention.",
+                concept="Closures",
+            ),
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+            ),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 1,
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200
+        q = r.json()["questions"][0]
+        assert len(q["options"]) == 1
+        assert q["options"][0]["correct"] is True
+        assert q["options"][0]["label"] == "A"
+
+    def test_persists_to_quiz_attempts_table(self):
+        fake_quiz = Quiz(questions=[
+            QuizQuestion(
+                question="Q?",
+                type="multiple_choice",
+                difficulty="easy",
+                options=["a", "b", "c", "d"],
+                correct_answer="a",
+                explanation="ok",
+                concept="X",
+            ),
+        ])
+        # Capture the insert call so we can assert what's stored.
+        captured = {}
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "graph_nodes":
+                mock.select.return_value = [{
+                    "id": "node1",
+                    "course_id": "course1",
+                    "concept_name": "X",
+                    "mastery_score": 0.5,
+                }]
+            elif name == "quiz_attempts":
+                def _capture(payload):
+                    captured["payload"] = payload
+                    return [{"id": payload["id"]}]
+                mock.insert.side_effect = _capture
+            return mock
+
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+            ),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 1,
+                "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200
+        # quiz_attempts row stores the same legacy-shape questions list.
+        payload = captured["payload"]
+        assert payload["user_id"] == "user_andres"
+        assert payload["concept_node_id"] == "node1"
+        assert payload["difficulty"] == "easy"
+        assert isinstance(payload["questions_json"], list)
+        assert payload["questions_json"][0]["id"] == 1
+
+
+class TestQuizAgentFallback:
+    """When the agent trips, the route runs the legacy generation pipeline."""
+
+    def _legacy_response(self):
+        # The legacy-shape question that the original quiz_generation prompt
+        # produces: id, question, options[{label,text,correct}], etc.
+        return {
+            "questions": [
+                {
+                    "id": 1,
+                    "question": "Legacy fallback question?",
+                    "options": [
+                        {"label": "A", "text": "wrong", "correct": False},
+                        {"label": "B", "text": "right", "correct": True},
+                    ],
+                    "explanation": "Because.",
+                    "concept_tested": "Loops",
+                    "difficulty": "easy",
+                },
+            ]
+        }
+
+    def _patch_legacy_dependencies(self):
+        """Patch every dep _legacy_generate_quiz reaches for besides table()."""
+        return (
+            patch(
+                "routes.quiz.get_graph",
+                return_value={"nodes": [], "edges": []},
+            ),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch(
+                "routes.quiz.call_gemini_json",
+                return_value=self._legacy_response(),
+            ),
+        )
+
+    def test_falls_back_to_legacy_on_usage_limit_exceeded(self):
+        from pydantic_ai.exceptions import UsageLimitExceeded
+
+        get_graph_p, get_ctx_p, gemini_p = self._patch_legacy_dependencies()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(
+                    side_effect=UsageLimitExceeded("token cap"),
+                ),
+            ),
+            get_graph_p as _get_graph,
+            get_ctx_p as _get_ctx,
+            gemini_p as gemini_mock,
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 1,
+                "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200
+        gemini_mock.assert_called_once()  # legacy path actually ran
+        q = r.json()["questions"][0]
+        assert q["question"] == "Legacy fallback question?"
+        # Wire format from legacy is preserved verbatim (it already matches).
+        assert q["options"][1]["correct"] is True
+
+    def test_falls_back_to_legacy_on_unexpected_exception(self):
+        get_graph_p, get_ctx_p, gemini_p = self._patch_legacy_dependencies()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(side_effect=RuntimeError("boom")),
+            ),
+            get_graph_p,
+            get_ctx_p,
+            gemini_p as gemini_mock,
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 1,
+                "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200
+        gemini_mock.assert_called_once()
+        assert r.json()["questions"][0]["question"] == "Legacy fallback question?"

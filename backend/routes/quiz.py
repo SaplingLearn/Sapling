@@ -1,3 +1,4 @@
+import logging
 import uuid
 import json
 import os
@@ -5,6 +6,10 @@ from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
+from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
+
+from agents.quiz import quiz_agent, Quiz, QuizQuestion
+from agents.deps import SaplingDeps
 from config import get_mastery_tier
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
@@ -13,6 +18,9 @@ from services.encryption import decrypt_if_present
 from services.gemini_service import MODEL_LITE, call_gemini_json
 from services.graph_service import get_graph, update_streak
 from services.quiz_context_service import get_quiz_context, save_quiz_context
+from services.request_context import current_request_id
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -24,10 +32,125 @@ def _load_prompt(name: str) -> str:
         return f.read()
 
 
-@router.post("/generate")
-def generate_quiz(body: GenerateQuizBody, request: Request):
-    require_self(body.user_id, request)
-    node_rows = table("graph_nodes").select("*", filters={"id": f"eq.{body.concept_node_id}"})
+# ── Wire-format helpers (legacy + agent paths share this shape) ──────────────
+#
+# `submit_quiz` expects each question dict to look like:
+#   {
+#     "id": int,
+#     "question": str,
+#     "options": [{"label": "A"|"B"|..., "text": str, "correct": bool}, ...],
+#     "explanation": str,
+#     "concept_tested": str,
+#     "difficulty": "easy"|"medium"|"hard",
+#   }
+# This is the format the original quiz_generation.txt prompt produced.
+# The agent's QuizQuestion has a flatter shape — we map it back here so the
+# stored `questions_json` and the response payload don't change. Frontend
+# `submitQuiz`/`scoreQuiz` flows are unaffected.
+
+_OPTION_LABELS = ["A", "B", "C", "D", "E", "F"]
+
+
+def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict:
+    """Map an agent QuizQuestion to the legacy wire-format dict.
+
+    For multiple_choice: emit options=[{label,text,correct}] with exactly
+    one option flagged correct (the one whose `text` matches
+    `q.correct_answer`; if no exact match, the first option is flagged so
+    the quiz remains gradable).
+    For short_answer: emit a single synthetic option (label "A") that
+    holds the canonical answer, marked correct=True. This keeps
+    `submit_quiz`'s grading loop (which assumes options[].correct) working
+    without a special-case branch.
+    """
+    if q.type == "multiple_choice":
+        options: list[dict] = []
+        matched = False
+        for i, text in enumerate(q.options[: len(_OPTION_LABELS)]):
+            is_correct = (not matched) and (text.strip() == q.correct_answer.strip())
+            if is_correct:
+                matched = True
+            options.append({
+                "label": _OPTION_LABELS[i],
+                "text": text,
+                "correct": is_correct,
+            })
+        # Defensive: if no option matched the canonical answer (LLM drift),
+        # mark the first one correct so submit_quiz can still score the
+        # attempt instead of returning 0/N for a generation-quality issue.
+        if options and not matched:
+            options[0]["correct"] = True
+        return {
+            "id": qid,
+            "question": q.question,
+            "options": options,
+            "explanation": q.explanation,
+            "concept_tested": q.concept,
+            "difficulty": q.difficulty,
+        }
+    # short_answer: single synthetic option carrying the canonical answer.
+    return {
+        "id": qid,
+        "question": q.question,
+        "options": [{"label": "A", "text": q.correct_answer, "correct": True}],
+        "explanation": q.explanation,
+        "concept_tested": q.concept,
+        "difficulty": q.difficulty,
+        "type": "short_answer",
+    }
+
+
+async def _quiz_via_agent(
+    *,
+    user_id: str,
+    course_id: str | None,
+    concept_node_id: str,
+    concept_name: str,
+    num_questions: int,
+    difficulty: str,
+    use_shared_context: bool,
+    request_id: str,
+) -> list[dict]:
+    """Run quiz_agent and return questions in the legacy wire shape.
+
+    The agent's tools (read_concepts_for_user, read_misconceptions_for_course)
+    pull weak-area + class misconception data themselves, replacing the
+    manual prompt-string augmentation that used to live in generate_quiz.
+    """
+    deps = SaplingDeps(
+        user_id=user_id,
+        course_id=course_id,
+        supabase=None,
+        request_id=request_id,
+    )
+    user_message = (
+        f"Generate {num_questions} {difficulty} questions for the student. "
+        f"The target concept is '{concept_name}' (concept_node_id={concept_node_id}). "
+        f"Call read_concepts_for_user to find the student's weakest concepts in this course "
+        f"and bias the question mix toward those."
+    )
+    if use_shared_context:
+        user_message += (
+            " Also call read_misconceptions_for_course and use those misconceptions "
+            "as distractors and probes."
+        )
+
+    result = await quiz_agent.run(user_message, deps=deps)
+    quiz: Quiz = result.output
+    return [_agent_question_to_wire(q, i + 1) for i, q in enumerate(quiz.questions)]
+
+
+async def _legacy_generate_quiz(body: GenerateQuizBody, request: Request) -> list[dict]:
+    """The pre-agent quiz generation pipeline, kept as a fallback per ADR-0001.
+
+    Verbatim copy of the original generate_quiz body: prompt-template assembly,
+    course-context augmentation, and a single call_gemini_json.
+    Returns the raw `questions` list — the route handler is responsible for
+    persisting it and shaping the HTTP response.
+    """
+    node_rows = table("graph_nodes").select(
+        "*", filters={"id": f"eq.{body.concept_node_id}"}
+    )
     if not node_rows:
         raise HTTPException(status_code=404, detail="Concept node not found")
     node = node_rows[0]
@@ -89,7 +212,56 @@ def generate_quiz(body: GenerateQuizBody, request: Request):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
-    questions = result.get("questions", [])
+    return result.get("questions", [])
+
+
+@router.post("/generate")
+async def generate_quiz(body: GenerateQuizBody, request: Request):
+    require_self(body.user_id, request)
+    node_rows = table("graph_nodes").select(
+        "*", filters={"id": f"eq.{body.concept_node_id}"}
+    )
+    if not node_rows:
+        raise HTTPException(status_code=404, detail="Concept node not found")
+    node = node_rows[0]
+    course_id = node.get("course_id") or None
+    concept_name = node.get("concept_name") or ""
+
+    # Unify with the middleware-stamped request ID so agent traces and any
+    # downstream error payloads share the same correlation key.
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or current_request_id()
+        or str(uuid.uuid4())
+    )
+
+    try:
+        questions = await _quiz_via_agent(
+            user_id=body.user_id,
+            course_id=course_id,
+            concept_node_id=body.concept_node_id,
+            concept_name=concept_name,
+            num_questions=body.num_questions,
+            difficulty=body.difficulty,
+            use_shared_context=body.use_shared_context,
+            request_id=request_id,
+        )
+    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+        logger.warning(
+            "Quiz agent guardrails tripped; falling back to legacy",
+            exc_info=e,
+        )
+        questions = await _legacy_generate_quiz(body, request)
+    except HTTPException:
+        # Legacy path raises HTTPException for known states (404/502); never
+        # treat those as a reason to fall back. Re-raise.
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected quiz-agent failure; falling back to legacy"
+        )
+        questions = await _legacy_generate_quiz(body, request)
+
     quiz_id = str(uuid.uuid4())
     table("quiz_attempts").insert({
         "id": quiz_id,
