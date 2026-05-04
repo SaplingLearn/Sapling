@@ -28,6 +28,14 @@ Fallback contract (see docs/decisions/0001-adopt-pydantic-ai.md):
 Until the route stops calling _legacy_upload_pipeline (i.e., until we
 delete services/gemini_service.py per ADR 0001's migration plan),
 every new agent must respect this contract.
+
+Internal API: the `_step_*` functions defined below are wrapped with
+@durable_step and are meant to be called ONLY from `_run_workers`,
+which is itself reached only via `process_document` (the
+@durable_workflow). Calling a `_step_*` outside the workflow is
+undefined behavior under DBOS — depending on version, it may no-op
+silently, raise, or warn. Don't import them from routes or other
+modules.
 """
 
 from __future__ import annotations

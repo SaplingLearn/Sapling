@@ -36,6 +36,34 @@ The original deferred-design notes below remain accurate for the parts
 that haven't shipped (test coverage, real production validation,
 monitoring of resume behavior).
 
+### Step granularity (commit 918fdba)
+
+Each agent run inside `_run_workers` is now wrapped with `@durable_step`
+(`_step_classify`, `_step_summary`, `_step_concepts`,
+`_step_syllabus`). With DBOS active, a worker crash mid-`asyncio.gather`
+resumes at the last completed step instead of re-running the whole
+workflow.
+
+### Streaming-route asymmetry (intentional)
+
+The streaming `POST /api/documents/upload` route bypasses
+`process_document` and calls each agent inline so it can emit SSE
+progress events between phases. Those inline calls are NOT wrapped in
+the durable workflow — only `/upload/sync` (which calls
+`process_document`) gets durability when DBOS is enabled.
+
+This is intentional. SSE connections are per-process; if the worker
+crashes, the client's stream is gone before any resume could deliver
+progress events to it. Re-running the whole pipeline on the next
+client retry (deduplicated by `X-Request-ID` per ADR 0009) is the
+right semantic — there's nothing useful a resumed workflow could do
+for a connection that no longer exists.
+
+If a future iteration wants durable streaming UX, the design is the
+two-phase upload from ADR 0010: a `POST` that returns 202 + a
+`GET /upload/<id>/events` that opens a fresh SSE stream on the live
+workflow state. That sequencing belongs to ADR 0010, not this ADR.
+
 ## Context
 
 The agentic upload pipeline is in-memory only. If the FastAPI worker process dies mid-upload — pod restart, OOM kill, deploy rollover — the user's upload is lost. They retry from scratch, paying for OCR + classifier + workers + graph update again. The fallback path (`_legacy_upload_pipeline`) is the same shape; it isn't durable either.

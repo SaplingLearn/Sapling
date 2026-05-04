@@ -552,6 +552,23 @@ class TestUploadDocument:
         assert r.status_code == 200
         assert r.json()["file_name"] == "notes.pdf"
 
+    def test_sync_ocr_failure_returns_422_not_500(self):
+        """An extractor exception must surface as a clean 4xx with a friendly
+        detail, not a 500 with stack trace leaked through the body."""
+        with (
+            _mock_validate_user(),
+            patch(
+                "routes.documents.extract_text_from_file",
+                side_effect=RuntimeError("scanned PDF too noisy"),
+            ),
+        ):
+            r = _make_upload(filename="bad-scan.pdf")
+        assert r.status_code == 422
+        detail = r.json().get("detail", "")
+        assert "different file" in detail.lower()
+        # The global handler attaches request_id to error bodies.
+        assert "request_id" in r.json()
+
 
 # ── POST /api/documents/upload/sync — orchestrator success path ─────────────
 
@@ -991,6 +1008,26 @@ class TestUploadDocumentStreaming:
             if e["event"] == "error" and json.loads(e["data"])["step"] == "failed"
         )
         assert failed_data.get("data", {}).get("request_id")
+
+    def test_sync_ocr_failure_in_streaming_route_returns_422_before_stream(self):
+        """When OCR_ASYNC_ENABLED is the default (false), an extractor failure
+        on the streaming /upload route also surfaces as a clean 422 — the
+        EventSourceResponse never opens. (Async-OCR error path is covered by
+        test_async_ocr_failure_emits_terminal_error_no_legacy_fallthrough.)"""
+        with (
+            _mock_validate_user(),
+            patch(
+                "routes.documents.extract_text_from_file",
+                side_effect=RuntimeError("docling crashed"),
+            ),
+        ):
+            r = client.post(
+                "/api/documents/upload",
+                files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            )
+        assert r.status_code == 422
+        assert "different file" in r.json().get("detail", "").lower()
 
 
 # ── X-Request-ID middleware + error-handler propagation ─────────────────────
