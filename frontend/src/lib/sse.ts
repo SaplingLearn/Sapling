@@ -53,7 +53,8 @@ export async function* streamSSE<T = unknown>(
       let separatorIdx: number;
       while ((separatorIdx = findBlockEnd(buffer)) !== -1) {
         const block = buffer.slice(0, separatorIdx).replace(/\r\n/g, "\n");
-        buffer = buffer.slice(separatorIdx + 2);
+        const sepLen = buffer.startsWith("\r\n\r\n", separatorIdx) ? 4 : 2;
+        buffer = buffer.slice(separatorIdx + sepLen);
 
         const parsed = parseBlock<T>(block);
         if (parsed) yield parsed;
@@ -65,6 +66,7 @@ export async function* streamSSE<T = unknown>(
       if (parsed) yield parsed;
     }
   } finally {
+    await reader.cancel().catch(() => { /* already closed */ });
     reader.releaseLock();
   }
 }

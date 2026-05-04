@@ -399,8 +399,6 @@ export async function uploadDocumentStream(
       const docIdFromDone = (e.data.data as { document_id?: string } | undefined)?.document_id;
       if (docIdFromDone && finalDoc && typeof finalDoc === 'object' && !('id' in finalDoc)) {
         finalDoc = { ...finalDoc, id: docIdFromDone };
-      } else if (docIdFromDone && !finalDoc) {
-        finalDoc = { id: docIdFromDone };
       }
     }
   }
