@@ -1,12 +1,19 @@
 name: Evals
+# Triggered manually only until cassette coverage is complete.
+#
+# Today only 4 of 70 cassettes are recorded, so a pull_request trigger
+# would mark every PR red on missing cassettes. Once the remaining 66
+# are recorded (one-time SAPLING_EVAL_MODE=record pass against live
+# Gemini, then commit cassettes/), re-enable the pull_request trigger
+# below to gate prompt changes on eval pass/fail.
 on:
-  pull_request:
-    paths:
-      - 'backend/agents/**'
-      - 'backend/tests/evals/**'
-      - 'backend/services/agent_events.py'
-      - 'backend/routes/documents.py'
   workflow_dispatch:
+  # pull_request:
+  #   paths:
+  #     - 'backend/agents/**'
+  #     - 'backend/tests/evals/**'
+  #     - 'backend/services/agent_events.py'
+  #     - 'backend/routes/documents.py'
 
 jobs:
   evals:

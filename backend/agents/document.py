@@ -44,7 +44,7 @@ from agents.summary import summary_agent, Summary
 from agents.concept_extraction import concept_extraction_agent, ConceptList
 from agents.syllabus_extraction import syllabus_extraction_agent, SyllabusAssignments
 from agents.tools.graph import apply_concepts_to_graph
-from services.durable import workflow as durable_workflow
+from services.durable import workflow as durable_workflow, step as durable_step
 
 
 class DocumentProcessingResult(BaseModel):
@@ -71,39 +71,63 @@ class _WorkerResults:
     syllabus: SyllabusAssignments | None
 
 
+# Each agent run is wrapped as a durable step so DBOS (when enabled) can
+# resume the workflow at the last completed worker on a worker-crash retry,
+# instead of re-running every agent from scratch. When DBOS is disabled
+# (the default), `durable_step` is a no-op and these are plain async funcs.
+
+@durable_step
+async def _step_classify(text: str, deps: SaplingDeps) -> DocumentClassification:
+    result = await classifier_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
+    return result.output
+
+
+@durable_step
+async def _step_summary(text: str, deps: SaplingDeps) -> Summary:
+    result = await summary_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
+    return result.output
+
+
+@durable_step
+async def _step_concepts(text: str, deps: SaplingDeps) -> ConceptList:
+    result = await concept_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
+    return result.output
+
+
+@durable_step
+async def _step_syllabus(text: str, deps: SaplingDeps) -> SyllabusAssignments:
+    result = await syllabus_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
+    return result.output
+
+
 async def _run_workers(text: str, deps: SaplingDeps) -> _WorkerResults:
     """Run classification first, then fan out the other workers in parallel.
 
     Syllabus extraction only runs if classification flagged the document
     as a syllabus. Saves a Gemini call on the common case.
-    """
-    cls_result = await classifier_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
-    classification = cls_result.output
 
-    summary_task = summary_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
-    concepts_task = concept_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
-    syllabus_task = (
-        syllabus_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
-        if classification.is_syllabus
-        else None
-    )
+    Each worker is wrapped as a `@durable_step`, so a DBOS-enabled
+    deployment checkpoints completion of each one and resumes mid-pipeline
+    after a crash.
+    """
+    classification = await _step_classify(text, deps)
+
+    summary_task = _step_summary(text, deps)
+    concepts_task = _step_concepts(text, deps)
+    syllabus_task = _step_syllabus(text, deps) if classification.is_syllabus else None
 
     if syllabus_task is not None:
-        summary_r, concepts_r, syllabus_r = await asyncio.gather(
+        summary, concepts, syllabus = await asyncio.gather(
             summary_task, concepts_task, syllabus_task,
         )
         return _WorkerResults(
             classification=classification,
-            summary=summary_r.output,
-            concepts=concepts_r.output,
-            syllabus=syllabus_r.output,
+            summary=summary, concepts=concepts, syllabus=syllabus,
         )
-    summary_r, concepts_r = await asyncio.gather(summary_task, concepts_task)
+    summary, concepts = await asyncio.gather(summary_task, concepts_task)
     return _WorkerResults(
         classification=classification,
-        summary=summary_r.output,
-        concepts=concepts_r.output,
-        syllabus=None,
+        summary=summary, concepts=concepts, syllabus=None,
     )
 
 

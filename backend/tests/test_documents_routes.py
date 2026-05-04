@@ -951,6 +951,47 @@ class TestUploadDocumentStreaming:
         assert r.status_code == 400
         assert "Unsupported file type" in r.json()["detail"]
 
+    def test_async_ocr_failure_emits_terminal_error_no_legacy_fallthrough(self):
+        """OCR_ASYNC_ENABLED=true: a failing extractor must NOT cascade into
+        the legacy fallback (which would crash on extracted_text=None).
+        It should yield a clean error+done pair and stop.
+        """
+        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.OCR_ASYNC_ENABLED", True),
+            patch(
+                "routes.documents.extract_text_from_file",
+                side_effect=RuntimeError("scanned PDF too noisy"),
+            ),
+            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []  # no idempotency cache hit
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                assert r.status_code == 200
+                body = r.read()
+
+        events = _parse_sse_stream(body)
+        types_steps = [(e["event"], json.loads(e["data"])["step"]) for e in events]
+        # status:start → progress:extracting_text → error:failed → status:done
+        assert ("status", "start") in types_steps
+        assert ("progress", "extracting_text") in types_steps
+        assert ("error", "failed") in types_steps
+        assert types_steps[-1] == ("status", "done")
+        # Critically: we never reached classify or extract — no fallback fired.
+        assert ("progress", "classify") not in types_steps
+        # The failure event carries the request_id for support.
+        failed_data = next(
+            json.loads(e["data"]) for e in events
+            if e["event"] == "error" and json.loads(e["data"])["step"] == "failed"
+        )
+        assert failed_data.get("data", {}).get("request_id")
+
 
 # ── X-Request-ID middleware + error-handler propagation ─────────────────────
 

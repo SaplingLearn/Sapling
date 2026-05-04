@@ -638,15 +638,35 @@ async def upload_document(
                 return
 
             # ── Phase 0: text extraction (when OCR_ASYNC_ENABLED) ─────────────
+            # Failures here can NOT fall through to the legacy fallback —
+            # the legacy path uses the same extractor, and would crash on
+            # `extracted_text=None`. Emit a terminal error+done pair and
+            # return so the client gets a clean failure instead of a
+            # double-fault.
             if extracted_text is None:
                 yield sapling_event_to_sse(SaplingEvent(
                     type="progress", step="extracting_text",
                     message="Extracting text from document...",
                 ))
-                extracted_text = await asyncio.to_thread(
-                    extract_text_from_file, file_bytes, filename,
-                    file.content_type or "",
-                )
+                try:
+                    extracted_text = await asyncio.to_thread(
+                        extract_text_from_file, file_bytes, filename,
+                        file.content_type or "",
+                    )
+                except Exception:
+                    logger.exception(
+                        "Async text extraction failed for '%s'", filename,
+                    )
+                    yield sapling_event_to_sse(SaplingEvent(
+                        type="error", step="failed",
+                        message="Could not read this document. Please try a different file.",
+                        data={"request_id": request_id},
+                    ))
+                    yield sapling_event_to_sse(SaplingEvent(
+                        type="status", step="done",
+                        message="Failed.",
+                    ))
+                    return
                 yield sapling_event_to_sse(SaplingEvent(
                     type="progress", step="extracted_text",
                     message=f"Extracted {len(extracted_text):,} chars.",
