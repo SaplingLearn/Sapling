@@ -4,11 +4,11 @@ All routes require admin role.
 """
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from db.connection import table
-from services.encryption import decrypt_if_present
 from models import (
     CreateRoleBody,
     AssignRoleBody,
@@ -20,6 +20,7 @@ from models import (
 )
 from services.auth_guard import require_admin
 from services.achievement_service import check_achievements
+from services.users_search import paginate_users
 
 router = APIRouter()
 
@@ -211,22 +212,14 @@ def delete_cosmetic(cosmetic_id: str, request: Request):
 # ── Users ────────────────────────────────────────────────────────────────────
 
 @router.get("/users")
-def list_users(request: Request):
+def list_users(
+    request: Request,
+    q: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+):
     require_admin(request)
-    users = table("users").select("id,name,email,is_approved,created_at")
-    if not users:
-        return {"users": []}
-
-    for user in users:
-        user["name"] = decrypt_if_present(user.get("name"))
-        user["email"] = decrypt_if_present(user.get("email"))
-        roles = table("user_roles").select(
-            "roles(id,name,slug,color)",
-            filters={"user_id": f"eq.{user['id']}"},
-        )
-        user["roles"] = [r.get("roles", {}) for r in roles] if roles else []
-
-    return {"users": users}
+    return paginate_users(q=q, page=page, page_size=page_size)
 
 
 @router.patch("/users/{user_id}/approve")

@@ -134,31 +134,21 @@ class TestCreateCosmetic:
 
 # ── GET /api/admin/users ───────────────────────────────────────────────────
 
-class TestListUsers:
-    def test_returns_all_users(self):
-        users = [
-            {"id": "u1", "name": "Alice", "email": "a@b.c", "is_approved": True, "created_at": "2025-01-01"},
-        ]
-
-        call_count = 0
-
-        def table_side_effect(name):
-            nonlocal call_count
-            m = MagicMock()
-            if name == "users":
-                m.select.return_value = users
-            elif name == "user_roles":
-                m.select.return_value = [{"roles": {"id": "r1", "name": "Admin", "slug": "admin", "color": "#f00"}}]
-            else:
-                m.select.return_value = []
-            return m
-
-        with _mock_admin(), patch("routes.admin.table", side_effect=table_side_effect):
-            r = client.get("/api/admin/users?user_id=admin1")
-
+class TestListUsersPaginated:
+    def test_passes_query_and_page_through(self):
+        with _mock_admin(), patch("routes.admin.paginate_users") as p:
+            p.return_value = {"users": [], "total": 17, "page": 2, "page_size": 25}
+            r = client.get("/api/admin/users?q=alice&page=2&page_size=25")
         assert r.status_code == 200
-        assert len(r.json()["users"]) == 1
-        assert r.json()["users"][0]["name"] == "Alice"
+        assert r.json() == {"users": [], "total": 17, "page": 2, "page_size": 25}
+        p.assert_called_once_with(q="alice", page=2, page_size=25)
+
+    def test_defaults_when_params_missing(self):
+        with _mock_admin(), patch("routes.admin.paginate_users") as p:
+            p.return_value = {"users": [], "total": 0, "page": 1, "page_size": 50}
+            r = client.get("/api/admin/users")
+        assert r.status_code == 200
+        p.assert_called_once_with(q=None, page=1, page_size=50)
 
 
 # ── PATCH /api/admin/users/{id}/approve ────────────────────────────────────
