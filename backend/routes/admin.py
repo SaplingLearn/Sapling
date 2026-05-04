@@ -490,6 +490,7 @@ def revoke_allowlist(body: AllowlistEmailBody, request: Request):
         target_type="allowlist", target_id=body.email,
         payload={"email": body.email},
     )
+    return {"email": rows[0]}
 
 
 # ── Audit log ────────────────────────────────────────────────────────────────
@@ -522,7 +523,6 @@ def list_audit(
         offset=offset,
     )
     return {"entries": rows, "total": total, "page": page, "page_size": page_size}
-    return {"email": rows[0]}
 
 
 # ── Analytics ────────────────────────────────────────────────────────────────

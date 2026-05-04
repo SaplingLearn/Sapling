@@ -572,6 +572,16 @@ class TestAllowlistAudits:
             r = client.post("/api/admin/allowlist/revoke", json={"email": "A@B.c"})
         assert r.status_code == 200
         assert audit.call_args.kwargs["action"] == "allowlist.revoke"
+        assert r.json() == {"email": {"email": "a@b.c"}}
+
+    def test_revoke_404_does_not_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.update.return_value = []
+            r = client.post("/api/admin/allowlist/revoke", json={"email": "missing@b.c"})
+        assert r.status_code == 404
+        audit.assert_not_called()
 
 
 class TestAuditLogRead:
