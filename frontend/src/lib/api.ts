@@ -79,16 +79,46 @@ export const deleteGraphNode = (userId: string, nodeId: string) =>
   );
 
 // Learn
-export const startSession = (userId: string, topic: string, mode: string, courseId?: string, useSharedContext = true) =>
+export type ModelPref = 'smart' | 'fast';
+
+export const startSession = (
+  userId: string,
+  topic: string,
+  mode: string,
+  courseId?: string,
+  useSharedContext = true,
+  modelPref?: ModelPref,
+) =>
   fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, topic, mode, use_shared_context: useSharedContext, course_id: courseId }),
+    body: JSON.stringify({
+      user_id: userId,
+      topic,
+      mode,
+      use_shared_context: useSharedContext,
+      course_id: courseId,
+      ...(modelPref ? { model_pref: modelPref } : {}),
+    }),
   });
 
-export const sendChat = (sessionId: string, userId: string, message: string, mode: string, useSharedContext = true) =>
+export const sendChat = (
+  sessionId: string,
+  userId: string,
+  message: string,
+  mode: string,
+  useSharedContext = true,
+  modelPref?: ModelPref,
+) =>
   fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[] }>('/api/learn/chat', {
     method: 'POST',
-    body: JSON.stringify({ session_id: sessionId, user_id: userId, message, mode, use_shared_context: useSharedContext }),
+    body: JSON.stringify({
+      session_id: sessionId,
+      user_id: userId,
+      message,
+      mode,
+      use_shared_context: useSharedContext,
+      ...(modelPref ? { model_pref: modelPref } : {}),
+    }),
   });
 
 export interface SessionSummaryData {
@@ -111,6 +141,7 @@ export const learnAction = (
   actionType: 'hint' | 'confused' | 'skip',
   mode: string,
   useSharedContext = true,
+  modelPref?: ModelPref,
 ) =>
   fetchJSON<{ reply: string; graph_update: any }>('/api/learn/action', {
     method: 'POST',
@@ -120,6 +151,7 @@ export const learnAction = (
       action_type: actionType,
       mode,
       use_shared_context: useSharedContext,
+      ...(modelPref ? { model_pref: modelPref } : {}),
     }),
   });
 

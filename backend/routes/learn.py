@@ -11,7 +11,12 @@ from db.connection import table
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody
 from services.auth_guard import require_self, get_session_user_id
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
-from services.gemini_service import MODEL_SMART, call_gemini_multiturn, extract_graph_update
+from services.gemini_service import (
+    MODEL_DEFAULT,
+    MODEL_SMART,
+    call_gemini_multiturn,
+    extract_graph_update,
+)
 from services.graph_service import get_graph, apply_graph_update
 
 router = APIRouter()
@@ -27,6 +32,18 @@ MODE_DISPLAY_NAMES = {
     "expository": "Expository (direct explanation)",
     "teachback": "Teach-back (you explain to me)",
 }
+
+# User-facing speed/quality knob for the tutor chat.
+# "fast" = flash (default, faster), "smart" = pro (opt-in, slower but stronger reasoning).
+# Anything unrecognized falls back to fast so the default is the snappy one.
+_MODEL_PREF_TO_MODEL = {
+    "fast": MODEL_DEFAULT,
+    "smart": MODEL_SMART,
+}
+
+
+def _resolve_tutor_model(model_pref: str | None) -> str:
+    return _MODEL_PREF_TO_MODEL.get(model_pref or "", MODEL_DEFAULT)
 
 
 def _load_prompt(name: str) -> str:
@@ -293,13 +310,15 @@ def start_session(body: StartSessionBody, request: Request):
     )
 
     try:
-        raw = call_gemini_multiturn(system_prompt, [], user_message, model=MODEL_SMART)
+        raw = call_gemini_multiturn(
+            system_prompt, [], user_message, model=_resolve_tutor_model(body.model_pref)
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
     reply, graph_update = extract_graph_update(raw)
     apply_graph_update(body.user_id, graph_update, course_id=course_id)
-    
+
     PENDING_SESSIONS[session_id] = {
         "user_id": body.user_id,
         "mode": body.mode,
@@ -339,7 +358,9 @@ def chat(body: ChatBody, request: Request):
     )
 
     try:
-        raw = call_gemini_multiturn(system_prompt, history, body.message, model=MODEL_SMART)
+        raw = call_gemini_multiturn(
+            system_prompt, history, body.message, model=_resolve_tutor_model(body.model_pref)
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
@@ -558,7 +579,9 @@ def action(body: ActionBody, request: Request):
     action_message = f"[ACTION: {action_prompts.get(body.action_type, '')}]"
 
     try:
-        raw = call_gemini_multiturn(system_prompt, history, action_message, model=MODEL_SMART)
+        raw = call_gemini_multiturn(
+            system_prompt, history, action_message, model=_resolve_tutor_model(body.model_pref)
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 

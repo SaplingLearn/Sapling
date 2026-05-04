@@ -1,4 +1,4 @@
-from typing import Optional, Union, List
+from typing import Optional, Union, List, Literal
 from pydantic import BaseModel, Field
 
 
@@ -10,6 +10,7 @@ class StartSessionBody(BaseModel):
     mode: str = "socratic"
     use_shared_context: bool = True
     course_id: Optional[str] = None  # Direct course_id lookup instead of resolving from topic
+    model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
 
 
 class ChatBody(BaseModel):
@@ -18,6 +19,7 @@ class ChatBody(BaseModel):
     message: str
     mode: str = "socratic"
     use_shared_context: bool = True
+    model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
 
 
 class EndSessionBody(BaseModel):
@@ -31,6 +33,7 @@ class ActionBody(BaseModel):
     action_type: str = "hint"
     mode: str = "socratic"
     use_shared_context: bool = True
+    model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
 
 
 # ── Quiz ──────────────────────────────────────────────────────────────────────
