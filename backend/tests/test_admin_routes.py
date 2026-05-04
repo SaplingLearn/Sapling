@@ -262,3 +262,106 @@ class TestAssignRoleIdempotent:
         assert r.status_code == 200
         upsert_payload = t.return_value.upsert.call_args.args[0]
         assert upsert_payload["granted_by"] == "admin1"
+
+
+class TestRevokeRoleSelfProtection:
+    def test_cannot_revoke_own_admin(self):
+        def by_name(name):
+            m = MagicMock()
+            if name == "roles":
+                m.select.return_value = [{"id": "rA", "slug": "admin"}]
+            elif name == "user_roles":
+                m.select.return_value = []
+            return m
+
+        with patch("routes.admin.get_session_user_id", return_value="u1"), \
+             _mock_admin(), \
+             patch("routes.admin.table", side_effect=by_name):
+            r = client.request("DELETE", "/api/admin/roles/revoke",
+                               json={"user_id": "u1", "role_id": "rA"})
+        assert r.status_code == 409
+        assert "own admin" in r.json()["detail"].lower()
+
+    def test_cannot_revoke_last_admin(self):
+        def by_name(name):
+            m = MagicMock()
+            if name == "roles":
+                m.select.return_value = [{"id": "rA", "slug": "admin"}]
+            elif name == "user_roles":
+                m.select.return_value = [{"user_id": "u2"}]
+            return m
+
+        with patch("routes.admin.get_session_user_id", return_value="u1"), \
+             _mock_admin(), \
+             patch("routes.admin.table", side_effect=by_name):
+            r = client.request("DELETE", "/api/admin/roles/revoke",
+                               json={"user_id": "u2", "role_id": "rA"})
+        assert r.status_code == 409
+        assert "last admin" in r.json()["detail"].lower()
+
+    def test_revoke_non_admin_role_succeeds(self):
+        def by_name(name):
+            m = MagicMock()
+            if name == "roles":
+                m.select.return_value = [{"id": "rB", "slug": "verified"}]
+            return m
+
+        with patch("routes.admin.get_session_user_id", return_value="u1"), \
+             _mock_admin(), \
+             patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.admin.log_admin_action"):
+            r = client.request("DELETE", "/api/admin/roles/revoke",
+                               json={"user_id": "u2", "role_id": "rB"})
+        assert r.status_code == 200
+        assert r.json()["revoked"] is True
+
+
+class TestDeleteRoleProtection:
+    def test_cannot_delete_admin_role(self):
+        def by_name(name):
+            m = MagicMock()
+            m.select.return_value = [{"id": "rA", "slug": "admin"}]
+            return m
+
+        with _mock_admin(), \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.table", side_effect=by_name):
+            r = client.delete("/api/admin/roles/rA")
+        assert r.status_code == 409
+        assert "admin role" in r.json()["detail"].lower()
+
+    def test_delete_non_admin_role_succeeds(self):
+        def by_name(name):
+            m = MagicMock()
+            m.select.return_value = [{"id": "rB", "slug": "verified"}]
+            return m
+
+        with _mock_admin(), \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.admin.log_admin_action"):
+            r = client.delete("/api/admin/roles/rB")
+        assert r.status_code == 200
+        assert r.json()["deleted"] is True
+
+
+class TestRoleCreateUpdateAudits:
+    def test_create_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.insert.return_value = [{"id": "rZ"}]
+            r = client.post("/api/admin/roles", json={
+                "name": "Z", "slug": "z", "color": "#fff",
+            })
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "role.create"
+
+    def test_update_logs_audit(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.update.return_value = [{}]
+            r = client.patch("/api/admin/roles/rA", json={"color": "#000"})
+        assert r.status_code == 200
+        assert audit.call_args.kwargs["action"] == "role.update"

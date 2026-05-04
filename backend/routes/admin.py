@@ -26,6 +26,19 @@ from services.users_search import paginate_users
 router = APIRouter()
 
 
+def _role_slug(role_id: str) -> Optional[str]:
+    rows = table("roles").select("id,slug", filters={"id": f"eq.{role_id}"})
+    return rows[0]["slug"] if rows else None
+
+
+def _admin_user_count() -> int:
+    rows = table("user_roles").select(
+        "user_id,roles!inner(slug)",
+        filters={"roles.slug": "eq.admin"},
+    )
+    return len(rows or [])
+
+
 # ── Roles ────────────────────────────────────────────────────────────────────
 
 @router.get("/roles")
@@ -38,6 +51,7 @@ def list_roles(request: Request):
 @router.post("/roles")
 def create_role(body: CreateRoleBody, request: Request):
     require_admin(request)
+    actor = get_session_user_id(request)
     result = table("roles").insert({
         "name": body.name,
         "slug": body.slug,
@@ -48,17 +62,25 @@ def create_role(body: CreateRoleBody, request: Request):
         "is_earnable": body.is_earnable,
         "display_priority": body.display_priority,
     })
-    return {"role": result[0] if result else None}
+    role = result[0] if result else None
+    log_admin_action(
+        actor_id=actor, action="role.create", target_type="role",
+        target_id=role["id"] if role else None,
+        payload={"slug": body.slug, "name": body.name},
+    )
+    return {"role": role}
 
 
 @router.patch("/roles/{role_id}")
 def update_role(role_id: str, request: Request, body: dict = {}):
     require_admin(request)
+    actor = get_session_user_id(request)
     allowed = {"name", "color", "icon", "description", "is_staff_assigned", "is_earnable", "display_priority"}
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
     table("roles").update(updates, filters={"id": f"eq.{role_id}"})
+    log_admin_action(actor_id=actor, action="role.update", target_type="role", target_id=role_id, payload=updates)
     return {"updated": True}
 
 
@@ -86,17 +108,32 @@ def assign_role(body: AssignRoleBody, request: Request):
 @router.delete("/roles/revoke")
 def revoke_role(body: RevokeRoleBody, request: Request):
     require_admin(request)
+    actor = get_session_user_id(request)
+    slug = _role_slug(body.role_id)
+    if slug == "admin":
+        if body.user_id == actor:
+            raise HTTPException(status_code=409, detail="You cannot revoke your own admin role.")
+        if _admin_user_count() <= 1:
+            raise HTTPException(status_code=409, detail="Cannot revoke the last admin.")
     table("user_roles").delete(filters={
         "user_id": f"eq.{body.user_id}",
         "role_id": f"eq.{body.role_id}",
     })
+    log_admin_action(
+        actor_id=actor, action="role.revoke", target_type="role", target_id=body.role_id,
+        payload={"user_id": body.user_id},
+    )
     return {"revoked": True}
 
 
 @router.delete("/roles/{role_id}")
 def delete_role(role_id: str, request: Request):
     require_admin(request)
+    actor = get_session_user_id(request)
+    if _role_slug(role_id) == "admin":
+        raise HTTPException(status_code=409, detail="Cannot delete the admin role.")
     table("roles").delete(filters={"id": f"eq.{role_id}"})
+    log_admin_action(actor_id=actor, action="role.delete", target_type="role", target_id=role_id)
     return {"deleted": True}
 
 
