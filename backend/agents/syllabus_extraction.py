@@ -12,7 +12,7 @@ from datetime import date
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, PromptedOutput
 
-from agents._providers import google_model
+from agents._providers import model_for
 from agents.deps import SaplingDeps
 
 
@@ -57,7 +57,7 @@ class SyllabusAssignments(BaseModel):
 # Pydantic types/constraints (date parsing, ge/le on weight_pct) and
 # moves schema enforcement into the prompt + local validation.
 syllabus_extraction_agent = Agent[SaplingDeps, SyllabusAssignments](
-    model=google_model("gemini-2.5-flash"),
+    model=model_for("syllabus"),
     deps_type=SaplingDeps,
     output_type=PromptedOutput(SyllabusAssignments),
     system_prompt=(

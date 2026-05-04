@@ -860,14 +860,6 @@ class TestUploadDocumentStreaming:
             assignments=[], grading_categories=[],
         ) if is_syllabus else None
 
-        async def _empty_stream(*_a, **_kw):
-            # The route iterates run_stream_events() but never relies on
-            # its events — graph_updated stays False (route-side default)
-            # when no FinalResultEvent flows through.
-            if False:
-                yield  # pragma: no cover — async generator marker
-            return
-
         cls_run = AsyncMock(return_value=SimpleNamespace(output=cls))
         sum_run = AsyncMock(return_value=SimpleNamespace(output=summary))
         cpt_run = AsyncMock(return_value=SimpleNamespace(output=concepts))
@@ -878,13 +870,13 @@ class TestUploadDocumentStreaming:
             patch("routes.documents.summary_agent.run", sum_run),
             patch("routes.documents.concept_extraction_agent.run", cpt_run),
             patch("routes.documents.syllabus_extraction_agent.run", syl_run),
-            patch("routes.documents.document_agent.run_stream_events", _empty_stream),
+            patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
         )
 
     def test_emits_full_event_sequence_on_happy_path(self):
         """status:start → progress:classify → progress:classified →
-        progress:extract → progress:extracted → result:finalize →
-        status:done with document_id."""
+        progress:extract → progress:extracted → progress:graph_update →
+        progress:graph_updated → result:finalize → status:done with document_id."""
         cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
@@ -910,6 +902,8 @@ class TestUploadDocumentStreaming:
             ("progress", "classified"),
             ("progress", "extract"),
             ("progress", "extracted"),
+            ("progress", "graph_update"),
+            ("progress", "graph_updated"),
             ("result", "finalize"),
             ("status", "done"),
         ]
@@ -956,3 +950,45 @@ class TestUploadDocumentStreaming:
             )
         assert r.status_code == 400
         assert "Unsupported file type" in r.json()["detail"]
+
+
+# ── X-Request-ID middleware + error-handler propagation ─────────────────────
+
+class TestRequestIDPropagation:
+    def test_x_request_id_header_on_response(self):
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = []
+            r = client.get("/api/documents/user/u1")
+        assert r.status_code == 200
+        # Middleware always sets X-Request-ID.
+        assert "x-request-id" in {k.lower() for k in r.headers.keys()}
+
+    def test_caller_supplied_x_request_id_passes_through(self):
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = []
+            r = client.get(
+                "/api/documents/user/u1",
+                headers={"X-Request-ID": "custom-trace-1234"},
+            )
+        assert r.headers.get("X-Request-ID") == "custom-trace-1234"
+
+    def test_invalid_caller_supplied_id_replaced(self):
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = []
+            r = client.get(
+                "/api/documents/user/u1",
+                headers={"X-Request-ID": "bad id with spaces"},
+            )
+        # Bad input → middleware replaced with a generated one.
+        assert r.headers.get("X-Request-ID") != "bad id with spaces"
+        assert len(r.headers.get("X-Request-ID", "")) >= 8
+
+    def test_http_error_carries_request_id_in_body(self):
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = []  # 404 path
+            r = client.delete("/api/documents/doc/missing?user_id=u1")
+        assert r.status_code == 404
+        body = r.json()
+        assert "request_id" in body
+        # Same ID in header and body.
+        assert body["request_id"] == r.headers.get("X-Request-ID")

@@ -23,14 +23,15 @@ from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
 from services.course_context_service import update_course_context
 from services.achievement_service import check_achievements
-from services.agent_events import SaplingEvent, map_to_sapling_event, sapling_event_to_sse
-from agents import WORKER_LIMITS, ORCHESTRATOR_LIMITS
+from services.agent_events import SaplingEvent, sapling_event_to_sse
+from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
 from agents.summary import summary_agent
 from agents.concept_extraction import concept_extraction_agent
 from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.deps import SaplingDeps
-from agents.document import document_agent, process_document, DocumentProcessingResult
+from agents.document import process_document, DocumentProcessingResult
+from agents.tools.graph import apply_concepts_to_graph
 
 logger = logging.getLogger(__name__)
 
@@ -509,6 +510,10 @@ async def upload_document(
 
     extracted_text = extract_text_from_file(file_bytes, filename, file.content_type or "")
     request_id = str(uuid.uuid4())
+    # Middleware stamps every request with an ID; prefer it for client-facing
+    # error correlation. Fall back to the freshly-minted agent ID if the
+    # middleware was somehow bypassed (e.g. test client that didn't traverse it).
+    mw_request_id = getattr(request.state, "request_id", None) or request_id
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id,
@@ -574,27 +579,18 @@ async def upload_document(
                 message=f"Extracted {len(concepts.concepts)} concept(s).",
             ))
 
-            # ── Phase 3: orchestrator graph update (stream tool events) ──────
-            graph_updated = False
+            # ── Phase 3: graph update (direct call, no agent loop) ──────────────
+            yield sapling_event_to_sse(SaplingEvent(
+                type="progress", step="graph_update",
+                message="Merging concepts into the course graph...",
+            ))
             concept_names = [c.name for c in concepts.concepts]
-            async for ev in document_agent.run_stream_events(
-                f"Merge these concepts into the student's course graph: {concept_names}",
-                deps=deps,
-                usage_limits=ORCHESTRATOR_LIMITS,
-            ):
-                mapped = map_to_sapling_event(ev)
-                if mapped is None:
-                    continue
-                if mapped.type == "result":
-                    # The agent's FinalResultEvent carries
-                    # GraphUpdateConfirmation, not the full pipeline
-                    # output. Pull graph_updated off it for the composed
-                    # result, then suppress the event — the client gets
-                    # our deterministic 'result' below instead.
-                    if mapped.data:
-                        graph_updated = bool(mapped.data.get("graph_updated"))
-                    continue
-                yield sapling_event_to_sse(mapped)
+            merged = await apply_concepts_to_graph(user_id, course_id, concept_names)
+            graph_updated = merged > 0
+            yield sapling_event_to_sse(SaplingEvent(
+                type="progress", step="graph_updated",
+                message=f"Merged {merged} concept(s).",
+            ))
 
             # ── Compose final result + emit ──────────────────────────────────
             final_output = DocumentProcessingResult(
@@ -641,10 +637,12 @@ async def upload_document(
             yield sapling_event_to_sse(SaplingEvent(
                 type="error", step="fallback",
                 message="Agent guardrails tripped; using legacy pipeline.",
+                data={"request_id": mw_request_id},
             ))
             async for sse_event in _stream_legacy_fallback(
                 filename=filename, extracted_text=extracted_text,
                 course_id=course_id, user_id=user_id,
+                request_id=mw_request_id,
             ):
                 yield sse_event
         except Exception:
@@ -652,10 +650,12 @@ async def upload_document(
             yield sapling_event_to_sse(SaplingEvent(
                 type="error", step="fallback",
                 message="Unexpected error during processing; using legacy pipeline.",
+                data={"request_id": mw_request_id},
             ))
             async for sse_event in _stream_legacy_fallback(
                 filename=filename, extracted_text=extracted_text,
                 course_id=course_id, user_id=user_id,
+                request_id=mw_request_id,
             ):
                 yield sse_event
 
@@ -664,6 +664,7 @@ async def upload_document(
 
 async def _stream_legacy_fallback(
     *, filename: str, extracted_text: str, course_id: str, user_id: str,
+    request_id: str | None = None,
 ):
     """Run _legacy_upload_pipeline and yield SSE result/done events.
 
@@ -672,7 +673,9 @@ async def _stream_legacy_fallback(
     Streaming visibility is lost (the legacy path is single-shot), but
     the client still receives a usable result. If the legacy path also
     fails, we yield a terminal error event so the client doesn't see a
-    silent EOF mid-stream.
+    silent EOF mid-stream. ``request_id`` is the middleware-stamped
+    correlation ID — included in any error event so callers can match
+    the failure to a Logfire span.
     """
     try:
         legacy_response = await _legacy_upload_pipeline(
@@ -684,6 +687,7 @@ async def _stream_legacy_fallback(
         yield sapling_event_to_sse(SaplingEvent(
             type="error", step="failed",
             message="Document processing failed. Please try again.",
+            data={"request_id": request_id} if request_id else None,
         ))
         yield sapling_event_to_sse(SaplingEvent(
             type="status", step="done",

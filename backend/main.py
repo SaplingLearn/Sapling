@@ -1,16 +1,21 @@
+import logging
 import os
 from pathlib import Path
 
 import logfire
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import FRONTEND_URL, PORT
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.newsletter import router as newsletter_router
+from services.request_context import RequestIDMiddleware, current_request_id
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -47,6 +52,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add LAST so it's the outermost middleware (runs first on the way in,
+# last on the way out — exactly what we want for stamping every request
+# and tagging every response, including ones that fail inside CORS).
+app.add_middleware(RequestIDMiddleware)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    rid = getattr(request.state, "request_id", None) or current_request_id()
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "request_id": rid},
+        headers={"X-Request-ID": rid} if rid else {},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    rid = getattr(request.state, "request_id", None) or current_request_id()
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "request_id": rid},
+        headers={"X-Request-ID": rid} if rid else {},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logging.getLogger("main").exception("Unhandled exception")
+    rid = getattr(request.state, "request_id", None) or current_request_id()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error.", "request_id": rid},
+        headers={"X-Request-ID": rid} if rid else {},
+    )
 
 app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(learn.router,       prefix="/api/learn")
