@@ -92,3 +92,37 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+from unittest.mock import MagicMock, patch
+from db.connection import table
+
+
+class TestSelectWithCount:
+    def test_returns_rows_and_total_when_count_exact(self):
+        fake = MagicMock()
+        fake.json.return_value = [{"id": "1"}]
+        fake.headers = {"Content-Range": "0-0/42"}
+        fake.raise_for_status = MagicMock()
+
+        with patch("db.connection._client") as c:
+            c.get.return_value = fake
+            rows, total = table("users").select_with_count(
+                columns="id", limit=1, offset=0
+            )
+
+        assert rows == [{"id": "1"}]
+        assert total == 42
+
+    def test_total_zero_when_header_missing(self):
+        fake = MagicMock()
+        fake.json.return_value = []
+        fake.headers = {}
+        fake.raise_for_status = MagicMock()
+
+        with patch("db.connection._client") as c:
+            c.get.return_value = fake
+            rows, total = table("users").select_with_count(columns="id")
+
+        assert rows == []
+        assert total == 0

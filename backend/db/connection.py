@@ -46,6 +46,37 @@ class SupabaseTable:
         r.raise_for_status()
         return r.json()
 
+    def select_with_count(
+        self,
+        columns: str = "*",
+        filters: Optional[dict] = None,
+        order: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> tuple[list, int]:
+        """Like select(), but also returns total row count via Content-Range."""
+        params: dict = {"select": columns}
+        if filters:
+            params.update(filters)
+        if order:
+            params["order"] = order
+        if limit is not None:
+            params["limit"] = str(limit)
+        if offset is not None:
+            params["offset"] = str(offset)
+        headers = {"Prefer": "count=exact"}
+        r = _client.get(self.url, params=params, headers=headers)
+        r.raise_for_status()
+        rows = r.json()
+        total = 0
+        cr = r.headers.get("Content-Range") or r.headers.get("content-range")
+        if cr and "/" in cr:
+            try:
+                total = int(cr.rsplit("/", 1)[1])
+            except ValueError:
+                total = 0
+        return rows, total
+
     def insert(self, data) -> list:
         r = _client.post(self.url, json=data)
         r.raise_for_status()
