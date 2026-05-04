@@ -22,19 +22,9 @@ import {
   IS_LOCAL_MODE,
 } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
-import type { Role, Achievement, Cosmetic, CosmeticType, RarityTier, AchievementCategory, AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview } from "@/lib/types";
+import type { Role, Achievement, Cosmetic, CosmeticType, RarityTier, AchievementCategory, AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
 
 type Tab = "users" | "allowlist" | "roles" | "achievements" | "cosmetics" | "analytics" | "audit";
-type AdminUser = {
-  id: string;
-  name: string;
-  email: string;
-  is_approved: boolean;
-  is_admin?: boolean;
-  last_sign_in?: string | null;
-  created_at?: string;
-  roles?: Role[];
-};
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
 const ACH_CATS: AchievementCategory[] = ["activity", "social", "milestone", "special"];
@@ -117,32 +107,42 @@ function UsersTab() {
   const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [roles, setRoles] = React.useState<Role[]>([]);
   const [query, setQuery] = React.useState("");
+  const [committedQuery, setCommittedQuery] = React.useState("");
+  const [page, setPage] = React.useState(1);
+  const [pageSize] = React.useState(50);
+  const [total, setTotal] = React.useState(0);
   const [assignFor, setAssignFor] = React.useState<string | null>(null);
   const [assignRoleId, setAssignRoleId] = React.useState<string>("");
   const [loading, setLoading] = React.useState(true);
 
   const load = React.useCallback(async () => {
+    setLoading(true);
     try {
-      const [u, r] = await Promise.all([adminFetchUsers(), adminListRoles()]);
+      const [u, r] = await Promise.all([
+        adminFetchUsers({ q: committedQuery || undefined, page, page_size: pageSize }),
+        adminListRoles(),
+      ]);
       setUsers(u.users || []);
+      setTotal(u.total || 0);
       setRoles(r.roles || []);
     } catch (err) {
       toast.error(`Load failed: ${String(err)}`);
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [committedQuery, page, pageSize, toast]);
 
   React.useEffect(() => { load(); }, [load]);
 
-  const filtered = query
-    ? users.filter(u =>
-        (u.name || "").toLowerCase().includes(query.toLowerCase()) ||
-        (u.email || "").toLowerCase().includes(query.toLowerCase()))
-    : users;
+  React.useEffect(() => {
+    const id = window.setTimeout(() => {
+      setCommittedQuery(query);
+      setPage(1);
+    }, 350);
+    return () => window.clearTimeout(id);
+  }, [query]);
 
   const approved = users.filter(u => u.is_approved).length;
-  const pending = users.length - approved;
 
   const assign = async (uid: string) => {
     if (!assignRoleId) return;
@@ -167,23 +167,35 @@ function UsersTab() {
     }
   };
 
-  const approvedPct = users.length ? Math.round((approved / users.length) * 100) : 0;
+  const approve = async (uid: string) => {
+    try { await adminApproveUser(uid); await load(); }
+    catch (err) { toast.error(`Approve failed: ${String(err)}`); }
+  };
 
-  if (loading) {
+  const unapprove = async (uid: string) => {
+    try {
+      await adminUnapproveUser(uid);
+      toast.success("Approval revoked");
+      await load();
+    } catch (err) {
+      toast.error(`Unapprove failed: ${String(err)}`);
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  if (loading && users.length === 0) {
     return <AdminTableSkeleton />;
   }
 
   return (
     <>
-      {/* Prose strip replaces the previous 3-card hero-metric layout
-          (anti-pattern: big-number + small-label + gradient accent). */}
       <div className="body-serif" style={{
         fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680,
       }}>
-        <span style={{ color: "var(--text)" }}>{users.length}</span> student{users.length === 1 ? "" : "s"} · {" "}
-        <span style={{ color: "var(--accent)" }}>{approved} approved</span>
-        {users.length > 0 && <span> ({approvedPct}%)</span>}
-        {pending > 0 && <> · <span style={{ color: "var(--warn)" }}>{pending} waiting</span></>}
+        <span style={{ color: "var(--text)" }}>{total}</span> student{total === 1 ? "" : "s"} · {" "}
+        <span style={{ color: "var(--accent)" }}>{approved} approved on this page</span>
+        {committedQuery && <> · <span style={{ color: "var(--text-muted)" }}>filter "{committedQuery}"</span></>}
       </div>
       <div className="card" style={{ padding: 0 }}>
         <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
@@ -206,7 +218,7 @@ function UsersTab() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: "var(--bg-subtle)" }}>
-              {["User", "Email", "Roles", "Status", "Joined", ""].map(h => (
+              {["User", "Email", "Roles", "Status", "Last seen", "Joined", ""].map(h => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
                   {h}
                 </th>
@@ -214,7 +226,7 @@ function UsersTab() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(u => (
+            {users.map(u => (
               <tr key={u.id} style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={{ padding: "10px 16px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -268,13 +280,24 @@ function UsersTab() {
                   </span>
                 </td>
                 <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                  {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}
+                </td>
+                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
                   {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
                 </td>
                 <td style={{ padding: "10px 16px", textAlign: "right" }}>
-                  {!u.is_approved && (
+                  {u.is_approved ? (
+                    <button
+                      className="btn btn--sm btn--ghost"
+                      onClick={() => unapprove(u.id)}
+                      title="Revoke approval"
+                    >
+                      Unapprove
+                    </button>
+                  ) : (
                     <button
                       className="btn btn--sm btn--primary"
-                      onClick={async () => { await adminApproveUser(u.id); load(); }}
+                      onClick={() => approve(u.id)}
                     >
                       Approve
                     </button>
@@ -284,6 +307,16 @@ function UsersTab() {
             ))}
           </tbody>
         </table>
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)",
+        }}>
+          <div>Page {page} of {totalPages} · {total} total</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn btn--sm btn--ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
+            <button className="btn btn--sm btn--ghost" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
+          </div>
+        </div>
       </div>
     </>
   );
