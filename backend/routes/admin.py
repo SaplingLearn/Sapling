@@ -18,6 +18,7 @@ from models import (
     UpdateAchievementTriggerBody,
     GrantAchievementBody,
     CreateCosmeticBody,
+    LinkAchievementCosmeticBody,
 )
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
@@ -173,6 +174,22 @@ def update_achievement(achievement_id: str, request: Request, body: dict = {}):
     return {"updated": True}
 
 
+@router.delete("/achievements/cosmetics")
+def unlink_achievement_cosmetic(body: LinkAchievementCosmeticBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    table("achievement_cosmetics").delete(filters={
+        "achievement_id": f"eq.{body.achievement_id}",
+        "cosmetic_id": f"eq.{body.cosmetic_id}",
+    })
+    log_admin_action(
+        actor_id=actor, action="achievement_cosmetic.unlink",
+        target_type="achievement_cosmetic", target_id=body.achievement_id,
+        payload={"cosmetic_id": body.cosmetic_id},
+    )
+    return {"unlinked": True}
+
+
 @router.delete("/achievements/{achievement_id}")
 def delete_achievement(achievement_id: str, request: Request):
     require_admin(request)
@@ -244,6 +261,32 @@ def delete_trigger(trigger_id: str, request: Request):
     table("achievement_triggers").delete(filters={"id": f"eq.{trigger_id}"})
     log_admin_action(actor_id=actor, action="trigger.delete", target_type="trigger", target_id=trigger_id)
     return {"deleted": True}
+
+
+@router.get("/achievements/{achievement_id}/cosmetics")
+def list_achievement_cosmetics(achievement_id: str, request: Request):
+    require_admin(request)
+    rows = table("achievement_cosmetics").select(
+        "achievement_id,cosmetic_id",
+        filters={"achievement_id": f"eq.{achievement_id}"},
+    )
+    return {"links": rows or []}
+
+
+@router.post("/achievements/cosmetics")
+def link_achievement_cosmetic(body: LinkAchievementCosmeticBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    table("achievement_cosmetics").upsert(
+        {"achievement_id": body.achievement_id, "cosmetic_id": body.cosmetic_id},
+        on_conflict="achievement_id,cosmetic_id",
+    )
+    log_admin_action(
+        actor_id=actor, action="achievement_cosmetic.link",
+        target_type="achievement_cosmetic", target_id=body.achievement_id,
+        payload={"cosmetic_id": body.cosmetic_id},
+    )
+    return {"linked": True}
 
 
 # ── Cosmetics ────────────────────────────────────────────────────────────────

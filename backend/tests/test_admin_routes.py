@@ -401,3 +401,35 @@ class TestTriggers:
         assert r.status_code == 200
         assert r.json()["deleted"] is True
         assert audit.call_args.kwargs["action"] == "trigger.delete"
+
+
+class TestAchievementCosmeticLinks:
+    def test_list_links(self):
+        rows = [{"achievement_id": "a1", "cosmetic_id": "c1"}]
+        with _mock_admin(), patch("routes.admin.table") as t:
+            t.return_value.select.return_value = rows
+            r = client.get("/api/admin/achievements/a1/cosmetics")
+        assert r.status_code == 200
+        assert r.json() == {"links": rows}
+
+    def test_link(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.upsert.return_value = [{"achievement_id": "a1", "cosmetic_id": "c1"}]
+            r = client.post("/api/admin/achievements/cosmetics",
+                            json={"achievement_id": "a1", "cosmetic_id": "c1"})
+        assert r.status_code == 200
+        assert r.json()["linked"] is True
+        assert audit.call_args.kwargs["action"] == "achievement_cosmetic.link"
+
+    def test_unlink(self):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            t.return_value.delete.return_value = [{}]
+            r = client.request("DELETE", "/api/admin/achievements/cosmetics",
+                               json={"achievement_id": "a1", "cosmetic_id": "c1"})
+        assert r.status_code == 200
+        assert r.json()["unlinked"] is True
+        assert audit.call_args.kwargs["action"] == "achievement_cosmetic.unlink"
