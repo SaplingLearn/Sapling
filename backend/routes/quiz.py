@@ -1,7 +1,8 @@
-import logging
-import uuid
+import hashlib
 import json
+import logging
 import os
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -79,10 +80,21 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
         # Generation drift: agent's correct_answer doesn't match any
         # option verbatim. Surface in logs (Logfire span carries the
         # question_id correlation) and drop. Caller filters None.
+        #
+        # Don't log the raw text — student-content concept names and
+        # quiz answers don't belong in stdout/Railway logs. The
+        # fingerprint is stable enough to correlate with the same
+        # generation drift if it recurs (sha256 of "<canonical>|<options>");
+        # the full content is still in Logfire spans (where the scrubber
+        # from PR #67 controls egress).
+        canonical_only = q.correct_answer.strip()
+        fp = hashlib.sha256(
+            f"{canonical_only}|{'|'.join(q.options)}".encode("utf-8")
+        ).hexdigest()[:12]
         logger.warning(
-            "quiz: dropping question %d — correct_answer %r not found "
-            "in options %r (concept=%s)",
-            qid, q.correct_answer, q.options, q.concept,
+            "quiz: dropping question id=%d — correct_answer not found in "
+            "options (n_options=%d, canonical_len=%d, fp=%s)",
+            qid, len(q.options), len(canonical_only), fp,
         )
         return None
     return {

@@ -492,6 +492,56 @@ class TestQuizAgentFallback:
         gemini_mock.assert_called_once()
         assert r.json()["questions"][0]["question"] == "Legacy fallback question?"
 
+    def test_falls_back_to_legacy_when_all_questions_drift(self):
+        """Cascade: agent succeeds but every question fails wire-format
+        validation → _quiz_via_agent raises RuntimeError →
+        bare-Exception catch in generate_quiz routes to legacy.
+
+        This pins the path the 3 contract tests don't directly exercise
+        (they test _agent_question_to_wire in isolation; this exercises
+        the full route under the all-drift condition).
+        """
+        # Build a Quiz where every question's correct_answer doesn't
+        # appear in its options — schema-valid, but the wire-format
+        # check drops every one.
+        drift_quiz = Quiz(questions=[
+            QuizQuestion(
+                question=f"Q{i}?",
+                type="multiple_choice",
+                difficulty="easy",
+                options=["a", "b", "c", "d"],
+                correct_answer="MISMATCH",  # not in options
+                explanation="x",
+                concept="X",
+            )
+            for i in range(3)
+        ])
+
+        get_graph_p, get_ctx_p, gemini_p = self._patch_legacy_dependencies()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=drift_quiz)),
+            ),
+            get_graph_p,
+            get_ctx_p,
+            gemini_p as gemini_mock,
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 3,
+                "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200
+        # Legacy path fired (every question dropped → RuntimeError →
+        # caught → _legacy_generate_quiz called).
+        gemini_mock.assert_called_once()
+        assert r.json()["questions"][0]["question"] == "Legacy fallback question?"
+
 
 # ── Wire-format contract: pinned by tests so silent drift can't recur ───────
 
