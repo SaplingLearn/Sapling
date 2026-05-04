@@ -14,7 +14,8 @@ const SECTIONS: { label: string; items: Entry[] }[] = [
     label: "Learn",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: "home" },
-      { href: "/learn",     label: "Learn",     icon: "brain" },
+      { href: "/learn",     label: "Tutor",     icon: "brain" },
+      { href: "/quiz",      label: "Quiz",      icon: "flask" },
       { href: "/tree",      label: "Tree",      icon: "tree" },
       { href: "/study",     label: "Study",     icon: "bolt" },
     ],
@@ -36,8 +37,9 @@ const SECTIONS: { label: string; items: Entry[] }[] = [
   {
     label: "Tools",
     items: [
-      { href: "/gradebook",      label: "Gradebook",      icon: "doc" },
-      { href: "/course-planner", label: "Course Planner", icon: "pencil" },
+      { href: "/gradebook",      label: "Grades",         icon: "star" },
+      { href: "/notetaker",      label: "Notetaker",      icon: "pencil" },
+      { href: "/course-planner", label: "Course Planner", icon: "planner" },
     ],
   },
 ];

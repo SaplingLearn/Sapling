@@ -2,10 +2,10 @@
 import { TopBar } from "@/components/TopBar";
 import { Icon } from "@/components/Icon";
 
-export default function CoursePlannerPage() {
+export default function NotetakerPage() {
   return (
     <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
-      <TopBar title="Course Planner" />
+      <TopBar title="Notetaker" />
       <main
         style={{
           flex: 1,
@@ -37,11 +37,12 @@ export default function CoursePlannerPage() {
           Coming soon
         </div>
         <div className="h-serif" style={{ fontSize: 28, fontWeight: 500 }}>
-          Course Planner
+          Notetaker
         </div>
         <div style={{ color: "var(--text-dim)", fontSize: 14, maxWidth: 480, lineHeight: 1.55 }}>
-          Plan semesters, map prerequisites, and project your degree timeline. We&apos;re still
-          building it — check back soon.
+          Capture lecture notes, link them to concepts in your knowledge graph, and let
+          Sapling turn them into review material. We&apos;re still building it — check back
+          soon.
         </div>
       </main>
     </div>

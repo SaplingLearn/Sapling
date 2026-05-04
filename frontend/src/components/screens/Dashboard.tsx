@@ -714,7 +714,7 @@ export function Dashboard() {
         <strong>Try this next:</strong> {suggestNode.name}
         {suggestNode.subject && <span style={{ color: "var(--text-dim)" }}> · {suggestNode.subject}</span>}
       </div>
-      <button className="btn btn--sm btn--primary" onClick={() => router.push(`/learn?topic=${encodeURIComponent(suggestNode.name)}&mode=quiz`)}>
+      <button className="btn btn--sm btn--primary" onClick={() => router.push(`/quiz?topic=${encodeURIComponent(suggestNode.name)}`)}>
         Start quiz
       </button>
       <button className="btn btn--sm btn--ghost" onClick={dismissSuggest}>Dismiss</button>
@@ -938,7 +938,7 @@ export function Dashboard() {
           </button>
         ))}
         <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button className="btn btn--sm btn--primary" style={{ flex: 1 }} onClick={() => router.push("/learn?mode=quiz")}>
+          <button className="btn btn--sm btn--primary" style={{ flex: 1 }} onClick={() => router.push("/quiz")}>
             <Icon name="bolt" size={12} /> Quick quiz
           </button>
           <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => router.push("/social")}>

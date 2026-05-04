@@ -32,7 +32,8 @@ type Entry = { href: string; label: string };
 
 const LINKS: Entry[] = [
   { href: "/dashboard",    label: "Dashboard"    },
-  { href: "/learn",        label: "Learn"        },
+  { href: "/learn",        label: "Tutor"        },
+  { href: "/quiz",         label: "Quiz"         },
   { href: "/tree",         label: "Tree"         },
   { href: "/study",        label: "Study"        },
   { href: "/library",      label: "Library"      },
