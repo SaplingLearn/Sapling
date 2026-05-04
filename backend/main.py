@@ -11,6 +11,15 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import FRONTEND_URL, PORT
+
+# App-wide log format. Per-request log lines (with request_id, duration,
+# status) are emitted from RequestIDMiddleware; this just sets the
+# baseline so any other module's logger inherits a consistent shape.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
@@ -68,8 +77,9 @@ app.add_middleware(
 )
 
 # Add LAST so it's the outermost middleware (runs first on the way in,
-# last on the way out — exactly what we want for stamping every request
-# and tagging every response, including ones that fail inside CORS).
+# last on the way out — exactly what we want for stamping every request,
+# tagging every response, and emitting one structured log line per
+# request, including ones that fail inside CORS.
 app.add_middleware(RequestIDMiddleware)
 
 
@@ -129,9 +139,25 @@ def health():
 
 @app.get("/api/users")
 def list_users():
+    """List users with decrypted display names.
+
+    The `users.name` column is encrypted at rest (see
+    services.encryption); decrypt before returning so clients render the
+    human-readable name, not ciphertext. Sort by the decrypted value.
+    """
     from db.connection import table
-    rows = table("users").select("id,name,room_id", order="name.asc")
-    return {"users": [{"id": r["id"], "name": r["name"], "room_id": r.get("room_id")} for r in rows]}
+    from services.encryption import decrypt_if_present
+    rows = table("users").select("id,name,room_id")
+    users = [
+        {
+            "id": r.get("id"),
+            "name": decrypt_if_present(r.get("name")) or "",
+            "room_id": r.get("room_id"),
+        }
+        for r in rows
+    ]
+    users.sort(key=lambda u: (u["name"] or "").lower())
+    return {"users": users}
 
 
 @app.get("/api/gemini-test")

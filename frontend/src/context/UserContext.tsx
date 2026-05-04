@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
-import { IS_LOCAL_MODE } from '@/lib/api';
+import { API_URL, IS_LOCAL_MODE } from '@/lib/api';
 import { LOCAL_USER } from '@/lib/localData';
 
 interface UserOption {
@@ -89,7 +89,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (IS_LOCAL_MODE) return;
-    fetch(`/api/users`)
+    fetch(`${API_URL}/api/users`, { credentials: 'include' })
       .then(r => r.json())
       .then((data: { users: UserOption[] }) => {
         const list = data.users ?? [];
@@ -106,7 +106,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const fetchProfileData = useCallback(async (uid: string) => {
     if (!uid || IS_LOCAL_MODE) return;
     try {
-      const res = await fetch(`/api/auth/me?user_id=${encodeURIComponent(uid)}`);
+      const res = await fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(uid)}`, { credentials: 'include' });
       if (!res.ok) return;
       const data = await res.json();
       setUsername(data.username ?? null);

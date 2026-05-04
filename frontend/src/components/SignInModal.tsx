@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { IS_LOCAL_MODE } from "@/lib/api";
@@ -29,15 +29,6 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
   const [closing, setClosing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(false);
-  const popupRef = useRef<Window | null>(null);
-  const popupPollRef = useRef<number | null>(null);
-
-  const stopPopupPoll = useCallback(() => {
-    if (popupPollRef.current !== null) {
-      window.clearInterval(popupPollRef.current);
-      popupPollRef.current = null;
-    }
-  }, []);
 
   const close = useCallback(() => {
     setClosing(true);
@@ -50,13 +41,12 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
   useEffect(() => {
     if (!open) {
       setWaiting(false);
-      stopPopupPoll();
       return;
     }
     setLocalError(null);
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = ""; };
-  }, [open, stopPopupPoll]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -64,34 +54,6 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, close]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onMessage = (e: MessageEvent) => {
-      if (e.origin !== window.location.origin) return;
-      const data = e.data as { type?: string; success?: boolean; error?: string;
-        userId?: string; name?: string; avatar?: string; onboardingCompleted?: boolean } | null;
-      if (!data || data.type !== "sapling_signin") return;
-      stopPopupPoll();
-      setWaiting(false);
-      if (data.success && data.userId && data.name) {
-        setActiveUser(data.userId, data.name, data.avatar || "");
-        confirmApproved();
-        if (data.onboardingCompleted) {
-          router.replace("/dashboard");
-        } else {
-          sessionStorage.setItem("sapling_onboarding_pending", "1");
-        }
-        onClose();
-      } else {
-        setLocalError(data.error || "signin_failed");
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [open, setActiveUser, confirmApproved, router, onClose, stopPopupPoll]);
-
-  useEffect(() => () => stopPopupPoll(), [stopPopupPoll]);
 
   if (!open) return null;
 
@@ -112,28 +74,8 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       setLocalError("google_not_configured");
       return;
     }
-    const url = `${API_URL}/api/auth/google`;
-    const w = 520;
-    const h = 640;
-    const left = Math.max(0, window.screenX + (window.outerWidth - w) / 2);
-    const top = Math.max(0, window.screenY + (window.outerHeight - h) / 2);
-    const features = `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
-    const popup = window.open(url, "sapling_signin", features);
-    if (!popup || popup.closed) {
-      window.location.href = url;
-      return;
-    }
-    popup.focus?.();
-    popupRef.current = popup;
     setWaiting(true);
-    stopPopupPoll();
-    popupPollRef.current = window.setInterval(() => {
-      if (!popupRef.current || popupRef.current.closed) {
-        stopPopupPoll();
-        popupRef.current = null;
-        setWaiting(false);
-      }
-    }, 500);
+    window.location.href = `${API_URL}/api/auth/google`;
   };
 
   return (
