@@ -20,6 +20,7 @@ _client = genai.Client(
 )
 MODEL_DEFAULT = "gemini-2.5-flash"
 MODEL_LITE = "gemini-2.5-flash-lite"
+MODEL_SMART = "gemini-2.5-pro"
 
 
 def _strip_backtick_fencing(text: str) -> str:
