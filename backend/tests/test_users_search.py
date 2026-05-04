@@ -62,3 +62,37 @@ class TestPaginateUsers:
             t.return_value = users_tbl
             result = paginate_users(q=None, page=1, page_size=9999)
         assert result["page_size"] == 200  # hard cap
+
+    def test_attaches_roles_and_drops_orphan_joins(self):
+        rows = [{"id": "u1", "name": "ENC", "email": "ENC", "is_approved": True,
+                 "created_at": "x", "last_sign_in_at": None}]
+        # PostgREST returns an embedded `roles` value that is None when the join
+        # target was deleted but the user_roles row remained.
+        join_rows = [
+            {"roles": {"id": "r1", "name": "Admin", "slug": "admin", "color": "#f00",
+                       "icon": None, "description": None, "is_staff_assigned": True,
+                       "is_earnable": False, "display_priority": 100}},
+            {"roles": None},
+            {},
+        ]
+
+        with patch("services.users_search.table") as t, \
+             patch("services.users_search.decrypt_if_present", side_effect=lambda v: v):
+            users_tbl = MagicMock()
+            users_tbl.select_with_count.return_value = (rows, 1)
+            user_roles_tbl = MagicMock()
+            user_roles_tbl.select.return_value = join_rows
+
+            def by_name(name):
+                return users_tbl if name == "users" else user_roles_tbl
+
+            t.side_effect = by_name
+
+            result = paginate_users(q=None, page=1, page_size=50)
+
+        assert len(result["users"]) == 1
+        assert result["users"][0]["roles"] == [{
+            "id": "r1", "name": "Admin", "slug": "admin", "color": "#f00",
+            "icon": None, "description": None, "is_staff_assigned": True,
+            "is_earnable": False, "display_priority": 100,
+        }]

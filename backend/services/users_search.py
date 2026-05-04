@@ -19,11 +19,11 @@ _MAX_PAGE_SIZE = 200
 
 def _attach_roles(users: list[dict]) -> None:
     for user in users:
-        roles = table("user_roles").select(
+        rows = table("user_roles").select(
             "roles(id,name,slug,color,icon,description,is_staff_assigned,is_earnable,display_priority)",
             filters={"user_id": f"eq.{user['id']}"},
         )
-        user["roles"] = [r.get("roles", {}) for r in roles] if roles else []
+        user["roles"] = [r["roles"] for r in (rows or []) if r.get("roles")]
 
 
 def _decrypt(user: dict) -> dict:
