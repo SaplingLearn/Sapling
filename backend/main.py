@@ -1,11 +1,23 @@
+import logging
 import os
+import time
+import traceback
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import FRONTEND_URL, PORT
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("sapling")
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
@@ -22,6 +34,69 @@ RECOST_PROJECT_ID = "eaf22d10-840d-494f-8513-2dcef769ace1"
 recost_api_key = os.getenv("RECOST_API_KEY")
 
 app = FastAPI(title="Sapling API", version="1.0.0")
+
+
+class RequestLogMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        rid = uuid.uuid4().hex[:8]
+        request.state.request_id = rid
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            dur_ms = (time.perf_counter() - start) * 1000
+            log.error(
+                "[%s] %s %s -> EXCEPTION %s after %.1fms\n%s",
+                rid,
+                request.method,
+                request.url.path,
+                exc.__class__.__name__,
+                dur_ms,
+                traceback.format_exc(),
+            )
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "detail": "Internal Server Error",
+                    "error": exc.__class__.__name__,
+                    "message": str(exc),
+                    "request_id": rid,
+                    "path": request.url.path,
+                },
+            )
+        dur_ms = (time.perf_counter() - start) * 1000
+        if response.status_code >= 500:
+            log.error(
+                "[%s] %s %s -> %d (%.1fms)",
+                rid,
+                request.method,
+                request.url.path,
+                response.status_code,
+                dur_ms,
+            )
+        elif response.status_code >= 400:
+            log.warning(
+                "[%s] %s %s -> %d (%.1fms)",
+                rid,
+                request.method,
+                request.url.path,
+                response.status_code,
+                dur_ms,
+            )
+        else:
+            log.info(
+                "[%s] %s %s -> %d (%.1fms)",
+                rid,
+                request.method,
+                request.url.path,
+                response.status_code,
+                dur_ms,
+            )
+        response.headers["x-request-id"] = rid
+        return response
+
+
+app.add_middleware(RequestLogMiddleware)
 
 if recost_api_key and RecostMiddleware is not None:
     app.add_middleware(
