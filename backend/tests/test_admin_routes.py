@@ -597,3 +597,39 @@ class TestAuditLogRead:
             r = client.get("/api/admin/audit?page_size=9999")
         assert r.status_code == 200
         assert r.json()["page_size"] == 200
+
+
+class TestAnalyticsOverview:
+    def test_returns_totals_and_series(self):
+        users = [
+            {"id": "u1", "is_approved": True,  "created_at": "2026-05-01T00:00:00Z"},
+            {"id": "u2", "is_approved": True,  "created_at": "2026-05-01T00:00:00Z"},
+            {"id": "u3", "is_approved": False, "created_at": "2026-05-02T00:00:00Z"},
+        ]
+        roles = [{"id": "rA", "slug": "admin", "name": "Admin", "color": "#dc2626"}]
+        user_roles = [{"role_id": "rA"}, {"role_id": "rA"}, {"role_id": "rA"}]
+
+        def by_name(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = users
+            elif name == "roles":
+                m.select.return_value = roles
+            elif name == "user_roles":
+                m.select.return_value = user_roles
+            else:
+                m.select.return_value = []
+            return m
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name):
+            r = client.get("/api/admin/analytics/overview")
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["totals"]["users"] == 3
+        assert body["totals"]["approved"] == 2
+        assert body["totals"]["pending"] == 1
+        assert body["totals"]["admins"] == 3
+        assert any(d["date"] == "2026-05-01" and d["count"] == 2 for d in body["signups_by_day"])
+        assert body["role_counts"][0]["slug"] == "admin"
+        assert body["role_counts"][0]["count"] == 3

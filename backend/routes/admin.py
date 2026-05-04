@@ -3,7 +3,8 @@ Admin routes — role, achievement, cosmetic, and user management.
 All routes require admin role.
 """
 
-from datetime import datetime, timezone
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, Depends
@@ -522,3 +523,63 @@ def list_audit(
     )
     return {"entries": rows, "total": total, "page": page, "page_size": page_size}
     return {"email": rows[0]}
+
+
+# ── Analytics ────────────────────────────────────────────────────────────────
+
+@router.get("/analytics/overview")
+def analytics_overview(request: Request):
+    require_admin(request)
+
+    users = table("users").select("id,is_approved,created_at") or []
+    roles = table("roles").select("id,slug,name,color") or []
+    user_roles = table("user_roles").select("role_id") or []
+
+    role_index = {r["id"]: r for r in roles}
+    role_counter: Counter = Counter()
+    for ur in user_roles:
+        role_counter[ur["role_id"]] += 1
+
+    admin_role_ids = {r["id"] for r in roles if r.get("slug") == "admin"}
+    admin_count = sum(c for rid, c in role_counter.items() if rid in admin_role_ids)
+
+    approved = sum(1 for u in users if u.get("is_approved"))
+    totals = {
+        "users": len(users),
+        "approved": approved,
+        "pending": len(users) - approved,
+        "admins": admin_count,
+    }
+
+    today = datetime.now(timezone.utc).date()
+    window = [today - timedelta(days=i) for i in range(29, -1, -1)]
+    by_day_signups: Counter = Counter()
+    by_day_approvals: Counter = Counter()
+    for u in users:
+        ca = u.get("created_at") or ""
+        try:
+            d = datetime.fromisoformat(ca.replace("Z", "+00:00")).date()
+        except ValueError:
+            continue
+        if d in window:
+            by_day_signups[d.isoformat()] += 1
+            if u.get("is_approved"):
+                by_day_approvals[d.isoformat()] += 1
+
+    signups_by_day = [{"date": d.isoformat(), "count": by_day_signups.get(d.isoformat(), 0)} for d in window]
+    approvals_by_day = [{"date": d.isoformat(), "count": by_day_approvals.get(d.isoformat(), 0)} for d in window]
+
+    role_counts = []
+    for rid, count in role_counter.items():
+        r = role_index.get(rid)
+        if not r:
+            continue
+        role_counts.append({"slug": r["slug"], "name": r["name"], "color": r["color"], "count": count})
+    role_counts.sort(key=lambda x: x["count"], reverse=True)
+
+    return {
+        "totals": totals,
+        "signups_by_day": signups_by_day,
+        "approvals_by_day": approvals_by_day,
+        "role_counts": role_counts,
+    }
