@@ -648,12 +648,9 @@ function LearnInner() {
                 style={{ padding: 8, display: "flex", flexDirection: "column", gap: 4 }}
               >
                 <div className="label-micro" style={{ padding: "4px 6px" }}>Knowledge graph</div>
-                <KnowledgeGraph
+                <SidebarKnowledgeGraph
                   nodes={graphNodes}
                   edges={graphEdges}
-                  width={isMobile ? 320 : 280}
-                  height={280}
-                  variant="organism"
                   highlightId={highlightId}
                   onNodeClick={handleNodeClick}
                 />
@@ -688,6 +685,43 @@ function LearnInner() {
           summary={summary}
           onClose={closeSummary}
           onStartNext={startNextFromSummary}
+        />
+      )}
+    </div>
+  );
+}
+
+function SidebarKnowledgeGraph({
+  nodes,
+  edges,
+  highlightId,
+  onNodeClick,
+}: {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  highlightId?: string;
+  onNodeClick?: (n: GraphNode) => void;
+}) {
+  const [width, setWidth] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => setWidth(entries[0].contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div ref={ref} style={{ width: "100%" }}>
+      {width > 0 && (
+        <KnowledgeGraph
+          nodes={nodes}
+          edges={edges}
+          width={width}
+          height={280}
+          variant="organism"
+          highlightId={highlightId}
+          onNodeClick={onNodeClick}
         />
       )}
     </div>
