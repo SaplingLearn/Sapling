@@ -774,6 +774,47 @@ function CosmeticsTab() {
   const [uploading, setUploading] = React.useState(false);
   const fileRef = React.useRef<HTMLInputElement | null>(null);
 
+  const [openId, setOpenId] = React.useState<string | null>(null);
+  const [allRoles, setAllRoles] = React.useState<Role[]>([]);
+  const [linkedRoleIdsByCosmetic, setLinkedRoleIdsByCosmetic] = React.useState<Record<string, string[]>>({});
+
+  const ensureRoles = React.useCallback(async () => {
+    if (allRoles.length) return;
+    try { setAllRoles((await adminListRoles()).roles || []); }
+    catch (err) { toast.error(`Roles load failed: ${String(err)}`); }
+  }, [allRoles.length, toast]);
+
+  const loadLinks = async (cosmeticId: string) => {
+    await ensureRoles();
+    try {
+      // Build linked roles list by checking each role's cosmetic links.
+      const roles = allRoles.length ? allRoles : (await adminListRoles()).roles || [];
+      if (!allRoles.length) setAllRoles(roles);
+      const all = await Promise.all(roles.map(r => adminListRoleCosmetics(r.id).then(x => ({ r, x }))));
+      const linked = all
+        .filter(({ x }) => x.links.some(l => l.cosmetic_id === cosmeticId))
+        .map(({ r }) => r.id);
+      setLinkedRoleIdsByCosmetic(prev => ({ ...prev, [cosmeticId]: linked }));
+    } catch (err) {
+      toast.error(`Link load failed: ${String(err)}`);
+    }
+  };
+
+  const toggleRoleLink = async (roleId: string, cosmeticId: string) => {
+    const linked = linkedRoleIdsByCosmetic[cosmeticId] || [];
+    try {
+      if (linked.includes(roleId)) await adminUnlinkRoleCosmetic(roleId, cosmeticId);
+      else                          await adminLinkRoleCosmetic(roleId, cosmeticId);
+      await loadLinks(cosmeticId);
+    } catch (err) { toast.error(`Toggle failed: ${String(err)}`); }
+  };
+
+  const toggleOpen = async (id: string) => {
+    if (openId === id) { setOpenId(null); return; }
+    setOpenId(id);
+    await loadLinks(id);
+  };
+
   const load = async () => {
     try {
       const r = await adminListCosmetics();
@@ -950,6 +991,29 @@ function CosmeticsTab() {
                 }
                 sub={c.slug}
                 onDelete={() => del(c.id)}
+                onExpand={() => toggleOpen(c.id)}
+                expanded={openId === c.id}
+                expandedContent={
+                  <div>
+                    <div className="label-micro" style={{ marginBottom: 6 }}>Roles that grant this</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {allRoles.map(r => {
+                        const on = (linkedRoleIdsByCosmetic[c.id] || []).includes(r.id);
+                        return (
+                          <button
+                            key={r.id}
+                            className={`chip ${on ? "chip--accent" : ""}`}
+                            onClick={() => toggleRoleLink(r.id, c.id)}
+                            style={{ cursor: "pointer", border: on ? undefined : "1px dashed var(--border)" }}
+                          >
+                            {r.name}
+                          </button>
+                        );
+                      })}
+                      {allRoles.length === 0 && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No roles defined yet.</span>}
+                    </div>
+                  </div>
+                }
               />
             ))}
           </div>
