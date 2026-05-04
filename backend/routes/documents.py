@@ -310,7 +310,7 @@ def update_document(document_id: str, request: Request, body: dict = Body(...)):
     return updated[0] if updated else {"id": document_id, **updates}
 
 
-def _extract_text_or_400(file_bytes: bytes, filename: str, content_type: str) -> str:
+def _extract_text_or_422(file_bytes: bytes, filename: str, content_type: str) -> str:
     """Run synchronous text extraction. Convert any failure into a clean
     HTTP 422 with a friendly detail instead of a bubbled-up 500.
 
@@ -505,7 +505,7 @@ async def upload_document_sync(
             detail="File exceeds the 15 MB limit. Please upload a smaller file.",
         )
 
-    extracted_text = _extract_text_or_400(file_bytes, filename, file.content_type or "")
+    extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
 
     # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
     # Unify with the middleware-stamped request ID so agent traces and
@@ -627,7 +627,7 @@ async def upload_document(
     # so existing tests and clients keep working.
     extracted_text: str | None = (
         None if OCR_ASYNC_ENABLED
-        else _extract_text_or_400(file_bytes, filename, file.content_type or "")
+        else _extract_text_or_422(file_bytes, filename, file.content_type or "")
     )
 
     async def event_stream():

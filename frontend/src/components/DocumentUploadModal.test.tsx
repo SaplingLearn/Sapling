@@ -121,10 +121,13 @@ describe("DocumentUploadModal SSE error UX", () => {
 
     await user.click(screen.getByRole("button", { name: /start upload/i }));
 
-    // The in-band error event fires `toast.error("Upload failed: …")` and the
-    // catch-block also fires one. Either way, "Upload failed" should appear.
+    // Two toasts fire on a terminal failure today: the in-band error
+    // event handler runs `toast.error("Upload failed: …")`, and the
+    // outer catch block then runs another after the stream rejects.
+    // Pin that exact contract so a future de-dupe (or the opposite —
+    // accidentally suppressing both) shows up as a test failure.
     await waitFor(() => {
-      expect(screen.getAllByText(/upload failed/i).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/upload failed/i).length).toBe(2);
     });
   });
 
@@ -138,8 +141,12 @@ describe("DocumentUploadModal SSE error UX", () => {
         data: { request_id: "trace-fallback-1" },
       },
       {
+        // Wire-format note: the streaming /upload route emits the result
+        // event with step="finalize" (see backend/routes/documents.py).
+        // The component branches on `ev.type` only, but matching the
+        // backend's actual step keeps the fixture honest.
         type: "result",
-        step: "result",
+        step: "finalize",
         message: "Saved.",
         data: { id: "doc-1", classification: { category: "other" } },
       },
@@ -159,10 +166,10 @@ describe("DocumentUploadModal SSE error UX", () => {
     await user.click(screen.getByRole("button", { name: /start upload/i }));
 
     await waitFor(() => {
-      expect(screen.queryByText(/switching to fallback/i)).not.toBeNull();
+      expect(screen.getByText(/switching to fallback/i)).toBeInTheDocument();
     });
     // No "upload failed" toast — fallback is a warn, not an error.
-    expect(screen.queryByText(/upload failed/i)).toBeNull();
+    expect(screen.queryByText(/upload failed/i)).not.toBeInTheDocument();
   });
 
   it("retry mints a fresh request_id on the second uploadDocumentStream call", async () => {
@@ -187,7 +194,13 @@ describe("DocumentUploadModal SSE error UX", () => {
     // Wait for the first call to settle and the Retry button to render.
     const retryBtn = await screen.findByRole("button", { name: /retry/i });
     expect(mockedUpload).toHaveBeenCalledTimes(1);
-    const firstRequestId = mockedUpload.mock.calls[0][3];
+
+    // uploadDocumentStream signature: (formData, onEvent, signal, requestId).
+    // We're pinning the positional contract intentionally — if the call site
+    // ever switches to a named-options object, update REQUEST_ID_ARG_INDEX
+    // (and the matching call in lib/api.ts).
+    const REQUEST_ID_ARG_INDEX = 3;
+    const firstRequestId = mockedUpload.mock.calls[0][REQUEST_ID_ARG_INDEX];
     expect(typeof firstRequestId).toBe("string");
     expect((firstRequestId as string).length).toBeGreaterThan(0);
 
@@ -196,7 +209,7 @@ describe("DocumentUploadModal SSE error UX", () => {
     await waitFor(() => {
       expect(mockedUpload).toHaveBeenCalledTimes(2);
     });
-    const secondRequestId = mockedUpload.mock.calls[1][3];
+    const secondRequestId = mockedUpload.mock.calls[1][REQUEST_ID_ARG_INDEX];
     expect(typeof secondRequestId).toBe("string");
     expect(secondRequestId).not.toBe(firstRequestId);
   });
@@ -224,7 +237,7 @@ describe("DocumentUploadModal SSE error UX", () => {
     // The Reference: line is keyed off status === "error" && requestId; wait for it.
     const ref = await screen.findByText(/reference:/i);
     // Modal shows a truncated form ("trace-fa…") — verify the rendered prefix.
-    expect(ref.textContent).toMatch(/trace-fa/);
+    expect(ref).toHaveTextContent(/trace-fa/);
 
     // userEvent.setup() installs its own Clipboard stub directly on the
     // navigator instance, shadowing our prototype getter. Strip that and
