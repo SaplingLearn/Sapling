@@ -14,8 +14,8 @@ binding = "ASSETS"
 directory = ".open-next/assets"
 
 [vars]
-NEXT_PUBLIC_API_URL = "https://sapling-production-cb12.up.railway.app"
-BACKEND_URL = "https://sapling-production-cb12.up.railway.app"
+NEXT_PUBLIC_API_URL = "https://api.saplinglearn.com"
+BACKEND_URL = "https://api.saplinglearn.com"
 
 [observability]
 enabled = true
