@@ -318,40 +318,32 @@ class TestQuizAgentSuccess:
         assert len(correct) == 1
         assert correct[0]["text"] == "4"
 
-    def test_short_answer_question_keeps_grading_compatibility(self):
-        """short_answer questions get a synthetic options list so submit_quiz
-        (which assumes options[].correct exists) keeps grading."""
-        fake_quiz = Quiz(questions=[
+    def test_short_answer_type_is_rejected_at_schema_layer(self):
+        """short_answer was dropped from QuizQuestionType in refactor #2
+        because the frontend has no UI for free-text answers and
+        submit_quiz grades by option-label lookup. Constructing a
+        QuizQuestion with type='short_answer' must raise a Pydantic
+        validation error — not silently produce an ungradable item.
+        """
+        from pydantic import ValidationError
+        try:
             QuizQuestion(
                 question="Define a closure.",
-                type="short_answer",
+                type="short_answer",  # type: ignore[arg-type]
                 difficulty="medium",
-                options=[],
-                correct_answer="A function bundled with its surrounding state.",
-                explanation="Lexical scope retention.",
+                options=["a", "b", "c", "d"],
+                correct_answer="a",
+                explanation="x",
                 concept="Closures",
-            ),
-        ])
-        with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
-            patch(
-                "routes.quiz.quiz_agent.run",
-                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
-            ),
-        ):
-            r = client.post("/api/quiz/generate", json={
-                "user_id": "user_andres",
-                "concept_node_id": "node1",
-                "num_questions": 1,
-                "difficulty": "medium",
-                "use_shared_context": False,
-            })
-
-        assert r.status_code == 200
-        q = r.json()["questions"][0]
-        assert len(q["options"]) == 1
-        assert q["options"][0]["correct"] is True
-        assert q["options"][0]["label"] == "A"
+            )
+        except ValidationError:
+            pass
+        else:
+            raise AssertionError(
+                "Short-answer regression: QuizQuestion accepted "
+                "type='short_answer'. The Literal must stay MCQ-only "
+                "until real short-answer grading exists."
+            )
 
     def test_persists_to_quiz_attempts_table(self):
         fake_quiz = Quiz(questions=[
@@ -499,3 +491,84 @@ class TestQuizAgentFallback:
         assert r.status_code == 200
         gemini_mock.assert_called_once()
         assert r.json()["questions"][0]["question"] == "Legacy fallback question?"
+
+
+# ── Wire-format contract: pinned by tests so silent drift can't recur ───────
+
+class TestQuizWireFormatContract:
+    """Pin the invariant `_agent_question_to_wire` enforces: every emitted
+    question has exactly one correct option, and the correct option's text
+    matches the agent's `correct_answer`. Drift cases (LLM emits a
+    correct_answer not in options) drop the question rather than silently
+    mis-marking it.
+    """
+
+    def test_well_formed_question_passes_through(self):
+        from agents.quiz import QuizQuestion
+        from routes.quiz import _agent_question_to_wire
+
+        q = QuizQuestion(
+            question="What is 2 + 2?",
+            type="multiple_choice",
+            difficulty="easy",
+            options=["3", "4", "5", "6"],
+            correct_answer="4",
+            explanation="Basic arithmetic.",
+            concept="Arithmetic",
+        )
+        wire = _agent_question_to_wire(q, qid=1)
+        assert wire is not None
+        # Exactly one option flagged correct.
+        correct = [o for o in wire["options"] if o["correct"]]
+        assert len(correct) == 1, f"expected 1 correct, got {len(correct)}"
+        # The correct option's text matches the canonical answer verbatim.
+        assert correct[0]["text"] == q.correct_answer
+        # Labels are A, B, C, D in order.
+        assert [o["label"] for o in wire["options"]] == ["A", "B", "C", "D"]
+
+    def test_correct_answer_not_in_options_drops_question(self):
+        """Generation drift: the agent's `correct_answer` doesn't appear
+        in `options`. The wrapper returns None; the caller filters it out.
+        Silent first-option-correct fallback must NOT happen.
+        """
+        from agents.quiz import QuizQuestion
+        from routes.quiz import _agent_question_to_wire
+
+        q = QuizQuestion(
+            question="What is 2 + 2?",
+            type="multiple_choice",
+            difficulty="easy",
+            options=["3", "5", "6", "7"],   # 4 is missing
+            correct_answer="4",
+            explanation="Basic arithmetic.",
+            concept="Arithmetic",
+        )
+        wire = _agent_question_to_wire(q, qid=1)
+        assert wire is None, (
+            "Silent fallback regression: the wrapper must not mark an "
+            "arbitrary option correct when the agent's correct_answer "
+            "isn't present verbatim — drop the question instead."
+        )
+
+    def test_whitespace_only_difference_still_matches(self):
+        """The wrapper trims whitespace before comparing — minor LLM
+        whitespace drift shouldn't drop the question."""
+        from agents.quiz import QuizQuestion
+        from routes.quiz import _agent_question_to_wire
+
+        q = QuizQuestion(
+            question="What is 2 + 2?",
+            type="multiple_choice",
+            difficulty="easy",
+            options=["3", "  4  ", "5", "6"],
+            correct_answer="4",
+            explanation="Basic arithmetic.",
+            concept="Arithmetic",
+        )
+        wire = _agent_question_to_wire(q, qid=1)
+        assert wire is not None
+        correct = [o for o in wire["options"] if o["correct"]]
+        assert len(correct) == 1
+        # The matched option preserves its original (whitespace-padded)
+        # text — the trim is only used for comparison.
+        assert correct[0]["text"].strip() == "4"

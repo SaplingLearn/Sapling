@@ -80,22 +80,6 @@ class MultipleChoiceShapeEvaluator(Evaluator[str, Quiz]):
 
 
 @dataclass
-class ShortAnswerShapeEvaluator(Evaluator[str, Quiz]):
-    """Every short_answer question has options=[] and a non-empty
-    correct_answer."""
-
-    def evaluate(self, ctx: EvaluatorContext[str, Quiz]) -> float:
-        sa = [q for q in ctx.output.questions if q.type == "short_answer"]
-        if not sa:
-            return 1.0
-        ok = sum(
-            1 for q in sa
-            if not q.options and q.correct_answer.strip()
-        )
-        return ok / len(sa)
-
-
-@dataclass
 class ConceptCoverageEvaluator(Evaluator[str, Quiz]):
     """Every question's `concept` field is one of the concepts the
     case's prompt named (declared in metadata)."""
@@ -189,56 +173,72 @@ CASES: list[Case[str, Quiz]] = [
         },
     ),
 
-    # ── Easy × Short Answer ────────────────────────────────────────────────
+    # NOTE: ADR 0005 originally specified 3 difficulty × 2 question type
+    # (MCQ + short answer). Short answer was dropped during refactor #2
+    # because the frontend grade path has no UI for free-text answers
+    # and `submit_quiz` grades by option-label lookup. The 3 cases below
+    # replace the original short-answer cases with additional MCQ
+    # coverage at the same difficulty levels — total stays at 8.
+    # Revisit when real short-answer grading exists (LLM-judged or
+    # fuzzy-match).
+
+    # ── Easy × MCQ (extra coverage) ───────────────────────────────────────
     Case(
-        name="easy_short_answer_definitions",
+        name="easy_mcq_physics_definitions",
         inputs=(
-            "Course: PHYS 101. Generate 3 easy short-answer questions "
+            "Course: PHYS 101. Generate 3 easy multiple-choice questions "
             "covering Newton's First Law, Kinetic Energy, and Momentum. "
-            "Each should have a one-sentence canonical answer."
+            "Each question should test a definitional understanding."
         ),
         metadata={
             "expected_count": 3,
             "expected_difficulty": "easy",
-            "expected_type": "short_answer",
+            "expected_type": "multiple_choice",
             "concepts": ["Newton's First Law", "Kinetic Energy", "Momentum"],
         },
     ),
 
-    # ── Medium × Short Answer ──────────────────────────────────────────────
+    # ── Medium × MCQ (extra coverage — econ) ───────────────────────────────
     Case(
-        name="medium_short_answer_econ",
+        name="medium_mcq_econ",
         inputs=(
-            "Course: ECON 201. Generate 3 medium short-answer questions "
+            "Course: ECON 201. Generate 3 medium multiple-choice questions "
             "covering Marginal Cost, Price Elasticity of Demand, and "
-            "Comparative Advantage."
+            "Comparative Advantage. Use distractors that reflect common "
+            "confusions between these concepts."
         ),
         metadata={
             "expected_count": 3,
             "expected_difficulty": "medium",
-            "expected_type": "short_answer",
+            "expected_type": "multiple_choice",
             "concepts": ["Marginal Cost", "Price Elasticity of Demand", "Comparative Advantage"],
         },
     ),
 
-    # ── Hard × Short Answer ────────────────────────────────────────────────
+    # ── Hard × MCQ (extra coverage — theory of computation) ────────────────
     Case(
-        name="hard_short_answer_proofs",
+        name="hard_mcq_theory_of_computation",
         inputs=(
-            "Course: MATH 320. Generate 2 hard short-answer questions "
-            "covering the Pumping Lemma and Decidability. Each answer "
-            "should require a brief proof sketch."
+            "Course: MATH 320. Generate 2 hard multiple-choice questions "
+            "covering the Pumping Lemma and Decidability. Distractors "
+            "should target the most common misapplications of these "
+            "results."
         ),
         metadata={
             "expected_count": 2,
             "expected_difficulty": "hard",
-            "expected_type": "short_answer",
+            "expected_type": "multiple_choice",
             "concepts": ["Pumping Lemma", "Decidability"],
         },
     ),
 ]
 
 assert len(CASES) == 8, f"Expected 8 cases per ADR 0005, got {len(CASES)}"
+# All cases are MCQ today — short_answer dropped pending frontend support.
+assert all(
+    c.metadata and c.metadata.get("expected_type") == "multiple_choice"
+    for c in CASES
+), "All quiz_agent eval cases must be multiple_choice (see refactor #2 fixes)"
 
 
 # ── Adapter (replay layer) ──────────────────────────────────────────────────
@@ -267,7 +267,6 @@ def make_dataset() -> Dataset[str, Quiz]:
             DifficultyMixEvaluator(),
             TypeMixEvaluator(),
             MultipleChoiceShapeEvaluator(),
-            ShortAnswerShapeEvaluator(),
             ConceptCoverageEvaluator(),
         ],
     )

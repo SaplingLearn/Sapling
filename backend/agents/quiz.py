@@ -28,22 +28,30 @@ from agents.tools.graph_read import (
 
 # Difficulty + question type are Literals so Gemini's enum constraint
 # applies and downstream UI can branch on stable strings.
+#
+# `QuizQuestionType` is intentionally MCQ-only today. The frontend
+# `submitQuiz` flow grades by `q["options"][i].correct` lookup — there's
+# no UI for free-text answers, no fuzzy-match grading, no LLM-judged
+# scoring. Generating short-answer questions through this path would
+# emit unrenderable, ungradable items. Keep the type narrow until real
+# short-answer support exists; revisit when that lands.
 QuizDifficulty = Literal["easy", "medium", "hard"]
-QuizQuestionType = Literal["multiple_choice", "short_answer"]
+QuizQuestionType = Literal["multiple_choice"]
 
 
 class QuizQuestion(BaseModel):
-    """A single quiz question. Kept small so the parent Quiz schema
-    doesn't trip Gemini's structured-output complexity limit."""
+    """A single multiple-choice quiz question. Kept small so the parent
+    Quiz schema doesn't trip Gemini's structured-output complexity limit."""
 
     question: str = Field(max_length=600)
     type: QuizQuestionType
     difficulty: QuizDifficulty
-    # Options are only used for multiple_choice; otherwise []. The agent
-    # is instructed in the system prompt to leave it empty for short_answer.
-    options: list[str] = Field(default_factory=list, max_length=6)
-    # For multiple_choice: the option text the agent considers correct.
-    # For short_answer: the canonical answer (or one acceptable phrasing).
+    # 3-6 options. The agent is required to populate this for every
+    # question and to make `correct_answer` match exactly one of them.
+    options: list[str] = Field(min_length=3, max_length=6)
+    # The option text the agent considers correct. Must appear verbatim
+    # in `options`; the route validates this and drops questions that
+    # violate the contract rather than silently mis-marking them.
     correct_answer: str = Field(max_length=400)
     explanation: str = Field(max_length=600)
     # Concept the question is testing — must be one of the user's known
@@ -59,9 +67,9 @@ class Quiz(BaseModel):
 
 
 _SYSTEM_PROMPT = (
-    "You generate adaptive quizzes for a student. Each question must "
-    "target a specific concept the student has weak mastery on, OR "
-    "address a class-level misconception you've seen.\n\n"
+    "You generate adaptive multiple-choice quizzes for a student. Each "
+    "question must target a specific concept the student has weak "
+    "mastery on, OR address a class-level misconception you've seen.\n\n"
     "Workflow:\n"
     "1. Call `read_concepts_for_user` to see the student's mastery per "
     "   concept for this course (returned sorted by mastery ASC — "
@@ -72,12 +80,13 @@ _SYSTEM_PROMPT = (
     "3. Compose `Quiz.questions` so the WEAKEST concepts get the most "
     "   questions, AND each item's `concept` field exactly matches a "
     "   concept_name returned by tool 1.\n\n"
-    "Per-question rules:\n"
-    "- multiple_choice: 4 options, exactly one correct. The correct "
-    "   option text MUST appear verbatim in `options`. Distractors "
-    "   should reflect plausible misconceptions, not random noise.\n"
-    "- short_answer: leave `options=[]`. `correct_answer` is the "
-    "   canonical answer (one acceptable phrasing).\n"
+    "Per-question rules (multiple-choice only — the type field is "
+    "constrained to 'multiple_choice'):\n"
+    "- 4 options, exactly one correct. The text in `correct_answer` "
+    "   MUST appear verbatim in `options` — character-for-character. "
+    "   Questions that violate this are dropped at the route layer.\n"
+    "- Distractors should reflect plausible misconceptions, not random "
+    "   noise. Use the read_misconceptions_for_course return value.\n"
     "- explanation: 1-3 sentences explaining WHY the correct answer "
     "   is correct — used in the post-quiz review screen.\n"
     "- difficulty: align with the student's mastery on the concept; "

@@ -51,52 +51,47 @@ def _load_prompt(name: str) -> str:
 _OPTION_LABELS = ["A", "B", "C", "D", "E", "F"]
 
 
-def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict:
-    """Map an agent QuizQuestion to the legacy wire-format dict.
+def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
+    """Map an agent QuizQuestion to the legacy wire-format dict, or
+    return None if the question violates the contract.
 
-    For multiple_choice: emit options=[{label,text,correct}] with exactly
-    one option flagged correct (the one whose `text` matches
-    `q.correct_answer`; if no exact match, the first option is flagged so
-    the quiz remains gradable).
-    For short_answer: emit a single synthetic option (label "A") that
-    holds the canonical answer, marked correct=True. This keeps
-    `submit_quiz`'s grading loop (which assumes options[].correct) working
-    without a special-case branch.
+    The agent must produce `correct_answer` as one of the strings in
+    `q.options` verbatim. If that invariant is broken (LLM drift), we
+    DROP the question rather than silently mark an arbitrary option
+    correct — emitting an unverifiable question to the user is worse
+    than a slightly shorter quiz.
+
+    Returning None lets the caller filter questions out cleanly.
     """
-    if q.type == "multiple_choice":
-        options: list[dict] = []
-        matched = False
-        for i, text in enumerate(q.options[: len(_OPTION_LABELS)]):
-            is_correct = (not matched) and (text.strip() == q.correct_answer.strip())
-            if is_correct:
-                matched = True
-            options.append({
-                "label": _OPTION_LABELS[i],
-                "text": text,
-                "correct": is_correct,
-            })
-        # Defensive: if no option matched the canonical answer (LLM drift),
-        # mark the first one correct so submit_quiz can still score the
-        # attempt instead of returning 0/N for a generation-quality issue.
-        if options and not matched:
-            options[0]["correct"] = True
-        return {
-            "id": qid,
-            "question": q.question,
-            "options": options,
-            "explanation": q.explanation,
-            "concept_tested": q.concept,
-            "difficulty": q.difficulty,
-        }
-    # short_answer: single synthetic option carrying the canonical answer.
+    options: list[dict] = []
+    matched = False
+    canonical = q.correct_answer.strip()
+    for i, text in enumerate(q.options[: len(_OPTION_LABELS)]):
+        is_correct = (not matched) and (text.strip() == canonical)
+        if is_correct:
+            matched = True
+        options.append({
+            "label": _OPTION_LABELS[i],
+            "text": text,
+            "correct": is_correct,
+        })
+    if not matched:
+        # Generation drift: agent's correct_answer doesn't match any
+        # option verbatim. Surface in logs (Logfire span carries the
+        # question_id correlation) and drop. Caller filters None.
+        logger.warning(
+            "quiz: dropping question %d — correct_answer %r not found "
+            "in options %r (concept=%s)",
+            qid, q.correct_answer, q.options, q.concept,
+        )
+        return None
     return {
         "id": qid,
         "question": q.question,
-        "options": [{"label": "A", "text": q.correct_answer, "correct": True}],
+        "options": options,
         "explanation": q.explanation,
         "concept_tested": q.concept,
         "difficulty": q.difficulty,
-        "type": "short_answer",
     }
 
 
@@ -137,7 +132,22 @@ async def _quiz_via_agent(
 
     result = await quiz_agent.run(user_message, deps=deps)
     quiz: Quiz = result.output
-    return [_agent_question_to_wire(q, i + 1) for i, q in enumerate(quiz.questions)]
+    # Filter out questions where the agent's correct_answer didn't match
+    # any option verbatim — _agent_question_to_wire returns None for those.
+    # Re-number the survivors so question IDs stay 1-based and contiguous.
+    wire_questions: list[dict] = []
+    for q in quiz.questions:
+        mapped = _agent_question_to_wire(q, len(wire_questions) + 1)
+        if mapped is not None:
+            wire_questions.append(mapped)
+    if not wire_questions:
+        # All questions dropped — degrade to legacy rather than serve
+        # an empty quiz. Raise a sentinel that generate_quiz catches
+        # and routes to the legacy fallback.
+        raise RuntimeError(
+            "quiz_agent produced no valid questions after wire-format validation"
+        )
+    return wire_questions
 
 
 async def _legacy_generate_quiz(body: GenerateQuizBody, request: Request) -> list[dict]:

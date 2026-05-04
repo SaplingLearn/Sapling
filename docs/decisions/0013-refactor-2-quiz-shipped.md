@@ -125,6 +125,37 @@ version so we can answer "which prompt produced this quiz three weeks ago?"
    ships, write the eval first, record cassettes, then refactor with
    confidence.
 
+## Addendum (2026-05-04, after PR #71 review)
+
+Three post-review fixes landed before merge:
+
+1. **`QuizQuestionType` restricted to `multiple_choice` only.** The
+   original Literal also accepted `short_answer`, but the route-side
+   wrapper synthesized a single-option grading shim that didn't actually
+   work — `submit_quiz` grades by option-label lookup and the frontend
+   has no UI for free-text answers. Schema-level rejection (Pydantic
+   ValidationError on `type="short_answer"`) is now the contract; pinned
+   by `test_short_answer_type_is_rejected_at_schema_layer`. Real
+   short-answer support (LLM-judged or fuzzy-match grading) is a future
+   ADR when the frontend has the UI to match.
+
+2. **`_agent_question_to_wire` no longer silently rewrites correct
+   flags.** Old behavior: if the agent's `correct_answer` didn't match
+   any option verbatim, the wrapper marked the FIRST option correct so
+   `submit_quiz` could "still grade" the attempt. New behavior: log a
+   warning and return None; the caller filters those out. If all
+   questions in a generation drift like this, the route raises and
+   degrades to legacy fallback rather than serving an empty quiz.
+   Pinned by `TestQuizWireFormatContract` (3 tests: well-formed
+   passthrough, drift drops, whitespace tolerance).
+
+3. **Eval cases all-MCQ.** The 3 short-answer cases were rewritten as
+   MCQ at the same difficulty levels (PHYS 101 definitions, ECON 201,
+   theory of computation). `ShortAnswerShapeEvaluator` removed.
+   Module-level assertion verifies all 8 cases are MCQ — adding a
+   short-answer case will fail to import until short-answer support
+   actually exists.
+
 ## Pre-existing test failures (not caused by this refactor)
 
 - `tests/test_documents_routes.py::test_rejects_file_over_15mb` — asserts
