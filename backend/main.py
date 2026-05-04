@@ -140,8 +140,18 @@ def health():
 @app.get("/api/users")
 def list_users():
     from db.connection import table
-    rows = table("users").select("id,name,room_id", order="name.asc")
-    return {"users": [{"id": r["id"], "name": r["name"], "room_id": r.get("room_id")} for r in rows]}
+    from services.encryption import decrypt_if_present
+    rows = table("users").select("id,name,room_id")
+    users = [
+        {
+            "id": r.get("id"),
+            "name": decrypt_if_present(r.get("name")) or "",
+            "room_id": r.get("room_id"),
+        }
+        for r in rows
+    ]
+    users.sort(key=lambda u: (u["name"] or "").lower())
+    return {"users": users}
 
 
 @app.get("/api/gemini-test")
