@@ -231,12 +231,13 @@ class TestUploadDocument:
         assert r.status_code == 400
         assert "Unsupported file type" in r.json()["detail"]
 
-    def test_rejects_file_over_15mb(self):
-        big = b"x" * (15 * 1024 * 1024 + 1)
+    def test_rejects_file_over_100mb(self):
+        # Cap was raised from 15 MB → 100 MB in commit 9912a25.
+        big = b"x" * (100 * 1024 * 1024 + 1)
         with _mock_validate_user(), patch("routes.documents.extract_text_from_file", return_value=""):
             r = _make_upload(content=big)
         assert r.status_code == 400
-        assert "15 MB" in r.json()["detail"]
+        assert "100 MB" in r.json()["detail"]
 
     def test_accepts_pdf_by_extension(self):
         ai_result = {
