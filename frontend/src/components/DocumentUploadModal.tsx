@@ -6,12 +6,13 @@ import { Icon } from "./Icon";
 import { CustomSelect } from "./CustomSelect";
 import { useToast } from "./ToastProvider";
 import {
-  uploadDocument,
+  uploadDocumentStream,
   updateDocumentCategory,
   addCourse,
   onboardingCoursesSearch,
   type EnrolledCourse,
   type OnboardingCourse,
+  type UploadEvent,
 } from "@/lib/api";
 
 const MAX_FILES = 5;
@@ -32,6 +33,8 @@ interface UploadItem {
   summary?: string;
   conceptNames?: string[];
   abort?: AbortController;
+  /** Latest progress message from the SSE stream (visible while uploading). */
+  progress?: string;
 }
 
 interface Props {
@@ -124,25 +127,28 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     }
     const ac = new AbortController();
     const timeout = setTimeout(() => ac.abort(), UPLOAD_TIMEOUT_MS);
-    setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: "uploading", abort: ac } : i));
+    setItems(prev => prev.map(i => i.id === item.id ? {
+      ...i, status: "uploading", abort: ac, progress: "Starting upload…",
+    } : i));
     try {
       const fd = new FormData();
       fd.append("file", item.file);
       fd.append("course_id", item.courseId);
       fd.append("user_id", userId);
-      const resp = await uploadDocument(fd, ac.signal);
+      const resp = await uploadDocumentStream(fd, (ev: UploadEvent) => {
+        // Mirror backend SaplingEvent.message into the row's live label.
+        if (ev.type === "status" && ev.step === "done") return; // final state covered below
+        setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: ev.message } : i));
+      }, ac.signal);
       clearTimeout(timeout);
       setItems(prev => prev.map(i => i.id === item.id ? {
         ...i,
         status: "processed",
+        progress: undefined,
         docId: resp?.id,
-        category: resp?.category || "other",
-        summary: resp?.summary,
-        conceptNames: Array.isArray(resp?.concept_notes)
-          ? resp.concept_notes
-              .map((n: { name?: string }) => n?.name)
-              .filter((n: unknown): n is string => typeof n === "string" && n.length > 0)
-          : [],
+        category: resp?.classification?.category || resp?.category || "other",
+        summary: resp?.summary?.abstract ?? resp?.summary,
+        conceptNames: extractConceptNames(resp),
       } : i));
     } catch (err: any) {
       clearTimeout(timeout);
@@ -150,6 +156,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       setItems(prev => prev.map(i => i.id === item.id ? {
         ...i,
         status: aborted ? "aborted" : "error",
+        progress: undefined,
         error: aborted ? "Processing took longer than 4 minutes — try a smaller file." : String(err?.message || err),
       } : i));
     }
@@ -363,6 +370,19 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                     </>
                   )}
                 </div>
+                {item.status === "uploading" && item.progress && (
+                  <div
+                    aria-live="polite"
+                    style={{
+                      fontSize: 12,
+                      color: "var(--text-muted)",
+                      fontStyle: "italic",
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {item.progress}
+                  </div>
+                )}
                 {item.summary && (
                   <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>{item.summary}</div>
                 )}
@@ -405,6 +425,27 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     </div>,
     document.body,
   );
+}
+
+/**
+ * Pull concept names out of either the orchestrator result shape
+ * ({ concepts: { concepts: [{ name, ... }] } }) or the legacy fallback
+ * shape ({ concept_notes: [{ name }] }). Returns at most a flat string[].
+ */
+function extractConceptNames(resp: any): string[] {
+  const fromOrchestrator = resp?.concepts?.concepts;
+  if (Array.isArray(fromOrchestrator)) {
+    return fromOrchestrator
+      .map((c: { name?: unknown }) => c?.name)
+      .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
+  }
+  const fromLegacy = resp?.concept_notes;
+  if (Array.isArray(fromLegacy)) {
+    return fromLegacy
+      .map((n: { name?: unknown }) => n?.name)
+      .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
+  }
+  return [];
 }
 
 function StatusBadge({ status }: { status: UploadStatus }) {
