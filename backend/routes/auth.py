@@ -40,6 +40,17 @@ except ImportError:
 
 router = APIRouter()
 
+
+def _stamp_last_sign_in_for_test(user_id: str) -> None:
+    """Test seam: write last_sign_in_at to keep the callback path testable in
+    isolation without round-tripping through the OAuth flow."""
+    from datetime import datetime, timezone
+    table("users").update(
+        {"last_sign_in_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{user_id}"},
+    )
+
+
 OAUTH_STATE_COOKIE = "sapling_oauth_state"
 _OAUTH_COOKIE_MAX_AGE = 600
 _POPUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -311,6 +322,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         user_id = existing[0]["id"]
         is_approved = existing[0]["is_approved"]
         # Update name/avatar in case they changed
+        from datetime import datetime as _dt, timezone as _tz
         table("users").update(
             {
                 "name": encrypt_if_present(name),
@@ -318,6 +330,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
                 "last_name": encrypt_if_present(last_name),
                 "avatar_url": avatar_url,
                 "email": encrypt_if_present(email),
+                "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
             },
             filters={"id": f"eq.{user_id}"},
         )
@@ -327,6 +340,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         # New sign-ins for users without a google_id always create a fresh row.
         user_id = f"user_{google_id}"
         is_approved = False
+        from datetime import datetime as _dt, timezone as _tz
         table("users").insert({
             "id": user_id,
             "name": encrypt_if_present(name),
@@ -336,6 +350,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
             "google_id": google_id,
             "avatar_url": avatar_url,
             "auth_provider": "google",
+            "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
         })
 
     # Store OAuth tokens (calendar access included)

@@ -205,3 +205,25 @@ class TestCallbackStateValidation:
         )
         assert r.status_code in (302, 307)
         assert "error=google_not_configured" in r.headers["location"]
+
+
+from unittest.mock import MagicMock, patch
+
+
+class TestLastSignInStamp:
+    def test_stamp_seam_writes_last_sign_in_at(self):
+        from routes import auth as auth_routes
+
+        with patch.object(auth_routes, "table") as t:
+            users_table = MagicMock()
+            users_table.update = MagicMock(return_value=[{}])
+            t.return_value = users_table
+
+            auth_routes._stamp_last_sign_in_for_test("u1")
+
+        users_table.update.assert_called_once()
+        update_payload = users_table.update.call_args.args[0]
+        assert "last_sign_in_at" in update_payload
+        assert update_payload["last_sign_in_at"]
+        filters = users_table.update.call_args.args[1] if len(users_table.update.call_args.args) > 1 else users_table.update.call_args.kwargs.get("filters")
+        assert filters == {"id": "eq.u1"}
