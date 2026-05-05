@@ -298,10 +298,10 @@ class TestResolveLegacyModel:
         from services.gemini_service import MODEL_SMART
         assert _resolve_legacy_model("") == MODEL_SMART
 
-    def test_fast_returns_default(self):
+    def test_fast_returns_lite(self):
         from routes.learn import _resolve_legacy_model
-        from services.gemini_service import MODEL_DEFAULT
-        assert _resolve_legacy_model("fast") == MODEL_DEFAULT
+        from services.gemini_service import MODEL_LITE
+        assert _resolve_legacy_model("fast") == MODEL_LITE
 
     def test_smart_returns_smart(self):
         from routes.learn import _resolve_legacy_model
@@ -567,7 +567,7 @@ class TestChatViaAgent:
         assert kwargs["model"].model_name == "gemini-2.5-pro"
 
     def test_fast_pref_overrides_agent_model(self):
-        """body.model_pref='fast' → agent.run gets `model=GoogleModel('gemini-2.5-flash')`."""
+        """body.model_pref='fast' → agent.run gets `model=GoogleModel('gemini-2.5-flash-lite')`."""
         from types import SimpleNamespace
         agent = MagicMock()
         agent.run = AsyncMock(return_value=SimpleNamespace(output="ok"))
@@ -580,7 +580,7 @@ class TestChatViaAgent:
         assert r.status_code == 200
         kwargs = agent.run.call_args.kwargs
         assert "model" in kwargs
-        assert kwargs["model"].model_name == "gemini-2.5-flash"
+        assert kwargs["model"].model_name == "gemini-2.5-flash-lite"
 
     def test_no_pref_falls_through_to_agent_default(self):
         """No model_pref → agent.run gets NO `model` kwarg; agent default wins."""

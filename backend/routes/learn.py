@@ -18,7 +18,7 @@ from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeS
 from services.auth_guard import require_self, get_session_user_id
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.gemini_service import (
-    MODEL_DEFAULT,
+    MODEL_LITE,
     MODEL_SMART,
     call_gemini_multiturn,
     extract_graph_update,
@@ -43,12 +43,13 @@ MODE_DISPLAY_NAMES = {
 }
 
 # User-facing speed/quality knob for the tutor chat.
-# "fast" = flash (opt-in, faster), "smart" = pro (default, stronger reasoning).
+# "fast" = flash-lite (opt-in, lightweight + cheapest, no thinking),
+# "smart" = pro (default, capped thinking budget for snappy reasoning).
 # Anything unrecognized falls back to Pro (matches the agent default at
 # `agents/_providers.py::_DEFAULTS["chat_tutor"]`) so the legacy fallback
 # stays symmetric with the agent path when `body.model_pref` is None.
 _MODEL_PREF_TO_MODEL = {
-    "fast": MODEL_DEFAULT,
+    "fast": MODEL_LITE,
     "smart": MODEL_SMART,
 }
 
@@ -62,9 +63,15 @@ def _resolve_legacy_model(model_pref: str | None) -> str:
 # so a user choosing "smart" in either UI pulls the same Pro tier model.
 # None falls through to model_for("chat_tutor") (default `gemini-2.5-pro`).
 _PREF_MODEL_NAMES: dict[str, str] = {
-    "fast": "gemini-2.5-flash",
+    "fast": "gemini-2.5-flash-lite",
     "smart": "gemini-2.5-pro",
 }
+
+# Cap Pro's thinking budget for chat tutor turns. Dynamic thinking (-1) on
+# multi-turn pedagogy can spend 10s+ in the thinking phase before any tokens
+# stream; 2048 tokens is enough for the agent to plan a multi-step
+# explanation without burning latency the student can feel.
+_PRO_THINKING_BUDGET = 2048
 
 
 def _resolve_model_pref(model_pref: str | None):
@@ -82,6 +89,24 @@ def _resolve_model_pref(model_pref: str | None):
         return None
     from agents._providers import google_model
     return google_model(name)
+
+
+def _build_pro_model_settings():
+    """Return a GoogleModelSettings capping Pro's thinking budget.
+
+    Apply this whenever the effective chat-tutor model is Pro (explicit
+    "smart" pref OR no pref → agent default). Don't apply to Flash-Lite
+    runs — Lite doesn't think, and passing thinking_config there would be
+    wasted at best.
+
+    Imported lazily for the same reason as `google_model` — keeps the
+    GoogleProvider construction off the import path.
+    """
+    from google.genai.types import ThinkingConfig
+    from pydantic_ai.models.google import GoogleModelSettings
+    return GoogleModelSettings(
+        google_thinking_config=ThinkingConfig(thinking_budget=_PRO_THINKING_BUDGET)
+    )
 
 
 def _load_prompt(name: str) -> str:
@@ -464,6 +489,12 @@ async def _chat_via_agent(
     run_kwargs: dict = {"deps": deps, "message_history": message_history}
     if model_override is not None:
         run_kwargs["model"] = model_override
+
+    # Cap thinking budget on every Pro run (explicit "smart" OR no-pref
+    # falling through to the agent default). Skip the cap for explicit
+    # "fast" (Lite has no thinking).
+    if model_pref != "fast":
+        run_kwargs["model_settings"] = _build_pro_model_settings()
 
     result = await agent.run(user_message, **run_kwargs)
     reply = result.output  # str — chat_tutor agents return plain Markdown.

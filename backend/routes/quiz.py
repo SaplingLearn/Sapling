@@ -112,7 +112,7 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
 # model strings as Learn. None falls through to the agent's
 # task-default model from agents/_providers.py::model_for("quiz").
 _PREF_MODEL_NAMES: dict[str, str] = {
-    "fast": "gemini-2.5-flash",
+    "fast": "gemini-2.5-flash-lite",
     "smart": "gemini-2.5-pro",
 }
 
@@ -282,7 +282,7 @@ async def _legacy_generate_quiz(body: GenerateQuizBody, request: Request) -> lis
     if body.model_pref == "smart":
         legacy_model = MODEL_SMART  # gemini-2.5-pro
     elif body.model_pref == "fast":
-        legacy_model = MODEL_DEFAULT  # gemini-2.5-flash, matches _PREF_MODEL_NAMES
+        legacy_model = MODEL_LITE  # gemini-2.5-flash-lite, matches _PREF_MODEL_NAMES
     else:
         legacy_model = MODEL_LITE  # gemini-2.5-flash-lite, agent default per ADR 0008
     try:
