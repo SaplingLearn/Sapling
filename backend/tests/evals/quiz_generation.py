@@ -286,10 +286,11 @@ CASES: list[Case[str, Quiz]] = [
     # ── Adaptive difficulty (struggling student, request hard) ─────────────
     # Per ADR 0014: when recent_attempts.accuracy is consistently low,
     # the agent is allowed to drop the difficulty mix one step from what
-    # the user asked. AdaptiveDifficultyEvaluator pins the bound: the
-    # produced average difficulty must stay within ±1 step of requested.
-    # Without this case, a future prompt change that makes the agent
-    # produce all easy questions for a hard request would slip through.
+    # the user asked. AdaptiveDifficultyEvaluator scores the fraction of
+    # questions whose difficulty is within ±1 step of requested
+    # (per-question, not averaged). Without this case, a future prompt
+    # change that makes the agent produce all easy questions for a hard
+    # request would slip through.
     Case(
         name="adaptive_downshift_struggling_student",
         # NOTE: this case bakes the recent-accuracy signal into the user
