@@ -10,6 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
 from pydantic import BaseModel, Field
 
+from config import MAX_AVATAR_SIZE
 from db.connection import table
 from services.encryption import encrypt_if_present, decrypt_if_present
 from models import (
@@ -269,7 +270,12 @@ class _AvatarUploadBody(BaseModel):
     profile-PATCH endpoint successfully.
     """
 
-    file_b64: str = Field(..., max_length=10_000_000)  # ~7.5 MB base64 = ~5.6 MB binary
+    # 10M base64 chars upper-bounds the body before any decode work.
+    # Base64 expands binary by 4/3, so 10M chars decodes to ~7.5 MB
+    # binary — comfortably above MAX_AVATAR_SIZE (5 MB) and below any
+    # sensible JSON body limit. The actual binary cap is enforced
+    # below after decoding.
+    file_b64: str = Field(..., max_length=10_000_000)
     content_type: str = Field(default="image/png", max_length=64)
 
 
@@ -292,6 +298,18 @@ async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Req
         file_bytes = base64.b64decode(raw, validate=True)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid base64 payload")
+
+    # Enforce the binary size cap at the route layer so the 413 is
+    # immediate and the response shape matches the multipart endpoint
+    # the caller might still expect (per `services/storage_service.py
+    # ::_validate_upload`). Without this, the cap fires one layer
+    # deeper inside upload_avatar, which is correct but harder to
+    # reason about from a route-test perspective.
+    if len(file_bytes) > MAX_AVATAR_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {MAX_AVATAR_SIZE // (1024 * 1024)} MB",
+        )
 
     avatar_url = upload_avatar(user_id, file_bytes, body.content_type)
 

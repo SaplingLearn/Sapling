@@ -566,6 +566,32 @@ class TestUploadAvatar:
             )
         assert r.status_code == 422
 
+    def test_decoded_payload_over_size_cap_returns_413(self):
+        """The route enforces MAX_AVATAR_SIZE on the *decoded* binary —
+        so a base64 payload that fits the Pydantic max_length but
+        decodes to more than 5 MB is rejected at the route layer with
+        a 413 (not at the storage layer). Mirrors the multipart
+        endpoint's validate_upload contract."""
+        import base64
+        from config import MAX_AVATAR_SIZE
+        # MAX + 1 binary bytes → just above the cap once decoded.
+        oversize_bytes = b"\x00" * (MAX_AVATAR_SIZE + 1)
+        oversize_b64 = base64.b64encode(oversize_bytes).decode("ascii")
+
+        with _mock_self(), \
+             patch("routes.profile.table", side_effect=self._table_factory()), \
+             patch("routes.profile.upload_avatar") as up:
+            r = client.post(
+                f"/api/profile/{USER_ID}/avatar",
+                json={"file_b64": oversize_b64, "content_type": "image/png"},
+            )
+
+        assert r.status_code == 413
+        assert "Maximum size" in r.json()["detail"]
+        # Storage layer must NOT have been called — the route should
+        # reject before bothering Supabase.
+        up.assert_not_called()
+
 
 # ── _get_user_or_404 column contract (issue #75) ────────────────────────────
 
