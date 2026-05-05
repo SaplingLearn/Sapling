@@ -113,6 +113,28 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setRoles(data.roles ?? []);
       setEquippedCosmetics(data.equipped_cosmetics ?? {});
       setIsAdmin(data.is_admin ?? false);
+      // Avatar URL has to be refreshed here too — Settings.tsx calls
+      // refreshProfile() after a successful avatar upload to pick up
+      // the new image, and without this line the avatar stayed on
+      // whatever value setActiveUser put in at login (often empty,
+      // showing the initial-letter fallback in <Avatar>).
+      //
+      // Cache-bust with `?v=<timestamp>` because the storage URL is
+      // deterministic — every upload writes to
+      // `avatars/{user_id}/avatar.{ext}`, so a re-upload produces an
+      // identical URL and browsers serve the cached old image. The
+      // timestamp changes on every refresh, which forces a re-fetch
+      // from Supabase Storage's CDN once per refreshProfile() call.
+      // Avatars are small (<5 MB cap, usually <100 KB after
+      // browser-side compression), so the extra fetch per refresh is
+      // not a meaningful bandwidth concern.
+      const rawAvatar = (data.avatar_url ?? '').trim();
+      if (rawAvatar) {
+        const sep = rawAvatar.includes('?') ? '&' : '?';
+        setAvatarUrl(`${rawAvatar}${sep}v=${Date.now()}`);
+      } else {
+        setAvatarUrl('');
+      }
       const fr = data.equipped_cosmetics?.featured_role ?? null;
       setFeaturedRole(fr);
     } catch {}
