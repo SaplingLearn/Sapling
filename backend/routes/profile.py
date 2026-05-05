@@ -27,7 +27,7 @@ router = APIRouter()
 
 def _get_user_or_404(user_id: str) -> dict:
     rows = table("users").select(
-        "id,username,name,first_name,last_name,email,avatar_url,school,major,year,majors,minors,bio,location,website,streak_count,created_at",
+        "id,username,name,first_name,last_name,email,avatar_url,year,majors,minors,bio,location,website,streak_count,created_at",
         filters={"id": f"eq.{user_id}"},
     )
     if not rows:
