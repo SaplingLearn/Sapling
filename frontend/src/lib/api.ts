@@ -929,7 +929,10 @@ export const uploadAvatar = (userId: string, file: File): Promise<{ avatar_url: 
   if (IS_LOCAL_MODE) return Promise.resolve({ avatar_url: URL.createObjectURL(file) });
   const fd = new FormData();
   fd.append('file', file);
-  return fetch(`${API_URL}/api/profile/${encodeURIComponent(userId)}/avatar?user_id=${encodeURIComponent(userId)}`, {
+  // No `?user_id=` query — the backend reads auth from the session
+  // cookie (sent via `credentials: 'include'`). Matches the
+  // uploadDocument multipart pattern, which works in production.
+  return fetch(`${API_URL}/api/profile/${encodeURIComponent(userId)}/avatar`, {
     method: 'POST', body: fd, credentials: 'include',
   }).then(async r => {
     if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
