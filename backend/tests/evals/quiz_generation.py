@@ -98,16 +98,15 @@ _DIFF_RANK = {"easy": 0, "medium": 1, "hard": 2}
 
 @dataclass
 class AdaptiveDifficultyEvaluator(Evaluator[str, Quiz]):
-    """Pin the prompt's adaptive-difficulty bound: the average produced
-    difficulty must be within ±1 step of the user-requested difficulty
-    (in the metadata's `requested_difficulty`). Cases without
-    `requested_difficulty` skip this check.
+    """Fraction of questions whose difficulty is within ±1 step of the
+    user-requested difficulty (in the metadata's `requested_difficulty`).
+    Cases without `requested_difficulty` skip this check.
 
     The agent is *allowed* to step down (struggling student) or step
-    up (consistent high accuracy) by one rank. This evaluator catches
-    the regression where it overshoots — e.g. requested medium and
-    produced all easy AND all hard. The point is the bound, not the
-    direction.
+    up (consistent high accuracy) by one rank per question. This
+    evaluator catches the regression where individual questions
+    overshoot — e.g. requested hard and produced an easy question
+    (a two-step jump). The bound is per-question, not averaged.
     """
 
     def evaluate(self, ctx: EvaluatorContext[str, Quiz]) -> float:
@@ -117,13 +116,12 @@ class AdaptiveDifficultyEvaluator(Evaluator[str, Quiz]):
         target_rank = _DIFF_RANK.get(requested)
         if target_rank is None:
             return 1.0
-        # Compute average rank across produced questions; the bound
-        # is "within 1 step of requested." This permits the prompt's
-        # one-step adaptive shift in either direction but rejects
-        # anything beyond that.
-        ranks = [_DIFF_RANK.get(q.difficulty, target_rank) for q in ctx.output.questions]
-        avg = sum(ranks) / len(ranks)
-        return 1.0 if abs(avg - target_rank) <= 1.0 else 0.0
+        ok = sum(
+            1
+            for q in ctx.output.questions
+            if abs(_DIFF_RANK[q.difficulty] - target_rank) <= 1
+        )
+        return ok / len(ctx.output.questions)
 
 
 @dataclass
@@ -294,6 +292,11 @@ CASES: list[Case[str, Quiz]] = [
     # produce all easy questions for a hard request would slip through.
     Case(
         name="adaptive_downshift_struggling_student",
+        # NOTE: this case bakes the recent-accuracy signal into the user
+        # message for eval determinism. In production, the agent reads it
+        # via a `read_recent_quiz_attempts` tool call (see agents/quiz.py).
+        # This pins the prompt's adaptive-difficulty rule, not the tool-
+        # call data path — live-mode evals catch tool wiring regressions.
         inputs=(
             "Course: CS 201. Generate 3 hard multiple-choice questions "
             "covering Recursion, Dynamic Programming, and Graph Traversal. "
@@ -321,6 +324,12 @@ CASES: list[Case[str, Quiz]] = [
     # Evaluator asserts at least one question targets it.
     Case(
         name="spaced_repetition_revives_stale_concept",
+        # NOTE: the staleness signal (`last_reviewed_at` ages, mastery
+        # scores) is inlined into the prompt here for deterministic
+        # replay. Production sources the same data from a
+        # `read_recent_quiz_attempts` tool call (see agents/quiz.py), so
+        # this case validates the spaced-repetition rule's application,
+        # not the tool-call wiring. Use live-mode evals for that path.
         inputs=(
             "Course: BIO 100. Generate 3 medium multiple-choice questions. "
             "The student has been working on Photosynthesis (mastery 0.4) "
