@@ -668,7 +668,6 @@ function SidebarKnowledgeGraph({
           edges={edges}
           width={width}
           height={280}
-          variant="organism"
           highlightId={highlightId}
           onNodeClick={onNodeClick}
         />
