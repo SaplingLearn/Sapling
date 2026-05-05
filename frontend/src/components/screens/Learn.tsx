@@ -33,7 +33,7 @@ import {
   type EnrolledCourse,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import type { GraphNode, GraphEdge } from "@/lib/data";
+import { paletteFor, type GraphNode, type GraphEdge } from "@/lib/data";
 
 function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
   const course = courses.find((c) => c.course_name === n.subject);
@@ -41,7 +41,10 @@ function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
     id: n.id,
     name: n.concept_name,
     subject: n.subject,
-    color: n.course_color || course?.color || "var(--c-sage)",
+    color:
+      n.course_color ||
+      course?.color ||
+      paletteFor(n.course_id || course?.course_id || n.subject),
     is_subject_root: n.is_subject_root,
     mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
     mastery_score: n.mastery_score,
