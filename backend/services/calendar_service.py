@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 import sys
@@ -108,7 +107,7 @@ def save_assignments_to_db(user_id: str, assignments: list) -> int:
     return insert_new_assignments(user_id, assignments)
 
 
-def extract_assignments_from_file(
+async def extract_assignments_from_file(
     file_bytes: bytes,
     filename: str,
     content_type: str,
@@ -119,11 +118,13 @@ def extract_assignments_from_file(
     """Extract text from file then parse assignments via the agent
     (legacy fallback per ADR-0001).
 
-    Mirrors the orchestrator-vs-legacy fallback pattern in
-    `routes/quiz.py::_quiz_via_agent` and `routes/learn.py::_chat_via_agent`:
-    Pydantic-AI guardrail exceptions and bare exceptions degrade to
-    the legacy `parse_syllabus` path so a single agent failure can't
-    take the syllabus-upload feature down.
+    Async because the syllabus-extraction agent is async; callers
+    must `await` this. Mirrors the orchestrator-vs-legacy fallback
+    pattern in `routes/quiz.py::_quiz_via_agent` and
+    `routes/learn.py::_chat_via_agent`: Pydantic-AI guardrail
+    exceptions and bare exceptions degrade to the legacy
+    `parse_syllabus` path so a single agent failure can't take the
+    syllabus-upload feature down.
     """
     text = extract_text_from_file(file_bytes, filename, content_type)
     if not text.strip():
@@ -134,10 +135,8 @@ def extract_assignments_from_file(
         }
 
     try:
-        # TODO(refactor-4-followup): the route caller is currently sync;
-        # if it becomes async, switch this to `await`.
-        result = asyncio.run(
-            _extract_via_agent(text, user_id=user_id, request_id=request_id)
+        result = await _extract_via_agent(
+            text, user_id=user_id, request_id=request_id
         )
     except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
         logger.warning(
@@ -146,21 +145,28 @@ def extract_assignments_from_file(
         )
         result = parse_syllabus(text)
         result.setdefault("raw_text", text)
+        result.setdefault("course_title", None)
+        result.setdefault("grading_categories", [])
     except Exception:
         logger.exception(
             "Unexpected syllabus-agent failure; falling back to legacy"
         )
         result = parse_syllabus(text)
         result.setdefault("raw_text", text)
+        result.setdefault("course_title", None)
+        result.setdefault("grading_categories", [])
 
     return result
 
 
-def process_and_save_syllabus(
+async def process_and_save_syllabus(
     file_bytes: bytes, filename: str, content_type: str, user_id: str
 ) -> dict:
-    """Full pipeline: OCR → Gemini → DB save in one call."""
-    result = extract_assignments_from_file(file_bytes, filename, content_type)
+    """Full pipeline: OCR → agent → DB save in one call."""
+    result = await extract_assignments_from_file(
+        file_bytes, filename, content_type,
+        user_id=user_id,
+    )
     assignments = result.get("assignments") or []
     saved_count = save_assignments_to_db(user_id, assignments) if assignments else 0
     return {

@@ -373,3 +373,53 @@ class TestImportExtractWireFormat:
 
         assert r.status_code == 200
         assert r.json()["warnings"] == warnings
+
+    def test_import_extract_real_async_chain_works(self):
+        """Regression for PR #79 review: the route is `async def` and the
+        service helper is now `async def` — calling them through the real
+        chain without mocking the helper proves the awaits are wired
+        correctly. Catches the old `asyncio.run` inside an event loop bug.
+
+        We only mock at the AGENT layer (syllabus_extraction_agent.run) so
+        the full chain — route -> service -> _extract_via_agent ->
+        syllabus_to_wire_dict — actually executes.
+        """
+        from datetime import date
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from agents.syllabus_extraction import SyllabusAssignments, SyllabusAssignment
+
+        fake_output = SyllabusAssignments(
+            course_title="MATH 101",
+            instructor=None,
+            assignments=[
+                SyllabusAssignment(
+                    title="HW 1", description=None, due_date=date(2026, 6, 1), weight_pct=10.0,
+                ),
+            ],
+            grading_categories=[],
+        )
+
+        with (
+            patch(
+                "services.calendar_service.syllabus_extraction_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_output)),
+            ),
+            patch(
+                "services.calendar_service.extract_text_from_file",
+                return_value="MATH 101 Syllabus. HW 1 due 2026-06-01.",
+            ),
+        ):
+            # POST to the actual route — no helper mock. If
+            # `await extract_assignments_from_file(...)` isn't wired
+            # correctly, this raises and the test fails.
+            r = client.post(
+                "/api/calendar/extract",
+                files={"file": ("syl.txt", b"placeholder", "text/plain")},
+                data={"user_id": "user_andres"},
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert any(a["title"] == "HW 1" for a in body.get("assignments") or [])
+        assert body.get("course_title") == "MATH 101"

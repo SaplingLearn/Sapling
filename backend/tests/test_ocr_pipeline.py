@@ -5,6 +5,7 @@ Run from backend/:
     python3 tests/test_ocr_pipeline.py
     pytest tests/test_ocr_pipeline.py -v
 """
+import asyncio
 import sys
 import os
 from datetime import date
@@ -92,12 +93,12 @@ def test_save_to_db(parsed_assignments):
 def test_full_pipeline():
     print("\n[3] Testing process_and_save_syllabus() full pipeline with a text/plain file...")
     fake_bytes = SAMPLE_SYLLABUS.encode("utf-8")
-    result = process_and_save_syllabus(
+    result = asyncio.run(process_and_save_syllabus(
         file_bytes=fake_bytes,
         filename="syllabus_test.txt",
         content_type="text/plain",
         user_id=TEST_USER,
-    )
+    ))
     print(f"    assignments returned : {len(result['assignments'])}")
     print(f"    saved_count          : {result['saved_count']}")
     print(f"    warnings             : {result.get('warnings', [])}")
@@ -160,9 +161,9 @@ class TestExtractAssignmentsViaAgent:
                 return_value=legacy_sentinel,
             ),
         ):
-            result = calendar_service.extract_assignments_from_file(
+            result = asyncio.run(calendar_service.extract_assignments_from_file(
                 b"raw", "syllabus.pdf", "application/pdf",
-            )
+            ))
 
         # Agent path was used (not legacy sentinel).
         assert agent_run.await_count == 1
@@ -203,9 +204,9 @@ class TestExtractAssignmentsViaAgent:
                 return_value=dict(legacy_result),
             ) as legacy_mock,
         ):
-            result = calendar_service.extract_assignments_from_file(
+            result = asyncio.run(calendar_service.extract_assignments_from_file(
                 b"raw", "syllabus.pdf", "application/pdf",
-            )
+            ))
 
         assert agent_run.await_count == 1
         assert legacy_mock.call_count == 1
@@ -236,9 +237,9 @@ class TestExtractAssignmentsViaAgent:
                 return_value=dict(legacy_result),
             ) as legacy_mock,
         ):
-            result = calendar_service.extract_assignments_from_file(
+            result = asyncio.run(calendar_service.extract_assignments_from_file(
                 b"raw", "syllabus.pdf", "application/pdf",
-            )
+            ))
 
         assert agent_run.await_count == 1
         assert legacy_mock.call_count == 1
@@ -265,9 +266,9 @@ class TestExtractAssignmentsViaAgent:
                 calendar_service, "parse_syllabus", legacy_mock,
             ),
         ):
-            result = calendar_service.extract_assignments_from_file(
+            result = asyncio.run(calendar_service.extract_assignments_from_file(
                 b"raw", "syllabus.pdf", "application/pdf",
-            )
+            ))
 
         assert result["assignments"] == []
         assert result["warnings"] == [
@@ -320,9 +321,9 @@ def test_agent_and_legacy_paths_share_required_keys():
             calendar_service.syllabus_extraction_agent, "run", agent_run,
         ),
     ):
-        agent_result = calendar_service.extract_assignments_from_file(
+        agent_result = asyncio.run(calendar_service.extract_assignments_from_file(
             b"raw", "syllabus.pdf", "application/pdf",
-        )
+        ))
 
     assert LEGACY_REQUIRED.issubset(set(agent_result.keys())), (
         f"Agent path missing required legacy keys: "
@@ -351,9 +352,9 @@ def test_agent_and_legacy_paths_share_required_keys():
             return_value=dict(legacy_dict),
         ),
     ):
-        legacy_result = calendar_service.extract_assignments_from_file(
+        legacy_result = asyncio.run(calendar_service.extract_assignments_from_file(
             b"raw", "syllabus.pdf", "application/pdf",
-        )
+        ))
 
     assert LEGACY_REQUIRED.issubset(set(legacy_result.keys())), (
         f"Legacy fallback path missing required legacy keys: "
