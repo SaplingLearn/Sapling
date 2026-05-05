@@ -1,4 +1,3 @@
-import hashlib
 import json
 import logging
 import os
@@ -19,6 +18,7 @@ from services.encryption import decrypt_if_present
 from services.gemini_service import MODEL_LITE, call_gemini_json
 from services.graph_service import get_graph, update_streak
 from services.quiz_context_service import get_quiz_context, save_quiz_context
+from services.fingerprint import fingerprint
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
@@ -84,13 +84,13 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
         # Don't log the raw text — student-content concept names and
         # quiz answers don't belong in stdout/Railway logs. The
         # fingerprint is stable enough to correlate with the same
-        # generation drift if it recurs (sha256 of "<canonical>|<options>");
-        # the full content is still in Logfire spans (where the scrubber
-        # from PR #67 controls egress).
+        # generation drift if it recurs; the full content is still in
+        # Logfire spans (where the scrubber from PR #67 controls egress).
+        # services.fingerprint.fingerprint joins parts with the ASCII
+        # unit-separator (\x1f), so option text containing pipes or
+        # other punctuation can't accidentally collide.
         canonical_only = q.correct_answer.strip()
-        fp = hashlib.sha256(
-            f"{canonical_only}|{'|'.join(q.options)}".encode("utf-8")
-        ).hexdigest()[:12]
+        fp = fingerprint(canonical_only, q.options)
         logger.warning(
             "quiz: dropping question id=%d — correct_answer not found in "
             "options (n_options=%d, canonical_len=%d, fp=%s)",

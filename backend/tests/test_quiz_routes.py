@@ -518,12 +518,10 @@ class TestQuizAgentFallback:
         ])
 
         get_graph_p, get_ctx_p, gemini_p = self._patch_legacy_dependencies()
+        agent_run_mock = AsyncMock(return_value=SimpleNamespace(output=drift_quiz))
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
-            patch(
-                "routes.quiz.quiz_agent.run",
-                new=AsyncMock(return_value=SimpleNamespace(output=drift_quiz)),
-            ),
+            patch("routes.quiz.quiz_agent.run", new=agent_run_mock),
             get_graph_p,
             get_ctx_p,
             gemini_p as gemini_mock,
@@ -537,8 +535,11 @@ class TestQuizAgentFallback:
             })
 
         assert r.status_code == 200
-        # Legacy path fired (every question dropped → RuntimeError →
-        # caught → _legacy_generate_quiz called).
+        # Pin BOTH halves of the cascade contract:
+        #   1. The agent path was actually tried (not skipped).
+        agent_run_mock.assert_called_once()
+        #   2. The legacy path then fired (every question dropped →
+        #      RuntimeError → bare-Exception catch → _legacy_generate_quiz).
         gemini_mock.assert_called_once()
         assert r.json()["questions"][0]["question"] == "Legacy fallback question?"
 
