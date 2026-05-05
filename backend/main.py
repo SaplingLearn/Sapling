@@ -27,6 +27,7 @@ from routes.admin import router as admin_router
 from routes.newsletter import router as newsletter_router
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services.request_context import RequestIDMiddleware, current_request_id
+from services.storage_service import ALLOWED_CONTENT_TYPES, ensure_bucket_exists
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -70,12 +71,7 @@ logfire.instrument_pydantic_ai()
 # that no migration ever made" bugs.
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    from services.storage_service import (
-        ALLOWED_CONTENT_TYPES,
-        ensure_bucket_exists,
-    )
-
-    ensure_bucket_exists(
+    await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
         file_size_limit=MAX_AVATAR_SIZE,

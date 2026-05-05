@@ -26,7 +26,7 @@ _headers = {
 }
 
 
-def ensure_bucket_exists(
+async def ensure_bucket_exists(
     bucket_id: str,
     *,
     public: bool,
@@ -34,8 +34,8 @@ def ensure_bucket_exists(
     allowed_mime_types: list[str],
 ) -> None:
     """Idempotently ensure a Supabase Storage bucket exists with the
-    given settings. Called on app startup so new environments
-    self-bootstrap.
+    given settings. Called from FastAPI's `lifespan` on app startup
+    so new environments self-bootstrap.
 
     The Supabase Storage API returns:
       • 200 — bucket created.
@@ -51,6 +51,9 @@ def ensure_bucket_exists(
 
     Service-role uploads bypass Storage RLS, so no policy needs to be
     attached after creation.
+
+    Async because it runs inside FastAPI's async lifespan; using
+    httpx.AsyncClient avoids blocking the event loop during startup.
     """
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
         logger.warning(
@@ -70,7 +73,8 @@ def ensure_bucket_exists(
         "allowed_mime_types": allowed_mime_types,
     }
     try:
-        resp = httpx.post(url, json=body, headers=_headers, timeout=10.0)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=body, headers=_headers)
     except Exception:
         logger.exception(
             "ensure_bucket_exists(%s): Supabase Storage API call raised — "

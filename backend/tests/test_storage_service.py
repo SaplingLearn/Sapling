@@ -8,8 +8,10 @@ Tests cover:
   - upload_cosmetic_asset constructs correct path
   - delete_asset calls correct endpoint
 """
+import asyncio
+
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
 
 
@@ -137,6 +139,34 @@ class TestUploadCosmeticAsset:
         assert "apikey" not in detail
 
 
+def _patch_async_client(*, status_code=200, body_text="", raises=None):
+    """Patch `httpx.AsyncClient` to return a stubbed response (or
+    raise) without doing a real network call. Returns the patcher so
+    tests can inspect the recorded `post(...)` call args.
+
+    `httpx.AsyncClient` is used inside an `async with` block, so the
+    mock has to behave as an async context manager. The `post` method
+    is itself awaitable. AsyncMock handles both shapes when set on
+    the right attributes.
+    """
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.text = body_text
+
+    client_instance = MagicMock()
+    client_instance.__aenter__ = AsyncMock(return_value=client_instance)
+    client_instance.__aexit__ = AsyncMock(return_value=None)
+    if raises is not None:
+        client_instance.post = AsyncMock(side_effect=raises)
+    else:
+        client_instance.post = AsyncMock(return_value=resp)
+
+    # AsyncClient(timeout=...) -> client_instance. The constructor is
+    # called synchronously, so a MagicMock side effect is correct.
+    cls_mock = MagicMock(return_value=client_instance)
+    return patch("services.storage_service.httpx.AsyncClient", cls_mock), client_instance
+
+
 class TestEnsureBucketExists:
     """Pin the startup bootstrap behavior. Backend lifespan calls this
     on app boot so new Supabase environments self-create the avatars
@@ -145,21 +175,16 @@ class TestEnsureBucketExists:
 
     KW = dict(public=True, file_size_limit=5_242_880, allowed_mime_types=["image/png"])
 
-    def _resp(self, status_code, text=""):
-        m = MagicMock()
-        m.status_code = status_code
-        m.text = text
-        return m
-
     def test_creates_bucket_when_missing(self):
-        post = self._resp(200)
-        with patch("services.storage_service.httpx.post", return_value=post) as p:
+        patcher, client = _patch_async_client(status_code=200)
+        with patcher:
             from services.storage_service import ensure_bucket_exists
-            ensure_bucket_exists("avatars", **self.KW)
+            asyncio.run(ensure_bucket_exists("avatars", **self.KW))
+
         # Verify the API contract: POST to .../storage/v1/bucket with
         # the expected body shape.
-        assert p.called
-        call_args = p.call_args
+        assert client.post.called
+        call_args = client.post.call_args
         assert call_args.args[0].endswith("/storage/v1/bucket")
         body = call_args.kwargs["json"]
         assert body["id"] == "avatars"
@@ -170,39 +195,72 @@ class TestEnsureBucketExists:
 
     def test_idempotent_on_409_already_exists(self):
         """Re-running on an already-created bucket must not raise."""
-        post = self._resp(409, '{"statusCode":"409","error":"Duplicate"}')
-        with patch("services.storage_service.httpx.post", return_value=post):
+        patcher, _ = _patch_async_client(
+            status_code=409, body_text='{"statusCode":"409","error":"Duplicate"}',
+        )
+        with patcher:
             from services.storage_service import ensure_bucket_exists
-            # Should not raise.
-            ensure_bucket_exists("avatars", **self.KW)
+            asyncio.run(ensure_bucket_exists("avatars", **self.KW))
 
     def test_logs_warning_on_unexpected_status(self):
         """Other 4xx/5xx are non-fatal — startup should not block on
         Supabase availability."""
-        post = self._resp(500, "Internal Server Error")
-        with patch("services.storage_service.httpx.post", return_value=post):
+        patcher, _ = _patch_async_client(status_code=500, body_text="Internal Server Error")
+        with patcher:
             from services.storage_service import ensure_bucket_exists
-            ensure_bucket_exists("avatars", **self.KW)
+            asyncio.run(ensure_bucket_exists("avatars", **self.KW))
 
     def test_swallows_network_exception(self):
         """A transient network error (DNS, connection refused) must
         not crash startup."""
-        with patch(
-            "services.storage_service.httpx.post",
-            side_effect=Exception("connection refused"),
-        ):
+        patcher, _ = _patch_async_client(raises=Exception("connection refused"))
+        with patcher:
             from services.storage_service import ensure_bucket_exists
-            ensure_bucket_exists("avatars", **self.KW)
+            asyncio.run(ensure_bucket_exists("avatars", **self.KW))
 
     def test_skips_when_credentials_missing(self):
         """If SUPABASE_URL or service key is unset, log + skip without
         crashing or making a network call. Lets the backend still
         start in tests / partial-config environments."""
         with patch("services.storage_service.SUPABASE_URL", ""), \
-             patch("services.storage_service.httpx.post") as p:
+             patch("services.storage_service.httpx.AsyncClient") as ac:
             from services.storage_service import ensure_bucket_exists
-            ensure_bucket_exists("avatars", **self.KW)
-        p.assert_not_called()
+            asyncio.run(ensure_bucket_exists("avatars", **self.KW))
+        ac.assert_not_called()
+
+
+class TestLifespanWiresEnsureBucketExists:
+    """Pin that the FastAPI lifespan actually calls
+    ensure_bucket_exists on app boot. Without this, a future refactor
+    that drops the call from `_lifespan` wouldn't fail any test —
+    we'd silently regress to the original "bucket-doesn't-exist"
+    bug from issue #75."""
+
+    def test_lifespan_invokes_ensure_bucket_exists_with_avatars_settings(self):
+        from unittest.mock import AsyncMock
+
+        # Patch in main.py's namespace because the import is hoisted
+        # to module-level there. AsyncMock so `await` inside the
+        # lifespan resolves cleanly.
+        with patch("main.ensure_bucket_exists", new=AsyncMock()) as m:
+            from fastapi.testclient import TestClient
+            from main import app
+            with TestClient(app):
+                # Entering the context triggers the lifespan startup.
+                pass
+
+        m.assert_called_once()
+        # Verify the lifespan passes the avatars-specific settings the
+        # bucket actually needs: public for unauthenticated <img src>
+        # reads, MAX_AVATAR_SIZE for the size cap, and the same MIME
+        # types the route's _validate_upload allows.
+        from config import MAX_AVATAR_SIZE, STORAGE_BUCKET
+        from services.storage_service import ALLOWED_CONTENT_TYPES
+        args = m.call_args
+        assert args.args[0] == STORAGE_BUCKET
+        assert args.kwargs["public"] is True
+        assert args.kwargs["file_size_limit"] == MAX_AVATAR_SIZE
+        assert set(args.kwargs["allowed_mime_types"]) == ALLOWED_CONTENT_TYPES
 
 
 class TestDeleteAsset:
