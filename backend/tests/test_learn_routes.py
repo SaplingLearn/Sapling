@@ -329,21 +329,17 @@ class TestRenameSession:
             PENDING_SESSIONS.pop("pending-1", None)
 
     def test_empty_topic_returns_400(self):
-        with patch("routes.learn.table") as t:
-            t.return_value.select.return_value = [{"user_id": "u1"}]
-            r = client.patch(
-                "/api/learn/sessions/s1",
-                json={"user_id": "u1", "topic": "   "},
-            )
+        r = client.patch(
+            "/api/learn/sessions/s1",
+            json={"user_id": "u1", "topic": "   "},
+        )
         assert r.status_code == 400
 
     def test_topic_too_long_returns_400(self):
-        with patch("routes.learn.table") as t:
-            t.return_value.select.return_value = [{"user_id": "u1"}]
-            r = client.patch(
-                "/api/learn/sessions/s1",
-                json={"user_id": "u1", "topic": "x" * 121},
-            )
+        r = client.patch(
+            "/api/learn/sessions/s1",
+            json={"user_id": "u1", "topic": "x" * 121},
+        )
         assert r.status_code == 400
 
     def test_wrong_user_returns_403(self):

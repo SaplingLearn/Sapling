@@ -17,7 +17,10 @@ export function paletteFor(seed: string | null | undefined): string {
   if (!seed) return COURSE_PALETTE[0];
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
-  return COURSE_PALETTE[Math.abs(h) % COURSE_PALETTE.length];
+  // `Math.abs` overflows on -2^31; do a positive-modulo dance instead so
+  // we always land in-range.
+  const idx = ((h % COURSE_PALETTE.length) + COURSE_PALETTE.length) % COURSE_PALETTE.length;
+  return COURSE_PALETTE[idx];
 }
 
 export type GraphNode = {

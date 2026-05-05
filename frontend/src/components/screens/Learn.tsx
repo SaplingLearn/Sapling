@@ -223,7 +223,11 @@ function LearnInner() {
     try {
       await renameSession(s.id, userId, trimmed);
     } catch (err) {
-      setRecentSessions(prev => prev.map(p => (p.id === s.id ? { ...p, topic: previousTopic } : p)));
+      // Only revert if our optimistic value is still on screen — a newer rename
+      // may have superseded it, in which case we don't want to clobber that.
+      setRecentSessions(prev => prev.map(p =>
+        p.id === s.id && p.topic === trimmed ? { ...p, topic: previousTopic } : p
+      ));
       toast.error(err instanceof Error ? err.message : "Rename failed.");
     }
   }, [userId, toast]);
@@ -751,6 +755,9 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
   const del = useConfirm(() => onDelete(s), 3000);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(s.topic);
+  // Esc unmounts the input, which fires blur → commitEdit. The blur closure
+  // still holds the typed `draft`, so without this guard Esc would commit.
+  const cancellingRef = useRef(false);
 
   const startEdit = () => {
     setDraft(s.topic);
@@ -758,12 +765,18 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
   };
 
   const commitEdit = () => {
+    if (cancellingRef.current) {
+      cancellingRef.current = false;
+      setEditing(false);
+      return;
+    }
     const trimmed = draft.trim();
     if (trimmed && trimmed !== s.topic) onRename(s, trimmed);
     setEditing(false);
   };
 
   const cancelEdit = () => {
+    cancellingRef.current = true;
     setDraft(s.topic);
     setEditing(false);
   };
@@ -815,7 +828,6 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
       ) : (
         <button
           onClick={() => onResume(s)}
-          disabled={editing}
           style={{
             flex: 1,
             textAlign: "left",
