@@ -36,36 +36,21 @@ const ForceGraph3D = dynamic(
   { ssr: false, loading: () => null },
 );
 
-// ── Public types kept identical to the old SVG component so callers
-//    (Tree.tsx, Learn.tsx, Dashboard.tsx) don't need changes. ──────
-
-export type GraphVariant = "orb" | "constellation" | "organism";
-
-export interface GraphComparisonEntry {
-  /** Partner's concept name — must match the primary graph's node name for the ring to render. */
-  name: string;
-  /** Partner mastery 0–1. Drives the ring radius/opacity. */
-  mastery_score: number;
-  /** Partner display name (for the tooltip/legend). */
-  partner_name?: string;
-}
+// ── Public prop surface ───────────────────────────────────────────
+// The old SVG version exposed `variant`, `comparison`,
+// `comparisonColor`, `comparisonLabel`, `pauseWhenOffscreen`. The 3D
+// backend doesn't yet implement those treatments, so they're removed
+// from the public API rather than silently ignored — callers that
+// pass them will hit a TypeScript error and be steered to a follow-up
+// issue rather than wondering why their UI is gone.
 
 type Props = {
   nodes: GraphNode[];
   edges: GraphEdge[];
   width?: number;
   height?: number;
-  variant?: GraphVariant;
   highlightId?: string;
   onNodeClick?: (n: GraphNode) => void;
-  /** Pause simulation when graph is off-screen (default: true). */
-  pauseWhenOffscreen?: boolean;
-  /** Partner concept mastery, matched to this graph's nodes by name. Renders an outline ring per match. */
-  comparison?: GraphComparisonEntry[] | null;
-  /** Color for the comparison ring (defaults to a muted accent). */
-  comparisonColor?: string;
-  /** Label for the legend/tooltip — usually the partner's display name. */
-  comparisonLabel?: string;
 };
 
 // ── Color helpers (copied verbatim from the old SVG version) ──────
@@ -154,25 +139,22 @@ export function KnowledgeGraph({
   height = 480,
   highlightId,
   onNodeClick,
-  // Kept for prop compatibility; not consumed by the 3D backend yet.
-  // TODO(graph-3d): port the variant-driven layout tweaks if/when the
-  // visual treatment matters again. Same for comparison rings.
-  variant: _variant,
-  pauseWhenOffscreen: _pauseWhenOffscreen,
-  comparison: _comparison,
-  comparisonColor: _comparisonColor,
-  comparisonLabel: _comparisonLabel,
 }: Props) {
   // Honour the user's reduced-motion preference. When set, we cut
   // simulation cooldown to 0 ticks so the lib stops physics
   // immediately — the graph appears in its initial position with no
   // animation. Otherwise we keep the default 120-tick settle.
-  const [reducedMotion, setReducedMotion] = React.useState(false);
+  //
+  // Lazy initializer reads matchMedia synchronously on first paint so
+  // reduced-motion users don't see a one-frame flash of physics
+  // before the effect flips the value.
+  const [reducedMotion, setReducedMotion] = React.useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  });
   React.useEffect(() => {
-    // SSR-safe: matchMedia only runs in the browser.
     if (typeof window === "undefined") return;
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    setReducedMotion(mq.matches);
     const onChange = (e: MediaQueryListEvent) => setReducedMotion(e.matches);
     // `addEventListener` on MediaQueryList isn't supported in Safari <14.
     // Fall back to addListener — both keep working in modern browsers.
@@ -221,6 +203,14 @@ export function KnowledgeGraph({
     return 4 + (typeof n.mastery_score === "number" ? n.mastery_score : 0) * 6;
   }, []);
 
+  // O(1) id lookup for the click handler — beats `nodes.find` per
+  // click on graphs with hundreds of nodes.
+  const nodesById = React.useMemo(() => {
+    const m = new Map<string, GraphNode>();
+    for (const n of nodes) m.set(n.id, n);
+    return m;
+  }, [nodes]);
+
   const handleNodeClick = React.useCallback(
     (raw: object) => {
       if (!onNodeClick) return;
@@ -231,10 +221,10 @@ export function KnowledgeGraph({
       // sim run and the click (very rare, but possible with prop
       // updates), drop the click rather than synthesise a partial
       // node from the lib's mutated copy.
-      const original = nodes.find((node) => node.id === n.id);
+      const original = nodesById.get(n.id);
       if (original) onNodeClick(original);
     },
-    [onNodeClick, nodes],
+    [onNodeClick, nodesById],
   );
 
   return (
