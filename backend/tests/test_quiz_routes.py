@@ -623,3 +623,111 @@ class TestQuizWireFormatContract:
         # The matched option preserves its original (whitespace-padded)
         # text — the trim is only used for comparison.
         assert correct[0]["text"].strip() == "4"
+
+
+# ── Per-request model_pref (Fast/Smart toggle, mirrors chat tutor) ──────────
+
+class TestQuizModelPref:
+    """Pin the per-request fast/smart toggle introduced after PR #73's
+    chat-tutor model toggle landed on main. Both routes now expose the
+    same body field; this class locks the dispatch contract end-to-end.
+    """
+
+    def _fake_quiz(self):
+        return Quiz(questions=[
+            QuizQuestion(
+                question="What is 2 + 2?",
+                type="multiple_choice",
+                difficulty="easy",
+                options=["3", "4", "5", "6"],
+                correct_answer="4",
+                explanation="Basic arithmetic.",
+                concept="Arithmetic",
+            ),
+        ])
+
+    def _post(self, body_extra: dict):
+        return client.post("/api/quiz/generate", json={
+            "user_id": "user_andres",
+            "concept_node_id": "node1",
+            "num_questions": 1,
+            "difficulty": "easy",
+            "use_shared_context": False,
+            **body_extra,
+        })
+
+    def test_smart_pref_overrides_agent_model(self):
+        """model_pref='smart' → agent.run is called with model=GoogleModel('gemini-2.5-pro')."""
+        run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run_mock),
+        ):
+            r = self._post({"model_pref": "smart"})
+        assert r.status_code == 200
+        assert run_mock.call_count == 1
+        kwargs = run_mock.call_args.kwargs
+        assert "model" in kwargs, "smart pref must pass an explicit model override"
+        assert kwargs["model"].model_name == "gemini-2.5-pro"
+
+    def test_fast_pref_overrides_agent_model(self):
+        """model_pref='fast' → agent.run is called with model=GoogleModel('gemini-2.5-flash')."""
+        run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run_mock),
+        ):
+            r = self._post({"model_pref": "fast"})
+        assert r.status_code == 200
+        kwargs = run_mock.call_args.kwargs
+        assert "model" in kwargs
+        assert kwargs["model"].model_name == "gemini-2.5-flash"
+
+    def test_no_pref_falls_through_to_agent_default(self):
+        """No model_pref → agent.run gets NO model kwarg, falls back to model_for('quiz')."""
+        run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run_mock),
+        ):
+            r = self._post({})  # no model_pref
+        assert r.status_code == 200
+        kwargs = run_mock.call_args.kwargs
+        assert "model" not in kwargs, (
+            "Without model_pref, the route must NOT inject a model override — "
+            "the agent's task-default (model_for('quiz')) should win."
+        )
+
+    def test_unknown_pref_falls_through_to_agent_default(self):
+        """An unrecognized preference (e.g. legacy clients sending 'auto')
+        falls through to the agent default rather than raising. Pydantic
+        validation already restricts the body type to fast|smart|None,
+        but we double-belt at the resolver layer."""
+        from routes.quiz import _resolve_model_pref
+        assert _resolve_model_pref(None) is None
+        assert _resolve_model_pref("") is None
+        assert _resolve_model_pref("auto") is None  # not in the map
+
+    def test_legacy_fallback_uses_smart_when_pref_smart(self):
+        """If the agent path trips and we fall through to legacy,
+        the same preference must propagate — call_gemini_json gets
+        MODEL_SMART instead of MODEL_LITE."""
+        from services.gemini_service import MODEL_SMART
+        run_mock = AsyncMock(side_effect=RuntimeError("agent boom"))
+        gemini_mock = MagicMock(return_value={"questions": [{
+            "id": 1, "question": "Q?",
+            "options": [{"label": "A", "text": "x", "correct": True}],
+            "explanation": ".", "concept_tested": "X", "difficulty": "easy",
+        }]})
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run_mock),
+            patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": []}),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.call_gemini_json", new=gemini_mock),
+        ):
+            r = self._post({"model_pref": "smart"})
+        assert r.status_code == 200
+        # call_gemini_json was called with model=MODEL_SMART, not MODEL_LITE.
+        gemini_mock.assert_called_once()
+        assert gemini_mock.call_args.kwargs.get("model") == MODEL_SMART

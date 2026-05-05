@@ -15,7 +15,7 @@ from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from services.auth_guard import require_self
 from services.encryption import decrypt_if_present
-from services.gemini_service import MODEL_LITE, call_gemini_json
+from services.gemini_service import MODEL_LITE, MODEL_SMART, call_gemini_json
 from services.graph_service import get_graph, update_streak
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
@@ -107,6 +107,33 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
     }
 
 
+# Per-request model override map. Mirrors the chat tutor's
+# fast/smart toggle so quiz body's `model_pref` resolves to the same
+# model strings as Learn. None falls through to the agent's
+# task-default model from agents/_providers.py::model_for("quiz").
+_PREF_MODEL_NAMES: dict[str, str] = {
+    "fast": "gemini-2.5-flash",
+    "smart": "gemini-2.5-pro",
+}
+
+
+def _resolve_model_pref(model_pref: str | None):
+    """Build a GoogleModel override for the per-request fast/smart
+    preference, or return None to use the agent's default.
+
+    Lazy import keeps the agents module out of the route's import path
+    until the override is actually requested — keeps test fixtures that
+    patch routes.quiz.quiz_agent.run from re-instantiating providers.
+    """
+    if not model_pref:
+        return None
+    name = _PREF_MODEL_NAMES.get(model_pref)
+    if not name:
+        return None
+    from agents._providers import google_model
+    return google_model(name)
+
+
 async def _quiz_via_agent(
     *,
     user_id: str,
@@ -117,12 +144,17 @@ async def _quiz_via_agent(
     difficulty: str,
     use_shared_context: bool,
     request_id: str,
+    model_pref: str | None = None,
 ) -> list[dict]:
     """Run quiz_agent and return questions in the legacy wire shape.
 
     The agent's tools (read_concepts_for_user, read_misconceptions_for_course)
     pull weak-area + class misconception data themselves, replacing the
     manual prompt-string augmentation that used to live in generate_quiz.
+
+    `model_pref` ("fast" or "smart") overrides the agent's default model
+    on this single run. Anything else (None, unknown string) falls
+    through to model_for("quiz") at agent-construction time.
     """
     deps = SaplingDeps(
         user_id=user_id,
@@ -142,7 +174,11 @@ async def _quiz_via_agent(
             "as distractors and probes."
         )
 
-    result = await quiz_agent.run(user_message, deps=deps)
+    model_override = _resolve_model_pref(model_pref)
+    run_kwargs: dict = {"deps": deps}
+    if model_override is not None:
+        run_kwargs["model"] = model_override
+    result = await quiz_agent.run(user_message, **run_kwargs)
     quiz: Quiz = result.output
     # Filter out questions where the agent's correct_answer didn't match
     # any option verbatim — _agent_question_to_wire returns None for those.
@@ -229,8 +265,12 @@ async def _legacy_generate_quiz(body: GenerateQuizBody, request: Request) -> lis
                     )
                 prompt += "\n\n" + "\n\n".join(addendum_parts)
 
+    # Honor the same fast/smart toggle the agent path uses. "smart"
+    # routes to gemini-2.5-pro; anything else (including "fast" and
+    # None) stays on the existing flash-lite default.
+    legacy_model = MODEL_SMART if body.model_pref == "smart" else MODEL_LITE
     try:
-        result = call_gemini_json(prompt, model=MODEL_LITE)
+        result = call_gemini_json(prompt, model=legacy_model)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
@@ -267,6 +307,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             difficulty=body.difficulty,
             use_shared_context=body.use_shared_context,
             request_id=request_id,
+            model_pref=body.model_pref,
         )
     except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
         logger.warning(

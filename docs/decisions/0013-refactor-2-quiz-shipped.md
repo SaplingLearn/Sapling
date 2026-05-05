@@ -156,6 +156,37 @@ Three post-review fixes landed before merge:
    short-answer case will fail to import until short-answer support
    actually exists.
 
+## Addendum (2026-05-04, post-merge with main): per-request fast/smart toggle
+
+After merging main into the branch, a fourth fix landed to close the
+asymmetry between the new agentic quiz route and the chat tutor:
+
+- **Main shipped `model_pref: Literal["fast", "smart"]`** on the chat
+  body (PR #73), letting users pay for `gemini-2.5-pro` per request.
+- **The quiz route originally had only `SAPLING_MODEL_QUIZ`**, an
+  env-var-only override.
+
+Resolved by adding the same `model_pref` field to `GenerateQuizBody`
+and threading it through both paths:
+
+- Agent path: `_quiz_via_agent` builds an optional model override via
+  `_resolve_model_pref(...)` and passes `model=` per call to
+  `quiz_agent.run`. None falls through to the agent's
+  `model_for("quiz")` default.
+- Legacy fallback: `_legacy_generate_quiz` swaps `MODEL_LITE` for
+  `MODEL_SMART` when `body.model_pref == "smart"`. The fast/None
+  cases stay on `MODEL_LITE`.
+
+Pinned by `TestQuizModelPref` (5 tests): smart → flash-pro override,
+fast → flash-flash override, no-pref falls through, unknown pref
+falls through, and legacy fallback honors smart.
+
+Decision rationale: keep the env var (`SAPLING_MODEL_QUIZ`) for ops
+defaults, AND accept `model_pref` for per-request overrides. They
+compose — the env var sets the agent's startup default; the body
+field overrides per call. Same shape as the chat tutor on main, so
+the two AI-driven routes are now symmetric.
+
 ## Pre-existing test failures (not caused by this refactor)
 
 - `tests/test_documents_routes.py::test_rejects_file_over_15mb` — asserts
