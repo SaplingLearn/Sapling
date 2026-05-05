@@ -15,7 +15,7 @@ from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from services.auth_guard import require_self
 from services.encryption import decrypt_if_present
-from services.gemini_service import MODEL_LITE, MODEL_SMART, call_gemini_json
+from services.gemini_service import MODEL_DEFAULT, MODEL_LITE, MODEL_SMART, call_gemini_json
 from services.graph_service import get_graph, update_streak
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
@@ -121,9 +121,13 @@ def _resolve_model_pref(model_pref: str | None):
     """Build a GoogleModel override for the per-request fast/smart
     preference, or return None to use the agent's default.
 
-    Lazy import keeps the agents module out of the route's import path
-    until the override is actually requested — keeps test fixtures that
-    patch routes.quiz.quiz_agent.run from re-instantiating providers.
+    `google_model` is imported lazily so that constructing a
+    GoogleProvider (which reads GEMINI_API_KEY at call time) only
+    happens when an override is actually requested — not at module
+    import. agents.quiz is already in this route's import graph, so
+    this isn't about import-path isolation; it's about deferring the
+    one runtime side-effect (the provider build) to the request that
+    needs it.
     """
     if not model_pref:
         return None
@@ -265,10 +269,18 @@ async def _legacy_generate_quiz(body: GenerateQuizBody, request: Request) -> lis
                     )
                 prompt += "\n\n" + "\n\n".join(addendum_parts)
 
-    # Honor the same fast/smart toggle the agent path uses. "smart"
-    # routes to gemini-2.5-pro; anything else (including "fast" and
-    # None) stays on the existing flash-lite default.
-    legacy_model = MODEL_SMART if body.model_pref == "smart" else MODEL_LITE
+    # Honor the same fast/smart toggle the agent path uses. The mapping
+    # mirrors _PREF_MODEL_NAMES exactly, so a user choosing "fast" gets
+    # the same upgraded model whether the agent succeeded or fell back
+    # here. Without this, "fast" was silently a no-op on the legacy
+    # path (still MODEL_LITE) — the kind of inconsistency that surfaces
+    # six months later as "why does Fast sometimes feel slower?"
+    if body.model_pref == "smart":
+        legacy_model = MODEL_SMART  # gemini-2.5-pro
+    elif body.model_pref == "fast":
+        legacy_model = MODEL_DEFAULT  # gemini-2.5-flash, matches _PREF_MODEL_NAMES
+    else:
+        legacy_model = MODEL_LITE  # gemini-2.5-flash-lite, agent default per ADR 0008
     try:
         result = call_gemini_json(prompt, model=legacy_model)
     except Exception as e:

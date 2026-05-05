@@ -731,3 +731,55 @@ class TestQuizModelPref:
         # call_gemini_json was called with model=MODEL_SMART, not MODEL_LITE.
         gemini_mock.assert_called_once()
         assert gemini_mock.call_args.kwargs.get("model") == MODEL_SMART
+
+    def test_legacy_fallback_uses_default_when_pref_fast(self):
+        """Symmetry contract: legacy "fast" must upgrade to MODEL_DEFAULT
+        (gemini-2.5-flash) just like the agent path does. Without this,
+        a Fast request that trips the agent silently downgrades to
+        MODEL_LITE — the same kind of inconsistency users would feel
+        as "Fast sometimes gives worse quizzes than Default."
+        """
+        from services.gemini_service import MODEL_DEFAULT, MODEL_LITE
+        run_mock = AsyncMock(side_effect=RuntimeError("agent boom"))
+        gemini_mock = MagicMock(return_value={"questions": [{
+            "id": 1, "question": "Q?",
+            "options": [{"label": "A", "text": "x", "correct": True}],
+            "explanation": ".", "concept_tested": "X", "difficulty": "easy",
+        }]})
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run_mock),
+            patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": []}),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.call_gemini_json", new=gemini_mock),
+        ):
+            r = self._post({"model_pref": "fast"})
+        assert r.status_code == 200
+        gemini_mock.assert_called_once()
+        chosen = gemini_mock.call_args.kwargs.get("model")
+        assert chosen == MODEL_DEFAULT, (
+            f"Legacy fast→{chosen!r} expected MODEL_DEFAULT (gemini-2.5-flash); "
+            f"do NOT downgrade to MODEL_LITE (={MODEL_LITE!r})."
+        )
+
+    def test_legacy_fallback_uses_lite_when_no_pref(self):
+        """Default path (no model_pref) keeps using MODEL_LITE — the
+        cheap baseline that's been in place since the route shipped."""
+        from services.gemini_service import MODEL_LITE
+        run_mock = AsyncMock(side_effect=RuntimeError("agent boom"))
+        gemini_mock = MagicMock(return_value={"questions": [{
+            "id": 1, "question": "Q?",
+            "options": [{"label": "A", "text": "x", "correct": True}],
+            "explanation": ".", "concept_tested": "X", "difficulty": "easy",
+        }]})
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run_mock),
+            patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": []}),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.call_gemini_json", new=gemini_mock),
+        ):
+            r = self._post({})  # no model_pref
+        assert r.status_code == 200
+        gemini_mock.assert_called_once()
+        assert gemini_mock.call_args.kwargs.get("model") == MODEL_LITE

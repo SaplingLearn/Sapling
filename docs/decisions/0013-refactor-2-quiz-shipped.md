@@ -182,10 +182,21 @@ fast → flash-flash override, no-pref falls through, unknown pref
 falls through, and legacy fallback honors smart.
 
 Decision rationale: keep the env var (`SAPLING_MODEL_QUIZ`) for ops
-defaults, AND accept `model_pref` for per-request overrides. They
-compose — the env var sets the agent's startup default; the body
-field overrides per call. Same shape as the chat tutor on main, so
-the two AI-driven routes are now symmetric.
+defaults AND accept `model_pref` for per-request overrides. They are
+two independent layers, not multiplicative — the env var sets the
+agent's startup baseline (`model_for("quiz")` reads it at process
+start); the body field, when present, fully replaces that default
+for the current call by passing `model=...` to `quiz_agent.run`.
+Same shape as the chat tutor on main, so the two AI-driven routes
+are now symmetric.
+
+`fast` and `smart` resolve identically across the agent path AND the
+legacy fallback (commit ddd109b initially missed this; it was fixed
+in the same iteration so a `fast` request that trips the agent
+guardrails still gets `gemini-2.5-flash`, not silently downgraded to
+`gemini-2.5-flash-lite`). The route's `_PREF_MODEL_NAMES` table is
+the single source of truth; the legacy `else`/`elif` chain mirrors
+it exactly.
 
 ## Pre-existing test failures (not caused by this refactor)
 
