@@ -331,15 +331,13 @@ async def read_session_history_tool(
 ) -> list[SessionMessage]:
     """Pydantic AI tool wrapper.
 
-    `session_id` is read off `ctx.deps` (we pull it via getattr because
-    older `SaplingDeps` instances built before refactor #3 may not carry
-    a session_id; in that case we return [] rather than blow up). The
-    LLM supplies only `last_n`.
+    `session_id` is read off `ctx.deps` rather than accepted from the
+    LLM — letting the model supply it would let it read other students'
+    chat history. The LLM supplies only `last_n`.
     """
-    session_id = getattr(ctx.deps, "session_id", None) or ""
-    if not session_id:
+    if not ctx.deps.session_id:
         return []
-    return await read_session_history(session_id, last_n)
+    return await read_session_history(ctx.deps.session_id, last_n)
 
 
 # read_user_progress

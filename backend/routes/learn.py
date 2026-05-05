@@ -43,16 +43,18 @@ MODE_DISPLAY_NAMES = {
 }
 
 # User-facing speed/quality knob for the tutor chat.
-# "fast" = flash (default, faster), "smart" = pro (opt-in, slower but stronger reasoning).
-# Anything unrecognized falls back to fast so the default is the snappy one.
+# "fast" = flash (opt-in, faster), "smart" = pro (default, stronger reasoning).
+# Anything unrecognized falls back to Pro (matches the agent default at
+# `agents/_providers.py::_DEFAULTS["chat_tutor"]`) so the legacy fallback
+# stays symmetric with the agent path when `body.model_pref` is None.
 _MODEL_PREF_TO_MODEL = {
     "fast": MODEL_DEFAULT,
     "smart": MODEL_SMART,
 }
 
 
-def _resolve_tutor_model(model_pref: str | None) -> str:
-    return _MODEL_PREF_TO_MODEL.get(model_pref or "", MODEL_DEFAULT)
+def _resolve_legacy_model(model_pref: str | None) -> str:
+    return _MODEL_PREF_TO_MODEL.get(model_pref or "", MODEL_SMART)
 
 
 # Per-request agent-model override map. Mirrors `routes.quiz._PREF_MODEL_NAMES`
@@ -388,7 +390,7 @@ def start_session(body: StartSessionBody, request: Request):
 
     try:
         raw = call_gemini_multiturn(
-            system_prompt, [], user_message, model=_resolve_tutor_model(body.model_pref)
+            system_prompt, [], user_message, model=_resolve_legacy_model(body.model_pref)
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
@@ -442,17 +444,14 @@ async def _chat_via_agent(
     """
     agent = agent_for_mode(mode)
 
-    # SaplingDeps doesn't carry a `session_id` field; chat_context.py's
-    # read_session_history_tool reads it via `getattr(..., None)` and
-    # returns [] if absent. We attach session_id as an extra attribute
-    # so the tool can scope history reads to *this* session.
+    # `session_id` scopes read_session_history_tool to *this* session.
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id or None,
         supabase=None,
         request_id=request_id,
+        session_id=session_id,
     )
-    deps.session_id = session_id  # type: ignore[attr-defined]
 
     if not use_shared_context:
         user_message = (
@@ -506,7 +505,7 @@ async def _legacy_chat(body: ChatBody, request: Request) -> dict:
 
     try:
         raw = call_gemini_multiturn(
-            system_prompt, history, body.message, model=_resolve_tutor_model(body.model_pref)
+            system_prompt, history, body.message, model=_resolve_legacy_model(body.model_pref)
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
@@ -786,7 +785,7 @@ def action(body: ActionBody, request: Request):
 
     try:
         raw = call_gemini_multiturn(
-            system_prompt, history, action_message, model=_resolve_tutor_model(body.model_pref)
+            system_prompt, history, action_message, model=_resolve_legacy_model(body.model_pref)
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")

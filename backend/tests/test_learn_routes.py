@@ -281,39 +281,58 @@ class TestModeSwitch:
         assert len(insert_calls) >= 1
 
 
-# ── _resolve_tutor_model ──────────────────────────────────────────────────────
+# ── _resolve_legacy_model ─────────────────────────────────────────────────────
 
-class TestResolveTutorModel:
-    def test_none_returns_default(self):
-        from routes.learn import _resolve_tutor_model
-        from services.gemini_service import MODEL_DEFAULT
-        assert _resolve_tutor_model(None) == MODEL_DEFAULT
+class TestResolveLegacyModel:
+    def test_none_returns_smart(self):
+        # PR #78 review: symmetry with agent default. The agent path defaults
+        # to gemini-2.5-pro (MODEL_SMART) per agents/_providers.py:_DEFAULTS,
+        # so the legacy fallback must too.
+        from routes.learn import _resolve_legacy_model
+        from services.gemini_service import MODEL_SMART
+        assert _resolve_legacy_model(None) == MODEL_SMART
 
-    def test_empty_string_returns_default(self):
-        from routes.learn import _resolve_tutor_model
-        from services.gemini_service import MODEL_DEFAULT
-        assert _resolve_tutor_model("") == MODEL_DEFAULT
+    def test_empty_string_returns_smart(self):
+        # PR #78 review: symmetry with agent default.
+        from routes.learn import _resolve_legacy_model
+        from services.gemini_service import MODEL_SMART
+        assert _resolve_legacy_model("") == MODEL_SMART
 
     def test_fast_returns_default(self):
-        from routes.learn import _resolve_tutor_model
+        from routes.learn import _resolve_legacy_model
         from services.gemini_service import MODEL_DEFAULT
-        assert _resolve_tutor_model("fast") == MODEL_DEFAULT
+        assert _resolve_legacy_model("fast") == MODEL_DEFAULT
 
     def test_smart_returns_smart(self):
-        from routes.learn import _resolve_tutor_model
+        from routes.learn import _resolve_legacy_model
         from services.gemini_service import MODEL_SMART
-        assert _resolve_tutor_model("smart") == MODEL_SMART
+        assert _resolve_legacy_model("smart") == MODEL_SMART
 
-    def test_uppercase_fast_returns_default(self):
-        # Lookup is case-sensitive: only lowercase keys hit the map.
-        from routes.learn import _resolve_tutor_model
-        from services.gemini_service import MODEL_DEFAULT
-        assert _resolve_tutor_model("FAST") == MODEL_DEFAULT
+    def test_uppercase_fast_returns_smart(self):
+        # Lookup is case-sensitive: only lowercase keys hit the map. Anything
+        # unrecognized (incl. wrong case) falls back to the Pro tier to match
+        # the agent default — PR #78 review: symmetry with agent default.
+        from routes.learn import _resolve_legacy_model
+        from services.gemini_service import MODEL_SMART
+        assert _resolve_legacy_model("FAST") == MODEL_SMART
 
-    def test_garbage_returns_default(self):
-        from routes.learn import _resolve_tutor_model
-        from services.gemini_service import MODEL_DEFAULT
-        assert _resolve_tutor_model("garbage") == MODEL_DEFAULT
+    def test_garbage_returns_smart(self):
+        # PR #78 review: symmetry with agent default.
+        from routes.learn import _resolve_legacy_model
+        from services.gemini_service import MODEL_SMART
+        assert _resolve_legacy_model("garbage") == MODEL_SMART
+
+    def test_default_matches_agent_default_for_no_pref(self):
+        """When body.model_pref is None, the legacy fallback must hit the
+        same model tier the agent path defaults to (gemini-2.5-pro per
+        agents/_providers.py:_DEFAULTS["chat_tutor"]). PR #71's commit
+        a2fd5cd established this contract for quiz; chat must match.
+        """
+        from routes.learn import _resolve_legacy_model
+        from services.gemini_service import MODEL_SMART
+        assert _resolve_legacy_model(None) == MODEL_SMART
+        assert _resolve_legacy_model("") == MODEL_SMART
+        assert _resolve_legacy_model("garbage") == MODEL_SMART
 
 
 # ── POST /api/learn/chat (agent path + legacy fallback) ──────────────────────

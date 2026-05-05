@@ -323,10 +323,15 @@ class TestToolWrappers:
         inner.assert_awaited_once_with("sess_42", 7)
 
     def test_history_tool_returns_empty_when_session_id_missing(self):
-        # Older deps may not carry session_id. Don't blow up — return [].
+        # Eval mode / batch tasks construct SaplingDeps with session_id=None.
+        # Don't blow up — return [].
         ctx = SimpleNamespace(
             deps=SimpleNamespace(
-                user_id="u", course_id="c", supabase=None, request_id="r"
+                user_id="u",
+                course_id="c",
+                supabase=None,
+                request_id="r",
+                session_id=None,
             )
         )
         with patch(

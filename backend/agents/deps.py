@@ -23,9 +23,14 @@ class SaplingDeps:
             version.
         request_id: A correlation ID for tracing across a single
             user-facing request. Used by Logfire spans.
+        session_id: The active chat session, when applicable. Used by tools
+            that need to scope reads to *this* conversation (e.g.
+            read_session_history_tool). Optional — agent runs that don't
+            happen inside a session (eval mode, batch tasks) leave it None.
     """
 
     user_id: str
     course_id: str | None
     supabase: Any
     request_id: str
+    session_id: str | None = None
