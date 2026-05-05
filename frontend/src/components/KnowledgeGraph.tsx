@@ -199,8 +199,11 @@ export function KnowledgeGraph({
   const nodeColor = React.useCallback(
     (raw: object) => {
       const n = raw as FG3DNode;
-      if (n.id === highlightId) return "#ffffff";
-      return shadeFor(n.color || "#88aa55", n.id);
+      // Highlight uses the brand --accent (#8a9a5b) so it pops on both
+      // the cream light theme and the near-black dark theme. Pure white
+      // disappears against the cream background.
+      if (n.id === highlightId) return "#8a9a5b";
+      return shadeFor(n.color || "#8a9a5b", n.id);
     },
     [highlightId],
   );
@@ -254,7 +257,7 @@ export function KnowledgeGraph({
         nodeVal={nodeVal}
         nodeOpacity={0.95}
         nodeResolution={16}
-        linkColor={() => "rgba(160, 160, 160, 0.35)"}
+        linkColor={() => "rgba(138, 131, 114, 0.45)"}
         linkOpacity={0.4}
         linkWidth={(l: object) => {
           const link = l as FG3DLink;

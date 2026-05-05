@@ -149,7 +149,7 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
     expect(graphData.nodes[0]).not.toBe(nodes[0]);
   });
 
-  it("nodeColor returns white for the highlighted id and an hsl() shade otherwise", () => {
+  it("nodeColor returns the brand accent for the highlighted id and an hsl() shade otherwise", () => {
     render(
       <KnowledgeGraph
         nodes={[makeNode({ id: "abc" })]}
@@ -161,8 +161,9 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
     expect(lastProps).not.toBeNull();
     const nodeColor = lastProps!.nodeColor as (n: object) => string;
 
-    // Highlight branch: exact white.
-    expect(nodeColor({ id: "abc", color: "#88aa55" })).toBe("#ffffff");
+    // Highlight branch: brand --accent (#8a9a5b). Pure white disappears
+    // against the cream light theme; the accent pops on both themes.
+    expect(nodeColor({ id: "abc", color: "#88aa55" })).toBe("#8a9a5b");
 
     // Non-highlight branch: deterministic hsl(...) string from shadeFor.
     const other = nodeColor({ id: "xyz", color: "#88aa55" });
