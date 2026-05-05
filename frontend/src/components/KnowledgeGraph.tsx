@@ -269,13 +269,23 @@ export function KnowledgeGraph({
         onNodeClick={handleNodeClick}
       />
       <ul style={SR_ONLY} aria-label="Knowledge graph nodes">
-        {nodes.map((n) => (
-          <li key={n.id}>
-            <button type="button" onClick={() => onNodeClick?.(n)}>
-              {n.name}
-            </button>
-          </li>
-        ))}
+        {nodes.map((n) =>
+          onNodeClick ? (
+            // Interactive entry — keyboard + AT users get a real
+            // activation that mirrors the mouse-click behavior.
+            <li key={n.id}>
+              <button type="button" onClick={() => onNodeClick(n)}>
+                {n.name}
+              </button>
+            </li>
+          ) : (
+            // No handler from the parent → render as static text so
+            // we don't surface a focusable control that does nothing
+            // (a "dead control" wastes Tab stops and is worse for AT
+            // than a passive list item).
+            <li key={n.id}>{n.name}</li>
+          ),
+        )}
       </ul>
     </div>
   );

@@ -273,6 +273,33 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
     expect(onNodeClick.mock.calls[0][0]).toBe(nodes[1]);
   });
 
+  it("renders sr-only list as static text (no buttons) when onNodeClick is undefined", () => {
+    // CodeRabbit review: the focusable buttons would be 'dead
+    // controls' if no handler is wired. Pin that the component
+    // degrades to non-interactive list items in that case so AT
+    // users don't get wasted Tab stops with no behaviour.
+    const nodes: GraphNode[] = [
+      makeNode({ id: "a", name: "Alpha" }),
+      makeNode({ id: "b", name: "Beta" }),
+    ];
+    const { container } = render(
+      <KnowledgeGraph nodes={nodes} edges={[]} />,
+    );
+
+    const list = container.querySelector(
+      'ul[aria-label="Knowledge graph nodes"]',
+    );
+    expect(list).not.toBeNull();
+    // No <button> elements at all.
+    expect(list!.querySelectorAll("button")).toHaveLength(0);
+    // But every node still appears as <li> text — AT users hear the
+    // names without the dead-control affordance.
+    const items = list!.querySelectorAll("li");
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toBe("Alpha");
+    expect(items[1].textContent).toBe("Beta");
+  });
+
   it("sets cooldownTicks to 0 when prefers-reduced-motion is reduce", () => {
     // Override matchMedia to advertise reduced-motion preference for
     // the relevant query only.
