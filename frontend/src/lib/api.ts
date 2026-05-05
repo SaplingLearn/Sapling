@@ -944,16 +944,30 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
+// Mirrors backend/config.py::MAX_AVATAR_SIZE. Kept as a const so the
+// guard below doesn't depend on Settings.tsx remembering to check
+// size first — every caller of uploadAvatar gets the same protection.
+export const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+
 export const uploadAvatar = async (userId: string, file: File): Promise<{ avatar_url: string }> => {
   if (IS_LOCAL_MODE) return { avatar_url: URL.createObjectURL(file) };
+  // Size-check BEFORE the base64 encode. Reading a 50 MB file just to
+  // throw it out is wasted CPU + memory. Settings.tsx already
+  // pre-checks size for the toast UX, but a future caller (admin
+  // bulk tool, recovery script) could easily bypass that and we'd
+  // still want the guard.
+  if (file.size > MAX_AVATAR_BYTES) {
+    throw new Error(
+      `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB — max is ${MAX_AVATAR_BYTES / 1024 / 1024} MB.`,
+    );
+  }
   // POST as JSON+base64 instead of multipart/form-data. The multipart
   // path was silently failing in some browser configurations with
   // `TypeError: Failed to fetch` (no response, request aborted before
   // reaching the server). JSON requests work in every environment
   // that already runs the rest of the profile API successfully, so
   // routing the avatar through the same shape eliminates the failure
-  // class entirely. The 5 MB file-size cap is enforced before we
-  // bother encoding.
+  // class entirely.
   const file_b64 = await readFileAsBase64(file);
   return fetchJSON<{ avatar_url: string }>(`/api/profile/${encodeURIComponent(userId)}/avatar`, {
     method: 'POST',

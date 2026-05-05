@@ -152,4 +152,32 @@ describe('credentials: include on auth-protected multipart uploads', () => {
       (globalThis as any).FileReader = originalFR;
     }
   });
+
+  it('uploadAvatar rejects oversized files BEFORE base64-encoding', async () => {
+    // CodeRabbit review: don't waste cycles encoding a 50 MB file just
+    // to throw it out. The size check must run before readFileAsBase64.
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockClear();
+
+    let frInstantiated = false;
+    const originalFR = (globalThis as any).FileReader;
+    (globalThis as any).FileReader = class {
+      constructor() { frInstantiated = true; }
+      readAsDataURL() {}
+      onload: ((e: any) => void) | null = null;
+      onerror: ((e: any) => void) | null = null;
+    };
+
+    try {
+      // 6 MB > 5 MB cap.
+      const oversize = new File([new Uint8Array(6 * 1024 * 1024)], 'big.png', { type: 'image/png' });
+      await expect(uploadAvatar('u1', oversize)).rejects.toThrow(/max is 5 MB/);
+      // FileReader must NOT have been touched.
+      expect(frInstantiated).toBe(false);
+      // Network must NOT have been hit.
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      (globalThis as any).FileReader = originalFR;
+    }
+  });
 });
