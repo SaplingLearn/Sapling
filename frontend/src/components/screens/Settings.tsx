@@ -62,7 +62,7 @@ type UsernameState = { status: "idle" | "checking" | "available" | "taken" | "in
 
 export function Settings() {
   const toast = useToast();
-  const { userId, userName, avatarUrl, userReady, signOut, refreshProfile } = useUser();
+  const { userId, userName, avatarUrl, userReady, signOut, refreshProfile, setAvatarUrl } = useUser();
   const [tab, setTab] = React.useState<Tab>("profile");
   const [settings, setSettings] = React.useState<UserSettings | null>(null);
   const [layoutPref, setLayoutPref] = useLayoutPref();
@@ -115,14 +115,40 @@ export function Settings() {
       if (avatarFileRef.current) avatarFileRef.current.value = "";
       return;
     }
+
+    // Optimistic UI: paint the picked image immediately via a local
+    // blob URL so the user sees their face in the avatar circle the
+    // instant they pick the file. The actual upload + Supabase
+    // round-trip can take 1–3s on slow connections; without this,
+    // there's a visible delay between "Avatar updated" toast and
+    // the image appearing.
+    //
+    // We capture the previous URL up front so we can revert on
+    // failure, and revoke the blob URL once we either swap to the
+    // real Supabase URL or roll back, to free its memory.
+    const previousAvatar = avatarUrl;
+    const blobUrl = URL.createObjectURL(file);
+    setAvatarUrl(blobUrl);
     setUploadingAvatar(true);
     try {
-      await uploadAvatar(userId, file);
-      await refreshProfile();
+      const result = await uploadAvatar(userId, file);
+      // Swap to the canonical Supabase URL with a cache-bust so
+      // re-uploads on the same deterministic path actually refresh.
+      // No need to call refreshProfile() — we already have the URL,
+      // and skipping the extra /api/auth/me round-trip removes ~50–
+      // 200ms of latency from the perceived flow.
+      const sep = result.avatar_url.includes("?") ? "&" : "?";
+      setAvatarUrl(`${result.avatar_url}${sep}v=${Date.now()}`);
       toast.success("Avatar updated");
     } catch (err) {
+      // Revert to whatever the user had before so the optimistic
+      // paint doesn't leave a ghost of a file that never landed.
+      setAvatarUrl(previousAvatar);
       toast.error(`Upload failed: ${String(err)}`);
     } finally {
+      // Always free the blob URL — whether we swapped to the
+      // server URL or reverted, the blob is no longer referenced.
+      URL.revokeObjectURL(blobUrl);
       setUploadingAvatar(false);
       if (avatarFileRef.current) avatarFileRef.current.value = "";
     }

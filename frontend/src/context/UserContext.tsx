@@ -27,6 +27,11 @@ interface UserContextValue {
   confirmApproved: () => void;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  // Direct setter exposed so callers can do an optimistic UI update
+  // (e.g. show a local blob URL for an avatar the user just picked
+  // before the upload finishes). The next refreshProfile() will
+  // overwrite this with the canonical Supabase URL + cache-bust.
+  setAvatarUrl: (url: string) => void;
 }
 
 export const UserContext = createContext<UserContextValue>({
@@ -46,6 +51,7 @@ export const UserContext = createContext<UserContextValue>({
   confirmApproved: () => {},
   signOut: () => Promise.resolve(),
   refreshProfile: () => Promise.resolve(),
+  setAvatarUrl: () => {},
 });
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
@@ -181,7 +187,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     () => ({
       userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved,
       username, roles, equippedCosmetics, featuredRole, isAdmin,
-      setActiveUser, confirmApproved, signOut, refreshProfile,
+      setActiveUser, confirmApproved, signOut, refreshProfile, setAvatarUrl,
     }),
     [userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved,
      username, roles, equippedCosmetics, featuredRole, isAdmin, refreshProfile]
