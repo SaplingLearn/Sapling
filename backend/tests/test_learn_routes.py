@@ -597,6 +597,72 @@ class TestChatViaAgent:
         kwargs = agent.run.call_args.kwargs
         assert "model" not in kwargs
 
+    def test_smart_pref_attaches_thinking_cap(self):
+        """smart pref → agent.run gets model_settings with thinking_budget=2048.
+
+        Regression guard: a future refactor that drops the
+        `_build_pro_model_settings()` call would silently restore Pro to
+        unbounded dynamic thinking — the exact latency regression this PR
+        fixed. Pin the budget value, not just the kwarg's presence.
+        """
+        from types import SimpleNamespace
+        from routes.learn import _PRO_THINKING_BUDGET
+        agent = MagicMock()
+        agent.run = AsyncMock(return_value=SimpleNamespace(output="ok"))
+        with (
+            patch("routes.learn.table", side_effect=self._make_table_factory()),
+            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch("routes.learn.apply_graph_update"),
+        ):
+            r = self._post(model_pref="smart")
+        assert r.status_code == 200
+        kwargs = agent.run.call_args.kwargs
+        assert "model_settings" in kwargs
+        # GoogleModelSettings is a TypedDict at the type level but a plain
+        # dict at runtime; ThinkingConfig is a regular Pydantic-style object.
+        budget = kwargs["model_settings"]["google_thinking_config"].thinking_budget
+        assert budget == _PRO_THINKING_BUDGET == 2048
+
+    def test_no_pref_attaches_thinking_cap(self):
+        """No model_pref → falls through to Pro default → still capped.
+
+        The cap protects every path that lands on Pro, including the
+        no-pref agent default — not just explicit "smart" requests.
+        """
+        from types import SimpleNamespace
+        agent = MagicMock()
+        agent.run = AsyncMock(return_value=SimpleNamespace(output="ok"))
+        with (
+            patch("routes.learn.table", side_effect=self._make_table_factory()),
+            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch("routes.learn.apply_graph_update"),
+        ):
+            r = self._post()
+        assert r.status_code == 200
+        kwargs = agent.run.call_args.kwargs
+        assert "model_settings" in kwargs
+        assert kwargs["model_settings"]["google_thinking_config"].thinking_budget == 2048
+
+    def test_fast_pref_does_not_attach_thinking_cap(self):
+        """fast pref → Lite model → no model_settings.
+
+        Lite doesn't think, so passing a thinking_config is wasted at
+        best and could be rejected by the provider. The route's
+        `if model_pref != "fast":` guard is the contract; pin it.
+        """
+        from types import SimpleNamespace
+        agent = MagicMock()
+        agent.run = AsyncMock(return_value=SimpleNamespace(output="ok"))
+        with (
+            patch("routes.learn.table", side_effect=self._make_table_factory()),
+            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch("routes.learn.apply_graph_update"),
+        ):
+            r = self._post(model_pref="fast")
+        assert r.status_code == 200
+        kwargs = agent.run.call_args.kwargs
+        assert "model_settings" not in kwargs
+
     def test_use_shared_context_false_appends_constraint(self):
         """`use_shared_context=False` augments the user message with a
         constraint instructing the agent not to call class-aggregate tools."""

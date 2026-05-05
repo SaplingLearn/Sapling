@@ -15,7 +15,7 @@ from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from services.auth_guard import require_self
 from services.encryption import decrypt_if_present
-from services.gemini_service import MODEL_DEFAULT, MODEL_LITE, MODEL_SMART, call_gemini_json
+from services.gemini_service import MODEL_LITE, MODEL_SMART, call_gemini_json
 from services.graph_service import get_graph, update_streak
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
