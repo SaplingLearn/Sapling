@@ -12,6 +12,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "check:lockfile": "node scripts/check-lockfile-version.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "cf:build": "opennextjs-cloudflare build",
