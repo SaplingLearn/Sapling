@@ -164,10 +164,16 @@ class TestReadRecentQuizAttempts:
         assert "easy" in difficulties  # the score=None one
         assert "medium" in difficulties
 
-    def test_accuracy_is_clamped_to_unit_interval(self):
-        # Pathological row (score > total). Shouldn't blow the model
-        # validator; clamp to 1.0.
-        rows = [{"score": 7, "total": 5, "difficulty": "hard", "completed_at": "z"}]
+    def test_corrupt_rows_are_dropped(self):
+        # Rows where score is outside [0, total] are corrupt — passing
+        # them to the LLM as e.g. "score=7, total=5" would prompt the
+        # agent to wonder whether to trust the data at all. Drop them
+        # entirely. A valid neighbour row in the same response stays.
+        rows = [
+            {"score": 7, "total": 5, "difficulty": "hard", "completed_at": "x"},
+            {"score": -1, "total": 5, "difficulty": "easy", "completed_at": "y"},
+            {"score": 4, "total": 5, "difficulty": "medium", "completed_at": "z"},
+        ]
         with patch(
             "agents.tools.quiz_history.table",
             side_effect=_table_factory(attempt_rows=rows),
@@ -175,7 +181,10 @@ class TestReadRecentQuizAttempts:
             history = asyncio.run(
                 read_recent_quiz_attempts("user_andres", "node1")
             )
-        assert history.recent_attempts[0].accuracy == 1.0
+        assert len(history.recent_attempts) == 1
+        assert history.recent_attempts[0].score == 4
+        assert history.recent_attempts[0].total == 5
+        assert history.recent_attempts[0].accuracy == pytest.approx(0.8)
 
     def test_filters_passed_to_quiz_attempts_select(self):
         captured: dict = {}

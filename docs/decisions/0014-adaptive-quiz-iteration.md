@@ -1,7 +1,7 @@
 # 0014: Adaptive quiz iteration — spaced repetition + difficulty + history
 
 - Status: accepted
-- Date: 2026-05-03
+- Date: 2026-05-04
 - Refines: 0005, 0013
 
 ## Context
@@ -111,13 +111,28 @@ one prompt revert.
 
 ## Eval coverage
 
-The existing replay-mode eval set in `tests/evals/quiz_generation.py`
-exercises the agent end-to-end. Adaptive-difficulty + spaced-
-repetition behaviors are inherently prompt-driven (the LLM decides
-how aggressively to apply them), so unit tests pin only the tool's
-I/O contract. Live-mode evals (run with `SAPLING_EVAL_MODE=live`) are
-the right place to catch prompt regressions — the unit tests don't
-try.
+`tests/evals/quiz_generation.py` gains 2 cases (count: 8 → 10) and
+2 evaluators that pin the new prompt rules structurally:
+
+- `AdaptiveDifficultyEvaluator` — when a case's metadata sets
+  `requested_difficulty`, the produced questions' average difficulty
+  rank must stay within ±1 step. This permits the prompt's allowed
+  one-step shift in either direction (down for struggling students,
+  up for consistent high accuracy) but flags overshoots.
+- `SpacedRepetitionConceptEvaluator` — when a case's metadata sets
+  `stale_concept`, at least one question must target that concept.
+  Catches a regression where the agent drops the stale concept
+  entirely in favor of the lowest-mastery one.
+
+Unit tests in `tests/test_quiz_history_tool.py` pin only the tool's
+I/O contract (shape coercion, accuracy math, filter wiring, silent
+degrade on DB error). The agent's *application* of the new rules is
+prompt-driven — the eval cases above are the regression sentinel.
+
+Cassettes for the new cases get written on the next
+`SAPLING_EVAL_MODE=record` run; replay-mode CI continues to fail
+loudly when a cassette is missing, so neither the new nor existing
+quiz cases silently no-op.
 
 ## Rollback
 

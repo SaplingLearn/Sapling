@@ -170,7 +170,21 @@ async def read_recent_quiz_attempts(
             # Skip rows that look incomplete — accuracy is undefined and
             # the agent shouldn't have to guess.
             continue
-        accuracy = max(0.0, min(1.0, score / total))
+        if score < 0 or score > total:
+            # Corrupt row (score outside [0, total]). Drop entirely
+            # rather than passing impossible numbers to the LLM —
+            # `score=7, total=5` would prompt the agent to wonder
+            # whether to trust the data at all.
+            logger.warning(
+                "read_recent_quiz_attempts: dropping corrupt row "
+                "(score=%d outside [0, total=%d]) user=%s concept=%s",
+                score,
+                total,
+                user_id,
+                concept_node_id,
+            )
+            continue
+        accuracy = score / total
         attempts.append(
             RecentQuizAttempt(
                 score=score,
@@ -191,10 +205,13 @@ async def read_recent_quiz_attempts_tool(
     ctx: RunContext[SaplingDeps],
     concept_node_id: str,
 ) -> QuizHistory:
-    """Pydantic AI tool wrapper.
-
-    `concept_node_id` is supplied by the agent (which receives it in
-    the user message). user_id comes from deps so a tool-call can't
-    cross users.
+    """Returns this student's history on one concept: a `summary`
+    string digesting their prior mistakes (mine for distractor
+    inspiration) and `recent_attempts` — the last 5 completed quiz
+    attempts on this concept, newest first, with `accuracy` precomputed
+    so you can apply the adaptive-difficulty rule directly. Empty
+    history on first attempt. Pass the `concept_node_id` from the
+    user message; user identity is taken from context.
     """
+    # user_id comes from ctx.deps so a tool call can't cross users.
     return await read_recent_quiz_attempts(ctx.deps.user_id, concept_node_id)
