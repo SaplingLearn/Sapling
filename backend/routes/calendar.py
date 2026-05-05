@@ -21,6 +21,7 @@ from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
 from services.auth_guard import require_self, get_session_user_id
 from services.calendar_service import extract_assignments_from_file, insert_new_assignments
 from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
+from services.request_context import current_request_id
 
 try:
     from google_auth_oauthlib.flow import Flow
@@ -97,8 +98,17 @@ async def extract(request: FastAPIRequest, file: UploadFile = File(...), user_id
     file_bytes = await file.read()
     filename = file.filename or "upload"
     content_type = file.content_type or "application/octet-stream"
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or current_request_id()
+        or ""
+    )
     try:
-        result = extract_assignments_from_file(file_bytes, filename, content_type)
+        result = await extract_assignments_from_file(
+            file_bytes, filename, content_type,
+            user_id=user_id or "",
+            request_id=request_id,
+        )
         return result
     except Exception as e:
         return {"error": str(e), "assignments": [], "warnings": [str(e)]}

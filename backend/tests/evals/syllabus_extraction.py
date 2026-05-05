@@ -136,6 +136,82 @@ class WeightsAreNumericEvaluator(Evaluator[str, SyllabusAssignments]):
         return 1.0
 
 
+# ── Wire-format adapter evaluators (refactor #4) ────────────────────────────
+# These pin the contract produced by `syllabus_to_wire_dict`, the adapter
+# that bridges the agent's typed `SyllabusAssignments` to the dict shape
+# that `services/calendar_service.py` and downstream consumers expect.
+# A schema drift on the adapter (or on the agent's output that the adapter
+# re-shapes) gets caught here without requiring fresh cassettes.
+
+
+@dataclass
+class WireFormatRequiredKeysEvaluator(Evaluator[str, SyllabusAssignments]):
+    """The adapter (`syllabus_to_wire_dict`) MUST produce the legacy
+    required keys: assignments, warnings, raw_text. Future refactors
+    that drop one would break consumers in `routes/calendar.py` and
+    elsewhere; this evaluator catches that regression.
+    """
+
+    REQUIRED = {"assignments", "warnings", "raw_text"}
+
+    def evaluate(
+        self, ctx: EvaluatorContext[str, SyllabusAssignments]
+    ) -> float:
+        try:
+            from agents.tools.syllabus_adapter import syllabus_to_wire_dict
+        except ImportError:
+            from agents.syllabus_extraction import syllabus_to_wire_dict
+        wire = syllabus_to_wire_dict(ctx.output, raw_text="")
+        return 1.0 if self.REQUIRED.issubset(set(wire.keys())) else 0.0
+
+
+@dataclass
+class AssignmentTypeNonNullEvaluator(Evaluator[str, SyllabusAssignments]):
+    """Every assignment in the wire dict must carry `assignment_type`
+    (the adapter defaults missing values to "other"). `routes/calendar.py`
+    uses this field to bucket items by category in the UI; null breaks
+    the rendering.
+    """
+
+    def evaluate(
+        self, ctx: EvaluatorContext[str, SyllabusAssignments]
+    ) -> float:
+        try:
+            from agents.tools.syllabus_adapter import syllabus_to_wire_dict
+        except ImportError:
+            from agents.syllabus_extraction import syllabus_to_wire_dict
+        wire = syllabus_to_wire_dict(ctx.output, raw_text="")
+        items = wire.get("assignments") or []
+        return 1.0 if all(a.get("assignment_type") for a in items) else 0.0
+
+
+@dataclass
+class DueDateIsoStringEvaluator(Evaluator[str, SyllabusAssignments]):
+    """Adapter must serialize the agent's `date | None` to ISO-8601
+    strings (or None) — `insert_new_assignments` and
+    `assignment_dedupe_key` expect strings, not date objects.
+    """
+
+    def evaluate(
+        self, ctx: EvaluatorContext[str, SyllabusAssignments]
+    ) -> float:
+        try:
+            from agents.tools.syllabus_adapter import syllabus_to_wire_dict
+        except ImportError:
+            from agents.syllabus_extraction import syllabus_to_wire_dict
+        wire = syllabus_to_wire_dict(ctx.output, raw_text="")
+        for a in wire.get("assignments") or []:
+            v = a.get("due_date")
+            if v is None:
+                continue
+            if not isinstance(v, str):
+                return 0.0
+            # 'YYYY-MM-DD' shape — quick sanity check, not a full parser.
+            if len(v) != 10 or v[4] != "-" or v[7] != "-":
+                return 0.0
+        return 1.0
+
+
 CASES: list[Case[str, None]] = [
     # ── 1. TYPICAL SYLLABUS — concrete dates + grading breakdown ─────────
     Case(
@@ -345,6 +421,9 @@ def make_dataset() -> Dataset[str, None]:
             NoInventedDatesEvaluator(),
             GradingCategoriesPresenceEvaluator(),
             WeightsAreNumericEvaluator(),
+            WireFormatRequiredKeysEvaluator(),
+            AssignmentTypeNonNullEvaluator(),
+            DueDateIsoStringEvaluator(),
         ],
     )
 
