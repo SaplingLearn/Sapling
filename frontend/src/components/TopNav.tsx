@@ -284,6 +284,13 @@ function NavGroupTrigger({ group, pathname }: { group: NavGroup; pathname: strin
     closeTimer.current = window.setTimeout(() => setOpen(false), 140);
   };
 
+  // Cancel any pending close-timer if this component unmounts mid-flight
+  // (e.g. route change while the dropdown is closing). Avoids a stray
+  // setState on an unmounted component.
+  React.useEffect(() => {
+    return () => cancelClose();
+  }, []);
+
   // Close when route changes (navigation triggered).
   React.useEffect(() => {
     setOpen(false);
@@ -313,11 +320,21 @@ function NavGroupTrigger({ group, pathname }: { group: NavGroup; pathname: strin
       ref={wrapperRef}
       onMouseEnter={() => { cancelClose(); setOpen(true); }}
       onMouseLeave={scheduleClose}
+      // Symmetric counterpart to onFocus opening the panel: when focus
+      // leaves the wrapper entirely (Tab past the last item), close.
+      // relatedTarget can be null when focus jumps to a non-focusable
+      // surface or to another window — treat that as leaving too.
+      onBlur={(e) => {
+        const next = e.relatedTarget as Node | null;
+        if (!wrapperRef.current || !next || !wrapperRef.current.contains(next)) {
+          setOpen(false);
+        }
+      }}
       style={{ position: "relative" }}
     >
       <button
         type="button"
-        aria-haspopup="menu"
+        aria-haspopup="true"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         onFocus={() => { cancelClose(); setOpen(true); }}
@@ -361,16 +378,21 @@ function NavGroupTrigger({ group, pathname }: { group: NavGroup; pathname: strin
 
       {open && (
         <div
-          role="menu"
           aria-label={group.label}
-          // Touch the trigger (no gap) so cursor traversal can't
-          // accidentally land between trigger and panel.
+          // Panel touches the trigger's bottom edge (no marginTop) so
+          // cursor traversal stays within the wrapper's mouse-event
+          // bounds. The 140ms close-delay is a separate forgiveness
+          // mechanism; together they make the hover handoff reliable.
+          //
+          // No `role="menu"` here — that ARIA role implies arrow-key
+          // navigation between items, which we don't implement. Linear
+          // tab order through Links is the actual UX, so we leave the
+          // semantics as "nav with links" rather than over-claim.
           style={{
             position: "absolute",
             top: "100%",
             left: 0,
             minWidth: 200,
-            marginTop: 2,
             padding: 6,
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
@@ -388,7 +410,6 @@ function NavGroupTrigger({ group, pathname }: { group: NavGroup; pathname: strin
               <Link
                 key={item.href}
                 href={item.href}
-                role="menuitem"
                 style={{
                   display: "flex",
                   alignItems: "center",
