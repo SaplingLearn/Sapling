@@ -7,7 +7,7 @@
 name = "frontend"
 main = ".open-next/worker.js"
 compatibility_date = "2025-06-01"
-compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+compatibility_flags = ["nodejs_compat_v2", "global_fetch_strictly_public"]
 
 [assets]
 binding = "ASSETS"
