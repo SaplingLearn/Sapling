@@ -5,22 +5,6 @@ export type Course = {
   color: string;
 };
 
-// Brand-aligned course palette. Used as a deterministic fallback when
-// the backend / enrolled-course record doesn't supply a per-course
-// color, so each course family still reads as its own hue rather than
-// every concept collapsing onto one fallback color.
-const COURSE_PALETTE = [
-  "#8a9a5b", "#3e6f8a", "#7b4b99", "#b4562c",
-  "#3f8a7c", "#c89c4a", "#a06b8e", "#6b8a3e",
-];
-
-export function paletteFor(seed: string | null | undefined): string {
-  if (!seed) return COURSE_PALETTE[0];
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
-  return COURSE_PALETTE[Math.abs(h) % COURSE_PALETTE.length];
-}
-
 export type GraphNode = {
   id: string;
   name: string;

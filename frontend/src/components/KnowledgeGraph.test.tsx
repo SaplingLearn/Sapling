@@ -5,13 +5,9 @@
  * and the `react-force-graph-3d` library:
  *   1. Renders without crashing on empty data.
  *   2. `graphData` memo produces the {nodes, links:{source,target,strength}} shape.
- *   3. `nodeColor` returns the brand --accent for the highlighted node
- *      and a deterministic hex shade for everything else (hex, not
- *      `hsl(...)`, because Three.js's Color parser only accepts the
- *      comma-separated HSL form and silently renders space-separated
- *      HSL as black).
- *   4. `nodeVal` scales 4..10 with `mastery_score`, and course-root
- *      nodes (`is_subject_root: true`) render at a fixed larger size.
+ *   3. `nodeColor` returns "#ffffff" for the highlighted node and an
+ *      `hsl(...)` shade for everything else.
+ *   4. `nodeVal` scales 4..10 with `mastery_score`.
  *   5. `onNodeClick` whitelists the original GraphNode by id so
  *      library-injected fields (x/y/z, vx/vy/vz, fx/fy/fz,
  *      __threeObj, ...) never leak to callers.
@@ -153,7 +149,7 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
     expect(graphData.nodes[0]).not.toBe(nodes[0]);
   });
 
-  it("nodeColor returns the brand accent for the highlighted id and a hex shade otherwise", () => {
+  it("nodeColor returns the brand accent for the highlighted id and an hsl() shade otherwise", () => {
     render(
       <KnowledgeGraph
         nodes={[makeNode({ id: "abc" })]}
@@ -169,27 +165,19 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
     // against the cream light theme; the accent pops on both themes.
     expect(nodeColor({ id: "abc", color: "#88aa55" })).toBe("#8a9a5b");
 
-    // Non-highlight branch: deterministic 7-char hex from shadeFor.
-    // Hex (not hsl) because Three.js parses hex reliably; the modern
-    // space-separated `hsl(120 50% 50%)` syntax silently renders black.
+    // Non-highlight branch: deterministic hsl(...) string from shadeFor.
     const other = nodeColor({ id: "xyz", color: "#88aa55" });
-    expect(other).toMatch(/^#[0-9a-f]{6}$/);
+    expect(other.startsWith("hsl(")).toBe(true);
   });
 
-  it("nodeVal scales 4..10 with mastery_score and pins course-root nodes larger", () => {
+  it("nodeVal scales 4..10 with mastery_score (0 -> 4, 1 -> 10)", () => {
     render(<KnowledgeGraph nodes={[makeNode()]} edges={[]} />);
 
     expect(lastProps).not.toBeNull();
     const nodeVal = lastProps!.nodeVal as (n: object) => number;
 
-    // Concept nodes scale linearly with mastery.
     expect(nodeVal({ mastery_score: 0 })).toBe(4);
     expect(nodeVal({ mastery_score: 1 })).toBe(10);
-
-    // Course-root nodes anchor the family — fixed larger size that
-    // dominates any concept node regardless of mastery.
-    expect(nodeVal({ is_subject_root: true, mastery_score: 0 })).toBe(22);
-    expect(nodeVal({ is_subject_root: true, mastery_score: 1 })).toBe(22);
   });
 
   it("onNodeClick whitelists the original GraphNode by id so lib-injected fields never leak", () => {
