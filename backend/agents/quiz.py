@@ -24,6 +24,7 @@ from agents.tools.graph_read import (
     read_concepts_for_user_tool,
     read_misconceptions_for_course_tool,
 )
+from agents.tools.quiz_history import read_recent_quiz_attempts_tool
 
 
 # Difficulty + question type are Literals so Gemini's enum constraint
@@ -69,31 +70,63 @@ class Quiz(BaseModel):
 _SYSTEM_PROMPT = (
     "You generate adaptive multiple-choice quizzes for a student. Each "
     "question must target a specific concept the student has weak "
-    "mastery on, OR address a class-level misconception you've seen.\n\n"
+    "mastery on, OR address a class-level misconception you've seen, "
+    "OR revive a concept the student hasn't reviewed in a while.\n\n"
     "Workflow:\n"
     "1. Call `read_concepts_for_user` to see the student's mastery per "
     "   concept for this course (returned sorted by mastery ASC — "
-    "   weakest first).\n"
+    "   weakest first). Each concept also carries `last_reviewed_at`, "
+    "   which you use for spaced repetition (see rules below).\n"
     "2. Call `read_misconceptions_for_course` to see anonymized class "
     "   misconceptions. Use these to phrase distractors and to write "
     "   a question that probes the misconception.\n"
-    "3. Compose `Quiz.questions` so the WEAKEST concepts get the most "
-    "   questions, AND each item's `concept` field exactly matches a "
-    "   concept_name returned by tool 1.\n\n"
+    "3. Call `read_recent_quiz_attempts(concept_node_id)` for the "
+    "   target concept_node_id given in the user message. The "
+    "   `summary` is a digest of past mistakes the student has made "
+    "   on this concept — mine it for distractor inspiration. The "
+    "   `recent_attempts` list (newest first) drives adaptive "
+    "   difficulty (see rules below).\n"
+    "4. Compose `Quiz.questions` so the WEAKEST and STALEST concepts "
+    "   get the most questions, AND each item's `concept` field "
+    "   exactly matches a concept_name returned by tool 1.\n\n"
+    "Concept-selection rules (combine all three signals):\n"
+    "- Bias question count toward the lowest-mastery concepts (the "
+    "   weakest first in the tool 1 return).\n"
+    "- SPACED REPETITION: also surface concepts whose "
+    "   `last_reviewed_at` is older than ~7 days, even if their "
+    "   mastery is mid-tier — they're due for review and decay over "
+    "   time. Concepts with `last_reviewed_at = null` are unreviewed; "
+    "   treat them as stale.\n"
+    "- Don't drop high-mastery, recently-reviewed concepts entirely; "
+    "   include 1 question on a strong-and-fresh concept to keep the "
+    "   quiz from feeling punishing.\n\n"
+    "Adaptive-difficulty rules (use `recent_attempts.accuracy`):\n"
+    "- If the most recent 2-3 attempts on this concept averaged < "
+    "   0.5 accuracy, drop the difficulty mix one step from what the "
+    "   user asked (hard -> medium, medium -> easy, easy stays easy). "
+    "   The student is struggling; keep them on track.\n"
+    "- If the most recent 3 attempts all scored >= 0.8, you may "
+    "   include 1-2 questions one step harder than the requested "
+    "   difficulty to push them.\n"
+    "- If `recent_attempts` is empty (first attempt), honor the "
+    "   user-requested difficulty exactly.\n"
+    "- Never override the user-requested difficulty by more than one "
+    "   step in either direction. Stay close to what they asked for.\n\n"
     "Per-question rules (multiple-choice only — the type field is "
     "constrained to 'multiple_choice'):\n"
     "- 4 options, exactly one correct. The text in `correct_answer` "
     "   MUST appear verbatim in `options` — character-for-character. "
     "   Questions that violate this are dropped at the route layer.\n"
     "- Distractors should reflect plausible misconceptions, not random "
-    "   noise. Use the read_misconceptions_for_course return value.\n"
+    "   noise. Combine signals from `read_misconceptions_for_course` "
+    "   (class-wide) and `read_recent_quiz_attempts.summary` "
+    "   (this student's prior errors) when writing them.\n"
     "- explanation: 1-3 sentences explaining WHY the correct answer "
     "   is correct — used in the post-quiz review screen.\n"
-    "- difficulty: align with the student's mastery on the concept; "
-    "   weakest concepts get easy/medium, strongest get hard.\n\n"
-    "Honor the requested num_questions and difficulty distribution "
-    "in the user message. Don't invent concepts the student doesn't "
-    "have."
+    "- difficulty: align with the student's mastery on the concept "
+    "   AND the adaptive-difficulty rules above.\n\n"
+    "Honor the requested num_questions. Don't invent concepts the "
+    "student doesn't have."
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 
@@ -107,5 +140,6 @@ quiz_agent = Agent[SaplingDeps, Quiz](
     tools=[
         read_concepts_for_user_tool,
         read_misconceptions_for_course_tool,
+        read_recent_quiz_attempts_tool,
     ],
 )

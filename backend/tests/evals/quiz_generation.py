@@ -92,6 +92,57 @@ class ConceptCoverageEvaluator(Evaluator[str, Quiz]):
         return ok / max(1, len(ctx.output.questions))
 
 
+# Difficulty ordering for the adaptive evaluator. Higher index = harder.
+_DIFF_RANK = {"easy": 0, "medium": 1, "hard": 2}
+
+
+@dataclass
+class AdaptiveDifficultyEvaluator(Evaluator[str, Quiz]):
+    """Fraction of questions whose difficulty is within ±1 step of the
+    user-requested difficulty (in the metadata's `requested_difficulty`).
+    Cases without `requested_difficulty` skip this check.
+
+    The agent is *allowed* to step down (struggling student) or step
+    up (consistent high accuracy) by one rank per question. This
+    evaluator catches the regression where individual questions
+    overshoot — e.g. requested hard and produced an easy question
+    (a two-step jump). The bound is per-question, not averaged.
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[str, Quiz]) -> float:
+        requested = (ctx.metadata or {}).get("requested_difficulty")
+        if requested is None or not ctx.output.questions:
+            return 1.0
+        target_rank = _DIFF_RANK.get(requested)
+        if target_rank is None:
+            return 1.0
+        ok = sum(
+            1
+            for q in ctx.output.questions
+            if abs(_DIFF_RANK[q.difficulty] - target_rank) <= 1
+        )
+        return ok / len(ctx.output.questions)
+
+
+@dataclass
+class SpacedRepetitionConceptEvaluator(Evaluator[str, Quiz]):
+    """Pin the prompt's spaced-repetition rule: when metadata names a
+    `stale_concept`, at least one question must target it. Cases
+    without `stale_concept` skip this check.
+
+    This is the structural sentinel — it doesn't try to verify that
+    the agent reasoned about `last_reviewed_at` correctly, just that
+    the stale concept didn't get dropped from the question mix entirely
+    in favor of the lowest-mastery one.
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[str, Quiz]) -> float:
+        stale = (ctx.metadata or {}).get("stale_concept")
+        if not stale:
+            return 1.0
+        return 1.0 if any(q.concept == stale for q in ctx.output.questions) else 0.0
+
+
 # ── Cases ───────────────────────────────────────────────────────────────────
 
 # Inputs are deliberately small — Gemini reads the prompt + tool results
@@ -231,9 +282,74 @@ CASES: list[Case[str, Quiz]] = [
             "concepts": ["Pumping Lemma", "Decidability"],
         },
     ),
+
+    # ── Adaptive difficulty (struggling student, request hard) ─────────────
+    # Per ADR 0014: when recent_attempts.accuracy is consistently low,
+    # the agent is allowed to drop the difficulty mix one step from what
+    # the user asked. AdaptiveDifficultyEvaluator scores the fraction of
+    # questions whose difficulty is within ±1 step of requested
+    # (per-question, not averaged). Without this case, a future prompt
+    # change that makes the agent produce all easy questions for a hard
+    # request would slip through.
+    Case(
+        name="adaptive_downshift_struggling_student",
+        # NOTE: this case bakes the recent-accuracy signal into the user
+        # message for eval determinism. In production, the agent reads it
+        # via a `read_recent_quiz_attempts` tool call (see agents/quiz.py).
+        # This pins the prompt's adaptive-difficulty rule, not the tool-
+        # call data path — live-mode evals catch tool wiring regressions.
+        inputs=(
+            "Course: CS 201. Generate 3 hard multiple-choice questions "
+            "covering Recursion, Dynamic Programming, and Graph Traversal. "
+            "The student has been struggling on this material — recent "
+            "attempts have averaged < 50% accuracy. Apply the adaptive-"
+            "difficulty rule: it's OK to step down to medium where the "
+            "evidence supports it."
+        ),
+        metadata={
+            "expected_count": 3,
+            # Don't pin a single expected_difficulty — the agent may
+            # mix medium/hard under the adaptive rule. The point is
+            # the ±1-step bound captured by requested_difficulty.
+            "expected_difficulty": None,
+            "expected_type": "multiple_choice",
+            "concepts": ["Recursion", "Dynamic Programming", "Graph Traversal"],
+            "requested_difficulty": "hard",
+        },
+    ),
+
+    # ── Spaced repetition (stale concept must be revived) ──────────────────
+    # Per ADR 0014: concepts whose `last_reviewed_at` is older than ~7
+    # days should surface even when their mastery is mid-tier. The case
+    # input names a stale concept explicitly; SpacedRepetitionConcept-
+    # Evaluator asserts at least one question targets it.
+    Case(
+        name="spaced_repetition_revives_stale_concept",
+        # NOTE: the staleness signal (`last_reviewed_at` ages, mastery
+        # scores) is inlined into the prompt here for deterministic
+        # replay. Production sources the same data from a
+        # `read_recent_quiz_attempts` tool call (see agents/quiz.py), so
+        # this case validates the spaced-repetition rule's application,
+        # not the tool-call wiring. Use live-mode evals for that path.
+        inputs=(
+            "Course: BIO 100. Generate 3 medium multiple-choice questions. "
+            "The student has been working on Photosynthesis (mastery 0.4) "
+            "and Mitosis (mastery 0.5) recently, but Cell Membrane "
+            "(mastery 0.65) hasn't been reviewed in 14 days. Per the "
+            "spaced-repetition rule, include at least one Cell Membrane "
+            "question to revive the stale concept."
+        ),
+        metadata={
+            "expected_count": 3,
+            "expected_difficulty": "medium",
+            "expected_type": "multiple_choice",
+            "concepts": ["Photosynthesis", "Mitosis", "Cell Membrane"],
+            "stale_concept": "Cell Membrane",
+        },
+    ),
 ]
 
-assert len(CASES) == 8, f"Expected 8 cases per ADR 0005, got {len(CASES)}"
+assert len(CASES) == 10, f"Expected 10 cases (8 original + 2 ADR 0014), got {len(CASES)}"
 # All cases are MCQ today — short_answer dropped pending frontend support.
 assert all(
     c.metadata and c.metadata.get("expected_type") == "multiple_choice"
@@ -268,6 +384,8 @@ def make_dataset() -> Dataset[str, Quiz]:
             TypeMixEvaluator(),
             MultipleChoiceShapeEvaluator(),
             ConceptCoverageEvaluator(),
+            AdaptiveDifficultyEvaluator(),
+            SpacedRepetitionConceptEvaluator(),
         ],
     )
 

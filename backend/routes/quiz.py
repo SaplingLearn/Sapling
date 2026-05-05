@@ -166,11 +166,15 @@ async def _quiz_via_agent(
         supabase=None,
         request_id=request_id,
     )
+    # Keep this message routing-only; the workflow + adaptive rules
+    # live in the system prompt. We just hand the agent the inputs it
+    # needs and trust the prompt to drive tool calls.
     user_message = (
         f"Generate {num_questions} {difficulty} questions for the student. "
-        f"The target concept is '{concept_name}' (concept_node_id={concept_node_id}). "
-        f"Call read_concepts_for_user to find the student's weakest concepts in this course "
-        f"and bias the question mix toward those."
+        f"The target concept is '{concept_name}' "
+        f"(concept_node_id={concept_node_id}). Follow the workflow in your "
+        f"system prompt; pass concept_node_id='{concept_node_id}' to "
+        f"read_recent_quiz_attempts."
     )
     if use_shared_context:
         user_message += (
