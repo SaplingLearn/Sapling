@@ -109,13 +109,15 @@ function hslToHex(h: number, s: number, l: number): string {
   return `#${to(r)}${to(g)}${to(b)}`;
 }
 
-// Brand sage — used as a final fallback when the input color isn't a
-// parseable hex (e.g. callers pass through a CSS custom property like
-// `var(--c-sage)`, which Three.js can't resolve).
-const FALLBACK_HEX = "#8a9a5b";
+// Brand sage in HSL — used as a final fallback when the input color
+// isn't parseable hex (e.g. callers pass through `var(--c-sage)`,
+// which Three.js can't resolve). Precomputed so the call site doesn't
+// need a non-null assertion that would silently break if anyone
+// changed FALLBACK to an unparseable value.
+const FALLBACK_HSL = { h: 75, s: 26, l: 48 } as const;
 
 function shadeFor(baseHex: string, nodeId: string): string {
-  const hsl = hexToHsl(baseHex) ?? hexToHsl(FALLBACK_HEX)!;
+  const hsl = hexToHsl(baseHex) ?? FALLBACK_HSL;
   const seed = hashId(nodeId);
   // Hue variance is intentionally narrow (±10°) so each course family
   // reads as a single color band — children clearly belong to their

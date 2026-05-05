@@ -41,7 +41,7 @@ function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
     color:
       n.course_color ||
       course?.color ||
-      paletteFor(n.course_id || course?.course_id || n.subject),
+      paletteFor(course?.course_id || n.course_id || n.subject),
     is_subject_root: n.is_subject_root,
     mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
     mastery_score: n.mastery_score,

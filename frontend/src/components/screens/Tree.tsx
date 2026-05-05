@@ -31,12 +31,13 @@ function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
     subject: n.subject,
     // Resolved hex (not CSS custom property): the 3D KnowledgeGraph
     // feeds this into Three.js which can't resolve `var(--…)`.
-    // Final fallback hashes course_id → distinct palette color so each
-    // course family reads as its own hue even without backend colors.
+    // Seed prefers the course-record id so every node in the same
+    // family hashes to the same palette color, even if some nodes
+    // arrive without `n.course_id` set.
     color:
       n.course_color ||
       course?.color ||
-      paletteFor(n.course_id || course?.course_id || n.subject),
+      paletteFor(course?.course_id || n.course_id || n.subject),
     is_subject_root: n.is_subject_root,
     mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
     mastery_score: n.mastery_score,
