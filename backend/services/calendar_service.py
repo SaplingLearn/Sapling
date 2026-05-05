@@ -160,12 +160,25 @@ async def extract_assignments_from_file(
 
 
 async def process_and_save_syllabus(
-    file_bytes: bytes, filename: str, content_type: str, user_id: str
+    file_bytes: bytes,
+    filename: str,
+    content_type: str,
+    user_id: str,
+    *,
+    request_id: str = "",
 ) -> dict:
-    """Full pipeline: OCR → agent → DB save in one call."""
+    """Full pipeline: OCR → agent → DB save in one call.
+
+    `request_id` is optional so existing callers (the live-DB tests in
+    `test_ocr_pipeline.py`) keep working unchanged. Routes that wire
+    this should pass their `request.state.request_id` through so
+    Logfire spans correlate the syllabus run with the user-facing
+    request.
+    """
     result = await extract_assignments_from_file(
         file_bytes, filename, content_type,
         user_id=user_id,
+        request_id=request_id,
     )
     assignments = result.get("assignments") or []
     saved_count = save_assignments_to_db(user_id, assignments) if assignments else 0
