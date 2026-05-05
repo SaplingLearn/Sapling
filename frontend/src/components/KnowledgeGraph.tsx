@@ -132,6 +132,21 @@ type FG3DLink = {
   strength: number;
 };
 
+// Visually hidden style for the AT-only node list. The WebGL canvas is
+// opaque to assistive tech, so we mirror nodes as focusable buttons
+// that share the `onNodeClick` activation behavior.
+const SR_ONLY: React.CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0,0,0,0)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
+
 export function KnowledgeGraph({
   nodes,
   edges,
@@ -148,6 +163,26 @@ export function KnowledgeGraph({
   comparisonColor: _comparisonColor,
   comparisonLabel: _comparisonLabel,
 }: Props) {
+  // Honour the user's reduced-motion preference. When set, we cut
+  // simulation cooldown to 0 ticks so the lib stops physics
+  // immediately — the graph appears in its initial position with no
+  // animation. Otherwise we keep the default 120-tick settle.
+  const [reducedMotion, setReducedMotion] = React.useState(false);
+  React.useEffect(() => {
+    // SSR-safe: matchMedia only runs in the browser.
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReducedMotion(mq.matches);
+    const onChange = (e: MediaQueryListEvent) => setReducedMotion(e.matches);
+    // `addEventListener` on MediaQueryList isn't supported in Safari <14.
+    // Fall back to addListener — both keep working in modern browsers.
+    if (mq.addEventListener) mq.addEventListener("change", onChange);
+    else mq.addListener(onChange);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", onChange);
+      else mq.removeListener(onChange);
+    };
+  }, []);
   const graphData = React.useMemo(() => {
     const fgNodes: FG3DNode[] = nodes.map((n) => ({ ...n }));
     const fgLinks: FG3DLink[] = edges.map((e) => ({
@@ -187,16 +222,23 @@ export function KnowledgeGraph({
     (raw: object) => {
       if (!onNodeClick) return;
       const n = raw as FG3DNode;
-      // Strip the lib-mutated coordinate fields before handing the
-      // node back to the caller — they expect the original
-      // GraphNode shape. The other fields are spread back in.
-      const { x: _x, y: _y, z: _z, ...rest } = n;
-      onNodeClick(rest as GraphNode);
+      // Whitelist the original GraphNode by id so library-injected
+      // fields (vx/vy/vz, fx/fy/fz, __threeObj, ...) never leak to
+      // callers. If the node disappeared from the prop between the
+      // sim run and the click (very rare, but possible with prop
+      // updates), drop the click rather than synthesise a partial
+      // node from the lib's mutated copy.
+      const original = nodes.find((node) => node.id === n.id);
+      if (original) onNodeClick(original);
     },
-    [onNodeClick],
+    [onNodeClick, nodes],
   );
 
   return (
+    // WebGL canvas is opaque to AT. The sr-only list below mirrors
+    // every node as a focusable button so keyboard + screen-reader
+    // users can reach the same activation behavior `onNodeClick`
+    // provides to mouse users.
     <div
       // Reserve the layout slot at the parent's chosen size so the
       // canvas mounts without a layout shift on first render.
@@ -222,12 +264,19 @@ export function KnowledgeGraph({
         }}
         backgroundColor="rgba(0,0,0,0)"
         showNavInfo={false}
-        cooldownTicks={120}
+        cooldownTicks={reducedMotion ? 0 : 120}
         enableNodeDrag={false}
         onNodeClick={handleNodeClick}
       />
+      <ul style={SR_ONLY} aria-label="Knowledge graph nodes">
+        {nodes.map((n) => (
+          <li key={n.id}>
+            <button type="button" onClick={() => onNodeClick?.(n)}>
+              {n.name}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
-
-export default KnowledgeGraph;

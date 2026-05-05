@@ -8,7 +8,13 @@
  *   3. `nodeColor` returns "#ffffff" for the highlighted node and an
  *      `hsl(...)` shade for everything else.
  *   4. `nodeVal` scales 4..10 with `mastery_score`.
- *   5. `onNodeClick` strips lib-mutated x/y/z before handing the node back.
+ *   5. `onNodeClick` whitelists the original GraphNode by id so
+ *      library-injected fields (x/y/z, vx/vy/vz, fx/fy/fz,
+ *      __threeObj, ...) never leak to callers.
+ *   6. Renders an sr-only list of focusable buttons that mirror the
+ *      node set for keyboard + screen-reader users.
+ *   7. Honours `prefers-reduced-motion: reduce` by setting
+ *      `cooldownTicks` to 0 (otherwise 120).
  *
  * Mocking strategy: we replace `react-force-graph-3d` with a stub that
  * captures the props the component passes (so tests can call back into
@@ -21,7 +27,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup } from "@testing-library/react";
+import { render, cleanup, fireEvent } from "@testing-library/react";
 
 // Capture the props the component passes to ForceGraph3D so tests can
 // drive its callbacks. Reset in beforeEach.
@@ -76,8 +82,28 @@ function makeNode(over: Partial<GraphNode> = {}): GraphNode {
   };
 }
 
+// Default `matchMedia` stub for jsdom — returns "no preference" for
+// every query. Individual tests override it to flip reduced-motion on.
+function installDefaultMatchMedia() {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
 beforeEach(() => {
   lastProps = null;
+  installDefaultMatchMedia();
 });
 
 afterEach(() => {
@@ -153,11 +179,12 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
     expect(nodeVal({ mastery_score: 1 })).toBe(10);
   });
 
-  it("onNodeClick strips x/y/z coordinate fields before handing the node to the caller", () => {
+  it("onNodeClick whitelists the original GraphNode by id so lib-injected fields never leak", () => {
     const onNodeClick = vi.fn<(n: GraphNode) => void>();
+    const original = makeNode({ id: "n1" });
     render(
       <KnowledgeGraph
-        nodes={[makeNode({ id: "n1" })]}
+        nodes={[original]}
         edges={[]}
         onNodeClick={onNodeClick}
       />,
@@ -166,22 +193,107 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
     expect(lastProps).not.toBeNull();
     const handler = lastProps!.onNodeClick as (raw: object) => void;
 
-    // Simulate the lib mutating the node with simulation coords.
+    // Simulate the lib mutating the node with the FULL set of
+    // internals it injects — coordinate, velocity, fixed-position
+    // pins, and Three.js refs. None of these should leak to the
+    // caller; the caller must receive the canonical prop shape.
     const mutated = {
-      ...makeNode({ id: "n1" }),
+      ...original,
       x: 1,
       y: 2,
       z: 3,
+      vx: 0.1,
+      vy: 0.2,
+      vz: 0.3,
+      fx: 4,
+      fy: 5,
+      fz: 6,
+      __threeObj: { uuid: "fake-mesh" },
+      __lineObj: { uuid: "fake-line" },
+      __indexColor: "#abcdef",
     };
     handler(mutated);
 
     expect(onNodeClick).toHaveBeenCalledTimes(1);
     const passed = onNodeClick.mock.calls[0][0] as Record<string, unknown>;
-    expect(passed).not.toHaveProperty("x");
-    expect(passed).not.toHaveProperty("y");
-    expect(passed).not.toHaveProperty("z");
-    // Other GraphNode fields survive the strip.
+
+    // The whitelist returns the original prop reference — identity-
+    // equal to what the caller handed us.
+    expect(passed).toBe(original);
+
+    // Defence-in-depth: none of the library-injected fields
+    // survive on the object the caller receives.
+    for (const k of [
+      "x",
+      "y",
+      "z",
+      "vx",
+      "vy",
+      "vz",
+      "fx",
+      "fy",
+      "fz",
+      "__threeObj",
+      "__lineObj",
+      "__indexColor",
+    ]) {
+      expect(passed).not.toHaveProperty(k);
+    }
+    // Canonical GraphNode fields are present.
     expect(passed.id).toBe("n1");
     expect(passed.mastery_score).toBe(0.5);
+  });
+
+  it("renders an sr-only list of focusable buttons that mirror the node set", () => {
+    const onNodeClick = vi.fn<(n: GraphNode) => void>();
+    const nodes: GraphNode[] = [
+      makeNode({ id: "a", name: "Alpha" }),
+      makeNode({ id: "b", name: "Beta" }),
+    ];
+    const { container } = render(
+      <KnowledgeGraph
+        nodes={nodes}
+        edges={[]}
+        onNodeClick={onNodeClick}
+      />,
+    );
+
+    const list = container.querySelector(
+      'ul[aria-label="Knowledge graph nodes"]',
+    );
+    expect(list).not.toBeNull();
+    const buttons = list!.querySelectorAll("button");
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0].textContent).toBe("Alpha");
+    expect(buttons[1].textContent).toBe("Beta");
+
+    // Activating a button calls back with the matching original node.
+    fireEvent.click(buttons[1]);
+    expect(onNodeClick).toHaveBeenCalledTimes(1);
+    expect(onNodeClick.mock.calls[0][0]).toBe(nodes[1]);
+  });
+
+  it("sets cooldownTicks to 0 when prefers-reduced-motion is reduce", () => {
+    // Override matchMedia to advertise reduced-motion preference for
+    // the relevant query only.
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query === "(prefers-reduced-motion: reduce)",
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    render(<KnowledgeGraph nodes={[makeNode()]} edges={[]} />);
+
+    expect(lastProps).not.toBeNull();
+    expect(lastProps!.cooldownTicks).toBe(0);
   });
 });
