@@ -161,9 +161,26 @@ async def read_recent_quiz_attempts(
 
     attempts: list[RecentQuizAttempt] = []
     for r in attempt_rows:
+        raw_score = r.get("score")
+        raw_total = r.get("total")
+        if raw_score is None or raw_total is None:
+            # `submit_quiz` writes score+total atomically, so a row with
+            # `completed_at IS NOT NULL` but a null score/total is
+            # corruption (or an out-of-band edit). Drop it rather than
+            # coercing to 0/0 — feeding the LLM a bogus 0% accuracy
+            # could trigger a spurious adaptive downshift.
+            logger.warning(
+                "read_recent_quiz_attempts: dropping row with null "
+                "score/total (score=%r, total=%r) user=%s concept=%s",
+                raw_score,
+                raw_total,
+                user_id,
+                concept_node_id,
+            )
+            continue
         try:
-            score = int(r.get("score") or 0)
-            total = int(r.get("total") or 0)
+            score = int(raw_score)
+            total = int(raw_total)
         except (TypeError, ValueError):
             continue
         if total <= 0:

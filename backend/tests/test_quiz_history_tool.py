@@ -143,10 +143,16 @@ class TestReadRecentQuizAttempts:
         # Second attempt: 1/5 = 0.2
         assert history.recent_attempts[1].accuracy == pytest.approx(0.2)
 
-    def test_attempts_with_zero_or_missing_total_are_skipped(self):
+    def test_attempts_with_zero_or_null_fields_are_skipped(self):
+        # submit_quiz writes score+total atomically, so any row with
+        # null score, null total, or total=0 is corruption — drop it
+        # rather than passing the LLM a bogus 0% accuracy that could
+        # trigger a spurious adaptive downshift. The valid 3/5 row
+        # stays.
         rows = [
             {"score": 0, "total": 0, "difficulty": "easy", "completed_at": "x"},
             {"score": None, "total": 5, "difficulty": "easy", "completed_at": "y"},
+            {"score": 3, "total": None, "difficulty": "easy", "completed_at": "y2"},
             {"score": 3, "total": 5, "difficulty": "medium", "completed_at": "z"},
         ]
         with patch(
@@ -157,12 +163,11 @@ class TestReadRecentQuizAttempts:
                 read_recent_quiz_attempts("user_andres", "node1")
             )
 
-        # The total=0 row drops; the score=None row coerces to 0/5 → 0.0
-        # and stays. The valid 3/5 row stays. Two valid rows total.
-        assert len(history.recent_attempts) == 2
-        difficulties = [a.difficulty for a in history.recent_attempts]
-        assert "easy" in difficulties  # the score=None one
-        assert "medium" in difficulties
+        assert len(history.recent_attempts) == 1
+        kept = history.recent_attempts[0]
+        assert kept.score == 3
+        assert kept.total == 5
+        assert kept.difficulty == "medium"
 
     def test_corrupt_rows_are_dropped(self):
         # Rows where score is outside [0, total] are corrupt — passing
