@@ -219,10 +219,12 @@ function KnowledgeGraphImpl({
   // ── Helpers ──────────────────────────────────────────────────────────────
   const masteryOpacity = (tier: GraphNode["mastery_tier"]) =>
     ({ mastered: 1, learning: 0.78, struggling: 0.55, unexplored: 0.28 })[tier] || 0.6;
-  const nodeRadius = (n: GraphNode) => (n.is_subject_root ? 22 : 8 + (n.mastery_score || 0) * 12);
+  const nodeRadius = (n: GraphNode) => (n.is_subject_root ? 28 : 8 + (n.mastery_score || 0) * 12);
+  // SVG `fill=` doesn't resolve CSS custom properties, so `var(--c-sage)`
+  // would render black. Use the resolved hex.
   const courseColor = (n?: GraphNode) => {
-    if (!n) return "var(--c-sage)";
-    const base = n.color || "var(--c-sage)";
+    if (!n) return "#8a9a5b";
+    const base = n.color || "#8a9a5b";
     if (n.is_subject_root) return base;
     return shadeFor(base, n.id);
   };
