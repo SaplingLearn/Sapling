@@ -15,6 +15,7 @@ def test_quiz_agent_imports_and_has_tools():
     tool_names = set(quiz_agent._function_toolset.tools.keys())
     assert "read_concepts_for_user_tool" in tool_names
     assert "read_misconceptions_for_course_tool" in tool_names
+    assert "read_recent_quiz_attempts_tool" in tool_names
 
 
 def test_quiz_question_fields_align_with_route_contract():

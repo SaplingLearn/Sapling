@@ -169,8 +169,12 @@ async def _quiz_via_agent(
     user_message = (
         f"Generate {num_questions} {difficulty} questions for the student. "
         f"The target concept is '{concept_name}' (concept_node_id={concept_node_id}). "
-        f"Call read_concepts_for_user to find the student's weakest concepts in this course "
-        f"and bias the question mix toward those."
+        f"Call read_concepts_for_user to find the student's weakest and stalest "
+        f"concepts in this course and bias the question mix toward those. "
+        f"Then call read_recent_quiz_attempts(concept_node_id='{concept_node_id}') "
+        f"to see what this student has been getting wrong on this concept and how "
+        f"recent attempts have been scoring — use that to set the difficulty mix "
+        f"adaptively per the system prompt."
     )
     if use_shared_context:
         user_message += (
