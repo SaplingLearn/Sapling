@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import logfire
@@ -10,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import FRONTEND_URL, PORT
+from config import FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET
 
 # App-wide log format. Per-request log lines (with request_id, duration,
 # status) are emitted from RequestIDMiddleware; this just sets the
@@ -58,7 +59,33 @@ logfire.configure(
 )
 logfire.instrument_pydantic_ai()
 
-app = FastAPI(title="Sapling API", version="1.0.0")
+# ── App lifespan: self-bootstrap external resources ─────────────────────────
+#
+# The avatars + cosmetics storage bucket is required by
+# routes/profile.py::upload_user_avatar (and the cosmetic admin path).
+# Issue #75 / PRs #84-#87 chased the symptom (uploads fail) before the
+# real cause (the bucket never existed) surfaced in a Supabase audit.
+# Creating it on startup makes new environments self-bootstrap and
+# protects against the same class of "code expects a Supabase resource
+# that no migration ever made" bugs.
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    from services.storage_service import (
+        ALLOWED_CONTENT_TYPES,
+        ensure_bucket_exists,
+    )
+
+    ensure_bucket_exists(
+        STORAGE_BUCKET,
+        public=True,  # required for unauthenticated <img src> reads
+        file_size_limit=MAX_AVATAR_SIZE,
+        allowed_mime_types=sorted(ALLOWED_CONTENT_TYPES),
+    )
+    yield
+    # No shutdown hooks today.
+
+
+app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
 logfire.instrument_fastapi(app)
 
 if recost_api_key and RecostMiddleware is not None:

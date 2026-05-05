@@ -137,6 +137,74 @@ class TestUploadCosmeticAsset:
         assert "apikey" not in detail
 
 
+class TestEnsureBucketExists:
+    """Pin the startup bootstrap behavior. Backend lifespan calls this
+    on app boot so new Supabase environments self-create the avatars
+    bucket — fixes the underlying cause of issue #75 (bucket missing,
+    every avatar upload returned 502 'Bucket not found')."""
+
+    KW = dict(public=True, file_size_limit=5_242_880, allowed_mime_types=["image/png"])
+
+    def _resp(self, status_code, text=""):
+        m = MagicMock()
+        m.status_code = status_code
+        m.text = text
+        return m
+
+    def test_creates_bucket_when_missing(self):
+        post = self._resp(200)
+        with patch("services.storage_service.httpx.post", return_value=post) as p:
+            from services.storage_service import ensure_bucket_exists
+            ensure_bucket_exists("avatars", **self.KW)
+        # Verify the API contract: POST to .../storage/v1/bucket with
+        # the expected body shape.
+        assert p.called
+        call_args = p.call_args
+        assert call_args.args[0].endswith("/storage/v1/bucket")
+        body = call_args.kwargs["json"]
+        assert body["id"] == "avatars"
+        assert body["name"] == "avatars"
+        assert body["public"] is True
+        assert body["file_size_limit"] == 5_242_880
+        assert body["allowed_mime_types"] == ["image/png"]
+
+    def test_idempotent_on_409_already_exists(self):
+        """Re-running on an already-created bucket must not raise."""
+        post = self._resp(409, '{"statusCode":"409","error":"Duplicate"}')
+        with patch("services.storage_service.httpx.post", return_value=post):
+            from services.storage_service import ensure_bucket_exists
+            # Should not raise.
+            ensure_bucket_exists("avatars", **self.KW)
+
+    def test_logs_warning_on_unexpected_status(self):
+        """Other 4xx/5xx are non-fatal — startup should not block on
+        Supabase availability."""
+        post = self._resp(500, "Internal Server Error")
+        with patch("services.storage_service.httpx.post", return_value=post):
+            from services.storage_service import ensure_bucket_exists
+            ensure_bucket_exists("avatars", **self.KW)
+
+    def test_swallows_network_exception(self):
+        """A transient network error (DNS, connection refused) must
+        not crash startup."""
+        with patch(
+            "services.storage_service.httpx.post",
+            side_effect=Exception("connection refused"),
+        ):
+            from services.storage_service import ensure_bucket_exists
+            ensure_bucket_exists("avatars", **self.KW)
+
+    def test_skips_when_credentials_missing(self):
+        """If SUPABASE_URL or service key is unset, log + skip without
+        crashing or making a network call. Lets the backend still
+        start in tests / partial-config environments."""
+        with patch("services.storage_service.SUPABASE_URL", ""), \
+             patch("services.storage_service.httpx.post") as p:
+            from services.storage_service import ensure_bucket_exists
+            ensure_bucket_exists("avatars", **self.KW)
+        p.assert_not_called()
+
+
 class TestDeleteAsset:
     def test_calls_httpx_delete(self):
         with patch("services.storage_service.httpx.delete") as mock_del:
