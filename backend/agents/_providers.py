@@ -8,9 +8,11 @@ via env vars without touching code:
     SAPLING_MODEL_CONCEPTS=gemini-2.5-flash
     SAPLING_MODEL_SYLLABUS=gemini-2.5-flash
     SAPLING_MODEL_QUIZ=gemini-2.5-flash-lite
+    SAPLING_MODEL_CHAT_TUTOR=gemini-2.5-pro
 
 Defaults are tuned per task: cheaper models for simpler classifications,
-flagship Flash for tasks where output quality drives downstream UX.
+flagship Flash for tasks where output quality drives downstream UX, and
+the Pro tier for the conversational tutor where reasoning depth matters.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from pydantic_ai.providers.google import GoogleProvider
 from config import GEMINI_API_KEY
 
 
-AgentTask = Literal["classifier", "summary", "concepts", "syllabus", "quiz"]
+AgentTask = Literal["classifier", "summary", "concepts", "syllabus", "quiz", "chat_tutor"]
 
 
 # Defaults are conservative. Bumping a model up costs more; the env var
@@ -38,6 +40,12 @@ _DEFAULTS: dict[AgentTask, str] = {
     # call where the agent pulls structured graph data via tools, so the
     # bulk of the value is in tool wiring, not raw model strength.
     "quiz": "gemini-2.5-flash-lite",
+    # Chat tutor runs on Pro: it streams a multi-turn pedagogical
+    # conversation where reasoning depth and instruction following drive
+    # perceived quality. Matches main's tutor default after PR #73
+    # (`feat(learn): use gemini-2.5-pro for tutor chat`) and PR #74
+    # (`fix(learn): allow thinking on gemini-2.5-pro multiturn calls`).
+    "chat_tutor": "gemini-2.5-pro",
 }
 
 
