@@ -26,6 +26,78 @@ _headers = {
 }
 
 
+async def ensure_bucket_exists(
+    bucket_id: str,
+    *,
+    public: bool,
+    file_size_limit: int,
+    allowed_mime_types: list[str],
+) -> None:
+    """Idempotently ensure a Supabase Storage bucket exists with the
+    given settings. Called from FastAPI's `lifespan` on app startup
+    so new environments self-bootstrap.
+
+    The Supabase Storage API returns:
+      • 200 — bucket created.
+      • 409 — bucket already exists. Treated as success; we DO NOT
+              overwrite settings, in case an admin has intentionally
+              tuned them in the dashboard.
+      • 4xx/5xx — logged as a warning and we move on. Startup is not
+              gated on storage-bucket availability — a transient
+              Supabase outage shouldn't block the deploy. If the
+              bucket genuinely doesn't exist after this, the next
+              upload returns 502 with the upstream error visible
+              (per upload_avatar's diagnostic logging from PR #86).
+
+    Service-role uploads bypass Storage RLS, so no policy needs to be
+    attached after creation.
+
+    Async because it runs inside FastAPI's async lifespan; using
+    httpx.AsyncClient avoids blocking the event loop during startup.
+    """
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        logger.warning(
+            "ensure_bucket_exists(%s): SUPABASE_URL or SUPABASE_SERVICE_KEY "
+            "missing — skipping bucket bootstrap. Storage operations will "
+            "fail at runtime if the bucket doesn't exist.",
+            bucket_id,
+        )
+        return
+
+    url = f"{SUPABASE_URL}/storage/v1/bucket"
+    body = {
+        "id": bucket_id,
+        "name": bucket_id,
+        "public": public,
+        "file_size_limit": file_size_limit,
+        "allowed_mime_types": allowed_mime_types,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=body, headers=_headers)
+    except Exception:
+        logger.exception(
+            "ensure_bucket_exists(%s): Supabase Storage API call raised — "
+            "bucket existence is unknown.",
+            bucket_id,
+        )
+        return
+
+    if resp.status_code in (200, 201):
+        logger.info("Storage bucket %s created.", bucket_id)
+    elif resp.status_code == 409:
+        # "Bucket already exists" — expected on every restart after the
+        # first. Don't log at warning level; this is the steady-state path.
+        logger.debug("Storage bucket %s already exists.", bucket_id)
+    else:
+        logger.warning(
+            "ensure_bucket_exists(%s): Supabase returned %d body=%s",
+            bucket_id,
+            resp.status_code,
+            (resp.text or "").strip()[:300],
+        )
+
+
 def _validate_upload(file_bytes: bytes, content_type: str):
     if content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported image type. Allowed: jpeg, png, webp, gif")
