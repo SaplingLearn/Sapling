@@ -479,7 +479,7 @@ class TestAchievementProgress:
 
 # ── _get_user_or_404 column contract (issue #75) ────────────────────────────
 
-class TestGetUserOrFour04SelectColumns:
+class TestGetUserOr404SelectColumns:
     """Pin the column list used by `_get_user_or_404`'s SELECT against the
     actual `users` schema. Issue #75 was caused by `school` and `major` being
     SELECTed despite never being added by any migration; PostgREST returned
@@ -514,16 +514,28 @@ class TestGetUserOrFour04SelectColumns:
             if name == "users":
                 def _capture_select(columns, **kwargs):
                     captured["users_columns"] = columns
+                    # Return a row with every encrypted column set to
+                    # None so `decrypt_if_present` returns early without
+                    # trying to base64-decode a plaintext fixture (which
+                    # logs a noisy "Nonce must be between..." warning).
+                    # The non-encrypted scalars stay populated since
+                    # the route accesses them by `.get(...)`.
                     return [{
-                        # Return a row with every column the SELECT might
-                        # name so post-select decryption + dict access
-                        # don't NoneType-blow-up when the test runs.
-                        "id": USER_ID, "name": "Test", "email": None,
-                        "first_name": None, "last_name": None,
-                        "username": None, "avatar_url": None,
-                        "year": None, "majors": [], "minors": [],
-                        "bio": None, "location": None, "website": None,
-                        "streak_count": 0, "created_at": "2026-01-01",
+                        "id": USER_ID,
+                        "name": None,
+                        "email": None,
+                        "first_name": None,
+                        "last_name": None,
+                        "username": "tester",
+                        "avatar_url": None,
+                        "year": None,
+                        "majors": [],
+                        "minors": [],
+                        "bio": None,
+                        "location": None,
+                        "website": None,
+                        "streak_count": 0,
+                        "created_at": "2026-01-01",
                     }]
                 m.select.side_effect = _capture_select
             else:
