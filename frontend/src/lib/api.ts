@@ -149,6 +149,12 @@ export const deleteSession = (sessionId: string, userId: string) =>
     { method: 'DELETE' }
   );
 
+export const renameSession = (sessionId: string, userId: string, topic: string) =>
+  fetchJSON<{ updated: boolean; session: { id: string; topic: string } }>(
+    `/api/learn/sessions/${sessionId}`,
+    { method: 'PATCH', body: JSON.stringify({ user_id: userId, topic }) }
+  );
+
 export const resumeSession = (sessionId: string) =>
   fetchJSON<{
     session: { id: string; user_id: string; topic: string; mode: string; course_id: string | null; started_at: string; ended_at: string | null };

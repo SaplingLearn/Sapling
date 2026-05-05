@@ -23,6 +23,7 @@ import {
   getSessions,
   resumeSession,
   deleteSession,
+  renameSession,
   endSession,
   switchMode,
   learnAction,
@@ -212,6 +213,20 @@ function LearnInner() {
       toast.error(err instanceof Error ? err.message : "Delete failed.");
     }
   };
+
+  const handleRenameSession = useCallback(async (s: Session, newTopic: string) => {
+    if (!userId) return;
+    const trimmed = newTopic.trim();
+    if (!trimmed || trimmed.length > 120 || trimmed === s.topic) return;
+    const previousTopic = s.topic;
+    setRecentSessions(prev => prev.map(p => (p.id === s.id ? { ...p, topic: trimmed } : p)));
+    try {
+      await renameSession(s.id, userId, trimmed);
+    } catch (err) {
+      setRecentSessions(prev => prev.map(p => (p.id === s.id ? { ...p, topic: previousTopic } : p)));
+      toast.error(err instanceof Error ? err.message : "Rename failed.");
+    }
+  }, [userId, toast]);
 
   const send = useCallback(async (userText: string) => {
     if (!userText.trim() || !sessionId || !userId) return;
@@ -501,7 +516,7 @@ function LearnInner() {
               <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No recent sessions yet.</div>
             )}
             {recentSessions.map(s => (
-              <SessionRow key={s.id} s={s} onResume={handleResume} onDelete={handleDeleteSession} />
+              <SessionRow key={s.id} s={s} onResume={handleResume} onDelete={handleDeleteSession} onRename={handleRenameSession} />
             ))}
           </div>
         </div>
@@ -727,12 +742,32 @@ function BackToLearnLink({ onClick }: { onClick: () => void }) {
   );
 }
 
-function SessionRow({ s, onResume, onDelete }: {
+function SessionRow({ s, onResume, onDelete, onRename }: {
   s: Session;
   onResume: (s: Session) => void;
   onDelete: (s: Session) => void;
+  onRename: (s: Session, newTopic: string) => void;
 }) {
   const del = useConfirm(() => onDelete(s), 3000);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(s.topic);
+
+  const startEdit = () => {
+    setDraft(s.topic);
+    setEditing(true);
+  };
+
+  const commitEdit = () => {
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== s.topic) onRename(s, trimmed);
+    setEditing(false);
+  };
+
+  const cancelEdit = () => {
+    setDraft(s.topic);
+    setEditing(false);
+  };
+
   return (
     <div
       style={{
@@ -745,24 +780,70 @@ function SessionRow({ s, onResume, onDelete }: {
         marginBottom: 6,
       }}
     >
-      <button
-        onClick={() => onResume(s)}
-        style={{
-          flex: 1,
-          textAlign: "left",
-          display: "flex",
-          flexDirection: "column",
-          gap: 2,
-        }}
-      >
-        <span style={{ fontSize: 13, fontWeight: 600 }}>{s.topic}</span>
-        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          {s.mode} · {s.message_count} msg{s.message_count === 1 ? "" : "s"}
-        </span>
-      </button>
+      {editing ? (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+          <input
+            autoFocus
+            value={draft}
+            maxLength={120}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitEdit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancelEdit();
+              }
+            }}
+            onBlur={commitEdit}
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              padding: "2px 4px",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-sm)",
+              background: "var(--bg)",
+              color: "var(--text)",
+              outline: "none",
+            }}
+          />
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            {s.mode} · {s.message_count} msg{s.message_count === 1 ? "" : "s"}
+          </span>
+        </div>
+      ) : (
+        <button
+          onClick={() => onResume(s)}
+          disabled={editing}
+          style={{
+            flex: 1,
+            textAlign: "left",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+          }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{s.topic}</span>
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            {s.mode} · {s.message_count} msg{s.message_count === 1 ? "" : "s"}
+          </span>
+        </button>
+      )}
+      {!editing && (
+        <button
+          className="btn btn--ghost btn--sm"
+          onClick={startEdit}
+          aria-label="Rename session"
+          title="Rename"
+        >
+          <Icon name="pencil" size={12} />
+        </button>
+      )}
       <button
         className={del.armed ? "btn btn--danger btn--sm" : "btn btn--ghost btn--sm"}
         onClick={del.trigger}
+        disabled={editing}
         aria-label={del.armed ? "Confirm delete" : "Delete session"}
         title={del.armed ? "Click again to confirm" : "Delete"}
       >

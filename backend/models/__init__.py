@@ -25,6 +25,11 @@ class EndSessionBody(BaseModel):
     user_id: str = ""  # Required to discard a lazy (not-yet-persisted) session safely
 
 
+class RenameSessionBody(BaseModel):
+    user_id: str
+    topic: str
+
+
 class ActionBody(BaseModel):
     session_id: str
     user_id: str = "user_andres"
