@@ -925,15 +925,53 @@ export const submitJobApplication = async (data: {
   return res.json();
 };
 
-export const uploadAvatar = (userId: string, file: File): Promise<{ avatar_url: string }> => {
-  if (IS_LOCAL_MODE) return Promise.resolve({ avatar_url: URL.createObjectURL(file) });
-  const fd = new FormData();
-  fd.append('file', file);
-  return fetch(`${API_URL}/api/profile/${encodeURIComponent(userId)}/avatar?user_id=${encodeURIComponent(userId)}`, {
-    method: 'POST', body: fd, credentials: 'include',
-  }).then(async r => {
-    if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
-    return r.json();
+/**
+ * Read a File as a base64 string (no data-URL prefix). Resolves with
+ * just the encoded bytes so the JSON payload is the smallest possible
+ * shape the server needs.
+ */
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      // result is a data URL like "data:image/png;base64,iVBORw0K..."
+      const result = reader.result as string;
+      const comma = result.indexOf(',');
+      resolve(comma === -1 ? result : result.slice(comma + 1));
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Mirrors backend/config.py::MAX_AVATAR_SIZE. Kept as a const so the
+// guard below doesn't depend on Settings.tsx remembering to check
+// size first — every caller of uploadAvatar gets the same protection.
+export const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+
+export const uploadAvatar = async (userId: string, file: File): Promise<{ avatar_url: string }> => {
+  if (IS_LOCAL_MODE) return { avatar_url: URL.createObjectURL(file) };
+  // Size-check BEFORE the base64 encode. Reading a 50 MB file just to
+  // throw it out is wasted CPU + memory. Settings.tsx already
+  // pre-checks size for the toast UX, but a future caller (admin
+  // bulk tool, recovery script) could easily bypass that and we'd
+  // still want the guard.
+  if (file.size > MAX_AVATAR_BYTES) {
+    throw new Error(
+      `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB — max is ${MAX_AVATAR_BYTES / 1024 / 1024} MB.`,
+    );
+  }
+  // POST as JSON+base64 instead of multipart/form-data. The multipart
+  // path was silently failing in some browser configurations with
+  // `TypeError: Failed to fetch` (no response, request aborted before
+  // reaching the server). JSON requests work in every environment
+  // that already runs the rest of the profile API successfully, so
+  // routing the avatar through the same shape eliminates the failure
+  // class entirely.
+  const file_b64 = await readFileAsBase64(file);
+  return fetchJSON<{ avatar_url: string }>(`/api/profile/${encodeURIComponent(userId)}/avatar`, {
+    method: 'POST',
+    body: JSON.stringify({ file_b64, content_type: file.type || 'image/png' }),
   });
 };
 

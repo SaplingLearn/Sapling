@@ -113,14 +113,71 @@ describe('credentials: include on auth-protected multipart uploads', () => {
     expect(init.credentials).toBe('include');
   });
 
-  it('uploadAvatar (POST /api/profile/<id>/avatar)', async () => {
+  it('uploadAvatar (POST /api/profile/<id>/avatar) — JSON+base64', async () => {
+    // FileReader isn't available in vitest's node env; stub the
+    // global so readFileAsBase64 resolves synchronously to a known
+    // base64 payload. Real browser upload tested in production.
+    const originalFR = (globalThis as any).FileReader;
+    (globalThis as any).FileReader = class MockFileReader {
+      onload: ((e: any) => void) | null = null;
+      onerror: ((e: any) => void) | null = null;
+      result: string | null = null;
+      readAsDataURL(_file: File) {
+        this.result = 'data:image/png;base64,ZmFrZQ==';  // base64 of 'fake'
+        queueMicrotask(() => this.onload?.({} as any));
+      }
+    };
+
+    try {
+      const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+      fetchMock.mockResolvedValue(jsonResponse({ avatar_url: 'https://x' }));
+
+      const file = new File(['fake'], 'a.png', { type: 'image/png' });
+      await uploadAvatar('u1', file);
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toContain('/api/profile/u1/avatar');
+      // No more `?user_id=` noise — the backend reads auth from the
+      // session cookie.
+      expect(url).not.toContain('?user_id=');
+      expect(init.method).toBe('POST');
+      expect(init.credentials).toBe('include');
+      // JSON body, NOT multipart. This is the load-bearing assertion
+      // for the `TypeError: Failed to fetch` regression class.
+      expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+      const body = JSON.parse(init.body as string);
+      expect(body.file_b64).toBe('ZmFrZQ==');
+      expect(body.content_type).toBe('image/png');
+    } finally {
+      (globalThis as any).FileReader = originalFR;
+    }
+  });
+
+  it('uploadAvatar rejects oversized files BEFORE base64-encoding', async () => {
+    // CodeRabbit review: don't waste cycles encoding a 50 MB file just
+    // to throw it out. The size check must run before readFileAsBase64.
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchMock.mockResolvedValue(jsonResponse({ avatar_url: 'https://x' }));
+    fetchMock.mockClear();
 
-    const file = new File(['fake'], 'a.png', { type: 'image/png' });
-    await uploadAvatar('u1', file);
+    let frInstantiated = false;
+    const originalFR = (globalThis as any).FileReader;
+    (globalThis as any).FileReader = class {
+      constructor() { frInstantiated = true; }
+      readAsDataURL() {}
+      onload: ((e: any) => void) | null = null;
+      onerror: ((e: any) => void) | null = null;
+    };
 
-    const init = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(init.credentials).toBe('include');
+    try {
+      // 6 MB > 5 MB cap.
+      const oversize = new File([new Uint8Array(6 * 1024 * 1024)], 'big.png', { type: 'image/png' });
+      await expect(uploadAvatar('u1', oversize)).rejects.toThrow(/max is 5 MB/);
+      // FileReader must NOT have been touched.
+      expect(frInstantiated).toBe(false);
+      // Network must NOT have been hit.
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      (globalThis as any).FileReader = originalFR;
+    }
   });
 });
