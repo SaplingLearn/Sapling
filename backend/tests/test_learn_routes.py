@@ -621,7 +621,8 @@ class TestChatViaAgent:
         # GoogleModelSettings is a TypedDict at the type level but a plain
         # dict at runtime; ThinkingConfig is a regular Pydantic-style object.
         budget = kwargs["model_settings"]["google_thinking_config"].thinking_budget
-        assert budget == _PRO_THINKING_BUDGET == 2048
+        assert budget == _PRO_THINKING_BUDGET
+        assert _PRO_THINKING_BUDGET == 2048  # pin the literal too
 
     def test_no_pref_attaches_thinking_cap(self):
         """No model_pref → falls through to Pro default → still capped.
@@ -642,6 +643,15 @@ class TestChatViaAgent:
         kwargs = agent.run.call_args.kwargs
         assert "model_settings" in kwargs
         assert kwargs["model_settings"]["google_thinking_config"].thinking_budget == 2048
+
+    def test_build_pro_model_settings_uses_constant(self):
+        """Direct unit test on the helper. The integration tests above
+        cover the contract end-to-end via a mocked agent; this one pins
+        the helper itself so a refactor of `_build_pro_model_settings`
+        can't drift from `_PRO_THINKING_BUDGET` silently."""
+        from routes.learn import _build_pro_model_settings, _PRO_THINKING_BUDGET
+        s = _build_pro_model_settings()
+        assert s["google_thinking_config"].thinking_budget == _PRO_THINKING_BUDGET
 
     def test_fast_pref_does_not_attach_thinking_cap(self):
         """fast pref → Lite model → no model_settings.

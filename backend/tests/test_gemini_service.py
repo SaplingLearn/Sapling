@@ -15,6 +15,7 @@ from services.gemini_service import (
     extract_graph_update,
     call_gemini,
     call_gemini_json,
+    call_gemini_multiturn,
 )
 
 
@@ -195,3 +196,48 @@ class TestCallGeminiJson:
             mock_client.models.generate_content.return_value = mock_resp
             with pytest.raises(ValueError, match="not valid JSON"):
                 call_gemini_json("test prompt")
+
+
+# ── call_gemini_multiturn — thinking_budget cap ─────────────────────────────
+
+def _capture_multiturn_thinking_budget(model: str) -> int:
+    """Run call_gemini_multiturn against a mocked client and return the
+    thinking_budget the route configured on the GenerateContentConfig.
+    """
+    captured: dict = {}
+
+    def fake_chats_create(*, model, config, history):
+        captured["thinking_budget"] = config.thinking_config.thinking_budget
+        chat = MagicMock()
+        resp = MagicMock()
+        resp.text = "ok"
+        chat.send_message.return_value = resp
+        return chat
+
+    with patch("services.gemini_service._client") as mock_client:
+        mock_client.chats.create.side_effect = fake_chats_create
+        call_gemini_multiturn("sys", [], "msg", model=model)
+
+    return captured["thinking_budget"]
+
+
+class TestCallGeminiMultiturnThinking:
+    """Pin the legacy-path thinking_budget contract.
+
+    Mirrors the agent-path coverage in test_learn_routes.py
+    (TestChatViaAgent.test_*_attaches_thinking_cap). Symmetric guard so
+    a future edit can't silently restore Pro to dynamic (-1) thinking
+    on the legacy fallback either — that was the original latency
+    regression PR #80 fixed.
+    """
+
+    def test_pro_uses_capped_thinking_budget(self):
+        """gemini-2.5-pro must run with a capped budget (2048), NOT -1
+        (dynamic). Pin the literal value, not just "any positive int"."""
+        assert _capture_multiturn_thinking_budget("gemini-2.5-pro") == 2048
+
+    def test_flash_disables_thinking(self):
+        """Non-pro models (Flash, Flash-Lite) get thinking_budget=0 —
+        Pro is the only model that actually thinks on this path."""
+        assert _capture_multiturn_thinking_budget("gemini-2.5-flash") == 0
+        assert _capture_multiturn_thinking_budget("gemini-2.5-flash-lite") == 0
