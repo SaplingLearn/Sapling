@@ -108,8 +108,9 @@ def call_gemini_multiturn(system_prompt: str, history: list[dict], user_message:
     ]
 
     # gemini-2.5-pro requires thinking (budget=0 is rejected); flash allows
-    # disabling it for latency. Use dynamic thinking (-1) on pro, off on flash.
-    thinking_budget = -1 if "pro" in model else 0
+    # disabling it for latency. Cap pro at 2048 instead of -1 (dynamic) to keep
+    # tutor replies snappy without losing multi-step reasoning quality.
+    thinking_budget = 2048 if "pro" in model else 0
     for attempt in range(retries + 1):
         try:
             config = types.GenerateContentConfig(

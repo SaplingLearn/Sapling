@@ -8,6 +8,14 @@ read_user_progress, apply_graph_update_tool.
 Modes (Socratic, Expository, TeachBack) are gated by selecting different
 system prompts at construction time. The route picks the right agent
 instance per request based on body.mode.
+
+Per-call thinking budget: the Pro thinking cap is applied at the route
+layer (`routes.learn._build_pro_model_settings`), not on the agent
+itself, because the same agent instance also serves Lite runs (via the
+"fast" model_pref override) where thinking_config is wasted at best.
+Direct callers of `chat_tutor_agent.run(...)` that bypass the route
+will get unbounded Pro thinking — pin a `model_settings=` kwarg there
+if that matters.
 """
 
 from __future__ import annotations

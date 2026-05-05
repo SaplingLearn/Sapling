@@ -671,7 +671,7 @@ class TestQuizModelPref:
         assert kwargs["model"].model_name == "gemini-2.5-pro"
 
     def test_fast_pref_overrides_agent_model(self):
-        """model_pref='fast' → agent.run is called with model=GoogleModel('gemini-2.5-flash')."""
+        """model_pref='fast' → agent.run is called with model=GoogleModel('gemini-2.5-flash-lite')."""
         run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
@@ -681,7 +681,7 @@ class TestQuizModelPref:
         assert r.status_code == 200
         kwargs = run_mock.call_args.kwargs
         assert "model" in kwargs
-        assert kwargs["model"].model_name == "gemini-2.5-flash"
+        assert kwargs["model"].model_name == "gemini-2.5-flash-lite"
 
     def test_no_pref_falls_through_to_agent_default(self):
         """No model_pref → agent.run gets NO model kwarg, falls back to model_for('quiz')."""
@@ -732,14 +732,12 @@ class TestQuizModelPref:
         gemini_mock.assert_called_once()
         assert gemini_mock.call_args.kwargs.get("model") == MODEL_SMART
 
-    def test_legacy_fallback_uses_default_when_pref_fast(self):
-        """Symmetry contract: legacy "fast" must upgrade to MODEL_DEFAULT
-        (gemini-2.5-flash) just like the agent path does. Without this,
-        a Fast request that trips the agent silently downgrades to
-        MODEL_LITE — the same kind of inconsistency users would feel
-        as "Fast sometimes gives worse quizzes than Default."
+    def test_legacy_fallback_uses_lite_when_pref_fast(self):
+        """Symmetry contract: legacy "fast" must resolve to MODEL_LITE
+        (gemini-2.5-flash-lite) — same as the agent path's _PREF_MODEL_NAMES["fast"].
+        Pinned so a future change can't silently desynchronize the two paths.
         """
-        from services.gemini_service import MODEL_DEFAULT, MODEL_LITE
+        from services.gemini_service import MODEL_LITE
         run_mock = AsyncMock(side_effect=RuntimeError("agent boom"))
         gemini_mock = MagicMock(return_value={"questions": [{
             "id": 1, "question": "Q?",
@@ -757,9 +755,9 @@ class TestQuizModelPref:
         assert r.status_code == 200
         gemini_mock.assert_called_once()
         chosen = gemini_mock.call_args.kwargs.get("model")
-        assert chosen == MODEL_DEFAULT, (
-            f"Legacy fast→{chosen!r} expected MODEL_DEFAULT (gemini-2.5-flash); "
-            f"do NOT downgrade to MODEL_LITE (={MODEL_LITE!r})."
+        assert chosen == MODEL_LITE, (
+            f"Legacy fast→{chosen!r} expected MODEL_LITE (gemini-2.5-flash-lite); "
+            f"matches the agent path's _PREF_MODEL_NAMES['fast']."
         )
 
     def test_legacy_fallback_uses_lite_when_no_pref(self):

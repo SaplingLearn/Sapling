@@ -145,8 +145,8 @@ export function ModelToggle({
           <strong style={{ color: "var(--text)", display: "block", marginBottom: 4 }}>
             Tutor model
           </strong>
-          Fast is the default — quicker replies. Switch to Smart for stronger reasoning when
-          you want depth and don&apos;t mind waiting.
+          Fast is the default — lighter and snappier. Switch to Smart for stronger reasoning
+          when you want depth.
         </div>
       )}
     </div>
