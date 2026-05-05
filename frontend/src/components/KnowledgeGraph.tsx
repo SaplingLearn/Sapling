@@ -148,6 +148,16 @@ export function KnowledgeGraph({
   // Lazy initializer reads matchMedia synchronously on first paint so
   // reduced-motion users don't see a one-frame flash of physics
   // before the effect flips the value.
+  //
+  // HYDRATION CONSTRAINT: this value is client-only. SSR returns
+  // `false` (window undefined); the client may compute `true`. That
+  // mismatch is safe today because `reducedMotion` only flows into
+  // `cooldownTicks` on `<ForceGraph3D>`, which is `dynamic({ ssr:
+  // false, loading: () => null })` — its props never reach the SSR
+  // DOM. If you ever wire `reducedMotion` into the sr-only list,
+  // outer <div> styling, or anything else that renders during SSR,
+  // gate it behind a `mounted` flag (`useState(false) + useEffect`)
+  // or you'll get a React hydration warning.
   const [reducedMotion, setReducedMotion] = React.useState(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
