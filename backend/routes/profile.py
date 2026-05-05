@@ -2,11 +2,13 @@
 Profile routes — public profiles, settings, cosmetics, achievements, account management.
 """
 
+import base64
 import re
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
+from pydantic import BaseModel, Field
 
 from db.connection import table
 from services.encryption import encrypt_if_present, decrypt_if_present
@@ -255,14 +257,43 @@ def update_profile(user_id: str, body: UpdateProfileBody, request: Request):
 
 # ── Avatar Upload ────────────────────────────────────────────────────────────
 
+
+class _AvatarUploadBody(BaseModel):
+    """JSON body for the avatar upload endpoint.
+
+    Multipart uploads with cookies were silently failing in some
+    browser/extension/network configurations with `TypeError: Failed
+    to fetch` (no response, request aborted before reaching the
+    server). The route now accepts a base64-encoded body over JSON,
+    which works in every environment that already runs the JSON
+    profile-PATCH endpoint successfully.
+    """
+
+    file_b64: str = Field(..., max_length=10_000_000)  # ~7.5 MB base64 = ~5.6 MB binary
+    content_type: str = Field(default="image/png", max_length=64)
+
+
 @router.post("/{user_id}/avatar")
-async def upload_user_avatar(user_id: str, request: Request, file: UploadFile = File(...)):
+async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Request):
     require_self(user_id, request)
     _get_user_or_404(user_id)
 
-    file_bytes = await file.read()
-    content_type = file.content_type or "image/png"
-    avatar_url = upload_avatar(user_id, file_bytes, content_type)
+    # `file_b64` may arrive as a bare base64 string OR as a data URL
+    # (`data:image/png;base64,...`) depending on how the client encoded
+    # it. Strip the data-URL prefix if present.
+    raw = body.file_b64
+    if raw.startswith("data:"):
+        comma = raw.find(",")
+        if comma == -1:
+            raise HTTPException(status_code=400, detail="Invalid data URL")
+        raw = raw[comma + 1 :]
+
+    try:
+        file_bytes = base64.b64decode(raw, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 payload")
+
+    avatar_url = upload_avatar(user_id, file_bytes, body.content_type)
 
     table("users").update({"avatar_url": avatar_url}, filters={"id": f"eq.{user_id}"})
     return {"avatar_url": avatar_url}

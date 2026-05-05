@@ -477,6 +477,96 @@ class TestAchievementProgress:
         assert out["progress"] is None
 
 
+# ── POST /api/profile/{user_id}/avatar (JSON+base64) ──────────────────────
+
+
+class TestUploadAvatar:
+    """The avatar route accepts a JSON body with a base64-encoded file
+    instead of multipart/form-data. Multipart was silently failing in
+    some browser configs with `TypeError: Failed to fetch` — JSON
+    avoids the failure class. See routes/profile.py:_AvatarUploadBody."""
+
+    USER_ROW = {"id": USER_ID, "name": "Test", "username": None, "avatar_url": None, "created_at": "2025-01-01"}
+
+    def _table_factory(self, *, captured_update=None):
+        def factory(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [self.USER_ROW]
+                if captured_update is not None:
+                    def _capture(payload, filters):
+                        captured_update.append({"payload": payload, "filters": filters})
+                        return [{}]
+                    m.update.side_effect = _capture
+                else:
+                    m.update.return_value = [{}]
+            else:
+                m.select.return_value = []
+                m.update.return_value = []
+            return m
+        return factory
+
+    def test_accepts_base64_body_and_uploads(self):
+        captured = []
+        with _mock_self(), \
+             patch("routes.profile.table", side_effect=self._table_factory(captured_update=captured)), \
+             patch("routes.profile.upload_avatar", return_value="https://cdn/avatar.png") as up:
+            r = client.post(
+                f"/api/profile/{USER_ID}/avatar",
+                json={
+                    # Base64 of the bytes "PNG-bytes"
+                    "file_b64": "UE5HLWJ5dGVz",
+                    "content_type": "image/png",
+                },
+            )
+
+        assert r.status_code == 200
+        assert r.json()["avatar_url"] == "https://cdn/avatar.png"
+        # Ensure decoded bytes (not the base64 string) reach the storage layer.
+        up.assert_called_once_with(USER_ID, b"PNG-bytes", "image/png")
+        # Ensure the avatar_url is persisted to users.
+        assert captured == [{"payload": {"avatar_url": "https://cdn/avatar.png"}, "filters": {"id": f"eq.{USER_ID}"}}]
+
+    def test_accepts_data_url_prefix(self):
+        """Frontend's readFileAsBase64 strips the prefix, but a future
+        client that forgets must also work — accept either shape."""
+        with _mock_self(), \
+             patch("routes.profile.table", side_effect=self._table_factory()), \
+             patch("routes.profile.upload_avatar", return_value="https://cdn/avatar.png") as up:
+            r = client.post(
+                f"/api/profile/{USER_ID}/avatar",
+                json={
+                    "file_b64": "data:image/png;base64,UE5HLWJ5dGVz",
+                    "content_type": "image/png",
+                },
+            )
+
+        assert r.status_code == 200
+        up.assert_called_once_with(USER_ID, b"PNG-bytes", "image/png")
+
+    def test_invalid_base64_returns_400(self):
+        with _mock_self(), \
+             patch("routes.profile.table", side_effect=self._table_factory()), \
+             patch("routes.profile.upload_avatar") as up:
+            r = client.post(
+                f"/api/profile/{USER_ID}/avatar",
+                json={"file_b64": "!!!not-base64!!!", "content_type": "image/png"},
+            )
+
+        assert r.status_code == 400
+        assert "Invalid base64" in r.json()["detail"]
+        up.assert_not_called()
+
+    def test_missing_file_b64_returns_422(self):
+        """Pydantic body validation rejects missing required field."""
+        with _mock_self(), patch("routes.profile.table", side_effect=self._table_factory()):
+            r = client.post(
+                f"/api/profile/{USER_ID}/avatar",
+                json={"content_type": "image/png"},
+            )
+        assert r.status_code == 422
+
+
 # ── _get_user_or_404 column contract (issue #75) ────────────────────────────
 
 class TestGetUserOr404SelectColumns:
