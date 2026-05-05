@@ -206,8 +206,11 @@ def _capture_multiturn_thinking_budget(model: str) -> int:
     """
     captured: dict = {}
 
-    def fake_chats_create(*, model, config, history):
-        captured["thinking_budget"] = config.thinking_config.thinking_budget
+    def fake_chats_create(**kwargs):
+        # Accept all kwargs the real _client.chats.create receives
+        # (model, config, history) without rebinding the outer `model`
+        # parameter. Only `config` is inspected here.
+        captured["thinking_budget"] = kwargs["config"].thinking_config.thinking_budget
         chat = MagicMock()
         resp = MagicMock()
         resp.text = "ok"
@@ -236,8 +239,17 @@ class TestCallGeminiMultiturnThinking:
         (dynamic). Pin the literal value, not just "any positive int"."""
         assert _capture_multiturn_thinking_budget("gemini-2.5-pro") == 2048
 
-    def test_flash_disables_thinking(self):
+    def test_legacy_pro_matches_agent_constant(self):
+        """Legacy-path Pro budget must match the agent-path constant —
+        they're the same setting on different code paths. A future bump
+        of `_PRO_THINKING_BUDGET` in routes/learn.py without updating the
+        legacy literal in gemini_service.py would silently desynchronize
+        the two paths; this test catches that."""
+        from routes.learn import _PRO_THINKING_BUDGET
+        assert _capture_multiturn_thinking_budget("gemini-2.5-pro") == _PRO_THINKING_BUDGET
+
+    @pytest.mark.parametrize("model", ["gemini-2.5-flash", "gemini-2.5-flash-lite"])
+    def test_non_pro_disables_thinking(self, model: str):
         """Non-pro models (Flash, Flash-Lite) get thinking_budget=0 —
         Pro is the only model that actually thinks on this path."""
-        assert _capture_multiturn_thinking_budget("gemini-2.5-flash") == 0
-        assert _capture_multiturn_thinking_budget("gemini-2.5-flash-lite") == 0
+        assert _capture_multiturn_thinking_budget(model) == 0
