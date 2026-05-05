@@ -77,7 +77,20 @@ def upload_cosmetic_asset(cosmetic_id: str, file_bytes: bytes, content_type: str
         headers={**_headers, "Content-Type": content_type, "x-upsert": "true"},
     )
     if resp.status_code not in (200, 201):
-        raise HTTPException(status_code=502, detail="Failed to upload cosmetic asset")
+        # Same shape as upload_avatar's error path — surface the real
+        # Supabase response so admin-side cosmetic uploads aren't a
+        # black box either. URL + headers stay out of the message
+        # (the latter contains the service-role key).
+        body_text = (resp.text or "").strip()[:500]
+        logger.warning(
+            "upload_cosmetic_asset: Supabase storage rejected upload "
+            "cosmetic=%s status=%d body=%s",
+            cosmetic_id, resp.status_code, body_text,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Cosmetic asset upload failed (Supabase {resp.status_code}): {body_text or 'no body'}",
+        )
     public_url = f"{SUPABASE_URL}/storage/v1/object/public/{STORAGE_BUCKET}/{path}"
     return public_url
 
