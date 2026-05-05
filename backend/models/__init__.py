@@ -44,6 +44,12 @@ class GenerateQuizBody(BaseModel):
     num_questions: int = 5
     difficulty: str = "medium"
     use_shared_context: bool = True
+    # Mirrors the Learn-route fast/smart toggle so quiz generation has
+    # the same per-request model-quality choice as chat tutoring.
+    # "fast" → gemini-2.5-flash, "smart" → gemini-2.5-pro. None falls
+    # through to whatever SAPLING_MODEL_QUIZ resolves to (default
+    # gemini-2.5-flash-lite per ADR 0008).
+    model_pref: Optional[Literal["fast", "smart"]] = None
 
 
 class AnswerItem(BaseModel):

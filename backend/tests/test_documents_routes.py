@@ -231,12 +231,21 @@ class TestUploadDocument:
         assert r.status_code == 400
         assert "Unsupported file type" in r.json()["detail"]
 
-    def test_rejects_file_over_15mb(self):
-        big = b"x" * (15 * 1024 * 1024 + 1)
-        with _mock_validate_user(), patch("routes.documents.extract_text_from_file", return_value=""):
-            r = _make_upload(content=big)
+    def test_rejects_file_over_max_size(self):
+        # Cap was raised from 15 MB → 100 MB in commit 9912a25. Don't
+        # allocate 100MB here — it makes the test fragile under full-suite
+        # memory pressure. Instead, monkeypatch MAX_FILE_SIZE to 1 KB and
+        # pin the rejection-message contract.
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.MAX_FILE_SIZE", 1024),
+            patch("routes.documents.extract_text_from_file", return_value=""),
+        ):
+            r = _make_upload(content=b"x" * 2048)
         assert r.status_code == 400
-        assert "15 MB" in r.json()["detail"]
+        # The error message names the actual cap (100 MB) — verifies the
+        # route's hardcoded copy in the detail string didn't drift.
+        assert "100 MB" in r.json()["detail"]
 
     def test_accepts_pdf_by_extension(self):
         ai_result = {

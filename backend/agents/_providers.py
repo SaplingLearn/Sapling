@@ -7,6 +7,7 @@ via env vars without touching code:
     SAPLING_MODEL_SUMMARY=gemini-2.5-flash-lite
     SAPLING_MODEL_CONCEPTS=gemini-2.5-flash
     SAPLING_MODEL_SYLLABUS=gemini-2.5-flash
+    SAPLING_MODEL_QUIZ=gemini-2.5-flash-lite
 
 Defaults are tuned per task: cheaper models for simpler classifications,
 flagship Flash for tasks where output quality drives downstream UX.
@@ -23,7 +24,7 @@ from pydantic_ai.providers.google import GoogleProvider
 from config import GEMINI_API_KEY
 
 
-AgentTask = Literal["classifier", "summary", "concepts", "syllabus"]
+AgentTask = Literal["classifier", "summary", "concepts", "syllabus", "quiz"]
 
 
 # Defaults are conservative. Bumping a model up costs more; the env var
@@ -33,6 +34,10 @@ _DEFAULTS: dict[AgentTask, str] = {
     "summary": "gemini-2.5-flash-lite",
     "concepts": "gemini-2.5-flash",
     "syllabus": "gemini-2.5-flash",
+    # Quiz generation defaults to lite: it's a single-shot non-streaming
+    # call where the agent pulls structured graph data via tools, so the
+    # bulk of the value is in tool wiring, not raw model strength.
+    "quiz": "gemini-2.5-flash-lite",
 }
 
 

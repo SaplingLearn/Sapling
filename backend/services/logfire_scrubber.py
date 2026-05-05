@@ -23,11 +23,12 @@ ScrubbingOptions API surface.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from typing import Any
 
 from logfire import ScrubMatch
+
+from services.fingerprint import fingerprint_text
 
 
 # Path components that indicate the value contains user-supplied prompt
@@ -76,8 +77,13 @@ _RISKY_RE = re.compile("|".join(EXTRA_PATTERNS), re.IGNORECASE)
 
 
 def _fingerprint(value: str) -> str:
-    """Short, stable hash for matching a redacted body to a re-uploaded copy."""
-    return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()[:16]
+    """Short, stable hash for matching a redacted body to a re-uploaded copy.
+
+    Delegates to services.fingerprint.fingerprint_text so the hashing
+    convention is consistent across log-correlation sites (this scrubber
+    + routes/quiz.py drift warnings).
+    """
+    return fingerprint_text(value, length=16)
 
 
 def _path_is_risky(path: tuple[Any, ...] | str) -> bool:
