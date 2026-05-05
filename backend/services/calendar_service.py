@@ -1,12 +1,21 @@
+import asyncio
+import logging
 import os
 import sys
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
+
+from agents.deps import SaplingDeps
+from agents.syllabus_extraction import syllabus_extraction_agent
+from agents.tools.syllabus_adapter import syllabus_to_wire_dict
 from services.extraction_service import extract_text_from_file
 from services.gemini_service import call_gemini_json
 from services.assignment_dedupe import assignment_dedupe_key
 from db.connection import table
+
+logger = logging.getLogger(__name__)
 
 PROMPT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", "syllabus_extraction.txt")
 
@@ -52,11 +61,46 @@ def insert_new_assignments(user_id: str, assignments: list[dict]) -> int:
 
 
 def parse_syllabus(extracted_text: str) -> dict:
-    """Use Gemini to parse assignments from extracted text."""
+    """Use Gemini to parse assignments from extracted text.
+
+    Legacy fallback path retained per ADR-0001. The primary path now
+    runs through `_extract_via_agent` (syllabus_extraction_agent +
+    syllabus_to_wire_dict). This function stays so that the agent path
+    has a working degrade target when guardrails trip.
+    """
     with open(PROMPT_PATH) as f:
         prompt_template = f.read()
     prompt = prompt_template + f"\n\nDOCUMENT TEXT:\n{extracted_text}"
     return call_gemini_json(prompt)
+
+
+async def _extract_via_agent(
+    extracted_text: str,
+    *,
+    user_id: str = "",
+    request_id: str = "",
+) -> dict:
+    """Run syllabus_extraction_agent on `extracted_text` and convert
+    its output to the legacy wire-format dict.
+
+    Returns the same shape as the legacy `parse_syllabus`:
+    {"assignments": [...], "warnings": [...], "raw_text": str,
+     "course_title": str | None, "grading_categories": [...]}.
+
+    `course_id` and `session_id` don't apply to syllabus extraction —
+    the agent doesn't read them for this output type. `user_id` is
+    threaded through SaplingDeps for span correlation only; the
+    extraction itself is user-agnostic (the user-scoped dedup-write
+    step happens later in `process_and_save_syllabus`).
+    """
+    deps = SaplingDeps(
+        user_id=user_id or "anonymous",
+        course_id=None,
+        supabase=None,
+        request_id=request_id or "",
+    )
+    result = await syllabus_extraction_agent.run(extracted_text, deps=deps)
+    return syllabus_to_wire_dict(result.output, raw_text=extracted_text)
 
 
 def save_assignments_to_db(user_id: str, assignments: list) -> int:
@@ -64,13 +108,51 @@ def save_assignments_to_db(user_id: str, assignments: list) -> int:
     return insert_new_assignments(user_id, assignments)
 
 
-def extract_assignments_from_file(file_bytes: bytes, filename: str, content_type: str) -> dict:
-    """Extract text from file then parse assignments with Gemini."""
+def extract_assignments_from_file(
+    file_bytes: bytes,
+    filename: str,
+    content_type: str,
+    *,
+    user_id: str = "",
+    request_id: str = "",
+) -> dict:
+    """Extract text from file then parse assignments via the agent
+    (legacy fallback per ADR-0001).
+
+    Mirrors the orchestrator-vs-legacy fallback pattern in
+    `routes/quiz.py::_quiz_via_agent` and `routes/learn.py::_chat_via_agent`:
+    Pydantic-AI guardrail exceptions and bare exceptions degrade to
+    the legacy `parse_syllabus` path so a single agent failure can't
+    take the syllabus-upload feature down.
+    """
     text = extract_text_from_file(file_bytes, filename, content_type)
     if not text.strip():
-        return {"assignments": [], "warnings": ["No text could be extracted from the file."]}
-    result = parse_syllabus(text)
-    result.setdefault("raw_text", text)
+        return {
+            "assignments": [],
+            "warnings": ["No text could be extracted from the file."],
+            "raw_text": "",
+        }
+
+    try:
+        # TODO(refactor-4-followup): the route caller is currently sync;
+        # if it becomes async, switch this to `await`.
+        result = asyncio.run(
+            _extract_via_agent(text, user_id=user_id, request_id=request_id)
+        )
+    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+        logger.warning(
+            "Syllabus agent guardrails tripped; falling back to legacy",
+            exc_info=e,
+        )
+        result = parse_syllabus(text)
+        result.setdefault("raw_text", text)
+    except Exception:
+        logger.exception(
+            "Unexpected syllabus-agent failure; falling back to legacy"
+        )
+        result = parse_syllabus(text)
+        result.setdefault("raw_text", text)
+
     return result
 
 

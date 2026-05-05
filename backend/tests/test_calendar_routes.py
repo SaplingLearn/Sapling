@@ -263,3 +263,113 @@ class TestDeleteAssignment:
             t.return_value.select.return_value = []
             r = client.delete("/api/calendar/assignments/a1?user_id=u1")
         assert r.status_code == 404
+
+
+# ── POST /api/calendar/extract ───────────────────────────────────────────────
+#
+# These tests pin the wire-format contract between
+# `services.calendar_service.extract_assignments_from_file` and the
+# `/api/calendar/extract` route. Refactor #4 made the extractor
+# agent-first with a legacy fallback; the route returns the dict
+# verbatim, so ANY shape change to the service's return value is a
+# breaking change for the frontend. The agent-path dict carries extra
+# keys (`course_title`, `grading_categories`); the legacy fallback
+# returns a smaller dict. Both must round-trip cleanly through the
+# route.
+
+class TestImportExtractWireFormat:
+    """Pins the wire format of POST /api/calendar/extract."""
+
+    AGENT_RESULT = {
+        "assignments": [
+            {
+                "title": "Lab 7: Recursion",
+                "due_date": "2026-03-15",
+                "assignment_type": "other",
+                "notes": "Hands-on recursion lab.",
+                "weight_pct": 10.0,
+            }
+        ],
+        "warnings": [],
+        "raw_text": "syllabus body",
+        "course_title": "CS 101",
+        "grading_categories": [{"name": "Labs", "weight": 0.4}],
+    }
+
+    LEGACY_RESULT = {
+        "assignments": [
+            {
+                "title": "HW1",
+                "due_date": "2026-03-01",
+                "assignment_type": "homework",
+                "notes": None,
+            }
+        ],
+        "warnings": [],
+        "raw_text": "fallback text",
+    }
+
+    def _post_extract(self):
+        return client.post(
+            "/api/calendar/extract",
+            files={"file": ("syllabus.pdf", b"raw-bytes", "application/pdf")},
+            data={"user_id": "user_andres"},
+        )
+
+    def test_import_extract_returns_assignments_from_agent(self):
+        """Agent-path dict (with course_title, grading_categories extras)
+        passes through the route verbatim."""
+        with patch(
+            "routes.calendar.extract_assignments_from_file",
+            return_value=dict(self.AGENT_RESULT),
+        ) as m:
+            r = self._post_extract()
+
+        assert m.call_count == 1
+        assert r.status_code == 200
+        body = r.json()
+        # Required legacy keys are present.
+        assert body["assignments"][0]["title"] == "Lab 7: Recursion"
+        assert body["assignments"][0]["due_date"] == "2026-03-15"
+        assert body["warnings"] == []
+        assert body["raw_text"] == "syllabus body"
+        # Adapter-added extras flow through to the client.
+        assert body["course_title"] == "CS 101"
+        assert body["grading_categories"] == [{"name": "Labs", "weight": 0.4}]
+
+    def test_import_extract_handles_legacy_path_dict(self):
+        """Legacy fallback dict (no course_title / grading_categories)
+        still works through the route — backward compat after refactor #4."""
+        with patch(
+            "routes.calendar.extract_assignments_from_file",
+            return_value=dict(self.LEGACY_RESULT),
+        ) as m:
+            r = self._post_extract()
+
+        assert m.call_count == 1
+        assert r.status_code == 200
+        body = r.json()
+        assert body["assignments"][0]["title"] == "HW1"
+        assert body["raw_text"] == "fallback text"
+        assert body["warnings"] == []
+        # Agent extras are absent on the fallback path; consumers must
+        # tolerate their absence.
+        assert "course_title" not in body
+        assert "grading_categories" not in body
+
+    def test_import_extract_warnings_passthrough(self):
+        """Warnings from either path reach the client untouched."""
+        warnings = ["page 3 had no extractable text", "due date heuristic uncertain"]
+        result = {
+            "assignments": [],
+            "warnings": list(warnings),
+            "raw_text": "",
+        }
+        with patch(
+            "routes.calendar.extract_assignments_from_file",
+            return_value=result,
+        ):
+            r = self._post_extract()
+
+        assert r.status_code == 200
+        assert r.json()["warnings"] == warnings
