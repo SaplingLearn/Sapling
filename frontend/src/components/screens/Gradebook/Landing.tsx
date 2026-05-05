@@ -49,7 +49,7 @@ export function GradebookLanding() {
   return (
     <>
       <TopBar
-        title="Gradebook"
+        title="Grades"
         actions={
           <button
             type="button"

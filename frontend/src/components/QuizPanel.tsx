@@ -152,13 +152,12 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
 
   return (
     <div
-      className="card"
       style={{
-        padding: "var(--pad-xl)",
         display: "flex",
         flexDirection: "column",
-        gap: 18,
-        maxWidth: 680,
+        gap: 22,
+        width: "100%",
+        maxWidth: 880,
       }}
     >
       {phase === "select" && (

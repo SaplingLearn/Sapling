@@ -3,10 +3,10 @@ import type { NextRequest } from 'next/server'
 import { verifySession } from '@/lib/sessionToken'
 
 const PROTECTED = [
-  '/dashboard', '/learn', '/study', '/tree',
+  '/dashboard', '/learn', '/quiz', '/study', '/tree',
   '/library', '/calendar', '/social',
   '/settings', '/achievements', '/admin',
-  '/gradebook', '/course-planner'
+  '/gradebook', '/course-planner', '/notetaker'
 ]
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL
@@ -65,11 +65,11 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/dashboard/:path*', '/learn/:path*', '/study/:path*',
+    '/dashboard/:path*', '/learn/:path*', '/quiz/:path*', '/study/:path*',
     '/tree/:path*', '/library/:path*',
     '/calendar/:path*', '/social/:path*',
     '/settings/:path*', '/achievements/:path*',
     '/admin/:path*',
-    '/gradebook/:path*', '/course-planner/:path*'
+    '/gradebook/:path*', '/course-planner/:path*', '/notetaker/:path*'
   ]
 }

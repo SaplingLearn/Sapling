@@ -1,4 +1,4 @@
-from typing import Optional, Union, List
+from typing import Optional, Union, List, Literal
 from pydantic import BaseModel, Field
 
 
@@ -10,6 +10,7 @@ class StartSessionBody(BaseModel):
     mode: str = "socratic"
     use_shared_context: bool = True
     course_id: Optional[str] = None  # Direct course_id lookup instead of resolving from topic
+    model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
 
 
 class ChatBody(BaseModel):
@@ -18,6 +19,7 @@ class ChatBody(BaseModel):
     message: str
     mode: str = "socratic"
     use_shared_context: bool = True
+    model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
 
 
 class EndSessionBody(BaseModel):
@@ -31,6 +33,7 @@ class ActionBody(BaseModel):
     action_type: str = "hint"
     mode: str = "socratic"
     use_shared_context: bool = True
+    model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
 
 
 # ── Quiz ──────────────────────────────────────────────────────────────────────
@@ -282,7 +285,6 @@ class CreateRoleBody(BaseModel):
 class AssignRoleBody(BaseModel):
     user_id: str
     role_id: str
-    granted_by: Optional[str] = None
 
 
 class RevokeRoleBody(BaseModel):
@@ -311,6 +313,21 @@ class CreateAchievementTriggerBody(BaseModel):
 class GrantAchievementBody(BaseModel):
     user_id: str
     achievement_id: str
+
+
+class UpdateAchievementTriggerBody(BaseModel):
+    trigger_type: Optional[str] = None
+    trigger_threshold: Optional[int] = None
+
+
+class LinkAchievementCosmeticBody(BaseModel):
+    achievement_id: str
+    cosmetic_id: str
+
+
+class LinkRoleCosmeticBody(BaseModel):
+    role_id: str
+    cosmetic_id: str
 
 
 # ── Cosmetics (Admin) ────────────────────────────────────────────────────────
@@ -384,3 +401,9 @@ class SyllabusApplyBody(BaseModel):
     doc_id: str
     categories: list[CategoryItem]
     assignments: list[dict]               # uses the same shape as syllabus extraction
+
+
+# ── Newsletter & Allowlist (Admin) ──────────────────────────────────────────
+
+class AllowlistEmailBody(BaseModel):
+    email: str

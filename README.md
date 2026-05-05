@@ -26,7 +26,7 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 * **Study Guide** — Generate a Gemini-powered exam study guide from your uploaded course materials. Guides are cached per exam and can be regenerated at any time.
 * **Class Intelligence** — Aggregates anonymized class-wide patterns to surface common misconceptions and weak areas, personalizing your sessions.
 * **Calendar & Syllabus Tracking** — Paste your syllabus and Sapling extracts assignments, deadlines, and topics automatically.
-* **Document Library** — Upload PDFs and notes; Sapling extracts summaries, key concept notes, and flashcard topics to enrich your knowledge graph and study guides. Concept notes can be re-scanned manually per doc or per course.
+* **Document Library** — Upload PDFs and notes (up to 100 MB each); Sapling extracts summaries, key concept notes, and flashcard topics to enrich your knowledge graph and study guides. Uploads use a streaming SSE pipeline so the UI shows live per-phase progress (*"Classifying..." → "Extracting summary, concepts, and syllabus..." → "Saved."*). Concept notes can be re-scanned manually per doc or per course.
 * **Study Rooms** — Invite classmates, compare knowledge graphs, and track relative mastery across your group.
 * **Room Chat** — Real-time text chat with avatars inside each study room.
 * **User Profiles** — Public profiles with academic info, bio, featured achievements, and equipped cosmetics.
@@ -38,10 +38,12 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 
 ## Tech Stack
 
-* **Frontend** — Next.js (TypeScript) with D3.js for interactive graph visualization
-* **Backend** — FastAPI (Python) serving a REST API with structured Gemini prompts
-* **AI** — Google Gemini for tutoring, quiz generation, graph updates, and syllabus extraction. `gemini-2.5-flash` for chat / document understanding; `gemini-2.5-flash-lite` for short structured tasks (quiz generation, concept suggestions)
-* **OCR** — Docling (layout-aware PDF → Markdown) with GOT-OCR 2.0 fallback for math/handwriting; Tesseract retained as a legacy fallback
+* **Frontend** — Next.js 16 (TypeScript, App Router) with D3.js for interactive graph visualization. Vitest with jsdom + React Testing Library for unit + component tests.
+* **Backend** — FastAPI (Python) serving a REST API. Document ingestion runs through a Pydantic AI agentic pipeline (4 typed worker agents fanned out in parallel via `asyncio.gather`); other LLM-driven routes still use the structured-prompt helper in `services/gemini_service.py` until they're migrated.
+* **AI** — Google Gemini, with per-task model routing configurable via env vars. Defaults: `gemini-2.5-flash-lite` for classifier + summary; `gemini-2.5-flash` for concept extraction + syllabus parsing; `gemini-2.5-flash-lite` for quiz generation and concept suggestions. Override per task via `SAPLING_MODEL_<TASK>`.
+* **Streaming** — `sse-starlette` Server-Sent Events on `POST /api/documents/upload` for live per-phase progress. The frontend SSE consumer (`frontend/src/lib/sse.ts`) parses the wire format from a fetch ReadableStream so it works with multipart POSTs (which `EventSource` can't do).
+* **Observability** — [Logfire](https://logfire.pydantic.dev) auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom span scrubber (`backend/services/logfire_scrubber.py`) truncates and SHA-256-fingerprints risky attribute paths (prompt text, model output, message content) before egress so user-uploaded document text never ships verbatim. `genai-prices` provides per-call cost telemetry. Per-request structured logging includes a correlation ID, status, and duration.
+* **OCR** — Docling (layout-aware PDF → Markdown) with GOT-OCR 2.0 fallback for math/handwriting; Tesseract retained as a legacy fallback.
 * **Database** — Supabase (PostgreSQL) for all persistent data
 * **Encryption** — AES-256-GCM column-level encryption (via the `cryptography` library) for user PII, document summaries/concept notes, OAuth tokens, chat messages, and gradebook notes
 * **Deploy** — Frontend on Cloudflare Workers via `@opennextjs/cloudflare`
@@ -120,9 +122,12 @@ npm run dev                # → http://localhost:3000
 - `POST` `/api/calendar/save` — Save extracted assignments
 
 **Documents**
-- `POST` `/api/documents/upload` — Upload and process a document
+- `POST` `/api/documents/upload` — **Streaming SSE upload.** Runs the agentic pipeline (classifier → parallel summary/concepts/syllabus → graph merge) and emits typed SSE events the client renders as live progress: `status:start`, `progress:classify`, `progress:classified`, `progress:extract`, `progress:extracted`, `progress:graph_update`, `progress:graph_updated`, `result:finalize`, `status:done`. Errors emit `error:fallback` (degraded to legacy single-call pipeline) or `error:failed` (terminal). Idempotent on `X-Request-ID` — a retry with the same ID returns the previously persisted document without re-running the pipeline.
+- `POST` `/api/documents/upload/sync` — Non-streaming JSON upload. Same orchestrator under the hood, returns the persisted document as a single JSON response. Used by callers that don't need progress events.
 - `GET`  `/api/documents/user/{user_id}` — List a user's documents
 - `DELETE` `/api/documents/doc/{doc_id}` — Delete a document
+- `POST` `/api/documents/doc/{doc_id}/scan-concepts` — Re-extract concepts from a stored document into the course graph
+- `POST` `/api/documents/course/{course_id}/scan-concepts` — Extend a course's concept graph from its label alone
 
 **Social**
 - `POST` `/api/social/rooms/create` — Create a study room
@@ -189,6 +194,14 @@ npm run dev                # → http://localhost:3000
 | `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (for sign-in and Calendar) |
 | `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
 | `SESSION_SECRET` | — | HMAC secret for session tokens (min 32 bytes) |
+| `LOGFIRE_TOKEN` | — | If set, traces ship to logfire.pydantic.dev. Without it, Logfire stays local-only. The Sapling scrubber redacts prompt/output content before egress regardless. |
+| `SAPLING_MODEL_CLASSIFIER` | — | Override classifier-agent model (default `gemini-2.5-flash-lite`) |
+| `SAPLING_MODEL_SUMMARY` | — | Override summary-agent model (default `gemini-2.5-flash-lite`) |
+| `SAPLING_MODEL_CONCEPTS` | — | Override concept-extraction-agent model (default `gemini-2.5-flash`) |
+| `SAPLING_MODEL_SYLLABUS` | — | Override syllabus-extraction-agent model (default `gemini-2.5-flash`) |
+| `OCR_ASYNC_ENABLED` | — | When `true`, the streaming `/upload` route runs OCR off the request critical path with a `progress:extracting_text` SSE event. Default `false`. |
+| `DBOS_ENABLED` | — | When `true` AND `dbos` is installed AND `DBOS_DATABASE_URL` is set, `process_document` runs as a checkpointed DBOS workflow with per-step resume on crash. Default `false` (decorators are no-op passthroughs). See `docs/decisions/0011-durable-execution-dbos.md`. |
+| `DBOS_DATABASE_URL` | — | Postgres connection string for DBOS metadata (separate from Supabase). Required only when `DBOS_ENABLED=true`. |
 
 **`frontend/.env.local`**
 
@@ -196,6 +209,75 @@ npm run dev                # → http://localhost:3000
 |---|---|---|
 | `NEXT_PUBLIC_API_URL` | ✅ | Backend base URL (e.g. `http://localhost:5000`) |
 | `SESSION_SECRET` | — | Same HMAC secret as backend (for middleware token verification) |
+
+## Tests
+
+**Backend** — pytest, mocked Gemini + Supabase. ~430 tests, ~40s.
+```bash
+cd backend
+python -m pytest tests/ -q --ignore=tests/evals
+```
+
+**Frontend** — Vitest. Pure-logic tests (`sse.ts`, `api.ts`) run in node; component tests (`DocumentUploadModal.test.tsx`) use jsdom + React Testing Library + `@testing-library/jest-dom`. Per-file `// @vitest-environment jsdom` directive keeps the lib tests fast.
+```bash
+cd frontend
+npm install
+npm run typecheck
+npm test            # vitest run
+npm run test:watch  # vitest watch
+```
+
+**Evals** (live Gemini, on demand) — 70 cases across the 4 worker agents (`document_classification`, `document_summary`, `concept_extraction`, `syllabus_extraction`). Three modes via `SAPLING_EVAL_MODE`:
+```bash
+cd backend
+# Replay (default; no network, requires recorded cassettes):
+SAPLING_EVAL_MODE=replay python tests/evals/document_classification.py
+# Record (hits live Gemini, writes cassettes to tests/evals/cassettes/):
+SAPLING_EVAL_MODE=record python tests/evals/document_classification.py
+# Live (hits live Gemini, no recording):
+SAPLING_EVAL_MODE=live   python tests/evals/document_classification.py
+```
+The `.github/workflows/evals.yml` workflow runs replay-mode in CI; it's currently `workflow_dispatch`-only until cassette coverage is complete (4 / 70 recorded today).
+
+## Architecture & Dev Context
+
+**Live architecture overview** — `docs/architecture.md`.
+
+**Architectural Decision Records** — `docs/decisions/` (append-only, MADR-minimal format). Twelve ADRs as of merge:
+- `0001` — Adopt Pydantic AI as the agent framework
+- `0002` — Markdown-based dev-context vault structure
+- `0003` — Per-call `usage_limits=` and inline system prompts
+- `0004` — `graph_service` as the next agent-tool surface
+- `0005` — Quiz generation as the next agentic refactor
+- `0006` — SSE protocol choice (`sse-starlette` + custom mapper, not `VercelAIAdapter`)
+- `0007` — Drop the document orchestrator agent (saves a Gemini Pro call per upload)
+- `0008` — Per-task model routing
+- `0009` — Request correlation IDs (`X-Request-ID`)
+- `0010` — OCR async / two-phase upload (partial — feature flag shipped, full design deferred)
+- `0011` — Durable execution via DBOS (partial — optional shim shipped, real DBOS opt-in)
+- `0012` — Concept-by-concept streaming (deferred — needs eval data on Gemini's emission ordering first)
+
+**Things that didn't work** — `docs/attempts/` (each entry has a mandatory "What I'd try next" section).
+
+**Slash commands for Claude Code sessions** — `.claude/commands/log-decision.md`, `log-attempt.md`, `recall.md`, `sync-context.md`. Run `/sync-context` at session start to load the most relevant ADRs as a digest.
+
+**Read-only context curator subagent** — `.claude/agents/context-curator.md` keeps the main session's context window lean by forking off vault searches into a separate subagent.
+
+## Migrations
+
+The agentic refactor added one schema migration that must be applied to staging and prod before idempotency dedupe takes effect (the route code degrades gracefully if the column is missing, so deploying without running it is safe but the dedupe is a no-op):
+
+```sql
+-- backend/db/migration_documents_request_id.sql
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS request_id text;
+
+CREATE UNIQUE INDEX IF NOT EXISTS documents_request_id_user_unique
+  ON documents (user_id, request_id)
+  WHERE request_id IS NOT NULL;
+```
+
+Apply via the Supabase SQL editor or your migration tool of choice. Idempotent — safe to re-run.
 
 ## License
 

@@ -149,7 +149,7 @@ export function Tree() {
     `/learn?topic=${encodeURIComponent(n.name)}&mode=socratic${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`,
   );
   const onQuiz = (n: GraphNode) => router.push(
-    `/learn?topic=${encodeURIComponent(n.name)}&mode=quiz${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`,
+    `/quiz?topic=${encodeURIComponent(n.name)}${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`,
   );
 
   const del = useConfirm(async () => {

@@ -9,9 +9,9 @@ import { CustomSelect } from "../CustomSelect";
 import { ChatPanel, type ChatMsg } from "../ChatPanel";
 import { SessionSummary } from "../SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../SharedContextToggle";
+import { ModelToggle, useModelPref } from "../ModelToggle";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { AIDisclaimerChip } from "../AIDisclaimerChip";
-import { QuizPanel } from "../QuizPanel";
 import { KnowledgeGraph } from "../KnowledgeGraph";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
@@ -54,17 +54,15 @@ function apiToGraphEdge(e: ApiEdge): GraphEdge {
   return { source: e.source as string, target: e.target as string, strength: e.strength };
 }
 
-type Mode = "socratic" | "expository" | "teachback" | "quiz";
+type Mode = "socratic" | "expository" | "teachback";
 
 const MODES: { id: Mode; name: string; tip: string }[] = [
   { id: "socratic", name: "Socratic", tip: "Asks guiding questions" },
   { id: "expository", name: "Expository", tip: "Explains directly" },
   { id: "teachback", name: "Teach-back", tip: "You teach, AI listens" },
-  { id: "quiz", name: "Quiz", tip: "Rapid recall checks" },
 ];
 
-const VALID_MODES: Mode[] = ["socratic", "expository", "teachback", "quiz"];
-const CHAT_MODES: Mode[] = ["socratic", "expository", "teachback"];
+const VALID_MODES: Mode[] = ["socratic", "expository", "teachback"];
 const SESSION_END_COUNT_KEY = "sapling_session_end_count";
 const LAST_SESSION_CTX_KEY = "sapling_last_session_context";
 
@@ -89,6 +87,7 @@ function LearnInner() {
   const isMobile = useIsMobile();
 
   const [sharedCtx, setSharedCtx] = useSharedContext();
+  const [modelPref, setModelPref] = useModelPref();
 
   const initialTopic = searchParams.get("topic") ?? "";
   const initialMode = normalizeMode(searchParams.get("mode"));
@@ -164,15 +163,11 @@ function LearnInner() {
   const handleStart = async () => {
     const t = topicDraft.trim();
     if (!t || !userId) return;
-    if (mode === "quiz") {
-      setTopic(t);
-      return; // QuizPanel handles its own flow
-    }
     setTopic(t);
     setMessages([{ id: msgId(), role: "assistant", content: "", loading: true }]);
     setStarting(true);
     try {
-      const res = await startSession(userId, t, mode, selectedCourseId || undefined, sharedCtx);
+      const res = await startSession(userId, t, mode, selectedCourseId || undefined, sharedCtx, modelPref);
       setSessionId(res.session_id);
       setMessages([{ id: msgId(), role: "assistant", content: res.initial_message || "Let's begin." }]);
     } catch (err) {
@@ -215,7 +210,6 @@ function LearnInner() {
 
   const send = useCallback(async (userText: string) => {
     if (!userText.trim() || !sessionId || !userId) return;
-    const chatMode = CHAT_MODES.includes(mode) ? mode : "socratic";
     setMessages(m => [
       ...m,
       { id: msgId(), role: "user", content: userText },
@@ -223,7 +217,7 @@ function LearnInner() {
     ]);
     setSending(true);
     try {
-      const res = await sendChat(sessionId, userId, userText, chatMode, sharedCtx);
+      const res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref);
       setMessages(m => {
         const next = [...m];
         next[next.length - 1] = { id: next[next.length - 1].id, role: "assistant", content: res.reply || "" };
@@ -238,11 +232,10 @@ function LearnInner() {
     } finally {
       setSending(false);
     }
-  }, [sessionId, userId, mode, sharedCtx]);
+  }, [sessionId, userId, mode, sharedCtx, modelPref]);
 
   const handleAction = async (action: "hint" | "confused" | "skip") => {
     if (!sessionId || !userId) return;
-    const chatMode = CHAT_MODES.includes(mode) ? mode : "socratic";
     const labelMap = { hint: "(Requested a hint)", confused: "(Said I'm confused)", skip: "(Asked to skip)" };
     setMessages(m => [
       ...m,
@@ -251,7 +244,7 @@ function LearnInner() {
     ]);
     setSending(true);
     try {
-      const res = await learnAction(sessionId, userId, action, chatMode, sharedCtx);
+      const res = await learnAction(sessionId, userId, action, mode, sharedCtx, modelPref);
       setMessages(m => {
         const next = [...m];
         next[next.length - 1] = { id: next[next.length - 1].id, role: "assistant", content: res.reply || "" };
@@ -268,11 +261,6 @@ function LearnInner() {
   const handleModeSwitch = async (newMode: Mode) => {
     if (newMode === mode) return;
     if (!sessionId || !userId) {
-      setMode(newMode);
-      return;
-    }
-    if (newMode === "quiz") {
-      // Quiz mode is UI-driven — don't call mode-switch.
       setMode(newMode);
       return;
     }
@@ -426,12 +414,11 @@ function LearnInner() {
   }, [router, mode]);
 
   // ────────── Entry screen (no active session) ──────────
-  if (!sessionId && !starting && mode !== "quiz") {
+  if (!sessionId && !starting) {
     return (
       <div className="fade-in" style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
         <DisclaimerModal />
         <TopBar
-          breadcrumb="Learn"
           title="Start a session"
           subtitle="Pick a topic. Sapling will adapt to your chosen mode."
           actions={<AIDisclaimerChip />}
@@ -509,39 +496,6 @@ function LearnInner() {
     );
   }
 
-  // ────────── Quiz mode entry (no chat session) ──────────
-  if (!sessionId && mode === "quiz") {
-    return (
-      <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
-        <DisclaimerModal />
-        <TopBar
-          breadcrumb="Learn / Quiz"
-          title="Quiz"
-          subtitle="Pick a concept and test what you know."
-          actions={
-            <>
-              <AIDisclaimerChip />
-              <button className="btn btn--sm" onClick={() => setMode("socratic")}>
-                <Icon name="x" size={13} /> Back to Learn
-              </button>
-            </>
-          }
-        />
-        <div style={{ padding: 32, flex: 1, overflowY: "auto" }}>
-          {userId ? (
-            <QuizPanel
-              userId={userId}
-              concepts={concepts}
-              onExit={() => { setMode("socratic"); setTopic(""); }}
-            />
-          ) : (
-            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Sign in to take a quiz.</div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   // ────────── Active session ──────────
   return (
     <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
@@ -578,7 +532,6 @@ function LearnInner() {
               subtitle={`${mode} tutor · ${messages.length} msgs`}
               actions={
                 <>
-                  <AIDisclaimerChip />
                   <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
                   <button
                     className={endConfirm.armed ? "btn btn--danger btn--sm" : "btn btn--sm"}
@@ -591,7 +544,7 @@ function LearnInner() {
               }
             />
             <div style={{ display: "flex", gap: 6, padding: "10px 32px", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
-              {MODES.filter(m => m.id !== "quiz").map(m => (
+              {MODES.map(m => (
                 <button
                   key={m.id}
                   onClick={() => handleModeSwitch(m.id)}
@@ -609,9 +562,8 @@ function LearnInner() {
                 </button>
               ))}
               <div style={{ flex: 1 }} />
-              <button className="btn btn--sm" onClick={() => handleModeSwitch("quiz")}>
-                <Icon name="bolt" size={12} /> Quick quiz
-              </button>
+              <AIDisclaimerChip />
+              <ModelToggle pref={modelPref} onChange={setModelPref} />
             </div>
             <ChatPanel
               messages={messages}
@@ -645,12 +597,9 @@ function LearnInner() {
                 style={{ padding: 8, display: "flex", flexDirection: "column", gap: 4 }}
               >
                 <div className="label-micro" style={{ padding: "4px 6px" }}>Knowledge graph</div>
-                <KnowledgeGraph
+                <SidebarKnowledgeGraph
                   nodes={graphNodes}
                   edges={graphEdges}
-                  width={isMobile ? 320 : 280}
-                  height={280}
-                  variant="organism"
                   highlightId={highlightId}
                   onNodeClick={handleNodeClick}
                 />
@@ -685,6 +634,43 @@ function LearnInner() {
           summary={summary}
           onClose={closeSummary}
           onStartNext={startNextFromSummary}
+        />
+      )}
+    </div>
+  );
+}
+
+function SidebarKnowledgeGraph({
+  nodes,
+  edges,
+  highlightId,
+  onNodeClick,
+}: {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  highlightId?: string;
+  onNodeClick?: (n: GraphNode) => void;
+}) {
+  const [width, setWidth] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => setWidth(entries[0].contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div ref={ref} style={{ width: "100%" }}>
+      {width > 0 && (
+        <KnowledgeGraph
+          nodes={nodes}
+          edges={edges}
+          width={width}
+          height={280}
+          variant="organism"
+          highlightId={highlightId}
+          onNodeClick={onNodeClick}
         />
       )}
     </div>
