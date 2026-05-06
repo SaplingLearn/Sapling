@@ -25,7 +25,7 @@
 
 import React from "react";
 import dynamic from "next/dynamic";
-import type { GraphEdge, GraphNode } from "@/lib/data";
+import { hashSeed, type GraphEdge, type GraphNode } from "@/lib/data";
 
 // `react-force-graph-3d`'s default export touches `document` at
 // module evaluation, so it can't be SSR'd. ssr: false ensures the
@@ -59,12 +59,6 @@ type Props = {
 // Keeps each course visually unified while giving every node its own
 // tone, and produces identical output across pages because it depends
 // only on the stable inputs (no per-screen overrides).
-
-function hashId(id: string): number {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
 
 function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
@@ -118,7 +112,7 @@ const FALLBACK_HSL = { h: 75, s: 26, l: 48 } as const;
 
 function shadeFor(baseHex: string, nodeId: string): string {
   const hsl = hexToHsl(baseHex) ?? FALLBACK_HSL;
-  const seed = hashId(nodeId);
+  const seed = hashSeed(nodeId);
   // Hue variance is intentionally narrow (±10°) so each course family
   // reads as a single color band — children clearly belong to their
   // parent course rather than drifting into a sibling's hue. Within-

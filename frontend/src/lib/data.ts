@@ -1,3 +1,6 @@
+import type { GraphNode as ApiNode } from "@/lib/types";
+import type { EnrolledCourse } from "@/lib/api";
+
 export type Course = {
   id: string;
   course_code: string;
@@ -14,11 +17,19 @@ const COURSE_PALETTE = [
   "#3f8a7c", "#c89c4a", "#a06b8e", "#6b8a3e",
 ];
 
+// DJB2-ish string hash → non-negative integer. Shared by `paletteFor`
+// (palette index seeding) and `KnowledgeGraph`'s `shadeFor` (per-node
+// HSL jitter seeding). Keep the body identical across consumers so the
+// same input always maps to the same downstream color.
+export function hashSeed(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
 export function paletteFor(seed: string | null | undefined): string {
   if (!seed) return COURSE_PALETTE[0];
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
-  return COURSE_PALETTE[Math.abs(h) % COURSE_PALETTE.length];
+  return COURSE_PALETTE[hashSeed(seed) % COURSE_PALETTE.length];
 }
 
 export type GraphNode = {
@@ -38,6 +49,32 @@ export type GraphEdge = {
   target: string;
   strength: number;
 };
+
+// Adapter from the backend `ApiNode` shape to the frontend `GraphNode`
+// shape consumed by `KnowledgeGraph`. Hoisted here from Tree/Learn/
+// Dashboard so the three screens share a single source of truth.
+export function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
+  const course = courses.find((c) => c.course_name === n.subject);
+  return {
+    id: n.id,
+    name: n.concept_name,
+    subject: n.subject,
+    // Resolved hex (not CSS custom property): the 3D KnowledgeGraph
+    // feeds this into Three.js which can't resolve `var(--…)`.
+    // Seed prefers the course-record id so every node in the same
+    // family hashes to the same palette color, even if some nodes
+    // arrive without `n.course_id` set.
+    color:
+      n.course_color ||
+      course?.color ||
+      paletteFor(course?.course_id || n.course_id || n.subject),
+    is_subject_root: n.is_subject_root,
+    mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
+    mastery_score: n.mastery_score,
+    course_id: n.course_id || course?.course_id || "",
+    last_studied_at: n.last_studied_at || undefined,
+  };
+}
 
 export type Assignment = {
   id: string;
