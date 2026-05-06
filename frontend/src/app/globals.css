@@ -970,3 +970,30 @@ html.dark textarea {
   50%       { box-shadow: 0 0 0 5px rgba(74,158,92,0.6), 0 4px 28px rgba(74,158,92,0.3); }
 }
 .beta-glow-btn { animation: beta-glow 2.2s ease-in-out infinite; }
+
+/* ── Editorial feature rows (no boxes, hairline dividers, hover sweep) ── */
+.landing-page .landing-feature-row { transition: background-color 600ms ease, padding 500ms ease; }
+.landing-page .landing-feature-row > div { position: relative; z-index: 1; }
+.landing-page .landing-feature-row::before {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(27,108,66,0.07) 0%, transparent 70%);
+  opacity: 0; transition: opacity 600ms ease; pointer-events: none; z-index: 0;
+}
+.landing-page .landing-feature-row:hover::before { opacity: 1; }
+.landing-page .landing-feature-title {
+  transition: transform 700ms cubic-bezier(0.22,1,0.36,1), color 500ms ease, letter-spacing 700ms ease;
+  will-change: transform;
+}
+.landing-page .landing-feature-row:hover .landing-feature-title {
+  transform: translateX(8px);
+  color: #1B6C42;
+  letter-spacing: -0.012em;
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-page .landing-feature-row::before,
+  .landing-page .landing-feature-title,
+  .landing-page .landing-feature-icon,
+  .landing-page .landing-feature-underline { transition: none !important; }
+  .landing-page .landing-feature-row:hover .landing-feature-title { transform: none; }
+  .landing-page .landing-feature-row:hover .landing-feature-icon { transform: none; }
+}
