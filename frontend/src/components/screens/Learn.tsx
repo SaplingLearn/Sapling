@@ -33,22 +33,7 @@ import {
   type EnrolledCourse,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import type { GraphNode, GraphEdge } from "@/lib/data";
-
-function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
-  const course = courses.find((c) => c.course_name === n.subject);
-  return {
-    id: n.id,
-    name: n.concept_name,
-    subject: n.subject,
-    color: n.course_color || course?.color || "var(--c-sage)",
-    is_subject_root: n.is_subject_root,
-    mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
-    mastery_score: n.mastery_score,
-    course_id: n.course_id || course?.course_id || "",
-    last_studied_at: n.last_studied_at || undefined,
-  };
-}
+import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
 function apiToGraphEdge(e: ApiEdge): GraphEdge {
   return { source: e.source as string, target: e.target as string, strength: e.strength };

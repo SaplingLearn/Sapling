@@ -25,7 +25,7 @@
 
 import React from "react";
 import dynamic from "next/dynamic";
-import type { GraphEdge, GraphNode } from "@/lib/data";
+import { hashSeed, type GraphEdge, type GraphNode } from "@/lib/data";
 
 // `react-force-graph-3d`'s default export touches `document` at
 // module evaluation, so it can't be SSR'd. ssr: false ensures the
@@ -60,12 +60,6 @@ type Props = {
 // tone, and produces identical output across pages because it depends
 // only on the stable inputs (no per-screen overrides).
 
-function hashId(id: string): number {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
 function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
   if (!m) return null;
@@ -87,17 +81,53 @@ function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
   return { h, s: s * 100, l: l * 100 };
 }
 
+function hslToHex(h: number, s: number, l: number): string {
+  const sN = s / 100;
+  const lN = l / 100;
+  const c = (1 - Math.abs(2 * lN - 1)) * sN;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = lN - c / 2;
+  let r = 0,
+    g = 0,
+    b = 0;
+  if (h < 60) [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  const to = (v: number) =>
+    Math.round((v + m) * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${to(r)}${to(g)}${to(b)}`;
+}
+
+// Brand sage in HSL — used as a final fallback when the input color
+// isn't parseable hex (e.g. callers pass through `var(--c-sage)`,
+// which Three.js can't resolve). Precomputed so the call site doesn't
+// need a non-null assertion that would silently break if anyone
+// changed FALLBACK to an unparseable value.
+const FALLBACK_HSL = { h: 75, s: 26, l: 48 } as const;
+
 function shadeFor(baseHex: string, nodeId: string): string {
-  const hsl = hexToHsl(baseHex);
-  if (!hsl) return baseHex;
-  const seed = hashId(nodeId);
-  const dh = (seed % 51) - 25;
+  const hsl = hexToHsl(baseHex) ?? FALLBACK_HSL;
+  const seed = hashSeed(nodeId);
+  // Hue variance is intentionally narrow (±10°) so each course family
+  // reads as a single color band — children clearly belong to their
+  // parent course rather than drifting into a sibling's hue. Within-
+  // family distinction comes from saturation/lightness instead.
+  const dh = (seed % 21) - 10;
   const ds = ((seed >> 5) % 17) - 8;
   const dl = ((seed >> 10) % 25) - 12;
   const h = (hsl.h + dh + 360) % 360;
   const s = Math.max(20, Math.min(85, hsl.s + ds));
   const l = Math.max(28, Math.min(62, hsl.l + dl));
-  return `hsl(${h.toFixed(0)} ${s.toFixed(0)}% ${l.toFixed(0)}%)`;
+  // Return hex (#RRGGBB), not `hsl(...)`. Three.js's Color.setStyle
+  // only accepts comma-separated `hsl(h, s%, l%)`, not the modern
+  // space-separated form; mismatches silently render black. Hex is
+  // unambiguous across consumers.
+  return hslToHex(h, s, l);
 }
 
 // ── Component ──────────────────────────────────────────────────────
@@ -207,9 +237,10 @@ export function KnowledgeGraph({
 
   const nodeVal = React.useCallback((raw: object) => {
     const n = raw as FG3DNode;
-    // Bigger nodes for higher mastery so the eye lands on what the
-    // student has built up. Range ~4..10 — keeps small nodes visible
-    // without dwarfing the rest.
+    // Course (root) nodes anchor each family — render them noticeably
+    // larger than concept nodes so the eye lands on the family center
+    // first. Concept nodes scale 4..10 with mastery_score.
+    if (n.is_subject_root) return 22;
     return 4 + (typeof n.mastery_score === "number" ? n.mastery_score : 0) * 6;
   }, []);
 
