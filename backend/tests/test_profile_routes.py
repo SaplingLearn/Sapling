@@ -475,3 +475,200 @@ class TestAchievementProgress:
         out = r.json()["available"][0]
         assert out["name"] == "Secret Achievement"
         assert out["progress"] is None
+
+
+# ── POST /api/profile/{user_id}/avatar (JSON+base64) ──────────────────────
+
+
+class TestUploadAvatar:
+    """The avatar route accepts a JSON body with a base64-encoded file
+    instead of multipart/form-data. Multipart was silently failing in
+    some browser configs with `TypeError: Failed to fetch` — JSON
+    avoids the failure class. See routes/profile.py:_AvatarUploadBody."""
+
+    USER_ROW = {"id": USER_ID, "name": "Test", "username": None, "avatar_url": None, "created_at": "2025-01-01"}
+
+    def _table_factory(self, *, captured_update=None):
+        def factory(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [self.USER_ROW]
+                if captured_update is not None:
+                    def _capture(payload, filters):
+                        captured_update.append({"payload": payload, "filters": filters})
+                        return [{}]
+                    m.update.side_effect = _capture
+                else:
+                    m.update.return_value = [{}]
+            else:
+                m.select.return_value = []
+                m.update.return_value = []
+            return m
+        return factory
+
+    def test_accepts_base64_body_and_uploads(self):
+        captured = []
+        with _mock_self(), \
+             patch("routes.profile.table", side_effect=self._table_factory(captured_update=captured)), \
+             patch("routes.profile.upload_avatar", return_value="https://cdn/avatar.png") as up:
+            r = client.post(
+                f"/api/profile/{USER_ID}/avatar",
+                json={
+                    # Base64 of the bytes "PNG-bytes"
+                    "file_b64": "UE5HLWJ5dGVz",
+                    "content_type": "image/png",
+                },
+            )
+
+        assert r.status_code == 200
+        assert r.json()["avatar_url"] == "https://cdn/avatar.png"
+        # Ensure decoded bytes (not the base64 string) reach the storage layer.
+        up.assert_called_once_with(USER_ID, b"PNG-bytes", "image/png")
+        # Ensure the avatar_url is persisted to users.
+        assert captured == [{"payload": {"avatar_url": "https://cdn/avatar.png"}, "filters": {"id": f"eq.{USER_ID}"}}]
+
+    def test_accepts_data_url_prefix(self):
+        """Frontend's readFileAsBase64 strips the prefix, but a future
+        client that forgets must also work — accept either shape."""
+        with _mock_self(), \
+             patch("routes.profile.table", side_effect=self._table_factory()), \
+             patch("routes.profile.upload_avatar", return_value="https://cdn/avatar.png") as up:
+            r = client.post(
+                f"/api/profile/{USER_ID}/avatar",
+                json={
+                    "file_b64": "data:image/png;base64,UE5HLWJ5dGVz",
+                    "content_type": "image/png",
+                },
+            )
+
+        assert r.status_code == 200
+        up.assert_called_once_with(USER_ID, b"PNG-bytes", "image/png")
+
+    def test_invalid_base64_returns_400(self):
+        with _mock_self(), \
+             patch("routes.profile.table", side_effect=self._table_factory()), \
+             patch("routes.profile.upload_avatar") as up:
+            r = client.post(
+                f"/api/profile/{USER_ID}/avatar",
+                json={"file_b64": "!!!not-base64!!!", "content_type": "image/png"},
+            )
+
+        assert r.status_code == 400
+        assert "Invalid base64" in r.json()["detail"]
+        up.assert_not_called()
+
+    def test_missing_file_b64_returns_422(self):
+        """Pydantic body validation rejects missing required field."""
+        with _mock_self(), patch("routes.profile.table", side_effect=self._table_factory()):
+            r = client.post(
+                f"/api/profile/{USER_ID}/avatar",
+                json={"content_type": "image/png"},
+            )
+        assert r.status_code == 422
+
+    def test_decoded_payload_over_size_cap_returns_413(self):
+        """The route enforces MAX_AVATAR_SIZE on the *decoded* binary —
+        so a base64 payload that fits the Pydantic max_length but
+        decodes to more than 5 MB is rejected at the route layer with
+        a 413 (not at the storage layer). Mirrors the multipart
+        endpoint's validate_upload contract."""
+        import base64
+        from config import MAX_AVATAR_SIZE
+        # MAX + 1 binary bytes → just above the cap once decoded.
+        oversize_bytes = b"\x00" * (MAX_AVATAR_SIZE + 1)
+        oversize_b64 = base64.b64encode(oversize_bytes).decode("ascii")
+
+        with _mock_self(), \
+             patch("routes.profile.table", side_effect=self._table_factory()), \
+             patch("routes.profile.upload_avatar") as up:
+            r = client.post(
+                f"/api/profile/{USER_ID}/avatar",
+                json={"file_b64": oversize_b64, "content_type": "image/png"},
+            )
+
+        assert r.status_code == 413
+        assert "Maximum size" in r.json()["detail"]
+        # Storage layer must NOT have been called — the route should
+        # reject before bothering Supabase.
+        up.assert_not_called()
+
+
+# ── _get_user_or_404 column contract (issue #75) ────────────────────────────
+
+class TestGetUserOr404SelectColumns:
+    """Pin the column list used by `_get_user_or_404`'s SELECT against the
+    actual `users` schema. Issue #75 was caused by `school` and `major` being
+    SELECTed despite never being added by any migration; PostgREST returned
+    HTTP 400, the route 500'd, and three endpoints (PATCH, GET, avatar POST)
+    failed simultaneously. Existing MagicMock-based tests didn't catch it
+    because the mock returns success for any column.
+    """
+
+    # Columns that actually exist on `users` per
+    # `backend/db/supabase_schema.sql:7` + `migration_profile_settings.sql`
+    # + `migration_google_auth.sql` + `migration_add_is_approved.sql` +
+    # `migration_onboarding_fields.sql`. If a future migration adds a column
+    # to `users`, update this set in the same PR that introduces the
+    # migration so the test stays the source of truth.
+    USERS_SCHEMA_COLUMNS = {
+        "id", "name", "email", "first_name", "last_name", "year",
+        "majors", "minors", "learning_style", "onboarding_completed",
+        "streak_count", "last_active_date", "room_id", "created_at",
+        "google_id", "avatar_url", "auth_provider", "is_approved",
+        "username", "bio", "location", "website", "deleted_at",
+    }
+
+    def test_select_columns_all_exist_on_users_schema(self):
+        """Every column in `_get_user_or_404`'s SELECT must exist on
+        `users`. The column string is the second positional arg to
+        `table('users').select(...)`; we capture it and compare against
+        the schema set above."""
+        captured = {}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "users":
+                def _capture_select(columns, **kwargs):
+                    captured["users_columns"] = columns
+                    # Return a row with every encrypted column set to
+                    # None so `decrypt_if_present` returns early without
+                    # trying to base64-decode a plaintext fixture (which
+                    # logs a noisy "Nonce must be between..." warning).
+                    # The non-encrypted scalars stay populated since
+                    # the route accesses them by `.get(...)`.
+                    return [{
+                        "id": USER_ID,
+                        "name": None,
+                        "email": None,
+                        "first_name": None,
+                        "last_name": None,
+                        "username": "tester",
+                        "avatar_url": None,
+                        "year": None,
+                        "majors": [],
+                        "minors": [],
+                        "bio": None,
+                        "location": None,
+                        "website": None,
+                        "streak_count": 0,
+                        "created_at": "2026-01-01",
+                    }]
+                m.select.side_effect = _capture_select
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.profile.table", side_effect=table_side_effect):
+            from routes.profile import _get_user_or_404
+            _get_user_or_404(USER_ID)
+
+        assert "users_columns" in captured, "table('users').select(...) was not called"
+        selected = {c.strip() for c in captured["users_columns"].split(",")}
+        unknown = selected - self.USERS_SCHEMA_COLUMNS
+        assert not unknown, (
+            f"_get_user_or_404 SELECTs columns that don't exist on `users`: "
+            f"{sorted(unknown)}. This is the root cause of issue #75 — "
+            f"PostgREST returns HTTP 400 for unknown columns and the route "
+            f"500s. Fix: remove these columns from the SELECT in "
+            f"backend/routes/profile.py:_get_user_or_404."
+        )

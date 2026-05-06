@@ -21,6 +21,7 @@ from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
 from services.auth_guard import require_self, get_session_user_id
 from services.calendar_service import extract_assignments_from_file, insert_new_assignments
 from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
+from services.request_context import current_request_id
 
 try:
     from google_auth_oauthlib.flow import Flow
@@ -97,8 +98,17 @@ async def extract(request: FastAPIRequest, file: UploadFile = File(...), user_id
     file_bytes = await file.read()
     filename = file.filename or "upload"
     content_type = file.content_type or "application/octet-stream"
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or current_request_id()
+        or ""
+    )
     try:
-        result = extract_assignments_from_file(file_bytes, filename, content_type)
+        result = await extract_assignments_from_file(
+            file_bytes, filename, content_type,
+            user_id=user_id or "",
+            request_id=request_id,
+        )
         return result
     except Exception as e:
         return {"error": str(e), "assignments": [], "warnings": [str(e)]}
@@ -128,7 +138,7 @@ def get_upcoming(user_id: str, request: FastAPIRequest):
     require_self(user_id, request)
     today = datetime.utcnow().strftime("%Y-%m-%d")
     rows = table("assignments").select(
-        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,course_code,course_name,courses!left(course_code,course_name)",
+        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,courses!left(course_code,course_name)",
         filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
         order="due_date.asc",
         limit=20,
@@ -145,8 +155,8 @@ def get_upcoming(user_id: str, request: FastAPIRequest):
             "notes": decrypt_if_present(r.get("notes")),
             "google_event_id": r.get("google_event_id"),
             "course_id": r.get("course_id"),
-            "course_code": course.get("course_code") or r.get("course_code") or "",
-            "course_name": course.get("course_name") or r.get("course_name") or "",
+            "course_code": course.get("course_code") or "",
+            "course_name": course.get("course_name") or "",
         })
     return {"assignments": assignments}
 
@@ -156,7 +166,7 @@ def get_all_assignments(user_id: str, request: FastAPIRequest):
     """Return all assignments for a user (past and future) for the calendar view."""
     require_self(user_id, request)
     rows = table("assignments").select(
-        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,course_code,course_name,courses!left(course_code,course_name)",
+        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,courses!left(course_code,course_name)",
         filters={"user_id": f"eq.{user_id}"},
         order="due_date.asc",
     )
@@ -172,8 +182,8 @@ def get_all_assignments(user_id: str, request: FastAPIRequest):
             "notes": decrypt_if_present(r.get("notes")),
             "google_event_id": r.get("google_event_id"),
             "course_id": r.get("course_id"),
-            "course_code": course.get("course_code") or r.get("course_code") or "",
-            "course_name": course.get("course_name") or r.get("course_name") or "",
+            "course_code": course.get("course_code") or "",
+            "course_name": course.get("course_name") or "",
         })
     return {"assignments": assignments}
 
@@ -221,15 +231,15 @@ def suggest_study_blocks(body: StudyBlockBody, request: FastAPIRequest):
     require_self(body.user_id, request)
     today = datetime.utcnow().strftime("%Y-%m-%d")
     assignments = table("assignments").select(
-        "id,title,due_date,course_code,course_name,courses!left(course_code,course_name)",
+        "id,title,due_date,courses!left(course_code,course_name)",
         filters={"user_id": f"eq.{body.user_id}", "due_date": f"gte.{today}"},
         order="due_date.asc",
     )
     blocks = []
     for a in assignments:
         course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        cc = course.get("course_code") or a.get("course_code") or ""
-        cn = course.get("course_name") or a.get("course_name") or ""
+        cc = course.get("course_code") or ""
+        cn = course.get("course_name") or ""
         course_label = f"[{cc}] " if cc else (f"{cn}: " if cn else "")
         blocks.append({
             "topic": f"{course_label}{a['title']}" if course_label else a["title"],
@@ -314,7 +324,7 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
     service = build("calendar", "v3", credentials=creds)
 
     unsynced = table("assignments").select(
-        "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",
+        "id,title,due_date,notes,google_event_id,courses!left(course_code,course_name)",
         filters={
             "user_id": f"eq.{body.user_id}",
             "google_event_id": "is.null",
@@ -322,7 +332,7 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
     )
     # Also catch empty-string google_event_id
     unsynced += table("assignments").select(
-        "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",
+        "id,title,due_date,notes,google_event_id,courses!left(course_code,course_name)",
         filters={
             "user_id": f"eq.{body.user_id}",
             "google_event_id": "eq.",
@@ -335,8 +345,8 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
             continue
 
         course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        course_code = course.get("course_code") or a.get("course_code") or ""
-        course_name = course.get("course_name") or a.get("course_name") or ""
+        course_code = course.get("course_code") or ""
+        course_name = course.get("course_name") or ""
         course_label = f"[{course_code}] " if course_code else (f"{course_name}: " if course_name else "")
 
         event = {
@@ -367,7 +377,7 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
     skipped = 0
     for aid in body.assignment_ids:
         rows = table("assignments").select(
-            "id,title,due_date,notes,google_event_id,course_code,course_name,courses!left(course_code,course_name)",
+            "id,title,due_date,notes,google_event_id,courses!left(course_code,course_name)",
             filters={"id": f"eq.{aid}"},
         )
         if not rows:
@@ -379,8 +389,8 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
             continue
 
         course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        course_code = course.get("course_code") or a.get("course_code") or ""
-        course_name = course.get("course_name") or a.get("course_name") or ""
+        course_code = course.get("course_code") or ""
+        course_name = course.get("course_name") or ""
         course_label = f"[{course_code}] " if course_code else (f"{course_name}: " if course_name else "")
 
         event = {

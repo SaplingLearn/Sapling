@@ -4,20 +4,22 @@
  * Sapling top navigation.
  *
  * Replaces the vertical Sidebar with a minimal 56px sticky top bar —
- * matches the pre-revamp Navbar pattern. Text-only links (no icon
- * clutter), solid background (glassmorphism is off the table),
- * serif "Sapling" wordmark on the left, avatar dropdown on the right
- * for account actions.
+ * matches the pre-revamp Navbar pattern. Top-level entries are grouped
+ * (Learn / Organize / Community / Tools) and reveal sub-items on hover,
+ * mirroring the SideNav's section structure but in horizontal form.
  *
  * Design decisions:
- *  - Active state = `color: var(--text)` + weight 700 (no underline, no
- *    pill, no border — hierarchy through type, not decoration).
- *  - Inactive links are dimmed to `var(--text-muted)`; hover lifts to
- *    `var(--text-dim)`.
- *  - Mobile (≤768px) collapses the link list into a hamburger that
- *    drops a panel anchored to the hamburger button.
- *  - Everything on the right (account menu, report, report-issue link)
- *    stays inside a single flex group that pushes to the far right.
+ *  - Group labels in the bar; hover/focus opens a small panel with the
+ *    section's icon+label rows (same shape as SideNav rows so the two
+ *    shells feel related, not parallel).
+ *  - Active state on a GROUP = any child route matches. The group
+ *    label goes weight 700 + `var(--text)`; inactive groups are dimmed.
+ *  - Hover open is forgiving: a short close-delay (140ms) gives the
+ *    cursor time to bridge from trigger to panel without flicker.
+ *  - Click on a group label is also valid (keyboard / touch parity).
+ *  - Mobile (≤768px) collapses everything into a hamburger that drops a
+ *    panel grouped the same way.
+ *  - Right-side cluster (settings / admin / avatar) unchanged.
  */
 
 import React from "react";
@@ -28,24 +30,57 @@ import { Icon } from "./Icon";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 
-type Entry = { href: string; label: string };
+type NavItem = { href: string; label: string; icon: string };
+type NavGroup = { label: string; items: NavItem[] };
 
-const LINKS: Entry[] = [
-  { href: "/dashboard",    label: "Dashboard"    },
-  { href: "/learn",        label: "Learn"        },
-  { href: "/tree",         label: "Tree"         },
-  { href: "/study",        label: "Study"        },
-  { href: "/library",      label: "Library"      },
-  { href: "/calendar",     label: "Calendar"     },
-  { href: "/social",       label: "Social"       },
-  { href: "/achievements", label: "Achievements" },
+// Mirrors SideNav's SECTIONS verbatim. Kept duplicated rather than
+// imported so the two shells stay independent — TopNav and SideNav are
+// alternative skins, not parent/child, and the routing data is small
+// enough that the duplication isn't a maintenance burden.
+const GROUPS: NavGroup[] = [
+  {
+    label: "Learn",
+    items: [
+      { href: "/dashboard", label: "Dashboard", icon: "home"  },
+      { href: "/learn",     label: "Tutor",     icon: "brain" },
+      { href: "/quiz",      label: "Quiz",      icon: "flask" },
+      { href: "/tree",      label: "Tree",      icon: "tree"  },
+      { href: "/study",     label: "Study",     icon: "bolt"  },
+    ],
+  },
+  {
+    label: "Organize",
+    items: [
+      { href: "/library",  label: "Library",  icon: "book" },
+      { href: "/calendar", label: "Calendar", icon: "cal"  },
+    ],
+  },
+  {
+    label: "Community",
+    items: [
+      { href: "/social",       label: "Social",       icon: "users"  },
+      { href: "/achievements", label: "Achievements", icon: "trophy" },
+    ],
+  },
+  {
+    label: "Tools",
+    items: [
+      { href: "/gradebook",      label: "Grades",         icon: "star"    },
+      { href: "/notetaker",      label: "Notetaker",      icon: "pencil"  },
+      { href: "/course-planner", label: "Course Planner", icon: "planner" },
+    ],
+  },
 ];
 
 export const TOP_NAV_HEIGHT = 56;
 
-function isActive(pathname: string, href: string): boolean {
+function isActiveItem(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
   return pathname === href || pathname.startsWith(href + "/");
+}
+
+function isActiveGroup(pathname: string, group: NavGroup): boolean {
+  return group.items.some((item) => isActiveItem(pathname, item.href));
 }
 
 export function TopNav() {
@@ -100,7 +135,8 @@ export function TopNav() {
         <div ref={mobileRef} style={{ position: "relative" }}>
           <button
             aria-label="Navigation menu"
-            onClick={() => setMobileOpen(o => !o)}
+            aria-expanded={mobileOpen}
+            onClick={() => setMobileOpen((o) => !o)}
             style={{
               padding: 6, display: "flex", flexDirection: "column", gap: 4,
               width: 28, alignItems: "center",
@@ -161,34 +197,12 @@ export function TopNav() {
         </div>
       </Link>
 
-      {/* Desktop link row — icon + label from the pre-revamp Sidebar */}
+      {/* Desktop group row — hover/focus reveals each group's items */}
       {!isMobile && (
-        <div style={{ display: "flex", alignItems: "center", gap: 2, flex: 1, minWidth: 0 }}>
-          {LINKS.map(l => {
-            const active = isActive(pathname, l.href);
-            return (
-              <Link
-                key={l.href}
-                href={l.href}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                  padding: "6px 10px", borderRadius: "var(--r-sm)",
-                  fontSize: 13, fontWeight: active ? 700 : 500,
-                  color: active ? "var(--text)" : "var(--text-muted)",
-                  textDecoration: "none", whiteSpace: "nowrap",
-                  transition: "color var(--dur-fast) var(--ease)",
-                }}
-                onMouseEnter={(e) => {
-                  if (!active) e.currentTarget.style.color = "var(--text-dim)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!active) e.currentTarget.style.color = "var(--text-muted)";
-                }}
-              >
-                {l.label}
-              </Link>
-            );
-          })}
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
+          {GROUPS.map((g) => (
+            <NavGroupTrigger key={g.label} group={g} pathname={pathname} />
+          ))}
         </div>
       )}
 
@@ -244,38 +258,235 @@ export function TopNav() {
   );
 }
 
+/**
+ * NavGroupTrigger — one of the four top-level group buttons.
+ *
+ * Hover (or focus) opens a panel anchored to the trigger; mouse-leave
+ * with a short delay closes it. The delay (140ms) is deliberate: the
+ * trigger and panel touch but a bare 0px gap can still flicker on
+ * sub-pixel cursor moves, so we let the close animation tolerate
+ * cursor jitter while the user travels from label to item.
+ */
+function NavGroupTrigger({ group, pathname }: { group: NavGroup; pathname: string }) {
+  const active = isActiveGroup(pathname, group);
+  const [open, setOpen] = React.useState(false);
+  const closeTimer = React.useRef<number | null>(null);
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+
+  const cancelClose = () => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => setOpen(false), 140);
+  };
+
+  // Cancel any pending close-timer if this component unmounts mid-flight
+  // (e.g. route change while the dropdown is closing). Avoids a stray
+  // setState on an unmounted component.
+  React.useEffect(() => {
+    return () => cancelClose();
+  }, []);
+
+  // Close when route changes (navigation triggered).
+  React.useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
+  // Click outside / Escape closes.
+  React.useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div
+      ref={wrapperRef}
+      onMouseEnter={() => { cancelClose(); setOpen(true); }}
+      onMouseLeave={scheduleClose}
+      // Symmetric counterpart to onFocus opening the panel: when focus
+      // leaves the wrapper entirely (Tab past the last item), close.
+      // relatedTarget can be null when focus jumps to a non-focusable
+      // surface or to another window — treat that as leaving too.
+      onBlur={(e) => {
+        const next = e.relatedTarget as Node | null;
+        if (!wrapperRef.current || !next || !wrapperRef.current.contains(next)) {
+          setOpen(false);
+        }
+      }}
+      style={{ position: "relative" }}
+    >
+      <button
+        type="button"
+        aria-haspopup="true"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onFocus={() => { cancelClose(); setOpen(true); }}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          padding: "6px 10px",
+          borderRadius: "var(--r-sm)",
+          fontSize: 13,
+          fontWeight: active ? 700 : 500,
+          color: active || open ? "var(--text)" : "var(--text-muted)",
+          whiteSpace: "nowrap",
+          transition: "color var(--dur-fast) var(--ease)",
+          cursor: "pointer",
+          background: "transparent",
+          border: "none",
+        }}
+        onMouseEnter={(e) => {
+          if (!active) e.currentTarget.style.color = "var(--text-dim)";
+        }}
+        onMouseLeave={(e) => {
+          if (!active && !open) e.currentTarget.style.color = "var(--text-muted)";
+        }}
+      >
+        {group.label}
+        <span
+          aria-hidden
+          style={{
+            display: "inline-flex",
+            transition: "transform var(--dur-fast) var(--ease)",
+            transform: open ? "rotate(180deg)" : "rotate(90deg)",
+            color: "currentColor",
+            opacity: 0.6,
+            marginTop: 1,
+          }}
+        >
+          <Icon name="chev" size={10} />
+        </span>
+      </button>
+
+      {open && (
+        <div
+          aria-label={group.label}
+          // Panel touches the trigger's bottom edge (no marginTop) so
+          // cursor traversal stays within the wrapper's mouse-event
+          // bounds. The 140ms close-delay is a separate forgiveness
+          // mechanism; together they make the hover handoff reliable.
+          //
+          // No `role="menu"` here — that ARIA role implies arrow-key
+          // navigation between items, which we don't implement. Linear
+          // tab order through Links is the actual UX, so we leave the
+          // semantics as "nav with links" rather than over-claim.
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            minWidth: 200,
+            padding: 6,
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-md)",
+            boxShadow: "var(--shadow-md)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            zIndex: 100,
+          }}
+        >
+          {group.items.map((item) => {
+            const itemActive = isActiveItem(pathname, item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "8px 10px",
+                  borderRadius: "var(--r-sm)",
+                  background: itemActive ? "var(--bg-soft)" : "transparent",
+                  color: itemActive ? "var(--text)" : "var(--text-dim)",
+                  fontSize: 13,
+                  fontWeight: itemActive ? 600 : 400,
+                  textDecoration: "none",
+                  transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--bg-soft)";
+                  e.currentTarget.style.color = "var(--text)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = itemActive ? "var(--bg-soft)" : "transparent";
+                  e.currentTarget.style.color = itemActive ? "var(--text)" : "var(--text-dim)";
+                }}
+              >
+                <Icon name={item.icon} size={15} />
+                <span style={{ flex: 1 }}>{item.label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MobilePanel({ pathname }: { pathname: string }) {
   return (
     <div
       style={{
         position: "absolute", top: "calc(100% + 6px)", left: 0,
-        minWidth: 220, padding: "6px 0",
+        minWidth: 240, padding: "6px 0",
         background: "var(--bg-panel)", border: "1px solid var(--border)",
         borderRadius: "var(--r-md)", boxShadow: "var(--shadow-md)",
         zIndex: 100,
       }}
     >
-      {LINKS.map(l => {
-        const active = isActive(pathname, l.href);
-        return (
-          <Link
-            key={l.href}
-            href={l.href}
-            style={{
-              display: "flex", alignItems: "center", gap: 10,
-              padding: "10px 14px",
-              fontSize: 14, fontWeight: active ? 700 : 500,
-              color: active ? "var(--text)" : "var(--text-dim)",
-              textDecoration: "none",
-              transition: "background var(--dur-fast) var(--ease)",
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+      {GROUPS.map((g, i) => (
+        <React.Fragment key={g.label}>
+          {i > 0 && <div style={{ height: 1, background: "var(--border)", margin: "6px 8px" }} aria-hidden />}
+          <div
+            className="label-micro"
+            style={{ padding: "8px 14px 4px" }}
           >
-            {l.label}
-          </Link>
-        );
-      })}
+            {g.label}
+          </div>
+          {g.items.map((item) => {
+            const itemActive = isActiveItem(pathname, item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "10px 14px",
+                  fontSize: 14, fontWeight: itemActive ? 700 : 500,
+                  color: itemActive ? "var(--text)" : "var(--text-dim)",
+                  textDecoration: "none",
+                  transition: "background var(--dur-fast) var(--ease)",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-soft)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                <Icon name={item.icon} size={15} />
+                {item.label}
+              </Link>
+            );
+          })}
+        </React.Fragment>
+      ))}
     </div>
   );
 }

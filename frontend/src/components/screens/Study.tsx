@@ -84,7 +84,6 @@ export function Study() {
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
       <TopBar
-        breadcrumb="Home / Study"
         title="Study"
         subtitle={mode === "guide" ? "Exam-ready guides from your course material" : "Spaced review with ratings and a 3D flip"}
         actions={actions}

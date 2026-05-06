@@ -497,17 +497,39 @@ class TestLearnHelpers(unittest.TestCase):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestQuizPromptAugmentation(unittest.TestCase):
+    """Legacy prompt-augmentation tests.
+
+    Post-refactor (ADR 0005), generate_quiz routes through quiz_agent
+    first and only falls through to the legacy `_legacy_generate_quiz`
+    path on agent failure. Each test below patches `quiz_agent.run` to
+    raise so the legacy code path actually executes — that is the path
+    these assertions describe (manual prompt-string augmentation against
+    course_context_service output).
+    """
 
     def _make_generate_body(self):
-        from models import GenerateQuizBody
-        return GenerateQuizBody(
-            user_id="user1",
-            concept_node_id="node-abc",
-            difficulty="medium",
-            num_questions=3,
+        return {
+            "user_id": "user1",
+            "concept_node_id": "node-abc",
+            "difficulty": "medium",
+            "num_questions": 3,
+        }
+
+    def _force_legacy(self):
+        """Patch quiz_agent.run to raise so the route falls back to legacy."""
+        from unittest.mock import AsyncMock
+        return patch(
+            "routes.quiz.quiz_agent.run",
+            new=AsyncMock(side_effect=RuntimeError("force legacy fallback for tests")),
         )
 
-    # get_course_context is lazily imported inside generate_quiz;
+    def _post_generate(self):
+        """POST to /api/quiz/generate via TestClient."""
+        from fastapi.testclient import TestClient
+        from main import app
+        return TestClient(app).post("/api/quiz/generate", json=self._make_generate_body())
+
+    # get_course_context is lazily imported inside _legacy_generate_quiz;
     # patch at the source module so the `from ... import` resolves to our mock.
     @patch("services.course_context_service.get_course_context")
     @patch("routes.quiz.call_gemini_json")
@@ -535,8 +557,8 @@ class TestQuizPromptAugmentation(unittest.TestCase):
         }
         mock_gemini.return_value = {"questions": []}
 
-        from routes.quiz import generate_quiz
-        generate_quiz(self._make_generate_body(), MagicMock())
+        with self._force_legacy():
+            self._post_generate()
 
         actual_prompt = mock_gemini.call_args[0][0]
         self.assertIn("Dangling pointers", actual_prompt)
@@ -559,8 +581,8 @@ class TestQuizPromptAugmentation(unittest.TestCase):
         mock_graph.return_value = {"nodes": [], "edges": []}
         mock_gemini.return_value = {"questions": []}
 
-        from routes.quiz import generate_quiz
-        generate_quiz(self._make_generate_body(), MagicMock())
+        with self._force_legacy():
+            self._post_generate()
 
         actual_prompt = mock_gemini.call_args[0][0]
         self.assertNotIn("Common misconceptions seen across the class", actual_prompt)
@@ -591,8 +613,8 @@ class TestQuizPromptAugmentation(unittest.TestCase):
         }
         mock_gemini.return_value = {"questions": []}
 
-        from routes.quiz import generate_quiz
-        generate_quiz(self._make_generate_body(), MagicMock())
+        with self._force_legacy():
+            self._post_generate()
 
         actual_prompt = mock_gemini.call_args[0][0]
         self.assertIn("mistake_9", actual_prompt)
@@ -613,10 +635,10 @@ class TestQuizPromptAugmentation(unittest.TestCase):
         mock_graph.return_value = {"nodes": [], "edges": []}
         mock_gemini.return_value = {"questions": []}
 
-        with patch("services.course_context_service.get_course_context") as mock_ctx:
-            from routes.quiz import generate_quiz
-            generate_quiz(self._make_generate_body(), MagicMock())
-            mock_ctx.assert_not_called()
+        with self._force_legacy():
+            with patch("services.course_context_service.get_course_context") as mock_ctx:
+                self._post_generate()
+                mock_ctx.assert_not_called()
 
 
 if __name__ == "__main__":

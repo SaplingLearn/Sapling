@@ -1,0 +1,44 @@
+name: Evals
+# Triggered manually only until cassette coverage is complete.
+#
+# Today only 4 of 70 cassettes are recorded, so a pull_request trigger
+# would mark every PR red on missing cassettes. Once the remaining 66
+# are recorded (one-time SAPLING_EVAL_MODE=record pass against live
+# Gemini, then commit cassettes/), re-enable the pull_request trigger
+# below to gate prompt changes on eval pass/fail.
+on:
+  workflow_dispatch:
+  # pull_request:
+  #   paths:
+  #     - 'backend/agents/**'
+  #     - 'backend/tests/evals/**'
+  #     - 'backend/services/agent_events.py'
+  #     - 'backend/routes/documents.py'
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - name: Install backend deps
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install 'pydantic-evals>=0.0.5'
+      - name: Run evals against cassettes
+        env:
+          SAPLING_EVAL_MODE: replay
+          GEMINI_API_KEY: dummy-not-used-in-replay
+          # 64 hex chars; only needed if any import path requires it.
+          ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+        run: |
+          cd backend
+          python tests/evals/document_classification.py
+          python tests/evals/document_summary.py
+          python tests/evals/concept_extraction.py
+          python tests/evals/syllabus_extraction.py

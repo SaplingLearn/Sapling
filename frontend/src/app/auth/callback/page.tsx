@@ -16,26 +16,26 @@ function CallbackInner() {
     const approvedParam = searchParams.get('is_approved');
     const authToken = searchParams.get('auth_token');
     const error = searchParams.get('error');
+    const popupId = searchParams.get('popup_id');
 
-    const isPopup =
-      typeof window !== 'undefined' &&
-      !!window.opener &&
-      window.opener !== window;
+    // Popup mode is signalled by the backend echoing back popup_id we sent
+    // when opening the window. We can't trust window.opener here: COOP nulls
+    // it the moment the popup hops to a cross-origin URL (Railway/Google).
+    const isPopup = !!popupId && typeof window !== 'undefined';
 
-    const postToOpener = (payload: Record<string, unknown>): boolean => {
-      if (!isPopup) return false;
+    const broadcast = (payload: Record<string, unknown>): boolean => {
+      if (!isPopup || typeof BroadcastChannel === 'undefined') return false;
       try {
-        window.opener.postMessage(
-          { type: 'sapling_signin', ...payload },
-          window.location.origin,
-        );
+        const ch = new BroadcastChannel(`sapling_signin:${popupId}`);
+        ch.postMessage({ type: 'sapling_signin', ...payload });
+        ch.close();
       } catch {}
       try { window.close(); } catch {}
       return true;
     };
 
     const fail = (errCode: string) => {
-      if (postToOpener({ success: false, error: errCode })) return;
+      if (broadcast({ success: false, error: errCode })) return;
       router.replace(`/?error=${encodeURIComponent(errCode)}`);
     };
 
@@ -83,7 +83,7 @@ function CallbackInner() {
         confirmApproved();
       }
 
-      if (postToOpener({
+      if (broadcast({
         success: true,
         userId,
         name,

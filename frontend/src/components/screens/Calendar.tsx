@@ -248,7 +248,6 @@ export function Calendar() {
   return (
     <div>
       <TopBar
-        breadcrumb="Home / Calendar"
         title="Calendar"
         subtitle={`${rangeLabel} · ${assignments.length} assignment${assignments.length === 1 ? "" : "s"}`}
         actions={topActions}

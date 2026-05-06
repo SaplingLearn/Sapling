@@ -384,7 +384,7 @@ export function Dashboard() {
   if (loadError && !courses.length) {
     return (
       <div>
-        <TopBar breadcrumb="Home / Dashboard" title="Couldn't load dashboard" />
+        <TopBar title="Couldn't load dashboard" />
         <div style={{ padding: 32, fontSize: 13 }}>
           <div style={{ color: "var(--err)", marginBottom: 10 }}>{loadError}</div>
           <button className="btn btn--primary" onClick={load}>Retry</button>
@@ -499,11 +499,19 @@ export function Dashboard() {
   const rightPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
       {!isMobile && (
-        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 30 }}>
-          <button className="btn btn--sm" onClick={() => router.push("/library")}>
+        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 28 }}>
+          <button
+            className="btn btn--sm"
+            onClick={() => router.push("/library")}
+            style={{ padding: "7px 14px", fontSize: 12 }}
+          >
             <Icon name="search" size={13} /> Search
           </button>
-          <button className="btn btn--sm btn--primary" onClick={() => router.push("/learn")}>
+          <button
+            className="btn btn--sm btn--primary"
+            onClick={() => router.push("/learn")}
+            style={{ padding: "7px 14px", fontSize: 12 }}
+          >
             <Icon name="sparkle" size={13} /> Start learning
           </button>
         </div>
@@ -636,7 +644,7 @@ export function Dashboard() {
     <div
       style={{
         textAlign: useLegacyPanels && !isMobile ? "center" : "left",
-        padding: isMobile ? "14px 4px 0" : "6px 0 0",
+        padding: isMobile ? "14px 4px 14px" : "6px 0 18px",
       }}
     >
       <h1
@@ -680,20 +688,25 @@ export function Dashboard() {
       style={{
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
+        justifyContent: "flex-end",
+        gap: 8,
         flexWrap: "wrap",
       }}
     >
-      <span className="label-micro">Home / Dashboard</span>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn btn--sm" onClick={() => router.push("/library")}>
-          <Icon name="search" size={13} /> Library
-        </button>
-        <button className="btn btn--sm btn--primary" onClick={() => router.push("/learn")}>
-          <Icon name="sparkle" size={13} /> Start learning
-        </button>
-      </div>
+      <button
+        className="btn btn--sm"
+        onClick={() => router.push("/library")}
+        style={{ padding: "7px 14px", fontSize: 12 }}
+      >
+        <Icon name="search" size={13} /> Library
+      </button>
+      <button
+        className="btn btn--sm btn--primary"
+        onClick={() => router.push("/learn")}
+        style={{ padding: "7px 14px", fontSize: 12 }}
+      >
+        <Icon name="sparkle" size={13} /> Start learning
+      </button>
     </div>
   ) : null;
 
@@ -704,7 +717,7 @@ export function Dashboard() {
         <strong>Try this next:</strong> {suggestNode.name}
         {suggestNode.subject && <span style={{ color: "var(--text-dim)" }}> · {suggestNode.subject}</span>}
       </div>
-      <button className="btn btn--sm btn--primary" onClick={() => router.push(`/learn?topic=${encodeURIComponent(suggestNode.name)}&mode=quiz`)}>
+      <button className="btn btn--sm btn--primary" onClick={() => router.push(`/quiz?topic=${encodeURIComponent(suggestNode.name)}`)}>
         Start quiz
       </button>
       <button className="btn btn--sm btn--ghost" onClick={dismissSuggest}>Dismiss</button>
@@ -722,11 +735,6 @@ export function Dashboard() {
         alignSelf: "stretch",
       }}
     >
-      {!isMobile && !useLegacyPanels && (
-        <div style={{ padding: "0 2px", display: "flex", alignItems: "center", minHeight: 30 }}>
-          <span className="label-micro">Home / Dashboard</span>
-        </div>
-      )}
       {heroBlock}
       {mobileMetaRow}
       {suggestBlock}
@@ -740,11 +748,6 @@ export function Dashboard() {
   // on the right. Only rendered when layoutPref === "topnav".
   const legacyCoursesPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-      {!isMobile && (
-        <div style={{ padding: "0 2px", display: "flex", alignItems: "center", minHeight: 30 }}>
-          <span className="label-micro">Home / Dashboard</span>
-        </div>
-      )}
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">My courses</div>
@@ -850,11 +853,19 @@ export function Dashboard() {
   const legacyRightPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
       {!isMobile && (
-        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 30 }}>
-          <button className="btn btn--sm" onClick={() => router.push("/library")}>
+        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 28 }}>
+          <button
+            className="btn btn--sm"
+            onClick={() => router.push("/library")}
+            style={{ padding: "7px 14px", fontSize: 12 }}
+          >
             <Icon name="search" size={13} /> Library
           </button>
-          <button className="btn btn--sm btn--primary" onClick={() => router.push("/learn")}>
+          <button
+            className="btn btn--sm btn--primary"
+            onClick={() => router.push("/learn")}
+            style={{ padding: "7px 14px", fontSize: 12 }}
+          >
             <Icon name="sparkle" size={13} /> Start learning
           </button>
         </div>
@@ -930,7 +941,7 @@ export function Dashboard() {
           </button>
         ))}
         <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button className="btn btn--sm btn--primary" style={{ flex: 1 }} onClick={() => router.push("/learn?mode=quiz")}>
+          <button className="btn btn--sm btn--primary" style={{ flex: 1 }} onClick={() => router.push("/quiz")}>
             <Icon name="bolt" size={12} /> Quick quiz
           </button>
           <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => router.push("/social")}>
@@ -1142,17 +1153,17 @@ function CoursesKey({
     <div
       style={{
         position: "absolute",
-        bottom: 12,
-        right: 12,
-        width: collapsed ? "auto" : 220,
-        maxWidth: "calc(100% - 24px)",
+        bottom: 14,
+        right: 14,
+        width: collapsed ? "auto" : 300,
+        maxWidth: "calc(100% - 28px)",
         background: "transparent",
         border: "none",
         borderRadius: 0,
         boxShadow: "none",
-        padding: collapsed ? "6px 10px" : "10px 12px 8px",
+        padding: collapsed ? "8px 12px" : "14px 16px 12px",
         zIndex: 2,
-        fontSize: 11,
+        fontSize: 13,
       }}
     >
       <div
@@ -1160,12 +1171,12 @@ function CoursesKey({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 8,
-          marginBottom: collapsed ? 0 : 8,
+          gap: 10,
+          marginBottom: collapsed ? 0 : 12,
         }}
       >
-        <div className="label-micro" style={{ fontSize: 9, ...legibleText }}>My courses</div>
-        <div style={{ display: "flex", gap: 4 }}>
+        <div className="label-micro" style={{ fontSize: 11, ...legibleText }}>My courses</div>
+        <div style={{ display: "flex", gap: 6 }}>
           {!collapsed && (
             <button
               className="btn btn--ghost btn--sm"
@@ -1173,7 +1184,7 @@ function CoursesKey({
               title="Manage courses"
               style={paddedIconBtn}
             >
-              <Icon name="cog" size={10} />
+              <Icon name="cog" size={13} />
             </button>
           )}
           <button
@@ -1182,13 +1193,13 @@ function CoursesKey({
             aria-label={collapsed ? "Expand courses key" : "Collapse courses key"}
             style={paddedIconBtn}
           >
-            <Icon name={collapsed ? "plus" : "x"} size={10} />
+            <Icon name={collapsed ? "plus" : "x"} size={13} />
           </button>
         </div>
       </div>
 
       {!collapsed && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {courseProgress.map(({ course, mastered, learning, struggling, unexplored, total, progress }) => {
             const pct = Math.round(progress * 100);
             const baseColor = course.color || "var(--accent)";
@@ -1200,20 +1211,20 @@ function CoursesKey({
             ];
             return (
               <div key={course.course_id}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3, gap: 6 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: baseColor, flexShrink: 0, ...legibleDot }} />
-                    <strong style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...legibleText }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5, gap: 8 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <span style={{ width: 11, height: 11, borderRadius: "50%", background: baseColor, flexShrink: 0, ...legibleDot }} />
+                    <strong style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...legibleText }}>
                       {course.course_code || course.course_name}
                     </strong>
                   </span>
-                  <span className="mono" style={{ color: "var(--text-dim)", fontSize: 10, ...legibleText }}>{pct}%</span>
+                  <span className="mono" style={{ color: "var(--text-dim)", fontSize: 12, ...legibleText }}>{pct}%</span>
                 </div>
                 {total > 0 ? (
                   <div
                     style={{
                       display: "flex",
-                      height: 5,
+                      height: 8,
                       background: "var(--bg-soft)",
                       borderRadius: "var(--r-full)",
                       overflow: "hidden",
@@ -1234,7 +1245,7 @@ function CoursesKey({
                     ))}
                   </div>
                 ) : (
-                  <div style={{ height: 5, background: "var(--bg-soft)", borderRadius: "var(--r-full)", ...legibleBar }} />
+                  <div style={{ height: 8, background: "var(--bg-soft)", borderRadius: "var(--r-full)", ...legibleBar }} />
                 )}
               </div>
             );

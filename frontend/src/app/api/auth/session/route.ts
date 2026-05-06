@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { signSession, SESSION_MAX_AGE } from '@/lib/sessionToken';
 
 const SESSION_SECRET = process.env.SESSION_SECRET;
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
 
 async function verifyAuthToken(token: string): Promise<string | null> {
   if (!SESSION_SECRET) return null;
@@ -71,10 +72,11 @@ export async function POST(request: NextRequest) {
     const response = NextResponse.json({ ok: true });
     response.cookies.set('sapling_session', token, {
       httpOnly: true,
-      sameSite: 'none',
+      sameSite: 'lax',
       secure: true,
       path: '/',
       maxAge: SESSION_MAX_AGE,
+      ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
     });
     return response;
   } catch {
@@ -86,10 +88,11 @@ export async function DELETE() {
   const response = NextResponse.json({ ok: true });
   response.cookies.set('sapling_session', '', {
     httpOnly: true,
-    sameSite: 'none',
+    sameSite: 'lax',
     secure: true,
     path: '/',
     maxAge: 0,
+    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
   });
   return response;
 }

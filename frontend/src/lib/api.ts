@@ -4,6 +4,7 @@ import type {
   UserCosmetic, CosmeticType, Role, Cosmetic, RarityTier, AchievementCategory,
   GradebookSummary, GradebookCourse, GradeCategory, GradedAssignment, LetterScaleTier,
   ExtractedSyllabusCategory,
+  AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
 } from '@/lib/types';
 
 import { handleLocalRequest } from '@/lib/localData';
@@ -79,16 +80,46 @@ export const deleteGraphNode = (userId: string, nodeId: string) =>
   );
 
 // Learn
-export const startSession = (userId: string, topic: string, mode: string, courseId?: string, useSharedContext = true) =>
+export type ModelPref = 'smart' | 'fast';
+
+export const startSession = (
+  userId: string,
+  topic: string,
+  mode: string,
+  courseId?: string,
+  useSharedContext = true,
+  modelPref?: ModelPref,
+) =>
   fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, topic, mode, use_shared_context: useSharedContext, course_id: courseId }),
+    body: JSON.stringify({
+      user_id: userId,
+      topic,
+      mode,
+      use_shared_context: useSharedContext,
+      course_id: courseId,
+      ...(modelPref ? { model_pref: modelPref } : {}),
+    }),
   });
 
-export const sendChat = (sessionId: string, userId: string, message: string, mode: string, useSharedContext = true) =>
+export const sendChat = (
+  sessionId: string,
+  userId: string,
+  message: string,
+  mode: string,
+  useSharedContext = true,
+  modelPref?: ModelPref,
+) =>
   fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[] }>('/api/learn/chat', {
     method: 'POST',
-    body: JSON.stringify({ session_id: sessionId, user_id: userId, message, mode, use_shared_context: useSharedContext }),
+    body: JSON.stringify({
+      session_id: sessionId,
+      user_id: userId,
+      message,
+      mode,
+      use_shared_context: useSharedContext,
+      ...(modelPref ? { model_pref: modelPref } : {}),
+    }),
   });
 
 export interface SessionSummaryData {
@@ -111,6 +142,7 @@ export const learnAction = (
   actionType: 'hint' | 'confused' | 'skip',
   mode: string,
   useSharedContext = true,
+  modelPref?: ModelPref,
 ) =>
   fetchJSON<{ reply: string; graph_update: any }>('/api/learn/action', {
     method: 'POST',
@@ -120,6 +152,7 @@ export const learnAction = (
       action_type: actionType,
       mode,
       use_shared_context: useSharedContext,
+      ...(modelPref ? { model_pref: modelPref } : {}),
     }),
   });
 
@@ -197,7 +230,7 @@ export const getAllAssignments = (userId: string) =>
 export const extractSyllabus = (formData: FormData, userId?: string): Promise<any> => {
   if (IS_LOCAL_MODE) return Promise.resolve({ assignments: [] });
   if (userId) formData.set('user_id', userId);
-  return fetch(`${API_URL}/api/calendar/extract`, { method: 'POST', body: formData })
+  return fetch(`${API_URL}/api/calendar/extract`, { method: 'POST', body: formData, credentials: 'include' })
     .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(String(data?.detail || `HTTP ${r.status}`)); return data; });
 };
 
@@ -361,10 +394,60 @@ export const deleteDocument = (documentId: string, userId?: string) =>
   fetchJSON<{ deleted: boolean }>(`/api/documents/doc/${documentId}${userId ? `?user_id=${encodeURIComponent(userId)}` : ''}`, { method: 'DELETE' });
 
 export const uploadDocument = (formData: FormData, signal?: AbortSignal): Promise<any> => {
+  // Non-streaming JSON upload. Hits /upload/sync (legacy contract) so callers
+  // that don't care about progress events stay one-line. The streaming /upload
+  // route is exposed separately via uploadDocumentStream below.
   if (IS_LOCAL_MODE) return Promise.resolve({ id: 'local-doc', status: 'processed' });
-  return fetch(`${API_URL}/api/documents/upload`, { method: 'POST', body: formData, signal })
+  return fetch(`${API_URL}/api/documents/upload/sync`, { method: 'POST', body: formData, signal, credentials: 'include' })
     .then(async r => { if (!r.ok) { const e = await r.text(); throw new Error(e || `HTTP ${r.status}`); } return r.json(); });
 };
+
+// Streaming upload — emits SaplingEvent SSE events while the orchestrator runs.
+// Event types match backend/services/agent_events.py::SaplingEvent.
+export type UploadEventType = 'status' | 'progress' | 'result' | 'error';
+
+export interface UploadEvent {
+  type: UploadEventType;
+  step: string;
+  message: string;
+  data?: Record<string, unknown> | null;
+}
+
+export async function uploadDocumentStream(
+  formData: FormData,
+  onEvent: (event: UploadEvent) => void,
+  signal?: AbortSignal,
+  requestId?: string,
+): Promise<any> {
+  if (IS_LOCAL_MODE) {
+    onEvent({ type: 'status', step: 'done', message: 'Saved.' });
+    return { id: 'local-doc', status: 'processed' };
+  }
+  const { streamSSE } = await import('./sse');
+  let finalDoc: any = null;
+  const headers: Record<string, string> = {};
+  if (requestId) headers['X-Request-ID'] = requestId;
+  for await (const e of streamSSE<UploadEvent>(
+    `${API_URL}/api/documents/upload`,
+    { method: 'POST', body: formData, signal, credentials: 'include', headers },
+  )) {
+    onEvent(e.data);
+    if (e.event === 'result') {
+      // result.data carries the full DocumentProcessingResult (orchestrator)
+      // OR the legacy-fallback persisted row. Both expose `id`/`document_id`.
+      finalDoc = e.data.data ?? null;
+    }
+    if (e.event === 'status' && e.data.step === 'done') {
+      // The done event carries { document_id } when the row persisted.
+      const docIdFromDone = (e.data.data as { document_id?: string } | undefined)?.document_id;
+      if (docIdFromDone && finalDoc && typeof finalDoc === 'object' && !('id' in finalDoc)) {
+        finalDoc = { ...finalDoc, id: docIdFromDone };
+      }
+    }
+  }
+  if (!finalDoc) throw new Error('Upload stream ended without a result event.');
+  return finalDoc;
+}
 
 export const updateDocumentCategory = (documentId: string, userId: string, category: string) =>
   fetchJSON<{ id: string; category: string }>(`/api/documents/doc/${documentId}`, {
@@ -644,17 +727,27 @@ export const deleteAccount = (userId: string, confirmation: string) =>
     body: JSON.stringify({ confirmation }),
   });
 
-// Admin
-export const adminFetchUsers = () =>
-  fetchJSON<{ users: any[] }>('/api/admin/users');
+// Admin — users
+export const adminFetchUsers = (params?: { q?: string; page?: number; page_size?: number }) => {
+  const qp = new URLSearchParams();
+  if (params?.q) qp.set('q', params.q);
+  if (params?.page) qp.set('page', String(params.page));
+  if (params?.page_size) qp.set('page_size', String(params.page_size));
+  const suffix = qp.toString() ? `?${qp.toString()}` : '';
+  return fetchJSON<PaginatedUsers>(`/api/admin/users${suffix}`);
+};
 
 export const adminApproveUser = (userId: string) =>
   fetchJSON<{ approved: boolean }>(`/api/admin/users/${userId}/approve`, { method: 'PATCH' });
 
-export const adminAssignRole = (userId: string, roleId: string, grantedBy?: string) =>
+export const adminUnapproveUser = (userId: string) =>
+  fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
+
+// Admin — roles
+export const adminAssignRole = (userId: string, roleId: string) =>
   fetchJSON<{ assigned: boolean }>('/api/admin/roles/assign', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, role_id: roleId, granted_by: grantedBy }),
+    body: JSON.stringify({ user_id: userId, role_id: roleId }),
   });
 
 export const adminRevokeRole = (userId: string, roleId: string) =>
@@ -679,6 +772,24 @@ export const adminCreateRole = (payload: {
 export const adminDeleteRole = (roleId: string) =>
   fetchJSON<{ deleted: boolean }>(`/api/admin/roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' });
 
+export const adminListRoleCosmetics = (roleId: string) =>
+  fetchJSON<{ links: { role_id: string; cosmetic_id: string }[] }>(
+    `/api/admin/roles/${encodeURIComponent(roleId)}/cosmetics`,
+  );
+
+export const adminLinkRoleCosmetic = (roleId: string, cosmeticId: string) =>
+  fetchJSON<{ linked: boolean }>('/api/admin/roles/cosmetics', {
+    method: 'POST',
+    body: JSON.stringify({ role_id: roleId, cosmetic_id: cosmeticId }),
+  });
+
+export const adminUnlinkRoleCosmetic = (roleId: string, cosmeticId: string) =>
+  fetchJSON<{ unlinked: boolean }>('/api/admin/roles/cosmetics', {
+    method: 'DELETE',
+    body: JSON.stringify({ role_id: roleId, cosmetic_id: cosmeticId }),
+  });
+
+// Admin — achievements
 export const adminListAchievements = () =>
   fetchJSON<{ achievements: Achievement[] }>('/api/admin/achievements');
 
@@ -700,6 +811,46 @@ export const adminGrantAchievement = (userId: string, achievementId: string) =>
     body: JSON.stringify({ user_id: userId, achievement_id: achievementId }),
   });
 
+export const adminListTriggers = (achievementId: string) =>
+  fetchJSON<{ triggers: AchievementTrigger[] }>(
+    `/api/admin/achievements/${encodeURIComponent(achievementId)}/triggers`,
+  );
+
+export const adminCreateTrigger = (payload: {
+  achievement_id: string; trigger_type: string; trigger_threshold: number;
+}) =>
+  fetchJSON<{ trigger: AchievementTrigger }>('/api/admin/achievements/triggers', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const adminUpdateTrigger = (triggerId: string, patch: Partial<{ trigger_type: string; trigger_threshold: number }>) =>
+  fetchJSON<{ updated: boolean }>(`/api/admin/achievements/triggers/${encodeURIComponent(triggerId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+
+export const adminDeleteTrigger = (triggerId: string) =>
+  fetchJSON<{ deleted: boolean }>(`/api/admin/achievements/triggers/${encodeURIComponent(triggerId)}`, { method: 'DELETE' });
+
+export const adminListAchievementCosmetics = (achievementId: string) =>
+  fetchJSON<{ links: { achievement_id: string; cosmetic_id: string }[] }>(
+    `/api/admin/achievements/${encodeURIComponent(achievementId)}/cosmetics`,
+  );
+
+export const adminLinkAchievementCosmetic = (achievementId: string, cosmeticId: string) =>
+  fetchJSON<{ linked: boolean }>('/api/admin/achievements/cosmetics', {
+    method: 'POST',
+    body: JSON.stringify({ achievement_id: achievementId, cosmetic_id: cosmeticId }),
+  });
+
+export const adminUnlinkAchievementCosmetic = (achievementId: string, cosmeticId: string) =>
+  fetchJSON<{ unlinked: boolean }>('/api/admin/achievements/cosmetics', {
+    method: 'DELETE',
+    body: JSON.stringify({ achievement_id: achievementId, cosmetic_id: cosmeticId }),
+  });
+
+// Admin — cosmetics
 export const adminListCosmetics = () =>
   fetchJSON<{ cosmetics: Cosmetic[] }>('/api/admin/cosmetics');
 
@@ -715,6 +866,42 @@ export const adminCreateCosmetic = (payload: {
 
 export const adminDeleteCosmetic = (cosmeticId: string) =>
   fetchJSON<{ deleted: boolean }>(`/api/admin/cosmetics/${encodeURIComponent(cosmeticId)}`, { method: 'DELETE' });
+
+// Admin — allowlist
+export const adminListAllowlist = () =>
+  fetchJSON<{ emails: AllowlistEmail[] }>('/api/admin/allowlist');
+
+export const adminApproveAllowlist = (email: string) =>
+  fetchJSON<{ email: AllowlistEmail }>('/api/admin/allowlist/approve', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+
+export const adminRevokeAllowlist = (email: string) =>
+  fetchJSON<{ email: AllowlistEmail }>('/api/admin/allowlist/revoke', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+
+// Admin — audit
+export const adminAuditLog = (params?: {
+  page?: number; page_size?: number; action?: string; target_type?: string; actor_id?: string;
+}) => {
+  const qp = new URLSearchParams();
+  if (params?.page) qp.set('page', String(params.page));
+  if (params?.page_size) qp.set('page_size', String(params.page_size));
+  if (params?.action) qp.set('action', params.action);
+  if (params?.target_type) qp.set('target_type', params.target_type);
+  if (params?.actor_id) qp.set('actor_id', params.actor_id);
+  const suffix = qp.toString() ? `?${qp.toString()}` : '';
+  return fetchJSON<{ entries: AdminAuditEntry[]; total: number; page: number; page_size: number }>(
+    `/api/admin/audit${suffix}`,
+  );
+};
+
+// Admin — analytics
+export const adminAnalyticsOverview = () =>
+  fetchJSON<AnalyticsOverview>('/api/admin/analytics/overview');
 
 // Careers
 export const submitJobApplication = async (data: {
@@ -744,15 +931,53 @@ export const submitJobApplication = async (data: {
   return res.json();
 };
 
-export const uploadAvatar = (userId: string, file: File): Promise<{ avatar_url: string }> => {
-  if (IS_LOCAL_MODE) return Promise.resolve({ avatar_url: URL.createObjectURL(file) });
-  const fd = new FormData();
-  fd.append('file', file);
-  return fetch(`${API_URL}/api/profile/${encodeURIComponent(userId)}/avatar?user_id=${encodeURIComponent(userId)}`, {
-    method: 'POST', body: fd,
-  }).then(async r => {
-    if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
-    return r.json();
+/**
+ * Read a File as a base64 string (no data-URL prefix). Resolves with
+ * just the encoded bytes so the JSON payload is the smallest possible
+ * shape the server needs.
+ */
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      // result is a data URL like "data:image/png;base64,iVBORw0K..."
+      const result = reader.result as string;
+      const comma = result.indexOf(',');
+      resolve(comma === -1 ? result : result.slice(comma + 1));
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Mirrors backend/config.py::MAX_AVATAR_SIZE. Kept as a const so the
+// guard below doesn't depend on Settings.tsx remembering to check
+// size first — every caller of uploadAvatar gets the same protection.
+export const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+
+export const uploadAvatar = async (userId: string, file: File): Promise<{ avatar_url: string }> => {
+  if (IS_LOCAL_MODE) return { avatar_url: URL.createObjectURL(file) };
+  // Size-check BEFORE the base64 encode. Reading a 50 MB file just to
+  // throw it out is wasted CPU + memory. Settings.tsx already
+  // pre-checks size for the toast UX, but a future caller (admin
+  // bulk tool, recovery script) could easily bypass that and we'd
+  // still want the guard.
+  if (file.size > MAX_AVATAR_BYTES) {
+    throw new Error(
+      `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB — max is ${MAX_AVATAR_BYTES / 1024 / 1024} MB.`,
+    );
+  }
+  // POST as JSON+base64 instead of multipart/form-data. The multipart
+  // path was silently failing in some browser configurations with
+  // `TypeError: Failed to fetch` (no response, request aborted before
+  // reaching the server). JSON requests work in every environment
+  // that already runs the rest of the profile API successfully, so
+  // routing the avatar through the same shape eliminates the failure
+  // class entirely.
+  const file_b64 = await readFileAsBase64(file);
+  return fetchJSON<{ avatar_url: string }>(`/api/profile/${encodeURIComponent(userId)}/avatar`, {
+    method: 'POST',
+    body: JSON.stringify({ file_b64, content_type: file.type || 'image/png' }),
   });
 };
 

@@ -46,6 +46,7 @@ Thumbs.db
 
 # ---- LLM code helpers ----
 .claude/
+!.claude/
 .cursor/
 .copilot/
 .github/copilot/

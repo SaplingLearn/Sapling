@@ -1,0 +1,44 @@
+{
+  "assignments": [
+    {
+      "description": null,
+      "due_date": "2026-02-05",
+      "title": "Problem Set 1",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": "2026-02-19",
+      "title": "Problem Set 2",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": "2026-03-12",
+      "title": "Midterm",
+      "weight_pct": 25.0
+    },
+    {
+      "description": null,
+      "due_date": "2026-05-01",
+      "title": "Final Project",
+      "weight_pct": 35.0
+    }
+  ],
+  "course_title": "CS 188 \u2014 Spring 2026",
+  "grading_categories": [
+    {
+      "name": "Problem sets",
+      "weight": 40.0
+    },
+    {
+      "name": "Midterm",
+      "weight": 25.0
+    },
+    {
+      "name": "Final Project",
+      "weight": 35.0
+    }
+  ],
+  "instructor": "Smith"
+}
