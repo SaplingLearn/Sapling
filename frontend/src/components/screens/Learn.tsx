@@ -132,9 +132,10 @@ function LearnInner() {
           getGraph(userId).catch(() => ({ nodes: [] as any[], edges: [] as any[], stats: {} })),
         ]);
         if (cancelled) return;
-        setRecentSessions((sRes.sessions ?? []).filter(s => s.message_count > 0));
+        const filteredSessions = (sRes.sessions ?? []).filter(s => s.message_count > 0);
+        setRecentSessions(filteredSessions);
         confirmedTopicsRef.current = new Map(
-          (sRes.sessions ?? []).map(s => [s.id, s.topic] as const),
+          filteredSessions.map(s => [s.id, s.topic] as const),
         );
         setCourses(cRes.courses ?? []);
         const nodes = (gRes.nodes ?? []) as Array<{ id: string; concept_name?: string; name?: string; course_id?: string | null; is_subject_root?: boolean }>;
@@ -226,15 +227,19 @@ function LearnInner() {
     if (!userId) return;
     const trimmed = newTopic.trim();
     if (!trimmed || trimmed.length > 120 || trimmed === s.topic) return;
-    const previousTopic = confirmedTopicsRef.current.get(s.id) ?? s.topic;
     setRecentSessions(prev => prev.map(p => (p.id === s.id ? { ...p, topic: trimmed } : p)));
     try {
       await renameSession(s.id, userId, trimmed);
       confirmedTopicsRef.current.set(s.id, trimmed);
     } catch (err) {
-      setRecentSessions(prev => prev.map(p =>
-        p.id === s.id && p.topic === trimmed ? { ...p, topic: previousTopic } : p
-      ));
+      // Server is authoritative — resync from it instead of guessing a revert
+      // target, which is otherwise racy when multiple renames overlap.
+      const res = await getSessions(userId, 10).catch(() => null);
+      if (res) {
+        const filtered = (res.sessions ?? []).filter(x => x.message_count > 0);
+        setRecentSessions(filtered);
+        confirmedTopicsRef.current = new Map(filtered.map(x => [x.id, x.topic] as const));
+      }
       toast.error(err instanceof Error ? err.message : "Rename failed.");
     }
   }, [userId, toast]);
