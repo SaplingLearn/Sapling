@@ -34,7 +34,7 @@ import {
   type EnrolledCourse,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import type { GraphNode, GraphEdge } from "@/lib/data";
+import { paletteFor, type GraphNode, type GraphEdge } from "@/lib/data";
 
 function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
   const course = courses.find((c) => c.course_name === n.subject);
@@ -42,7 +42,10 @@ function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
     id: n.id,
     name: n.concept_name,
     subject: n.subject,
-    color: n.course_color || course?.color || "var(--c-sage)",
+    color:
+      n.course_color ||
+      course?.color ||
+      paletteFor(n.course_id || course?.course_id || n.subject),
     is_subject_root: n.is_subject_root,
     mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
     mastery_score: n.mastery_score,
@@ -114,6 +117,8 @@ function LearnInner() {
   const [mobileTab, setMobileTab] = useState<"chat" | "graph">("chat");
   const idCounter = useRef(0);
   const msgId = () => `m-${++idCounter.current}`;
+  // Tracks each session's last server-confirmed topic so back-to-back rename failures revert to the right value.
+  const confirmedTopicsRef = useRef<Map<string, string>>(new Map());
 
   // Initial data load
   useEffect(() => {
@@ -128,6 +133,9 @@ function LearnInner() {
         ]);
         if (cancelled) return;
         setRecentSessions((sRes.sessions ?? []).filter(s => s.message_count > 0));
+        confirmedTopicsRef.current = new Map(
+          (sRes.sessions ?? []).map(s => [s.id, s.topic] as const),
+        );
         setCourses(cRes.courses ?? []);
         const nodes = (gRes.nodes ?? []) as Array<{ id: string; concept_name?: string; name?: string; course_id?: string | null; is_subject_root?: boolean }>;
         const courseById = new Map((cRes.courses ?? []).map(c => [c.course_id, c]));
@@ -218,13 +226,12 @@ function LearnInner() {
     if (!userId) return;
     const trimmed = newTopic.trim();
     if (!trimmed || trimmed.length > 120 || trimmed === s.topic) return;
-    const previousTopic = s.topic;
+    const previousTopic = confirmedTopicsRef.current.get(s.id) ?? s.topic;
     setRecentSessions(prev => prev.map(p => (p.id === s.id ? { ...p, topic: trimmed } : p)));
     try {
       await renameSession(s.id, userId, trimmed);
+      confirmedTopicsRef.current.set(s.id, trimmed);
     } catch (err) {
-      // Only revert if our optimistic value is still on screen — a newer rename
-      // may have superseded it, in which case we don't want to clobber that.
       setRecentSessions(prev => prev.map(p =>
         p.id === s.id && p.topic === trimmed ? { ...p, topic: previousTopic } : p
       ));
@@ -797,6 +804,7 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
           <input
             autoFocus
+            aria-label="Session name"
             value={draft}
             maxLength={120}
             onChange={e => setDraft(e.target.value)}
