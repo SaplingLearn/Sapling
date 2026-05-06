@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Component tests for KnowledgeGraph (3D) — pins the small but
+ * Component tests for KnowledgeGraph3D — pins the small but
  * load-bearing adapter logic between our GraphNode/GraphEdge shape
  * and the `react-force-graph-3d` library:
  *   1. Renders without crashing on empty data.
@@ -66,7 +66,7 @@ vi.mock("next/dynamic", () => ({
   },
 }));
 
-import { KnowledgeGraph } from "./KnowledgeGraph";
+import { KnowledgeGraph3D } from "./KnowledgeGraph3D";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 
 function makeNode(over: Partial<GraphNode> = {}): GraphNode {
@@ -110,10 +110,10 @@ afterEach(() => {
   cleanup();
 });
 
-describe("KnowledgeGraph (3D) — adapter behavior", () => {
+describe("KnowledgeGraph3D — adapter behavior", () => {
   it("renders without crashing with empty data", () => {
     expect(() =>
-      render(<KnowledgeGraph nodes={[]} edges={[]} />),
+      render(<KnowledgeGraph3D nodes={[]} edges={[]} />),
     ).not.toThrow();
     // The mock should still have received props (graphData with empty
     // arrays) — sanity check that the dynamic-import wrapper got past
@@ -131,7 +131,7 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
       { source: "a", target: "b", strength: 0.7 },
     ];
 
-    render(<KnowledgeGraph nodes={nodes} edges={edges} />);
+    render(<KnowledgeGraph3D nodes={nodes} edges={edges} />);
 
     expect(lastProps).not.toBeNull();
     const { graphData } = lastProps!;
@@ -151,7 +151,7 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
 
   it("nodeColor returns the brand accent for the highlighted id and an hsl() shade otherwise", () => {
     render(
-      <KnowledgeGraph
+      <KnowledgeGraph3D
         nodes={[makeNode({ id: "abc" })]}
         edges={[]}
         highlightId="abc"
@@ -171,7 +171,7 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
   });
 
   it("nodeVal scales 4..10 with mastery_score (0 -> 4, 1 -> 10)", () => {
-    render(<KnowledgeGraph nodes={[makeNode()]} edges={[]} />);
+    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
 
     expect(lastProps).not.toBeNull();
     const nodeVal = lastProps!.nodeVal as (n: object) => number;
@@ -184,7 +184,7 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
     const onNodeClick = vi.fn<(n: GraphNode) => void>();
     const original = makeNode({ id: "n1" });
     render(
-      <KnowledgeGraph
+      <KnowledgeGraph3D
         nodes={[original]}
         edges={[]}
         onNodeClick={onNodeClick}
@@ -252,7 +252,7 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
       makeNode({ id: "b", name: "Beta" }),
     ];
     const { container } = render(
-      <KnowledgeGraph
+      <KnowledgeGraph3D
         nodes={nodes}
         edges={[]}
         onNodeClick={onNodeClick}
@@ -284,7 +284,7 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
       makeNode({ id: "b", name: "Beta" }),
     ];
     const { container } = render(
-      <KnowledgeGraph nodes={nodes} edges={[]} />,
+      <KnowledgeGraph3D nodes={nodes} edges={[]} />,
     );
 
     const list = container.querySelector(
@@ -319,7 +319,7 @@ describe("KnowledgeGraph (3D) — adapter behavior", () => {
       })),
     });
 
-    render(<KnowledgeGraph nodes={[makeNode()]} edges={[]} />);
+    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
 
     expect(lastProps).not.toBeNull();
     expect(lastProps!.cooldownTicks).toBe(0);
