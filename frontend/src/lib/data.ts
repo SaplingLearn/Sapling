@@ -12,9 +12,16 @@ export type Course = {
 // the backend / enrolled-course record doesn't supply a per-course
 // color, so each course family still reads as its own hue rather than
 // every concept collapsing onto one fallback color.
+//
+// Each entry hits ≥3:1 contrast against the cream `--bg` (#faf8f3) —
+// WCAG AA threshold for non-text UI elements. Sage and ochre were
+// nudged darker (from #8a9a5b → #7a874f and #c89c4a → #a87d2e) so the
+// nodes stay legible on the light theme. Brand --accent (#8a9a5b)
+// remains unchanged elsewhere; this palette is only the backend-color
+// fallback.
 const COURSE_PALETTE = [
-  "#8a9a5b", "#3e6f8a", "#7b4b99", "#b4562c",
-  "#3f8a7c", "#c89c4a", "#a06b8e", "#6b8a3e",
+  "#7a874f", "#3e6f8a", "#7b4b99", "#b4562c",
+  "#3f8a7c", "#a87d2e", "#a06b8e", "#6b8a3e",
 ];
 
 // DJB2-ish string hash → non-negative integer. Shared by `paletteFor`

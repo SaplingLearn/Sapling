@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { hashSeed, paletteFor } from "./data";
 
 // First entry of COURSE_PALETTE in data.ts. Asserted directly so the
-// palette stays internal to data.ts.
-const PALETTE_FIRST = "#8a9a5b";
+// palette stays internal to data.ts. (Darkened sage — chosen to clear
+// WCAG AA 3:1 contrast against the cream `--bg`.)
+const PALETTE_FIRST = "#7a874f";
 
 describe("paletteFor", () => {
   it("returns the first palette entry for empty / nullish seeds", () => {
