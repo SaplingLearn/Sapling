@@ -5,6 +5,24 @@ export type Course = {
   color: string;
 };
 
+// Deterministic course palette used as a fallback when the backend doesn't
+// supply a per-course color. SVG `fill=` doesn't resolve `var(--…)`, so a
+// missing color previously rendered black; this maps a stable seed to a hue.
+const COURSE_PALETTE = [
+  "#8a9a5b", "#3e6f8a", "#7b4b99", "#b4562c",
+  "#3f8a7c", "#c89c4a", "#a06b8e", "#6b8a3e",
+];
+
+export function paletteFor(seed: string | null | undefined): string {
+  if (!seed) return COURSE_PALETTE[0];
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
+  // `Math.abs` overflows on -2^31; do a positive-modulo dance instead so
+  // we always land in-range.
+  const idx = ((h % COURSE_PALETTE.length) + COURSE_PALETTE.length) % COURSE_PALETTE.length;
+  return COURSE_PALETTE[idx];
+}
+
 export type GraphNode = {
   id: string;
   name: string;

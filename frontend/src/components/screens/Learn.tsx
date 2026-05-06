@@ -23,6 +23,7 @@ import {
   getSessions,
   resumeSession,
   deleteSession,
+  renameSession,
   endSession,
   switchMode,
   learnAction,
@@ -33,7 +34,7 @@ import {
   type EnrolledCourse,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import type { GraphNode, GraphEdge } from "@/lib/data";
+import { paletteFor, type GraphNode, type GraphEdge } from "@/lib/data";
 
 function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
   const course = courses.find((c) => c.course_name === n.subject);
@@ -41,7 +42,10 @@ function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
     id: n.id,
     name: n.concept_name,
     subject: n.subject,
-    color: n.course_color || course?.color || "var(--c-sage)",
+    color:
+      n.course_color ||
+      course?.color ||
+      paletteFor(n.course_id || course?.course_id || n.subject),
     is_subject_root: n.is_subject_root,
     mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
     mastery_score: n.mastery_score,
@@ -112,6 +116,8 @@ function LearnInner() {
   const [mobileTab, setMobileTab] = useState<"chat" | "graph">("chat");
   const idCounter = useRef(0);
   const msgId = () => `m-${++idCounter.current}`;
+  // Tracks each session's last server-confirmed topic so back-to-back rename failures revert to the right value.
+  const confirmedTopicsRef = useRef<Map<string, string>>(new Map());
 
   // Initial data load
   useEffect(() => {
@@ -125,7 +131,11 @@ function LearnInner() {
           getGraph(userId).catch(() => ({ nodes: [] as any[], edges: [] as any[], stats: {} })),
         ]);
         if (cancelled) return;
-        setRecentSessions((sRes.sessions ?? []).filter(s => s.message_count > 0));
+        const filteredSessions = (sRes.sessions ?? []).filter(s => s.message_count > 0);
+        setRecentSessions(filteredSessions);
+        confirmedTopicsRef.current = new Map(
+          filteredSessions.map(s => [s.id, s.topic] as const),
+        );
         setCourses(cRes.courses ?? []);
         const nodes = (gRes.nodes ?? []) as Array<{ id: string; concept_name?: string; name?: string; course_id?: string | null; is_subject_root?: boolean }>;
         const courseById = new Map((cRes.courses ?? []).map(c => [c.course_id, c]));
@@ -207,6 +217,27 @@ function LearnInner() {
       toast.error(err instanceof Error ? err.message : "Delete failed.");
     }
   };
+
+  const handleRenameSession = useCallback(async (s: Session, newTopic: string) => {
+    if (!userId) return;
+    const trimmed = newTopic.trim();
+    if (!trimmed || trimmed.length > 120 || trimmed === s.topic) return;
+    setRecentSessions(prev => prev.map(p => (p.id === s.id ? { ...p, topic: trimmed } : p)));
+    try {
+      await renameSession(s.id, userId, trimmed);
+      confirmedTopicsRef.current.set(s.id, trimmed);
+    } catch (err) {
+      // Server is authoritative — resync from it instead of guessing a revert
+      // target, which is otherwise racy when multiple renames overlap.
+      const res = await getSessions(userId, 10).catch(() => null);
+      if (res) {
+        const filtered = (res.sessions ?? []).filter(x => x.message_count > 0);
+        setRecentSessions(filtered);
+        confirmedTopicsRef.current = new Map(filtered.map(x => [x.id, x.topic] as const));
+      }
+      toast.error(err instanceof Error ? err.message : "Rename failed.");
+    }
+  }, [userId, toast]);
 
   const send = useCallback(async (userText: string) => {
     if (!userText.trim() || !sessionId || !userId) return;
@@ -488,7 +519,7 @@ function LearnInner() {
               <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No recent sessions yet.</div>
             )}
             {recentSessions.map(s => (
-              <SessionRow key={s.id} s={s} onResume={handleResume} onDelete={handleDeleteSession} />
+              <SessionRow key={s.id} s={s} onResume={handleResume} onDelete={handleDeleteSession} onRename={handleRenameSession} />
             ))}
           </div>
         </div>
@@ -712,12 +743,41 @@ function BackToLearnLink({ onClick }: { onClick: () => void }) {
   );
 }
 
-function SessionRow({ s, onResume, onDelete }: {
+function SessionRow({ s, onResume, onDelete, onRename }: {
   s: Session;
   onResume: (s: Session) => void;
   onDelete: (s: Session) => void;
+  onRename: (s: Session, newTopic: string) => void;
 }) {
   const del = useConfirm(() => onDelete(s), 3000);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(s.topic);
+  // Esc unmounts the input, which fires blur → commitEdit. The blur closure
+  // still holds the typed `draft`, so without this guard Esc would commit.
+  const cancellingRef = useRef(false);
+
+  const startEdit = () => {
+    setDraft(s.topic);
+    setEditing(true);
+  };
+
+  const commitEdit = () => {
+    if (cancellingRef.current) {
+      cancellingRef.current = false;
+      setEditing(false);
+      return;
+    }
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== s.topic) onRename(s, trimmed);
+    setEditing(false);
+  };
+
+  const cancelEdit = () => {
+    cancellingRef.current = true;
+    setDraft(s.topic);
+    setEditing(false);
+  };
+
   return (
     <div
       style={{
@@ -730,24 +790,70 @@ function SessionRow({ s, onResume, onDelete }: {
         marginBottom: 6,
       }}
     >
-      <button
-        onClick={() => onResume(s)}
-        style={{
-          flex: 1,
-          textAlign: "left",
-          display: "flex",
-          flexDirection: "column",
-          gap: 2,
-        }}
-      >
-        <span style={{ fontSize: 13, fontWeight: 600 }}>{s.topic}</span>
-        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          {s.mode} · {s.message_count} msg{s.message_count === 1 ? "" : "s"}
-        </span>
-      </button>
+      {editing ? (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+          <input
+            autoFocus
+            aria-label="Session name"
+            value={draft}
+            maxLength={120}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitEdit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancelEdit();
+              }
+            }}
+            onBlur={commitEdit}
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              padding: "2px 4px",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-sm)",
+              background: "var(--bg)",
+              color: "var(--text)",
+              outline: "none",
+            }}
+          />
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            {s.mode} · {s.message_count} msg{s.message_count === 1 ? "" : "s"}
+          </span>
+        </div>
+      ) : (
+        <button
+          onClick={() => onResume(s)}
+          style={{
+            flex: 1,
+            textAlign: "left",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+          }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{s.topic}</span>
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            {s.mode} · {s.message_count} msg{s.message_count === 1 ? "" : "s"}
+          </span>
+        </button>
+      )}
+      {!editing && (
+        <button
+          className="btn btn--ghost btn--sm"
+          onClick={startEdit}
+          aria-label="Rename session"
+          title="Rename"
+        >
+          <Icon name="pencil" size={12} />
+        </button>
+      )}
       <button
         className={del.armed ? "btn btn--danger btn--sm" : "btn btn--ghost btn--sm"}
         onClick={del.trigger}
+        disabled={editing}
         aria-label={del.armed ? "Confirm delete" : "Delete session"}
         title={del.armed ? "Click again to confirm" : "Delete"}
       >

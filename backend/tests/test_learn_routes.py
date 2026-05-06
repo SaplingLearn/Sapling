@@ -281,6 +281,93 @@ class TestModeSwitch:
         assert len(insert_calls) >= 1
 
 
+# ── PATCH /api/learn/sessions/{session_id} ────────────────────────────────────
+
+class TestRenameSession:
+    def test_renames_persisted_session(self):
+        sessions_mock = MagicMock()
+        sessions_mock.select.return_value = [{"user_id": "u1"}]
+
+        def factory(name):
+            if name == "sessions":
+                return sessions_mock
+            m = MagicMock()
+            m.select.return_value = []
+            return m
+
+        with patch("routes.learn.table", side_effect=factory):
+            r = client.patch(
+                "/api/learn/sessions/s1",
+                json={"user_id": "u1", "topic": "  New Topic  "},
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body == {"updated": True, "session": {"id": "s1", "topic": "New Topic"}}
+        sessions_mock.update.assert_called_once_with(
+            {"topic": "New Topic"},
+            filters={"id": "eq.s1"},
+        )
+
+    def test_renames_pending_session(self):
+        from routes.learn import PENDING_SESSIONS
+        PENDING_SESSIONS["pending-1"] = {
+            "user_id": "u1",
+            "topic": "Old",
+            "mode": "socratic",
+            "assistant_reply": "hi",
+        }
+        try:
+            r = client.patch(
+                "/api/learn/sessions/pending-1",
+                json={"user_id": "u1", "topic": "Renamed"},
+            )
+            assert r.status_code == 200
+            assert r.json() == {"updated": True, "session": {"id": "pending-1", "topic": "Renamed"}}
+            assert PENDING_SESSIONS["pending-1"]["topic"] == "Renamed"
+        finally:
+            PENDING_SESSIONS.pop("pending-1", None)
+
+    def test_empty_topic_returns_400(self):
+        r = client.patch(
+            "/api/learn/sessions/s1",
+            json={"user_id": "u1", "topic": "   "},
+        )
+        assert r.status_code == 400
+
+    def test_topic_too_long_returns_400(self):
+        r = client.patch(
+            "/api/learn/sessions/s1",
+            json={"user_id": "u1", "topic": "x" * 121},
+        )
+        assert r.status_code == 400
+
+    def test_wrong_user_returns_403(self):
+        sessions_mock = MagicMock()
+        sessions_mock.select.return_value = [{"user_id": "other_user"}]
+
+        def factory(name):
+            if name == "sessions":
+                return sessions_mock
+            m = MagicMock()
+            m.select.return_value = []
+            return m
+
+        with patch("routes.learn.table", side_effect=factory):
+            r = client.patch(
+                "/api/learn/sessions/s1",
+                json={"user_id": "u1", "topic": "Renamed"},
+            )
+        assert r.status_code == 403
+
+    def test_missing_session_returns_404(self):
+        with patch("routes.learn.table") as t:
+            t.return_value.select.return_value = []
+            r = client.patch(
+                "/api/learn/sessions/nonexistent",
+                json={"user_id": "u1", "topic": "Renamed"},
+            )
+        assert r.status_code == 404
 # ── _resolve_legacy_model ─────────────────────────────────────────────────────
 
 class TestResolveLegacyModel:
