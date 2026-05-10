@@ -1,50 +1,956 @@
 "use client";
+import React from "react";
 import { TopBar } from "@/components/TopBar";
 import { Icon } from "@/components/Icon";
 
+type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
+
+type Course = {
+  id: string;
+  name: string;
+  code: string;
+  color: string;
+};
+
+type Concept = {
+  id: string;
+  name: string;
+  course: string;
+  mastery: Mastery;
+};
+
+type Note = {
+  id: string;
+  title: string;
+  body: string;
+  courseId: string;
+  updatedAt: Date;
+  tags: string[];
+  linkedConcepts: Concept[];
+};
+
+const MASTERY_COLOR: Record<Mastery, string> = {
+  mastered: "#4a7d5c",
+  learning: "#c89b5e",
+  struggling: "#b25855",
+  unexplored: "#9a9a9a",
+};
+
+const COURSES: Course[] = [
+  { id: "bio-101", name: "Biology", code: "BIO-101", color: "#74a25d" },
+  { id: "mat-220", name: "Linear Algebra", code: "MAT-220", color: "#3e6f8a" },
+  { id: "eng-201", name: "English Lit", code: "ENG-201", color: "#b4562c" },
+  { id: "chem-200", name: "Chemistry", code: "CHEM-200", color: "#8a9a5b" },
+  { id: "his-101", name: "World History", code: "HIS-101", color: "#a4806f" },
+];
+
+const SEED_NOTES: Note[] = [
+  {
+    id: "n-1",
+    title: "Photosynthesis — light vs dark reactions",
+    body:
+      "Light-dependent reactions occur in the thylakoid membrane and produce ATP and NADPH. The Calvin cycle (dark reactions) takes place in the stroma and fixes CO₂ into G3P.\n\nKey questions:\n- Where does the oxygen come from? (Water splitting at PSII.)\n- Why does the Calvin cycle need ATP and NADPH from the light reactions?\n- What limits the rate — light, CO₂, or temperature?",
+    courseId: "bio-101",
+    updatedAt: new Date(Date.now() - 1000 * 60 * 22),
+    tags: ["lecture", "exam-3"],
+    linkedConcepts: [
+      { id: "c-1", name: "Photosynthesis", course: "BIO-101", mastery: "learning" },
+      { id: "c-2", name: "Calvin cycle", course: "BIO-101", mastery: "struggling" },
+      { id: "c-3", name: "Cellular respiration", course: "BIO-101", mastery: "mastered" },
+    ],
+  },
+  {
+    id: "n-2",
+    title: "Linear algebra — eigenvectors office hours",
+    body:
+      "Av = λv. The eigenvector v points in a direction that A only scales — never rotates. For a 2×2 matrix, det(A − λI) = 0 gives the characteristic polynomial; its roots are the eigenvalues.\n\nProf. M said the best intuition is the shear matrix: one eigenvector along the shear axis (λ = 1) and another nowhere — complex eigenvalues mean rotation.",
+    courseId: "mat-220",
+    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 6),
+    tags: ["office-hours"],
+    linkedConcepts: [
+      { id: "c-4", name: "Eigenvectors", course: "MAT-220", mastery: "learning" },
+      { id: "c-5", name: "Characteristic polynomial", course: "MAT-220", mastery: "unexplored" },
+    ],
+  },
+  {
+    id: "n-3",
+    title: "Romanticism — reading response",
+    body:
+      "Wordsworth's Preface to Lyrical Ballads (1800) reframes poetry as 'the spontaneous overflow of powerful feelings: it takes its origin from emotion recollected in tranquillity.' The shift away from neoclassical formalism: nature as moral teacher, the common speaker as legitimate voice.",
+    courseId: "eng-201",
+    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2),
+    tags: ["essay-prep"],
+    linkedConcepts: [
+      { id: "c-6", name: "Romanticism", course: "ENG-201", mastery: "mastered" },
+      { id: "c-7", name: "Wordsworth", course: "ENG-201", mastery: "learning" },
+    ],
+  },
+  {
+    id: "n-4",
+    title: "Stoichiometry quick reference",
+    body: "Mole ratios from balanced equation → limiting reagent → theoretical yield → % yield.",
+    courseId: "chem-200",
+    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5),
+    tags: ["lab-prep", "cheatsheet"],
+    linkedConcepts: [
+      { id: "c-8", name: "Limiting reagent", course: "CHEM-200", mastery: "learning" },
+    ],
+  },
+];
+
+function relTime(d: Date) {
+  const diff = Date.now() - d.getTime();
+  const mins = Math.round(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+  return d.toLocaleDateString();
+}
+
+function courseFor(id: string): Course {
+  return COURSES.find((c) => c.id === id) ?? COURSES[0];
+}
+
 export default function NotetakerPage() {
+  const [notes, setNotes] = React.useState<Note[]>(SEED_NOTES);
+  const [activeId, setActiveId] = React.useState<string>(SEED_NOTES[0].id);
+  const [query, setQuery] = React.useState("");
+  const [courseFilter, setCourseFilter] = React.useState<string | null>(null);
+  const [fullscreen, setFullscreen] = React.useState(false);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+
+  const active = notes.find((n) => n.id === activeId) ?? notes[0];
+
+  const filtered = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return notes.filter((n) => {
+      if (courseFilter && n.courseId !== courseFilter) return false;
+      if (!q) return true;
+      const c = courseFor(n.courseId);
+      return (
+        n.title.toLowerCase().includes(q) ||
+        n.body.toLowerCase().includes(q) ||
+        c.code.toLowerCase().includes(q) ||
+        c.name.toLowerCase().includes(q) ||
+        n.tags.some((t) => t.toLowerCase().includes(q))
+      );
+    });
+  }, [notes, query, courseFilter]);
+
+  const updateActive = (patch: Partial<Note>) => {
+    setNotes((prev) =>
+      prev.map((n) =>
+        n.id === active.id ? { ...n, ...patch, updatedAt: new Date() } : n,
+      ),
+    );
+  };
+
+  const createNoteIn = (courseId: string) => {
+    const id = `n-${Math.random().toString(36).slice(2, 8)}`;
+    const fresh: Note = {
+      id,
+      title: "Untitled note",
+      body: "",
+      courseId,
+      updatedAt: new Date(),
+      tags: [],
+      linkedConcepts: [],
+    };
+    setNotes((prev) => [fresh, ...prev]);
+    setActiveId(id);
+    setPickerOpen(false);
+  };
+
+  React.useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
+
+  React.useEffect(() => {
+    if (!pickerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPickerOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [pickerOpen]);
+
+  // Animated panel collapse: side panels keep `flex-basis` set to their
+  // natural width (or 0 in fullscreen) and transition smoothly. The editor
+  // takes flex: 1 and naturally expands as the side panels shrink.
+  const panelTransition =
+    "flex-basis var(--dur-slow) var(--ease), opacity var(--dur) var(--ease), margin var(--dur-slow) var(--ease)";
+
+  const leftStyle: React.CSSProperties = {
+    flex: fullscreen ? "0 0 0px" : "0 0 300px",
+    minWidth: 0,
+    opacity: fullscreen ? 0 : 1,
+    overflow: "hidden",
+    transition: panelTransition,
+    pointerEvents: fullscreen ? "none" : undefined,
+  };
+
+  const rightStyle: React.CSSProperties = {
+    flex: fullscreen ? "0 0 0px" : "0 0 320px",
+    minWidth: 0,
+    opacity: fullscreen ? 0 : 1,
+    overflow: "hidden",
+    transition: panelTransition,
+    pointerEvents: fullscreen ? "none" : undefined,
+  };
+
   return (
-    <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
-      <TopBar title="Notetaker" />
-      <main
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+      <TopBar
+        title="Notetaker"
+        subtitle="Capture lecture notes and link them to concepts in your knowledge graph."
+        actions={
+          <>
+            <button
+              className="btn btn--sm"
+              type="button"
+              onClick={() => setFullscreen((f) => !f)}
+              title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen editor"}
+            >
+              <Icon name={fullscreen ? "x" : "max"} size={13} />
+              {fullscreen ? "Exit fullscreen" : "Fullscreen"}
+            </button>
+            <button
+              className="btn btn--sm btn--primary"
+              type="button"
+              onClick={() => setPickerOpen(true)}
+            >
+              <Icon name="plus" size={13} /> New note
+            </button>
+          </>
+        }
+      />
+
+      <div
         style={{
           flex: 1,
+          minHeight: 0,
+          display: "flex",
+          gap: fullscreen ? 0 : 16,
+          padding: fullscreen ? "0 32px 24px" : "18px 32px 24px",
+          transition: "gap var(--dur-slow) var(--ease), padding var(--dur-slow) var(--ease)",
+        }}
+      >
+        <div style={leftStyle} aria-hidden={fullscreen}>
+          <NotesList
+            notes={filtered}
+            totalCount={notes.length}
+            activeId={active.id}
+            query={query}
+            onQueryChange={setQuery}
+            courseFilter={courseFilter}
+            onCourseFilterChange={setCourseFilter}
+            onSelect={setActiveId}
+            onCreate={() => setPickerOpen(true)}
+          />
+        </div>
+
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: fullscreen ? 980 : "none",
+              display: "flex",
+              transition: "max-width var(--dur-slow) var(--ease)",
+            }}
+          >
+            <NoteEditor
+              note={active}
+              onChange={updateActive}
+              fullscreen={fullscreen}
+              onToggleFullscreen={() => setFullscreen((f) => !f)}
+            />
+          </div>
+        </div>
+
+        <div style={rightStyle} aria-hidden={fullscreen}>
+          <NoteDetail note={active} course={courseFor(active.courseId)} />
+        </div>
+      </div>
+
+      {pickerOpen && (
+        <CoursePickerModal
+          onPick={createNoteIn}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function NotesList({
+  notes,
+  totalCount,
+  activeId,
+  query,
+  onQueryChange,
+  courseFilter,
+  onCourseFilterChange,
+  onSelect,
+  onCreate,
+}: {
+  notes: Note[];
+  totalCount: number;
+  activeId: string;
+  query: string;
+  onQueryChange: (v: string) => void;
+  courseFilter: string | null;
+  onCourseFilterChange: (v: string | null) => void;
+  onSelect: (id: string) => void;
+  onCreate: () => void;
+}) {
+  return (
+    <aside
+      className="card"
+      style={{
+        padding: 0,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--border)" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 10,
+          }}
+        >
+          <div className="label-micro">All notes</div>
+          <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            {notes.length}
+            {courseFilter ? ` / ${totalCount}` : ""}
+          </span>
+        </div>
+        <div style={{ position: "relative", marginBottom: 10 }}>
+          <span
+            style={{
+              position: "absolute",
+              left: 10,
+              top: "50%",
+              transform: "translateY(-50%)",
+              color: "var(--text-muted)",
+              display: "inline-flex",
+              pointerEvents: "none",
+            }}
+          >
+            <Icon name="search" size={13} />
+          </span>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            placeholder="Search notes…"
+            style={{
+              width: "100%",
+              padding: "8px 10px 8px 30px",
+              fontSize: 13,
+              fontFamily: "var(--font-sans)",
+              background: "var(--bg-input)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-sm)",
+              color: "var(--text)",
+              outline: "none",
+            }}
+          />
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 4,
+          }}
+        >
+          <CourseFilterChip
+            active={courseFilter === null}
+            label="All"
+            onClick={() => onCourseFilterChange(null)}
+          />
+          {COURSES.map((c) => (
+            <CourseFilterChip
+              key={c.id}
+              active={courseFilter === c.id}
+              label={c.code}
+              color={c.color}
+              onClick={() => onCourseFilterChange(courseFilter === c.id ? null : c.id)}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "6px" }}>
+        {notes.length === 0 ? (
+          <div
+            style={{
+              padding: "20px 12px",
+              fontSize: 12,
+              color: "var(--text-muted)",
+              textAlign: "center",
+            }}
+          >
+            No notes match the current filters.
+          </div>
+        ) : (
+          notes.map((n) => {
+            const isActive = n.id === activeId;
+            const c = courseFor(n.courseId);
+            return (
+              <button
+                key={n.id}
+                type="button"
+                onClick={() => onSelect(n.id)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "10px 12px",
+                  marginBottom: 2,
+                  borderRadius: "var(--r-sm)",
+                  background: isActive ? "var(--bg-soft)" : "transparent",
+                  color: isActive ? "var(--text)" : "var(--text-dim)",
+                  fontWeight: isActive ? 600 : 400,
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "background var(--dur-fast) var(--ease)",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 13,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    marginBottom: 4,
+                  }}
+                >
+                  {n.title || "Untitled note"}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 11,
+                    color: "var(--text-muted)",
+                    fontWeight: 400,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
+                      background: c.color,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span>{c.code}</span>
+                  <span aria-hidden>·</span>
+                  <span>{relTime(n.updatedAt)}</span>
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      <div style={{ padding: 10, borderTop: "1px solid var(--border)" }}>
+        <button
+          type="button"
+          onClick={onCreate}
+          className="btn btn--primary"
+          style={{ width: "100%", justifyContent: "center", display: "inline-flex" }}
+        >
+          <Icon name="plus" size={13} /> New note
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function CourseFilterChip({
+  active,
+  label,
+  color,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  color?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="chip"
+      style={{
+        cursor: "pointer",
+        border: "1px solid transparent",
+        background: active ? "var(--accent-soft)" : "var(--bg-soft)",
+        color: active ? "var(--accent)" : "var(--text-dim)",
+        borderColor: active ? "var(--accent-border)" : "transparent",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+      }}
+    >
+      {color && (
+        <span
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            background: color,
+            display: "inline-block",
+          }}
+        />
+      )}
+      {label}
+    </button>
+  );
+}
+
+function NoteEditor({
+  note,
+  onChange,
+  fullscreen,
+  onToggleFullscreen,
+}: {
+  note: Note;
+  onChange: (patch: Partial<Note>) => void;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
+}) {
+  return (
+    <section
+      className="card"
+      style={{
+        padding: 0,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        overflow: "hidden",
+        width: "100%",
+        transition: "padding var(--dur-slow) var(--ease)",
+      }}
+    >
+      <div
+        style={{
+          padding: "20px 28px 12px",
+          borderBottom: "1px solid var(--border)",
           display: "flex",
           flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 32,
-          gap: 14,
-          textAlign: "center",
+          gap: 8,
         }}
       >
         <div
           style={{
-            display: "inline-flex",
+            display: "flex",
             alignItems: "center",
-            gap: 8,
-            padding: "6px 14px",
-            borderRadius: "var(--r-full)",
-            background: "var(--accent-soft)",
-            color: "var(--accent)",
-            fontSize: 12,
-            fontWeight: 600,
-            letterSpacing: "0.06em",
-            textTransform: "uppercase",
+            justifyContent: "flex-end",
           }}
         >
-          <Icon name="sparkle" size={12} />
-          Coming soon
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={onToggleFullscreen}
+            title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen editor"}
+          >
+            <Icon name={fullscreen ? "x" : "max"} size={12} />
+          </button>
         </div>
-        <div className="h-serif" style={{ fontSize: 28, fontWeight: 500 }}>
-          Notetaker
+        <input
+          value={note.title}
+          onChange={(e) => onChange({ title: e.target.value })}
+          placeholder="Untitled note"
+          className="h-serif"
+          style={{
+            fontSize: fullscreen ? 36 : 30,
+            fontWeight: 500,
+            letterSpacing: "-0.015em",
+            lineHeight: 1.2,
+            color: "var(--text)",
+            background: "transparent",
+            border: "none",
+            outline: "none",
+            padding: 0,
+            width: "100%",
+          }}
+        />
+      </div>
+
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          padding: fullscreen ? "28px 36px" : "20px 28px",
+        }}
+      >
+        <textarea
+          value={note.body}
+          onChange={(e) => onChange({ body: e.target.value })}
+          placeholder="Start writing — Sapling will pick up concepts as you go."
+          className="body-serif"
+          style={{
+            width: "100%",
+            minHeight: fullscreen ? "calc(100vh - 280px)" : 320,
+            border: "none",
+            outline: "none",
+            resize: "none",
+            background: "transparent",
+            fontSize: fullscreen ? 16 : 15,
+            lineHeight: 1.7,
+            color: "var(--text)",
+            fontFamily: "var(--font-serif)",
+          }}
+        />
+      </div>
+
+      <div
+        style={{
+          padding: "10px 22px",
+          borderTop: "1px solid var(--border)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          background: "var(--bg-inset)",
+          fontSize: 11,
+          color: "var(--text-muted)",
+          fontFamily: "var(--font-mono)",
+          letterSpacing: "0.04em",
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <Icon name="check" size={11} />
+          Saved · {relTime(note.updatedAt)}
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
+          <span>{note.body.split(/\s+/).filter(Boolean).length} words</span>
+          <span>{note.body.length} chars</span>
+          {fullscreen && <span>Esc to exit</span>}
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function NoteDetail({ note, course }: { note: Note; course: Course }) {
+  return (
+    <aside
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+        minHeight: 0,
+        overflowY: "auto",
+      }}
+    >
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div className="label-micro" style={{ marginBottom: 10 }}>
+          Linked concepts
         </div>
-        <div style={{ color: "var(--text-dim)", fontSize: 14, maxWidth: 480, lineHeight: 1.55 }}>
-          Capture lecture notes, link them to concepts in your knowledge graph, and let
-          Sapling turn them into review material. We&apos;re still building it — check back
-          soon.
+        {note.linkedConcepts.length === 0 ? (
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            No concepts linked yet. Sapling will surface them as you write.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {note.linkedConcepts.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "8px 10px",
+                  borderRadius: "var(--r-sm)",
+                  background: "var(--bg-subtle)",
+                  border: "none",
+                  width: "100%",
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: MASTERY_COLOR[c.mastery],
+                    flexShrink: 0,
+                  }}
+                />
+                <span style={{ flex: 1, fontSize: 13, color: "var(--text)" }}>
+                  {c.name}
+                </span>
+                <span
+                  className="mono"
+                  style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase" }}
+                >
+                  {c.mastery}
+                </span>
+                <Icon name="chev" size={11} />
+              </button>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          style={{ marginTop: 10, width: "100%", justifyContent: "center", display: "inline-flex" }}
+        >
+          <Icon name="plus" size={11} /> Link concept
+        </button>
+      </div>
+
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div className="label-micro" style={{ marginBottom: 10 }}>
+          Tags
         </div>
-      </main>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {note.tags.length === 0 && (
+            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No tags.</span>
+          )}
+          {note.tags.map((t) => (
+            <span key={t} className="chip">
+              {t}
+            </span>
+          ))}
+          <button
+            type="button"
+            className="chip"
+            style={{
+              background: "transparent",
+              border: "1px dashed var(--border-strong)",
+              cursor: "pointer",
+            }}
+          >
+            + Add
+          </button>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div className="label-micro" style={{ marginBottom: 10 }}>
+          Sapling actions
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            style={{ justifyContent: "flex-start", textAlign: "left" }}
+          >
+            <Icon name="sparkle" size={13} /> Summarize note
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            style={{ justifyContent: "flex-start", textAlign: "left" }}
+          >
+            <Icon name="brain" size={13} /> Extract concepts
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            style={{ justifyContent: "flex-start", textAlign: "left" }}
+          >
+            <Icon name="flask" size={13} /> Generate quiz
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            style={{ justifyContent: "flex-start", textAlign: "left" }}
+          >
+            <Icon name="bolt" size={13} /> Send to tutor
+          </button>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div className="label-micro" style={{ marginBottom: 10 }}>
+          Note info
+        </div>
+        <dl
+          style={{
+            margin: 0,
+            display: "grid",
+            gridTemplateColumns: "auto 1fr",
+            rowGap: 6,
+            columnGap: 12,
+            fontSize: 12,
+          }}
+        >
+          <dt style={{ color: "var(--text-muted)" }}>Course</dt>
+          <dd style={{ margin: 0, color: "var(--text)" }}>{course.name}</dd>
+          <dt style={{ color: "var(--text-muted)" }}>Updated</dt>
+          <dd style={{ margin: 0, color: "var(--text)" }}>{relTime(note.updatedAt)}</dd>
+          <dt style={{ color: "var(--text-muted)" }}>Concepts</dt>
+          <dd className="mono" style={{ margin: 0, color: "var(--text)" }}>
+            {note.linkedConcepts.length}
+          </dd>
+        </dl>
+        <button
+          type="button"
+          className="btn btn--danger btn--sm"
+          style={{ marginTop: 12, width: "100%", justifyContent: "center", display: "inline-flex" }}
+        >
+          <Icon name="x" size={11} /> Delete note
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function CoursePickerModal({
+  onPick,
+  onClose,
+}: {
+  onPick: (courseId: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 200,
+        background: "rgba(19, 17, 13, 0.45)",
+        backdropFilter: "blur(2px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="card"
+        style={{
+          width: "100%",
+          maxWidth: 520,
+          padding: 0,
+          boxShadow: "var(--shadow-lg)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            padding: "20px 24px 12px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <div className="label-micro" style={{ marginBottom: 6 }}>
+            New note
+          </div>
+          <h2
+            className="h-serif"
+            style={{ margin: 0, fontSize: 22, fontWeight: 500, letterSpacing: "-0.01em" }}
+          >
+            Which course is this for?
+          </h2>
+          <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--text-dim)" }}>
+            Pick a course so Sapling can link concepts to the right knowledge graph.
+          </p>
+        </div>
+
+        <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+          {COURSES.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => onPick(c.id)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "12px 14px",
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--border)",
+                background: "var(--bg-panel)",
+                cursor: "pointer",
+                textAlign: "left",
+                transition: "background var(--dur-fast) var(--ease)",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--bg-soft)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "var(--bg-panel)";
+              }}
+            >
+              <span
+                style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: "50%",
+                  background: c.color,
+                  flexShrink: 0,
+                }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+                  {c.name}
+                </div>
+                <div
+                  className="mono"
+                  style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}
+                >
+                  {c.code}
+                </div>
+              </div>
+              <Icon name="chev" size={13} />
+            </button>
+          ))}
+        </div>
+
+        <div
+          style={{
+            padding: "12px 16px",
+            borderTop: "1px solid var(--border)",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            background: "var(--bg-subtle)",
+          }}
+        >
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            You can change this later.
+          </span>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
