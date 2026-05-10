@@ -85,9 +85,10 @@ async def ensure_bucket_exists(
 
     if resp.status_code in (200, 201):
         logger.info("Storage bucket %s created.", bucket_id)
-    elif resp.status_code == 409:
+    elif _is_duplicate_bucket(resp):
         # "Bucket already exists" — expected on every restart after the
-        # first. Don't log at warning level; this is the steady-state path.
+        # first. Supabase signals this as HTTP 400 with body
+        # {"statusCode":"409","error":"Duplicate", ...}, not as a real 409.
         logger.debug("Storage bucket %s already exists.", bucket_id)
     else:
         logger.warning(
@@ -96,6 +97,18 @@ async def ensure_bucket_exists(
             resp.status_code,
             (resp.text or "").strip()[:300],
         )
+
+
+def _is_duplicate_bucket(resp: httpx.Response) -> bool:
+    if resp.status_code == 409:
+        return True
+    if resp.status_code != 400:
+        return False
+    try:
+        body = resp.json()
+    except ValueError:
+        return False
+    return str(body.get("statusCode")) == "409" or body.get("error") == "Duplicate"
 
 
 def _validate_upload(file_bytes: bytes, content_type: str):

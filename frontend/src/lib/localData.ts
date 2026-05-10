@@ -190,6 +190,19 @@ export function handleLocalRequest(path: string, options?: RequestInit): unknown
   if (route.match(/^\/api\/graph\/[^/]+\/courses\/[^/]+\/color$/)) return { updated: true };
   if (route.match(/^\/api\/graph\/[^/]+\/courses\/[^/]+$/) && options?.method === 'DELETE') return { deleted: true };
 
+  if (route.match(/^\/api\/gradebook\/summary/)) return {
+    courses: LOCAL_COURSES.map((c, i) => ({
+      course_id: c.course_id,
+      course_code: c.course_code || c.course_name,
+      course_name: c.course_name,
+      semester: 'Spring 2026',
+      percent: [88.5, 76.2, 92.1][i] ?? null,
+      letter: ['B+', 'C', 'A-'][i] ?? null,
+      graded_count: [4, 3, 5][i] ?? 0,
+      total_count: [6, 5, 6][i] ?? 0,
+    })),
+  };
+
   if (route.match(/^\/api\/calendar\/upcoming\//)) return { assignments: LOCAL_ASSIGNMENTS };
   if (route.match(/^\/api\/calendar\/all\//)) return { assignments: LOCAL_ASSIGNMENTS };
   if (route.match(/^\/api\/calendar\/status\//)) return { connected: false };
