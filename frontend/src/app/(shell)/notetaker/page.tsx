@@ -4,15 +4,21 @@ import { Icon } from "@/components/Icon";
 import {
   createNote as apiCreateNote,
   deleteNote as apiDeleteNote,
+  extractNoteConcepts,
+  generateQuizFromNote,
   getCourses,
   type EnrolledCourse,
+  linkNoteConcept,
   listNoteConcepts,
   listNotes,
   patchNote,
+  sendNoteToTutor,
+  summarizeNote,
   unlinkNoteConcept,
 } from "@/lib/api";
 import type { LinkedConcept, Note as ApiNote } from "@/lib/types";
 import { useUser } from "@/context/UserContext";
+import { useRouter } from "next/navigation";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -133,7 +139,10 @@ export default function NotetakerPage() {
   const [courseFilter, setCourseFilter] = React.useState<string | null>(null);
   const [fullscreen, setFullscreen] = React.useState(false);
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [conceptPickerOpen, setConceptPickerOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
+  const [busy, setBusy] = React.useState<null | "summarize" | "extract" | "quiz" | "tutor">(null);
+  const router = useRouter();
 
   React.useEffect(() => {
     if (!userId) return;
@@ -176,6 +185,74 @@ export default function NotetakerPage() {
       },
     [courses],
   );
+
+  const refreshConcepts = React.useCallback(async () => {
+    if (!active || !userId) return;
+    const fresh = await listNoteConcepts(active.id, userId);
+    setNotes((prev) =>
+      prev.map((n) =>
+        n.id === active.id
+          ? {
+              ...n,
+              linkedConcepts: fresh.concepts.map((c) => ({
+                id: c.id, name: c.concept_name, course: "",
+                mastery: (c.mastery_tier === "subject_root" ? "unexplored" : c.mastery_tier) as Mastery,
+              })),
+            }
+          : n,
+      ),
+    );
+  }, [active, userId]);
+
+  const onSummarize = async () => {
+    if (!active || !userId) return;
+    setBusy("summarize");
+    try {
+      const { summary } = await summarizeNote(active.id, userId);
+      setNotes((prev) =>
+        prev.map((n) => (n.id === active.id ? { ...n, lastSummary: summary } : n)),
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onExtractConcepts = async () => {
+    if (!active || !userId) return;
+    setBusy("extract");
+    try {
+      await extractNoteConcepts(active.id, userId);
+      await refreshConcepts();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onGenerateQuiz = async () => {
+    if (!active || !userId) return;
+    setBusy("quiz");
+    try {
+      const { concept_node_id } = await generateQuizFromNote(active.id, userId);
+      router.push(`/quiz?concept=${encodeURIComponent(concept_node_id)}`);
+    } catch (e) {
+      console.error("Quiz generation failed", e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onSendToTutor = async () => {
+    if (!active || !userId) return;
+    setBusy("tutor");
+    try {
+      const { topic, course_id } = await sendNoteToTutor(active.id, userId);
+      router.push(
+        `/learn?topic=${encodeURIComponent(topic)}&course=${encodeURIComponent(course_id)}`,
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -376,7 +453,7 @@ export default function NotetakerPage() {
                 return remaining[0]?.id ?? null;
               });
             }}
-            onLink={() => { /* placeholder; wired in Task 17 */ }}
+            onLink={() => setConceptPickerOpen(true)}
             onUnlink={async (conceptId: string) => {
               if (!userId) return;
               await unlinkNoteConcept(active.id, userId, conceptId);
@@ -395,6 +472,11 @@ export default function NotetakerPage() {
                 ),
               );
             }}
+            onSummarize={onSummarize}
+            onExtractConcepts={onExtractConcepts}
+            onGenerateQuiz={onGenerateQuiz}
+            onSendToTutor={onSendToTutor}
+            busy={busy}
           />
         </div>
 
@@ -423,6 +505,19 @@ export default function NotetakerPage() {
           courses={courses}
           onPick={createNoteIn}
           onClose={() => setPickerOpen(false)}
+        />
+      )}
+      {conceptPickerOpen && active && userId && (
+        <ConceptPickerModal
+          userId={userId}
+          courseId={active.courseId}
+          alreadyLinkedIds={new Set(active.linkedConcepts.map((c) => c.id))}
+          onPick={async (cid) => {
+            await linkNoteConcept(active.id, userId, cid);
+            await refreshConcepts();
+            setConceptPickerOpen(false);
+          }}
+          onClose={() => setConceptPickerOpen(false)}
         />
       )}
     </div>
@@ -810,6 +905,11 @@ function NoteDetail({
   onDelete,
   onLink,
   onUnlink,
+  onSummarize,
+  onExtractConcepts,
+  onGenerateQuiz,
+  onSendToTutor,
+  busy,
 }: {
   note: Note;
   course: Course;
@@ -817,6 +917,11 @@ function NoteDetail({
   onDelete: () => void;
   onLink: () => void;
   onUnlink: (conceptId: string) => void;
+  onSummarize: () => void;
+  onExtractConcepts: () => void;
+  onGenerateQuiz: () => void;
+  onSendToTutor: () => void;
+  busy: null | "summarize" | "extract" | "quiz" | "tutor";
 }) {
   const [tagDraft, setTagDraft] = React.useState("");
   const addTag = () => {
@@ -948,34 +1053,47 @@ function NoteDetail({
         <div className="label-micro" style={{ marginBottom: 10 }}>
           Sapling actions
         </div>
+        {note.lastSummary && (
+          <div style={{ marginBottom: 10, padding: 10, background: "var(--bg-subtle)", borderRadius: "var(--r-sm)", fontSize: 12, lineHeight: 1.5 }}>
+            {note.lastSummary}
+          </div>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <button
             type="button"
             className="btn btn--ghost"
+            disabled={!!busy}
+            onClick={onSummarize}
             style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
-            <Icon name="sparkle" size={13} /> Summarize note
+            <Icon name="sparkle" size={13} /> {busy === "summarize" ? "Summarizing…" : "Summarize note"}
           </button>
           <button
             type="button"
             className="btn btn--ghost"
+            disabled={!!busy}
+            onClick={onExtractConcepts}
             style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
-            <Icon name="brain" size={13} /> Extract concepts
+            <Icon name="brain" size={13} /> {busy === "extract" ? "Extracting…" : "Extract concepts"}
           </button>
           <button
             type="button"
             className="btn btn--ghost"
+            disabled={!!busy}
+            onClick={onGenerateQuiz}
             style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
-            <Icon name="flask" size={13} /> Generate quiz
+            <Icon name="flask" size={13} /> {busy === "quiz" ? "Generating…" : "Generate quiz"}
           </button>
           <button
             type="button"
             className="btn btn--ghost"
+            disabled={!!busy}
+            onClick={onSendToTutor}
             style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
-            <Icon name="bolt" size={13} /> Send to tutor
+            <Icon name="bolt" size={13} /> {busy === "tutor" ? "Opening tutor…" : "Send to tutor"}
           </button>
         </div>
       </div>
@@ -1139,6 +1257,96 @@ function CoursePickerModal({
           <button type="button" className="btn btn--ghost btn--sm" onClick={onClose}>
             Cancel
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConceptPickerModal({
+  userId,
+  courseId,
+  alreadyLinkedIds,
+  onPick,
+  onClose,
+}: {
+  userId: string;
+  courseId: string;
+  alreadyLinkedIds: Set<string>;
+  onPick: (conceptNodeId: string) => void;
+  onClose: () => void;
+}) {
+  const [nodes, setNodes] = React.useState<{ id: string; concept_name: string; mastery_tier: string }[]>([]);
+  const [q, setQ] = React.useState("");
+
+  React.useEffect(() => {
+    let cancelled = false;
+    import("@/lib/api").then(({ getGraph }) => getGraph(userId)).then((res) => {
+      if (cancelled) return;
+      const filtered = (res.nodes as { id: string; concept_name: string; mastery_tier: string; course_id?: string | null }[])
+        .filter((n) => !n.course_id || n.course_id === courseId)
+        .filter((n) => !alreadyLinkedIds.has(n.id));
+      setNodes(filtered);
+    });
+    return () => { cancelled = true; };
+  }, [userId, courseId, alreadyLinkedIds]);
+
+  const filtered = nodes.filter((n) =>
+    q ? n.concept_name.toLowerCase().includes(q.toLowerCase()) : true,
+  );
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 200,
+        background: "rgba(19, 17, 13, 0.45)", backdropFilter: "blur(2px)",
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="card"
+        style={{ width: "100%", maxWidth: 520, padding: 0, boxShadow: "var(--shadow-lg)", overflow: "hidden" }}
+      >
+        <div style={{ padding: "20px 24px 12px", borderBottom: "1px solid var(--border)" }}>
+          <div className="label-micro" style={{ marginBottom: 6 }}>Link concept</div>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search concepts…"
+            style={{
+              width: "100%", padding: "8px 10px", fontSize: 13,
+              background: "var(--bg-input)", border: "1px solid var(--border)",
+              borderRadius: "var(--r-sm)", color: "var(--text)", outline: "none",
+            }}
+          />
+        </div>
+        <div style={{ padding: 10, maxHeight: 380, overflowY: "auto" }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: 16, fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>
+              No matching concepts in this course.
+            </div>
+          ) : filtered.map((n) => (
+            <button
+              key={n.id}
+              type="button"
+              onClick={() => onPick(n.id)}
+              style={{
+                display: "block", width: "100%", textAlign: "left",
+                padding: "10px 12px", borderRadius: "var(--r-sm)",
+                background: "transparent", border: "none",
+                cursor: "pointer", fontSize: 13, color: "var(--text)",
+              }}
+            >
+              {n.concept_name}
+              <span className="mono" style={{ marginLeft: 8, fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                {n.mastery_tier}
+              </span>
+            </button>
+          ))}
         </div>
       </div>
     </div>
