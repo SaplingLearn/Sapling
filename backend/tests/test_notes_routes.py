@@ -168,3 +168,83 @@ class TestLinkConceptRoute:
             )
         assert r.status_code == 200
         assert r.json() == {"unlinked": True}
+
+
+class TestSummarizeRoute:
+    def test_runs_agent_and_persists(self, client):
+        captured = {}
+        class FakeResult:
+            output = type("S", (), {"summary": "Short summary."})()
+        async def fake_run(*args, **kwargs):
+            captured["called"] = True
+            return FakeResult()
+        async def fake_get_note(note_id, user_id):
+            return {"id": note_id, "user_id": user_id, "course_id": "c1",
+                    "title": "T", "body": "Long body…", "tags": [],
+                    "last_summary": None, "last_summary_at": None,
+                    "created_at": "", "updated_at": ""}
+        async def fake_save_summary(note_id, user_id, summary):
+            captured["saved"] = summary
+            return {"id": note_id, "last_summary": summary,
+                    "last_summary_at": "2026-05-11T00:00:00Z",
+                    "user_id": user_id, "course_id": "c1",
+                    "title": "T", "body": "Long body…", "tags": [],
+                    "created_at": "", "updated_at": ""}
+        with patch("routes.notes.note_summary_agent.run", side_effect=fake_run), \
+             patch("routes.notes.get_note", side_effect=fake_get_note), \
+             patch("routes.notes.save_summary", side_effect=fake_save_summary):
+            r = client.post(
+                "/api/notes/n1/summarize",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 200
+        assert r.json()["summary"] == "Short summary."
+        assert captured["saved"] == "Short summary."
+
+    def test_404_when_note_missing(self, client):
+        async def fake_get_note(note_id, user_id):
+            return None
+        with patch("routes.notes.get_note", side_effect=fake_get_note):
+            r = client.post(
+                "/api/notes/missing/summarize",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 404
+
+
+class TestExtractConceptsRoute:
+    def test_extracts_and_links(self, client):
+        class FakeResult:
+            output = type("C", (), {"concepts": ["Photosynthesis", "Calvin Cycle"]})()
+        async def fake_run(*args, **kwargs):
+            return FakeResult()
+        async def fake_get_note(note_id, user_id):
+            return {"id": note_id, "user_id": user_id, "course_id": "c1",
+                    "title": "T", "body": "B", "tags": [],
+                    "last_summary": None, "last_summary_at": None,
+                    "created_at": "", "updated_at": ""}
+        merged: list[str] = []
+        async def fake_apply(user_id, course_id, concept_names):
+            merged.extend(concept_names)
+            return len(concept_names)
+        async def fake_lookup(user_id, course_id, names):
+            return [{"id": f"g_{n}", "concept_name": n} for n in names]
+        linked: list[tuple[str, str]] = []
+        async def fake_link(note_id, user_id, concept_node_id):
+            linked.append((note_id, concept_node_id))
+            return True
+
+        with patch("routes.notes.note_concepts_agent.run", side_effect=fake_run), \
+             patch("routes.notes.get_note", side_effect=fake_get_note), \
+             patch("routes.notes.apply_concepts_to_graph", side_effect=fake_apply), \
+             patch("routes.notes._lookup_concept_nodes_by_name", side_effect=fake_lookup), \
+             patch("routes.notes.link_concept", side_effect=fake_link):
+            r = client.post(
+                "/api/notes/n1/extract-concepts",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["concepts"] == ["Photosynthesis", "Calvin Cycle"]
+        assert merged == ["Photosynthesis", "Calvin Cycle"]
+        assert {n[1] for n in linked} == {"g_Photosynthesis", "g_Calvin Cycle"}
