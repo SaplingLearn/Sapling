@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agents.deps import SaplingDeps
+from agents.note_chat import note_chat_agent
 from agents.note_concepts import note_concepts_agent
 from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
@@ -234,3 +235,19 @@ async def extract_concepts(
             concept_node_id=n["id"],
         )
     return {"concepts": names, "linked": len(nodes)}
+
+
+class NoteChatBody(BaseModel):
+    user_id: str
+    message: str
+
+
+@router.post("/{note_id}/chat")
+async def note_chat(note_id: str, body: NoteChatBody, request: Request):
+    require_self(body.user_id, request)
+    note = await get_note(note_id=note_id, user_id=body.user_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found.")
+    deps = _deps_for(body.user_id, note.get("course_id"), note_id)
+    result = await note_chat_agent.run(body.message, deps=deps)
+    return {"reply": result.output}

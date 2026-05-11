@@ -248,3 +248,24 @@ class TestExtractConceptsRoute:
         assert body["concepts"] == ["Photosynthesis", "Calvin Cycle"]
         assert merged == ["Photosynthesis", "Calvin Cycle"]
         assert {n[1] for n in linked} == {"g_Photosynthesis", "g_Calvin Cycle"}
+
+
+class TestNoteChatRoute:
+    def test_runs_note_chat_agent(self, client):
+        class FakeResult:
+            output = "Here is a quick answer."
+        async def fake_run(*args, **kwargs):
+            return FakeResult()
+        async def fake_get_note(note_id, user_id):
+            return {"id": note_id, "user_id": user_id, "course_id": "c1",
+                    "title": "T", "body": "B", "tags": [],
+                    "last_summary": None, "last_summary_at": None,
+                    "created_at": "", "updated_at": ""}
+        with patch("routes.notes.note_chat_agent.run", side_effect=fake_run), \
+             patch("routes.notes.get_note", side_effect=fake_get_note):
+            r = client.post(
+                "/api/notes/n1/chat",
+                json={"user_id": "u1", "message": "What's the gist?"},
+            )
+        assert r.status_code == 200
+        assert r.json() == {"reply": "Here is a quick answer."}
