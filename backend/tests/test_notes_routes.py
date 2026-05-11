@@ -269,3 +269,72 @@ class TestNoteChatRoute:
             )
         assert r.status_code == 200
         assert r.json() == {"reply": "Here is a quick answer."}
+
+
+class TestSendToTutorRoute:
+    def test_returns_topic_and_course(self, client):
+        async def fake_get_note(note_id, user_id):
+            return {"id": note_id, "user_id": user_id, "course_id": "c1",
+                    "title": "Photosynthesis — light vs dark reactions",
+                    "body": "B", "tags": [],
+                    "last_summary": "A short summary",
+                    "last_summary_at": "2026-05-11T00:00:00Z",
+                    "created_at": "", "updated_at": ""}
+        with patch("routes.notes.get_note", side_effect=fake_get_note):
+            r = client.post(
+                "/api/notes/n1/send-to-tutor",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["course_id"] == "c1"
+        # topic uses the note title (first 80 chars, single line).
+        assert body["topic"].startswith("Photosynthesis")
+        # preface carries note summary + body excerpt for the Learn page.
+        assert "preface" in body and isinstance(body["preface"], str)
+
+
+class TestGenerateQuizFromNote:
+    def test_picks_lowest_mastery_linked_concept(self, client):
+        async def fake_get_note(note_id, user_id):
+            return {"id": note_id, "user_id": user_id, "course_id": "c1",
+                    "title": "T", "body": "B", "tags": [],
+                    "last_summary": None, "last_summary_at": None,
+                    "created_at": "", "updated_at": ""}
+        async def fake_list_linked(note_id, user_id):
+            return [
+                {"id": "g1", "concept_name": "Easy",
+                 "mastery_tier": "mastered", "mastery_score": 0.9,
+                 "course_id": "c1"},
+                {"id": "g2", "concept_name": "Hard",
+                 "mastery_tier": "struggling", "mastery_score": 0.2,
+                 "course_id": "c1"},
+            ]
+        with patch("routes.notes.get_note", side_effect=fake_get_note), \
+             patch("routes.notes.list_linked_concepts", side_effect=fake_list_linked):
+            r = client.post(
+                "/api/notes/n1/generate-quiz",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 200
+        # The route hands the frontend the chosen concept_node_id; the
+        # frontend then calls /api/quiz/generate. We don't proxy the
+        # quiz call server-side because the existing client already
+        # handles quiz state.
+        assert r.json() == {"concept_node_id": "g2", "concept_name": "Hard"}
+
+    def test_returns_400_when_no_linked_concepts(self, client):
+        async def fake_get_note(note_id, user_id):
+            return {"id": note_id, "user_id": user_id, "course_id": "c1",
+                    "title": "", "body": "", "tags": [],
+                    "last_summary": None, "last_summary_at": None,
+                    "created_at": "", "updated_at": ""}
+        async def fake_list_linked(note_id, user_id):
+            return []
+        with patch("routes.notes.get_note", side_effect=fake_get_note), \
+             patch("routes.notes.list_linked_concepts", side_effect=fake_list_linked):
+            r = client.post(
+                "/api/notes/n1/generate-quiz",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 400

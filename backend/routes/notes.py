@@ -251,3 +251,49 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     deps = _deps_for(body.user_id, note.get("course_id"), note_id)
     result = await note_chat_agent.run(body.message, deps=deps)
     return {"reply": result.output}
+
+
+@router.post("/{note_id}/send-to-tutor")
+async def send_to_tutor(
+    note_id: str, body: AgentActionBody, request: Request
+):
+    require_self(body.user_id, request)
+    note = await get_note(note_id=note_id, user_id=body.user_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found.")
+    title = (note.get("title") or "").strip() or "Untitled note"
+    topic = title.splitlines()[0][:80]
+    preface_parts: list[str] = []
+    if note.get("last_summary"):
+        preface_parts.append(f"Note summary: {note['last_summary']}")
+    body_text = (note.get("body") or "").strip()
+    if body_text:
+        preface_parts.append(f"Note excerpt:\n{body_text[:1500]}")
+    preface = "\n\n".join(preface_parts)
+    return {
+        "topic": topic,
+        "course_id": note.get("course_id"),
+        "preface": preface,
+    }
+
+
+@router.post("/{note_id}/generate-quiz")
+async def generate_quiz_from_note(
+    note_id: str, body: AgentActionBody, request: Request
+):
+    require_self(body.user_id, request)
+    note = await get_note(note_id=note_id, user_id=body.user_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found.")
+    linked = await list_linked_concepts(note_id=note_id, user_id=body.user_id)
+    if not linked:
+        raise HTTPException(
+            status_code=400,
+            detail="Link at least one concept before generating a quiz.",
+        )
+    # Lowest mastery wins so the quiz targets the weakest spot.
+    chosen = min(linked, key=lambda c: float(c.get("mastery_score") or 0.0))
+    return {
+        "concept_node_id": chosen.get("id"),
+        "concept_name": chosen.get("concept_name"),
+    }
