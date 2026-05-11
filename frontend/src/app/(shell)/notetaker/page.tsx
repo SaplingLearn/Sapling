@@ -1,6 +1,15 @@
 "use client";
 import React from "react";
 import { Icon } from "@/components/Icon";
+import {
+  createNote as apiCreateNote,
+  getCourses,
+  type EnrolledCourse,
+  listNoteConcepts,
+  listNotes,
+} from "@/lib/api";
+import type { LinkedConcept, Note as ApiNote } from "@/lib/types";
+import { useUser } from "@/context/UserContext";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -26,6 +35,7 @@ type Note = {
   updatedAt: Date;
   tags: string[];
   linkedConcepts: Concept[];
+  lastSummary: string | null;
 };
 
 const MASTERY_COLOR: Record<Mastery, string> = {
@@ -34,68 +44,6 @@ const MASTERY_COLOR: Record<Mastery, string> = {
   struggling: "#b25855",
   unexplored: "#9a9a9a",
 };
-
-const COURSES: Course[] = [
-  { id: "bio-101", name: "Biology", code: "BIO-101", color: "#74a25d" },
-  { id: "mat-220", name: "Linear Algebra", code: "MAT-220", color: "#3e6f8a" },
-  { id: "eng-201", name: "English Lit", code: "ENG-201", color: "#b4562c" },
-  { id: "chem-200", name: "Chemistry", code: "CHEM-200", color: "#8a9a5b" },
-  { id: "his-101", name: "World History", code: "HIS-101", color: "#a4806f" },
-];
-
-const SEED_NOTES: Note[] = [
-  {
-    id: "n-1",
-    title: "Photosynthesis — light vs dark reactions",
-    body:
-      "Light-dependent reactions occur in the thylakoid membrane and produce ATP and NADPH. The Calvin cycle (dark reactions) takes place in the stroma and fixes CO₂ into G3P.\n\nKey questions:\n- Where does the oxygen come from? (Water splitting at PSII.)\n- Why does the Calvin cycle need ATP and NADPH from the light reactions?\n- What limits the rate — light, CO₂, or temperature?",
-    courseId: "bio-101",
-    updatedAt: new Date(Date.now() - 1000 * 60 * 22),
-    tags: ["lecture", "exam-3"],
-    linkedConcepts: [
-      { id: "c-1", name: "Photosynthesis", course: "BIO-101", mastery: "learning" },
-      { id: "c-2", name: "Calvin cycle", course: "BIO-101", mastery: "struggling" },
-      { id: "c-3", name: "Cellular respiration", course: "BIO-101", mastery: "mastered" },
-    ],
-  },
-  {
-    id: "n-2",
-    title: "Linear algebra — eigenvectors office hours",
-    body:
-      "Av = λv. The eigenvector v points in a direction that A only scales — never rotates. For a 2×2 matrix, det(A − λI) = 0 gives the characteristic polynomial; its roots are the eigenvalues.\n\nProf. M said the best intuition is the shear matrix: one eigenvector along the shear axis (λ = 1) and another nowhere — complex eigenvalues mean rotation.",
-    courseId: "mat-220",
-    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 6),
-    tags: ["office-hours"],
-    linkedConcepts: [
-      { id: "c-4", name: "Eigenvectors", course: "MAT-220", mastery: "learning" },
-      { id: "c-5", name: "Characteristic polynomial", course: "MAT-220", mastery: "unexplored" },
-    ],
-  },
-  {
-    id: "n-3",
-    title: "Romanticism — reading response",
-    body:
-      "Wordsworth's Preface to Lyrical Ballads (1800) reframes poetry as 'the spontaneous overflow of powerful feelings: it takes its origin from emotion recollected in tranquillity.' The shift away from neoclassical formalism: nature as moral teacher, the common speaker as legitimate voice.",
-    courseId: "eng-201",
-    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2),
-    tags: ["essay-prep"],
-    linkedConcepts: [
-      { id: "c-6", name: "Romanticism", course: "ENG-201", mastery: "mastered" },
-      { id: "c-7", name: "Wordsworth", course: "ENG-201", mastery: "learning" },
-    ],
-  },
-  {
-    id: "n-4",
-    title: "Stoichiometry quick reference",
-    body: "Mole ratios from balanced equation → limiting reagent → theoretical yield → % yield.",
-    courseId: "chem-200",
-    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5),
-    tags: ["lab-prep", "cheatsheet"],
-    linkedConcepts: [
-      { id: "c-8", name: "Limiting reagent", course: "CHEM-200", mastery: "learning" },
-    ],
-  },
-];
 
 function relTime(d: Date) {
   const diff = Date.now() - d.getTime();
@@ -110,19 +58,121 @@ function relTime(d: Date) {
   return d.toLocaleDateString();
 }
 
-function courseFor(id: string): Course {
-  return COURSES.find((c) => c.id === id) ?? COURSES[0];
+async function adaptNote(api: ApiNote, userId: string): Promise<Note> {
+  const conceptsRes = await listNoteConcepts(api.id, userId).catch(
+    () => ({ concepts: [] as LinkedConcept[] }),
+  );
+  return {
+    id: api.id,
+    title: api.title,
+    body: api.body,
+    courseId: api.course_id,
+    updatedAt: new Date(api.updated_at),
+    tags: api.tags,
+    lastSummary: api.last_summary,
+    linkedConcepts: conceptsRes.concepts.map((c) => ({
+      id: c.id,
+      name: c.concept_name,
+      course: "",
+      mastery: (c.mastery_tier === "subject_root"
+        ? "unexplored"
+        : c.mastery_tier) as Mastery,
+    })),
+  };
+}
+
+function EmptyNotetaker({
+  courses,
+  onCreate,
+  pickerOpen,
+  onPickerClose,
+  onPick,
+}: {
+  courses: Course[];
+  onCreate: () => void;
+  pickerOpen: boolean;
+  onPickerClose: () => void;
+  onPick: (courseId: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        height: "100vh", flexDirection: "column", gap: 14,
+      }}
+    >
+      <div className="label-micro">No notes yet</div>
+      <button
+        type="button"
+        className="btn btn--primary"
+        onClick={onCreate}
+      >
+        Create your first note
+      </button>
+      {pickerOpen && (
+        <CoursePickerModal
+          courses={courses}
+          onPick={onPick}
+          onClose={onPickerClose}
+        />
+      )}
+    </div>
+  );
 }
 
 export default function NotetakerPage() {
-  const [notes, setNotes] = React.useState<Note[]>(SEED_NOTES);
-  const [activeId, setActiveId] = React.useState<string>(SEED_NOTES[0].id);
+  const { userId } = useUser();
+
+  const [courses, setCourses] = React.useState<Course[]>([]);
+  const [notes, setNotes] = React.useState<Note[]>([]);
+  const [activeId, setActiveId] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState("");
   const [courseFilter, setCourseFilter] = React.useState<string | null>(null);
   const [fullscreen, setFullscreen] = React.useState(false);
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
 
-  const active = notes.find((n) => n.id === activeId) ?? notes[0];
+  React.useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [coursesRes, notesRes] = await Promise.all([
+          getCourses(userId),
+          listNotes(userId),
+        ]);
+        if (cancelled) return;
+        setCourses(
+          coursesRes.courses.map((c: EnrolledCourse) => ({
+            id: c.course_id,
+            name: c.course_name,
+            code: c.course_code,
+            color: c.color ?? "#9a9a9a",
+          })),
+        );
+        const adapted = await Promise.all(
+          notesRes.notes.map((n) => adaptNote(n, userId)),
+        );
+        setNotes(adapted);
+        setActiveId(adapted[0]?.id ?? null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  const active = notes.find((n) => n.id === activeId) ?? notes[0] ?? null;
+
+  const courseFor = React.useCallback(
+    (id: string): Course =>
+      courses.find((c) => c.id === id) ?? {
+        id, name: "Course", code: "—", color: "#9a9a9a",
+      },
+    [courses],
+  );
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -138,7 +188,7 @@ export default function NotetakerPage() {
         n.tags.some((t) => t.toLowerCase().includes(q))
       );
     });
-  }, [notes, query, courseFilter]);
+  }, [notes, query, courseFilter, courseFor]);
 
   const updateActive = (patch: Partial<Note>) => {
     setNotes((prev) =>
@@ -148,19 +198,12 @@ export default function NotetakerPage() {
     );
   };
 
-  const createNoteIn = (courseId: string) => {
-    const id = `n-${Math.random().toString(36).slice(2, 8)}`;
-    const fresh: Note = {
-      id,
-      title: "Untitled note",
-      body: "",
-      courseId,
-      updatedAt: new Date(),
-      tags: [],
-      linkedConcepts: [],
-    };
-    setNotes((prev) => [fresh, ...prev]);
-    setActiveId(id);
+  const createNoteIn = async (courseId: string) => {
+    if (!userId) return;
+    const fresh = await apiCreateNote(userId, courseId, "Untitled note");
+    const adapted = await adaptNote(fresh, userId);
+    setNotes((prev) => [adapted, ...prev]);
+    setActiveId(adapted.id);
     setPickerOpen(false);
   };
 
@@ -181,6 +224,28 @@ export default function NotetakerPage() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [pickerOpen]);
+
+  if (!userId) return null;
+  if (loading) {
+    return <div style={{ padding: 24, fontSize: 13, color: "var(--text-muted)" }}>Loading…</div>;
+  }
+  if (!active) {
+    return (
+      <EmptyNotetaker
+        courses={courses}
+        onCreate={() => setPickerOpen(true)}
+        pickerOpen={pickerOpen}
+        onPickerClose={() => setPickerOpen(false)}
+        onPick={async (courseId) => {
+          const fresh = await apiCreateNote(userId, courseId, "Untitled note");
+          const adapted = await adaptNote(fresh, userId);
+          setNotes([adapted]);
+          setActiveId(adapted.id);
+          setPickerOpen(false);
+        }}
+      />
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
@@ -209,12 +274,13 @@ export default function NotetakerPage() {
           <NotesList
             notes={filtered}
             totalCount={notes.length}
+            courses={courses}
             activeId={active.id}
             query={query}
             onQueryChange={setQuery}
             courseFilter={courseFilter}
             onCourseFilterChange={setCourseFilter}
-            onSelect={setActiveId}
+            onSelect={(id) => setActiveId(id)}
             onCreate={() => setPickerOpen(true)}
           />
         </div>
@@ -281,6 +347,7 @@ export default function NotetakerPage() {
 
       {pickerOpen && (
         <CoursePickerModal
+          courses={courses}
           onPick={createNoteIn}
           onClose={() => setPickerOpen(false)}
         />
@@ -292,6 +359,7 @@ export default function NotetakerPage() {
 function NotesList({
   notes,
   totalCount,
+  courses,
   activeId,
   query,
   onQueryChange,
@@ -302,6 +370,7 @@ function NotesList({
 }: {
   notes: Note[];
   totalCount: number;
+  courses: Course[];
   activeId: string;
   query: string;
   onQueryChange: (v: string) => void;
@@ -380,7 +449,7 @@ function NotesList({
             label="All"
             onClick={() => onCourseFilterChange(null)}
           />
-          {COURSES.map((c) => (
+          {courses.map((c) => (
             <CourseFilterChip
               key={c.id}
               active={courseFilter === c.id}
@@ -407,7 +476,7 @@ function NotesList({
         ) : (
           notes.map((n) => {
             const isActive = n.id === activeId;
-            const c = courseFor(n.courseId);
+            const c = courses.find((x) => x.id === n.courseId) ?? { id: n.courseId, name: "Course", code: "—", color: "#9a9a9a" };
             return (
               <button
                 key={n.id}
@@ -830,9 +899,11 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
 }
 
 function CoursePickerModal({
+  courses,
   onPick,
   onClose,
 }: {
+  courses: Course[];
   onPick: (courseId: string) => void;
   onClose: () => void;
 }) {
@@ -885,7 +956,7 @@ function CoursePickerModal({
         </div>
 
         <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 4 }}>
-          {COURSES.map((c) => (
+          {courses.map((c) => (
             <button
               key={c.id}
               type="button"
