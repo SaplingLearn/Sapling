@@ -390,3 +390,24 @@ export interface PaginatedUsers {
   page: number;
   page_size: number;
 }
+
+export interface LinkedConcept {
+  id: string;
+  concept_name: string;
+  mastery_tier: 'mastered' | 'learning' | 'struggling' | 'unexplored' | 'subject_root';
+  mastery_score: number;
+  course_id: string | null;
+}
+
+export interface Note {
+  id: string;
+  user_id: string;
+  course_id: string;
+  title: string;
+  body: string;
+  tags: string[];
+  last_summary: string | null;
+  last_summary_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

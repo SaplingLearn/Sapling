@@ -1097,3 +1097,89 @@ export const uploadSyllabus = (input: {
   fd.append('file', input.file);
   return uploadDocument(fd);
 };
+
+// Notes
+import type { Note, LinkedConcept } from '@/lib/types';
+
+export const listNotes = (userId: string, courseId?: string) => {
+  const qs = courseId ? `?course_id=${encodeURIComponent(courseId)}` : '';
+  return fetchJSON<{ notes: Note[] }>(`/api/notes/user/${userId}${qs}`);
+};
+
+export const createNote = (
+  userId: string,
+  courseId: string,
+  title = '',
+  body = '',
+  tags: string[] = [],
+) =>
+  fetchJSON<Note>('/api/notes', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, course_id: courseId, title, body, tags }),
+  });
+
+export const getNote = (noteId: string, userId: string) =>
+  fetchJSON<Note>(`/api/notes/${noteId}?user_id=${encodeURIComponent(userId)}`);
+
+export const patchNote = (
+  noteId: string,
+  userId: string,
+  patch: Partial<Pick<Note, 'title' | 'body' | 'tags' | 'course_id'>>,
+) =>
+  fetchJSON<Note>(`/api/notes/${noteId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ user_id: userId, ...patch }),
+  });
+
+export const deleteNote = (noteId: string, userId: string) =>
+  fetchJSON<{ deleted: boolean }>(
+    `/api/notes/${noteId}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const listNoteConcepts = (noteId: string, userId: string) =>
+  fetchJSON<{ concepts: LinkedConcept[] }>(
+    `/api/notes/${noteId}/concepts?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const linkNoteConcept = (noteId: string, userId: string, conceptNodeId: string) =>
+  fetchJSON<{ linked: boolean }>(`/api/notes/${noteId}/concepts`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, concept_node_id: conceptNodeId }),
+  });
+
+export const unlinkNoteConcept = (noteId: string, userId: string, conceptNodeId: string) =>
+  fetchJSON<{ unlinked: boolean }>(
+    `/api/notes/${noteId}/concepts/${encodeURIComponent(conceptNodeId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const summarizeNote = (noteId: string, userId: string) =>
+  fetchJSON<{ summary: string }>(`/api/notes/${noteId}/summarize`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+export const extractNoteConcepts = (noteId: string, userId: string) =>
+  fetchJSON<{ concepts: string[]; linked: number }>(
+    `/api/notes/${noteId}/extract-concepts`,
+    { method: 'POST', body: JSON.stringify({ user_id: userId }) },
+  );
+
+export const noteChat = (noteId: string, userId: string, message: string) =>
+  fetchJSON<{ reply: string }>(`/api/notes/${noteId}/chat`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, message }),
+  });
+
+export const sendNoteToTutor = (noteId: string, userId: string) =>
+  fetchJSON<{ topic: string; course_id: string; preface: string }>(
+    `/api/notes/${noteId}/send-to-tutor`,
+    { method: 'POST', body: JSON.stringify({ user_id: userId }) },
+  );
+
+export const generateQuizFromNote = (noteId: string, userId: string) =>
+  fetchJSON<{ concept_node_id: string; concept_name: string }>(
+    `/api/notes/${noteId}/generate-quiz`,
+    { method: 'POST', body: JSON.stringify({ user_id: userId }) },
+  );
