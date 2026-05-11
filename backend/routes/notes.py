@@ -13,7 +13,10 @@ from services.notes_service import (
     create_note,
     delete_note,
     get_note,
+    link_concept,
+    list_linked_concepts,
     list_notes,
+    unlink_concept,
     update_note,
 )
 
@@ -96,3 +99,46 @@ async def remove(note_id: str, request: Request, user_id: str):
     require_self(user_id, request)
     await delete_note(note_id=note_id, user_id=user_id)
     return {"deleted": True}
+
+
+class LinkConceptBody(BaseModel):
+    user_id: str
+    concept_node_id: str
+
+
+@router.get("/{note_id}/concepts")
+async def list_concepts(note_id: str, request: Request, user_id: str):
+    require_self(user_id, request)
+    concepts = await list_linked_concepts(note_id=note_id, user_id=user_id)
+    return {"concepts": concepts}
+
+
+@router.post("/{note_id}/concepts")
+async def link_concept_route(
+    note_id: str, body: LinkConceptBody, request: Request
+):
+    require_self(body.user_id, request)
+    ok = await link_concept(
+        note_id=note_id,
+        user_id=body.user_id,
+        concept_node_id=body.concept_node_id,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Note not found.")
+    return {"linked": True}
+
+
+@router.delete("/{note_id}/concepts/{concept_node_id}")
+async def unlink_concept_route(
+    note_id: str,
+    concept_node_id: str,
+    request: Request,
+    user_id: str,
+):
+    require_self(user_id, request)
+    ok = await unlink_concept(
+        note_id=note_id, user_id=user_id, concept_node_id=concept_node_id
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Note not found.")
+    return {"unlinked": True}

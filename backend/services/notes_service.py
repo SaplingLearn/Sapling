@@ -160,3 +160,78 @@ async def save_summary(
     if not rows:
         return None
     return _decrypt_row(rows[0])
+
+
+async def _note_belongs_to_user(note_id: str, user_id: str) -> bool:
+    def _fetch() -> list[dict]:
+        return table("notes").select(
+            "id",
+            filters={"id": f"eq.{note_id}", "user_id": f"eq.{user_id}"},
+            limit=1,
+        ) or []
+    rows = await asyncio.to_thread(_fetch)
+    return bool(rows)
+
+
+async def link_concept(
+    note_id: str, user_id: str, concept_node_id: str
+) -> bool:
+    """Insert a (note_id, concept_node_id) row. Returns True on success,
+    False if the note does not belong to user_id (silent reject — caller
+    converts to 404)."""
+    if not await _note_belongs_to_user(note_id, user_id):
+        return False
+
+    def _insert() -> None:
+        table("note_concepts").insert(
+            {"note_id": note_id, "concept_node_id": concept_node_id}
+        )
+    await asyncio.to_thread(_insert)
+    return True
+
+
+async def unlink_concept(
+    note_id: str, user_id: str, concept_node_id: str
+) -> bool:
+    if not await _note_belongs_to_user(note_id, user_id):
+        return False
+
+    def _delete() -> None:
+        table("note_concepts").delete(
+            filters={
+                "note_id": f"eq.{note_id}",
+                "concept_node_id": f"eq.{concept_node_id}",
+            }
+        )
+    await asyncio.to_thread(_delete)
+    return True
+
+
+async def list_linked_concepts(note_id: str, user_id: str) -> list[dict]:
+    """Return linked concepts decorated with mastery_tier + concept_name.
+
+    Two queries: pull junction rows, then graph_nodes by id IN (...).
+    Scoped to user_id at the graph_nodes layer so a stale junction row
+    pointing at another user's node never leaks.
+    """
+    def _fetch_links() -> list[dict]:
+        return table("note_concepts").select(
+            "concept_node_id",
+            filters={"note_id": f"eq.{note_id}"},
+        ) or []
+
+    links = await asyncio.to_thread(_fetch_links)
+    if not links:
+        return []
+    ids = [l["concept_node_id"] for l in links if l.get("concept_node_id")]
+    if not ids:
+        return []
+
+    in_clause = "in.(" + ",".join(ids) + ")"
+    def _fetch_nodes() -> list[dict]:
+        return table("graph_nodes").select(
+            "id,concept_name,mastery_tier,mastery_score,course_id",
+            filters={"user_id": f"eq.{user_id}", "id": in_clause},
+        ) or []
+    nodes = await asyncio.to_thread(_fetch_nodes)
+    return nodes

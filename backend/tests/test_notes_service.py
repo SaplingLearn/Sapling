@@ -147,3 +147,63 @@ def test_delete_note_scopes_by_user():
     with patch("services.notes_service.table", return_value=fake):
         _run(delete_note(note_id="n1", user_id="u1"))
     assert fake.deleted == [{"id": "eq.n1", "user_id": "eq.u1"}]
+
+
+from services.notes_service import (
+    link_concept,
+    list_linked_concepts,
+    unlink_concept,
+)
+
+
+class TestLinkedConcepts:
+    def test_link_concept_inserts_junction_row(self):
+        notes_fake = FakeTable(rows=[{"id": "n1", "user_id": "u1"}])
+        nc_fake = FakeTable()
+        def picker(name):
+            return {"notes": notes_fake, "note_concepts": nc_fake}[name]
+        with patch("services.notes_service.table", side_effect=picker):
+            _run(link_concept(note_id="n1", user_id="u1", concept_node_id="g1"))
+        assert nc_fake.inserted == [{"note_id": "n1", "concept_node_id": "g1"}]
+
+    def test_link_concept_rejects_unowned_note(self):
+        notes_fake = FakeTable(rows=[])  # no such note for this user
+        nc_fake = FakeTable()
+        def picker(name):
+            return {"notes": notes_fake, "note_concepts": nc_fake}[name]
+        with patch("services.notes_service.table", side_effect=picker):
+            ok = _run(link_concept(note_id="n1", user_id="u1", concept_node_id="g1"))
+        assert ok is False
+        assert nc_fake.inserted == []
+
+    def test_list_linked_concepts_joins_against_graph_nodes(self):
+        nc_fake = FakeTable(rows=[
+            {"note_id": "n1", "concept_node_id": "g1"},
+            {"note_id": "n1", "concept_node_id": "g2"},
+        ])
+        nodes_fake = FakeTable(rows=[
+            {"id": "g1", "concept_name": "Photosynthesis",
+             "mastery_tier": "learning", "mastery_score": 0.5,
+             "course_id": "c1"},
+            {"id": "g2", "concept_name": "Calvin Cycle",
+             "mastery_tier": "struggling", "mastery_score": 0.2,
+             "course_id": "c1"},
+        ])
+        def picker(name):
+            return {"note_concepts": nc_fake, "graph_nodes": nodes_fake}[name]
+        with patch("services.notes_service.table", side_effect=picker):
+            out = _run(list_linked_concepts(note_id="n1", user_id="u1"))
+        names = {c["concept_name"] for c in out}
+        assert names == {"Photosynthesis", "Calvin Cycle"}
+        assert all("mastery_tier" in c for c in out)
+
+    def test_unlink_concept_scopes_by_note(self):
+        nc_fake = FakeTable()
+        notes_fake = FakeTable(rows=[{"id": "n1", "user_id": "u1"}])
+        def picker(name):
+            return {"notes": notes_fake, "note_concepts": nc_fake}[name]
+        with patch("services.notes_service.table", side_effect=picker):
+            _run(unlink_concept(note_id="n1", user_id="u1", concept_node_id="g1"))
+        assert nc_fake.deleted == [
+            {"note_id": "eq.n1", "concept_node_id": "eq.g1"}
+        ]

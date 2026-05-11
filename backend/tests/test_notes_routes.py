@@ -131,3 +131,40 @@ class TestDeleteNote:
         assert r.status_code == 200
         assert r.json() == {"deleted": True}
         assert called["args"] == ("n1", "u1")
+
+
+class TestLinkConceptRoute:
+    def test_list_linked(self, client):
+        async def fake_list(note_id, user_id):
+            return [{"id": "g1", "concept_name": "X",
+                     "mastery_tier": "learning",
+                     "mastery_score": 0.5, "course_id": "c1"}]
+        with patch("routes.notes.list_linked_concepts", side_effect=fake_list):
+            r = client.get("/api/notes/n1/concepts?user_id=u1")
+        assert r.status_code == 200
+        assert r.json() == {"concepts": [{
+            "id": "g1", "concept_name": "X",
+            "mastery_tier": "learning",
+            "mastery_score": 0.5, "course_id": "c1",
+        }]}
+
+    def test_link(self, client):
+        async def fake_link(note_id, user_id, concept_node_id):
+            return True
+        with patch("routes.notes.link_concept", side_effect=fake_link):
+            r = client.post(
+                "/api/notes/n1/concepts",
+                json={"user_id": "u1", "concept_node_id": "g1"},
+            )
+        assert r.status_code == 200
+        assert r.json() == {"linked": True}
+
+    def test_unlink(self, client):
+        async def fake_unlink(note_id, user_id, concept_node_id):
+            return True
+        with patch("routes.notes.unlink_concept", side_effect=fake_unlink):
+            r = client.delete(
+                "/api/notes/n1/concepts/g1?user_id=u1"
+            )
+        assert r.status_code == 200
+        assert r.json() == {"unlinked": True}
