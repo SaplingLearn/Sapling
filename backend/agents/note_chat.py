@@ -14,7 +14,6 @@ Tools:
 from __future__ import annotations
 
 import hashlib
-from typing import Any
 
 from pydantic_ai import Agent, Tool
 
@@ -40,15 +39,7 @@ _PROMPT = (
 _PROMPT_HASH = hashlib.sha256(_PROMPT.encode("utf-8")).hexdigest()[:12]
 
 
-class _NoteChatAgent(Agent[SaplingDeps, str]):
-    """Agent subclass that exposes ``_function_tools`` for back-compat tests."""
-
-    @property
-    def _function_tools(self) -> dict[str, Any]:  # type: ignore[override]
-        return self._function_toolset.tools
-
-
-note_chat_agent = _NoteChatAgent(
+note_chat_agent = Agent[SaplingDeps, str](
     model=model_for("note_chat"),
     deps_type=SaplingDeps,
     output_type=str,

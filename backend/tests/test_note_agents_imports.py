@@ -30,7 +30,10 @@ def test_note_concepts_agent_exists():
 
 def test_note_chat_agent_exists_with_tools():
     from agents.note_chat import note_chat_agent
-    tool_names = {t.name for t in note_chat_agent._function_tools.values()}
+    # Pydantic AI 1.89's tool registry is at agent._function_toolset.tools
+    # (keys are tool names) — matches the pattern in test_chat_tutor_imports
+    # and test_quiz_agent_imports.
+    tool_names = set(note_chat_agent._function_toolset.tools.keys())
     # read_active_note must be registered; existing course-material and
     # graph-update tools come along for grounding.
     assert "read_active_note" in tool_names
