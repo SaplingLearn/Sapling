@@ -1,6 +1,5 @@
 "use client";
 import React from "react";
-import { TopBar } from "@/components/TopBar";
 import { Icon } from "@/components/Icon";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
@@ -183,68 +182,30 @@ export default function NotetakerPage() {
     return () => document.removeEventListener("keydown", onKey);
   }, [pickerOpen]);
 
-  // Animated panel collapse: side panels keep `flex-basis` set to their
-  // natural width (or 0 in fullscreen) and transition smoothly. The editor
-  // takes flex: 1 and naturally expands as the side panels shrink.
-  const panelTransition =
-    "flex-basis var(--dur-slow) var(--ease), opacity var(--dur) var(--ease), margin var(--dur-slow) var(--ease)";
-
-  const leftStyle: React.CSSProperties = {
-    flex: fullscreen ? "0 0 0px" : "0 0 300px",
-    minWidth: 0,
-    opacity: fullscreen ? 0 : 1,
-    overflow: "hidden",
-    transition: panelTransition,
-    pointerEvents: fullscreen ? "none" : undefined,
-  };
-
-  const rightStyle: React.CSSProperties = {
-    flex: fullscreen ? "0 0 0px" : "0 0 320px",
-    minWidth: 0,
-    opacity: fullscreen ? 0 : 1,
-    overflow: "hidden",
-    transition: panelTransition,
-    pointerEvents: fullscreen ? "none" : undefined,
-  };
-
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      <TopBar
-        title="Notetaker"
-        subtitle="Capture lecture notes and link them to concepts in your knowledge graph."
-        actions={
-          <>
-            <button
-              className="btn btn--sm"
-              type="button"
-              onClick={() => setFullscreen((f) => !f)}
-              title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen editor"}
-            >
-              <Icon name={fullscreen ? "x" : "max"} size={13} />
-              {fullscreen ? "Exit fullscreen" : "Fullscreen"}
-            </button>
-            <button
-              className="btn btn--sm btn--primary"
-              type="button"
-              onClick={() => setPickerOpen(true)}
-            >
-              <Icon name="plus" size={13} /> New note
-            </button>
-          </>
-        }
-      />
-
       <div
         style={{
           flex: 1,
           minHeight: 0,
           display: "flex",
-          gap: fullscreen ? 0 : 16,
-          padding: fullscreen ? "0 32px 24px" : "18px 32px 24px",
+          gap: fullscreen ? 24 : 16,
+          padding: fullscreen ? "24px 24px 24px 24px" : "32px 32px 24px",
           transition: "gap var(--dur-slow) var(--ease), padding var(--dur-slow) var(--ease)",
         }}
       >
-        <div style={leftStyle} aria-hidden={fullscreen}>
+        <div
+          style={{
+            flex: fullscreen ? "0 0 0px" : "0 0 clamp(260px, 22%, 320px)",
+            minWidth: 0,
+            opacity: fullscreen ? 0 : 1,
+            overflow: "hidden",
+            pointerEvents: fullscreen ? "none" : undefined,
+            transition:
+              "flex-basis var(--dur-slow) var(--ease), opacity var(--dur) var(--ease)",
+          }}
+          aria-hidden={fullscreen}
+        >
           <NotesList
             notes={filtered}
             totalCount={notes.length}
@@ -269,7 +230,7 @@ export default function NotetakerPage() {
           <div
             style={{
               width: "100%",
-              maxWidth: fullscreen ? 980 : "none",
+              maxWidth: fullscreen ? "min(1200px, 96%)" : "none",
               display: "flex",
               transition: "max-width var(--dur-slow) var(--ease)",
             }}
@@ -283,8 +244,38 @@ export default function NotetakerPage() {
           </div>
         </div>
 
-        <div style={rightStyle} aria-hidden={fullscreen}>
+        <div
+          style={{
+            flex: fullscreen ? "0 0 0px" : "0 0 clamp(280px, 22%, 340px)",
+            minWidth: 0,
+            opacity: fullscreen ? 0 : 1,
+            overflow: "hidden",
+            pointerEvents: fullscreen ? "none" : undefined,
+            transition:
+              "flex-basis var(--dur-slow) var(--ease), opacity var(--dur) var(--ease)",
+          }}
+          aria-hidden={fullscreen}
+        >
           <NoteDetail note={active} course={courseFor(active.courseId)} />
+        </div>
+
+        <div
+          style={{
+            flex: fullscreen ? "0 0 clamp(300px, 24%, 380px)" : "0 0 0px",
+            minWidth: 0,
+            opacity: fullscreen ? 1 : 0,
+            overflow: "hidden",
+            pointerEvents: fullscreen ? undefined : "none",
+            display: "flex",
+            flexDirection: "column",
+            paddingTop: fullscreen ? 32 : 0,
+            paddingBottom: fullscreen ? 32 : 0,
+            transition:
+              "flex-basis var(--dur-slow) var(--ease), opacity var(--dur) var(--ease), padding var(--dur-slow) var(--ease)",
+          }}
+          aria-hidden={!fullscreen}
+        >
+          <AIChatPanel />
         </div>
       </div>
 
@@ -545,9 +536,11 @@ function NoteEditor({
   fullscreen: boolean;
   onToggleFullscreen: () => void;
 }) {
+  const surfaceTransition =
+    "background var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease), box-shadow var(--dur-slow) var(--ease), border-radius var(--dur-slow) var(--ease)";
+
   return (
     <section
-      className="card"
       style={{
         padding: 0,
         display: "flex",
@@ -555,41 +548,35 @@ function NoteEditor({
         minHeight: 0,
         overflow: "hidden",
         width: "100%",
-        transition: "padding var(--dur-slow) var(--ease)",
+        background: fullscreen ? "transparent" : "var(--bg-panel)",
+        border: "1px solid",
+        borderColor: fullscreen ? "transparent" : "var(--border)",
+        borderRadius: fullscreen ? 0 : "var(--r-lg)",
+        boxShadow: fullscreen ? "none" : "var(--shadow-sm)",
+        transition: surfaceTransition,
       }}
     >
       <div
         style={{
-          padding: "20px 28px 12px",
-          borderBottom: "1px solid var(--border)",
+          padding: fullscreen ? "48px 56px 20px" : "20px 28px 16px",
+          borderBottom: "1px solid",
+          borderColor: fullscreen ? "transparent" : "var(--border)",
           display: "flex",
-          flexDirection: "column",
-          gap: 8,
+          alignItems: "flex-start",
+          gap: 12,
+          transition:
+            "padding var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease)",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-          }}
-        >
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm"
-            onClick={onToggleFullscreen}
-            title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen editor"}
-          >
-            <Icon name={fullscreen ? "x" : "max"} size={12} />
-          </button>
-        </div>
         <input
           value={note.title}
           onChange={(e) => onChange({ title: e.target.value })}
           placeholder="Untitled note"
           className="h-serif"
           style={{
-            fontSize: fullscreen ? 36 : 30,
+            flex: 1,
+            minWidth: 0,
+            fontSize: fullscreen ? 42 : 30,
             fontWeight: 500,
             letterSpacing: "-0.015em",
             lineHeight: 1.2,
@@ -598,9 +585,18 @@ function NoteEditor({
             border: "none",
             outline: "none",
             padding: 0,
-            width: "100%",
+            transition: "font-size var(--dur-slow) var(--ease)",
           }}
         />
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={onToggleFullscreen}
+          title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen editor"}
+          style={{ flexShrink: 0 }}
+        >
+          <Icon name={fullscreen ? "x" : "max"} size={12} />
+        </button>
       </div>
 
       <div
@@ -608,7 +604,8 @@ function NoteEditor({
           flex: 1,
           minHeight: 0,
           overflowY: "auto",
-          padding: fullscreen ? "28px 36px" : "20px 28px",
+          padding: fullscreen ? "24px 56px" : "20px 28px",
+          transition: "padding var(--dur-slow) var(--ease)",
         }}
       >
         <textarea
@@ -623,27 +620,31 @@ function NoteEditor({
             outline: "none",
             resize: "none",
             background: "transparent",
-            fontSize: fullscreen ? 16 : 15,
+            fontSize: fullscreen ? 14 : 15,
             lineHeight: 1.7,
             color: "var(--text)",
             fontFamily: "var(--font-serif)",
+            transition: "font-size var(--dur-slow) var(--ease)",
           }}
         />
       </div>
 
       <div
         style={{
-          padding: "10px 22px",
-          borderTop: "1px solid var(--border)",
+          padding: fullscreen ? "14px 56px" : "10px 22px",
+          borderTop: "1px solid",
+          borderColor: fullscreen ? "transparent" : "var(--border)",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           gap: 12,
-          background: "var(--bg-inset)",
+          background: fullscreen ? "transparent" : "var(--bg-inset)",
           fontSize: 11,
           color: "var(--text-muted)",
           fontFamily: "var(--font-mono)",
           letterSpacing: "0.04em",
+          transition:
+            "padding var(--dur-slow) var(--ease), background var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease)",
         }}
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -952,5 +953,141 @@ function CoursePickerModal({
         </div>
       </div>
     </div>
+  );
+}
+
+type ChatMessage = { role: "user" | "ai"; text: string };
+
+function AIChatPanel() {
+  const [messages, setMessages] = React.useState<ChatMessage[]>([]);
+  const [input, setInput] = React.useState("");
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages]);
+
+  const send = () => {
+    const text = input.trim();
+    if (!text) return;
+    setMessages((prev) => [...prev, { role: "user", text }]);
+    setInput("");
+    setTimeout(() => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "ai",
+          text: "I'm thinking about that — once wired up, I'll pull from this note and your linked concepts.",
+        },
+      ]);
+    }, 600);
+  };
+
+  return (
+    <aside
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        background: "var(--bg-panel)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-lg)",
+        boxShadow: "var(--shadow-sm)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          padding: "14px 16px",
+          borderBottom: "1px solid var(--border)",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <Icon name="sparkle" size={13} />
+        <span className="label-micro">Quick questions</span>
+      </div>
+
+      <div
+        ref={scrollRef}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          padding: "14px 16px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        }}
+      >
+        {messages.length === 0 ? (
+          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
+            Ask Sapling anything about what you&apos;re writing — clarify a concept, check a
+            definition, or surface related ideas.
+          </div>
+        ) : (
+          messages.map((m, i) => (
+            <div
+              key={i}
+              style={{
+                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                maxWidth: "85%",
+                padding: "8px 11px",
+                borderRadius: "var(--r-md)",
+                background: m.role === "user" ? "var(--accent-soft)" : "var(--bg-subtle)",
+                color: m.role === "user" ? "var(--accent)" : "var(--text)",
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              {m.text}
+            </div>
+          ))
+        )}
+      </div>
+
+      <div
+        style={{
+          padding: 10,
+          borderTop: "1px solid var(--border)",
+          display: "flex",
+          gap: 6,
+        }}
+      >
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
+          placeholder="Ask a quick question…"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            padding: "8px 10px",
+            fontSize: 13,
+            fontFamily: "var(--font-sans)",
+            background: "var(--bg-input)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-sm)",
+            color: "var(--text)",
+            outline: "none",
+          }}
+        />
+        <button
+          type="button"
+          onClick={send}
+          className="btn btn--sm btn--primary"
+          disabled={!input.trim()}
+          style={{ flexShrink: 0 }}
+        >
+          <Icon name="bolt" size={12} />
+        </button>
+      </div>
+    </aside>
   );
 }

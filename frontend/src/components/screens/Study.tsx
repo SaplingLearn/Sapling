@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { useSearchParams } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
 import { TopBar } from "../TopBar";
 import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { Icon } from "../Icon";
@@ -63,17 +64,43 @@ export function Study() {
   const actions = (
     <>
       <AIDisclaimerChip />
-      <div style={{ display: "flex", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
+      <div
+        style={{
+          position: "relative",
+          display: "flex",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-sm)",
+          overflow: "hidden",
+          isolation: "isolate",
+        }}
+      >
         {([["guide", "Study Guide"], ["cards", "Flashcards"]] as const).map(([v, label]) => (
           <button
             key={v}
             onClick={() => setMode(v)}
             style={{
-              padding: "6px 14px", fontSize: 12, fontWeight: 600,
-              background: mode === v ? "var(--accent-soft)" : "transparent",
+              position: "relative",
+              padding: "6px 14px",
+              fontSize: 12,
+              fontWeight: 600,
+              background: "transparent",
               color: mode === v ? "var(--accent)" : "var(--text-dim)",
+              transition: "color 220ms cubic-bezier(.2,.85,.35,1)",
+              zIndex: 1,
             }}
           >
+            {mode === v && (
+              <motion.span
+                layoutId="study-toggle-active"
+                transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  background: "var(--accent-soft)",
+                  zIndex: -1,
+                }}
+              />
+            )}
             {label}
           </button>
         ))}
@@ -85,14 +112,25 @@ export function Study() {
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
       <TopBar
         title="Study"
-        subtitle={mode === "guide" ? "Exam-ready guides from your course material" : "Spaced review with ratings and a 3D flip"}
+        subtitle={mode === "guide" ? undefined : "Spaced review with ratings and a 3D flip"}
         actions={actions}
       />
-      {mode === "guide" ? (
-        <GuideMode courses={courses} isMobile={isMobile} />
-      ) : (
-        <FlashcardsMode courses={courses} isMobile={isMobile} />
-      )}
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={mode}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.22, ease: [0.2, 0.85, 0.35, 1] }}
+          style={{ display: "flex", flex: 1, minHeight: 0 }}
+        >
+          {mode === "guide" ? (
+            <GuideMode courses={courses} isMobile={isMobile} />
+          ) : (
+            <FlashcardsMode courses={courses} isMobile={isMobile} />
+          )}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }
@@ -182,9 +220,30 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "24px 32px" }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
-          <div style={{ minWidth: 220 }}>
-            <div className="label-micro" style={{ marginBottom: 4 }}>Course</div>
+        <div
+          style={{
+            display: "flex",
+            gap: 16,
+            flexWrap: "wrap",
+            alignItems: "flex-end",
+            marginBottom: 20,
+          }}
+        >
+          <div style={{ flex: "1 1 240px", minWidth: 220 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <span
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  letterSpacing: "0.08em",
+                  color: courseId ? "var(--accent)" : "var(--text-muted)",
+                  transition: "color var(--dur) var(--ease)",
+                }}
+              >
+                01
+              </span>
+              <span className="label-micro">Course</span>
+            </div>
             <CustomSelect
               value={courseId}
               onChange={v => setCourseId(v)}
@@ -196,8 +255,21 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
               }))}
             />
           </div>
-          <div style={{ minWidth: 260 }}>
-            <div className="label-micro" style={{ marginBottom: 4 }}>Exam</div>
+          <div style={{ flex: "1 1 240px", minWidth: 220 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <span
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  letterSpacing: "0.08em",
+                  color: examId ? "var(--accent)" : courseId ? "var(--text-dim)" : "var(--text-muted)",
+                  transition: "color var(--dur) var(--ease)",
+                }}
+              >
+                02
+              </span>
+              <span className="label-micro">Exam</span>
+            </div>
             <CustomSelect
               value={examId}
               onChange={v => setExamId(v)}
@@ -211,15 +283,13 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
             />
           </div>
           {guide && (
-            <div style={{ marginLeft: "auto", alignSelf: "flex-end" }}>
-              <button
-                className="btn btn--sm"
-                onClick={regenerate}
-                disabled={regenerating || loadingGuide}
-              >
-                <Icon name="sparkle" size={12} /> {regenerating ? "Regenerating…" : "Regenerate"}
-              </button>
-            </div>
+            <button
+              className="btn btn--sm"
+              onClick={regenerate}
+              disabled={regenerating || loadingGuide}
+            >
+              <Icon name="sparkle" size={12} /> {regenerating ? "Regenerating…" : "Regenerate"}
+            </button>
           )}
         </div>
 
