@@ -3,10 +3,13 @@ import React from "react";
 import { Icon } from "@/components/Icon";
 import {
   createNote as apiCreateNote,
+  deleteNote as apiDeleteNote,
   getCourses,
   type EnrolledCourse,
   listNoteConcepts,
   listNotes,
+  patchNote,
+  unlinkNoteConcept,
 } from "@/lib/api";
 import type { LinkedConcept, Note as ApiNote } from "@/lib/types";
 import { useUser } from "@/context/UserContext";
@@ -190,13 +193,51 @@ export default function NotetakerPage() {
     });
   }, [notes, query, courseFilter, courseFor]);
 
-  const updateActive = (patch: Partial<Note>) => {
-    setNotes((prev) =>
-      prev.map((n) =>
-        n.id === active.id ? { ...n, ...patch, updatedAt: new Date() } : n,
-      ),
-    );
-  };
+  const updateActive = React.useCallback(
+    (patch: Partial<Pick<Note, "title" | "body" | "tags">>) => {
+      if (!active) return;
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.id === active.id ? { ...n, ...patch, updatedAt: new Date() } : n,
+        ),
+      );
+    },
+    [active],
+  );
+
+  // Debounced autosave: any change to title/body/tags triggers a PATCH
+  // 800ms after the user stops typing. Cancels prior pending saves.
+  const saveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedSignature = React.useRef<string>("");
+
+  React.useEffect(() => {
+    if (!active || !userId) return;
+    const signature = JSON.stringify({
+      id: active.id,
+      title: active.title,
+      body: active.body,
+      tags: active.tags,
+    });
+    if (signature === lastSavedSignature.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      patchNote(active.id, userId, {
+        title: active.title,
+        body: active.body,
+        tags: active.tags,
+      })
+        .then(() => {
+          lastSavedSignature.current = signature;
+        })
+        .catch(() => {
+          // Save failed — leave the signature unchanged so the next edit
+          // (or a retry from the effect) reattempts.
+        });
+    }, 800);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [active?.id, active?.title, active?.body, active?.tags, userId]);
 
   const createNoteIn = async (courseId: string) => {
     if (!userId) return;
@@ -322,7 +363,39 @@ export default function NotetakerPage() {
           }}
           aria-hidden={fullscreen}
         >
-          <NoteDetail note={active} course={courseFor(active.courseId)} />
+          <NoteDetail
+            note={active}
+            course={courseFor(active.courseId)}
+            onChange={(patch) => updateActive(patch)}
+            onDelete={async () => {
+              if (!userId) return;
+              await apiDeleteNote(active.id, userId);
+              setNotes((prev) => prev.filter((n) => n.id !== active.id));
+              setActiveId((id) => {
+                const remaining = notes.filter((n) => n.id !== id);
+                return remaining[0]?.id ?? null;
+              });
+            }}
+            onLink={() => { /* placeholder; wired in Task 17 */ }}
+            onUnlink={async (conceptId: string) => {
+              if (!userId) return;
+              await unlinkNoteConcept(active.id, userId, conceptId);
+              const fresh = await listNoteConcepts(active.id, userId);
+              setNotes((prev) =>
+                prev.map((n) =>
+                  n.id === active.id
+                    ? {
+                        ...n,
+                        linkedConcepts: fresh.concepts.map((c) => ({
+                          id: c.id, name: c.concept_name, course: "",
+                          mastery: (c.mastery_tier === "subject_root" ? "unexplored" : c.mastery_tier) as Mastery,
+                        })),
+                      }
+                    : n,
+                ),
+              );
+            }}
+          />
         </div>
 
         <div
@@ -730,7 +803,36 @@ function NoteEditor({
   );
 }
 
-function NoteDetail({ note, course }: { note: Note; course: Course }) {
+function NoteDetail({
+  note,
+  course,
+  onChange,
+  onDelete,
+  onLink,
+  onUnlink,
+}: {
+  note: Note;
+  course: Course;
+  onChange: (patch: Partial<Pick<Note, "tags">>) => void;
+  onDelete: () => void;
+  onLink: () => void;
+  onUnlink: (conceptId: string) => void;
+}) {
+  const [tagDraft, setTagDraft] = React.useState("");
+  const addTag = () => {
+    const t = tagDraft.trim();
+    if (!t) return;
+    if (note.tags.includes(t)) {
+      setTagDraft("");
+      return;
+    }
+    onChange({ tags: [...note.tags, t] });
+    setTagDraft("");
+  };
+  const removeTag = (t: string) => {
+    onChange({ tags: note.tags.filter((x) => x !== t) });
+  };
+
   return (
     <aside
       style={{
@@ -755,6 +857,8 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
               <button
                 key={c.id}
                 type="button"
+                onClick={() => onUnlink(c.id)}
+                title="Unlink concept"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -794,6 +898,7 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
         <button
           type="button"
           className="btn btn--ghost btn--sm"
+          onClick={onLink}
           style={{ marginTop: 10, width: "100%", justifyContent: "center", display: "inline-flex" }}
         >
           <Icon name="plus" size={11} /> Link concept
@@ -805,25 +910,37 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
           Tags
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {note.tags.length === 0 && (
-            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No tags.</span>
-          )}
           {note.tags.map((t) => (
-            <span key={t} className="chip">
-              {t}
-            </span>
+            <button
+              key={t}
+              type="button"
+              className="chip"
+              onClick={() => removeTag(t)}
+              style={{ cursor: "pointer" }}
+              title="Remove tag"
+            >
+              {t} ×
+            </button>
           ))}
-          <button
-            type="button"
+          <input
+            value={tagDraft}
+            onChange={(e) => setTagDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addTag();
+              }
+            }}
+            placeholder="+ add tag"
             className="chip"
             style={{
               background: "transparent",
               border: "1px dashed var(--border-strong)",
-              cursor: "pointer",
+              outline: "none",
+              minWidth: 80,
+              fontFamily: "var(--font-sans)",
             }}
-          >
-            + Add
-          </button>
+          />
         </div>
       </div>
 
@@ -889,6 +1006,7 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
         <button
           type="button"
           className="btn btn--danger btn--sm"
+          onClick={onDelete}
           style={{ marginTop: 12, width: "100%", justifyContent: "center", display: "inline-flex" }}
         >
           <Icon name="x" size={11} /> Delete note
