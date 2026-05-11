@@ -11,6 +11,7 @@ import {
   linkNoteConcept,
   listNoteConcepts,
   listNotes,
+  noteChat,
   patchNote,
   sendNoteToTutor,
   summarizeNote,
@@ -496,7 +497,7 @@ export default function NotetakerPage() {
           }}
           aria-hidden={!fullscreen}
         >
-          <AIChatPanel />
+          <AIChatPanel noteId={active?.id ?? null} userId={userId} />
         </div>
       </div>
 
@@ -1355,29 +1356,35 @@ function ConceptPickerModal({
 
 type ChatMessage = { role: "user" | "ai"; text: string };
 
-function AIChatPanel() {
+function AIChatPanel({ noteId, userId }: { noteId: string | null; userId: string }) {
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
   const [input, setInput] = React.useState("");
+  const [pending, setPending] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  // Reset when the active note changes — chat is scoped per-note.
+  React.useEffect(() => {
+    setMessages([]);
+  }, [noteId]);
 
   React.useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  const send = () => {
+  const send = async () => {
     const text = input.trim();
-    if (!text) return;
+    if (!text || !noteId || pending) return;
     setMessages((prev) => [...prev, { role: "user", text }]);
     setInput("");
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "ai",
-          text: "I'm thinking about that — once wired up, I'll pull from this note and your linked concepts.",
-        },
-      ]);
-    }, 600);
+    setPending(true);
+    try {
+      const { reply } = await noteChat(noteId, userId, text);
+      setMessages((prev) => [...prev, { role: "ai", text: reply }]);
+    } catch (e) {
+      setMessages((prev) => [...prev, { role: "ai", text: "Sapling hit an error answering that. Try again?" }]);
+    } finally {
+      setPending(false);
+    }
   };
 
   return (
@@ -1479,7 +1486,7 @@ function AIChatPanel() {
           type="button"
           onClick={send}
           className="btn btn--sm btn--primary"
-          disabled={!input.trim()}
+          disabled={!input.trim() || pending}
           style={{ flexShrink: 0 }}
         >
           <Icon name="bolt" size={12} />
