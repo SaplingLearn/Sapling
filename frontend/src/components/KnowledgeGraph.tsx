@@ -10,9 +10,18 @@
  */
 
 import React from "react";
+import dynamic from "next/dynamic";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import { KnowledgeGraph2D } from "./KnowledgeGraph2D";
-import { KnowledgeGraph3D } from "./KnowledgeGraph3D";
+
+// The 3D graph pulls in three.js + react-force-graph-3d + d3-force-3d.
+// Static-importing it bloats the OpenNext worker bundle past Cloudflare's
+// size limit even on paid plans. Lazy-load it (ssr:false) so the three.js
+// stack only enters the bundle as a client chunk when 3D mode is toggled.
+const KnowledgeGraph3D = dynamic(
+  () => import("./KnowledgeGraph3D").then((m) => m.KnowledgeGraph3D),
+  { ssr: false, loading: () => null },
+);
 
 type Mode = "2d" | "3d";
 
