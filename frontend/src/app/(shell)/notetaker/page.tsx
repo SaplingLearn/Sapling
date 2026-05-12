@@ -1,6 +1,30 @@
 "use client";
 import React from "react";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { useUser } from "@/context/UserContext";
+import {
+  listNotes,
+  createNote as createNoteApi,
+  patchNote,
+  deleteNote as deleteNoteApi,
+  listNoteConcepts,
+  linkNoteConcept,
+  unlinkNoteConcept,
+  summarizeNote,
+  extractNoteConcepts,
+  generateQuizFromNote,
+  sendNoteToTutor,
+  noteChat,
+  getCourses,
+  getGraph,
+  type EnrolledCourse,
+} from "@/lib/api";
+import type {
+  Note as ApiNote,
+  LinkedConcept as ApiLinkedConcept,
+  GraphNode,
+} from "@/lib/types";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -26,6 +50,7 @@ type Note = {
   updatedAt: Date;
   tags: string[];
   linkedConcepts: Concept[];
+  lastSummary: string | null;
 };
 
 const MASTERY_COLOR: Record<Mastery, string> = {
@@ -35,67 +60,10 @@ const MASTERY_COLOR: Record<Mastery, string> = {
   unexplored: "#9a9a9a",
 };
 
-const COURSES: Course[] = [
-  { id: "bio-101", name: "Biology", code: "BIO-101", color: "#74a25d" },
-  { id: "mat-220", name: "Linear Algebra", code: "MAT-220", color: "#3e6f8a" },
-  { id: "eng-201", name: "English Lit", code: "ENG-201", color: "#b4562c" },
-  { id: "chem-200", name: "Chemistry", code: "CHEM-200", color: "#8a9a5b" },
-  { id: "his-101", name: "World History", code: "HIS-101", color: "#a4806f" },
-];
-
-const SEED_NOTES: Note[] = [
-  {
-    id: "n-1",
-    title: "Photosynthesis — light vs dark reactions",
-    body:
-      "Light-dependent reactions occur in the thylakoid membrane and produce ATP and NADPH. The Calvin cycle (dark reactions) takes place in the stroma and fixes CO₂ into G3P.\n\nKey questions:\n- Where does the oxygen come from? (Water splitting at PSII.)\n- Why does the Calvin cycle need ATP and NADPH from the light reactions?\n- What limits the rate — light, CO₂, or temperature?",
-    courseId: "bio-101",
-    updatedAt: new Date(Date.now() - 1000 * 60 * 22),
-    tags: ["lecture", "exam-3"],
-    linkedConcepts: [
-      { id: "c-1", name: "Photosynthesis", course: "BIO-101", mastery: "learning" },
-      { id: "c-2", name: "Calvin cycle", course: "BIO-101", mastery: "struggling" },
-      { id: "c-3", name: "Cellular respiration", course: "BIO-101", mastery: "mastered" },
-    ],
-  },
-  {
-    id: "n-2",
-    title: "Linear algebra — eigenvectors office hours",
-    body:
-      "Av = λv. The eigenvector v points in a direction that A only scales — never rotates. For a 2×2 matrix, det(A − λI) = 0 gives the characteristic polynomial; its roots are the eigenvalues.\n\nProf. M said the best intuition is the shear matrix: one eigenvector along the shear axis (λ = 1) and another nowhere — complex eigenvalues mean rotation.",
-    courseId: "mat-220",
-    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 6),
-    tags: ["office-hours"],
-    linkedConcepts: [
-      { id: "c-4", name: "Eigenvectors", course: "MAT-220", mastery: "learning" },
-      { id: "c-5", name: "Characteristic polynomial", course: "MAT-220", mastery: "unexplored" },
-    ],
-  },
-  {
-    id: "n-3",
-    title: "Romanticism — reading response",
-    body:
-      "Wordsworth's Preface to Lyrical Ballads (1800) reframes poetry as 'the spontaneous overflow of powerful feelings: it takes its origin from emotion recollected in tranquillity.' The shift away from neoclassical formalism: nature as moral teacher, the common speaker as legitimate voice.",
-    courseId: "eng-201",
-    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2),
-    tags: ["essay-prep"],
-    linkedConcepts: [
-      { id: "c-6", name: "Romanticism", course: "ENG-201", mastery: "mastered" },
-      { id: "c-7", name: "Wordsworth", course: "ENG-201", mastery: "learning" },
-    ],
-  },
-  {
-    id: "n-4",
-    title: "Stoichiometry quick reference",
-    body: "Mole ratios from balanced equation → limiting reagent → theoretical yield → % yield.",
-    courseId: "chem-200",
-    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5),
-    tags: ["lab-prep", "cheatsheet"],
-    linkedConcepts: [
-      { id: "c-8", name: "Limiting reagent", course: "CHEM-200", mastery: "learning" },
-    ],
-  },
-];
+function normalizeMastery(tier: string): Mastery {
+  if (tier === "mastered" || tier === "learning" || tier === "struggling") return tier;
+  return "unexplored";
+}
 
 function relTime(d: Date) {
   const diff = Date.now() - d.getTime();
@@ -110,19 +78,118 @@ function relTime(d: Date) {
   return d.toLocaleDateString();
 }
 
-function courseFor(id: string): Course {
-  return COURSES.find((c) => c.id === id) ?? COURSES[0];
+function enrolledToCourse(e: EnrolledCourse): Course {
+  return {
+    id: e.course_id,
+    name: e.nickname || e.course_name,
+    code: e.course_code,
+    color: e.color || "#74a25d",
+  };
+}
+
+function apiNoteToNote(n: ApiNote): Note {
+  return {
+    id: n.id,
+    title: n.title || "",
+    body: n.body || "",
+    courseId: n.course_id,
+    updatedAt: new Date(n.updated_at || Date.now()),
+    tags: n.tags || [],
+    linkedConcepts: [],
+    lastSummary: n.last_summary || null,
+  };
+}
+
+function apiConceptToConcept(c: ApiLinkedConcept, courseCode: string): Concept {
+  return {
+    id: c.id,
+    name: c.concept_name,
+    course: courseCode,
+    mastery: normalizeMastery(c.mastery_tier),
+  };
 }
 
 export default function NotetakerPage() {
-  const [notes, setNotes] = React.useState<Note[]>(SEED_NOTES);
-  const [activeId, setActiveId] = React.useState<string>(SEED_NOTES[0].id);
+  const { userId, userReady } = useUser();
+  const router = useRouter();
+
+  const [courses, setCourses] = React.useState<Course[]>([]);
+  const [notes, setNotes] = React.useState<Note[]>([]);
+  const [activeId, setActiveId] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState("");
   const [courseFilter, setCourseFilter] = React.useState<string | null>(null);
   const [fullscreen, setFullscreen] = React.useState(false);
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [conceptPickerOpen, setConceptPickerOpen] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+  const [busy, setBusy] = React.useState<string | null>(null);
 
-  const active = notes.find((n) => n.id === activeId) ?? notes[0];
+  const active = notes.find((n) => n.id === activeId) ?? notes[0] ?? null;
+
+  const courseFor = React.useCallback(
+    (id: string): Course =>
+      courses.find((c) => c.id === id) ?? {
+        id,
+        name: "Unknown course",
+        code: "—",
+        color: "#9a9a9a",
+      },
+    [courses],
+  );
+
+  // Initial load: courses + notes.
+  React.useEffect(() => {
+    if (!userReady || !userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [coursesRes, notesRes] = await Promise.all([
+          getCourses(userId),
+          listNotes(userId),
+        ]);
+        if (cancelled) return;
+        setCourses(coursesRes.courses.map(enrolledToCourse));
+        const built = (notesRes.notes ?? []).map(apiNoteToNote);
+        setNotes(built);
+        setActiveId(built[0]?.id ?? null);
+      } catch (e) {
+        console.error("Failed to load notetaker data", e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userReady, userId]);
+
+  // Load linked concepts when the active note changes.
+  const activeIdForConcepts = active?.id ?? null;
+  React.useEffect(() => {
+    if (!activeIdForConcepts || !userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await listNoteConcepts(activeIdForConcepts, userId);
+        if (cancelled) return;
+        setNotes((prev) =>
+          prev.map((n) => {
+            if (n.id !== activeIdForConcepts) return n;
+            const code = courseFor(n.courseId).code;
+            return {
+              ...n,
+              linkedConcepts: (res.concepts || []).map((c) => apiConceptToConcept(c, code)),
+            };
+          }),
+        );
+      } catch (e) {
+        console.error("Failed to load concepts", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeIdForConcepts, userId, courseFor]);
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -138,30 +205,186 @@ export default function NotetakerPage() {
         n.tags.some((t) => t.toLowerCase().includes(q))
       );
     });
-  }, [notes, query, courseFilter]);
+  }, [notes, query, courseFilter, courseFor]);
+
+  // Debounced autosave for title/body/tags.
+  const saveTimersRef = React.useRef<Map<string, number>>(new Map());
+  const queueSave = React.useCallback(
+    (noteId: string, patch: Partial<Pick<ApiNote, "title" | "body" | "tags">>) => {
+      if (!userId) return;
+      const timers = saveTimersRef.current;
+      const existing = timers.get(noteId);
+      if (existing) window.clearTimeout(existing);
+      const handle = window.setTimeout(() => {
+        timers.delete(noteId);
+        patchNote(noteId, userId, patch).catch((e) =>
+          console.error("Autosave failed", e),
+        );
+      }, 800);
+      timers.set(noteId, handle);
+    },
+    [userId],
+  );
+
+  React.useEffect(() => {
+    const timers = saveTimersRef.current;
+    return () => {
+      timers.forEach((handle) => window.clearTimeout(handle));
+      timers.clear();
+    };
+  }, []);
 
   const updateActive = (patch: Partial<Note>) => {
+    if (!active) return;
     setNotes((prev) =>
       prev.map((n) =>
         n.id === active.id ? { ...n, ...patch, updatedAt: new Date() } : n,
       ),
     );
+    const apiPatch: Partial<Pick<ApiNote, "title" | "body" | "tags">> = {};
+    if (patch.title !== undefined) apiPatch.title = patch.title;
+    if (patch.body !== undefined) apiPatch.body = patch.body;
+    if (patch.tags !== undefined) apiPatch.tags = patch.tags;
+    if (Object.keys(apiPatch).length > 0) queueSave(active.id, apiPatch);
   };
 
-  const createNoteIn = (courseId: string) => {
-    const id = `n-${Math.random().toString(36).slice(2, 8)}`;
-    const fresh: Note = {
-      id,
-      title: "Untitled note",
-      body: "",
-      courseId,
-      updatedAt: new Date(),
-      tags: [],
-      linkedConcepts: [],
-    };
-    setNotes((prev) => [fresh, ...prev]);
-    setActiveId(id);
-    setPickerOpen(false);
+  const createNoteIn = async (courseId: string) => {
+    if (!userId) return;
+    try {
+      const created = await createNoteApi(userId, courseId);
+      const fresh = apiNoteToNote(created);
+      setNotes((prev) => [fresh, ...prev]);
+      setActiveId(fresh.id);
+      setPickerOpen(false);
+    } catch (e) {
+      console.error("Create note failed", e);
+    }
+  };
+
+  const deleteActive = async () => {
+    if (!active || !userId) return;
+    setBusy("delete");
+    try {
+      await deleteNoteApi(active.id, userId);
+      setNotes((prev) => {
+        const next = prev.filter((n) => n.id !== active.id);
+        setActiveId(next[0]?.id ?? null);
+        return next;
+      });
+    } catch (e) {
+      console.error("Delete failed", e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const refreshActiveConcepts = async () => {
+    if (!active || !userId) return;
+    try {
+      const res = await listNoteConcepts(active.id, userId);
+      const code = courseFor(active.courseId).code;
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.id === active.id
+            ? {
+                ...n,
+                linkedConcepts: (res.concepts || []).map((c) =>
+                  apiConceptToConcept(c, code),
+                ),
+              }
+            : n,
+        ),
+      );
+    } catch (e) {
+      console.error("Refresh concepts failed", e);
+    }
+  };
+
+  const onSummarize = async () => {
+    if (!active || !userId) return;
+    setBusy("summarize");
+    try {
+      const { summary } = await summarizeNote(active.id, userId);
+      setNotes((prev) =>
+        prev.map((n) => (n.id === active.id ? { ...n, lastSummary: summary } : n)),
+      );
+    } catch (e) {
+      console.error("Summarize failed", e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onExtract = async () => {
+    if (!active || !userId) return;
+    setBusy("extract");
+    try {
+      await extractNoteConcepts(active.id, userId);
+      await refreshActiveConcepts();
+    } catch (e) {
+      console.error("Extract failed", e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onGenerateQuiz = async () => {
+    if (!active || !userId) return;
+    setBusy("quiz");
+    try {
+      const { concept_node_id } = await generateQuizFromNote(active.id, userId);
+      router.push(`/quiz?concept=${encodeURIComponent(concept_node_id)}`);
+    } catch (e) {
+      console.error("Quiz failed", e);
+      setBusy(null);
+    }
+  };
+
+  const onSendToTutor = async () => {
+    if (!active || !userId) return;
+    setBusy("tutor");
+    try {
+      const { topic, course_id } = await sendNoteToTutor(active.id, userId);
+      router.push(
+        `/learn?topic=${encodeURIComponent(topic)}&course=${encodeURIComponent(course_id)}`,
+      );
+    } catch (e) {
+      console.error("Send to tutor failed", e);
+      setBusy(null);
+    }
+  };
+
+  const onLinkConcept = async (conceptNodeId: string) => {
+    if (!active || !userId) return;
+    try {
+      await linkNoteConcept(active.id, userId, conceptNodeId);
+      await refreshActiveConcepts();
+      setConceptPickerOpen(false);
+    } catch (e) {
+      console.error("Link concept failed", e);
+    }
+  };
+
+  const onUnlinkConcept = async (conceptNodeId: string) => {
+    if (!active || !userId) return;
+    try {
+      await unlinkNoteConcept(active.id, userId, conceptNodeId);
+      await refreshActiveConcepts();
+    } catch (e) {
+      console.error("Unlink concept failed", e);
+    }
+  };
+
+  const onAddTag = (tag: string) => {
+    if (!active) return;
+    const trimmed = tag.trim();
+    if (!trimmed || active.tags.includes(trimmed)) return;
+    updateActive({ tags: [...active.tags, trimmed] });
+  };
+
+  const onRemoveTag = (tag: string) => {
+    if (!active) return;
+    updateActive({ tags: active.tags.filter((t) => t !== tag) });
   };
 
   React.useEffect(() => {
@@ -174,13 +397,98 @@ export default function NotetakerPage() {
   }, [fullscreen]);
 
   React.useEffect(() => {
-    if (!pickerOpen) return;
+    if (!pickerOpen && !conceptPickerOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPickerOpen(false);
+      if (e.key === "Escape") {
+        setPickerOpen(false);
+        setConceptPickerOpen(false);
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [pickerOpen]);
+  }, [pickerOpen, conceptPickerOpen]);
+
+  if (!userReady || loading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100vh",
+          color: "var(--text-muted)",
+          fontSize: 13,
+        }}
+      >
+        Loading notes…
+      </div>
+    );
+  }
+
+  if (!active) {
+    return (
+      <>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "100vh",
+            padding: 32,
+            textAlign: "center",
+            gap: 12,
+          }}
+        >
+          <div className="label-micro">Notetaker</div>
+          <h2
+            className="h-serif"
+            style={{
+              margin: 0,
+              fontSize: 28,
+              fontWeight: 500,
+              letterSpacing: "-0.015em",
+            }}
+          >
+            No notes yet
+          </h2>
+          <p
+            style={{
+              margin: 0,
+              maxWidth: 420,
+              color: "var(--text-dim)",
+              fontSize: 14,
+              lineHeight: 1.6,
+            }}
+          >
+            Pick a course to start — Sapling will link the concepts you write to its
+            knowledge graph.
+          </p>
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            className="btn btn--primary"
+            disabled={courses.length === 0}
+            style={{ marginTop: 8 }}
+          >
+            <Icon name="plus" size={13} /> Create your first note
+          </button>
+          {courses.length === 0 && (
+            <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+              Add a course first to start taking notes.
+            </p>
+          )}
+        </div>
+        {pickerOpen && (
+          <CoursePickerModal
+            courses={courses}
+            onPick={createNoteIn}
+            onClose={() => setPickerOpen(false)}
+          />
+        )}
+      </>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
@@ -191,7 +499,8 @@ export default function NotetakerPage() {
           display: "flex",
           gap: fullscreen ? 24 : 16,
           padding: fullscreen ? "24px 24px 24px 24px" : "32px 32px 24px",
-          transition: "gap var(--dur-slow) var(--ease), padding var(--dur-slow) var(--ease)",
+          transition:
+            "gap var(--dur-slow) var(--ease), padding var(--dur-slow) var(--ease)",
         }}
       >
         <div
@@ -209,7 +518,9 @@ export default function NotetakerPage() {
           <NotesList
             notes={filtered}
             totalCount={notes.length}
+            courses={courses}
             activeId={active.id}
+            courseFor={courseFor}
             query={query}
             onQueryChange={setQuery}
             courseFilter={courseFilter}
@@ -256,7 +567,20 @@ export default function NotetakerPage() {
           }}
           aria-hidden={fullscreen}
         >
-          <NoteDetail note={active} course={courseFor(active.courseId)} />
+          <NoteDetail
+            note={active}
+            course={courseFor(active.courseId)}
+            busy={busy}
+            onSummarize={onSummarize}
+            onExtract={onExtract}
+            onGenerateQuiz={onGenerateQuiz}
+            onSendToTutor={onSendToTutor}
+            onOpenConceptPicker={() => setConceptPickerOpen(true)}
+            onUnlinkConcept={onUnlinkConcept}
+            onAddTag={onAddTag}
+            onRemoveTag={onRemoveTag}
+            onDelete={deleteActive}
+          />
         </div>
 
         <div
@@ -275,14 +599,24 @@ export default function NotetakerPage() {
           }}
           aria-hidden={!fullscreen}
         >
-          <AIChatPanel />
+          <AIChatPanel noteId={active.id} userId={userId} />
         </div>
       </div>
 
       {pickerOpen && (
         <CoursePickerModal
+          courses={courses}
           onPick={createNoteIn}
           onClose={() => setPickerOpen(false)}
+        />
+      )}
+      {conceptPickerOpen && userId && (
+        <ConceptPickerModal
+          userId={userId}
+          courseId={active.courseId}
+          alreadyLinkedIds={new Set(active.linkedConcepts.map((c) => c.id))}
+          onPick={onLinkConcept}
+          onClose={() => setConceptPickerOpen(false)}
         />
       )}
     </div>
@@ -292,7 +626,9 @@ export default function NotetakerPage() {
 function NotesList({
   notes,
   totalCount,
+  courses,
   activeId,
+  courseFor,
   query,
   onQueryChange,
   courseFilter,
@@ -302,7 +638,9 @@ function NotesList({
 }: {
   notes: Note[];
   totalCount: number;
+  courses: Course[];
   activeId: string;
+  courseFor: (id: string) => Course;
   query: string;
   onQueryChange: (v: string) => void;
   courseFilter: string | null;
@@ -368,28 +706,26 @@ function NotesList({
             }}
           />
         </div>
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 4,
-          }}
-        >
-          <CourseFilterChip
-            active={courseFilter === null}
-            label="All"
-            onClick={() => onCourseFilterChange(null)}
-          />
-          {COURSES.map((c) => (
+        {courses.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
             <CourseFilterChip
-              key={c.id}
-              active={courseFilter === c.id}
-              label={c.code}
-              color={c.color}
-              onClick={() => onCourseFilterChange(courseFilter === c.id ? null : c.id)}
+              active={courseFilter === null}
+              label="All"
+              onClick={() => onCourseFilterChange(null)}
             />
-          ))}
-        </div>
+            {courses.map((c) => (
+              <CourseFilterChip
+                key={c.id}
+                active={courseFilter === c.id}
+                label={c.code}
+                color={c.color}
+                onClick={() =>
+                  onCourseFilterChange(courseFilter === c.id ? null : c.id)
+                }
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "6px" }}>
@@ -661,7 +997,47 @@ function NoteEditor({
   );
 }
 
-function NoteDetail({ note, course }: { note: Note; course: Course }) {
+function NoteDetail({
+  note,
+  course,
+  busy,
+  onSummarize,
+  onExtract,
+  onGenerateQuiz,
+  onSendToTutor,
+  onOpenConceptPicker,
+  onUnlinkConcept,
+  onAddTag,
+  onRemoveTag,
+  onDelete,
+}: {
+  note: Note;
+  course: Course;
+  busy: string | null;
+  onSummarize: () => void;
+  onExtract: () => void;
+  onGenerateQuiz: () => void;
+  onSendToTutor: () => void;
+  onOpenConceptPicker: () => void;
+  onUnlinkConcept: (id: string) => void;
+  onAddTag: (tag: string) => void;
+  onRemoveTag: (tag: string) => void;
+  onDelete: () => void;
+}) {
+  const [adding, setAdding] = React.useState(false);
+  const [draftTag, setDraftTag] = React.useState("");
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (adding) inputRef.current?.focus();
+  }, [adding]);
+
+  const commitTag = () => {
+    if (draftTag.trim()) onAddTag(draftTag);
+    setDraftTag("");
+    setAdding(false);
+  };
+
   return (
     <aside
       style={{
@@ -683,9 +1059,8 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {note.linkedConcepts.map((c) => (
-              <button
+              <div
                 key={c.id}
-                type="button"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -693,10 +1068,7 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
                   padding: "8px 10px",
                   borderRadius: "var(--r-sm)",
                   background: "var(--bg-subtle)",
-                  border: "none",
                   width: "100%",
-                  textAlign: "left",
-                  cursor: "pointer",
                 }}
               >
                 <span
@@ -713,19 +1085,44 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
                 </span>
                 <span
                   className="mono"
-                  style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase" }}
+                  style={{
+                    fontSize: 10,
+                    color: "var(--text-muted)",
+                    textTransform: "uppercase",
+                  }}
                 >
                   {c.mastery}
                 </span>
-                <Icon name="chev" size={11} />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onUnlinkConcept(c.id)}
+                  title="Unlink concept"
+                  aria-label={`Unlink ${c.name}`}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--text-muted)",
+                    padding: 2,
+                    display: "inline-flex",
+                  }}
+                >
+                  <Icon name="x" size={11} />
+                </button>
+              </div>
             ))}
           </div>
         )}
         <button
           type="button"
           className="btn btn--ghost btn--sm"
-          style={{ marginTop: 10, width: "100%", justifyContent: "center", display: "inline-flex" }}
+          onClick={onOpenConceptPicker}
+          style={{
+            marginTop: 10,
+            width: "100%",
+            justifyContent: "center",
+            display: "inline-flex",
+          }}
         >
           <Icon name="plus" size={11} /> Link concept
         </button>
@@ -736,25 +1133,68 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
           Tags
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {note.tags.length === 0 && (
+          {note.tags.length === 0 && !adding && (
             <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No tags.</span>
           )}
           {note.tags.map((t) => (
-            <span key={t} className="chip">
+            <button
+              key={t}
+              type="button"
+              onClick={() => onRemoveTag(t)}
+              title={`Remove ${t}`}
+              className="chip"
+              style={{
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                border: "1px solid transparent",
+              }}
+            >
               {t}
-            </span>
+              <Icon name="x" size={9} />
+            </button>
           ))}
-          <button
-            type="button"
-            className="chip"
-            style={{
-              background: "transparent",
-              border: "1px dashed var(--border-strong)",
-              cursor: "pointer",
-            }}
-          >
-            + Add
-          </button>
+          {adding ? (
+            <input
+              ref={inputRef}
+              value={draftTag}
+              onChange={(e) => setDraftTag(e.target.value)}
+              onBlur={commitTag}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitTag();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setDraftTag("");
+                  setAdding(false);
+                }
+              }}
+              placeholder="tag"
+              className="chip"
+              style={{
+                background: "var(--bg-input)",
+                border: "1px dashed var(--border-strong)",
+                outline: "none",
+                color: "var(--text)",
+                width: 80,
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="chip"
+              style={{
+                background: "transparent",
+                border: "1px dashed var(--border-strong)",
+                cursor: "pointer",
+              }}
+            >
+              + Add
+            </button>
+          )}
         </div>
       </div>
 
@@ -766,32 +1206,65 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
           <button
             type="button"
             className="btn btn--ghost"
+            onClick={onSummarize}
+            disabled={busy !== null}
             style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
-            <Icon name="sparkle" size={13} /> Summarize note
+            <Icon name="sparkle" size={13} />{" "}
+            {busy === "summarize" ? "Summarizing…" : "Summarize note"}
           </button>
           <button
             type="button"
             className="btn btn--ghost"
+            onClick={onExtract}
+            disabled={busy !== null}
             style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
-            <Icon name="brain" size={13} /> Extract concepts
+            <Icon name="brain" size={13} />{" "}
+            {busy === "extract" ? "Extracting…" : "Extract concepts"}
           </button>
           <button
             type="button"
             className="btn btn--ghost"
+            onClick={onGenerateQuiz}
+            disabled={busy !== null || note.linkedConcepts.length === 0}
             style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
-            <Icon name="flask" size={13} /> Generate quiz
+            <Icon name="flask" size={13} />{" "}
+            {busy === "quiz" ? "Building quiz…" : "Generate quiz"}
           </button>
           <button
             type="button"
             className="btn btn--ghost"
+            onClick={onSendToTutor}
+            disabled={busy !== null}
             style={{ justifyContent: "flex-start", textAlign: "left" }}
           >
-            <Icon name="bolt" size={13} /> Send to tutor
+            <Icon name="bolt" size={13} />{" "}
+            {busy === "tutor" ? "Opening tutor…" : "Send to tutor"}
           </button>
         </div>
+        {note.lastSummary && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: 10,
+              borderRadius: "var(--r-sm)",
+              background: "var(--bg-subtle)",
+              fontSize: 12,
+              lineHeight: 1.6,
+              color: "var(--text-dim)",
+            }}
+          >
+            <div
+              className="label-micro"
+              style={{ marginBottom: 4, fontSize: 10 }}
+            >
+              Last summary
+            </div>
+            {note.lastSummary}
+          </div>
+        )}
       </div>
 
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
@@ -819,10 +1292,18 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
         </dl>
         <button
           type="button"
+          onClick={onDelete}
+          disabled={busy !== null}
           className="btn btn--danger btn--sm"
-          style={{ marginTop: 12, width: "100%", justifyContent: "center", display: "inline-flex" }}
+          style={{
+            marginTop: 12,
+            width: "100%",
+            justifyContent: "center",
+            display: "inline-flex",
+          }}
         >
-          <Icon name="x" size={11} /> Delete note
+          <Icon name="x" size={11} />{" "}
+          {busy === "delete" ? "Deleting…" : "Delete note"}
         </button>
       </div>
     </aside>
@@ -830,9 +1311,11 @@ function NoteDetail({ note, course }: { note: Note; course: Course }) {
 }
 
 function CoursePickerModal({
+  courses,
   onPick,
   onClose,
 }: {
+  courses: Course[];
   onPick: (courseId: string) => void;
   onClose: () => void;
 }) {
@@ -885,53 +1368,66 @@ function CoursePickerModal({
         </div>
 
         <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 4 }}>
-          {COURSES.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => onPick(c.id)}
+          {courses.length === 0 ? (
+            <div
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                padding: "12px 14px",
-                borderRadius: "var(--r-md)",
-                border: "1px solid var(--border)",
-                background: "var(--bg-panel)",
-                cursor: "pointer",
-                textAlign: "left",
-                transition: "background var(--dur-fast) var(--ease)",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "var(--bg-soft)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "var(--bg-panel)";
+                padding: "20px 14px",
+                fontSize: 12,
+                color: "var(--text-muted)",
+                textAlign: "center",
               }}
             >
-              <span
+              No courses enrolled yet.
+            </div>
+          ) : (
+            courses.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => onPick(c.id)}
                 style={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: "50%",
-                  background: c.color,
-                  flexShrink: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "12px 14px",
+                  borderRadius: "var(--r-md)",
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-panel)",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  transition: "background var(--dur-fast) var(--ease)",
                 }}
-              />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
-                  {c.name}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--bg-soft)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "var(--bg-panel)";
+                }}
+              >
+                <span
+                  style={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: "50%",
+                    background: c.color,
+                    flexShrink: 0,
+                  }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+                    {c.name}
+                  </div>
+                  <div
+                    className="mono"
+                    style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}
+                  >
+                    {c.code}
+                  </div>
                 </div>
-                <div
-                  className="mono"
-                  style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}
-                >
-                  {c.code}
-                </div>
-              </div>
-              <Icon name="chev" size={13} />
-            </button>
-          ))}
+                <Icon name="chev" size={13} />
+              </button>
+            ))
+          )}
         </div>
 
         <div
@@ -956,31 +1452,264 @@ function CoursePickerModal({
   );
 }
 
-type ChatMessage = { role: "user" | "ai"; text: string };
-
-function AIChatPanel() {
-  const [messages, setMessages] = React.useState<ChatMessage[]>([]);
-  const [input, setInput] = React.useState("");
-  const scrollRef = React.useRef<HTMLDivElement>(null);
+function ConceptPickerModal({
+  userId,
+  courseId,
+  alreadyLinkedIds,
+  onPick,
+  onClose,
+}: {
+  userId: string;
+  courseId: string;
+  alreadyLinkedIds: Set<string>;
+  onPick: (conceptNodeId: string) => void;
+  onClose: () => void;
+}) {
+  const [nodes, setNodes] = React.useState<GraphNode[] | null>(null);
+  const [query, setQuery] = React.useState("");
 
   React.useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await getGraph(userId);
+        if (cancelled) return;
+        const filtered = (res.nodes || []).filter(
+          (n) => !n.is_subject_root && (!courseId || n.course_id === courseId),
+        );
+        setNodes(filtered);
+      } catch (e) {
+        console.error("Graph load failed", e);
+        if (!cancelled) setNodes([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, courseId]);
+
+  const visible = React.useMemo(() => {
+    if (!nodes) return [];
+    const q = query.trim().toLowerCase();
+    return nodes.filter((n) => {
+      if (alreadyLinkedIds.has(n.id)) return false;
+      if (!q) return true;
+      return n.concept_name.toLowerCase().includes(q);
+    });
+  }, [nodes, query, alreadyLinkedIds]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 200,
+        background: "rgba(19, 17, 13, 0.45)",
+        backdropFilter: "blur(2px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="card"
+        style={{
+          width: "100%",
+          maxWidth: 520,
+          padding: 0,
+          boxShadow: "var(--shadow-lg)",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          maxHeight: "80vh",
+        }}
+      >
+        <div
+          style={{
+            padding: "20px 24px 12px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <div className="label-micro" style={{ marginBottom: 6 }}>
+            Link concept
+          </div>
+          <h2
+            className="h-serif"
+            style={{
+              margin: 0,
+              fontSize: 22,
+              fontWeight: 500,
+              letterSpacing: "-0.01em",
+            }}
+          >
+            Pick a concept to link
+          </h2>
+          <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--text-dim)" }}>
+            From your knowledge graph for this course.
+          </p>
+        </div>
+
+        <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search concepts…"
+            autoFocus
+            style={{
+              width: "100%",
+              padding: "8px 10px",
+              fontSize: 13,
+              fontFamily: "var(--font-sans)",
+              background: "var(--bg-input)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-sm)",
+              color: "var(--text)",
+              outline: "none",
+            }}
+          />
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: 10 }}>
+          {nodes === null ? (
+            <div
+              style={{
+                padding: "20px 14px",
+                fontSize: 12,
+                color: "var(--text-muted)",
+                textAlign: "center",
+              }}
+            >
+              Loading…
+            </div>
+          ) : visible.length === 0 ? (
+            <div
+              style={{
+                padding: "20px 14px",
+                fontSize: 12,
+                color: "var(--text-muted)",
+                textAlign: "center",
+              }}
+            >
+              No matching concepts.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {visible.map((n) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  onClick={() => onPick(n.id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "10px 12px",
+                    borderRadius: "var(--r-md)",
+                    border: "1px solid var(--border)",
+                    background: "var(--bg-panel)",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    transition: "background var(--dur-fast) var(--ease)",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--bg-soft)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--bg-panel)";
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      background:
+                        MASTERY_COLOR[normalizeMastery(n.mastery_tier)],
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span style={{ flex: 1, fontSize: 13, color: "var(--text)" }}>
+                    {n.concept_name}
+                  </span>
+                  <span
+                    className="mono"
+                    style={{
+                      fontSize: 10,
+                      color: "var(--text-muted)",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {n.mastery_tier}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div
+          style={{
+            padding: "12px 16px",
+            borderTop: "1px solid var(--border)",
+            display: "flex",
+            justifyContent: "flex-end",
+            background: "var(--bg-subtle)",
+          }}
+        >
+          <button type="button" className="btn btn--ghost btn--sm" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type ChatMessage = { role: "user" | "ai"; text: string };
+
+function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
+  const [messages, setMessages] = React.useState<ChatMessage[]>([]);
+  const [input, setInput] = React.useState("");
+  const [sending, setSending] = React.useState(false);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  // Reset thread when the active note changes.
+  React.useEffect(() => {
+    setMessages([]);
+    setInput("");
+  }, [noteId]);
+
+  React.useEffect(() => {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [messages]);
 
-  const send = () => {
+  const send = async () => {
     const text = input.trim();
-    if (!text) return;
+    if (!text || sending || !userId) return;
     setMessages((prev) => [...prev, { role: "user", text }]);
     setInput("");
-    setTimeout(() => {
+    setSending(true);
+    try {
+      const { reply } = await noteChat(noteId, userId, text);
+      setMessages((prev) => [...prev, { role: "ai", text: reply }]);
+    } catch (e) {
+      console.error("Chat failed", e);
       setMessages((prev) => [
         ...prev,
-        {
-          role: "ai",
-          text: "I'm thinking about that — once wired up, I'll pull from this note and your linked concepts.",
-        },
+        { role: "ai", text: "Sorry — something went wrong. Try again?" },
       ]);
-    }, 600);
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -1022,9 +1751,15 @@ function AIChatPanel() {
         }}
       >
         {messages.length === 0 ? (
-          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-            Ask Sapling anything about what you&apos;re writing — clarify a concept, check a
-            definition, or surface related ideas.
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--text-muted)",
+              lineHeight: 1.6,
+            }}
+          >
+            Ask Sapling anything about what you&apos;re writing — clarify a concept,
+            check a definition, or surface related ideas.
           </div>
         ) : (
           messages.map((m, i) => (
@@ -1035,15 +1770,29 @@ function AIChatPanel() {
                 maxWidth: "85%",
                 padding: "8px 11px",
                 borderRadius: "var(--r-md)",
-                background: m.role === "user" ? "var(--accent-soft)" : "var(--bg-subtle)",
+                background:
+                  m.role === "user" ? "var(--accent-soft)" : "var(--bg-subtle)",
                 color: m.role === "user" ? "var(--accent)" : "var(--text)",
                 fontSize: 13,
                 lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
               }}
             >
               {m.text}
             </div>
           ))
+        )}
+        {sending && (
+          <div
+            style={{
+              alignSelf: "flex-start",
+              fontSize: 12,
+              color: "var(--text-muted)",
+              fontStyle: "italic",
+            }}
+          >
+            Sapling is thinking…
+          </div>
         )}
       </div>
 
@@ -1065,6 +1814,7 @@ function AIChatPanel() {
             }
           }}
           placeholder="Ask a quick question…"
+          disabled={sending}
           style={{
             flex: 1,
             minWidth: 0,
@@ -1082,7 +1832,7 @@ function AIChatPanel() {
           type="button"
           onClick={send}
           className="btn btn--sm btn--primary"
-          disabled={!input.trim()}
+          disabled={!input.trim() || sending}
           style={{ flexShrink: 0 }}
         >
           <Icon name="bolt" size={12} />
