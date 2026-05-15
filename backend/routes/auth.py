@@ -31,7 +31,6 @@ from services.auth_guard import get_session_user_id
 
 try:
     from google_auth_oauthlib.flow import Flow
-    from googleapiclient.discovery import build
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request as GoogleAuthRequest
     GOOGLE_AVAILABLE = True
@@ -298,9 +297,20 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         return _fail_redirect("oauth_exchange_failed")
     creds = flow.credentials
 
-    # Fetch user info from Google
-    service = build("oauth2", "v2", credentials=creds)
-    user_info = service.userinfo().get().execute()
+    # Fetch user info from Google. Uses httpx (the codebase's sanctioned HTTP
+    # client) instead of googleapiclient/httplib2 — httplib2 ignores
+    # HTTPS_PROXY, which 500s on dev machines and proxy-bound deployments.
+    import httpx
+    try:
+        resp = httpx.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {creds.token}"},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        user_info = resp.json()
+    except httpx.HTTPError:
+        return _fail_redirect("userinfo_fetch_failed")
 
     email = user_info.get("email", "")
     google_id = user_info.get("id", "")
