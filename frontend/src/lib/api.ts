@@ -1001,7 +1001,7 @@ export const createCategory = (
 export const bulkUpdateCategories = (
   userId: string,
   courseId: string,
-  categories: { id?: string; name: string; weight: number; sort_order: number }[],
+  categories: { id?: string; name: string; weight: number; sort_order: number; drop_lowest: number }[],
 ) =>
   fetchJSON<{ categories: GradeCategory[] }>(
     `/api/gradebook/courses/${encodeURIComponent(courseId)}/categories`,
@@ -1091,3 +1091,99 @@ export const uploadSyllabus = (input: {
   fd.append('file', input.file);
   return uploadDocument(fd);
 };
+
+// ── Gradescope sync ────────────────────────────────────────────────────────
+
+export type GradescopeAuthMode = 'password' | 'cookies';
+
+export interface GradescopeStatus {
+  has_credentials: boolean;
+  auth_mode: GradescopeAuthMode | null;
+  last_synced_at: string | null;
+  credentials_updated_at?: string | null;
+}
+
+export type GradescopeConnectInput =
+  | { auth_mode: 'password'; email: string; password: string }
+  | {
+      auth_mode: 'cookies';
+      gradescope_session: string;
+      signed_token?: string;
+    };
+
+export interface GradescopeCourse {
+  id: string;
+  name: string;
+  full_name: string;
+  semester: string;
+  year: string;
+  num_assignments: string;
+}
+
+export interface GradescopeLink {
+  id: string;
+  sapling_course_id: string;
+  gradescope_course_id: string;
+  last_synced_at: string | null;
+}
+
+export interface GradescopeSyncResult {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+}
+
+export const getGradescopeStatus = (userId: string) =>
+  fetchJSON<GradescopeStatus>(`/api/gradescope/status?user_id=${encodeURIComponent(userId)}`);
+
+export const saveGradescopeCredentials = (
+  userId: string,
+  input: GradescopeConnectInput,
+) =>
+  fetchJSON<{ ok: true }>(`/api/gradescope/credentials`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, ...input }),
+  });
+
+export const deleteGradescopeCredentials = (userId: string) =>
+  fetchJSON<{ ok: true }>(
+    `/api/gradescope/credentials?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const listGradescopeCourses = (userId: string) =>
+  fetchJSON<{ courses: GradescopeCourse[] }>(
+    `/api/gradescope/courses?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const listGradescopeLinks = (userId: string) =>
+  fetchJSON<{ links: GradescopeLink[] }>(
+    `/api/gradescope/links?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const linkGradescopeCourse = (
+  userId: string,
+  saplingCourseId: string,
+  gradescopeCourseId: string,
+) =>
+  fetchJSON<{ link: GradescopeLink | null }>(`/api/gradescope/link`, {
+    method: 'POST',
+    body: JSON.stringify({
+      user_id: userId,
+      sapling_course_id: saplingCourseId,
+      gradescope_course_id: gradescopeCourseId,
+    }),
+  });
+
+export const unlinkGradescopeCourse = (userId: string, saplingCourseId: string) =>
+  fetchJSON<{ ok: true }>(
+    `/api/gradescope/link/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const syncGradescopeCourse = (userId: string, saplingCourseId: string) =>
+  fetchJSON<GradescopeSyncResult>(
+    `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'POST' },
+  );

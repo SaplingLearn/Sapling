@@ -100,6 +100,14 @@
   --c-teal: #3a7f77;
   --c-ink: #3f3b31;
 
+  /* Grade-band semantic colors. Used by the Gradebook landing and any
+   * future "grade pill" surface. Tied to the 90/80/70/60 letter scale. */
+  --grade-a: var(--c-sage);
+  --grade-b: var(--c-amber);
+  --grade-c: var(--c-rust);
+  --grade-d: var(--c-rose);
+  --grade-f: var(--err);
+
   --r-xs: 4px;
   --r-sm: 6px;
   --r-md: 10px;
@@ -210,6 +218,126 @@ body { font-size: 14px; line-height: 1.5; }
 .anim-d6 { animation-delay: 480ms; }
 .anim-d7 { animation-delay: 560ms; }
 .anim-d8 { animation-delay: 640ms; }
+
+/* Gradebook course-card hover — small lift on pointer-supporting devices.
+ * Uses CSS :hover instead of JS handlers so it never leaks an inline
+ * transform if the card re-renders mid-hover. */
+.course-card {
+  transition: transform var(--dur-fast) var(--ease);
+}
+@media (hover: hover) {
+  .course-card:hover { transform: translateY(-2px); }
+}
+
+/* Inline points-earned input in the course page assignment list.
+ * Looks like static text at rest; reveals a form-input affordance on
+ * hover/focus so the row stays editorial when read and obvious when
+ * interacted with. */
+.assignment-grade-input {
+  width: 72px;
+  padding: 6px 8px;
+  text-align: right;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.assignment-grade-input::-webkit-outer-spin-button,
+.assignment-grade-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+@media (hover: hover) {
+  .assignment-grade-input:hover { border-color: var(--border); }
+}
+.assignment-grade-input:focus {
+  background: var(--bg-input);
+  border-color: var(--border-strong);
+  outline: none;
+}
+/* Grade input flags values outside [0, points_possible] visually. Doesn't
+ * block save — extra credit is legit — but signals "this looks off". */
+.assignment-grade-input:invalid {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+/* Course-detail two-column shell: assignment list (primary action surface)
+ * on the left, sticky projection sidebar on the right. Collapses to a
+ * single column below 1100px so the sidebar stacks above the list. */
+.gradebook-course-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 56px;
+  align-items: start;
+}
+.gradebook-course-sidebar {
+  position: sticky;
+  top: calc(var(--row-h) + 20px);
+}
+@media (max-width: 1099px) {
+  .gradebook-course-grid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+  .gradebook-course-sidebar {
+    position: static;
+  }
+}
+
+/* Distribution-bar segment reveal — each solid fill scales up from 0 to
+ * its target ratio via transform (not width, which is layout-bound).
+ * --bar-fill (0..1) is the target scaleX; the stagger comes from
+ * per-segment inline animation-delay. prefers-reduced-motion below
+ * collapses the duration so the bar just snaps. */
+@keyframes bar-segment-grow {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(var(--bar-fill, 1)); }
+}
+.bar-segment-fill {
+  transform-origin: left center;
+  transform: scaleX(var(--bar-fill, 1));
+  animation: bar-segment-grow 700ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  will-change: transform;
+}
+
+/* Ambient orb drift — atmospheric brand motion per .impeccable.md.
+ * Six orbs each get their own slow keyframe path so the field never
+ * resolves into a recognizable loop. Durations 38s–64s; alternate
+ * ease-in-out so they drift, never travel. prefers-reduced-motion is
+ * already neutralized globally below. */
+@keyframes orb-drift-1 {
+  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate(-50%, -50%) translate3d(60px, -40px, 0) scale(1.08); }
+}
+@keyframes orb-drift-2 {
+  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate(-50%, -50%) translate3d(-50px, 50px, 0) scale(0.94); }
+}
+@keyframes orb-drift-3 {
+  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate(-50%, -50%) translate3d(40px, 80px, 0) scale(1.10); }
+}
+@keyframes orb-drift-4 {
+  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate(-50%, -50%) translate3d(-30px, -60px, 0) scale(1.06); }
+}
+@keyframes orb-drift-5 {
+  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate(-50%, -50%) translate3d(80px, 30px, 0) scale(0.92); }
+}
+@keyframes orb-drift-6 {
+  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate(-50%, -50%) translate3d(-70px, -20px, 0) scale(1.04); }
+}
 
 @keyframes shimmer { 0% { background-position: -200px 0; } 100% { background-position: 200px 0; } }
 .skeleton {

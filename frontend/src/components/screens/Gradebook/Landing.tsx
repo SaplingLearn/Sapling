@@ -1,39 +1,19 @@
 "use client";
 import React from "react";
-import Link from "next/link";
 import { TopBar } from "@/components/TopBar";
 import { SemesterChips } from "@/components/Gradebook/SemesterChips";
+import {
+  CourseCard,
+  COURSE_CARD_GRID_GAP,
+  COURSE_CARD_HEIGHT,
+} from "@/components/Gradebook/CourseCard";
+import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { useUser } from "@/context/UserContext";
 import { useToast } from "@/components/ToastProvider";
 import { getGradebookSummary, getCourses } from "@/lib/api";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GradebookCourseSummary } from "@/lib/types";
 import { SyllabusUploadFlow } from "@/components/Gradebook/SyllabusUploadFlow";
-
-const CARD_HEIGHT = 244;
-const BAND_HEIGHT = 132;
-
-function percentColor(percent: number | null): string {
-  if (percent === null) return "var(--text-muted)";
-  if (percent >= 90) return "#4e873c";
-  if (percent >= 80) return "#b4862c";
-  if (percent >= 70) return "#b4562c";
-  if (percent >= 60) return "#a8456b";
-  return "#a83a3a";
-}
-
-const DiscsWatermark = () => (
-  <svg
-    viewBox="0 0 240 160"
-    preserveAspectRatio="xMaxYMid slice"
-    aria-hidden="true"
-    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
-  >
-    <circle cx="190" cy="40" r="54" fill="rgba(255,255,255,0.10)" />
-    <circle cx="230" cy="110" r="38" fill="rgba(255,255,255,0.10)" />
-    <circle cx="178" cy="96" r="14" fill="rgba(0,0,0,0.06)" />
-  </svg>
-);
 
 export function GradebookLanding() {
   const { userId, userReady } = useUser();
@@ -45,9 +25,11 @@ export function GradebookLanding() {
   const [colorMap, setColorMap] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
   const [uploadOpen, setUploadOpen] = React.useState(false);
+  const [coursesError, setCoursesError] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
+  const fetchCourses = React.useCallback(() => {
     if (!userId) return;
+    setCoursesError(null);
     getCourses(userId)
       .then((res) => {
         const all = res.courses as (EnrolledCourse & { semester?: string })[];
@@ -63,8 +45,15 @@ export function GradebookLanding() {
         }
         setColorMap(colors);
       })
-      .catch((err) => toast.error(`Could not load courses: ${err.message}`));
+      .catch((err) => {
+        setCoursesError(err.message || "Unknown error");
+        toast.error(`Could not load courses: ${err.message}`);
+      });
   }, [userId, toast]);
+
+  React.useEffect(() => {
+    fetchCourses();
+  }, [fetchCourses]);
 
   React.useEffect(() => {
     if (!userId || !selected) return;
@@ -74,6 +63,45 @@ export function GradebookLanding() {
       .catch((err) => toast.error(`Gradebook failed to load: ${err.message}`))
       .finally(() => setLoading(false));
   }, [userId, selected, toast]);
+
+  const gridRef = React.useRef<HTMLDivElement>(null);
+
+  const handleGridKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!gridRef.current) return;
+    const anchors = Array.from(
+      gridRef.current.querySelectorAll<HTMLAnchorElement>("a"),
+    );
+    if (anchors.length === 0) return;
+
+    // Number keys 1-9: jump to that course by position
+    if (/^[1-9]$/.test(e.key)) {
+      const idx = parseInt(e.key, 10) - 1;
+      if (idx < anchors.length) {
+        anchors[idx].focus();
+        e.preventDefault();
+      }
+      return;
+    }
+
+    const active = document.activeElement;
+    const idx = anchors.indexOf(active as HTMLAnchorElement);
+    if (idx === -1) return;
+
+    let nextIdx = idx;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      nextIdx = Math.min(idx + 1, anchors.length - 1);
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      nextIdx = Math.max(idx - 1, 0);
+    } else if (e.key === "Home") {
+      nextIdx = 0;
+    } else if (e.key === "End") {
+      nextIdx = anchors.length - 1;
+    } else {
+      return;
+    }
+    anchors[nextIdx].focus();
+    e.preventDefault();
+  };
 
   if (!userReady) return null;
 
@@ -89,7 +117,7 @@ export function GradebookLanding() {
               padding: "6px 12px",
               borderRadius: "var(--r-sm)",
               background: "var(--accent)",
-              color: "#fff",
+              color: "var(--accent-fg)",
               fontSize: 13,
               border: 0,
               cursor: "pointer",
@@ -99,176 +127,50 @@ export function GradebookLanding() {
           </button>
         }
       />
-      <main style={{ padding: 32 }}>
+      <main
+        style={{
+          padding: "var(--pad-xl)",
+          position: "relative",
+          overflow: "hidden",
+          minHeight: "calc(100vh - var(--row-h))",
+        }}
+      >
+        <AmbientOrbs />
+        <div style={{ position: "relative", zIndex: 1 }}>
         <SemesterChips
           semesters={semesters}
           selected={selected}
           onSelect={setSelected}
         />
-        {loading ? (
-          <p style={{ color: "var(--text-dim)" }}>Loading…</p>
+        {coursesError ? (
+          <ErrorBanner message={coursesError} onRetry={fetchCourses} />
+        ) : loading ? (
+          <LoadingSkeleton />
         ) : courses.length === 0 ? (
-          <p style={{ color: "var(--text-dim)" }}>
-            No courses enrolled for {selected}. Add a course in onboarding to get started.
-          </p>
+          <EmptyState semesterLabel={selected} onUpload={() => setUploadOpen(true)} />
         ) : (
           <div
+            ref={gridRef}
+            onKeyDown={handleGridKeyDown}
+            role="grid"
+            aria-label="Courses"
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-              gap: 16,
+              gap: COURSE_CARD_GRID_GAP,
             }}
           >
-            {courses.map((c) => {
-              const courseColor = colorMap[c.course_id] || "var(--accent)";
-              const isPlaceholder = c.letter == null;
-              return (
-                <Link
-                  key={c.course_id}
-                  href={`/gradebook/${encodeURIComponent(c.course_id)}`}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    border: "1px solid rgba(42, 39, 31, 0.10)",
-                    borderRadius: 12,
-                    background: "var(--bg-panel)",
-                    textDecoration: "none",
-                    color: "var(--text)",
-                    overflow: "hidden",
-                    height: CARD_HEIGHT,
-                    boxShadow: "0 1px 2px rgba(19, 38, 16, 0.04)",
-                    transition:
-                      "transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease)",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = "translateY(-2px)";
-                    e.currentTarget.style.borderColor = "rgba(42, 39, 31, 0.18)";
-                    e.currentTarget.style.boxShadow =
-                      "0 6px 18px rgba(42, 39, 31, 0.10)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = "";
-                    e.currentTarget.style.borderColor = "rgba(42, 39, 31, 0.10)";
-                    e.currentTarget.style.boxShadow =
-                      "0 1px 2px rgba(19, 38, 16, 0.04)";
-                  }}
-                >
-                  <div
-                    style={{
-                      background: courseColor,
-                      color: "#ffffff",
-                      height: BAND_HEIGHT,
-                      padding: "14px 18px",
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "space-between",
-                      alignItems: "flex-start",
-                      gap: 14,
-                      position: "relative",
-                      overflow: "hidden",
-                    }}
-                  >
-                    <DiscsWatermark />
-                    <div
-                      className="mono"
-                      style={{
-                        position: "relative",
-                        zIndex: 1,
-                        fontSize: 10.5,
-                        fontWeight: 600,
-                        letterSpacing: "0.14em",
-                        textTransform: "uppercase",
-                        color: "#ffffff",
-                        opacity: 0.92,
-                      }}
-                    >
-                      {c.course_code}
-                    </div>
-                    <span
-                      style={{
-                        position: "relative",
-                        zIndex: 1,
-                        display: "inline-block",
-                        color: "#ffffff",
-                        fontFamily:
-                          "var(--font-display), 'Playfair Display', Georgia, serif",
-                        fontWeight: isPlaceholder ? 400 : 500,
-                        fontStyle: isPlaceholder ? "italic" : "normal",
-                        fontSize: 64,
-                        lineHeight: 0.9,
-                        letterSpacing: "-0.02em",
-                        opacity: isPlaceholder ? 0.6 : 1,
-                      }}
-                    >
-                      {isPlaceholder ? "—" : c.letter}
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      padding: "12px 16px 14px",
-                      flex: 1,
-                      display: "flex",
-                      flexDirection: "column",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontFamily:
-                          "var(--font-display), 'Playfair Display', Georgia, serif",
-                        fontWeight: 500,
-                        fontSize: 18,
-                        lineHeight: 1.25,
-                        letterSpacing: "-0.01em",
-                        color: "var(--text)",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                      }}
-                    >
-                      {c.course_name}
-                    </div>
-                    <div style={{ flex: 1, minHeight: 8 }} />
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "baseline",
-                        gap: 8,
-                      }}
-                    >
-                      <span
-                        className="mono"
-                        style={{
-                          fontSize: 18,
-                          fontWeight: 600,
-                          lineHeight: 1,
-                          letterSpacing: "-0.02em",
-                          color: percentColor(c.percent),
-                        }}
-                      >
-                        {c.percent === null
-                          ? "No grades"
-                          : `${c.percent.toFixed(1)}%`}
-                      </span>
-                      <span
-                        className="mono"
-                        style={{
-                          fontSize: 11,
-                          letterSpacing: "0.02em",
-                          color: "var(--text-dim)",
-                        }}
-                      >
-                        {c.graded_count}/{c.total_count} graded
-                      </span>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
+            {courses.map((c) => (
+              <CourseCard
+                key={c.course_id}
+                course={c}
+                variant="default"
+                courseColor={colorMap[c.course_id] || "var(--accent)"}
+              />
+            ))}
           </div>
         )}
+        </div>
       </main>
 
       {userId && (
@@ -279,5 +181,119 @@ export function GradebookLanding() {
         />
       )}
     </>
+  );
+}
+
+function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        padding: "20px 24px",
+        borderRadius: "var(--r-md)",
+        background: "var(--err-soft)",
+        border: "1px solid color-mix(in oklab, var(--err) 20%, transparent)",
+        display: "flex",
+        gap: 16,
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+      }}
+    >
+      <div>
+        <div style={{ fontWeight: 600, color: "var(--err)", marginBottom: 4 }}>
+          We couldn&apos;t load your courses.
+        </div>
+        <div style={{ fontSize: 13, color: "var(--text-dim)" }}>{message}</div>
+      </div>
+      <button
+        type="button"
+        className="btn btn--primary"
+        onClick={onRetry}
+        style={{ padding: "8px 16px" }}
+      >
+        Try again
+      </button>
+    </div>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+        gap: COURSE_CARD_GRID_GAP,
+      }}
+    >
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div
+          key={i}
+          className="skeleton"
+          style={{ height: COURSE_CARD_HEIGHT, borderRadius: "var(--r-md)" }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function EmptyState({
+  semesterLabel,
+  onUpload,
+}: {
+  semesterLabel: string;
+  onUpload: () => void;
+}) {
+  return (
+    <div style={{ padding: "64px 8px 40px", maxWidth: 680 }}>
+      <div
+        className="mono"
+        style={{
+          fontSize: 11,
+          letterSpacing: "0.14em",
+          textTransform: "uppercase",
+          color: "var(--text-muted)",
+          marginBottom: 14,
+        }}
+      >
+        {semesterLabel || "This semester"}
+      </div>
+      <h2
+        style={{
+          fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+          fontWeight: 500,
+          fontSize: 56,
+          lineHeight: 1.05,
+          letterSpacing: "-0.02em",
+          color: "var(--text)",
+          margin: "0 0 18px",
+        }}
+      >
+        A blank semester, ready to plant.
+      </h2>
+      <p
+        style={{
+          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+          fontSize: 17,
+          lineHeight: 1.6,
+          color: "var(--text-dim)",
+          margin: "0 0 32px",
+          maxWidth: 540,
+        }}
+      >
+        Drop in a syllabus and Sapling lays out every assignment, due date, and
+        weight — so you can see what&apos;s coming, not just what already happened.
+      </p>
+      <button
+        type="button"
+        className="btn btn--primary"
+        onClick={onUpload}
+        style={{ padding: "10px 18px", fontSize: 14 }}
+      >
+        Upload syllabus
+      </button>
+    </div>
   );
 }

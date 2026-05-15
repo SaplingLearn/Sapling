@@ -355,12 +355,15 @@ class CategoryItem(BaseModel):
     name: str
     weight: float = Field(ge=0, le=100)
     sort_order: int = 0
+    # "Drop the N lowest graded assignments before averaging." 0 = no drops.
+    drop_lowest: int = Field(default=0, ge=0)
 
 
 class CreateCategoryBody(BaseModel):
     user_id: str
     name: str
     weight: float = Field(ge=0, le=100)
+    drop_lowest: int = Field(default=0, ge=0)
 
 
 class BulkUpdateCategoriesBody(BaseModel):

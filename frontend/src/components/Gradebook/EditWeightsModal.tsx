@@ -8,6 +8,7 @@ interface Draft {
   name: string;
   weight: number;
   sort_order: number;
+  drop_lowest: number;
 }
 
 interface Props {
@@ -27,7 +28,11 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
     if (open) {
       setDrafts(
         initial.map((c) => ({
-          id: c.id, name: c.name, weight: c.weight, sort_order: c.sort_order,
+          id: c.id,
+          name: c.name,
+          weight: c.weight,
+          sort_order: c.sort_order,
+          drop_lowest: c.drop_lowest ?? 0,
         })),
       );
     }
@@ -43,7 +48,10 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
   const remove = (i: number) =>
     setDrafts((arr) => arr.filter((_, idx) => idx !== i));
   const add = () =>
-    setDrafts((arr) => [...arr, { name: "", weight: 0, sort_order: arr.length }]);
+    setDrafts((arr) => [
+      ...arr,
+      { name: "", weight: 0, sort_order: arr.length, drop_lowest: 0 },
+    ]);
 
   return createPortal(
     <div
@@ -59,29 +67,119 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--bg)", borderRadius: 12, padding: 20,
-          minWidth: 420, maxWidth: 560, maxHeight: "80vh", overflow: "auto",
+          minWidth: 520, maxWidth: 640, maxHeight: "80vh", overflow: "auto",
         }}
       >
-        <h3 style={{ margin: "0 0 12px" }}>Edit categories &amp; weights</h3>
+        <h3 style={{ margin: "0 0 4px" }}>Edit categories &amp; weights</h3>
+        <p
+          style={{
+            margin: "0 0 16px",
+            fontSize: 12,
+            color: "var(--text-dim)",
+            lineHeight: 1.5,
+          }}
+        >
+          Weights must sum to 100%. Set <strong>Drop</strong> to the number of
+          lowest-scoring graded assignments to exclude from that category&apos;s
+          average — e.g. &quot;drop 2 lowest homeworks.&quot;
+        </p>
+        <div
+          className="mono"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) 80px 80px 28px",
+            gap: 6,
+            fontSize: 10,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--text-muted)",
+            padding: "0 2px 6px",
+          }}
+        >
+          <span>Name</span>
+          <span style={{ textAlign: "right" }}>Weight</span>
+          <span style={{ textAlign: "right" }}>Drop</span>
+          <span />
+        </div>
         <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
           {drafts.map((d, i) => (
-            <li key={i} style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <li
+              key={i}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) 80px 80px 28px",
+                gap: 6,
+                alignItems: "center",
+                marginBottom: 8,
+              }}
+            >
               <input
                 value={d.name}
                 placeholder="Category name"
                 onChange={(e) => update(i, { name: e.target.value })}
-                style={{ flex: 1, padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+                style={{ padding: 6, border: "1px solid var(--border)", borderRadius: 6, minWidth: 0 }}
               />
+              <div style={{ position: "relative" }}>
+                <input
+                  type="number"
+                  value={d.weight}
+                  min={0}
+                  max={100}
+                  onChange={(e) => update(i, { weight: Number(e.target.value) })}
+                  style={{
+                    width: "100%",
+                    padding: "6px 22px 6px 6px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    textAlign: "right",
+                  }}
+                />
+                <span
+                  style={{
+                    position: "absolute",
+                    right: 8,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    fontSize: 11,
+                    color: "var(--text-muted)",
+                    pointerEvents: "none",
+                  }}
+                >
+                  %
+                </span>
+              </div>
               <input
                 type="number"
-                value={d.weight}
+                value={d.drop_lowest}
                 min={0}
-                max={100}
-                onChange={(e) => update(i, { weight: Number(e.target.value) })}
-                style={{ width: 70, padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
+                max={50}
+                step={1}
+                title="Number of lowest-scoring graded assignments to drop from this category"
+                onChange={(e) =>
+                  update(i, { drop_lowest: Math.max(0, Math.floor(Number(e.target.value) || 0)) })
+                }
+                style={{
+                  width: "100%",
+                  padding: "6px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  textAlign: "right",
+                }}
               />
-              <span style={{ alignSelf: "center" }}>%</span>
-              <button type="button" onClick={() => remove(i)} aria-label="Remove">
+              <button
+                type="button"
+                onClick={() => remove(i)}
+                aria-label="Remove category"
+                title="Remove"
+                style={{
+                  background: "transparent",
+                  border: 0,
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                  fontSize: 16,
+                  lineHeight: 1,
+                }}
+              >
                 ✕
               </button>
             </li>

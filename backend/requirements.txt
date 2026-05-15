@@ -25,6 +25,14 @@ openpyxl
 beautifulsoup4
 python-Levenshtein
 
+# Gradescope sync (unofficial scraper-style client; logs in with user creds)
+gradescopeapi==1.8.0
+
+# Headless browser for BU SSO + Duo 2FA flow. Requires running
+# `playwright install chromium` after pip install — the binary lives
+# outside the wheel. Skipped on CF Workers deploys (browser-less env).
+playwright>=1.45,<2
+
 # Testing
 pytest
 pytest-anyio

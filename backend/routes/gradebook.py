@@ -37,7 +37,7 @@ def _user_owns_course(user_id: str, course_id: str) -> bool:
 
 def _user_owns_category(user_id: str, category_id: str) -> dict | None:
     rows = table("course_categories").select(
-        "id,user_id,course_id,name,weight,sort_order",
+        "id,user_id,course_id,name,weight,sort_order,drop_lowest",
         filters={"id": f"eq.{category_id}", "user_id": f"eq.{user_id}"},
         limit=1,
     )
@@ -64,7 +64,7 @@ def get_summary(request: Request, user_id: str = Query(...), semester: str = Que
     in_clause = "in.(" + ",".join(course_ids) + ")"
 
     cats = table("course_categories").select(
-        "id,user_id,course_id,name,weight,sort_order",
+        "id,user_id,course_id,name,weight,sort_order,drop_lowest",
         filters={"user_id": f"eq.{user_id}", "course_id": in_clause},
     )
     assigns = table("assignments").select(
@@ -121,7 +121,7 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
     letter_scale = enrollment[0].get("letter_scale")
 
     cats = table("course_categories").select(
-        "id,user_id,course_id,name,weight,sort_order",
+        "id,user_id,course_id,name,weight,sort_order,drop_lowest",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
         order="sort_order.asc",
     )
@@ -142,10 +142,13 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
         if cid in by_cat:
             by_cat[cid].append(a)
     for c in cats:
-        c["category_grade"] = gradebook_service.category_grade(by_cat[c["id"]])
+        c["category_grade"] = gradebook_service.category_grade(
+            by_cat[c["id"]], c.get("drop_lowest", 0)
+        )
 
     percent = gradebook_service.current_grade(cats, assigns)
     letter = gradebook_service.letter_for(percent, letter_scale)
+    dropped_ids = gradebook_service.all_dropped_ids(cats, assigns)
 
     return {
         "course_id": course["id"],
@@ -157,6 +160,7 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
         "letter_scale": letter_scale,
         "categories": cats,
         "assignments": assigns,
+        "dropped_assignment_ids": dropped_ids,
     }
 
 
@@ -173,6 +177,7 @@ def create_category(course_id: str, body: CreateCategoryBody, request: Request):
         "name": body.name,
         "weight": body.weight,
         "sort_order": 0,
+        "drop_lowest": body.drop_lowest,
     })
     return {"category": inserted[0] if inserted else None}
 
@@ -194,7 +199,12 @@ def bulk_update_categories(course_id: str, body: BulkUpdateCategoriesBody, reque
     for c in body.categories:
         if c.id:
             updated = table("course_categories").update(
-                {"name": c.name, "weight": c.weight, "sort_order": c.sort_order},
+                {
+                    "name": c.name,
+                    "weight": c.weight,
+                    "sort_order": c.sort_order,
+                    "drop_lowest": c.drop_lowest,
+                },
                 filters={"id": f"eq.{c.id}", "user_id": f"eq.{body.user_id}"},
             )
             saved.extend(updated)
@@ -206,6 +216,7 @@ def bulk_update_categories(course_id: str, body: BulkUpdateCategoriesBody, reque
                 "name": c.name,
                 "weight": c.weight,
                 "sort_order": c.sort_order,
+                "drop_lowest": c.drop_lowest,
             })
             saved.extend(new)
     return {"categories": saved}
@@ -333,6 +344,7 @@ def apply_syllabus(body: SyllabusApplyBody, request: Request):
             "name": c.name,
             "weight": c.weight,
             "sort_order": c.sort_order,
+            "drop_lowest": c.drop_lowest,
         }
         for c in body.categories
     ]

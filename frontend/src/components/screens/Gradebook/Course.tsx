@@ -5,18 +5,78 @@ import { TopBar } from "@/components/TopBar";
 import { useUser } from "@/context/UserContext";
 import { useToast } from "@/components/ToastProvider";
 import {
-  getGradebookCourse, bulkUpdateCategories, deleteCategory,
-  createGradedAssignment, updateGradedAssignment, deleteGradedAssignment,
+  getGradebookCourse,
+  bulkUpdateCategories,
+  deleteCategory,
+  createGradedAssignment,
+  updateGradedAssignment,
+  deleteGradedAssignment,
   setLetterScale,
+  getGradescopeStatus,
+  listGradescopeLinks,
+  syncGradescopeCourse,
 } from "@/lib/api";
-import { CategoryPanel } from "@/components/Gradebook/CategoryPanel";
 import { EditWeightsModal } from "@/components/Gradebook/EditWeightsModal";
 import { AssignmentList } from "@/components/Gradebook/AssignmentList";
 import { AssignmentModal, type AssignmentDraft } from "@/components/Gradebook/AssignmentModal";
 import { LetterScaleEditor } from "@/components/Gradebook/LetterScaleEditor";
-import type { GradebookCourse, GradedAssignment } from "@/lib/types";
+import { GradescopeSyncModal } from "@/components/Gradebook/GradescopeSyncModal";
+import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
+import { percentColor } from "@/components/Gradebook/CourseCard";
+import { projectGrade, droppedAssignmentIds } from "@/components/Gradebook/GradeProjector";
+import type {
+  GradebookCourse,
+  GradeCategory,
+  GradedAssignment,
+  LetterScaleTier,
+} from "@/lib/types";
 
-interface Props { courseId: string; }
+const DEFAULT_SCALE: LetterScaleTier[] = [
+  { letter: "A", min: 90 },
+  { letter: "B", min: 80 },
+  { letter: "C", min: 70 },
+  { letter: "D", min: 60 },
+];
+
+function compactLetterScale(
+  scale: LetterScaleTier[] | null,
+): { letter: string; min: number }[] {
+  const base: LetterScaleTier[] =
+    scale && scale.length > 0 ? scale : DEFAULT_SCALE;
+  const sorted = [...base].sort((a, b) => b.min - a.min);
+  const seen = new Set<string>();
+  const out: { letter: string; min: number }[] = [];
+  for (const tier of sorted) {
+    const prefix = tier.letter.charAt(0).toUpperCase();
+    if (!seen.has(prefix) && /^[A-DF]$/.test(prefix)) {
+      seen.add(prefix);
+      out.push({ letter: prefix, min: tier.min });
+    }
+  }
+  if (!seen.has("F")) out.push({ letter: "F", min: 0 });
+  return out;
+}
+
+function tierFor(scale: LetterScaleTier[], pct: number): string | undefined {
+  return [...scale].sort((a, b) => b.min - a.min).find((t) => pct >= t.min)?.letter;
+}
+
+function majorTicks(scale: LetterScaleTier[]): { letter: string; min: number }[] {
+  const seen = new Set<string>();
+  const out: { letter: string; min: number }[] = [];
+  for (const t of [...scale].sort((a, b) => b.min - a.min)) {
+    const prefix = t.letter.charAt(0).toUpperCase();
+    if (!seen.has(prefix) && /^[A-D]$/.test(prefix)) {
+      seen.add(prefix);
+      out.push({ letter: prefix, min: t.min });
+    }
+  }
+  return out.sort((a, b) => a.min - b.min);
+}
+
+interface Props {
+  courseId: string;
+}
 
 export function GradebookCourseScreen({ courseId }: Props) {
   const { userId, userReady } = useUser();
@@ -24,126 +84,1191 @@ export function GradebookCourseScreen({ courseId }: Props) {
 
   const [data, setData] = React.useState<GradebookCourse | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [fetchError, setFetchError] = React.useState<string | null>(null);
+
+  const skeletonCount = React.useMemo<number>(() => {
+    if (typeof window === "undefined") return 4;
+    const n = window.sessionStorage.getItem(`gb-cats-${courseId}`);
+    const parsed = n ? parseInt(n, 10) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 4;
+  }, [courseId]);
+  React.useEffect(() => {
+    if (data?.categories && typeof window !== "undefined") {
+      window.sessionStorage.setItem(`gb-cats-${courseId}`, String(data.categories.length));
+    }
+  }, [data, courseId]);
   const [editWeights, setEditWeights] = React.useState(false);
   const [editScale, setEditScale] = React.useState(false);
-  const [assignModal, setAssignModal] = React.useState<{ open: boolean; initial: GradedAssignment | null }>({
-    open: false, initial: null,
-  });
+  const [syncOpen, setSyncOpen] = React.useState(false);
+  const [highlightedCategory, setHighlightedCategory] = React.useState<string | null>(null);
+  const [gscope, setGscope] = React.useState<{
+    ready: boolean;
+    lastSyncedAt: string | null;
+  }>({ ready: false, lastSyncedAt: null });
+  const [gscopeBusy, setGscopeBusy] = React.useState(false);
+  const [assignModal, setAssignModal] = React.useState<{
+    open: boolean;
+    initial: import("@/lib/types").GradedAssignment | null;
+  }>({ open: false, initial: null });
 
-  const reload = React.useCallback(async () => {
+  const refresh = React.useCallback(async () => {
     if (!userId) return;
-    setLoading(true);
+    setFetchError(null);
     try {
-      setData(await getGradebookCourse(userId, courseId));
+      const fresh = await getGradebookCourse(userId, courseId);
+      setData(fresh);
     } catch (err: any) {
+      setFetchError(err.message || "Unknown error");
       toast.error(`Couldn't load course: ${err.message}`);
-    } finally {
-      setLoading(false);
     }
   }, [userId, courseId, toast]);
 
-  React.useEffect(() => { reload(); }, [reload]);
+  const loadInitial = React.useCallback(async () => {
+    setLoading(true);
+    await refresh();
+    setLoading(false);
+  }, [refresh]);
+
+  React.useEffect(() => {
+    loadInitial();
+  }, [loadInitial]);
+
+  const refreshGscope = React.useCallback(async () => {
+    if (!userId) return;
+    try {
+      const status = await getGradescopeStatus(userId);
+      if (!status.has_credentials) {
+        setGscope({ ready: false, lastSyncedAt: null });
+        return;
+      }
+      const res = await listGradescopeLinks(userId);
+      const myLink = res.links.find((l) => l.sapling_course_id === courseId);
+      setGscope({
+        ready: !!myLink,
+        lastSyncedAt: myLink?.last_synced_at ?? status.last_synced_at ?? null,
+      });
+    } catch {
+      setGscope({ ready: false, lastSyncedAt: null });
+    }
+  }, [userId, courseId]);
+
+  React.useEffect(() => {
+    refreshGscope();
+  }, [refreshGscope]);
+
+  const directSyncGradescope = React.useCallback(async () => {
+    if (!userId) return;
+    setGscopeBusy(true);
+    try {
+      const res = await syncGradescopeCourse(userId, courseId);
+      const summary =
+        res.failed > 0
+          ? `Synced: ${res.inserted} added · ${res.updated} updated · ${res.failed} failed`
+          : `Synced: ${res.inserted} added · ${res.updated} updated`;
+      if (res.failed > 0) toast.error(summary);
+      else toast.success(summary);
+      await Promise.all([refresh(), refreshGscope()]);
+    } catch (err: any) {
+      const msg = err?.message ?? "Sync failed";
+      toast.error(msg);
+      if (/401|invalid|credentials|link/i.test(msg)) {
+        setSyncOpen(true);
+        await refreshGscope();
+      }
+    } finally {
+      setGscopeBusy(false);
+    }
+  }, [userId, courseId, refresh, refreshGscope, toast]);
+
+  const onClickSyncButton = React.useCallback(() => {
+    if (gscope.ready && !gscopeBusy) directSyncGradescope();
+    else setSyncOpen(true);
+  }, [gscope.ready, gscopeBusy, directSyncGradescope]);
+
+  const onEditGrade = React.useCallback(
+    async (id: string, points: number | null) => {
+      if (!userId || !data) return;
+      const prev = data;
+      setData({
+        ...data,
+        assignments: data.assignments.map((a) =>
+          a.id === id ? { ...a, points_earned: points } : a,
+        ),
+      });
+      try {
+        await updateGradedAssignment(userId, id, { points_earned: points });
+        await refresh();
+      } catch (err: any) {
+        setData(prev);
+        toast.error(`Couldn't save: ${err.message}`);
+      }
+    },
+    [userId, data, refresh, toast],
+  );
+
+  const focusCategory = React.useCallback((categoryId: string) => {
+    const el = document.getElementById(`category-${categoryId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlightedCategory(categoryId);
+    window.setTimeout(() => setHighlightedCategory(null), 1600);
+  }, []);
+
+  React.useEffect(() => {
+    if (!data) return;
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      if (!/^[1-9]$/.test(e.key)) return;
+      const sorted = [...data.categories].sort((a, b) => a.sort_order - b.sort_order);
+      const idx = parseInt(e.key, 10) - 1;
+      const cat = sorted[idx];
+      if (cat) {
+        focusCategory(cat.id);
+        e.preventDefault();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [data, focusCategory]);
 
   if (!userReady || !userId) return null;
-  if (loading || !data) return <main style={{ padding: 32 }}>Loading…</main>;
 
   return (
     <>
+      <AmbientOrbs />
       <TopBar
-        breadcrumb={<Link href="/gradebook" style={{ color: "var(--text-dim)" }}>← Gradebook</Link>}
-        title={`${data.course_code} · ${data.course_name}`}
-        subtitle={data.semester}
+        breadcrumb={
+          <Link href="/gradebook" style={{ color: "var(--text-dim)", textDecoration: "none" }}>
+            ← Gradebook
+          </Link>
+        }
         actions={
           <button
             type="button"
             onClick={() => setEditScale(true)}
-            style={{
-              fontSize: 12, padding: "4px 10px",
-              border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg)",
-            }}
+            className="btn"
+            style={{ padding: "4px 12px", fontSize: 12 }}
           >
             Letter scale
           </button>
         }
       />
-      <main style={{ padding: 32 }}>
+      <main
+        style={{
+          padding: "var(--pad-xl)",
+          position: "relative",
+          minHeight: "calc(100vh - var(--row-h))",
+        }}
+      >
         <div
           style={{
-            marginBottom: 16,
-            display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 8,
+            position: "relative",
+            zIndex: 1,
+            maxWidth: 1240,
+            margin: "0 auto",
           }}
         >
-          <span style={{ fontSize: 28, fontWeight: 700, color: "var(--accent)" }}>
-            {data.letter ?? "—"}
-          </span>
-          <span style={{ color: "var(--text-dim)" }}>
-            {data.percent !== null ? `${data.percent.toFixed(1)}%` : "No grades yet"}
-          </span>
+          {loading && !data ? (
+            <CoursePageSkeleton segmentCount={skeletonCount} />
+          ) : fetchError && !data ? (
+            <ErrorBanner message={fetchError} onRetry={loadInitial} />
+          ) : data ? (
+            <>
+              <Masthead data={data} />
+              <GradeCompositionBar
+                categories={data.categories}
+                assignments={data.assignments}
+                letterScale={data.letter_scale}
+                currentPercent={data.percent}
+                onEditWeights={() => setEditWeights(true)}
+                onSegmentClick={focusCategory}
+              />
+              <AssignmentList
+                assignments={data.assignments}
+                categories={data.categories}
+                droppedIds={droppedAssignmentIds(data.categories, data.assignments)}
+                highlightedCategory={highlightedCategory}
+                onAdd={() => setAssignModal({ open: true, initial: null })}
+                onEditFull={(a) => setAssignModal({ open: true, initial: a })}
+                onEditGrade={onEditGrade}
+                onSyncGradescope={onClickSyncButton}
+                onGradescopeSettings={
+                  gscope.ready ? () => setSyncOpen(true) : undefined
+                }
+                gradescopeReady={gscope.ready}
+                gradescopeBusy={gscopeBusy}
+                gradescopeLastSyncedAt={gscope.lastSyncedAt}
+              />
+            </>
+          ) : null}
         </div>
-        <CategoryPanel
-          categories={data.categories}
-          onEdit={() => setEditWeights(true)}
-        />
-        <AssignmentList
-          assignments={data.assignments}
-          categories={data.categories}
-          onAdd={() => setAssignModal({ open: true, initial: null })}
-          onEditFull={(a) => setAssignModal({ open: true, initial: a })}
-          onSyncGradescope={() => toast.info("Gradescope integration coming soon")}
-          onEditGrade={async (id, points) => {
-            await updateGradedAssignment(userId, id, { points_earned: points });
-            await reload();
-          }}
-        />
       </main>
 
-      <EditWeightsModal
-        open={editWeights}
-        initial={data.categories}
-        onClose={() => setEditWeights(false)}
-        onSave={async (drafts) => {
-          // Detect deletions: any existing id missing from drafts.
-          const draftIds = new Set(drafts.map((d) => d.id).filter(Boolean) as string[]);
-          for (const c of data.categories) {
-            if (!draftIds.has(c.id)) await deleteCategory(userId, c.id);
-          }
-          await bulkUpdateCategories(userId, courseId, drafts);
-          await reload();
-        }}
-      />
-
-      <AssignmentModal
-        open={assignModal.open}
-        initial={assignModal.initial}
-        categories={data.categories}
-        onClose={() => setAssignModal({ open: false, initial: null })}
-        onSave={async (draft: AssignmentDraft) => {
-          if (assignModal.initial) {
-            await updateGradedAssignment(userId, assignModal.initial.id, draft);
-          } else {
-            await createGradedAssignment(userId, courseId, draft);
-          }
-          await reload();
-        }}
-        onDelete={
-          assignModal.initial
-            ? async () => {
-                await deleteGradedAssignment(userId, assignModal.initial!.id);
-                await reload();
+      {data && (
+        <>
+          <EditWeightsModal
+            open={editWeights}
+            initial={data.categories}
+            onClose={() => setEditWeights(false)}
+            onSave={async (drafts) => {
+              const draftIds = new Set(drafts.map((d) => d.id).filter(Boolean) as string[]);
+              for (const c of data.categories) {
+                if (!draftIds.has(c.id)) await deleteCategory(userId, c.id);
               }
-            : null
+              await bulkUpdateCategories(userId, courseId, drafts);
+              await refresh();
+            }}
+          />
+
+          <AssignmentModal
+            open={assignModal.open}
+            initial={assignModal.initial}
+            categories={data.categories}
+            onClose={() => setAssignModal({ open: false, initial: null })}
+            onSave={async (draft: AssignmentDraft) => {
+              if (assignModal.initial) {
+                await updateGradedAssignment(userId, assignModal.initial.id, draft);
+              } else {
+                await createGradedAssignment(userId, courseId, draft);
+              }
+              await refresh();
+            }}
+            onDelete={
+              assignModal.initial
+                ? async () => {
+                    await deleteGradedAssignment(userId, assignModal.initial!.id);
+                    await refresh();
+                  }
+                : null
+            }
+          />
+
+          <LetterScaleEditor
+            open={editScale}
+            initial={data.letter_scale}
+            onClose={() => setEditScale(false)}
+            onSave={async (scale) => {
+              await setLetterScale(userId, courseId, scale);
+              await refresh();
+            }}
+          />
+
+          <GradescopeSyncModal
+            open={syncOpen}
+            userId={userId}
+            saplingCourseId={courseId}
+            saplingCourseLabel={`${data.course_code} · ${data.course_name}`}
+            onClose={() => {
+              setSyncOpen(false);
+              refreshGscope();
+            }}
+            onSynced={() => {
+              refresh();
+              refreshGscope();
+            }}
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Masthead — single-row identity strip. Code + semester kicker, course
+// name in a smaller serif, letter+percent at the right. Hovering the
+// letter cluster reveals the full scale; we don't burn vertical space on
+// it since it's reference info, not a hero metric.
+// ───────────────────────────────────────────────────────────────────────────
+function Masthead({ data }: { data: GradebookCourse }) {
+  const isEmpty = data.percent === null;
+  const scale = compactLetterScale(data.letter_scale);
+  const scaleText = scale
+    .map((t, i) => {
+      const isF = t.letter === "F";
+      const prevMin = i > 0 ? scale[i - 1].min : null;
+      return `${t.letter} ${isF ? `<${prevMin ?? 60}` : `${t.min}+`}`;
+    })
+    .join("  ·  ");
+  const letterColor = percentColor(data.percent);
+  return (
+    <header
+      style={{
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "space-between",
+        gap: 32,
+        marginBottom: 32,
+        paddingBottom: 20,
+        borderBottom: "1px solid var(--border)",
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div
+          className="mono"
+          style={{
+            fontSize: 11,
+            letterSpacing: "0.2em",
+            textTransform: "uppercase",
+            color: "var(--text-muted)",
+            marginBottom: 8,
+          }}
+        >
+          {data.course_code}
+          {data.semester ? ` · ${data.semester}` : ""}
+        </div>
+        <h1
+          style={{
+            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontWeight: 500,
+            fontSize: "clamp(26px, 3vw, 38px)",
+            lineHeight: 1.08,
+            letterSpacing: "-0.02em",
+            color: "var(--text)",
+            margin: 0,
+            maxWidth: "24ch",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {data.course_name}
+        </h1>
+      </div>
+      <div
+        title={`Letter scale  ${scaleText}`}
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 10,
+          flexShrink: 0,
+          cursor: "help",
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontWeight: 500,
+            fontSize: 42,
+            lineHeight: 1,
+            letterSpacing: "-0.03em",
+            color: letterColor,
+            fontStyle: isEmpty ? "italic" : "normal",
+            opacity: isEmpty ? 0.5 : 1,
+          }}
+        >
+          {isEmpty ? "—" : (data.letter ?? "—")}
+        </span>
+        <span
+          className="mono"
+          style={{
+            fontSize: 15,
+            fontWeight: 600,
+            color: letterColor,
+            letterSpacing: "-0.02em",
+            opacity: isEmpty ? 0.5 : 0.85,
+          }}
+        >
+          {data.percent === null ? "—" : `${data.percent.toFixed(1)}%`}
+        </span>
+      </div>
+    </header>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// GradeCompositionBar — full-width hero visualization. The bar's total
+// span = 100% of the final grade. Each category occupies a slot whose
+// width = its weight share. Inside each slot, three sub-segments encode:
+//
+//   solid green   — earned contribution (locked-in points toward final)
+//   faded green   — lost contribution (graded, but didn't score)
+//   diagonal hatch— remaining potential (still up for grabs)
+//
+// Letter-cutoff ticks overlay the bar at fixed scale positions (60/70/
+// 80/90). A "now" pin marks current percent. Hovering any sub-segment
+// pops a cursor-following tooltip with numerical detail.
+// ───────────────────────────────────────────────────────────────────────────
+type TipKind = "earned" | "lost" | "remaining" | "empty";
+interface TipState {
+  kind: TipKind;
+  category: GradeCategory;
+  pts: CategoryPts | null;
+  contribution: number; // weight × fraction = % of final
+  x: number;
+  y: number;
+}
+
+function GradeCompositionBar({
+  categories,
+  assignments,
+  letterScale,
+  currentPercent,
+  onEditWeights,
+  onSegmentClick,
+}: {
+  categories: GradeCategory[];
+  assignments: GradedAssignment[];
+  letterScale: LetterScaleTier[] | null;
+  currentPercent: number | null;
+  onEditWeights: () => void;
+  onSegmentClick: (categoryId: string) => void;
+}) {
+  const sorted = React.useMemo(
+    () => [...categories].sort((a, b) => a.sort_order - b.sort_order),
+    [categories],
+  );
+  const totalWeight = sorted.reduce((s, c) => s + c.weight, 0);
+  const scale = letterScale && letterScale.length > 0 ? letterScale : DEFAULT_SCALE;
+  const ticks = majorTicks(scale);
+  const projection = projectGrade(sorted, assignments);
+  const current = currentPercent ?? projection?.current ?? null;
+  const currentTier = current !== null ? tierFor(scale, current) : undefined;
+
+  const [tip, setTip] = React.useState<TipState | null>(null);
+
+  if (sorted.length === 0) {
+    return (
+      <section
+        style={{
+          marginBottom: 40,
+          padding: "28px 24px",
+          borderRadius: "var(--r-md)",
+          background: "var(--bg-panel)",
+          border: "1px solid var(--border)",
+        }}
+      >
+        <SectionHead label="Composition" onEdit={onEditWeights} />
+        <div
+          style={{
+            fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+            color: "var(--text-dim)",
+            fontSize: 15,
+            lineHeight: 1.55,
+            marginTop: 8,
+          }}
+        >
+          No categories yet. Upload a syllabus or add them by hand to break
+          your grade into pieces.
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section style={{ marginBottom: 44 }}>
+      <SectionHead
+        label="Composition"
+        onEdit={onEditWeights}
+        meta={
+          current !== null && (
+            <CompositionStatus
+              current={current}
+              currentTier={currentTier}
+              projection={projection}
+              scale={scale}
+            />
+          )
         }
       />
 
-      <LetterScaleEditor
-        open={editScale}
-        initial={data.letter_scale}
-        onClose={() => setEditScale(false)}
-        onSave={async (scale) => {
-          await setLetterScale(userId, courseId, scale);
-          await reload();
+      {/* Letter-tick scale above the bar */}
+      <div style={{ position: "relative", height: 24, marginTop: 8, marginBottom: 6 }}>
+        {ticks.map(({ letter, min }) => (
+          <div
+            key={letter}
+            style={{
+              position: "absolute",
+              left: `${min}%`,
+              top: 0,
+              transform: "translateX(-50%)",
+              textAlign: "center",
+              pointerEvents: "none",
+            }}
+          >
+            <div
+              className="mono"
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: "var(--text-dim)",
+                lineHeight: 1,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              {letter}
+            </div>
+            <div
+              className="mono"
+              style={{
+                fontSize: 9,
+                color: "var(--text-muted)",
+                lineHeight: 1.2,
+                marginTop: 2,
+              }}
+            >
+              {min}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* The composition bar itself */}
+      <div
+        style={{ position: "relative", width: "100%" }}
+        onMouseLeave={() => setTip(null)}
+      >
+        <div
+          style={{
+            display: "flex",
+            height: 46,
+            width: "100%",
+            background: "var(--bg-subtle)",
+            borderRadius: "var(--r-md)",
+            overflow: "hidden",
+            border: "1px solid var(--border)",
+          }}
+        >
+          {sorted.map((c, i) => {
+            const pts = categoryPoints(c.id, assignments, c.drop_lowest ?? 0);
+            const denom = pts && pts.total > 0 ? pts.total : 1;
+            const earned = pts ? pts.earned : 0;
+            const lost = pts ? pts.lost : 0;
+            const remaining = pts ? pts.remaining : 1; // empty cat = all hatched
+            const earnedFrac = earned / denom;
+            const lostFrac = lost / denom;
+            const remainingFrac = remaining / denom;
+            const earnedPctOfSlot = earnedFrac * 100;
+            const lostPctOfSlot = lostFrac * 100;
+            const remainingPctOfSlot = remainingFrac * 100;
+            const totalW = totalWeight > 0 ? totalWeight : 100;
+            const contribEarned = (c.weight / totalW) * earnedFrac * 100;
+            const contribLost = (c.weight / totalW) * lostFrac * 100;
+            const contribRemaining = (c.weight / totalW) * remainingFrac * 100;
+            const isEmptyCat = !pts || pts.total <= 0;
+
+            const onMove =
+              (kind: TipKind, contribution: number) =>
+              (e: React.MouseEvent) => {
+                setTip({
+                  kind,
+                  category: c,
+                  pts,
+                  contribution,
+                  x: e.clientX,
+                  y: e.clientY,
+                });
+              };
+
+            return (
+              <div
+                key={c.id}
+                onClick={() => onSegmentClick(c.id)}
+                title={`Jump to ${c.name} assignments`}
+                style={{
+                  flex: `${c.weight} 0 0`,
+                  display: "flex",
+                  cursor: "pointer",
+                  borderRight:
+                    i < sorted.length - 1
+                      ? "1px solid var(--bg-panel)"
+                      : "none",
+                  minWidth: 0,
+                }}
+              >
+                {isEmptyCat ? (
+                  <div
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      backgroundImage:
+                        "repeating-linear-gradient(135deg, color-mix(in oklch, var(--sap-500), transparent 70%) 0 6px, transparent 6px 12px)",
+                    }}
+                    onMouseEnter={onMove("empty", contribRemaining)}
+                    onMouseMove={onMove("empty", contribRemaining)}
+                  />
+                ) : (
+                  <>
+                    {earnedPctOfSlot > 0 && (
+                      <div
+                        style={{
+                          width: `${earnedPctOfSlot}%`,
+                          height: "100%",
+                          background: "var(--sap-500)",
+                        }}
+                        onMouseEnter={onMove("earned", contribEarned)}
+                        onMouseMove={onMove("earned", contribEarned)}
+                      />
+                    )}
+                    {lostPctOfSlot > 0 && (
+                      <div
+                        style={{
+                          width: `${lostPctOfSlot}%`,
+                          height: "100%",
+                          background:
+                            "color-mix(in oklch, var(--sap-500), var(--bg-panel) 70%)",
+                        }}
+                        onMouseEnter={onMove("lost", contribLost)}
+                        onMouseMove={onMove("lost", contribLost)}
+                      />
+                    )}
+                    {remainingPctOfSlot > 0 && (
+                      <div
+                        style={{
+                          width: `${remainingPctOfSlot}%`,
+                          height: "100%",
+                          backgroundImage:
+                            "repeating-linear-gradient(135deg, color-mix(in oklch, var(--sap-500), transparent 65%) 0 6px, transparent 6px 12px)",
+                        }}
+                        onMouseEnter={onMove("remaining", contribRemaining)}
+                        onMouseMove={onMove("remaining", contribRemaining)}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Letter-cutoff vertical guide lines crossing the bar */}
+        {ticks.map(({ letter, min }) => (
+          <div
+            key={`tick-line-${letter}`}
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              left: `${min}%`,
+              top: -6,
+              bottom: -6,
+              width: 1,
+              background: "var(--border-strong)",
+              transform: "translateX(-0.5px)",
+              pointerEvents: "none",
+            }}
+          />
+        ))}
+
+        {/* Now pin */}
+        {current !== null && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              left: `${current}%`,
+              top: -8,
+              bottom: -8,
+              width: 3,
+              background: "var(--text)",
+              borderRadius: 1,
+              transform: "translateX(-50%)",
+              pointerEvents: "none",
+              boxShadow: "0 0 0 2px var(--bg)",
+            }}
+          />
+        )}
+      </div>
+
+      {/* Category labels under their slots */}
+      <div style={{ display: "flex", marginTop: 12 }}>
+        {sorted.map((c, i) => {
+          const drop = c.drop_lowest ?? 0;
+          return (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => onSegmentClick(c.id)}
+              title={
+                drop > 0
+                  ? `${c.name} — drops ${drop} lowest. Click to jump to assignments.`
+                  : `Jump to ${c.name} assignments`
+              }
+              style={{
+                flex: `${c.weight} 0 0`,
+                minWidth: 0,
+                padding: "0 6px",
+                textAlign: "center",
+                background: "transparent",
+                border: 0,
+                borderLeft: i === 0 ? "none" : "1px solid var(--border)",
+                cursor: "pointer",
+                color: "inherit",
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+                  fontSize: 12,
+                  color: "var(--text)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {c.name}
+              </div>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-muted)",
+                  marginTop: 2,
+                  letterSpacing: "-0.01em",
+                }}
+              >
+                {c.weight}%
+                {drop > 0 && (
+                  <span
+                    style={{ marginLeft: 6, color: "var(--accent)" }}
+                    title={`Drops ${drop} lowest`}
+                  >
+                    · drop {drop}
+                  </span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {Math.abs(totalWeight - 100) > 0.01 && (
+        <div
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: "var(--warn)",
+            marginTop: 12,
+            letterSpacing: "-0.01em",
+          }}
+        >
+          Weights sum to {totalWeight.toFixed(0)}%, not 100%. Final percent
+          is normalized.
+        </div>
+      )}
+
+      {/* Legend */}
+      <div
+        style={{
+          display: "flex",
+          gap: 18,
+          marginTop: 14,
+          fontSize: 11,
+          color: "var(--text-dim)",
+          flexWrap: "wrap",
+        }}
+      >
+        <LegendSwatch fill="var(--sap-500)" label="Earned" />
+        <LegendSwatch
+          fill="color-mix(in oklch, var(--sap-500), var(--bg-panel) 70%)"
+          label="Lost"
+        />
+        <LegendSwatch
+          fill="repeating-linear-gradient(135deg, color-mix(in oklch, var(--sap-500), transparent 65%) 0 4px, transparent 4px 8px)"
+          label="Still reachable"
+          isImage
+        />
+      </div>
+
+      {/* Cursor-following tooltip */}
+      {tip && <CompositionTooltip tip={tip} />}
+    </section>
+  );
+}
+
+function SectionHead({
+  label,
+  onEdit,
+  meta,
+}: {
+  label: string;
+  onEdit: () => void;
+  meta?: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: 16,
+        flexWrap: "wrap",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 16, minWidth: 0 }}>
+        <span
+          className="mono"
+          style={{
+            fontSize: 10,
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            color: "var(--text-muted)",
+            fontWeight: 600,
+          }}
+        >
+          {label}
+        </span>
+        {meta}
+      </div>
+      <button
+        type="button"
+        onClick={onEdit}
+        style={{
+          fontFamily: "var(--font-sans)",
+          fontSize: 12,
+          fontWeight: 500,
+          color: "var(--text-dim)",
+          background: "none",
+          border: 0,
+          padding: 0,
+          cursor: "pointer",
+          textDecoration: "underline",
+          textUnderlineOffset: 3,
+          textDecorationColor: "var(--border-strong)",
+        }}
+      >
+        Edit weights
+      </button>
+    </div>
+  );
+}
+
+function CompositionStatus({
+  current,
+  currentTier,
+  projection,
+  scale,
+}: {
+  current: number;
+  currentTier: string | undefined;
+  projection: ReturnType<typeof projectGrade>;
+  scale: LetterScaleTier[];
+}) {
+  const nextUp = [...scale]
+    .sort((a, b) => a.min - b.min)
+    .find((t) => current < t.min);
+  let action: string;
+  if (!nextUp) action = "Top tier — locked in";
+  else if (projection && projection.floor >= nextUp.min)
+    action = `${nextUp.letter} already guaranteed`;
+  else if (projection && projection.ceiling < nextUp.min)
+    action = `${nextUp.letter} out of reach by ${(nextUp.min - projection.ceiling).toFixed(1)} pts`;
+  else if (projection) {
+    const span = projection.ceiling - projection.floor;
+    const need = nextUp.min - projection.floor;
+    const requiredAvg = span > 0 ? (need / span) * 100 : 0;
+    action = `Need ${Math.max(0, Math.ceil(requiredAvg))}%+ avg on the rest for ${nextUp.letter}`;
+  } else action = `${(nextUp.min - current).toFixed(1)} pts to ${nextUp.letter}`;
+
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
+      <span
+        style={{
+          fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+          fontWeight: 500,
+          fontSize: 20,
+          lineHeight: 1,
+          color: percentColor(current),
+          letterSpacing: "-0.01em",
+        }}
+      >
+        {current.toFixed(1)}%
+      </span>
+      {currentTier && (
+        <span
+          style={{
+            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontSize: 14,
+            color: "var(--text-dim)",
+            fontWeight: 400,
+          }}
+        >
+          {currentTier}
+        </span>
+      )}
+      <span
+        style={{
+          fontSize: 12,
+          color: "var(--text-dim)",
+          marginLeft: 4,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        · {action}
+      </span>
+    </div>
+  );
+}
+
+function LegendSwatch({
+  fill,
+  label,
+  isImage,
+}: {
+  fill: string;
+  label: string;
+  isImage?: boolean;
+}) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <span
+        style={{
+          display: "inline-block",
+          width: 14,
+          height: 10,
+          borderRadius: 2,
+          ...(isImage ? { backgroundImage: fill } : { background: fill }),
         }}
       />
-    </>
+      {label}
+    </span>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// CompositionTooltip — cursor-following hover card. Position is
+// viewport-relative (clientX/Y), and flips to the cursor's left or above
+// when it would otherwise overflow the right/bottom edges of the
+// viewport. pointer-events: none so the tooltip can't capture its own
+// mouseleave.
+// ───────────────────────────────────────────────────────────────────────────
+function CompositionTooltip({ tip }: { tip: TipState }) {
+  const { kind, category, pts, contribution, x, y } = tip;
+  const OFFSET = 14;
+  const TIP_W = 280;
+  const TIP_H_EST = 110;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const flipX = x + OFFSET + TIP_W > vw;
+  const flipY = y + OFFSET + TIP_H_EST > vh;
+  const left = flipX ? x - OFFSET - TIP_W : x + OFFSET;
+  const top = flipY ? y - OFFSET - TIP_H_EST : y + OFFSET;
+
+  let title = category.name;
+  let body: React.ReactNode = null;
+  if (kind === "earned" && pts) {
+    body = (
+      <>
+        <Row label="Earned" value={`${pts.earned.toFixed(1)} of ${pts.total.toFixed(0)} pts`} />
+        <Row label="Locked-in contribution" value={`${contribution.toFixed(2)}% of final`} />
+        <Row label="Weight" value={`${category.weight}%`} muted />
+      </>
+    );
+  } else if (kind === "lost" && pts) {
+    body = (
+      <>
+        <Row label="Lost" value={`${pts.lost.toFixed(1)} pts on graded work`} />
+        <Row label="Cost to final" value={`-${contribution.toFixed(2)}%`} />
+        <Row label="Weight" value={`${category.weight}%`} muted />
+      </>
+    );
+  } else if (kind === "remaining" && pts) {
+    body = (
+      <>
+        <Row label="Still reachable" value={`${pts.remaining.toFixed(0)} pts ungraded`} />
+        <Row label="Up to" value={`+${contribution.toFixed(2)}% of final`} />
+        <Row label="Weight" value={`${category.weight}%`} muted />
+      </>
+    );
+  } else {
+    body = (
+      <>
+        <Row label="Weight" value={`${category.weight}% of final`} />
+        <Row label="Status" value="No graded points yet" muted />
+        <Row
+          label="Reachable"
+          value={`up to ${contribution.toFixed(2)}% of final`}
+        />
+      </>
+    );
+  }
+
+  return (
+    <div
+      role="tooltip"
+      style={{
+        position: "fixed",
+        left,
+        top,
+        width: TIP_W,
+        pointerEvents: "none",
+        background: "var(--text)",
+        color: "var(--bg)",
+        padding: "10px 12px",
+        borderRadius: "var(--r-sm)",
+        fontSize: 12,
+        lineHeight: 1.45,
+        boxShadow: "var(--shadow-md)",
+        zIndex: 1000,
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+          fontSize: 14,
+          fontWeight: 500,
+          marginBottom: 6,
+          letterSpacing: "-0.01em",
+        }}
+      >
+        {title}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>{body}</div>
+    </div>
+  );
+}
+
+function Row({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        gap: 12,
+        opacity: muted ? 0.7 : 1,
+      }}
+    >
+      <span style={{ color: "color-mix(in oklch, var(--bg), transparent 35%)" }}>
+        {label}
+      </span>
+      <span className="mono" style={{ letterSpacing: "-0.01em" }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Per-category points breakdown — earned vs lost vs still-to-earn.
+// ───────────────────────────────────────────────────────────────────────────
+interface CategoryPts {
+  earned: number;
+  lost: number;
+  remaining: number;
+  total: number;
+}
+
+function categoryPoints(
+  catId: string,
+  assignments: GradedAssignment[],
+  dropLowest: number = 0,
+): CategoryPts | null {
+  const items = assignments.filter(
+    (a) =>
+      a.category_id === catId &&
+      a.points_possible !== null &&
+      (a.points_possible as number) > 0,
+  );
+  if (items.length === 0) return null;
+
+  // Identify which graded items are currently dropped (lowest score %).
+  // Drops apply only to graded items — ungraded ones can't be dropped
+  // until they have a score to compare. Recomputed locally so optimistic
+  // grade edits stay in sync without a server round-trip.
+  const drop = Math.max(0, dropLowest);
+  let droppedIds: Set<string> = new Set();
+  if (drop > 0) {
+    const graded = items
+      .filter((a) => a.points_earned !== null)
+      .map((a) => ({
+        id: a.id,
+        score: (a.points_earned as number) / (a.points_possible as number),
+        possible: a.points_possible as number,
+      }));
+    graded.sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      if (a.possible !== b.possible) return b.possible - a.possible;
+      return a.id.localeCompare(b.id);
+    });
+    droppedIds = new Set(graded.slice(0, drop).map((g) => g.id));
+  }
+
+  const kept = items.filter((a) => !droppedIds.has(a.id));
+  const total = kept.reduce((s, a) => s + (a.points_possible as number), 0);
+  const keptGraded = kept.filter((a) => a.points_earned !== null);
+  const earned = keptGraded.reduce(
+    (s, a) => s + (a.points_earned as number),
+    0,
+  );
+  const gradedPossible = keptGraded.reduce(
+    (s, a) => s + (a.points_possible as number),
+    0,
+  );
+  const lost = Math.max(0, gradedPossible - earned);
+  const remaining = Math.max(0, total - gradedPossible);
+  return { earned, lost, remaining, total };
+}
+
+function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        padding: "20px 24px",
+        borderRadius: "var(--r-md)",
+        background: "var(--err-soft)",
+        border: "1px solid color-mix(in oklab, var(--err) 20%, transparent)",
+        display: "flex",
+        gap: 16,
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        marginTop: 32,
+      }}
+    >
+      <div>
+        <div style={{ fontWeight: 600, color: "var(--err)", marginBottom: 4 }}>
+          We couldn&apos;t load this course.
+        </div>
+        <div style={{ fontSize: 13, color: "var(--text-dim)" }}>{message}</div>
+      </div>
+      <button
+        type="button"
+        className="btn btn--primary"
+        onClick={onRetry}
+        style={{ padding: "8px 16px" }}
+      >
+        Try again
+      </button>
+    </div>
+  );
+}
+
+function CoursePageSkeleton({ segmentCount = 4 }: { segmentCount?: number }) {
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-end",
+          gap: 32,
+          marginBottom: 32,
+          paddingBottom: 20,
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <div className="skeleton" style={{ width: 160, height: 12, borderRadius: 4, marginBottom: 10 }} />
+          <div className="skeleton" style={{ width: "55%", height: 36, borderRadius: 6 }} />
+        </div>
+        <div className="skeleton" style={{ width: 110, height: 44, borderRadius: 6 }} />
+      </div>
+      <div style={{ marginBottom: 44 }}>
+        <div className="skeleton" style={{ width: 140, height: 12, borderRadius: 4, marginBottom: 14 }} />
+        <div className="skeleton" style={{ width: "100%", height: 46, borderRadius: 10, marginBottom: 12 }} />
+        <div style={{ display: "flex", gap: 4 }}>
+          {Array.from({ length: Math.max(1, segmentCount) }).map((_, i) => (
+            <div key={i} className="skeleton" style={{ flex: 1, height: 28, borderRadius: 4 }} />
+          ))}
+        </div>
+      </div>
+      <div className="skeleton" style={{ width: 220, height: 18, borderRadius: 4, marginBottom: 24 }} />
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="skeleton" style={{ height: 64, borderRadius: 8, marginBottom: 12 }} />
+      ))}
+    </div>
   );
 }
