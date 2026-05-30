@@ -15,6 +15,7 @@ cryptography>=42,<46
 mammoth
 python-pptx
 recost
+gradescopeapi
 
 # OCR pipeline (Docling = default, GOT-OCR 2.0 = optional GPU fallback)
 docling>=2.15,<3
