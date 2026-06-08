@@ -4,6 +4,8 @@ _Generated 2026-06-07 · scope: `backend/` (FastAPI + Supabase + Pydantic AI age
 
 This is a **functional-correctness** audit: it hunts bugs that break Sapling for a user — frontend/backend contract drift, broken encryption read/write boundaries, auth/IDOR gaps, agent-migration regressions, and knowledge-graph consistency. Every finding is cited to `file:line` and was independently re-verified against the actual code (adversarial pass). It documents what's wrong — it does not change code.
 
+> **Tracked by epic [#136](https://github.com/SaplingLearn/Sapling/issues/136).** The 31 findings are grouped into issues #123–#135 (see the [Tracking](#tracking) map below). Overlapping pre-existing issues (#85, #72, #74, #61) were cross-linked and de-duplicated rather than re-filed.
+
 ## Method
 
 Eight domain auditors fanned out in parallel (contract diff, auth+encryption, document pipeline, agents/LLM seam, knowledge graph, frontend state, remaining routes, convention violations). Each candidate finding was then handed to a separate verifier instructed to **refute** it by reading the real code on both sides; only findings that survived are listed here. **40 candidates → 34 confirmed, 6 refuted.** Three confirmed pairs describe the same root bug and are merged below, giving **31 distinct issues**.
@@ -203,6 +205,28 @@ The reaction INSERT/DELETE subscriptions have no filter, so any reaction in any 
 ## Refuted during verification
 
 Six candidates were dropped after a verifier read the real code and could not reproduce the problem (e.g. a guard/decrypt that existed elsewhere, or a contract that matched once both sides were read). They are intentionally omitted to keep this list actionable.
+
+## Tracking
+
+Findings are grouped into GitHub issues under epic **[#136](https://github.com/SaplingLearn/Sapling/issues/136)**. Several findings sharing a root cause/subsystem are bundled into one issue.
+
+| Issue | Tier | Findings | Theme |
+|-------|:----:|----------|-------|
+| [#123](https://github.com/SaplingLearn/Sapling/issues/123) | P0 | 1 | calendar export cross-user IDOR `security` |
+| [#124](https://github.com/SaplingLearn/Sapling/issues/124) | P0 | 2 | realtime chat ciphertext `security` (root cause of #85) |
+| [#125](https://github.com/SaplingLearn/Sapling/issues/125) | P1 | 3 | course-materials tool leaks docs into LLM `security` |
+| [#126](https://github.com/SaplingLearn/Sapling/issues/126) | P1 | 4, 18, 19 | encryption boundary leaks `security` |
+| [#127](https://github.com/SaplingLearn/Sapling/issues/127) | P1 | 5, 13, 14 | agent-migration regressions (blocks #74) |
+| [#128](https://github.com/SaplingLearn/Sapling/issues/128) | P1 | 6, 9, 24 | knowledge-graph write integrity (overlaps #72) |
+| [#130](https://github.com/SaplingLearn/Sapling/issues/130) | P1 | 8 | admin allowlist 404 |
+| [#131](https://github.com/SaplingLearn/Sapling/issues/131) | P1 | 7, 28, 31 | social realtime correctness (root cause of #85) |
+| [#129](https://github.com/SaplingLearn/Sapling/issues/129) | P2 | 10, 29 | quiz scoring & idempotency |
+| [#132](https://github.com/SaplingLearn/Sapling/issues/132) | P2 | 11, 12, 21, 22 | document pipeline robustness |
+| [#133](https://github.com/SaplingLearn/Sapling/issues/133) | P2 | 15, 16 | notetaker data loss |
+| [#134](https://github.com/SaplingLearn/Sapling/issues/134) | P2 | 17, 30 | unauthenticated feedback + private-profile leak `security` |
+| [#135](https://github.com/SaplingLearn/Sapling/issues/135) | P3 | 20, 23, 25, 26, 27 | misc correctness/contract cleanups |
+
+**De-overlapped pre-existing issues** (cross-linked, not re-filed): #85 (Social broken → #124 + #131), #72 (class-intel write gating → #128), #74 (SSE progress card → depends on #127), #61 (calendar sync → same subsystem as #123).
 
 ## Cross-cutting patterns
 
