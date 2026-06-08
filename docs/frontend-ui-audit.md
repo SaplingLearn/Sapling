@@ -10,7 +10,7 @@ This is a **technical** quality audit across five dimensions, scored against WCA
 |---|-----------|:-----:|-------------|
 | 1 | Accessibility | **2 / 4** | Shared token contrast failures (`--text-muted`, `--accent` buttons, accent chips) + `outline:none` strips focus from most inputs |
 | 2 | Performance | **3 / 4** | Strong bundle/lazy-load discipline; weak runtime animation (landing RAF, atmospheric backdrop, d3-tick re-renders) and no `next/image` |
-| 3 | Theming | **2 / 4** | Canonical brand green `#1B6C42` is not a token (hard-coded ~90×); 8 competing "greens"; two parallel token systems |
+| 3 | Theming | **2 / 4** | Canonical brand green `#1B6C42` is not a token (hard-coded ~90×); 10 competing "greens"; two parallel token systems |
 | 4 | Responsive | **2 / 4** | 100% JS-hook breakpoints at a single 768px; Admin/Gradebook/Settings desktop-only; touch targets < 44px; SSR paints desktop |
 | 5 | Anti-Patterns | **1 / 4** | Landing/onboarding violate **four of the project's own hard bans**: glassmorphism, gradient text, hero-metric cards, dark-mode stylesheet |
 | | **Total** | **10 / 20** | **Acceptable — significant work needed** |
@@ -24,11 +24,11 @@ This is a **technical** quality audit across five dimensions, scored against WCA
 ## Executive summary
 
 - **Health: 10/20 (Acceptable).** No issues block basic task completion, but there are real WCAG AA violations and systemic brand-spec breaches.
-- **Issue counts:** 3 × P0, 11 × P1, 12 × P2, 6 × P3.
+- **Issue counts:** 4 × P0, 15 × P1, 19 × P2, 9 × P3.
 - **Top 5 issues:**
   1. **[P0] Glassmorphism system** (`globals.css:443-530`) — the single most-banned aesthetic in the contract, rendered front-and-center on the hero and onboarding.
   2. **[P0] Gradient text on every landing heading** (`page.tsx:673,791,844,937`) — a named anti-reference, on the brand's biggest typographic moments.
-  3. **[P0] Brand green `#1B6C42` is not a token** — hard-coded ~90× across 6 files; eight competing greens with no single source of truth.
+  3. **[P0] Brand green `#1B6C42` is not a token** — hard-coded ~90× across 6 files; ten competing greens with no single source of truth.
   4. **[P1] Token-level contrast failures** — `--text-muted` (~3.6:1, used ~224×), white-on-`--accent` buttons (3.06:1), accent chips (2.80:1) all fail WCAG 1.4.3.
   5. **[P1] `outline:none` with no replacement** on ~13 inputs/textareas — keyboard focus is invisible on the primary chat box and most form fields.
 - **Recommended sequence:** brand-spec cleanups first (glass, gradient text, dark-mode orphan — they're deletions that immediately raise the worst-scoring dimension), then the theming token consolidation that unblocks the contrast fixes, then responsive and performance passes.
@@ -68,7 +68,7 @@ _Verified-good:_ MarkdownChat / KnowledgeGraph3D / three.js / mermaid / function
 ### Theming — 2/4
 
 - **[P0] Canonical brand green `#1B6C42` is not a token** — ~90 occurrences across 6 files (`page.tsx` 24×, `HowItWorks.tsx` 19×, `OnboardingFlow.tsx` 5×, `SignInModal.tsx` 4×, `globals.css:371,870,989`). A brand-color change requires editing 90 call sites. Fix: define `--brand-forest: #1B6C42` and reference it; reconcile with `--sap-*`.
-- **[P0] Eight competing "brand greens" with no single source of truth** — see the table below. Fix: collapse to one canonical token + a defined tint scale.
+- **[P0] Ten competing "brand greens" with no single source of truth** — see the table below. Fix: collapse to one canonical token + a defined tint scale.
 - **[P1] Orphaned dark-mode block can still activate** — `globals.css:603-650` (`html.dark{…}`, `color-scheme:dark`) + a `["light","dark"]` Theme toggle at `screens/Settings.tsx:405`. Dead today (nothing adds `.dark`) but one wire from an off-spec theme. Fix: delete the block + the "dark" option.
 - **[P1] Mastery/progress/struggle defined three different ways** — landing tokens `--brand-success/-progress/-struggle` (`globals.css:74-77`) vs inline graph hex `#4a7d5c/#c89b5e/#b25855/#9a9a9a` repeated in `Dashboard.tsx:457-460`, `Tree.tsx:20-23`, `notetaker/page.tsx:57-60` vs rarity greens. Fix: promote one `--state-*` token set.
 - **[P1] Glassmorphism token system contradicts the spec** — `globals.css:443-530,784-813` (`.liquid-glass*`, `.glass-panel`, `.glass-input` with `backdrop-filter:blur`). See Anti-Patterns P0.

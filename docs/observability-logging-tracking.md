@@ -70,7 +70,7 @@ No raw content is ever stored — only fingerprints.
 
 ## Dependency graph
 
-```
+```text
 #115 (tables)
   └─> #116 (write path)
         ├─> #117 (capture seams)        [Andres]

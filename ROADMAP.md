@@ -27,7 +27,7 @@ _Added 2026-06-08. All work is tracked as GitHub issues in `SaplingLearn/Sapling
 Every issue title is prefixed with a priority tag, or `[EPIC]` for trackers. Domain and
 type are carried by **labels**, not the title.
 
-```
+```text
 [P0] <imperative summary>     [P1] …     [P2] …     [P3] …     [EPIC] <name>
 ```
 
