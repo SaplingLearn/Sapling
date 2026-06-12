@@ -104,3 +104,39 @@ def test_tampered_ciphertext_raises():
     tampered = base64.b64encode(bytes(raw)).decode()
     with pytest.raises(Exception):
         encryption.decrypt(tampered)
+
+
+# ── #200: columns retyped NUMERIC/JSONB -> TEXT in the canonical schema ─────────
+# These hold encrypted base64 *text*, so the value each column stores must survive
+# the exact write->read helpers the routes use. The route-level coverage for
+# documents.concept_notes lives in the test_documents_routes module quarantined
+# under #210, so assert the round-trip here (non-quarantined) before that change
+# lands. summary_json/concept_notes -> encrypt_json/decrypt_json; points ->
+# encrypt_if_present/decrypt_numeric (see routes/learn.py, routes/documents.py,
+# routes/gradebook.py).
+
+def test_summary_json_text_column_round_trip():
+    # sessions.summary_json — a JSON object (learn.py writes encrypt_json(summary))
+    summary = {"concepts": ["limits", "derivatives"], "score": 0.82, "notes": "ünïcode"}
+    assert encryption.decrypt_json(encryption.encrypt_json(summary)) == summary
+
+
+def test_concept_notes_text_column_round_trip():
+    # documents.concept_notes — a JSON array of {name, description}
+    # (documents.py writes encrypt_json(concept_notes))
+    concept_notes = [
+        {"name": "Eigenvalue", "description": "Scalar λ with Av = λv."},
+        {"name": "Span", "description": "All linear combinations of a set."},
+    ]
+    assert encryption.decrypt_json(encryption.encrypt_json(concept_notes)) == concept_notes
+
+
+def test_points_text_column_round_trip():
+    # assignments.points_possible / points_earned — numbers written via
+    # encrypt_if_present and read back via decrypt_numeric.
+    for value in (100, 95.5, 0):
+        ct = encryption.encrypt_if_present(value)
+        assert isinstance(ct, str)  # stored as TEXT, not NUMERIC
+        assert encryption.decrypt_numeric(ct) == float(value)
+    assert encryption.encrypt_if_present(None) is None
+    assert encryption.decrypt_numeric(None) is None
