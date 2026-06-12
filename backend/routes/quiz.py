@@ -215,7 +215,8 @@ async def _legacy_generate_quiz(body: GenerateQuizBody, request: Request) -> lis
     persisting it and shaping the HTTP response.
     """
     node_rows = table("graph_nodes").select(
-        "*", filters={"id": f"eq.{body.concept_node_id}"}
+        "*",
+        filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
     )
     if not node_rows:
         raise HTTPException(status_code=404, detail="Concept node not found")
@@ -297,7 +298,8 @@ async def _legacy_generate_quiz(body: GenerateQuizBody, request: Request) -> lis
 async def generate_quiz(body: GenerateQuizBody, request: Request):
     require_self(body.user_id, request)
     node_rows = table("graph_nodes").select(
-        "*", filters={"id": f"eq.{body.concept_node_id}"}
+        "*",
+        filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
     )
     if not node_rows:
         raise HTTPException(status_code=404, detail="Concept node not found")
@@ -389,12 +391,18 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     node_rows = table("graph_nodes").select(
         "mastery_score,times_studied,mastery_events",
-        filters={"id": f"eq.{concept_node_id}"},
+        filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
     )
-    mastery_before = node_rows[0]["mastery_score"] if node_rows else 0.0
+    if not node_rows:
+        # The attempt's concept node must belong to the attempt's owner.
+        # A missing/foreign node means we'd otherwise write mastery to
+        # someone else's row (IDOR) — refuse before any write.
+        raise HTTPException(status_code=404, detail="Concept node not found")
+    node = node_rows[0]
+    mastery_before = node["mastery_score"]
     mastery_after = max(0.0, min(1.0, mastery_before + (score * 0.03) - ((total - score) * 0.02)))
     new_tier = get_mastery_tier(mastery_after)
-    times_studied = (node_rows[0]["times_studied"] if node_rows else 0) + 1
+    times_studied = node["times_studied"] + 1
 
     score_ratio = score / total if total > 0 else 0.0
     if score_ratio >= 0.7:
@@ -404,7 +412,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     else:
         event_type = "confusion"
 
-    existing_events = (node_rows[0].get("mastery_events") or []) if node_rows else []
+    existing_events = node.get("mastery_events") or []
     quiz_event = {
         "ts": datetime.utcnow().isoformat(),
         "delta": round(mastery_after - mastery_before, 4),
@@ -421,7 +429,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             "last_studied_at": datetime.utcnow().isoformat(),
             "mastery_events": updated_events,
         },
-        filters={"id": f"eq.{concept_node_id}"},
+        filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
     )
     table("quiz_attempts").update(
         {
@@ -436,7 +444,8 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     update_streak(user_id)
 
     node2_rows = table("graph_nodes").select(
-        "concept_name", filters={"id": f"eq.{concept_node_id}"}
+        "concept_name",
+        filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
     )
     user_rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
     concept_name = node2_rows[0]["concept_name"] if node2_rows else "Unknown"
