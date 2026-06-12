@@ -76,9 +76,12 @@ export function ParsedCardsTable({ cards, onChange, reverseEnabled, onReverseTog
             {cards.map((c, i) => (
               <tr key={i} style={{
                 borderTop: "1px solid var(--border)",
-                borderLeft: c.error ? "3px solid var(--err)" : "3px solid transparent",
+                background: c.error ? "var(--err-soft)" : "transparent",
               }} title={c.error}>
-                <td style={{ padding: "4px 8px", color: "var(--text-muted)" }}>{c.row}</td>
+                <td style={{ padding: "4px 8px", color: "var(--text-muted)" }}>
+                  {c.error && <span aria-hidden="true" style={{ color: "var(--err)", fontWeight: 700, marginRight: 3 }}>!</span>}
+                  {c.row}
+                </td>
                 <td style={{ padding: "4px 8px" }}>
                   <input
                     value={c.front}

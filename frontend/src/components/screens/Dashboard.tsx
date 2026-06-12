@@ -141,7 +141,7 @@ function StreakMark({ state, day }: { state: "done" | "today" | "missed" | "futu
   if (state === "done") {
     return (
       <svg viewBox="0 0 32 32" width="30" height="30" aria-label="completed">
-        <path d={STREAK_SHIELD_PATH} fill="#e87734" />
+        <path d={STREAK_SHIELD_PATH} fill="var(--alert-warn)" />
         <path
           d="M10.5 16.5 L14.2 20.2 L22 12.4"
           stroke="#fff"
@@ -156,7 +156,7 @@ function StreakMark({ state, day }: { state: "done" | "today" | "missed" | "futu
   if (state === "today") {
     return (
       <svg viewBox="0 0 32 32" width="30" height="30" aria-label="today">
-        <circle cx="16" cy="16" r="13" fill="#e94b5c" />
+        <circle cx="16" cy="16" r="13" fill="var(--alert-err)" />
         <path
           d="M16 10 V22 M10 16 H22"
           stroke="#fff"
@@ -454,10 +454,10 @@ export function Dashboard() {
         )}
         <div style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
           {([
-            ["mastered", "#4a7d5c"],
-            ["learning", "#c89b5e"],
-            ["struggling", "#b25855"],
-            ["unexplored", "#9a9a9a"],
+            ["mastered", "var(--state-mastery)"],
+            ["learning", "var(--state-progress)"],
+            ["struggling", "var(--state-struggle)"],
+            ["unexplored", "var(--state-neutral)"],
           ] as const).map(([t, color]) => (
             <div key={t} style={{ display: "flex", alignItems: "center", gap: 5 }}>
               <span style={{ width: 10, height: 10, borderRadius: "50%", background: color }} />

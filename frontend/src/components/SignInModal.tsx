@@ -222,7 +222,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           fontSize: 34, lineHeight: 1.05, fontWeight: 600,
           letterSpacing: "-0.02em", color: "#1a1a1a",
         }}>
-          Welcome <span style={{ fontStyle: "italic", color: "#1B6C42" }}>back.</span>
+          Welcome <span style={{ fontStyle: "italic", color: "var(--brand-forest)" }}>back.</span>
         </h2>
         <p style={{ margin: "12px 0 0", fontSize: 14, color: "#4b5563", lineHeight: 1.55 }}>
           Sign in with your school Google account to continue.
@@ -261,7 +261,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           }}
           onMouseEnter={e => {
             if (waiting) return;
-            e.currentTarget.style.borderColor = "#1B6C42";
+            e.currentTarget.style.borderColor = "var(--brand-forest)";
             e.currentTarget.style.boxShadow = "0 6px 18px rgba(27,108,66,0.15)";
           }}
           onMouseLeave={e => {
@@ -300,9 +300,9 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
 
         <p style={{ margin: "16px 0 0", fontSize: 11.5, color: "#6b7280", textAlign: "center", lineHeight: 1.5 }}>
           By signing in, you agree to the{" "}
-          <a href="/terms" style={{ color: "#1B6C42", textDecoration: "underline" }}>terms</a>
+          <a href="/terms" style={{ color: "var(--brand-forest)", textDecoration: "underline" }}>terms</a>
           {" "}and{" "}
-          <a href="/privacy" style={{ color: "#1B6C42", textDecoration: "underline" }}>privacy policy</a>.
+          <a href="/privacy" style={{ color: "var(--brand-forest)", textDecoration: "underline" }}>privacy policy</a>.
         </p>
       </div>
     </div>

@@ -17,10 +17,10 @@ import { paletteFor, type GraphNode, type GraphEdge } from "@/lib/data";
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
 
 const TIER_META: Record<Exclude<Tier, "all">, { label: string; color: string }> = {
-  mastered: { label: "Mastered", color: "#4a7d5c" },
-  learning: { label: "Learning", color: "#c89b5e" },
-  struggling: { label: "Struggling", color: "#b25855" },
-  unexplored: { label: "Unexplored", color: "#9a9a9a" },
+  mastered: { label: "Mastered", color: "var(--state-mastery)" },
+  learning: { label: "Learning", color: "var(--state-progress)" },
+  struggling: { label: "Struggling", color: "var(--state-struggle)" },
+  unexplored: { label: "Unexplored", color: "var(--state-neutral)" },
 };
 
 function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {

@@ -54,10 +54,10 @@ type Note = {
 };
 
 const MASTERY_COLOR: Record<Mastery, string> = {
-  mastered: "#4a7d5c",
-  learning: "#c89b5e",
-  struggling: "#b25855",
-  unexplored: "#9a9a9a",
+  mastered: "var(--state-mastery)",
+  learning: "var(--state-progress)",
+  struggling: "var(--state-struggle)",
+  unexplored: "var(--state-neutral)",
 };
 
 function normalizeMastery(tier: string): Mastery {
@@ -132,7 +132,7 @@ export default function NotetakerPage() {
         id,
         name: "Unknown course",
         code: "—",
-        color: "#9a9a9a",
+        color: "var(--fallback-muted)",
       },
     [courses],
   );
@@ -1401,7 +1401,6 @@ function CoursePickerModal({
         inset: 0,
         zIndex: 200,
         background: "rgba(19, 17, 13, 0.45)",
-        backdropFilter: "blur(2px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -1580,7 +1579,6 @@ function ConceptPickerModal({
         inset: 0,
         zIndex: 200,
         background: "rgba(19, 17, 13, 0.45)",
-        backdropFilter: "blur(2px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",

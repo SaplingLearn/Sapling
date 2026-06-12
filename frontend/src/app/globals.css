@@ -18,6 +18,12 @@
   --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 
+  /* Canonical brand green ("forest"). Mirrored by BRAND_FOREST in lib/brand.ts. */
+  --brand-forest: #1B6C42;
+  /* Brighter forest used for the primary CTA fill + the hero "growth" leaf. */
+  --brand-forest-bright: #2D8F5C;
+  --brand-forest-bright-hover: #236F48;
+
   /* Brand greens */
   --sap-50:  #f1f6ee;
   --sap-100: #e0ecd8;
@@ -45,10 +51,10 @@
 
   /* Semantic (light) */
   --bg:        var(--ink-0);
-  --bg-panel:  #ffffff;
+  --bg-panel:  #fdfcf9;
   --bg-subtle: var(--ink-50);
   --bg-soft:   var(--ink-100);
-  --bg-input:  #ffffff;
+  --bg-input:  #fdfcf9;
   --bg-inset:  #f7f3eb;
   --bg-topbar: var(--ink-50);
   --border:    rgba(42, 39, 31, 0.10);
@@ -68,6 +74,24 @@
   --info: #3e6f8a;
   --info-soft: #dfe9ef;
 
+  /* Knowledge-status palette (mastery/progress/struggle legend + graph dots).
+     Single source for the 3 previously-inlined copies in Dashboard / Tree /
+     notetaker. Values are byte-identical to those inline copies. */
+  --state-mastery:  #4a7d5c;
+  --state-progress: #c89b5e;
+  --state-struggle: #b25855;
+  --state-neutral:  #9a9a9a;
+
+  /* Course "unknown" placeholder gray. Coincidentally equal to --state-neutral
+     today, but a distinct concept (a UI fallback, not a mastery status), so a
+     future neutral-state change won't silently move the notetaker fallback. */
+  --fallback-muted: #9a9a9a;
+
+  /* Dashboard alert one-offs (streak shield / notification dot). Kept distinct
+     from --warn (#b4562c) / --err (#a83a3a), whose values differ. */
+  --alert-warn: #e87734;
+  --alert-err:  #e94b5c;
+
   /* Landing-page brand tokens (mirrors main-branch palette so the
      pre-revamp landing + onboarding animations render on-brand). */
   --brand-primary:   #2e7d52;
@@ -78,7 +102,7 @@
   --brand-text1:     #1a1a1a;
   --brand-text2:     #4b5563;
   --bg-mesh:         #f0f4f2;
-  --font-inter: 'Inter', var(--font-sans);
+  --font-inter: var(--font-sans);
 
   --rarity-common: #8a8372;
   --rarity-uncommon: #4e873c;
@@ -260,7 +284,7 @@ body { font-size: 14px; line-height: 1.5; }
    ══════════════════════════════════════════════════════════════════ */
 
 .font-playfair { font-family: var(--font-playfair), 'Playfair Display', serif; }
-.font-inter    { font-family: var(--font-inter), 'Inter', sans-serif; }
+.font-inter    { font-family: var(--font-inter), sans-serif; }
 .font-jetbrains { font-family: var(--font-jetbrains), 'JetBrains Mono', monospace; }
 
 /* Prevent horizontal overflow without breaking position: sticky */
@@ -296,16 +320,6 @@ body { font-size: 14px; line-height: 1.5; }
   background: radial-gradient(ellipse at 50% 18%, rgba(255, 255, 255, 0.45) 0%, transparent 55%);
   opacity: 0;
   transition: opacity 0.5s ease, background 0.8s ease;
-}
-
-/* ── Gradient shift ────────────────────────────────────────────── */
-@keyframes landing-gradient-shift {
-  0%   { background-position: 0% center; }
-  100% { background-position: 100% center; }
-}
-.landing-animate-gradient {
-  background-size: 200% auto;
-  animation: landing-gradient-shift 5s ease-in-out infinite alternate;
 }
 
 /* ── Slow pulse ────────────────────────────────────────────────── */
@@ -368,7 +382,7 @@ body { font-size: 14px; line-height: 1.5; }
   border-radius: 999px;
 }
 
-.landing-intro-orbit-node--green  { background: #1B6C42;  top: -3px;  left: 50%; transform: translateX(-50%); }
+.landing-intro-orbit-node--green  { background: var(--brand-forest);  top: -3px;  left: 50%; transform: translateX(-50%); }
 .landing-intro-orbit-node--amber  { background: #D97706;  right: -3px; top: 45%; transform: translateY(-50%); }
 .landing-intro-orbit-node--blue   { background: #3B82F6;  bottom: -3px; left: 35%; transform: translateX(-50%); }
 .landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
@@ -407,7 +421,7 @@ body { font-size: 14px; line-height: 1.5; }
 
 /* ── Feature card icon hover ───────────────────────────────────── */
 .landing-icon-container {
-  transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transition: transform 0.4s var(--ease);
 }
 .landing-spotlight-card:hover .landing-icon-container {
   transform: scale(1.1) rotate(5deg);
@@ -441,90 +455,40 @@ body { font-size: 14px; line-height: 1.5; }
 .landing-page ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
 
 /* ════════════════════════════════════════════════════════════════════
-   LIQUID GLASS SYSTEM
+   PANEL SURFACES  (was the LIQUID GLASS SYSTEM — removed in #102)
+   Solid surfaces only: no backdrop-filter / blur / frosted panels, per the
+   brand contract (.impeccable.md). Class names are kept so component markup
+   is unchanged; they now render as opaque --bg-panel cards.
    ════════════════════════════════════════════════════════════════════ */
 
-/* Base glass panel (reference glass-panel: frosted + inset rim) */
-.liquid-glass {
-  background: rgba(255, 255, 255, 0.35);
-  backdrop-filter: blur(24px) saturate(1.5);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow:
-    0 8px 32px 0 rgba(31, 38, 135, 0.05),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+.liquid-glass,
+.glass-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
   position: relative;
   overflow: hidden;
   isolation: isolate;
 }
 
-/* Specular shimmer on hover */
-.liquid-glass::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(
-    105deg,
-    transparent 25%,
-    rgba(255, 255, 255, 0.6) 42%,
-    rgba(255, 255, 255, 0.2) 52%,
-    transparent 68%
-  );
-  opacity: 0;
-  transform: translateX(-100%);
-  transition: opacity 0.25s ease, transform 0.55s ease;
-  pointer-events: none;
-  z-index: 2;
-}
-.liquid-glass:hover::after {
-  opacity: 1;
-  transform: translateX(100%);
-}
-
-/* Stronger glass for modals / overlays */
 .liquid-glass-strong {
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(40px) saturate(1.65);
-  -webkit-backdrop-filter: blur(40px) saturate(1.65);
-  border: 1px solid rgba(255, 255, 255, 0.65);
-  box-shadow:
-    0 8px 32px 0 rgba(31, 38, 135, 0.08),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.5),
-    0 12px 48px -4px rgba(0, 0, 0, 0.1);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
 }
 
-/* Subtle glass for pills / small buttons */
 .liquid-glass-subtle {
-  background: rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(12px) saturate(1.45);
-  -webkit-backdrop-filter: blur(12px) saturate(1.45);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow:
-    0 4px 24px -2px rgba(31, 38, 135, 0.04),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.35);
-}
-
-/* Alias + inputs (reference glass-input) */
-.glass-panel {
-  background: rgba(255, 255, 255, 0.35);
-  backdrop-filter: blur(24px) saturate(1.5);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow:
-    0 8px 32px 0 rgba(31, 38, 135, 0.05),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 .glass-input {
-  background: rgba(255, 255, 255, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
 }
 .glass-input:focus {
   outline: none;
-  background: rgba(255, 255, 255, 0.6);
   border-color: var(--brand-primary);
   box-shadow: 0 0 0 2px rgba(46, 125, 82, 0.2);
 }
@@ -693,7 +657,7 @@ input[type="reset"]:disabled {
 /* Typography helpers main uses on the landing. */
 .landing-page .font-spectral   { font-family: var(--font-spectral), 'Spectral', Georgia, serif; }
 .landing-page .font-playfair   { font-family: var(--font-playfair), 'Playfair Display', serif; }
-.landing-page .font-inter      { font-family: var(--font-inter), 'Inter', sans-serif; }
+.landing-page .font-inter      { font-family: var(--font-inter), sans-serif; }
 .landing-page .font-jetbrains  { font-family: var(--font-jetbrains), 'JetBrains Mono', monospace; }
 .landing-page .font-dm-sans    { font-family: var(--font-dm-sans), 'DM Sans', sans-serif; }
 
@@ -727,36 +691,22 @@ input[type="reset"]:disabled {
   100% { transform: translate(0, 0) scale(1); }
 }
 
-/* Liquid glass / floating card surface effects. */
+/* Landing floating-card surfaces — solid (glass removed, #102). */
 .landing-page .liquid-glass {
   position: relative;
-  background: rgba(255, 255, 255, 0.42);
-  backdrop-filter: blur(24px) saturate(1.1);
-  -webkit-backdrop-filter: blur(24px) saturate(1.1);
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  box-shadow:
-    0 12px 32px rgba(15, 23, 42, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
   transition: transform 500ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),
               box-shadow 500ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
 }
-.landing-page .liquid-glass::after {
-  content: "";
-  position: absolute; inset: 0;
-  border-radius: inherit;
-  background: radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.75) 0%, transparent 55%);
-  opacity: 0.55;
-  pointer-events: none;
-  transition: opacity 500ms ease;
-}
-.landing-page .liquid-glass:hover::after { opacity: 0.8; }
 .landing-page .liquid-glass-strong {
-  background: rgba(255, 255, 255, 0.62);
-  border-color: rgba(255, 255, 255, 0.7);
+  background: var(--bg-panel);
+  border-color: var(--border);
 }
 .landing-page .liquid-glass-subtle {
-  background: rgba(255, 255, 255, 0.28);
-  border-color: rgba(255, 255, 255, 0.4);
+  background: var(--bg-panel);
+  border-color: var(--border);
 }
 
 /* Landing sections / dividers / ambient glow. */
@@ -770,15 +720,7 @@ input[type="reset"]:disabled {
   transition: opacity 0.5s ease, background 0.8s ease;
 }
 
-/* Gradient shift + slow pulse + float indicator. */
-@keyframes landing-gradient-shift {
-  0%   { background-position: 0% center; }
-  100% { background-position: 100% center; }
-}
-.landing-page .landing-animate-gradient {
-  background-size: 200% auto;
-  animation: landing-gradient-shift 5s ease-in-out infinite alternate;
-}
+/* Slow pulse + float indicator. */
 @keyframes landing-pulse-slow {
   0%, 100% { transform: scale(0.98); }
   50%      { transform: scale(1.02); }
@@ -814,7 +756,7 @@ input[type="reset"]:disabled {
   animation: landing-intro-orbit 14s linear infinite;
 }
 .landing-page .landing-intro-orbit-node { position: absolute; width: 10px; height: 10px; border-radius: 999px; }
-.landing-page .landing-intro-orbit-node--green  { background: #1B6C42;  top: -3px;  left: 50%; transform: translateX(-50%); }
+.landing-page .landing-intro-orbit-node--green  { background: var(--brand-forest);  top: -3px;  left: 50%; transform: translateX(-50%); }
 .landing-page .landing-intro-orbit-node--amber  { background: #D97706;  right: -3px; top: 45%; transform: translateY(-50%); }
 .landing-page .landing-intro-orbit-node--blue   { background: #3B82F6;  bottom: -3px; left: 35%; transform: translateX(-50%); }
 .landing-page .landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
@@ -837,7 +779,7 @@ input[type="reset"]:disabled {
   opacity: 0; transition: opacity 0.5s ease; pointer-events: none; z-index: 0;
 }
 .landing-page .landing-spotlight-card:hover::before { opacity: 1; }
-.landing-page .landing-icon-container { transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+.landing-page .landing-icon-container { transition: transform 0.4s var(--ease); }
 .landing-page .landing-spotlight-card:hover .landing-icon-container { transform: scale(1.1) rotate(5deg); }
 
 /* Feature card float. */
@@ -933,7 +875,7 @@ input[type="reset"]:disabled {
 }
 .landing-page .landing-feature-row:hover .landing-feature-title {
   transform: translateX(8px);
-  color: #1B6C42;
+  color: var(--brand-forest);
   letter-spacing: -0.012em;
 }
 @media (prefers-reduced-motion: reduce) {
