@@ -53,6 +53,7 @@ def _bypass_session_auth(monkeypatch):
             return None
         return _checker
 
+    auth_guard._real_decode_session = auth_guard._decode_session
     auth_guard._real_require_self = auth_guard.require_self
     auth_guard._real_get_session_user_id = auth_guard.get_session_user_id
     auth_guard._real_require_admin = auth_guard.require_admin

@@ -162,13 +162,18 @@ def health():
 
 
 @app.get("/api/users")
-def list_users():
+def list_users(request: Request):
     """List users with decrypted display names.
 
     The `users.name` column is encrypted at rest (see
     services.encryption); decrypt before returning so clients render the
     human-readable name, not ciphertext. Sort by the decrypted value.
+
+    Requires an authenticated session: this returns decrypted legal names,
+    so an unauthenticated caller must never reach the roster (401).
     """
+    from services.auth_guard import get_session_user_id
+    get_session_user_id(request)  # 401 if unauthenticated
     from db.connection import table
     from services.encryption import decrypt_if_present
     rows = table("users").select("id,name,room_id")
