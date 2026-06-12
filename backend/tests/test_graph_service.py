@@ -504,7 +504,13 @@ class TestApplyGraphUpdate:
         with patch("services.graph_service.table", side_effect=factory):
             apply_graph_update("u1", graph_update, course_id="c1")
 
-        mocks["graph_edges"].insert.assert_not_called()
+        # The only edge (A -> a) is a self-edge after case-folding, so it must be
+        # skipped. The factory populates `mocks` lazily, so when the self-edge is
+        # dropped before any graph_edges access the table is never in `mocks` —
+        # which still proves no insert happened. Guard the lookup so that path
+        # doesn't KeyError and mask the real assertion.
+        if "graph_edges" in mocks:
+            mocks["graph_edges"].insert.assert_not_called()
 
 
 # ── get_recommendations ───────────────────────────────────────────────────────
