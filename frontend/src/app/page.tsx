@@ -720,39 +720,6 @@ export default function LandingPage() {
           style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease' }}
         >
           <div
-            className="floating-card absolute w-48 liquid-glass rounded-2xl p-4"
-            style={{ position: 'absolute', top: '28%', left: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 0.8s' }}
-            data-base-rot="-6" data-float-delay="0" data-float-dur="5000"
-          >
-            <span className="font-jetbrains text-xs text-[#3B82F6] font-medium block mb-3">CS 101</span>
-            <div className="h-1 rounded-full bg-white/45 w-full overflow-hidden mb-2">
-              <div className="h-full bg-[#3B82F6] w-[55%] rounded-full" />
-            </div>
-            <span className="text-xs text-[var(--brand-text2)] opacity-80 block">55% mastered</span>
-          </div>
-
-          <div
-            className="floating-card absolute w-52 liquid-glass rounded-2xl p-4"
-            style={{ position: 'absolute', top: '52%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.4s' }}
-            data-base-rot="2" data-float-delay="1600" data-float-dur="5200"
-          >
-            <div className="flex flex-col gap-2 text-left">
-              <div className="flex items-center justify-between text-xs text-[var(--brand-text2)]">
-                <span>Total nodes</span>
-                <span className="font-jetbrains text-[var(--brand-text1)]">2,413</span>
-              </div>
-              <div className="flex items-center justify-between text-xs text-[var(--brand-text2)]">
-                <span>Mastered</span>
-                <span className="font-jetbrains text-[var(--brand-forest)]">68%</span>
-              </div>
-              <div className="flex items-center justify-between text-xs text-[var(--brand-text2)]">
-                <span>On track</span>
-                <span className="font-jetbrains text-[#D97706]">24%</span>
-              </div>
-            </div>
-          </div>
-
-          <div
             className="floating-card absolute w-52 liquid-glass rounded-2xl p-5"
             style={{ position: 'absolute', top: '24%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
             data-base-rot="4" data-float-delay="1000" data-float-dur="6000"
