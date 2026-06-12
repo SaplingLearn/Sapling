@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     course_id    TEXT REFERENCES courses(id),
     started_at   TIMESTAMPTZ DEFAULT now(),
     ended_at     TIMESTAMPTZ,
-    summary_json JSONB,
+    summary_json TEXT, -- encrypted base64 text (AES-256-GCM via services/encryption.py)
     name         TEXT
 );
 
@@ -159,8 +159,8 @@ CREATE TABLE IF NOT EXISTS assignments (
     notes           TEXT,
     google_event_id TEXT,
     category_id     TEXT REFERENCES course_categories(id) ON DELETE SET NULL,
-    points_possible NUMERIC,
-    points_earned   NUMERIC,
+    points_possible TEXT, -- encrypted base64 text (AES-256-GCM via services/encryption.py)
+    points_earned   TEXT, -- encrypted base64 text (AES-256-GCM via services/encryption.py)
     source          TEXT DEFAULT 'manual',
     created_at      TIMESTAMPTZ DEFAULT now()
 );
@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS documents (
     category     TEXT NOT NULL,
     summary      TEXT,
     flashcards   JSONB,
-    concept_notes JSONB,
+    concept_notes TEXT, -- encrypted base64 text (AES-256-GCM via services/encryption.py)
     created_at   TIMESTAMPTZ DEFAULT now(),
     processed_at TIMESTAMPTZ
 );
