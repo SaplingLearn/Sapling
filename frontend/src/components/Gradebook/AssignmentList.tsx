@@ -74,6 +74,7 @@ export function AssignmentList({
                 </div>
               </button>
               <input
+                key={`${a.id}-${a.points_earned}`}
                 type="number"
                 placeholder="—"
                 defaultValue={a.points_earned ?? ""}

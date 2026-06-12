@@ -91,8 +91,13 @@ export function GradebookCourseScreen({ courseId }: Props) {
           onEditFull={(a) => setAssignModal({ open: true, initial: a })}
           onSyncGradescope={() => toast.info("Gradescope integration coming soon")}
           onEditGrade={async (id, points) => {
-            await updateGradedAssignment(userId, id, { points_earned: points });
-            await reload();
+            try {
+              await updateGradedAssignment(userId, id, { points_earned: points });
+              await reload();
+            } catch (err: any) {
+              toast.error(`Couldn't save grade: ${err.message}`);
+              await reload();
+            }
           }}
         />
       </main>
