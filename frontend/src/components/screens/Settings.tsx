@@ -402,7 +402,7 @@ export function Settings() {
               </div>
               {(
                 [
-                  ["Theme", "theme", ["light", "dark"]],
+                  ["Theme", "theme", ["light"]],
                   ["Font size", "font_size", ["small", "medium", "large"]],
                   ["Profile visibility", "profile_visibility", ["public", "school", "private"]],
                 ] as const
