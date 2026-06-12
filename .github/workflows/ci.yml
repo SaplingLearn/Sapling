@@ -45,19 +45,17 @@ jobs:
           SUPABASE_URL: https://dummy.supabase.co
           SUPABASE_SERVICE_KEY: dummy-service-key
           SESSION_SECRET: dummy-session-secret
-        # test_documents_routes (whole module) + test_graph_service::test_skips_self_edges
-        # are PRE-EXISTING failures: they make unmocked network calls / have a mock-dict
-        # bug, never caught because there was no CI. Quarantined so the gate is green for
-        # the other ~580 tests; tracked in #210 to be made hermetic + un-quarantined.
+        # Only the OCR integration tests are excluded (heavy deps, run via the
+        # manual evals workflow). The earlier #210 quarantine of
+        # test_documents_routes + the graph self-edges test is gone — they're
+        # hermetic now (shared db-client mock in conftest) and gate normally.
         run: |
           python -m pytest tests/ -q \
             --ignore=tests/evals \
             --ignore=tests/test_docling_integration.py \
             --ignore=tests/test_ocr_pipeline.py \
             --ignore=tests/test_extraction_backends.py \
-            --ignore=tests/test_extraction_service.py \
-            --ignore=tests/test_documents_routes.py \
-            --deselect "tests/test_graph_service.py::TestApplyGraphUpdate::test_skips_self_edges"
+            --ignore=tests/test_extraction_service.py
 
   frontend:
     name: Frontend (lint + tsc + vitest)
