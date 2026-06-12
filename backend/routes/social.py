@@ -286,16 +286,20 @@ def get_room_messages(room_id: str, request: Request, before: str | None = None,
             raise HTTPException(status_code=400, detail="`before` must be an ISO 8601 timestamp")
         filters["created_at"] = f"lt.{before}"
     # Fetch newest-first so the slice covers the page we need, then reverse to ascending.
+    # Over-fetch one row so `has_more` is exact: if the DB returns more than
+    # `limit`, an extra page exists. (Using `len(rows) == limit` reports a
+    # phantom "load more" at exact page boundaries — issue #131.)
     rows = table("room_messages").select(
         "id,room_id,user_id,user_name,text,image_url,reply_to_id,is_deleted,edited_at,created_at",
         filters=filters,
         order="created_at.desc",
-        limit=limit,
+        limit=limit + 1,
     )
     if not rows:
         return {"messages": [], "has_more": False}
+    has_more = len(rows) > limit
+    rows = rows[:limit]  # drop the probe row before reversing
     rows = list(reversed(rows))
-    has_more = len(rows) == limit
 
     msg_ids = [r["id"] for r in rows]
 
