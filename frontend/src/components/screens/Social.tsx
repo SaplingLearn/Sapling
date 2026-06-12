@@ -434,7 +434,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
               <div style={{ position: "relative" }}>
                 {!self && <div style={{ fontSize: 11, color: "var(--text-dim)", fontWeight: 600, marginBottom: 2 }}>{m.user_name}</div>}
                 {m.reply_to && (
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", borderLeft: "2px solid var(--accent)", paddingLeft: 6, marginBottom: 4 }}>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", borderLeft: "1px solid var(--border)", paddingLeft: 6, marginBottom: 4 }}>
                     ↪ <strong>{m.reply_to.user_name}</strong>: {m.reply_to.text?.slice(0, 60) || "(deleted)"}
                   </div>
                 )}

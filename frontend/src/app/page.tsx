@@ -652,7 +652,7 @@ export default function LandingPage() {
   }
 
   return (
-    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), 'Inter', sans-serif", color: 'var(--brand-text1, #1a1a1a)', background: 'transparent' }}>
+    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), sans-serif", color: 'var(--brand-text1, #1a1a1a)', background: 'transparent' }}>
       <div ref={ambientGlowRef} className="landing-ambient-glow" />
 
       {/* ═══ Initial load intro overlay ═══ */}

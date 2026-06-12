@@ -48,10 +48,10 @@
 
   /* Semantic (light) */
   --bg:        var(--ink-0);
-  --bg-panel:  #ffffff;
+  --bg-panel:  #fdfcf9;
   --bg-subtle: var(--ink-50);
   --bg-soft:   var(--ink-100);
-  --bg-input:  #ffffff;
+  --bg-input:  #fdfcf9;
   --bg-inset:  #f7f3eb;
   --bg-topbar: var(--ink-50);
   --border:    rgba(42, 39, 31, 0.10);
@@ -99,7 +99,7 @@
   --brand-text1:     #1a1a1a;
   --brand-text2:     #4b5563;
   --bg-mesh:         #f0f4f2;
-  --font-inter: 'Inter', var(--font-sans);
+  --font-inter: var(--font-sans);
 
   --rarity-common: #8a8372;
   --rarity-uncommon: #4e873c;
@@ -281,7 +281,7 @@ body { font-size: 14px; line-height: 1.5; }
    ══════════════════════════════════════════════════════════════════ */
 
 .font-playfair { font-family: var(--font-playfair), 'Playfair Display', serif; }
-.font-inter    { font-family: var(--font-inter), 'Inter', sans-serif; }
+.font-inter    { font-family: var(--font-inter), sans-serif; }
 .font-jetbrains { font-family: var(--font-jetbrains), 'JetBrains Mono', monospace; }
 
 /* Prevent horizontal overflow without breaking position: sticky */
@@ -418,7 +418,7 @@ body { font-size: 14px; line-height: 1.5; }
 
 /* ── Feature card icon hover ───────────────────────────────────── */
 .landing-icon-container {
-  transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transition: transform 0.4s var(--ease);
 }
 .landing-spotlight-card:hover .landing-icon-container {
   transform: scale(1.1) rotate(5deg);
@@ -654,7 +654,7 @@ input[type="reset"]:disabled {
 /* Typography helpers main uses on the landing. */
 .landing-page .font-spectral   { font-family: var(--font-spectral), 'Spectral', Georgia, serif; }
 .landing-page .font-playfair   { font-family: var(--font-playfair), 'Playfair Display', serif; }
-.landing-page .font-inter      { font-family: var(--font-inter), 'Inter', sans-serif; }
+.landing-page .font-inter      { font-family: var(--font-inter), sans-serif; }
 .landing-page .font-jetbrains  { font-family: var(--font-jetbrains), 'JetBrains Mono', monospace; }
 .landing-page .font-dm-sans    { font-family: var(--font-dm-sans), 'DM Sans', sans-serif; }
 
@@ -776,7 +776,7 @@ input[type="reset"]:disabled {
   opacity: 0; transition: opacity 0.5s ease; pointer-events: none; z-index: 0;
 }
 .landing-page .landing-spotlight-card:hover::before { opacity: 1; }
-.landing-page .landing-icon-container { transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+.landing-page .landing-icon-container { transition: transform 0.4s var(--ease); }
 .landing-page .landing-spotlight-card:hover .landing-icon-container { transform: scale(1.1) rotate(5deg); }
 
 /* Feature card float. */

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import React from 'react';
-import { Spectral, DM_Sans, Inter, Playfair_Display, JetBrains_Mono } from 'next/font/google';
+import { Spectral, DM_Sans, Playfair_Display, JetBrains_Mono } from 'next/font/google';
 import { UserProvider } from '@/context/UserContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -17,12 +17,6 @@ const spectral = Spectral({
 const dmSans = DM_Sans({
   subsets: ['latin'],
   variable: '--font-dm-sans',
-  display: 'swap',
-});
-
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
   display: 'swap',
 });
 
@@ -55,7 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       data-accent="sage"
       data-density="compact"
-      className={`${spectral.variable} ${dmSans.variable} ${inter.variable} ${playfairDisplay.variable} ${jetbrainsMono.variable}`}
+      className={`${spectral.variable} ${dmSans.variable} ${playfairDisplay.variable} ${jetbrainsMono.variable}`}
     >
       <body>
         <ErrorBoundary>
