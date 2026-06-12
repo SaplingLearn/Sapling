@@ -768,7 +768,6 @@ function NotesList({
               border: "1px solid var(--border)",
               borderRadius: "var(--r-sm)",
               color: "var(--text)",
-              outline: "none",
             }}
           />
         </div>
@@ -987,7 +986,6 @@ function NoteEditor({
             color: "var(--text)",
             background: "transparent",
             border: "none",
-            outline: "none",
             padding: 0,
             transition: "font-size var(--dur-slow) var(--ease)",
           }}
@@ -1021,7 +1019,6 @@ function NoteEditor({
             width: "100%",
             minHeight: fullscreen ? "calc(100vh - 280px)" : 320,
             border: "none",
-            outline: "none",
             resize: "none",
             background: "transparent",
             fontSize: fullscreen ? 14 : 15,
@@ -1248,7 +1245,6 @@ function NoteDetail({
               style={{
                 background: "var(--bg-input)",
                 border: "1px dashed var(--border-strong)",
-                outline: "none",
                 color: "var(--text)",
                 width: 80,
               }}
@@ -1640,7 +1636,6 @@ function ConceptPickerModal({
               border: "1px solid var(--border)",
               borderRadius: "var(--r-sm)",
               color: "var(--text)",
-              outline: "none",
             }}
           />
         </div>
@@ -1895,7 +1890,6 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
             border: "1px solid var(--border)",
             borderRadius: "var(--r-sm)",
             color: "var(--text)",
-            outline: "none",
           }}
         />
         <button

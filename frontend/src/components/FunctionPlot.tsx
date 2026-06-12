@@ -123,6 +123,8 @@ export function FunctionPlot({ spec }: { spec: string }) {
   return (
     <div
       ref={containerRef}
+      role="img"
+      aria-label={`Function plot: ${spec.replace(/\s+/g, " ").trim()}`}
       style={{
         margin: "10px 0 14px",
         padding: "8px",

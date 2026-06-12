@@ -694,10 +694,10 @@ export default function LandingPage() {
         }}
       >
         <div className="max-w-[88%] mx-auto flex items-center justify-between w-full">
-          <div className="flex items-center cursor-pointer group" style={{ gap: '4px' }} onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '26px', height: '26px', flexShrink: 0, position: 'relative', top: '-2px' }} />
+          <button type="button" aria-label="Sapling — scroll to top" className="flex items-center cursor-pointer group" style={{ gap: '4px' }} onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+            <img src="/sapling-icon.svg" alt="" style={{ width: '26px', height: '26px', flexShrink: 0, position: 'relative', top: '-2px' }} />
             <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: '#1a5c2a', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Sapling</span>
-          </div>
+          </button>
           <div className="flex items-center">
             <button onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
             <button onClick={startOnboarding} className="relative overflow-hidden group bg-[var(--brand-forest)] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
@@ -1124,7 +1124,7 @@ export default function LandingPage() {
                       width: '100%', padding: '14px 16px', fontSize: 14,
                       background: 'rgba(255,255,255,0.6)',
                       border: '1.5px solid rgba(107,114,128,0.25)',
-                      borderRadius: 10, outline: 'none',
+                      borderRadius: 10,
                       transition: 'border-color 0.15s, box-shadow 0.15s',
                       fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
                       color: '#1a1a1a', boxSizing: 'border-box',
