@@ -146,27 +146,55 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
         (payload: any) => {
           const row = payload.new as RoomMessageRow;
           setMessages(prev => {
-            const withoutTmp = prev.filter(m => !m.id.startsWith("tmp_") || m.text !== row.text || m.user_id !== row.user_id);
-            if (withoutTmp.some(m => m.id === row.id)) return withoutTmp;
-            return [...withoutTmp, { ...row, reactions: [], reply_to: null }];
+            // Dedup by real id: the sender already has this row (optimistic tmp
+            // reconciled by the POST response, or a prior echo). Never append a
+            // realtime row that's already present, and don't clobber the loaded
+            // reply_to/reactions on a row we already have (issue #131).
+            if (prev.some(m => m.id === row.id)) return prev;
+            // Own messages are handled by send()'s POST reconciliation; skip the
+            // echo so we don't briefly render a ciphertext duplicate.
+            if (row.user_id === userId) return prev;
+            return [...prev, { ...row, reactions: [], reply_to: null }];
           });
         })
       .on("postgres_changes",
         { event: "UPDATE", schema: "public", table: "room_messages", filter: `room_id=eq.${roomId}` },
         (payload: any) => {
           const row = payload.new as RoomMessageRow;
-          setMessages(prev => prev.map(m => m.id === row.id ? { ...m, ...row } : m));
+          setMessages(prev => prev.map(m => {
+            if (m.id !== row.id) return m;
+            // Own edits/deletes are applied optimistically with plaintext; the
+            // echo carries ciphertext `text`, so don't overwrite it. Keep our
+            // text/edited_at, take server-side flags like is_deleted (issue #131).
+            if (row.user_id === userId) {
+              return { ...m, is_deleted: row.is_deleted, edited_at: row.edited_at ?? m.edited_at };
+            }
+            return { ...m, ...row, reply_to: m.reply_to, reactions: m.reactions };
+          }));
         })
       .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "room_reactions" },
-        () => { void load(); })
+        (payload: any) => {
+          // Scope the reload to this room: only reload if the reaction targets a
+          // message we have loaded, otherwise a reaction in any other room would
+          // refetch this open room (issue #131).
+          const mid = payload.new?.message_id;
+          if (mid) setMessages(prev => { if (prev.some(m => m.id === mid)) void load(); return prev; });
+        })
       .on("postgres_changes",
         { event: "DELETE", schema: "public", table: "room_reactions" },
-        () => { void load(); })
+        (payload: any) => {
+          // DELETE payloads only carry the primary key (id), not message_id,
+          // unless the table has REPLICA IDENTITY FULL. Reload only when the
+          // affected message is loaded; if we can't tell, fall back to a reload.
+          const mid = payload.old?.message_id;
+          if (mid === undefined) { void load(); return; }
+          setMessages(prev => { if (prev.some(m => m.id === mid)) void load(); return prev; });
+        })
       .subscribe();
 
     return () => { supa.removeChannel(channel); };
-  }, [roomId, load]);
+  }, [roomId, load, userId]);
 
   // Presence / typing channel.
   React.useEffect(() => {
@@ -253,7 +281,28 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
     const r = replyTo;
     setReplyTo(null);
     try {
-      await sendRoomMessage(roomId, userId, userName || "Me", text, undefined, r?.id);
+      // Replace the optimistic temp row with the server's decrypted message
+      // (matched by real id). This is the authoritative dedup: the realtime
+      // INSERT echo can't reconcile because it carries ciphertext, never the
+      // plaintext we appended (issue #131).
+      const res = await sendRoomMessage(roomId, userId, userName || "Me", text, undefined, r?.id);
+      const saved = res?.message as RoomMessageRow | undefined;
+      if (saved?.id) {
+        // Drop the tmp row, then upsert the saved row by id (replace if the
+        // realtime echo already landed it, else append). reply_to/reactions
+        // come from the optimistic tmp since the POST response omits them.
+        const reconciled: RoomMessageRow = {
+          ...saved,
+          reply_to: saved.reply_to ?? tmp.reply_to,
+          reactions: saved.reactions ?? [],
+        };
+        setMessages(prev => {
+          const next = prev.filter(m => m.id !== tmpId);
+          return next.some(m => m.id === saved.id)
+            ? next.map(m => m.id === saved.id ? { ...m, ...reconciled, reactions: m.reactions ?? reconciled.reactions } : m)
+            : [...next, reconciled];
+        });
+      }
     } catch (err) {
       setMessages(prev => prev.filter(m => m.id !== tmpId));
       toast.error(`Send failed: ${String(err)}`);
@@ -307,7 +356,15 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
       if (up.error) throw up.error;
       const pub = supa.storage.from("chat-images").getPublicUrl(path);
       const url: string = pub.data.publicUrl;
-      await sendRoomMessage(roomId, userId, userName || "Me", "", url);
+      const res = await sendRoomMessage(roomId, userId, userName || "Me", "", url);
+      // Append from the POST response (own realtime echoes are skipped to avoid
+      // duplicates), deduping by id in case the echo already landed.
+      const saved = res?.message as RoomMessageRow | undefined;
+      if (saved?.id) {
+        setMessages(prev => prev.some(m => m.id === saved.id)
+          ? prev
+          : [...prev, { ...saved, reply_to: saved.reply_to ?? null, reactions: saved.reactions ?? [] }]);
+      }
       toast.success("Image sent");
     } catch (err) {
       toast.error(`Upload failed: ${String(err)}`);
