@@ -87,7 +87,7 @@ export function AchievementUnlockToast({ achievement }: Props) {
           fontWeight: 600,
           textTransform: "uppercase",
           letterSpacing: "0.04em",
-          color: borderColor,
+          color: "var(--text)",
           flexShrink: 0,
         }}
       >
