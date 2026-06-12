@@ -12,6 +12,8 @@ interface TitleFlairProps {
 export function TitleFlair({ cosmetic, className, style }: TitleFlairProps) {
   if (!cosmetic) return null;
   const rarity = cosmetic.rarity ?? "common";
+  // Rarity is never conveyed by colored text (fails 4.5:1 on several tiers);
+  // the border carries the color and the literal tier name carries the cue.
   return (
     <span
       className={className}
@@ -25,12 +27,12 @@ export function TitleFlair({ cosmetic, className, style }: TitleFlairProps) {
         textTransform: "uppercase",
         borderRadius: "var(--r-full)",
         border: `1px solid var(--rarity-${rarity})`,
-        color: `var(--rarity-${rarity})`,
+        color: "var(--text)",
         background: `var(--rarity-${rarity}-bg)`,
         ...style,
       }}
     >
-      {cosmetic.name}
+      {cosmetic.name} · {rarity}
     </span>
   );
 }

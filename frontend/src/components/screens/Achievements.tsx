@@ -9,13 +9,9 @@ import { useUser } from "@/context/UserContext";
 import { fetchAchievements, setFeaturedAchievements } from "@/lib/api";
 import type { Achievement as AchType, UserAchievement, RarityTier, AchievementCategory } from "@/lib/types";
 
-const rarityBg: Record<RarityTier, string> = {
-  common: "#8a8372",
-  uncommon: "#4e873c",
-  rare: "#3e6f8a",
-  epic: "#7b4b99",
-  legendary: "#b4862c",
-};
+// Rarity colors come only from the canonical --rarity-* tokens (globals.css);
+// rarity text itself stays neutral (colored text fails 4.5:1 on several tiers).
+const rarityVar = (r: RarityTier) => `var(--rarity-${r}, var(--border))`;
 
 type CatFilter = "all" | AchievementCategory;
 
@@ -39,7 +35,7 @@ function Card({
   onToggleFeature?: () => void;
   canFeature?: boolean;
 }) {
-  const c = rarityBg[a.rarity];
+  const c = rarityVar(a.rarity);
   const secret = a.is_secret && !isEarned;
   const pct = progress ? Math.min(100, Math.round((progress.current / Math.max(1, progress.target)) * 100)) : null;
   return (
@@ -50,14 +46,14 @@ function Card({
         position: "relative",
         borderTop: `3px solid ${c}`,
         opacity: isEarned ? 1 : 0.85,
-        boxShadow: isEarned ? `0 2px 12px ${c}22, var(--shadow-sm)` : "var(--shadow-sm)",
+        boxShadow: isEarned ? `0 2px 12px color-mix(in srgb, ${c} 13%, transparent), var(--shadow-sm)` : "var(--shadow-sm)",
       }}
     >
       <div style={{ display: "flex", gap: 14 }}>
         <div
           style={{
             width: 52, height: 52, borderRadius: "var(--r-md)",
-            background: isEarned ? `${c}22` : "var(--bg-soft)",
+            background: isEarned ? `color-mix(in srgb, ${c} 13%, transparent)` : "var(--bg-soft)",
             color: c, display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 26, flexShrink: 0,
             filter: isEarned ? "none" : "grayscale(1) opacity(0.5)",
@@ -68,7 +64,7 @@ function Card({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 6 }}>
             <div style={{ fontWeight: 600, fontSize: 14 }}>{secret ? "Secret Achievement" : a.name}</div>
-            <span className="chip" style={{ color: c, borderColor: `${c}44`, background: `${c}11` }}>
+            <span className="chip" style={{ color: "var(--text)", borderColor: `color-mix(in srgb, ${c} 27%, transparent)`, background: `color-mix(in srgb, ${c} 7%, transparent)` }}>
               {a.rarity}
             </span>
           </div>
@@ -227,7 +223,7 @@ export function Achievements() {
           {featuredIds.map((id) => {
             const ua = earnedById.get(id);
             if (!ua) return null;
-            const c = rarityBg[ua.achievement.rarity];
+            const c = rarityVar(ua.achievement.rarity);
             return (
               <div
                 key={id}
@@ -260,6 +256,9 @@ export function Achievements() {
                 </button>
                 <div style={{ fontSize: 26, marginBottom: 4 }}>{ua.achievement.icon || "★"}</div>
                 <div style={{ fontSize: 11, fontWeight: 600 }}>{ua.achievement.name}</div>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 2 }}>
+                  {ua.achievement.rarity}
+                </div>
               </div>
             );
           })}

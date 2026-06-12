@@ -7,13 +7,8 @@ import { RoleBadge } from "./RoleBadge";
 import { Icon } from "./Icon";
 import type { UserProfile } from "@/lib/types";
 
-const rarityColor: Record<string, string> = {
-  common: "#8a8372",
-  uncommon: "#4e873c",
-  rare: "#3e6f8a",
-  epic: "#7b4b99",
-  legendary: "#b4862c",
-};
+// Rarity colors come only from the canonical --rarity-* tokens (globals.css).
+const rarityVar = (r: string) => `var(--rarity-${r}, var(--text-muted))`;
 
 export function ProfileView({ profile, embedded = false }: { profile: UserProfile; embedded?: boolean }) {
   const eq = profile.equipped_cosmetics || {};
@@ -145,15 +140,15 @@ export function ProfileView({ profile, embedded = false }: { profile: UserProfil
           <div className="label-micro" style={{ marginBottom: 10 }}>Featured achievements</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
             {profile.featured_achievements!.map(ua => {
-              const c = rarityColor[ua.achievement.rarity] || "var(--text-muted)";
+              const c = rarityVar(ua.achievement.rarity);
               return (
                 <div
                   key={ua.achievement.id}
                   style={{
                     padding: 12,
                     textAlign: "center",
-                    border: `1px solid ${c}33`,
-                    background: `${c}0f`,
+                    border: `1px solid color-mix(in srgb, ${c} 20%, transparent)`,
+                    background: `color-mix(in srgb, ${c} 6%, transparent)`,
                     borderRadius: "var(--r-md)",
                     borderTop: `3px solid ${c}`,
                   }}
