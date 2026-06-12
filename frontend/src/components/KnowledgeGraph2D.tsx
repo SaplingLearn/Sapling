@@ -356,7 +356,6 @@ function KnowledgeGraph2DImpl({
   };
 
   const resetView = () => setView({ tx: 0, ty: 0, scale: 1 });
-  const reheat = () => simRef.current?.alpha(0.8).restart();
 
   const hoveredMastery = hovered
     ? hovered.is_subject_root
@@ -562,14 +561,6 @@ function KnowledgeGraph2DImpl({
           title="Reset view"
         >
           ⟲
-        </button>
-        <button
-          className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontSize: 10 }}
-          onClick={reheat}
-          title="Re-run forces"
-        >
-          ✦
         </button>
       </div>
 
