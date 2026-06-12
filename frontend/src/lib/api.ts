@@ -1125,10 +1125,14 @@ export const patchNote = (
   noteId: string,
   userId: string,
   patch: Partial<Pick<Note, 'title' | 'body' | 'tags' | 'course_id'>>,
+  // `keepalive` lets a final autosave survive a page unload (tab close /
+  // navigation) instead of being cancelled mid-flight.
+  opts?: { keepalive?: boolean },
 ) =>
   fetchJSON<Note>(`/api/notes/${noteId}`, {
     method: 'PATCH',
     body: JSON.stringify({ user_id: userId, ...patch }),
+    keepalive: opts?.keepalive,
   });
 
 export const deleteNote = (noteId: string, userId: string) =>

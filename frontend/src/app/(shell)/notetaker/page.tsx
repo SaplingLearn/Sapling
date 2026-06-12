@@ -207,32 +207,95 @@ export default function NotetakerPage() {
     });
   }, [notes, query, courseFilter, courseFor]);
 
-  // Debounced autosave for title/body/tags.
-  const saveTimersRef = React.useRef<Map<string, number>>(new Map());
-  const queueSave = React.useCallback(
-    (noteId: string, patch: Partial<Pick<ApiNote, "title" | "body" | "tags">>) => {
+  // Debounced autosave for title/body/tags. We keep the latest pending patch
+  // per note next to its timer so it can be flushed immediately on unmount,
+  // navigation, or when switching notes — instead of being silently dropped.
+  type PendingSave = {
+    handle: number;
+    patch: Partial<Pick<ApiNote, "title" | "body" | "tags">>;
+  };
+  const pendingSavesRef = React.useRef<Map<string, PendingSave>>(new Map());
+  // Drives the editor footer so it never claims "Saved" while a write is still
+  // queued or in flight.
+  const [saveStatus, setSaveStatus] = React.useState<"saved" | "unsaved" | "saving">(
+    "saved",
+  );
+
+  const runSave = React.useCallback(
+    (
+      noteId: string,
+      patch: Partial<Pick<ApiNote, "title" | "body" | "tags">>,
+      keepalive = false,
+    ) => {
       if (!userId) return;
-      const timers = saveTimersRef.current;
-      const existing = timers.get(noteId);
-      if (existing) window.clearTimeout(existing);
-      const handle = window.setTimeout(() => {
-        timers.delete(noteId);
-        patchNote(noteId, userId, patch).catch((e) =>
-          console.error("Autosave failed", e),
-        );
-      }, 800);
-      timers.set(noteId, handle);
+      setSaveStatus("saving");
+      patchNote(noteId, userId, patch, { keepalive })
+        .then(() => {
+          if (pendingSavesRef.current.size === 0) setSaveStatus("saved");
+        })
+        .catch((e) => console.error("Autosave failed", e));
     },
     [userId],
   );
 
+  const flushSave = React.useCallback(
+    (noteId: string, keepalive = false) => {
+      if (!userId) return;
+      const pending = pendingSavesRef.current.get(noteId);
+      if (!pending) return;
+      window.clearTimeout(pending.handle);
+      pendingSavesRef.current.delete(noteId);
+      runSave(noteId, pending.patch, keepalive);
+    },
+    [userId, runSave],
+  );
+
+  const flushAllSaves = React.useCallback(
+    (keepalive = false) => {
+      for (const noteId of Array.from(pendingSavesRef.current.keys())) {
+        flushSave(noteId, keepalive);
+      }
+    },
+    [flushSave],
+  );
+
+  const queueSave = React.useCallback(
+    (noteId: string, patch: Partial<Pick<ApiNote, "title" | "body" | "tags">>) => {
+      if (!userId) return;
+      const pending = pendingSavesRef.current;
+      const existing = pending.get(noteId);
+      const merged = { ...(existing?.patch ?? {}), ...patch };
+      if (existing) window.clearTimeout(existing.handle);
+      setSaveStatus("unsaved");
+      const handle = window.setTimeout(() => {
+        pending.delete(noteId);
+        runSave(noteId, merged);
+      }, 800);
+      pending.set(noteId, { handle, patch: merged });
+    },
+    [userId, runSave],
+  );
+
+  // Flush pending edits before the active note changes, so switching notes
+  // never drops a queued save.
+  const prevActiveIdRef = React.useRef<string | null>(activeId);
   React.useEffect(() => {
-    const timers = saveTimersRef.current;
+    const prev = prevActiveIdRef.current;
+    if (prev && prev !== activeId) flushSave(prev);
+    prevActiveIdRef.current = activeId;
+  }, [activeId, flushSave]);
+
+  // Flush on unmount and on tab close / hard navigation. The pagehide flush
+  // uses keepalive so the request survives the unload; the unmount flush is a
+  // normal request that completes against the still-live page.
+  React.useEffect(() => {
+    const onPageHide = () => flushAllSaves(true);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
-      timers.forEach((handle) => window.clearTimeout(handle));
-      timers.clear();
+      window.removeEventListener("pagehide", onPageHide);
+      flushAllSaves();
     };
-  }, []);
+  }, [flushAllSaves]);
 
   const updateActive = (patch: Partial<Note>) => {
     if (!active) return;
@@ -330,6 +393,7 @@ export default function NotetakerPage() {
 
   const onGenerateQuiz = async () => {
     if (!active || !userId) return;
+    flushSave(active.id);
     setBusy("quiz");
     try {
       const { concept_node_id } = await generateQuizFromNote(active.id, userId);
@@ -342,6 +406,7 @@ export default function NotetakerPage() {
 
   const onSendToTutor = async () => {
     if (!active || !userId) return;
+    flushSave(active.id);
     setBusy("tutor");
     try {
       const { topic, course_id } = await sendNoteToTutor(active.id, userId);
@@ -549,6 +614,7 @@ export default function NotetakerPage() {
             <NoteEditor
               note={active}
               onChange={updateActive}
+              saveStatus={saveStatus}
               fullscreen={fullscreen}
               onToggleFullscreen={() => setFullscreen((f) => !f)}
             />
@@ -864,11 +930,13 @@ function CourseFilterChip({
 function NoteEditor({
   note,
   onChange,
+  saveStatus,
   fullscreen,
   onToggleFullscreen,
 }: {
   note: Note;
   onChange: (patch: Partial<Note>) => void;
+  saveStatus: "saved" | "unsaved" | "saving";
   fullscreen: boolean;
   onToggleFullscreen: () => void;
 }) {
@@ -984,8 +1052,12 @@ function NoteEditor({
         }}
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <Icon name="check" size={11} />
-          Saved · {relTime(note.updatedAt)}
+          <Icon name={saveStatus === "saved" ? "check" : "pencil"} size={11} />
+          {saveStatus === "saving"
+            ? "Saving…"
+            : saveStatus === "unsaved"
+              ? "Unsaved changes"
+              : `Saved · ${relTime(note.updatedAt)}`}
         </span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
           <span>{note.body.split(/\s+/).filter(Boolean).length} words</span>
