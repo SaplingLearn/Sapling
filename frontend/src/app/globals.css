@@ -104,17 +104,6 @@
   --bg-mesh:         #f0f4f2;
   --font-inter: var(--font-sans);
 
-  --rarity-common: #8a8372;
-  --rarity-uncommon: #4e873c;
-  --rarity-rare: #3e6f8a;
-  --rarity-epic: #7b4b99;
-  --rarity-legendary: #b4862c;
-  --rarity-common-bg:    color-mix(in oklab, #8a8372 14%, transparent);
-  --rarity-uncommon-bg:  color-mix(in oklab, #4e873c 14%, transparent);
-  --rarity-rare-bg:      color-mix(in oklab, #3e6f8a 14%, transparent);
-  --rarity-epic-bg:      color-mix(in oklab, #7b4b99 14%, transparent);
-  --rarity-legendary-bg: color-mix(in oklab, #b4862c 14%, transparent);
-
   --c-sage: #4e873c;
   --c-sky: #3e6f8a;
   --c-rose: #a8456b;
@@ -556,8 +545,8 @@ input[type="reset"]:disabled {
   --rarity-rare-bg:      rgba(43, 140, 150, 0.08);
   --rarity-epic:         #8b5cf6;
   --rarity-epic-bg:      rgba(139, 92, 246, 0.08);
-  --rarity-legendary:    var(--brand-progress);
-  --rarity-legendary-bg: rgba(232, 163, 58, 0.08);
+  --rarity-legendary:    #b4862c; /* not --brand-progress: #e8a33a is 2.10:1 on --bg-panel, under the 3:1 non-text bar */
+  --rarity-legendary-bg: rgba(232, 163, 58, 0.08); /* stays on the lighter gold: a #b4862c-based tint puts the TitleFlair border vs its own interior under 3:1 */
 }
 
 /* ══════════════════════════════════════════════════════════════════
