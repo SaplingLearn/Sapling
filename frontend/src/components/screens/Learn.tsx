@@ -95,11 +95,12 @@ function LearnInner() {
 
   const initialTopic = searchParams.get("topic") ?? "";
   const initialMode = normalizeMode(searchParams.get("mode"));
+  const initialCourseId = searchParams.get("course") ?? "";
 
   const [mode, setMode] = useState<Mode>(initialMode);
   const [topic, setTopic] = useState<string>(initialTopic);
   const [topicDraft, setTopicDraft] = useState<string>(initialTopic);
-  const [selectedCourseId, setSelectedCourseId] = useState<string | "">("");
+  const [selectedCourseId, setSelectedCourseId] = useState<string | "">(initialCourseId);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
