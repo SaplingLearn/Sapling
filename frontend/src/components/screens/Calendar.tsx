@@ -735,7 +735,7 @@ function AssignmentTable({
           <thead>
             <tr style={{ background: "var(--bg-subtle)", textAlign: "left" }}>
               <th style={{ padding: 10, width: 32 }}>
-                <input type="checkbox" checked={selected.size === assignments.length && assignments.length > 0} onChange={toggleAll} />
+                <input type="checkbox" aria-label="Select all assignments" checked={selected.size === assignments.length && assignments.length > 0} onChange={toggleAll} />
               </th>
               <th style={{ padding: 10 }}>Title</th>
               <th style={{ padding: 10 }}>Course</th>
@@ -750,7 +750,7 @@ function AssignmentTable({
               return (
                 <tr key={a.id} style={{ borderTop: i === 0 ? "none" : "1px solid var(--border)" }}>
                   <td style={{ padding: 10 }}>
-                    <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} />
+                    <input type="checkbox" aria-label={`Select ${a.title}`} checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} />
                   </td>
                   <td style={{ padding: 10 }}>
                     {editingThis ? (

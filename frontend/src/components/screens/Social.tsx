@@ -581,7 +581,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
             }}
             placeholder="Message the room… (@ to mention)"
             style={{
-              flex: 1, border: 0, background: "transparent", outline: "none",
+              flex: 1, border: 0, background: "transparent",
               fontSize: 14, padding: "6px 0", resize: "none", fontFamily: "inherit", color: "inherit",
             }}
           />

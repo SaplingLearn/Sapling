@@ -817,7 +817,6 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
               borderRadius: "var(--r-sm)",
               background: "var(--bg)",
               color: "var(--text)",
-              outline: "none",
             }}
           />
           <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
@@ -1057,7 +1056,6 @@ function TopicPicker({
               border: "none",
               borderBottom: "1px solid var(--border)",
               background: "transparent",
-              outline: "none",
             }}
           />
           <div style={{ overflowY: "auto", flex: 1 }}>

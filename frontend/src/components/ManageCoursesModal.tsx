@@ -114,6 +114,7 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
           <div style={{ position: "relative", marginBottom: 10 }}>
             <input
               autoFocus
+              aria-label="Search courses"
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Search by code or name (e.g. MATH 242)"

@@ -94,6 +94,8 @@ export function MermaidBlock({ code }: { code: string }) {
 
   return (
     <div
+      role="img"
+      aria-label={`Diagram: ${code.replace(/\s+/g, " ").trim()}`}
       style={{ margin: "10px 0 14px", overflowX: "auto", textAlign: "center" }}
       dangerouslySetInnerHTML={{ __html: svg }}
     />

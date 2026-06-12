@@ -155,6 +155,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
         }}
       >
         <textarea
+          aria-label="Message"
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => {
@@ -172,7 +173,6 @@ const ChatInputBar = React.memo(function ChatInputBar({
             background: "transparent",
             fontSize: 14,
             lineHeight: 1.5,
-            outline: "none",
             padding: "6px 0",
             fontFamily: "var(--font-sans)",
             maxHeight: 160,

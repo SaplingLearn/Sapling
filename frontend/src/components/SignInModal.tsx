@@ -33,6 +33,8 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
   const popupRef = useRef<Window | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
   const watchdogRef = useRef<number | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<Element | null>(null);
 
   const cleanupPopupListeners = useCallback(() => {
     if (channelRef.current) {
@@ -74,10 +76,44 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { close(); return; }
+      if (e.key === "Tab" && panelRef.current) {
+        const focusable = Array.from(
+          panelRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        );
+        if (focusable.length === 0) { e.preventDefault(); return; }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, close]);
+
+  // Move focus into the modal on open; restore it to the trigger on close.
+  useEffect(() => {
+    if (!open) return;
+    previousFocusRef.current = document.activeElement;
+    const focusTimer = setTimeout(() => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusable = panel.querySelector<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      (focusable ?? panel).focus();
+    }, 20);
+    return () => {
+      clearTimeout(focusTimer);
+      const prev = previousFocusRef.current;
+      if (prev instanceof HTMLElement) prev.focus();
+    };
+  }, [open]);
 
   if (!open) return null;
 
@@ -182,6 +218,8 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       onClick={close}
     >
       <div
+        ref={panelRef}
+        tabIndex={-1}
         className={`relative w-full ${closing ? "modal-card-out" : "modal-card-in"}`}
         style={{
           maxWidth: 440,

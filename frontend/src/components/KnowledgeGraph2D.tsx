@@ -99,6 +99,20 @@ type DragState =
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 3;
 
+// Visually-hidden but screen-reader-available. Mirrors KnowledgeGraph3D so the
+// pointer-only SVG graph still exposes its nodes as a navigable text list.
+const SR_ONLY: React.CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0,0,0,0)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
+
 function KnowledgeGraph2DImpl({
   nodes,
   edges,
@@ -372,6 +386,8 @@ function KnowledgeGraph2DImpl({
         ref={svgRef}
         width={width}
         height={height}
+        role="img"
+        aria-label="Knowledge graph"
         style={{
           display: "block",
           cursor: dragRef.current?.kind === "pan" ? "grabbing" : "grab",
@@ -629,6 +645,19 @@ function KnowledgeGraph2DImpl({
           )}
         </div>
       )}
+      <ul style={SR_ONLY} aria-label="Knowledge graph nodes">
+        {nodes.map((n) =>
+          onNodeClick ? (
+            <li key={n.id}>
+              <button type="button" onClick={() => onNodeClick(n)}>
+                {n.name}
+              </button>
+            </li>
+          ) : (
+            <li key={n.id}>{n.name}</li>
+          ),
+        )}
+      </ul>
     </div>
   );
 }

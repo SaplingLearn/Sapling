@@ -61,7 +61,7 @@
   --border-strong: rgba(42, 39, 31, 0.18);
   --text:      var(--ink-800);
   --text-dim:  var(--ink-600);
-  --text-muted:var(--ink-400);
+  --text-muted:#6f6857;  /* WCAG AA: darkened from --ink-400 (#8a8372, 3.4:1) to ≥4.5:1 on paper/inset */
   --accent:    #8a9a5b;
   --accent-fg: #ffffff;
   --accent-soft: var(--sap-50);
@@ -189,7 +189,7 @@ body { font-size: 14px; line-height: 1.5; }
   border: 1px solid var(--border);
   text-transform: uppercase;
 }
-.chip--accent { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-border); }
+.chip--accent { background: var(--accent-soft); color: var(--sap-600); border-color: var(--accent-border); }
 .chip--warn   { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .chip--err    { background: var(--err-soft); color: var(--err); border-color: transparent; }
 .chip--info   { background: var(--info-soft); color: var(--info); border-color: transparent; }
@@ -201,8 +201,8 @@ body { font-size: 14px; line-height: 1.5; }
   transition: all var(--dur-fast) var(--ease);
 }
 .btn:hover { border-color: var(--border-strong); background: var(--bg-subtle); }
-.btn--primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
-.btn--primary:hover { filter: brightness(1.05); background: var(--accent); }
+.btn--primary { background: var(--brand-forest); color: var(--accent-fg); border-color: transparent; }
+.btn--primary:hover { filter: brightness(1.05); background: var(--brand-forest); }
 .btn--ghost { background: transparent; border-color: transparent; }
 .btn--ghost:hover { background: var(--bg-soft); }
 .btn--danger { color: var(--err); border-color: rgba(168,58,58,0.3); }

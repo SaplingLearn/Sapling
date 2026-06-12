@@ -86,14 +86,14 @@ export function ParsedCardsTable({ cards, onChange, reverseEnabled, onReverseTog
                   <input
                     value={c.front}
                     onChange={e => updateRow(i, { front: e.target.value })}
-                    style={{ width: "100%", background: "transparent", border: "none", outline: "none", color: "var(--text)" }}
+                    style={{ width: "100%", background: "transparent", border: "none", color: "var(--text)" }}
                   />
                 </td>
                 <td style={{ padding: "4px 8px" }}>
                   <input
                     value={c.back}
                     onChange={e => updateRow(i, { back: e.target.value })}
-                    style={{ width: "100%", background: "transparent", border: "none", outline: "none", color: "var(--text)" }}
+                    style={{ width: "100%", background: "transparent", border: "none", color: "var(--text)" }}
                   />
                 </td>
                 <td>
