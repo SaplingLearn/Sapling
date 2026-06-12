@@ -462,90 +462,40 @@ body { font-size: 14px; line-height: 1.5; }
 .landing-page ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
 
 /* ════════════════════════════════════════════════════════════════════
-   LIQUID GLASS SYSTEM
+   PANEL SURFACES  (was the LIQUID GLASS SYSTEM — removed in #102)
+   Solid surfaces only: no backdrop-filter / blur / frosted panels, per the
+   brand contract (.impeccable.md). Class names are kept so component markup
+   is unchanged; they now render as opaque --bg-panel cards.
    ════════════════════════════════════════════════════════════════════ */
 
-/* Base glass panel (reference glass-panel: frosted + inset rim) */
-.liquid-glass {
-  background: rgba(255, 255, 255, 0.35);
-  backdrop-filter: blur(24px) saturate(1.5);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow:
-    0 8px 32px 0 rgba(31, 38, 135, 0.05),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+.liquid-glass,
+.glass-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
   position: relative;
   overflow: hidden;
   isolation: isolate;
 }
 
-/* Specular shimmer on hover */
-.liquid-glass::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(
-    105deg,
-    transparent 25%,
-    rgba(255, 255, 255, 0.6) 42%,
-    rgba(255, 255, 255, 0.2) 52%,
-    transparent 68%
-  );
-  opacity: 0;
-  transform: translateX(-100%);
-  transition: opacity 0.25s ease, transform 0.55s ease;
-  pointer-events: none;
-  z-index: 2;
-}
-.liquid-glass:hover::after {
-  opacity: 1;
-  transform: translateX(100%);
-}
-
-/* Stronger glass for modals / overlays */
 .liquid-glass-strong {
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(40px) saturate(1.65);
-  -webkit-backdrop-filter: blur(40px) saturate(1.65);
-  border: 1px solid rgba(255, 255, 255, 0.65);
-  box-shadow:
-    0 8px 32px 0 rgba(31, 38, 135, 0.08),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.5),
-    0 12px 48px -4px rgba(0, 0, 0, 0.1);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
 }
 
-/* Subtle glass for pills / small buttons */
 .liquid-glass-subtle {
-  background: rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(12px) saturate(1.45);
-  -webkit-backdrop-filter: blur(12px) saturate(1.45);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow:
-    0 4px 24px -2px rgba(31, 38, 135, 0.04),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.35);
-}
-
-/* Alias + inputs (reference glass-input) */
-.glass-panel {
-  background: rgba(255, 255, 255, 0.35);
-  backdrop-filter: blur(24px) saturate(1.5);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow:
-    0 8px 32px 0 rgba(31, 38, 135, 0.05),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 .glass-input {
-  background: rgba(255, 255, 255, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
 }
 .glass-input:focus {
   outline: none;
-  background: rgba(255, 255, 255, 0.6);
   border-color: var(--brand-primary);
   box-shadow: 0 0 0 2px rgba(46, 125, 82, 0.2);
 }
@@ -748,36 +698,22 @@ input[type="reset"]:disabled {
   100% { transform: translate(0, 0) scale(1); }
 }
 
-/* Liquid glass / floating card surface effects. */
+/* Landing floating-card surfaces — solid (glass removed, #102). */
 .landing-page .liquid-glass {
   position: relative;
-  background: rgba(255, 255, 255, 0.42);
-  backdrop-filter: blur(24px) saturate(1.1);
-  -webkit-backdrop-filter: blur(24px) saturate(1.1);
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  box-shadow:
-    0 12px 32px rgba(15, 23, 42, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
   transition: transform 500ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),
               box-shadow 500ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
 }
-.landing-page .liquid-glass::after {
-  content: "";
-  position: absolute; inset: 0;
-  border-radius: inherit;
-  background: radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.75) 0%, transparent 55%);
-  opacity: 0.55;
-  pointer-events: none;
-  transition: opacity 500ms ease;
-}
-.landing-page .liquid-glass:hover::after { opacity: 0.8; }
 .landing-page .liquid-glass-strong {
-  background: rgba(255, 255, 255, 0.62);
-  border-color: rgba(255, 255, 255, 0.7);
+  background: var(--bg-panel);
+  border-color: var(--border);
 }
 .landing-page .liquid-glass-subtle {
-  background: rgba(255, 255, 255, 0.28);
-  border-color: rgba(255, 255, 255, 0.4);
+  background: var(--bg-panel);
+  border-color: var(--border);
 }
 
 /* Landing sections / dividers / ambient glow. */
