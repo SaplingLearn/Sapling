@@ -37,14 +37,14 @@ export function ModelToggle({
     {
       value: "fast",
       label: "Fast",
-      color: "#3B82F6",
+      color: "#1D4ED8",
       soft: "rgba(59, 130, 246, 0.12)",
       border: "rgba(59, 130, 246, 0.35)",
     },
     {
       value: "smart",
       label: "Smart",
-      color: "#8A63D2",
+      color: "#6D28D9",
       soft: "rgba(138, 99, 210, 0.14)",
       border: "rgba(138, 99, 210, 0.4)",
     },
