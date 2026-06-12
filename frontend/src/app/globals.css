@@ -319,16 +319,6 @@ body { font-size: 14px; line-height: 1.5; }
   transition: opacity 0.5s ease, background 0.8s ease;
 }
 
-/* ── Gradient shift ────────────────────────────────────────────── */
-@keyframes landing-gradient-shift {
-  0%   { background-position: 0% center; }
-  100% { background-position: 100% center; }
-}
-.landing-animate-gradient {
-  background-size: 200% auto;
-  animation: landing-gradient-shift 5s ease-in-out infinite alternate;
-}
-
 /* ── Slow pulse ────────────────────────────────────────────────── */
 @keyframes landing-pulse-slow {
   0%, 100% { transform: scale(0.98); }
@@ -727,15 +717,7 @@ input[type="reset"]:disabled {
   transition: opacity 0.5s ease, background 0.8s ease;
 }
 
-/* Gradient shift + slow pulse + float indicator. */
-@keyframes landing-gradient-shift {
-  0%   { background-position: 0% center; }
-  100% { background-position: 100% center; }
-}
-.landing-page .landing-animate-gradient {
-  background-size: 200% auto;
-  animation: landing-gradient-shift 5s ease-in-out infinite alternate;
-}
+/* Slow pulse + float indicator. */
 @keyframes landing-pulse-slow {
   0%, 100% { transform: scale(0.98); }
   50%      { transform: scale(1.02); }

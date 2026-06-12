@@ -671,7 +671,7 @@ export default function LandingPage() {
             <div className="landing-intro-orbit-node landing-intro-orbit-node--purple" />
           </div>
           <div className="text-center">
-            <div className="font-playfair text-3xl sm:text-4xl font-semibold bg-gradient-to-r from-[var(--brand-forest)] via-[#2D8F5C] to-[var(--brand-forest)] bg-clip-text text-transparent">
+            <div className="font-playfair text-3xl sm:text-4xl font-semibold text-[var(--brand-forest)]">
               Sapling
             </div>
             <div className="mt-2 text-xs sm:text-sm font-jetbrains tracking-[0.2em] uppercase text-[var(--brand-text2)]">
@@ -789,7 +789,7 @@ export default function LandingPage() {
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 300ms',
-          }} className="font-playfair text-5xl sm:text-7xl md:text-8xl lg:text-[10rem] font-semibold leading-[1.15] tracking-tight pb-8 px-4 bg-gradient-to-r from-[var(--brand-forest)] via-[#2D8F5C] to-[var(--brand-forest)] bg-clip-text text-transparent landing-animate-gradient">
+          }} className="font-playfair text-5xl sm:text-7xl md:text-8xl lg:text-[10rem] font-semibold leading-[1.15] tracking-tight pb-8 px-4 text-[var(--brand-forest)]">
             <span>{heroText1 || '\u00A0'}</span>
           </h1>
 
@@ -842,7 +842,7 @@ export default function LandingPage() {
               <div className="md:col-span-7">
                 <span className="font-jetbrains text-[0.7rem] tracking-[0.32em] text-[var(--brand-forest)] uppercase font-medium">In the Sapling kit</span>
                 <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--brand-text1)] mt-5 leading-[1.02] tracking-tight">
-                  Tools that bend to <em className="not-italic bg-gradient-to-r from-[var(--brand-forest)] via-[#2D8F5C] to-[var(--brand-forest)] bg-clip-text text-transparent landing-animate-gradient">your study</em>, not the other way around.
+                  Tools that bend to <em className="not-italic text-[var(--brand-forest)]">your study</em>, not the other way around.
                 </h2>
               </div>
               <div className="md:col-span-4 md:col-start-9 md:pt-8 flex flex-col justify-end">
@@ -935,7 +935,7 @@ export default function LandingPage() {
           </div>
           <div className="relative z-10 max-w-3xl mx-auto px-6 landing-fade-up">
             <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--brand-text1)] tracking-tight leading-[1.05]">
-              Ready to <br /> Start <span className="bg-gradient-to-r from-[var(--brand-forest)] via-[#2D8F5C] to-[var(--brand-forest)] bg-clip-text text-transparent landing-animate-gradient pr-2">Growing?</span>
+              Ready to <br /> Start <span className="text-[var(--brand-forest)] pr-2">Growing?</span>
             </h2>
             <p className="text-[var(--brand-text2)] text-lg mt-6 font-light">Join students who learn smarter, not harder.</p>
             <div className="mt-10 flex flex-col items-center">
