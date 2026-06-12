@@ -777,9 +777,9 @@ export default function LandingPage() {
               <button
                 onClick={() => { setBetaModalOpen(true); if (betaEverSubmitted) setBetaSubmitted(true); }}
                 className={`relative overflow-hidden group px-10 py-4 rounded-full font-medium text-base tracking-wide text-white shadow-[0_4px_14px_rgba(27,108,66,0.18)] hover:shadow-[0_6px_20px_rgba(27,108,66,0.28)] transition-all duration-500 hover:scale-[1.02] active:scale-[0.98] landing-btn-shimmer${betaEverSubmitted ? '' : ' beta-glow-btn'}`}
-                style={{ background: '#2D8F5C', border: 'none' }}
-                onMouseEnter={e => { e.currentTarget.style.background = '#236F48'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = '#2D8F5C'; }}
+                style={{ background: 'var(--brand-forest-bright)', border: 'none' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--brand-forest-bright-hover)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'var(--brand-forest-bright)'; }}
               >
                 Sign up for Beta Testing
               </button>

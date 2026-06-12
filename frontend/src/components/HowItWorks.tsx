@@ -108,10 +108,10 @@ function SproutSVG({ active }: { active: boolean }) {
       />
       {/* Right leaf */}
       <motion.path d="M100 152 Q127 136 130 114 Q111 122 100 152"
-        fill="#2D8F5C" opacity="0.9"
+        opacity="0.9"
         initial={{ scale: 0 }} animate={active ? { scale: 1 } : { scale: 0 }}
         transition={{ duration: 0.55, delay: 0.65, ease: [0.34, 1.56, 0.64, 1] }}
-        style={{ transformOrigin: '100px 152px' }}
+        style={{ fill: 'var(--brand-forest-bright)', transformOrigin: '100px 152px' }}
       />
       {/* Tip bud */}
       <motion.circle cx="100" cy="136" r="5.5" fill="#3BAF6C"

@@ -20,6 +20,9 @@
 
   /* Canonical brand green ("forest"). Mirrored by BRAND_FOREST in lib/brand.ts. */
   --brand-forest: #1B6C42;
+  /* Brighter forest used for the primary CTA fill + the hero "growth" leaf. */
+  --brand-forest-bright: #2D8F5C;
+  --brand-forest-bright-hover: #236F48;
 
   /* Brand greens */
   --sap-50:  #f1f6ee;
