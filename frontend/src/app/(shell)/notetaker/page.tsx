@@ -54,10 +54,10 @@ type Note = {
 };
 
 const MASTERY_COLOR: Record<Mastery, string> = {
-  mastered: "#4a7d5c",
-  learning: "#c89b5e",
-  struggling: "#b25855",
-  unexplored: "#9a9a9a",
+  mastered: "var(--state-mastery)",
+  learning: "var(--state-progress)",
+  struggling: "var(--state-struggle)",
+  unexplored: "var(--state-neutral)",
 };
 
 function normalizeMastery(tier: string): Mastery {
@@ -132,7 +132,7 @@ export default function NotetakerPage() {
         id,
         name: "Unknown course",
         code: "—",
-        color: "#9a9a9a",
+        color: "var(--fallback-muted)",
       },
     [courses],
   );

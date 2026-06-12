@@ -351,7 +351,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
         <div style={{
           fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
           fontSize: '11px', letterSpacing: '0.12em', textTransform: 'uppercase',
-          color: '#1B6C42', fontWeight: 700, marginBottom: '4px',
+          color: 'var(--brand-forest)', fontWeight: 700, marginBottom: '4px',
         }}>
           Step {activeStep + 1} / {STEPS.length}
         </div>
@@ -384,7 +384,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
               <div style={{
                 position: 'absolute', left: 0, top: 0, height: '100%',
                 width: `${filledW}px`,
-                background: '#1B6C42', borderRadius: '99px',
+                background: 'var(--brand-forest)', borderRadius: '99px',
                 transition: 'width 0.55s cubic-bezier(0.22,1,0.36,1)',
               }} />
             </div>
@@ -505,7 +505,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
                           textAlign: 'left',
                           padding: '12px 18px',
                           fontSize: '14px',
-                          color: formData.year === opt.toLowerCase() ? '#1B6C42' : '#111827',
+                          color: formData.year === opt.toLowerCase() ? 'var(--brand-forest)' : '#111827',
                           fontWeight: formData.year === opt.toLowerCase() ? 500 : 400,
                           cursor: 'pointer',
                           borderBottom: i < YEAR_OPTIONS.length - 1 ? '1px solid rgba(0,0,0,0.06)' : 'none',
@@ -722,7 +722,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
               padding: '13px 22px',
               background: 'rgba(255,255,255,0.48)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
               border: '1px solid rgba(27,108,66,0.25)', borderRadius: '100px',
-              color: '#1B6C42', fontSize: '13px', fontWeight: 500,
+              color: 'var(--brand-forest)', fontSize: '13px', fontWeight: 500,
               cursor: 'pointer', transition: 'all 0.2s ease',
               fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
             }}>
@@ -733,7 +733,7 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
           <button onClick={handleNext} disabled={!canAdvance()} style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
               padding: '13px 40px',
-              background: canAdvance() ? '#1B6C42' : 'rgba(255,255,255,0.4)',
+              background: canAdvance() ? 'var(--brand-forest)' : 'rgba(255,255,255,0.4)',
               backdropFilter: canAdvance() ? 'none' : 'blur(10px)',
               WebkitBackdropFilter: canAdvance() ? 'none' : 'blur(10px)',
               border: canAdvance() ? 'none' : '1px solid rgba(0,0,0,0.09)',

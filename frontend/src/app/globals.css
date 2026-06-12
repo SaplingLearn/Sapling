@@ -18,6 +18,9 @@
   --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 
+  /* Canonical brand green ("forest"). Mirrored by BRAND_FOREST in lib/brand.ts. */
+  --brand-forest: #1B6C42;
+
   /* Brand greens */
   --sap-50:  #f1f6ee;
   --sap-100: #e0ecd8;
@@ -67,6 +70,24 @@
   --err-soft: #f5d8d3;
   --info: #3e6f8a;
   --info-soft: #dfe9ef;
+
+  /* Knowledge-status palette (mastery/progress/struggle legend + graph dots).
+     Single source for the 3 previously-inlined copies in Dashboard / Tree /
+     notetaker. Values are byte-identical to those inline copies. */
+  --state-mastery:  #4a7d5c;
+  --state-progress: #c89b5e;
+  --state-struggle: #b25855;
+  --state-neutral:  #9a9a9a;
+
+  /* Course "unknown" placeholder gray. Coincidentally equal to --state-neutral
+     today, but a distinct concept (a UI fallback, not a mastery status), so a
+     future neutral-state change won't silently move the notetaker fallback. */
+  --fallback-muted: #9a9a9a;
+
+  /* Dashboard alert one-offs (streak shield / notification dot). Kept distinct
+     from --warn (#b4562c) / --err (#a83a3a), whose values differ. */
+  --alert-warn: #e87734;
+  --alert-err:  #e94b5c;
 
   /* Landing-page brand tokens (mirrors main-branch palette so the
      pre-revamp landing + onboarding animations render on-brand). */
@@ -368,7 +389,7 @@ body { font-size: 14px; line-height: 1.5; }
   border-radius: 999px;
 }
 
-.landing-intro-orbit-node--green  { background: #1B6C42;  top: -3px;  left: 50%; transform: translateX(-50%); }
+.landing-intro-orbit-node--green  { background: var(--brand-forest);  top: -3px;  left: 50%; transform: translateX(-50%); }
 .landing-intro-orbit-node--amber  { background: #D97706;  right: -3px; top: 45%; transform: translateY(-50%); }
 .landing-intro-orbit-node--blue   { background: #3B82F6;  bottom: -3px; left: 35%; transform: translateX(-50%); }
 .landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
@@ -814,7 +835,7 @@ input[type="reset"]:disabled {
   animation: landing-intro-orbit 14s linear infinite;
 }
 .landing-page .landing-intro-orbit-node { position: absolute; width: 10px; height: 10px; border-radius: 999px; }
-.landing-page .landing-intro-orbit-node--green  { background: #1B6C42;  top: -3px;  left: 50%; transform: translateX(-50%); }
+.landing-page .landing-intro-orbit-node--green  { background: var(--brand-forest);  top: -3px;  left: 50%; transform: translateX(-50%); }
 .landing-page .landing-intro-orbit-node--amber  { background: #D97706;  right: -3px; top: 45%; transform: translateY(-50%); }
 .landing-page .landing-intro-orbit-node--blue   { background: #3B82F6;  bottom: -3px; left: 35%; transform: translateX(-50%); }
 .landing-page .landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
@@ -933,7 +954,7 @@ input[type="reset"]:disabled {
 }
 .landing-page .landing-feature-row:hover .landing-feature-title {
   transform: translateX(8px);
-  color: #1B6C42;
+  color: var(--brand-forest);
   letter-spacing: -0.012em;
 }
 @media (prefers-reduced-motion: reduce) {

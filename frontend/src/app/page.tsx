@@ -7,6 +7,7 @@ import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } 
 import OnboardingFlow from '@/components/OnboardingFlow';
 import HowItWorks from '@/components/HowItWorks';
 import SignInModal from '@/components/SignInModal';
+import { BRAND_FOREST } from '@/lib/brand';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
@@ -670,7 +671,7 @@ export default function LandingPage() {
             <div className="landing-intro-orbit-node landing-intro-orbit-node--purple" />
           </div>
           <div className="text-center">
-            <div className="font-playfair text-3xl sm:text-4xl font-semibold bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent">
+            <div className="font-playfair text-3xl sm:text-4xl font-semibold bg-gradient-to-r from-[var(--brand-forest)] via-[#2D8F5C] to-[var(--brand-forest)] bg-clip-text text-transparent">
               Sapling
             </div>
             <div className="mt-2 text-xs sm:text-sm font-jetbrains tracking-[0.2em] uppercase text-[var(--brand-text2)]">
@@ -699,7 +700,7 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center">
             <button onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
-            <button onClick={startOnboarding} className="relative overflow-hidden group bg-[#1B6C42] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
+            <button onClick={startOnboarding} className="relative overflow-hidden group bg-[var(--brand-forest)] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
               Get Started
             </button>
           </div>
@@ -742,7 +743,7 @@ export default function LandingPage() {
               </div>
               <div className="flex items-center justify-between text-xs text-[var(--brand-text2)]">
                 <span>Mastered</span>
-                <span className="font-jetbrains text-[#1B6C42]">68%</span>
+                <span className="font-jetbrains text-[var(--brand-forest)]">68%</span>
               </div>
               <div className="flex items-center justify-between text-xs text-[var(--brand-text2)]">
                 <span>On track</span>
@@ -757,7 +758,7 @@ export default function LandingPage() {
             data-base-rot="4" data-float-delay="1000" data-float-dur="6000"
           >
             <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#1B6C42]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Mastered</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--brand-forest)]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Mastered</span></div>
               <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#D97706]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Learning</span></div>
               <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#EF4444]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Struggling</span></div>
               <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#9CA3AF]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Unexplored</span></div>
@@ -788,7 +789,7 @@ export default function LandingPage() {
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 300ms',
-          }} className="font-playfair text-5xl sm:text-7xl md:text-8xl lg:text-[10rem] font-semibold leading-[1.15] tracking-tight pb-8 px-4 bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient">
+          }} className="font-playfair text-5xl sm:text-7xl md:text-8xl lg:text-[10rem] font-semibold leading-[1.15] tracking-tight pb-8 px-4 bg-gradient-to-r from-[var(--brand-forest)] via-[#2D8F5C] to-[var(--brand-forest)] bg-clip-text text-transparent landing-animate-gradient">
             <span>{heroText1 || '\u00A0'}</span>
           </h1>
 
@@ -839,9 +840,9 @@ export default function LandingPage() {
             {/* Editorial heading: asymmetric split, breathing room. */}
             <div className="grid md:grid-cols-12 gap-8 md:gap-12 mb-20 md:mb-28 landing-fade-up">
               <div className="md:col-span-7">
-                <span className="font-jetbrains text-[0.7rem] tracking-[0.32em] text-[#1B6C42] uppercase font-medium">In the Sapling kit</span>
+                <span className="font-jetbrains text-[0.7rem] tracking-[0.32em] text-[var(--brand-forest)] uppercase font-medium">In the Sapling kit</span>
                 <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--brand-text1)] mt-5 leading-[1.02] tracking-tight">
-                  Tools that bend to <em className="not-italic bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient">your study</em>, not the other way around.
+                  Tools that bend to <em className="not-italic bg-gradient-to-r from-[var(--brand-forest)] via-[#2D8F5C] to-[var(--brand-forest)] bg-clip-text text-transparent landing-animate-gradient">your study</em>, not the other way around.
                 </h2>
               </div>
               <div className="md:col-span-4 md:col-start-9 md:pt-8 flex flex-col justify-end">
@@ -849,7 +850,7 @@ export default function LandingPage() {
                   Six instruments, tuned to one another. Each is a verb you reach for; together they make a quiet system that learns you back.
                 </p>
                 <div className="mt-6 flex items-center gap-3">
-                  <span className="block h-px w-12 bg-[#1B6C42]" />
+                  <span className="block h-px w-12 bg-[var(--brand-forest)]" />
                   <span className="font-jetbrains text-[0.65rem] tracking-[0.3em] text-[var(--brand-text2)] uppercase">Scroll the catalog</span>
                 </div>
               </div>
@@ -872,9 +873,9 @@ export default function LandingPage() {
                 >
                   <div className="grid md:grid-cols-12 items-center gap-6 md:gap-8 py-9 md:py-12 px-2 md:px-4 transition-colors duration-500">
                     {/* Index marker. */}
-                    <div className="md:col-span-1 font-jetbrains text-[0.7rem] tracking-[0.3em] text-[var(--brand-text2)] transition-colors duration-500 group-hover:text-[#1B6C42]">
+                    <div className="md:col-span-1 font-jetbrains text-[0.7rem] tracking-[0.3em] text-[var(--brand-text2)] transition-colors duration-500 group-hover:text-[var(--brand-forest)]">
                       <span className="inline-block tabular-nums">0{i + 1}</span>
-                      <span className="hidden md:inline-block ml-3 align-middle h-px w-6 bg-[var(--brand-text2)]/30 group-hover:bg-[#1B6C42]/60 transition-colors duration-500" />
+                      <span className="hidden md:inline-block ml-3 align-middle h-px w-6 bg-[var(--brand-text2)]/30 group-hover:bg-[var(--brand-forest)]/60 transition-colors duration-500" />
                     </div>
 
                     {/* Title with bare inline icon — no circle, no color. */}
@@ -900,7 +901,7 @@ export default function LandingPage() {
                   {/* Hover-driven underline sweep, brand green. */}
                   <span
                     aria-hidden
-                    className="landing-feature-underline pointer-events-none absolute left-0 bottom-0 h-[2px] w-0 bg-[#1B6C42] group-hover:w-full transition-[width] duration-[900ms] ease-out"
+                    className="landing-feature-underline pointer-events-none absolute left-0 bottom-0 h-[2px] w-0 bg-[var(--brand-forest)] group-hover:w-full transition-[width] duration-[900ms] ease-out"
                   />
                 </li>
               ))}
@@ -934,11 +935,11 @@ export default function LandingPage() {
           </div>
           <div className="relative z-10 max-w-3xl mx-auto px-6 landing-fade-up">
             <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--brand-text1)] tracking-tight leading-[1.05]">
-              Ready to <br /> Start <span className="bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient pr-2">Growing?</span>
+              Ready to <br /> Start <span className="bg-gradient-to-r from-[var(--brand-forest)] via-[#2D8F5C] to-[var(--brand-forest)] bg-clip-text text-transparent landing-animate-gradient pr-2">Growing?</span>
             </h2>
             <p className="text-[var(--brand-text2)] text-lg mt-6 font-light">Join students who learn smarter, not harder.</p>
             <div className="mt-10 flex flex-col items-center">
-              <button onClick={startOnboarding} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
+              <button onClick={startOnboarding} className="relative overflow-hidden group bg-[var(--brand-forest)] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
                 Get Started
               </button>
             </div>
@@ -987,7 +988,7 @@ export default function LandingPage() {
             onClick={e => e.stopPropagation()}
           >
             <h2 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 32, lineHeight: 1.1, fontWeight: 600, letterSpacing: '-0.02em', color: '#1a1a1a' }}>
-              You&apos;re on the <span style={{ fontStyle: 'italic', color: '#1B6C42' }}>tree.</span>
+              You&apos;re on the <span style={{ fontStyle: 'italic', color: 'var(--brand-forest)' }}>tree.</span>
             </h2>
             <p style={{ margin: '10px 0 0', fontSize: 17, color: '#4b5563', fontStyle: 'italic' }}>
               See you in the inbox - The Team
@@ -1050,7 +1051,7 @@ export default function LandingPage() {
               <div>
                 <div style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace", fontSize: 10.5, color: '#6b7280', letterSpacing: '0.22em', marginBottom: 14, textTransform: 'uppercase', fontWeight: 600 }}>Early access</div>
                 <h2 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 44, lineHeight: 1.05, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
-                  Learn early.<br /><span style={{ fontStyle: 'italic', fontWeight: 800, color: '#1B6C42', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif" }}>Grow</span> with us.
+                  Learn early.<br /><span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif" }}>Grow</span> with us.
                 </h2>
                 <p style={{ margin: '14px 0 0', fontSize: 13.5, lineHeight: 1.55, color: '#4b5563', maxWidth: 360 }}>
                   Sapling is being built alongside the students who&apos;ll use it most. Join early and help shape what it becomes.
@@ -1098,14 +1099,14 @@ export default function LandingPage() {
               </div>
               <h1 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
                 Join the<br />
-                <span style={{ fontStyle: 'italic', fontWeight: 800, color: '#1B6C42', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif" }}>Newsletter</span>
+                <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif" }}>Newsletter</span>
               </h1>
               <p style={{ margin: '14px 0 0', fontSize: 15, color: '#4b5563', lineHeight: 1.5 }}>
                 Hear fun stories from students like you.
               </p>
               <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {([
-                  { dot: '#1B6C42', title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
+                  { dot: BRAND_FOREST, title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
                   { dot: '#D97706', title: 'Real notes from the team.', body: "What we're figuring out as we build. Honest, occasional, and worth opening." },
                   { dot: '#8A63D2', title: 'Your input shapes what we build.', body: 'Early polls, roadmap previews, and a direct line to the people building it.' },
                 ] as Array<{ dot: string; title: string; body: string }>).map(({ dot, title, body }) => (
@@ -1161,7 +1162,7 @@ export default function LandingPage() {
                       fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
                       color: '#1a1a1a', boxSizing: 'border-box',
                     }}
-                    onFocus={e => { e.target.style.borderColor = '#1B6C42'; e.target.style.boxShadow = '0 0 0 3px rgba(27,108,66,0.12)'; }}
+                    onFocus={e => { e.target.style.borderColor = 'var(--brand-forest)'; e.target.style.boxShadow = '0 0 0 3px rgba(27,108,66,0.12)'; }}
                     onBlur={e => { e.target.style.borderColor = 'rgba(107,114,128,0.25)'; e.target.style.boxShadow = 'none'; }}
                   />
                   {betaEmailError && (
@@ -1175,7 +1176,7 @@ export default function LandingPage() {
                   disabled={betaSubmitting}
                   style={{
                     width: '100%', padding: '14px 16px', borderRadius: 10,
-                    background: betaSubmitting ? '#4b5563' : '#1B6C42', color: '#fff',
+                    background: betaSubmitting ? '#4b5563' : 'var(--brand-forest)', color: '#fff',
                     fontSize: 14, fontWeight: 600, letterSpacing: '0.02em',
                     boxShadow: '0 8px 24px rgba(27,108,66,0.3)',
                     border: 'none', cursor: betaSubmitting ? 'default' : 'pointer',
@@ -1183,7 +1184,7 @@ export default function LandingPage() {
                     fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
                   }}
                   onMouseEnter={e => { if (!betaSubmitting) e.currentTarget.style.background = '#155A35'; }}
-                  onMouseLeave={e => { if (!betaSubmitting) e.currentTarget.style.background = '#1B6C42'; }}
+                  onMouseLeave={e => { if (!betaSubmitting) e.currentTarget.style.background = 'var(--brand-forest)'; }}
                 >
                   {betaSubmitting ? 'Planting your node…' : <>Sign Me Up <span style={{ opacity: 0.7 }}>→</span></>}
                 </button>

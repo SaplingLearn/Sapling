@@ -8,6 +8,7 @@ import {
   useMotionValueEvent,
   MotionValue,
 } from 'framer-motion';
+import { BRAND_FOREST } from '@/lib/brand';
 
 // ─── Graph data (shared by step 2 & 3) ───────────────────────────────────────
 
@@ -93,14 +94,14 @@ function SproutSVG({ active }: { active: boolean }) {
       ))}
       {/* Stem */}
       <motion.path d="M100 215 L100 138"
-        stroke="#1B6C42" strokeWidth="3.5" strokeLinecap="round"
+        stroke="var(--brand-forest)" strokeWidth="3.5" strokeLinecap="round"
         initial={{ pathLength: 0 }}
         animate={active ? { pathLength: 1 } : { pathLength: 0 }}
         transition={{ duration: 0.6, ease: 'easeOut' }}
       />
       {/* Left leaf */}
       <motion.path d="M100 163 Q73 148 70 126 Q89 132 100 163"
-        fill="#1B6C42" opacity="0.9"
+        fill="var(--brand-forest)" opacity="0.9"
         initial={{ scale: 0 }} animate={active ? { scale: 1 } : { scale: 0 }}
         transition={{ duration: 0.55, delay: 0.5, ease: [0.34, 1.56, 0.64, 1] }}
         style={{ transformOrigin: '100px 163px' }}
@@ -280,14 +281,14 @@ function Step1Content({ active }: { active: boolean }) {
         {COURSE_CHIPS.map((chip, i) => (
           <motion.div key={chip}
             className="rounded-full px-3 py-1 text-xs font-medium flex items-center gap-1.5"
-            style={{ background: 'rgba(27,108,66,0.1)', color: '#1B6C42' }}
+            style={{ background: 'rgba(27,108,66,0.1)', color: 'var(--brand-forest)' }}
             initial={{ scale: 0, opacity: 0 }}
             animate={active ? { scale: 1, opacity: 1 } : { scale: 0, opacity: 0 }}
             transition={{ duration: 0.38, delay: 0.58 + i * 0.14, ease: [0.34, 1.56, 0.64, 1] }}
           >
             <svg className="w-3 h-3" viewBox="0 0 12 12">
               <motion.path d="M2 6 L5 9 L10 3"
-                stroke="#1B6C42" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none"
+                stroke="var(--brand-forest)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none"
                 initial={{ pathLength: 0 }}
                 animate={active ? { pathLength: 1 } : { pathLength: 0 }}
                 transition={{ duration: 0.28, delay: 0.72 + i * 0.14 }}
@@ -339,8 +340,8 @@ function Step2Content({ active, showGraph }: { active: boolean; showGraph: boole
 
           {/* Progress ring */}
           <svg viewBox="0 0 28 28" className="w-7 h-7 -rotate-90">
-            <circle cx="14" cy="14" r="10" fill="none" stroke="#1B6C42" strokeOpacity="0.15" strokeWidth="2.5" />
-            <motion.circle cx="14" cy="14" r="10" fill="none" stroke="#1B6C42" strokeWidth="2.5"
+            <circle cx="14" cy="14" r="10" fill="none" stroke="var(--brand-forest)" strokeOpacity="0.15" strokeWidth="2.5" />
+            <motion.circle cx="14" cy="14" r="10" fill="none" stroke="var(--brand-forest)" strokeWidth="2.5"
               strokeLinecap="round"
               strokeDasharray={62.8}
               initial={{ strokeDashoffset: 62.8 }}
@@ -364,7 +365,7 @@ function Step2Content({ active, showGraph }: { active: boolean; showGraph: boole
             return (
               <motion.path key={i}
                 d={`M ${na.x} ${na.y} L ${nb.x} ${nb.y}`}
-                stroke="#1B6C42" strokeOpacity="0.22" strokeWidth="1.2"
+                stroke="var(--brand-forest)" strokeOpacity="0.22" strokeWidth="1.2"
                 initial={{ pathLength: 0 }}
                 animate={showGraph ? { pathLength: 1 } : { pathLength: 0 }}
                 transition={{ duration: 0.4, delay: 0.15 + i * 0.07 }}
@@ -374,8 +375,8 @@ function Step2Content({ active, showGraph }: { active: boolean; showGraph: boole
           {NODES.map((n, i) => (
             <g key={i}>
               <motion.circle cx={n.x} cy={n.y} r={12.5}
-                fill="#1B6C42" fillOpacity="0.07"
-                stroke="#1B6C42" strokeOpacity="0.28" strokeWidth="1.3"
+                fill="var(--brand-forest)" fillOpacity="0.07"
+                stroke="var(--brand-forest)" strokeOpacity="0.28" strokeWidth="1.3"
                 initial={{ scale: 0 }}
                 animate={showGraph ? { scale: 1 } : { scale: 0 }}
                 transition={{ duration: 0.38, delay: 0.25 + i * 0.07, ease: [0.34, 1.56, 0.64, 1] }}
@@ -383,7 +384,7 @@ function Step2Content({ active, showGraph }: { active: boolean; showGraph: boole
               />
               <motion.text x={n.x} y={n.y + 1}
                 textAnchor="middle" dominantBaseline="middle"
-                fontSize="5.5" fill="#1B6C42" fontFamily="monospace"
+                fontSize="5.5" fill="var(--brand-forest)" fontFamily="monospace"
                 initial={{ opacity: 0 }}
                 animate={showGraph ? { opacity: 0.75 } : { opacity: 0 }}
                 transition={{ duration: 0.3, delay: 0.45 + i * 0.07 }}
@@ -410,7 +411,7 @@ function Step3Content({ active }: { active: boolean }) {
           const na = NODES[a], nb = NODES[b];
           return (
             <path key={i} d={`M ${na.x} ${na.y} L ${nb.x} ${nb.y}`}
-              stroke="#1B6C42" strokeOpacity="0.18" strokeWidth="1.2"
+              stroke="var(--brand-forest)" strokeOpacity="0.18" strokeWidth="1.2"
             />
           );
         })}
@@ -423,7 +424,7 @@ function Step3Content({ active }: { active: boolean }) {
               {/* Ripple burst on mastery */}
               {willMaster && (
                 <motion.circle cx={n.x} cy={n.y} r={14}
-                  fill="none" stroke="#1B6C42" strokeWidth="1"
+                  fill="none" stroke="var(--brand-forest)" strokeWidth="1"
                   initial={{ scale: 0, opacity: 0 }}
                   animate={active ? { scale: [0, 2.2, 0], opacity: [0.7, 0.3, 0] } : { scale: 0, opacity: 0 }}
                   transition={{ duration: 0.65, delay: 0.35 + masteryIdx * 0.22 }}
@@ -431,11 +432,11 @@ function Step3Content({ active }: { active: boolean }) {
                 />
               )}
               <motion.circle cx={n.x} cy={n.y} r={13}
-                stroke={willMaster ? '#1B6C42' : '#9CA3AF'}
+                stroke={willMaster ? 'var(--brand-forest)' : '#9CA3AF'}
                 strokeWidth="1.4"
                 initial={{ fill: '#9CA3AF', fillOpacity: 0.08, strokeOpacity: 0.22 }}
                 animate={active && willMaster ? {
-                  fill: '#1B6C42',
+                  fill: BRAND_FOREST,
                   fillOpacity: [0.08, 0.3, 0.14],
                   strokeOpacity: 0.55,
                 } : {}}
@@ -444,7 +445,7 @@ function Step3Content({ active }: { active: boolean }) {
               <text x={n.x} y={n.y + 1}
                 textAnchor="middle" dominantBaseline="middle"
                 fontSize="5.5" fontFamily="monospace"
-                fill={willMaster ? '#1B6C42' : '#9CA3AF'}
+                fill={willMaster ? 'var(--brand-forest)' : '#9CA3AF'}
                 opacity={0.85}
               >
                 {n.label}
@@ -471,7 +472,7 @@ function Step3Content({ active }: { active: boolean }) {
             <div key={opt}
               className="rounded-lg px-2 py-1 text-[9px] font-medium"
               style={i === 1
-                ? { background: 'rgba(27,108,66,0.12)', color: '#1B6C42' }
+                ? { background: 'rgba(27,108,66,0.12)', color: 'var(--brand-forest)' }
                 : { background: 'rgba(0,0,0,0.04)', color: 'var(--brand-text2)' }
               }
             >
@@ -499,7 +500,7 @@ function StepIndicator({ scrollYProgress, activeStep }: {
         <div key={s} className="flex flex-col items-center" style={{ gap: 'clamp(0.375rem, 0.6vw, 0.5rem)' }}>
           <motion.div
             className="rounded-full"
-            style={{ width: 'clamp(0.4rem, 0.6vw, 0.5rem)', height: 'clamp(0.4rem, 0.6vw, 0.5rem)', background: activeStep >= s ? '#1B6C42' : 'rgba(156,163,175,0.4)' }}
+            style={{ width: 'clamp(0.4rem, 0.6vw, 0.5rem)', height: 'clamp(0.4rem, 0.6vw, 0.5rem)', background: activeStep >= s ? 'var(--brand-forest)' : 'rgba(156,163,175,0.4)' }}
             animate={{ scale: activeStep === s ? 1.4 : 1 }}
             transition={{ duration: 0.3 }}
           />
@@ -507,7 +508,7 @@ function StepIndicator({ scrollYProgress, activeStep }: {
             <div className="w-px overflow-hidden" style={{ height: 'clamp(1.5rem, 3vh, 2.25rem)', background: 'rgba(156,163,175,0.2)' }}>
               <motion.div className="w-full" style={{
                 height: i === 0 ? bar1H : bar2H,
-                background: '#1B6C42',
+                background: 'var(--brand-forest)',
               }} />
             </div>
           )}
@@ -620,7 +621,7 @@ export default function HowItWorks() {
                   className="absolute inset-x-0 top-0 text-center lg:text-left"
                   style={{ opacity: textOpacities[i], y: textYs[i] }}
                 >
-                  <span className="font-jetbrains tracking-[0.3em] text-[#1B6C42] uppercase block font-medium" style={{ fontSize: 'clamp(0.75rem, 1.1vw, 0.9375rem)', marginBottom: 'clamp(0.5rem, 1.2vh, 0.9375rem)' }}>
+                  <span className="font-jetbrains tracking-[0.3em] text-[var(--brand-forest)] uppercase block font-medium" style={{ fontSize: 'clamp(0.75rem, 1.1vw, 0.9375rem)', marginBottom: 'clamp(0.5rem, 1.2vh, 0.9375rem)' }}>
                     Step {step.num}
                   </span>
                   <h3 className="font-playfair font-semibold tracking-tight leading-tight"
