@@ -39,6 +39,16 @@ Wave 2 is closed.
   aria-hidden and redundant with the text label). Fix: delete the legacy block,
   then re-verify every rarity surface (AchievementUnlockToast, Achievements,
   ProfileView, TitleFlair) and re-measure dot ratios.
+- **Production deploy stalled (Cloudflare-side)**: every "Workers Builds:
+  frontend" run since 2026-06-12 14:30 UTC has failed (4 consecutive, including
+  a markdown-only diff), so main is merged but undeployed past the #213 build —
+  Wave 2 Phase 2 + PROGRAM.md are not live yet. Code is exonerated: both
+  `npm run build` and `npm run cf:build` pass locally on merged main. Cause:
+  Cloudflare incident "Cloudflare Dashboard and Cloudflare API service issues"
+  opened 2026-06-12 14:27 UTC, 3 minutes before the first failure. Edge serving
+  is unaffected (site stays up on the older build). Once the incident resolves,
+  retry from the dashboard or let the next push trigger a build, then confirm
+  the build goes green and drop this item.
 - **3 moderate Dependabot vulnerabilities** on the default branch (as of
   2026-06-12) — https://github.com/SaplingLearn/Sapling/security/dependabot
 - **PR #96** (feat/knowledge-graph-3d): pre-existing feature branch, outside this
