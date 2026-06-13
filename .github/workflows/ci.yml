@@ -35,6 +35,10 @@ jobs:
         run: |
           grep -vE '^(torch|docling|transformers)' requirements.txt > /tmp/req-ci.txt
           pip install -r /tmp/req-ci.txt
+      # #193: ruff lint, gated against the baseline in backend/ruff.toml. New
+      # violations (new files, or new rule categories in existing files) fail.
+      - name: Lint (ruff — baselined ratchet)
+        run: ruff check .
       - name: Run pytest
         env:
           # Non-secret dummy values so config validation / DB-URL construction /
