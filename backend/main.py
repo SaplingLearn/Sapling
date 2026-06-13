@@ -190,8 +190,17 @@ def list_users(request: Request):
 
 
 @app.get("/api/gemini-test")
-def gemini_test():
-    """Test Gemini connectivity. Shows clear error if API key is missing/wrong."""
+def gemini_test(request: Request):
+    """Admin-only Gemini connectivity check. Shows a clear error if the API
+    key is missing/wrong.
+
+    Gated behind `require_admin` (#198): every hit makes a real, billable
+    `call_gemini` round-trip, so an unauthenticated caller could burn Gemini
+    quota at will and use the `{"ok": ...}` response as an oracle for whether
+    the API key is configured. Only admins may trigger LLM spend here.
+    """
+    from services.auth_guard import require_admin
+    require_admin(request)  # 403 unless the session belongs to an admin; 401 if unauthenticated
     from services.gemini_service import call_gemini
     try:
         reply = call_gemini('Reply with exactly the text: Gemini OK', retries=0)
