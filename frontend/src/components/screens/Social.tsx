@@ -53,6 +53,45 @@ function supabaseClient() {
   }
 }
 
+// #124: room_messages.text is column-encrypted at rest; only the REST read path
+// decrypts it. Realtime postgres_changes payloads carry the raw CIPHERTEXT, so
+// rendering payload.new.text directly shows other users' messages as gibberish
+// until a manual reload. Treat a realtime message event as a "something changed"
+// signal and re-fetch through the decrypting REST endpoint instead of trusting
+// the payload — mirroring how this component already handles room_reactions.
+//
+// (This fixes DISPLAY only. It does not address the realtime channel's missing
+// authorization — that's the separate RLS/Realtime-Authorization work.)
+type RealtimeMsgAction =
+  | { type: "ignore" }
+  | { type: "refetch" }
+  | { type: "applyOwnFlags"; id: string; is_deleted: boolean; edited_at: string | null };
+
+export function planMessageRealtimeAction(
+  event: "INSERT" | "UPDATE",
+  row: { id?: string; user_id?: string; is_deleted?: boolean; edited_at?: string | null } | null | undefined,
+  currentUserId: string | null | undefined,
+): RealtimeMsgAction {
+  if (!row || !row.id) return { type: "ignore" };
+  const isOwn = row.user_id === currentUserId;
+  if (event === "INSERT") {
+    // Own inserts are shown optimistically and reconciled by the POST response;
+    // foreign inserts carry ciphertext text → re-fetch decrypted via REST.
+    return isOwn ? { type: "ignore" } : { type: "refetch" };
+  }
+  // UPDATE (edit / soft-delete): own edits keep their optimistic plaintext and
+  // take only the server-side flags; foreign edits re-fetch (ciphertext text).
+  if (isOwn) {
+    return {
+      type: "applyOwnFlags",
+      id: row.id,
+      is_deleted: !!row.is_deleted,
+      edited_at: row.edited_at ?? null,
+    };
+  }
+  return { type: "refetch" };
+}
+
 function CreateJoinBar({ onDone }: { onDone: () => void }) {
   const { userId } = useUser();
   const toast = useToast();
@@ -144,33 +183,27 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
       .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "room_messages", filter: `room_id=eq.${roomId}` },
         (payload: any) => {
-          const row = payload.new as RoomMessageRow;
-          setMessages(prev => {
-            // Dedup by real id: the sender already has this row (optimistic tmp
-            // reconciled by the POST response, or a prior echo). Never append a
-            // realtime row that's already present, and don't clobber the loaded
-            // reply_to/reactions on a row we already have (issue #131).
-            if (prev.some(m => m.id === row.id)) return prev;
-            // Own messages are handled by send()'s POST reconciliation; skip the
-            // echo so we don't briefly render a ciphertext duplicate.
-            if (row.user_id === userId) return prev;
-            return [...prev, { ...row, reactions: [], reply_to: null }];
-          });
+          // #124: foreign inserts carry ciphertext text — re-fetch decrypted via
+          // REST rather than appending payload.new. Own echoes are ignored (the
+          // optimistic UI + POST reconciliation already have them).
+          const action = planMessageRealtimeAction("INSERT", payload.new, userId);
+          if (action.type === "refetch") void load();
         })
       .on("postgres_changes",
         { event: "UPDATE", schema: "public", table: "room_messages", filter: `room_id=eq.${roomId}` },
         (payload: any) => {
-          const row = payload.new as RoomMessageRow;
-          setMessages(prev => prev.map(m => {
-            if (m.id !== row.id) return m;
-            // Own edits/deletes are applied optimistically with plaintext; the
-            // echo carries ciphertext `text`, so don't overwrite it. Keep our
-            // text/edited_at, take server-side flags like is_deleted (issue #131).
-            if (row.user_id === userId) {
-              return { ...m, is_deleted: row.is_deleted, edited_at: row.edited_at ?? m.edited_at };
-            }
-            return { ...m, ...row, reply_to: m.reply_to, reactions: m.reactions };
-          }));
+          const action = planMessageRealtimeAction("UPDATE", payload.new, userId);
+          if (action.type === "refetch") {
+            // #124: foreign edit/delete — re-fetch decrypted via REST.
+            void load();
+          } else if (action.type === "applyOwnFlags") {
+            // Own edit/delete keeps its optimistic plaintext; take server flags.
+            setMessages(prev => prev.map(m =>
+              m.id === action.id
+                ? { ...m, is_deleted: action.is_deleted, edited_at: action.edited_at ?? m.edited_at }
+                : m,
+            ));
+          }
         })
       .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "room_reactions" },
