@@ -145,9 +145,17 @@ async def search_course_materials(
     course_id: str | None,
     query: str,
     limit: int = 5,
+    *,
+    user_id: str,
 ) -> list[CourseMaterial]:
-    """Return the top `limit` documents for `course_id`, ranked by
-    keyword overlap with `query`.
+    """Return the top `limit` documents owned by `user_id` in `course_id`,
+    ranked by keyword overlap with `query`.
+
+    #125: documents are user-scoped *within* a shared course, so the query
+    MUST filter on user_id as well as course_id — otherwise another enrolled
+    student's private summary/concept_notes get decrypted into this user's LLM
+    context. user_id is keyword-only and required so no caller can silently
+    omit the scope.
 
     Drops rows that have neither a summary nor concept notes — there's
     nothing to ground on, and including them would waste a tool-result
@@ -167,7 +175,10 @@ async def search_course_materials(
             return (
                 table("documents").select(
                     "id,file_name,summary,concept_notes",
-                    filters={"course_id": f"eq.{course_id}"},
+                    filters={
+                        "course_id": f"eq.{course_id}",
+                        "user_id": f"eq.{user_id}",
+                    },
                     order="created_at.desc",
                 )
                 or []
@@ -238,11 +249,13 @@ async def search_course_materials_tool(
 ) -> list[CourseMaterial]:
     """Pydantic AI tool wrapper.
 
-    The LLM supplies `query` (and optionally `limit`); `course_id` is
-    pulled from `ctx.deps` so the model can't aim a search at another
-    course's materials.
+    The LLM supplies `query` (and optionally `limit`); `course_id` and
+    `user_id` are pulled from `ctx.deps` so the model can't aim a search at
+    another course's — or another user's — materials.
     """
-    return await search_course_materials(ctx.deps.course_id, query, limit)
+    return await search_course_materials(
+        ctx.deps.course_id, query, limit, user_id=ctx.deps.user_id
+    )
 
 
 # read_session_history

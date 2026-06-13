@@ -41,12 +41,62 @@ def _run(coro):
 # ── search_course_materials ───────────────────────────────────────────────
 
 
+class TestSearchCourseMaterialsUserScope:
+    """#125: documents are user-scoped within a shared course. The query must
+    filter on user_id, or another enrolled student's private summary/concept
+    notes get decrypted into this user's LLM context."""
+
+    def test_does_not_return_other_users_documents(self):
+        doc_mine = {
+            "id": "doc_mine",
+            "file_name": "my_notes.pdf",
+            "summary": "my private summary about recursion",
+            "concept_notes": [],
+        }
+        doc_other = {
+            "id": "doc_other",
+            "file_name": "their_notes.pdf",
+            "summary": "another student's private summary about recursion",
+            "concept_notes": [],
+        }
+
+        def _row_scoped_select(*_args, **kwargs):
+            # Faithful row-scoped store: both docs sit in the same course, owned
+            # by different users. A query scoped to me returns only mine; an
+            # UNSCOPED query (pre-fix — no user_id filter) leaks the whole class.
+            f = kwargs.get("filters", {})
+            uid = f.get("user_id")
+            if uid == "eq.user_mine":
+                return [doc_mine]
+            if "user_id" not in f:
+                return [doc_mine, doc_other]
+            return []
+
+        with patch("agents.tools.chat_context.table") as t, patch(
+            "agents.tools.chat_context.decrypt_if_present", side_effect=lambda v: v
+        ):
+            t.return_value.select.side_effect = _row_scoped_select
+            result = _run(
+                search_course_materials("course_cs101", "recursion", user_id="user_mine")
+            )
+
+        ids = {m.document_id for m in result}
+        assert "doc_mine" in ids
+        # Pre-fix this leaked the other student's doc into the result (and thus
+        # the LLM context); the user_id scope keeps it out.
+        assert "doc_other" not in ids
+        # And the mechanism that keeps it out: the DB query is scoped to the
+        # caller's user_id, not course_id alone.
+        filters = t.return_value.select.call_args.kwargs["filters"]
+        assert filters.get("user_id") == "eq.user_mine"
+
+
 class TestSearchCourseMaterials:
     def test_returns_empty_when_course_id_is_none(self):
         # No table call should happen at all — cross-course search is a
         # data-leak risk we explicitly avoid.
         with patch("agents.tools.chat_context.table") as t:
-            result = _run(search_course_materials(None, "recursion"))
+            result = _run(search_course_materials(None, "recursion", user_id="user_andres"))
 
         assert result == []
         t.assert_not_called()
@@ -82,7 +132,9 @@ class TestSearchCourseMaterials:
         ):
             t.return_value.select.return_value = rows
             result = _run(
-                search_course_materials("course_cs101", "recursion base case", limit=2)
+                search_course_materials(
+                    "course_cs101", "recursion base case", limit=2, user_id="user_andres"
+                )
             )
 
         assert len(result) == 2
@@ -113,7 +165,9 @@ class TestSearchCourseMaterials:
             "agents.tools.chat_context.decrypt_if_present", side_effect=lambda v: v
         ):
             t.return_value.select.return_value = rows
-            result = _run(search_course_materials("course_cs101", "pointer"))
+            result = _run(
+                search_course_materials("course_cs101", "pointer", user_id="user_andres")
+            )
 
         assert [m.document_id for m in result] == ["doc_good"]
 
@@ -145,7 +199,9 @@ class TestSearchCourseMaterials:
             "agents.tools.chat_context.decrypt_json", side_effect=fake_decrypt_json
         ) as dec_json:
             t.return_value.select.return_value = rows
-            result = _run(search_course_materials("course_cs101", "foo"))
+            result = _run(
+                search_course_materials("course_cs101", "foo", user_id="user_andres")
+            )
 
         # Both decrypt helpers were invoked at the boundary.
         assert dec_str.called, "decrypt_if_present must run on summary"
@@ -309,8 +365,10 @@ class TestToolWrappers:
             inner.return_value = []
             _run(search_course_materials_tool(self._ctx(), "recursion", limit=3))
 
-        # course_id pulled from deps, not from the LLM.
-        inner.assert_awaited_once_with("course_cs101", "recursion", 3)
+        # course_id AND user_id pulled from deps, not from the LLM (#125).
+        inner.assert_awaited_once_with(
+            "course_cs101", "recursion", 3, user_id="user_andres"
+        )
 
     def test_history_tool_passes_session_id_from_deps(self):
         with patch(
