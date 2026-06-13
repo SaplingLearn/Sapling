@@ -12,6 +12,7 @@ from agents.tools.syllabus_adapter import syllabus_to_wire_dict
 from services.extraction_service import extract_text_from_file
 from services.gemini_service import call_gemini_json
 from services.assignment_dedupe import assignment_dedupe_key
+from services.encryption import encrypt_if_present
 from db.connection import table
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,12 @@ def insert_new_assignments(user_id: str, assignments: list[dict]) -> int:
             "course_id": a.get("course_id") or None,
             "due_date": key[1],
             "assignment_type": a.get("assignment_type") or "other",
-            "notes": a.get("notes"),
+            # #126: encrypt at the write boundary. assignments.notes is an
+            # encrypted column; every other writer (calendar.py, gradebook.py)
+            # encrypts. Syllabus-extracted notes were being persisted as
+            # plaintext, defeating column encryption and spamming decrypt
+            # fallback warnings on read.
+            "notes": encrypt_if_present(a.get("notes")),
         })
     if rows:
         table("assignments").insert(rows)
