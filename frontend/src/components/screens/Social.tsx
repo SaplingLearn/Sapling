@@ -58,7 +58,7 @@ function supabaseClient() {
 // rendering payload.new.text directly shows other users' messages as gibberish
 // until a manual reload. Treat a realtime message event as a "something changed"
 // signal and re-fetch through the decrypting REST endpoint instead of trusting
-// the payload — mirroring how this component already handles room_reactions.
+// the payload.
 //
 // (This fixes DISPLAY only. It does not address the realtime channel's missing
 // authorization — that's the separate RLS/Realtime-Authorization work.)
@@ -205,25 +205,12 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
             ));
           }
         })
-      .on("postgres_changes",
-        { event: "INSERT", schema: "public", table: "room_reactions" },
-        (payload: any) => {
-          // Scope the reload to this room: only reload if the reaction targets a
-          // message we have loaded, otherwise a reaction in any other room would
-          // refetch this open room (issue #131).
-          const mid = payload.new?.message_id;
-          if (mid) setMessages(prev => { if (prev.some(m => m.id === mid)) void load(); return prev; });
-        })
-      .on("postgres_changes",
-        { event: "DELETE", schema: "public", table: "room_reactions" },
-        (payload: any) => {
-          // DELETE payloads only carry the primary key (id), not message_id,
-          // unless the table has REPLICA IDENTITY FULL. Reload only when the
-          // affected message is loaded; if we can't tell, fall back to a reload.
-          const mid = payload.old?.message_id;
-          if (mid === undefined) { void load(); return; }
-          setMessages(prev => { if (prev.some(m => m.id === mid)) void load(); return prev; });
-        })
+      // #231: the room_reactions realtime subscription was dead code — the
+      // table is not in the supabase_realtime publication, so these handlers
+      // never fired. Removed. Reactions still update on load/refresh via REST;
+      // live reactions can be restored post-RLS by publishing room_reactions
+      // with a membership-scoped policy (see
+      // docs/security/realtime-jwt-bridge-design.md).
       .subscribe();
 
     return () => { supa.removeChannel(channel); };
