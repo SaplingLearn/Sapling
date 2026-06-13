@@ -1,8 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { signSession, SESSION_MAX_AGE } from '@/lib/sessionToken';
+import { sanitizeCookieDomain } from '@/lib/cookieDomain';
 
 const SESSION_SECRET = process.env.SESSION_SECRET;
-const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
+// #190: validate COOKIE_DOMAIN instead of trusting env verbatim — an
+// overly-broad value would scope the session cookie across unrelated
+// subdomains. An invalid value degrades to a host-only cookie.
+const COOKIE_DOMAIN = sanitizeCookieDomain(process.env.COOKIE_DOMAIN);
+
+/**
+ * CSRF defense beyond SameSite=Lax (#190): reject cross-origin requests to the
+ * session endpoint. When a browser sends an Origin header (always, for these
+ * fetch POST/DELETE calls), its host must match this route's host. A missing
+ * Origin (non-browser client) is allowed — CSRF is a browser-driven attack and
+ * browsers always send Origin here. This is the documented anti-CSRF strategy
+ * for the state-changing session endpoint, layered on top of SameSite=Lax.
+ */
+function isCrossOrigin(request: NextRequest): boolean {
+  const origin = request.headers.get('origin');
+  if (!origin) return false;
+  try {
+    return new URL(origin).host !== request.nextUrl.host;
+  } catch {
+    return true;
+  }
+}
 
 async function verifyAuthToken(token: string): Promise<string | null> {
   if (!SESSION_SECRET) return null;
@@ -46,6 +68,10 @@ async function verifyAuthToken(token: string): Promise<string | null> {
 }
 
 export async function POST(request: NextRequest) {
+  if (isCrossOrigin(request)) {
+    return NextResponse.json({ error: 'Cross-origin request rejected' }, { status: 403 });
+  }
+
   const body = await request.json();
   const { authToken } = body as { authToken?: string };
 
@@ -84,7 +110,11 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(request: NextRequest) {
+  if (isCrossOrigin(request)) {
+    return NextResponse.json({ error: 'Cross-origin request rejected' }, { status: 403 });
+  }
+
   const response = NextResponse.json({ ok: true });
   response.cookies.set('sapling_session', '', {
     httpOnly: true,
