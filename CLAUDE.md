@@ -44,7 +44,12 @@ Docker (full stack from repo root):
 docker-compose up
 ```
 
-Lint: # TODO: no lint command defined (no ruff/flake8/black config in repo).
+Lint (run from `backend/`):
+
+```
+ruff check .                    # lint, gated in CI against the ruff.toml baseline (#193)
+ruff format .                   # formatter — available, not yet CI-gated (see ruff.toml)
+```
 
 ## Conventions
 
