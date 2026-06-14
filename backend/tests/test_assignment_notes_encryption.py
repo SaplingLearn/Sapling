@@ -7,7 +7,7 @@ This is an encryption-boundary correctness test (not a cross-user-access test):
 it asserts the value handed to the DB insert is ciphertext, and that it
 round-trips back to the original plaintext via decrypt.
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from services.calendar_service import insert_new_assignments
 from services.encryption import decrypt
