@@ -1,6 +1,10 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, field_validator
 from db.connection import table
+
+logger = logging.getLogger("newsletter")
 
 router = APIRouter()
 
@@ -24,6 +28,13 @@ def subscribe(body: SubscribeRequest):
             {"email": body.email},
             on_conflict="email",
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        # #199: never echo the raw DB/PostgREST exception text to the client —
+        # it leaks internal detail (host/table/driver). Log the full error
+        # server-side and return a generic message.
+        logger.exception("newsletter subscribe failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not process subscription. Please try again later.",
+        )
     return {"ok": True}

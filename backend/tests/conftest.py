@@ -16,6 +16,10 @@ from unittest.mock import MagicMock
 import pytest
 
 os.environ.setdefault("ENCRYPTION_KEY", "0" * 64)  # 32-byte all-zero key for deterministic tests
+# Tests run as local mode so validate_config() (invoked by the one test that
+# enters the FastAPI lifespan) doesn't reject the short dummy SESSION_SECRET the
+# CI env supplies. Production defaults APP_ENV=production (strict). #174.
+os.environ.setdefault("APP_ENV", "test")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

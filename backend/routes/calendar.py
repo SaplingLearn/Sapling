@@ -376,9 +376,15 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
     exported = 0
     skipped = 0
     for aid in body.assignment_ids:
+        # #123: scope by user_id, not just id. Without this an authenticated
+        # caller could pass another user's assignment UUIDs to read+decrypt
+        # their private notes, push them into the caller's calendar, and stamp
+        # google_event_id onto the victim's row. Every sibling endpoint
+        # (update/delete/sync) already scopes by user_id; a non-owned id now
+        # returns no row and is skipped.
         rows = table("assignments").select(
             "id,title,due_date,notes,google_event_id,courses!left(course_code,course_name)",
-            filters={"id": f"eq.{aid}"},
+            filters={"id": f"eq.{aid}", "user_id": f"eq.{body.user_id}"},
         )
         if not rows:
             continue
@@ -400,9 +406,11 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
             "end": {"date": a["due_date"]},
         }
         created = service.events().insert(calendarId="primary", body=event).execute()
+        # Scope the write-back by user_id too (defense in depth): never stamp
+        # google_event_id onto a row the caller doesn't own.
         table("assignments").update(
             {"google_event_id": created["id"]},
-            filters={"id": f"eq.{aid}"},
+            filters={"id": f"eq.{aid}", "user_id": f"eq.{body.user_id}"},
         )
         exported += 1
 

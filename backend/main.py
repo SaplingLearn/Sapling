@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET
+from config import FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET, validate_config
 
 # App-wide log format. Per-request log lines (with request_id, duration,
 # status) are emitted from RequestIDMiddleware; this just sets the
@@ -71,6 +71,9 @@ logfire.instrument_pydantic_ai()
 # that no migration ever made" bugs.
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    # #174: fail loudly at startup if required secrets are missing, before
+    # serving any request, rather than booting and failing opaquely later.
+    validate_config()
     await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
@@ -190,8 +193,17 @@ def list_users(request: Request):
 
 
 @app.get("/api/gemini-test")
-def gemini_test():
-    """Test Gemini connectivity. Shows clear error if API key is missing/wrong."""
+def gemini_test(request: Request):
+    """Admin-only Gemini connectivity check. Shows a clear error if the API
+    key is missing/wrong.
+
+    Gated behind `require_admin` (#198): every hit makes a real, billable
+    `call_gemini` round-trip, so an unauthenticated caller could burn Gemini
+    quota at will and use the `{"ok": ...}` response as an oracle for whether
+    the API key is configured. Only admins may trigger LLM spend here.
+    """
+    from services.auth_guard import require_admin
+    require_admin(request)  # 403 unless the session belongs to an admin; 401 if unauthenticated
     from services.gemini_service import call_gemini
     try:
         reply = call_gemini('Reply with exactly the text: Gemini OK', retries=0)

@@ -1,0 +1,67 @@
+# Backend linter (#193) — the analog of the frontend ESLint ratchet (#212).
+#
+# Every rule in `select` is enforced. The 94 pre-existing violations are
+# baselined in [lint.per-file-ignores] so `ruff check .` is green today, and
+# any NEW violation — in a new file, or a NEW rule category in an existing
+# file — fails CI. This is a true ratchet: the baseline can only shrink.
+#
+# Scope is ruff's default correctness set: E4 (import placement), E7 (statement
+# errors), E9 (syntax), F (pyflakes — unused imports/vars, undefined names).
+# Pure style/formatting (E501 line length, whitespace, quotes) is deliberately
+# NOT enforced here — that is `ruff format`'s job, and enabling it would require
+# a one-shot reformat of the whole backend that would collide with every
+# in-flight PR. `ruff format` is available to run manually; CI does not gate on
+# it yet. (line-length below only informs the formatter when it's used.)
+#
+# Burning the baseline down: most entries are F401 (unused import) and F841
+# (unused variable) — delete the dead import/var and remove the file's line
+# from the baseline. E402 (import-not-at-top) entries are mostly intentional
+# (deliberate import ordering after runtime config); leave those.
+
+target-version = "py313"
+line-length = 100
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+# Baseline of pre-existing violations as of 2026-06-12 (generated from
+# `ruff check . --select E4,E7,E9,F`). Do NOT add new entries — fix the
+# violation instead.
+[lint.per-file-ignores]
+"db/dedup_nodes.py" = ["E402"]
+"main.py" = ["E402"]
+"routes/admin.py" = ["F401"]
+"routes/auth.py" = ["F401"]
+"routes/calendar.py" = ["F401"]
+"routes/documents.py" = ["E402"]
+"routes/flashcards.py" = ["F401"]
+"routes/notes.py" = ["F401"]
+"routes/profile.py" = ["F401"]
+"routes/social.py" = ["F841"]
+"services/flashcard_import_service.py" = ["F401"]
+"services/gemini_service.py" = ["F541"]
+"services/notes_service.py" = ["E741"]
+"tests/evals/concept_extraction.py" = ["F401"]
+"tests/evals/document_classification.py" = ["F401"]
+"tests/evals/document_summary.py" = ["F401"]
+"tests/evals/quiz_generation.py" = ["F401"]
+"tests/evals/syllabus_extraction.py" = ["F401"]
+"tests/test_achievement_service.py" = ["F401", "F841"]
+"tests/test_admin_routes.py" = ["F401"]
+"tests/test_auth_state.py" = ["E402", "F401"]
+"tests/test_calendar_routes.py" = ["F401"]
+"tests/test_chat_context_tools.py" = ["F401"]
+"tests/test_documents_routes.py" = ["F401"]
+"tests/test_encryption.py" = ["F401"]
+"tests/test_extraction_backends.py" = ["E402", "F401"]
+"tests/test_extraction_service.py" = ["E402", "F401"]
+"tests/test_flashcard_import_routes.py" = ["F401"]
+"tests/test_flashcard_import_service.py" = ["E402", "F401"]
+"tests/test_learn_routes.py" = ["F401"]
+"tests/test_notes_service.py" = ["E402", "F401"]
+"tests/test_ocr_pipeline.py" = ["E402", "E702"]
+"tests/test_onboarding_routes.py" = ["F401"]
+"tests/test_profile_routes.py" = ["F401", "F841"]
+"tests/test_shared_course_context.py" = ["E701", "F401"]
+"tests/test_supabase.py" = ["E402", "F541"]
+"tests/test_syllabus_adapter.py" = ["F401"]
