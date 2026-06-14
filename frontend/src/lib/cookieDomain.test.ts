@@ -12,6 +12,11 @@ describe('sanitizeCookieDomain', () => {
     expect(sanitizeCookieDomain('  saplinglearn.com  ')).toBe('saplinglearn.com');
   });
 
+  it('normalizes case (DNS is case-insensitive)', () => {
+    expect(sanitizeCookieDomain('.SaplingLearn.com')).toBe('.saplinglearn.com');
+    expect(sanitizeCookieDomain('APP.Example.COM')).toBe('app.example.com');
+  });
+
   it('rejects overly-broad bare suffixes', () => {
     expect(sanitizeCookieDomain('.com')).toBeUndefined();
     expect(sanitizeCookieDomain('com')).toBeUndefined();

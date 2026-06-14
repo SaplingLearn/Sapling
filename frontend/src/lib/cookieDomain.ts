@@ -21,7 +21,9 @@ export function sanitizeCookieDomain(
   raw: string | undefined | null,
 ): string | undefined {
   if (!raw) return undefined;
-  const value = raw.trim();
+  // DNS is case-insensitive; normalize to lowercase so a config like
+  // ".SaplingLearn.com" isn't wrongly rejected by the lowercase-only regex.
+  const value = raw.trim().toLowerCase();
   if (!value || !DOMAIN_RE.test(value)) return undefined;
 
   // Require ≥2 labels in the registrable portion so a bare suffix like ".com"
