@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET
+from config import FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET, validate_config
 
 # App-wide log format. Per-request log lines (with request_id, duration,
 # status) are emitted from RequestIDMiddleware; this just sets the
@@ -71,6 +71,9 @@ logfire.instrument_pydantic_ai()
 # that no migration ever made" bugs.
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    # #174: fail loudly at startup if required secrets are missing, before
+    # serving any request, rather than booting and failing opaquely later.
+    validate_config()
     await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
