@@ -210,7 +210,11 @@ def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
     if "course_id" in patch and patch["course_id"] == "":
         patch["course_id"] = None
 
-    table("assignments").update(patch, filters={"id": f"eq.{assignment_id}"})
+    # Scope the write by user_id too (defense in depth): the scoped SELECT above
+    # already 404s a non-owned id, but don't rely on that guard alone (#123).
+    table("assignments").update(
+        patch, filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}
+    )
     return {"updated": True}
 
 
@@ -222,7 +226,10 @@ def delete_assignment(assignment_id: str, request: FastAPIRequest, user_id: str 
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Assignment not found")
-    table("assignments").delete(filters={"id": f"eq.{assignment_id}"})
+    # Scope the delete by user_id too (defense in depth), not just the guard above.
+    table("assignments").delete(
+        filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}
+    )
     return {"deleted": True}
 
 
@@ -356,9 +363,10 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
             "end": {"date": a["due_date"]},
         }
         created = service.events().insert(calendarId="primary", body=event).execute()
+        # Scope the write-back by user_id too (defense in depth), matching export.
         table("assignments").update(
             {"google_event_id": created["id"]},
-            filters={"id": f"eq.{a['id']}"},
+            filters={"id": f"eq.{a['id']}", "user_id": f"eq.{body.user_id}"},
         )
         synced += 1
 
