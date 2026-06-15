@@ -6,13 +6,11 @@ import { Pill } from "./Pill";
 import { useToast } from "./ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
-import { supabase } from "@/lib/supabase";
 import { submitIssueReport, IS_LOCAL_MODE } from "@/lib/api";
 
 const TOPICS = ["Bug", "Feature", "Polish", "Content", "Other"] as const;
 type Topic = typeof TOPICS[number];
 
-const BUCKET = "issues-media-files";
 const MAX_SCREENSHOTS = 5;
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -21,14 +19,21 @@ interface ReportIssueFlowProps {
   onClose: () => void;
 }
 
-async function uploadScreenshot(userId: string, file: File): Promise<string> {
+// #231: upload via the auth-gated backend endpoint (service-role) instead of the
+// public anon storage client, so issues-media-files can be made private. Returns
+// the storage path (stored in screenshot_urls), not a public URL.
+async function uploadScreenshot(file: File): Promise<string> {
   if (IS_LOCAL_MODE) return URL.createObjectURL(file);
-  const ext = file.name.split(".").pop() || "png";
-  const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const { error } = await supabase.storage.from(BUCKET).upload(path, file, { cacheControl: "3600", upsert: false });
-  if (error) throw error;
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
-  return data.publicUrl;
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch("/api/issue-reports/screenshot", {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  if (!res.ok) throw new Error(`Screenshot upload failed (${res.status})`);
+  const data = (await res.json()) as { path: string };
+  return data.path;
 }
 
 export function ReportIssueFlow({ open, onClose }: ReportIssueFlowProps) {
@@ -93,7 +98,7 @@ export function ReportIssueFlow({ open, onClose }: ReportIssueFlowProps) {
     setSubmitting(true);
     try {
       const urls = await Promise.all(
-        screenshots.map(s => uploadScreenshot(userId, s.file).catch(err => {
+        screenshots.map(s => uploadScreenshot(s.file).catch(err => {
           toast.error(`Screenshot upload failed: ${err?.message || "unknown"}`);
           return null;
         })),
