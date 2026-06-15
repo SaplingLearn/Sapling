@@ -38,8 +38,98 @@ instead of being re-briefed. **Update this file as waves land — don't duplicat
 
 Wave 2 is closed.
 
+## Wave 3 — security hardening
+
+Backend/data security, driven by the contract/security audit
+(`docs/backend-contract-bug-audit.md`). Eleven scoped PRs (each with a negative
+test that fails on pre-fix code) plus a production database lockdown that was
+applied out of band and lives in no merged PR — recorded below because it's the
+most important part.
+
+- **Merged security PRs** (all CI-green; one line each):
+  - **#219** — gate `/api/gemini-test` behind `require_admin` (was an
+    unauthenticated live-LLM cost/key oracle).
+  - **#220** — newsletter stops leaking raw exception text; careers upload
+    bounded (5 MB bounded-read 413, PDF/DOC/DOCX allowlist 415, input
+    validation 422).
+  - **#221** — validate `COOKIE_DOMAIN` + same-origin CSRF check on the session
+    route.
+  - **#222** — gate `/profile/[userId]` in the middleware (PROTECTED + matcher);
+    it was enumerable unauthenticated.
+  - **#223** — ruff lint ratchet (E4/E7/E9/F, 94 existing violations baselined in
+    `backend/ruff.toml`, new ones fail CI) wired into CI; deduped
+    `email-validator` (#194).
+  - **#224** — scope calendar `export_to_google` (read + write-back) by
+    `user_id`; closed a P0 cross-user IDOR leaking decrypted assignment notes.
+  - **#225** — scope `search_course_materials` by `user_id`; stopped another
+    student's documents leaking into the tutor/note-chat LLM context.
+  - **#226** — encrypt syllabus-extracted assignment notes at the write boundary
+    (merged earlier; live backfill was 0 rows, so no migration was needed).
+  - **#227** — decrypt gradebook-create and profile-settings responses (were
+    returning ciphertext to the owning user).
+  - **#228** — `validate_config()` at startup + `SESSION_SECRET` ≥32-byte check;
+    unsigned-session OAuth fallback fail-closed outside local
+    (`APP_ENV`/`IS_LOCAL`).
+  - **#229** — OCR extract endpoints require auth (401), a 20 MB bounded read
+    (413), and a per-user rate limit (429); shared `services/request_limits.py`.
+  - **#230** — realtime room chat re-fetches via the decrypting REST endpoint
+    instead of rendering ciphertext; removed the dead `room_reactions`
+    subscription (that table isn't in the realtime publication, so it never
+    fired).
+- **#234** — hotfix: the new ruff gate (#223) flagged an unused import in
+  already-merged #226 test code, turning `main` red until it was removed.
+  **Lesson: when landing a new lint gate, confirm `main` is clean under it
+  at merge — pre-existing merged code isn't in the gate's baseline.**
+
+### Production RLS lockdown (applied out of band — recorded here, no merged PR)
+
+- **Exposure:** the Supabase `anon` role had full read AND write
+  (SELECT/INSERT/UPDATE/DELETE) on 38 of 40 public tables via PostgREST, and the
+  anon key ships in the frontend bundle. So anyone with that key could read and
+  write the entire database — including self-assigning admin via `user_roles` —
+  bypassing the FastAPI backend and every `require_self` check. Confirmed live:
+  an anon `curl` returned a real `users` row before the lockdown, `permission
+  denied` (SQLSTATE 42501) after. Live since the project launched (~Feb 2026).
+- **Remediation:** `ENABLE ROW LEVEL SECURITY` + `REVOKE` anon DML on the 38
+  tables, applied directly to prod via the Supabase SQL Editor on 2026-06-13.
+  `service_role` is `rolbypassrls`, so the backend (service key) is unaffected
+  and keeps functioning. SQL is recorded in **#232**, kept open as the applied
+  record (do not merge); plan + verification in
+  `docs/security/rls-lockdown-plan.md`.
+- **Blast-radius audit (came back clean):**
+  - `oauth_tokens` access/refresh tokens were AES-GCM **encrypted** — verified in
+    both the stored data and the encrypt/decrypt code paths — so **no Google
+    token rotation was required**.
+  - `sessions` holds no replayable credential (auth is a stateless HMAC cookie;
+    there is no server-side session-token store).
+  - Admin audit clean: 4 admins + 1 vip, all real recognized accounts, all
+    granted in a single 2026-05-04/05 window; nothing granted during the
+    exposure window after.
+- **Caveat (follow-up):** `sessions.summary_json` (and likely `messages.content`)
+  are stored **plaintext**, contradicting the CLAUDE.md encrypted-columns list,
+  so they were anon-readable during the window. Not credentials, but a real
+  data-exposure gap — encrypt them and correct the docs (tracked below).
+
+Wave 3 merges are closed; the open security tracks are in the backlog below.
+
 ## Backlog / known items
 
+- **Deploy the Wave-3 route-leak fixes to prod.** #224/#225/#227 (and
+  #220/#226/#228/#229) are backend changes on `main` but "not closed until on
+  prod" — the backend deploy is external (not in-repo); confirm it landed.
+- **#231 storage hardening (the last live exposure):** the `application_resumes`
+  bucket is still public-read (résumé PII), and `issues-media-files` is public +
+  anon-writable. Plan in `docs/security/storage-hardening-plan.md`.
+- **#231 realtime JWT bridge (option a):** restores room-chat realtime under RLS
+  (mint a Supabase JWT at login + a membership-scoped RLS policy). Design in
+  `docs/security/realtime-jwt-bridge-design.md`; flagged complexity is JWT
+  refresh (30-day session vs ~1h JWT).
+- **Encrypt `sessions.summary_json` + `messages.content`** and fix the CLAUDE.md
+  gotchas list (both are listed as encrypted but stored plaintext — see the
+  Wave 3 caveat).
+- **Queued security follow-ups, awaiting review/merge:** **#235** (scope
+  assignment update/delete/sync write filters by `user_id` — defense-in-depth)
+  and **#236** (`.toLowerCase()` `COOKIE_DOMAIN` before validation).
 - **3 moderate Dependabot vulnerabilities** on the default branch (as of
   2026-06-12) — https://github.com/SaplingLearn/Sapling/security/dependabot
 - **PR #96** (feat/knowledge-graph-3d): pre-existing feature branch, outside this
