@@ -32,10 +32,22 @@ The **only live frontend-anon storage path is `issues-media-files`** (ReportIssu
 
 ## Sequenced remediation
 
-### Phase 1 — `application_resumes` → private (Supabase-side only, NO app change)
-This is the priority (13 résumés, PII, publicly readable by URL) and the safest:
-nothing in the app reads this bucket, and the upload is service-role (unaffected
-by the public flag or RLS).
+### Phase 1 — `application_resumes` → private  ✅ APPLIED 2026-06-15
+This was the priority (12 résumés, PII, publicly readable by URL) and the
+safest: nothing in the app reads this bucket, and the upload is service-role
+(unaffected by the public flag or RLS). Applied via MCP; `public=false`
+confirmed. Verified closed: a fresh/cache-busted anon GET of a résumé returns
+**400**, and an un-probed résumé returns **400** (origin private).
+
+**CDN caveat (learned during verification):** Supabase fronts public objects
+with Cloudflare. A résumé URL that was fetched *while the bucket was public*
+stays a stale edge **HIT (200)** until it ages out — verifying via the canonical
+public URL caches a stale 200. Check the origin with a **cache-buster**
+(`?x=<unique>`) instead. Practical residual exposure is ~nil: the only cached
+URL is the one our own verification probed, and résumé paths are random UUIDs
+stored only in `job_applications`, which the RLS lockdown already made
+anon-inaccessible — so cached URLs are undiscoverable. Recommend purging the
+storage CDN cache (dashboard) or letting it age out for full hygiene.
 
 - **Apply (Supabase dashboard SQL editor):**
   ```sql

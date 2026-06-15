@@ -9,12 +9,20 @@
 -- path is issues-media-files; application_resumes has no code reader at all.
 -- ============================================================================
 
--- ── Phase 1 — application_resumes → private (no app change; apply now) ───────
--- 13 résumés (PII) are publicly readable by URL. The bucket is written only by
+-- ── Phase 1 — application_resumes → private  [APPLIED 2026-06-15] ────────────
+-- 12 résumés (PII) were publicly readable by URL. The bucket is written only by
 -- the backend (careers.py, service-role) and read by NO code, so flipping it
--- private breaks nothing in the app.
+-- private broke nothing in the app. Applied via MCP; verified public=false.
 UPDATE storage.buckets SET public = false WHERE id = 'application_resumes';
 -- Rollback: UPDATE storage.buckets SET public = true WHERE id = 'application_resumes';
+--
+-- CDN NOTE: Supabase fronts public objects with Cloudflare. Fresh/un-cached
+-- object URLs return 400 after the flip (origin is private), but a URL that was
+-- fetched WHILE public stays a stale edge HIT (200) until it ages out — so
+-- verify with a cache-buster (`?x=<unique>`), not the canonical public URL, or
+-- the probe itself caches a stale 200. The résumé paths are random UUIDs stored
+-- only in job_applications (now anon-locked by the RLS lockdown), so cached URLs
+-- are undiscoverable; purge the storage cache or let it age for full hygiene.
 
 
 -- ── Phase 2 — issues-media-files → private ──────────────────────────────────
