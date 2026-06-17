@@ -216,7 +216,7 @@ export function GradeProjector({
         }}
       >
         Once your first assignment is graded, this becomes a live projector
-        showing what&apos;s guaranteed, what&apos;s Still Reachable, and what
+        showing what&apos;s guaranteed, what&apos;s still reachable, and what
         you need on the remaining work to hit each letter.
       </div>
     );
@@ -427,21 +427,7 @@ export function GradeProjector({
       </div>
 
       {isPredicted && (
-        <div
-          className="mono"
-          style={{
-            fontSize: 10,
-            letterSpacing: "0.12em",
-            textTransform: "uppercase",
-            color: "var(--accent)",
-            background: "var(--accent-soft)",
-            border: "1px solid var(--accent-border)",
-            borderRadius: "var(--r-full)",
-            padding: "2px 8px",
-            display: "inline-block",
-            marginBottom: 10,
-          }}
-        >
+        <div className="chip chip--accent" style={{ marginBottom: 10 }}>
           Predicted
         </div>
       )}
