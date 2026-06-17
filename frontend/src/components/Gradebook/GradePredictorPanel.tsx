@@ -30,8 +30,6 @@ export function GradePredictorPanel({
   predictedPercent,
   predictedLetter,
 }: Props) {
-  if (ungradedAssignments.length === 0) return null;
-
   const catMap = React.useMemo(
     () => new Map(categories.map((c) => [c.id, c.name])),
     [categories],
@@ -42,6 +40,8 @@ export function GradePredictorPanel({
       (a.points_possible !== null && (a.points_possible as number) > 0) ||
       (hypotheticals.get(a.id)?.possible ?? 0) > 0,
   );
+
+  if (ungradedAssignments.length === 0) return null;
 
   return (
     <div style={{ marginBottom: 32 }}>
