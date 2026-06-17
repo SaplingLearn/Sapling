@@ -17,7 +17,14 @@ BEGIN;
 
 -- Re-grant anon DML (the Supabase pre-lockdown default).
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon;
+-- Reverse the per-role default-privileges REVOKEs from the apply script. These
+-- MUST mirror the FOR ROLE lines in rls_lockdown.sql exactly — if you edited the
+-- migration-role list there, edit it here too, or rollback leaves anon's default
+-- privileges partially revoked.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres        IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin  IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon;
+-- ALTER DEFAULT PRIVILEGES FOR ROLE <your_migration_or_ci_role> IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon;
 
 -- Disable RLS on the 38 tables that were OFF before the lockdown.
 ALTER TABLE public.achievements          DISABLE ROW LEVEL SECURITY;

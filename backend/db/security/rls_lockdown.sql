@@ -79,7 +79,36 @@ REVOKE SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public FROM anon;
 -- Also stop FUTURE tables from silently re-granting anon (Supabase default
 -- ALTER DEFAULT PRIVILEGES grants to anon). Without this, the next table
 -- created reopens the hole.
+--
+-- ⚠️ IMPORTANT — ALTER DEFAULT PRIVILEGES is scoped PER CREATING ROLE.
+-- A default-privileges entry only affects objects created by the role named in
+-- `FOR ROLE` (or, with no FOR ROLE, by the role that RUNS this statement). If a
+-- migration creates a table as a DIFFERENT role than the one covered here, the
+-- anon GRANT from Supabase's own default privileges silently re-applies and the
+-- anon hole reopens — with no error and nothing to notice until the recurring
+-- verification (plan §2 / CI) catches it.
+--
+-- Therefore REVOKE the anon default privileges FOR EVERY role that creates
+-- tables in this project. Set the placeholders below to the ACTUAL migration
+-- role(s). To discover them, inspect who owns/creates objects, e.g.:
+--   SELECT DISTINCT defaclrole::regrole AS role_with_default_privs
+--   FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace
+--   WHERE n.nspname = 'public';
+--   -- and review table owners:
+--   SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = 'public';
+-- Common candidates on Supabase: `postgres`, `supabase_admin`, the Supabase
+-- migration/dashboard role, and any service/CI role your migrations run as.
+--
+-- Cover the role running THIS script (no FOR ROLE) AND each known creator role.
+-- Add/remove FOR ROLE lines below to match your project; leaving a creating
+-- role out is exactly how the hole silently reopens.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM anon;
+-- TODO(set-migration-role): replace/extend the roles below with this project's
+-- actual table-creating role(s) before applying. Keep `postgres` if migrations
+-- run as postgres; add your CI/migration role if different.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres        IN SCHEMA public REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin  IN SCHEMA public REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM anon;
+-- ALTER DEFAULT PRIVILEGES FOR ROLE <your_migration_or_ci_role> IN SCHEMA public REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM anon;
 
 COMMIT;
 

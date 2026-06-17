@@ -1,6 +1,19 @@
 # Storage hardening — PR-plan (#231)
 
-**Status: DRAFT plan for review. Nothing applied.**
+> ⚠️ **SUPERSEDED BY PR #238 — do not use this file as the source of truth for
+> storage.** This copy is an OLD version of the storage plan. PR #238 re-verified
+> the live state and corrected two factual errors below:
+> 1. The public INSERT policy is **not** a global any-bucket upload — it is
+>    scoped `WITH CHECK bucket_id = 'issues-media-files'`. There is **no** global
+>    public-INSERT policy.
+> 2. `avatars` has **no** anon INSERT policy and **needs no change** (the line
+>    below implying a blanket INSERT revoke does not apply to it).
+> #238 also adds the correct sequenced phasing (résumés private first; backend
+> endpoint + frontend change before flipping `issues-media-files`). **For any
+> storage work, follow #238**, not this file. Retained here only as the historical
+> record of what #232 originally carried.
+
+**Status: DRAFT plan for review. Nothing applied. SUPERSEDED — see #238.**
 
 ## Live findings (Sapling prod, read-only)
 Buckets that actually exist (3):

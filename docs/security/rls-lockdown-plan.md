@@ -51,7 +51,7 @@ Run `backend/db/security/rls_lockdown.sql`.
    FROM pg_class WHERE relnamespace='public'::regnamespace AND relkind='r';
    -- expect: still_off = 0
    ```
-2. **anon has no table DML left:**
+2. **anon has no table DML left (RECURRING — wire into CI/cron as a blocking check):**
    ```sql
    SELECT count(*) AS anon_grants
    FROM information_schema.role_table_grants
@@ -59,15 +59,40 @@ Run `backend/db/security/rls_lockdown.sql`.
      AND privilege_type IN ('SELECT','INSERT','UPDATE','DELETE');
    -- expect: anon_grants = 0
    ```
+   This must not just pass once. The `ALTER DEFAULT PRIVILEGES ... REVOKE ...
+   FROM anon` in `rls_lockdown.sql` is scoped per creating role, so a future
+   migration that creates a table as a role NOT covered by a `FOR ROLE` clause
+   will silently re-grant anon and reopen the hole with no error. **Wire this
+   exact query into CI and/or a scheduled cron as a BLOCKING assertion**
+   (`anon_grants = 0`; fail/alert on any non-zero result). Concretely:
+   - **CI:** run it (via the Supabase MCP `execute_sql`, `psql`, or a small
+     script) on every migration/deploy that touches the schema, and fail the
+     pipeline if `anon_grants > 0`.
+   - **Cron:** run it on a recurring schedule (e.g. daily) against prod and
+     alert on any non-zero result, to catch out-of-band table creation.
+   If it ever trips, find the creating role (see the discovery query in
+   `rls_lockdown.sql`) and add a matching `FOR ROLE <role>` REVOKE line there.
 3. **anon is blocked at the REST endpoint** (the actual exposure): with the
    public anon key,
    ```
-   curl -s -o /dev/null -w "%{http_code}\n" \
+   curl -s -w "\n%{http_code}\n" \
      "https://jxqcmjqtjlpuxfrxmrdv.supabase.co/rest/v1/users?select=id&limit=1" \
      -H "apikey: <ANON_KEY>" -H "Authorization: Bearer <ANON_KEY>"
    ```
-   Expect **401** (or `[]` with permission-denied), not a row. Repeat for
-   `user_roles`, `oauth_tokens`, `messages`.
+   **The pass condition is "no row returned", which has TWO valid shapes — do
+   not misread the empty-result shape as a failure:**
+   - **`401` / `403` with a `permission denied` error body** — this is what the
+     anon DML **REVOKE** (plan §2) forces, and it's the strongest signal.
+   - **`200` with an empty array `[]`** — this is what **RLS-enabled-with-no-policy**
+     produces on its own: PostgREST runs the SELECT, RLS filters out every row,
+     and you get `200 []` (NOT a 401). A `200 []` here is still a PASS — anon got
+     zero data. It only becomes the *expected* result if you test RLS in
+     isolation (e.g. before/without the REVOKE).
+   So: PASS = a permission-denied error **OR** an empty result (`[]`); FAIL =
+   any actual row data comes back. (Capture the body, not just the status code,
+   precisely so `200 []` isn't mistaken for `200 <rows>`.) Repeat for
+   `user_roles`, `oauth_tokens`, `messages`. After the REVOKE is applied the
+   permission-denied form is expected; before it (RLS only) the `200 []` form is.
 4. **Backend still works (service_role):**
    - `cd backend && python -m pytest tests/ -q` (suite is hermetic; sanity only).
    - Hit live read + write endpoints against the target DB and confirm normal
@@ -87,7 +112,12 @@ the 38). ⚠️ This restores the insecure state — re-apply the lockdown + opt
 ## Follow-ups (not in this script)
 - `authenticated` keeps its grants (RLS-with-no-policy denies it today); option
   (a) adds membership-scoped policies for it on `room_messages`.
-- Storage hardening is a separate track (`docs/security/storage-hardening-plan.md`).
+- Storage hardening is a separate track. **PR #238 supersedes the storage plan**
+  — treat `docs/security/storage-hardening-plan.md` as carried here in an OLD
+  state and **NOT the source of truth**. #238 corrects two factual errors in the
+  copy in this PR (there is no global any-bucket public INSERT — the policy is
+  scoped to `issues-media-files`; and `avatars` needs no change) and adds the
+  sequenced phasing. Use #238 for storage.
 - The 2 already-RLS tables (`achievement_cosmetics`, `achievement_triggers`)
   have RLS on but **no policies** — confirm nothing legitimately reads them via
   anon (the backend uses service_role, so it's unaffected).

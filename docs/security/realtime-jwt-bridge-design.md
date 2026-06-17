@@ -26,9 +26,24 @@ claims: { sub: <user_id>, role: "authenticated", aud: "authenticated", exp: now+
   session.
 - New env `SUPABASE_JWT_SECRET` (from Supabase → Settings → API → JWT secret).
   Add it to `validate_config()` (#174) as required outside local.
-- Note: Supabase is migrating to **asymmetric signing keys**. If this project is
-  on the new keys, mint/verify with the project's signing key instead of an
-  HS256 shared secret — confirm which at build time.
+
+> 🚫 **BLOCKING PRECONDITION — verify the project's signing-key type before
+> building this.** This design signs an **HS256** JWT with the legacy shared JWT
+> secret. Supabase is migrating to **asymmetric signing keys** (RS256/ES256/
+> EdDSA via JWKS). **If this project has migrated to asymmetric keys, an HS256
+> token signed with the legacy secret will be rejected — `setAuth(jwt)` yields a
+> silent `401` with no obvious cause** (the channel just fails to authorize; no
+> exception points at the key type). Do NOT start the build until you have
+> confirmed the key type and chosen the matching signing path:
+> - **Legacy HS256 (shared secret present & in use):** proceed as written
+>   (sign/verify with `SUPABASE_JWT_SECRET`).
+> - **Asymmetric signing keys:** mint with the project's **current/active
+>   signing key** (the private key for the active `kid`); the legacy
+>   `SUPABASE_JWT_SECRET` will NOT work.
+> Check via Supabase → Settings → API → JWT Keys (or the dashboard's signing-keys
+> page): if a legacy HS256 secret is still the active signer, you're on HS256;
+> if an asymmetric key is active, you must use it. This check is a gate, not a
+> footnote — getting it wrong fails closed and silently.
 
 ### 2. RLS SELECT policy on room_messages (membership-scoped)
 ```sql
@@ -65,6 +80,34 @@ Two options, smallest first:
   before `expires_at` and call `setAuth` again — or the subscription drops when
   the JWT expires. Handle: tab wake from sleep, network reconnect, and a failed
   refresh (fall back to REST-only, which the #230 display fix already supports).
+
+### 5. Presence / typing channel (NOT broken by the lockdown — but re-verify under JWT)
+`Social.tsx` opens a **second** realtime channel besides the `room_messages`
+`postgres_changes` subscription: a presence/broadcast channel
+`presence:${roomId}` (`supa.channel(\`presence:${roomId}\`, { config: { presence:
+{ key: userId } } })`, ~`Social.tsx:200-225`). It uses Realtime **presence/
+broadcast** (`.on("presence", { event: "sync" })` + `ch.track({...})` for typing
+indicators) — it does **NOT** read or write any Postgres table.
+
+- **The anon DML REVOKE / RLS lockdown does NOT break this channel.** The lockdown
+  only revokes table DML and enables RLS; presence/broadcast is server-side
+  Realtime messaging with no table involved, so it keeps working on the anon key
+  exactly as before. Do not expect (or "fix") a presence regression from the
+  lockdown — there isn't one.
+- **BUT presence authorization MUST be re-verified when the client switches to
+  `setAuth(jwt)` / private channels.** Two things change once §4 lands:
+  - Calling `realtime.setAuth(token)` re-authorizes the **whole client**, so the
+    presence channel starts authorizing as the JWT user, not anon. Confirm
+    presence/typing still works after `setAuth` (and after each JWT refresh /
+    reconnect), and that a failed/expired token doesn't silently kill typing.
+  - If/when we adopt option (ii) **private channels** (`{ config: { private:
+    true } }`), the presence channel will require a `realtime.messages`
+    authorization policy for its topic (`presence:${roomId}`) too — scope it to
+    room membership, the same as `room_messages`. **Do not forget this channel
+    when writing the Realtime Authorization policies** — it's easy to police only
+    `room_messages` and leave presence unauthorized (or broken).
+- Net: presence is out of scope for the *lockdown* but **in scope for this
+  bridge's verification** — add it to the §4 client-wiring test matrix.
 
 ## Sequencing
 1. RLS lockdown (separate, urgent) — breaks anon realtime (accepted).
