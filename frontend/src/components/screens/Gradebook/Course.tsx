@@ -391,7 +391,7 @@ function Masthead({ data }: { data: GradebookCourse }) {
       const prevMin = i > 0 ? scale[i - 1].min : null;
       return `${t.letter} ${isF ? `<${prevMin ?? 60}` : `${t.min}+`}`;
     })
-    .join("  ·  ");
+    .join(" · ");
   const letterColor = percentColor(data.percent);
   return (
     <header
@@ -437,7 +437,7 @@ function Masthead({ data }: { data: GradebookCourse }) {
         </h1>
       </div>
       <div
-        title={`Letter scale  ${scaleText}`}
+        title={`Letter scale: ${scaleText}`}
         style={{
           display: "flex",
           alignItems: "baseline",
@@ -507,6 +507,7 @@ function GradeCompositionBar({
   currentPercent,
   onEditWeights,
   onSegmentClick,
+  isPredicted = false,
 }: {
   categories: GradeCategory[];
   assignments: GradedAssignment[];
@@ -514,11 +515,30 @@ function GradeCompositionBar({
   currentPercent: number | null;
   onEditWeights: () => void;
   onSegmentClick: (categoryId: string) => void;
+  isPredicted?: boolean;
 }) {
   const sorted = React.useMemo(
     () => [...categories].sort((a, b) => a.sort_order - b.sort_order),
     [categories],
   );
+
+  // For the bar only: put categories with earned points first (left), fully
+  // ungraded last (right), so solid segments cluster on the left and hatched
+  // segments cluster on the right — matching the grade-projector visual.
+  const barSorted = React.useMemo(() => {
+    return [...sorted].sort((a, b) => {
+      const ptsA = categoryPoints(a.id, assignments, a.drop_lowest ?? 0);
+      const ptsB = categoryPoints(b.id, assignments, b.drop_lowest ?? 0);
+      const earnedA = ptsA ? ptsA.earned : 0;
+      const earnedB = ptsB ? ptsB.earned : 0;
+      // Categories with any earned points come before fully-ungraded ones.
+      if ((earnedA > 0) !== (earnedB > 0)) return earnedA > 0 ? -1 : 1;
+      // Among earned, sort by earned fraction descending.
+      const totalA = ptsA && ptsA.total > 0 ? ptsA.total : 1;
+      const totalB = ptsB && ptsB.total > 0 ? ptsB.total : 1;
+      return earnedB / totalB - earnedA / totalA;
+    });
+  }, [sorted, assignments]);
   const totalWeight = sorted.reduce((s, c) => s + c.weight, 0);
   const scale = letterScale && letterScale.length > 0 ? letterScale : DEFAULT_SCALE;
   const ticks = majorTicks(scale);
@@ -562,19 +582,27 @@ function GradeCompositionBar({
         label="Composition"
         onEdit={onEditWeights}
         meta={
-          current !== null && (
-            <CompositionStatus
-              current={current}
-              currentTier={currentTier}
-              projection={projection}
-              scale={scale}
-            />
-          )
+          <>
+            {isPredicted && (
+              <div className="chip chip--accent">
+                Predicted
+              </div>
+            )}
+            {current !== null && (
+              <CompositionStatus
+                current={current}
+                currentTier={currentTier}
+                projection={projection}
+                scale={scale}
+                isPredicted={isPredicted}
+              />
+            )}
+          </>
         }
       />
 
       {/* Letter-tick scale above the bar */}
-      <div style={{ position: "relative", height: 24, marginTop: 8, marginBottom: 6 }}>
+      <div style={{ position: "relative", height: 24, marginTop: 18, marginBottom: 8 }}>
         {ticks.map(({ letter, min }) => (
           <div
             key={letter}
@@ -627,10 +655,12 @@ function GradeCompositionBar({
             background: "var(--bg-subtle)",
             borderRadius: "var(--r-md)",
             overflow: "hidden",
-            border: "1px solid var(--border)",
+            border: isPredicted
+              ? "1.5px dashed var(--accent-border)"
+              : "1px solid var(--border)",
           }}
         >
-          {sorted.map((c, i) => {
+          {barSorted.map((c, i) => {
             const pts = categoryPoints(c.id, assignments, c.drop_lowest ?? 0);
             const denom = pts && pts.total > 0 ? pts.total : 1;
             const earned = pts ? pts.earned : 0;
@@ -771,8 +801,8 @@ function GradeCompositionBar({
       </div>
 
       {/* Category labels under their slots */}
-      <div style={{ display: "flex", marginTop: 12 }}>
-        {sorted.map((c, i) => {
+      <div style={{ display: "flex", marginTop: 14 }}>
+        {barSorted.map((c, i) => {
           const drop = c.drop_lowest ?? 0;
           return (
             <button
@@ -781,7 +811,7 @@ function GradeCompositionBar({
               onClick={() => onSegmentClick(c.id)}
               title={
                 drop > 0
-                  ? `${c.name} — drops ${drop} lowest. Click to jump to assignments.`
+                  ? `${c.name}: drops ${drop} lowest. Click to jump to assignments.`
                   : `Jump to ${c.name} assignments`
               }
               style={{
@@ -851,8 +881,8 @@ function GradeCompositionBar({
       <div
         style={{
           display: "flex",
-          gap: 18,
-          marginTop: 14,
+          gap: 20,
+          marginTop: 22,
           fontSize: 11,
           color: "var(--text-dim)",
           flexWrap: "wrap",
@@ -865,7 +895,7 @@ function GradeCompositionBar({
         />
         <LegendSwatch
           fill="repeating-linear-gradient(135deg, color-mix(in oklch, var(--sap-500), transparent 65%) 0 4px, transparent 4px 8px)"
-          label="Still reachable"
+          label="Still Reachable"
           isImage
         />
       </div>
@@ -927,7 +957,7 @@ function SectionHead({
           textDecorationColor: "var(--border-strong)",
         }}
       >
-        Edit weights
+        Edit Weights
       </button>
     </div>
   );
@@ -938,17 +968,19 @@ function CompositionStatus({
   currentTier,
   projection,
   scale,
+  isPredicted = false,
 }: {
   current: number;
   currentTier: string | undefined;
   projection: ReturnType<typeof projectGrade>;
   scale: LetterScaleTier[];
+  isPredicted?: boolean;
 }) {
   const nextUp = [...scale]
     .sort((a, b) => a.min - b.min)
     .find((t) => current < t.min);
   let action: string;
-  if (!nextUp) action = "Top tier — locked in";
+  if (!nextUp) action = "At the Top of the Scale";
   else if (projection && projection.floor >= nextUp.min)
     action = `${nextUp.letter} already guaranteed`;
   else if (projection && projection.ceiling < nextUp.min)
@@ -997,6 +1029,9 @@ function CompositionStatus({
         }}
       >
         · {action}
+        {isPredicted && (
+          <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>(predicted)</span>
+        )}
       </span>
     </div>
   );
@@ -1067,7 +1102,7 @@ function CompositionTooltip({ tip }: { tip: TipState }) {
   } else if (kind === "remaining" && pts) {
     body = (
       <>
-        <Row label="Still reachable" value={`${pts.remaining.toFixed(0)} pts ungraded`} />
+        <Row label="Still Reachable" value={`${pts.remaining.toFixed(0)} pts ungraded`} />
         <Row label="Up to" value={`+${contribution.toFixed(2)}% of final`} />
         <Row label="Weight" value={`${category.weight}%`} muted />
       </>
