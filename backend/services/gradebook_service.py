@@ -133,8 +133,10 @@ def category_grade(
         if curve_mode == "curved":
             item_mean = item.get("curve_class_mean")
             item_sd = item.get("curve_class_sd")
-            item_avg = item.get("curve_avg_target") or curve_avg_target
-            item_sd_delta = item.get("curve_sd_delta") or curve_sd_delta
+            item_avg_raw = item.get("curve_avg_target")
+            item_avg = item_avg_raw if item_avg_raw is not None else curve_avg_target
+            item_sd_raw = item.get("curve_sd_delta")
+            item_sd_delta = item_sd_raw if item_sd_raw is not None else curve_sd_delta
             if (item_mean is not None and item_sd is not None
                     and item_avg is not None and item_sd_delta is not None):
                 raw_pct = apply_curve(
