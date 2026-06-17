@@ -18,6 +18,7 @@ from models import (
     UpdateAssignmentBody,
     SetLetterScaleBody,
     SyllabusApplyBody,
+    CurveSettingsBody,
 )
 from services import gradebook_service
 from services.auth_guard import require_self
@@ -111,7 +112,7 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
     require_self(user_id, request)
 
     enrollment = table("user_courses").select(
-        "course_id,letter_scale,courses!inner(id,course_code,course_name,semester)",
+        "course_id,letter_scale,curve_mode,curve_avg_target,curve_sd_delta,curve_final_mean,curve_final_sd,courses!inner(id,course_code,course_name,semester)",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
         limit=1,
     )
@@ -119,6 +120,11 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
         raise HTTPException(status_code=404, detail="Course not in your gradebook")
     course = enrollment[0]["courses"]
     letter_scale = enrollment[0].get("letter_scale")
+    curve_mode = enrollment[0].get("curve_mode") or "raw"
+    curve_avg_target = enrollment[0].get("curve_avg_target")
+    curve_sd_delta = enrollment[0].get("curve_sd_delta")
+    curve_final_mean = enrollment[0].get("curve_final_mean")
+    curve_final_sd = enrollment[0].get("curve_final_sd")
 
     cats = table("course_categories").select(
         "id,user_id,course_id,name,weight,sort_order,drop_lowest",
@@ -126,7 +132,7 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
         order="sort_order.asc",
     )
     assigns = table("assignments").select(
-        "id,user_id,course_id,category_id,title,due_date,assignment_type,points_possible,points_earned,notes,source",
+        "id,user_id,course_id,category_id,title,due_date,assignment_type,points_possible,points_earned,notes,source,curve_class_mean,curve_class_sd,curve_avg_target,curve_sd_delta",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
         order="due_date.asc",
     )
@@ -146,7 +152,14 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
             by_cat[c["id"]], c.get("drop_lowest", 0)
         )
 
-    percent = gradebook_service.current_grade(cats, assigns)
+    percent = gradebook_service.current_grade(
+        cats, assigns,
+        curve_mode=curve_mode,
+        curve_avg_target=curve_avg_target,
+        curve_sd_delta=curve_sd_delta,
+        curve_final_mean=curve_final_mean,
+        curve_final_sd=curve_final_sd,
+    )
     letter = gradebook_service.letter_for(percent, letter_scale)
     dropped_ids = gradebook_service.all_dropped_ids(cats, assigns)
 
@@ -158,6 +171,11 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
         "percent": percent,
         "letter": letter,
         "letter_scale": letter_scale,
+        "curve_mode": curve_mode,
+        "curve_avg_target": curve_avg_target,
+        "curve_sd_delta": curve_sd_delta,
+        "curve_final_mean": curve_final_mean,
+        "curve_final_sd": curve_final_sd,
         "categories": cats,
         "assignments": assigns,
         "dropped_assignment_ids": dropped_ids,
@@ -262,6 +280,10 @@ def create_assignment(body: CreateAssignmentBody, request: Request):
         "assignment_type": body.assignment_type,
         "notes": encrypt_if_present(body.notes),
         "source": "manual",
+        "curve_class_mean": body.curve_class_mean,
+        "curve_class_sd": body.curve_class_sd,
+        "curve_avg_target": body.curve_avg_target,
+        "curve_sd_delta": body.curve_sd_delta,
     })
     return {"assignment": inserted[0] if inserted else None}
 
@@ -275,7 +297,10 @@ def update_assignment_route(assignment_id: str, body: UpdateAssignmentBody, requ
         raise HTTPException(status_code=400, detail="Category not in your gradebook")
 
     incoming = body.model_dump(exclude_unset=True, exclude={"user_id"})
-    ALLOWED = {"title", "category_id", "due_date", "assignment_type"}
+    ALLOWED = {
+        "title", "category_id", "due_date", "assignment_type",
+        "curve_class_mean", "curve_class_sd", "curve_avg_target", "curve_sd_delta",
+    }
     ENCRYPTED_FIELDS = {"points_possible", "points_earned", "notes"}
     patch_data = {k: v for k, v in incoming.items() if k in ALLOWED}
     for k in ENCRYPTED_FIELDS:
@@ -414,3 +439,24 @@ def set_letter_scale(course_id: str, body: SetLetterScaleBody, request: Request)
         filters={"user_id": f"eq.{body.user_id}", "course_id": f"eq.{course_id}"},
     )
     return {"updated": True, "letter_scale": scale_payload}
+
+
+@router.patch("/courses/{course_id}/curve")
+def set_curve_settings(course_id: str, body: CurveSettingsBody, request: Request):
+    """Persist bell curve policy and mode for a course."""
+    require_self(body.user_id, request)
+    if not _user_owns_course(body.user_id, course_id):
+        raise HTTPException(status_code=404, detail="Course not in your gradebook")
+    if body.curve_mode not in ("raw", "curved"):
+        raise HTTPException(status_code=400, detail="curve_mode must be 'raw' or 'curved'")
+    table("user_courses").update(
+        {
+            "curve_mode": body.curve_mode,
+            "curve_avg_target": body.curve_avg_target,
+            "curve_sd_delta": body.curve_sd_delta,
+            "curve_final_mean": body.curve_final_mean,
+            "curve_final_sd": body.curve_final_sd,
+        },
+        filters={"user_id": f"eq.{body.user_id}", "course_id": f"eq.{course_id}"},
+    )
+    return {"updated": True}
