@@ -35,16 +35,18 @@ export function GradePredictorPanel({
     [categories],
   );
 
-  const allHaveTotal = ungradedAssignments.every(
-    (a) =>
-      (a.points_possible !== null && (a.points_possible as number) > 0) ||
-      (hypotheticals.get(a.id)?.possible ?? 0) > 0,
-  );
+  const allHaveTotal =
+    ungradedAssignments.length > 0 &&
+    ungradedAssignments.every(
+      (a) =>
+        (a.points_possible !== null && (a.points_possible as number) > 0) ||
+        (hypotheticals.get(a.id)?.possible ?? 0) > 0,
+    );
 
   if (ungradedAssignments.length === 0) return null;
 
   return (
-    <div style={{ marginBottom: 32 }}>
+    <div style={{ marginBottom: "var(--pad-xl)" }}>
       {/* Toggle row */}
       <button
         type="button"
@@ -126,7 +128,7 @@ function PredictorBody({
         border: "1px solid var(--border)",
         borderTop: "none",
         borderRadius: "0 0 var(--r-md) var(--r-md)",
-        padding: "16px 20px",
+        padding: "var(--pad-md) var(--pad-lg)",
       }}
     >
       {/* Result badge */}
@@ -138,7 +140,7 @@ function PredictorBody({
           padding: "10px 14px",
           background: "var(--bg-panel)",
           border: "1px solid var(--accent-border)",
-          borderRadius: 8,
+          borderRadius: "var(--r-sm)",
           marginBottom: 16,
         }}
       >
@@ -156,7 +158,7 @@ function PredictorBody({
           <>
             <span
               style={{
-                fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+                fontFamily: "var(--font-display)",
                 fontSize: 26,
                 fontWeight: 500,
                 color: "var(--accent)",
@@ -222,7 +224,7 @@ function AssignmentSliderRow({
   const sliderMax = possible > 0 ? possible : 100;
 
   const handleEarnedChange = (val: number) => {
-    const clamped = Math.max(0, val);
+    const clamped = Math.max(0, Math.min(val, possible));
     onChange(clamped, possible);
   };
 
@@ -251,7 +253,7 @@ function AssignmentSliderRow({
       <div style={{ minWidth: 0 }}>
         <div
           style={{
-            fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+            fontFamily: "var(--font-serif)",
             fontSize: 13,
             fontWeight: 500,
             color: "var(--text)",
