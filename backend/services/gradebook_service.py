@@ -66,7 +66,7 @@ def apply_curve(
         z             = (score - class_mean) / class_sd
         curved_grade  = avg_target + z * sd_delta
 
-    Clamps to [0, 1]. Returns score_pct unchanged if class_sd == 0
+    Clamps to [0, 1]. Returns score_pct unchanged if class_sd <= 0 (also handles negative values which are mathematically invalid)
     (prevents division by zero when all students scored identically).
     """
     if class_sd <= 0:

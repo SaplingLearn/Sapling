@@ -23,8 +23,8 @@ class TestCategoryGrade:
             {"points_possible": 100, "points_earned": 92},
             {"points_possible": 50,  "points_earned": 40},
         ]
-        # (92 + 40) / (100 + 50) = 0.88
-        assert svc.category_grade(items) == pytest.approx(0.88)
+        # mean([92/100, 40/50]) = mean([0.92, 0.80]) = 0.86
+        assert svc.category_grade(items) == pytest.approx(0.86)
 
     def test_skips_items_missing_points_possible(self):
         items = [
@@ -132,5 +132,11 @@ class TestApplyCurve:
 
     def test_sd_zero_returns_raw_score(self):
         result = apply_curve(0.75, class_mean=0.75, class_sd=0.0,
+                             avg_target=0.83, sd_delta=0.10)
+        assert result == 0.75
+
+    def test_negative_sd_returns_raw_score(self):
+        # Negative SD is mathematically invalid — treated same as zero
+        result = apply_curve(0.75, class_mean=0.75, class_sd=-0.05,
                              avg_target=0.83, sd_delta=0.10)
         assert result == 0.75
