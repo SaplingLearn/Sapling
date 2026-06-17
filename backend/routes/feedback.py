@@ -4,7 +4,7 @@ import uuid
 import httpx
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
-from db.connection import SUPABASE_URL, SUPABASE_KEY, table
+from db.connection import SUPABASE_KEY, SUPABASE_URL, table
 from models import SubmitFeedbackBody, SubmitIssueReportBody
 from services.auth_guard import get_session_user_id
 from services.request_limits import read_within_limit
