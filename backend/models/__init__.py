@@ -404,7 +404,7 @@ class UpdateAssignmentBody(BaseModel):
 
 class CurveSettingsBody(BaseModel):
     user_id: str
-    curve_mode: str = "raw"  # "raw" | "curved"
+    curve_mode: Literal["raw", "curved"] = "raw"
     curve_avg_target: Optional[float] = Field(default=None, ge=0, le=1)
     curve_sd_delta: Optional[float] = Field(default=None, ge=0, le=1)
     curve_final_mean: Optional[float] = Field(default=None, ge=0, le=1)

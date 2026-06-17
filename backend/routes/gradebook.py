@@ -447,16 +447,11 @@ def set_curve_settings(course_id: str, body: CurveSettingsBody, request: Request
     require_self(body.user_id, request)
     if not _user_owns_course(body.user_id, course_id):
         raise HTTPException(status_code=404, detail="Course not in your gradebook")
-    if body.curve_mode not in ("raw", "curved"):
-        raise HTTPException(status_code=400, detail="curve_mode must be 'raw' or 'curved'")
+    patch = body.model_dump(exclude_unset=True, exclude={"user_id"})
+    if not patch:
+        return {"updated": False}
     table("user_courses").update(
-        {
-            "curve_mode": body.curve_mode,
-            "curve_avg_target": body.curve_avg_target,
-            "curve_sd_delta": body.curve_sd_delta,
-            "curve_final_mean": body.curve_final_mean,
-            "curve_final_sd": body.curve_final_sd,
-        },
+        patch,
         filters={"user_id": f"eq.{body.user_id}", "course_id": f"eq.{course_id}"},
     )
     return {"updated": True}
