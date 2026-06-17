@@ -6,7 +6,7 @@ import { Pill } from "./Pill";
 import { useToast } from "./ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
-import { submitIssueReport, IS_LOCAL_MODE } from "@/lib/api";
+import { submitIssueReport, IS_LOCAL_MODE, API_URL } from "@/lib/api";
 
 const TOPICS = ["Bug", "Feature", "Polish", "Content", "Other"] as const;
 type Topic = typeof TOPICS[number];
@@ -26,7 +26,7 @@ async function uploadScreenshot(file: File): Promise<string> {
   if (IS_LOCAL_MODE) return URL.createObjectURL(file);
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch("/api/issue-reports/screenshot", {
+  const res = await fetch(`${API_URL}/api/issue-reports/screenshot`, {
     method: "POST",
     credentials: "include",
     body: form,

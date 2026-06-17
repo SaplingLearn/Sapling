@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 import httpx
@@ -7,6 +8,8 @@ from db.connection import SUPABASE_URL, SUPABASE_KEY, table
 from models import SubmitFeedbackBody, SubmitIssueReportBody
 from services.auth_guard import get_session_user_id
 from services.request_limits import read_within_limit
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -77,6 +80,21 @@ async def upload_issue_screenshot(request: Request, file: UploadFile = File(...)
             "Authorization": f"Bearer {SUPABASE_KEY}",
             "Content-Type": file.content_type or "application/octet-stream",
         },
+        timeout=30.0,
     )
-    r.raise_for_status()
+    if r.status_code not in (200, 201):
+        # Surface the real Supabase response so the failure is debuggable
+        # without server access (mirrors storage_service.upload_avatar). We
+        # only show the truncated upstream body — never the URL or headers
+        # (the latter contains the service-role key).
+        body_text = (r.text or "").strip()[:500]
+        logger.warning(
+            "upload_issue_screenshot: Supabase storage rejected upload "
+            "user=%s status=%d body=%s",
+            user_id, r.status_code, body_text,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Screenshot upload failed (Supabase {r.status_code}): {body_text or 'no body'}",
+        )
     return {"path": path}

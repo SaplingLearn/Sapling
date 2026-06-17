@@ -47,11 +47,29 @@ class TestIssueScreenshotUpload:
 
     def test_valid_upload_returns_path_scoped_to_user(self):
         with patch("routes.feedback.httpx") as hx:
-            hx.put.return_value.raise_for_status.return_value = None
+            hx.put.return_value.status_code = 200
             r = client.post("/api/issue-reports/screenshot", files=_png())
         assert r.status_code == 200
         path = r.json()["path"]
         # Path is scoped under the authenticated user_id (conftest stub: user_andres).
         assert path.startswith("user_andres/")
         assert path.endswith(".png")
+        hx.put.assert_called_once()
+
+    def test_supabase_failure_returns_502_not_500(self):
+        # When Supabase Storage rejects the upload (e.g. bucket missing /
+        # RLS denied), the endpoint maps it to a 502 with the truncated
+        # upstream body — never a generic 500. (#231 review fix.)
+        with patch("routes.feedback.httpx") as hx:
+            hx.put.return_value.status_code = 404
+            hx.put.return_value.text = '{"statusCode":"404","error":"Bucket not found"}'
+            r = client.post("/api/issue-reports/screenshot", files=_png())
+        assert r.status_code == 502
+        detail = r.json()["detail"]
+        # Upstream status + body are surfaced for debuggability...
+        assert "404" in detail
+        assert "Bucket not found" in detail
+        # ...but the service-role key (in headers) and upload URL must not leak.
+        assert "Authorization" not in detail
+        assert "storage/v1/object" not in detail
         hx.put.assert_called_once()
