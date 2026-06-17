@@ -17,25 +17,18 @@ export interface GradeProjection {
   ceiling: number;  // final percent if everything ungraded scored 100
 }
 
-// "Drop the lowest N" helper. Sort score-asc, return summed earned/possible
-// over the kept items. If drop >= items.length, everything is dropped — the
-// category effectively has no contributing work in that scenario.
+// "Drop the lowest N" helper. Sort score-asc, drop the N lowest, return the
+// sum of scores and count of kept items. Each assignment is equally weighted —
+// the category grade is scoreSum/count, not total-earned/total-possible.
 function dropAndSum(
   items: { score: number; earned: number; possible: number }[],
   drop: number,
-): { earned: number; possible: number } {
-  if (drop <= 0) {
-    return {
-      earned: items.reduce((s, x) => s + x.earned, 0),
-      possible: items.reduce((s, x) => s + x.possible, 0),
-    };
-  }
-  if (drop >= items.length) return { earned: 0, possible: 0 };
-  const sorted = [...items].sort((a, b) => a.score - b.score);
-  const kept = sorted.slice(drop);
+): { scoreSum: number; count: number } {
+  if (drop >= items.length) return { scoreSum: 0, count: 0 };
+  const kept = drop <= 0 ? items : [...items].sort((a, b) => a.score - b.score).slice(drop);
   return {
-    earned: kept.reduce((s, x) => s + x.earned, 0),
-    possible: kept.reduce((s, x) => s + x.possible, 0),
+    scoreSum: kept.reduce((s, x) => s + x.score, 0),
+    count: kept.length,
   };
 }
 
@@ -81,7 +74,7 @@ export function projectGrade(
       });
     const currentDS = dropAndSum(currentItems, drop);
     const catCurrent =
-      currentDS.possible > 0 ? currentDS.earned / currentDS.possible : 0;
+      currentDS.count > 0 ? currentDS.scoreSum / currentDS.count : 0;
 
     // Floor scenario — ungraded = 0.
     const floorItems = items.map((a) => {
@@ -91,7 +84,7 @@ export function projectGrade(
     });
     const floorDS = dropAndSum(floorItems, drop);
     const catFloor =
-      floorDS.possible > 0 ? floorDS.earned / floorDS.possible : 0;
+      floorDS.count > 0 ? floorDS.scoreSum / floorDS.count : 0;
 
     // Ceiling scenario — ungraded = full marks.
     const ceilingItems = items.map((a) => {
@@ -101,7 +94,7 @@ export function projectGrade(
     });
     const ceilingDS = dropAndSum(ceilingItems, drop);
     const catCeiling =
-      ceilingDS.possible > 0 ? ceilingDS.earned / ceilingDS.possible : 0;
+      ceilingDS.count > 0 ? ceilingDS.scoreSum / ceilingDS.count : 0;
 
     weightSum += cat.weight;
     weightedCurrent += cat.weight * catCurrent;
@@ -165,6 +158,7 @@ interface Props {
   assignments: GradedAssignment[];
   currentPercent: number | null;
   letterScale: LetterScaleTier[] | null;
+  isPredicted?: boolean;
 }
 
 // Default scale used when a course has no per-course letter scale set.
@@ -201,6 +195,7 @@ export function GradeProjector({
   assignments,
   currentPercent,
   letterScale,
+  isPredicted = false,
 }: Props) {
   const projection = projectGrade(categories, assignments);
   // Prefer the server-computed current percent; fall back to our computation
@@ -220,8 +215,8 @@ export function GradeProjector({
           color: "var(--text-dim)",
         }}
       >
-        Once your first assignment is graded, this becomes a live projector —
-        showing what&apos;s guaranteed, what&apos;s still reachable, and what
+        Once your first assignment is graded, this becomes a live projector
+        showing what&apos;s guaranteed, what&apos;s Still Reachable, and what
         you need on the remaining work to hit each letter.
       </div>
     );
@@ -431,6 +426,25 @@ export function GradeProjector({
         </div>
       </div>
 
+      {isPredicted && (
+        <div
+          className="mono"
+          style={{
+            fontSize: 10,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: "var(--accent)",
+            background: "var(--accent-soft)",
+            border: "1px solid var(--accent-border)",
+            borderRadius: "var(--r-full)",
+            padding: "2px 8px",
+            display: "inline-block",
+            marginBottom: 10,
+          }}
+        >
+          Predicted
+        </div>
+      )}
       {/* Footer trio: Floor · Action · Ceiling */}
       <div
         style={{
