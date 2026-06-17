@@ -2,6 +2,7 @@
 import pytest
 
 from services import gradebook_service as svc
+from services.gradebook_service import apply_curve
 
 
 # ── category_grade ───────────────────────────────────────────────────────────
@@ -99,3 +100,37 @@ class TestLetterFor:
     def test_handles_boundary_exactly(self):
         assert svc.letter_for(93.0, None) == "A"
         assert svc.letter_for(92.999, None) == "A-"
+
+
+# ── apply_curve ───────────────────────────────────────────────────────────────
+
+class TestApplyCurve:
+    def test_at_mean_returns_avg_target(self):
+        result = apply_curve(0.68, class_mean=0.68, class_sd=0.12,
+                             avg_target=0.83, sd_delta=0.10)
+        assert abs(result - 0.83) < 1e-9
+
+    def test_one_sd_above_mean(self):
+        result = apply_curve(0.80, class_mean=0.68, class_sd=0.12,
+                             avg_target=0.83, sd_delta=0.10)
+        assert abs(result - 0.93) < 1e-9
+
+    def test_one_sd_below_mean(self):
+        result = apply_curve(0.56, class_mean=0.68, class_sd=0.12,
+                             avg_target=0.83, sd_delta=0.10)
+        assert abs(result - 0.73) < 1e-9
+
+    def test_clamp_above_100(self):
+        result = apply_curve(1.0, class_mean=0.50, class_sd=0.05,
+                             avg_target=0.83, sd_delta=0.10)
+        assert result == 1.0
+
+    def test_clamp_below_0(self):
+        result = apply_curve(0.0, class_mean=0.80, class_sd=0.05,
+                             avg_target=0.50, sd_delta=0.15)
+        assert result == 0.0
+
+    def test_sd_zero_returns_raw_score(self):
+        result = apply_curve(0.75, class_mean=0.75, class_sd=0.0,
+                             avg_target=0.83, sd_delta=0.10)
+        assert result == 0.75

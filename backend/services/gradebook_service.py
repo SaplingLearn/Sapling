@@ -51,6 +51,30 @@ def _coerce_drop(value) -> int:
     return n if n > 0 else 0
 
 
+def apply_curve(
+    score_pct: float,
+    class_mean: float,
+    class_sd: float,
+    avg_target: float,
+    sd_delta: float,
+) -> float:
+    """Apply a bell curve adjustment to a single score percentage (0–1).
+
+    Maps the student's score to a curved grade based on how many standard
+    deviations above/below the class mean they are.
+
+        z             = (score - class_mean) / class_sd
+        curved_grade  = avg_target + z * sd_delta
+
+    Clamps to [0, 1]. Returns score_pct unchanged if class_sd == 0
+    (prevents division by zero when all students scored identically).
+    """
+    if class_sd <= 0:
+        return score_pct
+    z = (score_pct - class_mean) / class_sd
+    return max(0.0, min(1.0, avg_target + z * sd_delta))
+
+
 def dropped_assignment_ids(
     items: Iterable[AssignmentRow],
     drop_lowest: int,
@@ -85,14 +109,16 @@ def category_grade(
 ) -> Optional[float]:
     """Return the 0–1 grade for one category, or None if no graded items.
 
-    A graded item has both points_possible (> 0) and points_earned (not None).
+    Each assignment is weighted equally: the category score is the mean of
+    individual (earned/possible) ratios, not a total-points ratio. A 54-point
+    assignment and a 12-point assignment each count as one unit.
+
     The lowest `drop_lowest` graded items (by earned/possible) are excluded
-    before averaging. Sums earned / sums possible across the kept items.
+    before averaging.
     """
     items = list(items)
     dropped = set(dropped_assignment_ids(items, drop_lowest))
-    total_possible = 0.0
-    total_earned = 0.0
+    scores: list[float] = []
     for item in items:
         possible = item.get("points_possible")
         earned = item.get("points_earned")
@@ -102,11 +128,10 @@ def category_grade(
             continue
         if item.get("id") in dropped:
             continue
-        total_possible += float(possible)
-        total_earned += float(earned)
-    if total_possible == 0:
+        scores.append(float(earned) / float(possible))
+    if not scores:
         return None
-    return total_earned / total_possible
+    return sum(scores) / len(scores)
 
 
 def current_grade(
