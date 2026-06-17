@@ -120,16 +120,13 @@ describe("hashSeed", () => {
   });
 
   it("returns a non-negative integer even when the raw 32-bit hash is negative", () => {
-    // OVERFLOW REGRESSION GUARD. The naive implementation did
-    // `return Math.abs(h)` where `h` is a `| 0` 32-bit int. That is
-    // broken at exactly INT_MIN (-2^31), whose magnitude has no positive
-    // 32-bit counterpart — `Math.abs(-2147483648) === -2147483648` stays
-    // NEGATIVE, yielding a negative array index and an `undefined` color.
-    //
-    // "overflow10" hashes to -2114666079 (negative raw 32-bit). We assert
-    // the unsigned-coerced result is a non-negative integer and that the
-    // downstream palette lookup is in-range and defined — a test the
-    // buggy `Math.abs` path would fail for the INT_MIN class of seeds.
+    // NEGATIVE-HASH REGRESSION GUARD. "overflow10" is a seed whose raw
+    // signed 32-bit hash (the `| 0` value before `>>> 0`) is negative. We
+    // assert that `hashSeed` still returns a non-negative integer thanks to
+    // the unsigned `>>> 0` coercion, and that the downstream palette lookup
+    // stays in-range and resolves to a defined color. This guards the
+    // general "negative raw hash" case for the index math; it is not the
+    // INT_MIN (-2^31) edge specifically.
     const h = hashSeed("overflow10");
     expect(Number.isInteger(h)).toBe(true);
     expect(h).toBeGreaterThanOrEqual(0);

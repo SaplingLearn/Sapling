@@ -28,11 +28,12 @@ const COURSE_PALETTE = [
 // (per-node HSL jitter seeding). Keep the body identical across consumers
 // so the same input always maps to the same downstream color.
 //
-// OVERFLOW SAFETY: the naive `Math.abs(h)` is broken — `Math.abs(-2^31)`
-// stays NEGATIVE (the value has no positive 32-bit counterpart), which
-// would produce a negative array index and an `undefined` color. We coerce
-// to an unsigned 32-bit integer with `>>> 0` instead, which is always in
-// `[0, 2^32)`, so every `% COURSE_PALETTE.length` is non-negative.
+// UNSIGNED NORMALIZATION: `h` is a signed 32-bit int (the `| 0` keeps it in
+// `[-2^31, 2^31)`), so its raw value can be negative. We coerce it to an
+// unsigned 32-bit integer with `>>> 0`, which is always in `[0, 2^32)`. This
+// gives consistent, deterministic indexing for every `% COURSE_PALETTE.length`
+// and keeps the hash semantics identical across both consumers (the 2D
+// `paletteFor` and the 3D `KnowledgeGraph3D`'s `shadeFor`).
 export function hashSeed(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
