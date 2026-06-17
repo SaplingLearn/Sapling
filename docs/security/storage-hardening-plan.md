@@ -1,8 +1,25 @@
 # Storage hardening — sequenced plan (#231)
 
-**Status: DRAFT for review. Nothing applied to prod.** Re-confirmed live against
-the Sapling project (`jxqcmjqtjlpuxfrxmrdv`) on 2026-06-15 — supersedes the
-earlier version of this doc, which had two wrong claims (noted below).
+**Status (per phase):**
+- **Phase 1 (`application_resumes` → private): ✅ APPLIED to prod 2026-06-15.**
+  Done via MCP; `public=false` verified. The SQL block in
+  `backend/db/security/storage_lockdown.sql` for Phase 1 is an after-the-fact
+  **record**, not a pending action.
+- **Phase 2 (`issues-media-files` → private): ⏳ NOT applied — DRAFT for review.**
+  Requires the Phase 2a app-code PR to ship + deploy first. Do not run Phase 2
+  SQL until then.
+
+Nothing in Phase 2 has touched live. Re-confirmed live against the Sapling
+project (`jxqcmjqtjlpuxfrxmrdv`) on 2026-06-15 — supersedes the earlier version
+of this doc, which had two wrong claims (noted below).
+
+> ⚠️ **Merge-ordering constraint (cross-PR):** an OLDER copy of this same file
+> (`docs/security/storage-hardening-plan.md`) lives in PR #232. **#238 supersedes
+> that content.** To avoid a silent revert, **#238 must merge AFTER #232**, OR
+> #232 must drop this file from its diff before either merges. If #232 lands
+> after #238 it will overwrite this doc with stale content (re-introducing the
+> two corrected-below errors and the pre-Phase-1 status). See the ordering note
+> at the bottom of this doc.
 
 ## Live findings (re-confirmed via MCP + code)
 
@@ -49,7 +66,7 @@ stored only in `job_applications`, which the RLS lockdown already made
 anon-inaccessible — so cached URLs are undiscoverable. Recommend purging the
 storage CDN cache (dashboard) or letting it age out for full hygiene.
 
-- **Apply (Supabase dashboard SQL editor):**
+- **Applied 2026-06-15 (Supabase, via MCP) — recorded here, do not re-run:**
   ```sql
   UPDATE storage.buckets SET public = false WHERE id = 'application_resumes';
   ```
@@ -65,8 +82,9 @@ storage CDN cache (dashboard) or letting it age out for full hygiene.
     "https://jxqcmjqtjlpuxfrxmrdv.supabase.co/storage/v1/object/public/application_resumes/<path>"
   ```
   **200 before, 400 after** (private bucket no longer serves `/object/public/`).
-  Confirm a careers upload still succeeds (service-role path unchanged).
-- **No app deploy required.** Can apply immediately after you approve this plan.
+  Confirmed: post-flip a careers upload still succeeds (service-role path
+  unchanged).
+- **No app deploy was required** (and none is now — this phase is complete).
 - **Future (only if in-app résumé viewing is ever added):** a backend
   signed-URL endpoint. Not needed now — there is no current reader.
 
@@ -96,16 +114,18 @@ uploads/displays break.
   ```sql
   BEGIN;
   UPDATE storage.buckets SET public = false WHERE id = 'issues-media-files';
-  DROP POLICY "Allow uploads"     ON storage.objects;  -- anon INSERT (issues-media-files)
-  DROP POLICY "Allow public read" ON storage.objects;  -- anon SELECT (issues-media-files)
+  DROP POLICY IF EXISTS "Allow uploads"     ON storage.objects;  -- anon INSERT (issues-media-files)
+  DROP POLICY IF EXISTS "Allow public read" ON storage.objects;  -- anon SELECT (issues-media-files)
   COMMIT;
   ```
 - **Rollback (2b):**
   ```sql
   BEGIN;
   UPDATE storage.buckets SET public = true WHERE id = 'issues-media-files';
+  DROP POLICY IF EXISTS "Allow public read" ON storage.objects;
   CREATE POLICY "Allow public read" ON storage.objects FOR SELECT TO public
     USING (bucket_id = 'issues-media-files');
+  DROP POLICY IF EXISTS "Allow uploads" ON storage.objects;
   CREATE POLICY "Allow uploads" ON storage.objects FOR INSERT TO public
     WITH CHECK (bucket_id = 'issues-media-files');
   COMMIT;
@@ -121,10 +141,23 @@ INSERT policy. Leave it.
 ---
 
 ## What's app-code vs Supabase-side, and the order
-1. **Phase 1 (Supabase only):** flip `application_resumes` private. *Apply now (post-review).* No deploy.
-2. **Phase 2a (app-code PR + deploy):** route issue-report screenshots through the backend; stop frontend anon storage use. Negative test.
-3. **Phase 2b (Supabase only):** flip `issues-media-files` private + drop its two `{public}` policies. *Only after 2a is deployed and verified.*
+1. **Phase 1 (Supabase only):** flip `application_resumes` private. ✅ **DONE — applied 2026-06-15.** No deploy.
+2. **Phase 2a (app-code PR + deploy):** route issue-report screenshots through the backend; stop frontend anon storage use. Negative test. *Not started.*
+3. **Phase 2b (Supabase only):** flip `issues-media-files` private + drop its two `{public}` policies. *Pending — only after 2a is deployed and verified.*
 
-The draft SQL lives in `backend/db/security/storage_lockdown.sql` (+ rollback),
-kept as the applied record like the RLS lockdown's #232 — **do not merge/run
-until reviewed**, and 2b not until 2a ships.
+The SQL lives in `backend/db/security/storage_lockdown.sql` (+ rollback): the
+Phase 1 block is the **applied record** (like the RLS lockdown's #232); the
+Phase 2 block is **draft — do not run until reviewed**, and 2b not until 2a
+ships.
+
+## Cross-PR ordering constraint (must read before merging)
+
+An older copy of this file (`docs/security/storage-hardening-plan.md`) is also
+included in **PR #232**. The content in **#238 supersedes** it. Therefore:
+
+- **#238 must merge AFTER #232**, OR
+- **#232 must remove this file from its diff** before either merges.
+
+If #232 merges after #238, it will silently overwrite this doc with the stale
+version (pre-Phase-1 status + the two errors corrected above). Coordinate the
+merge order or drop the file from #232 to prevent a silent revert.

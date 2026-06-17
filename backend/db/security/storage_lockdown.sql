@@ -1,8 +1,13 @@
 -- ============================================================================
--- STORAGE HARDENING (#231) — DRAFT. Apply via the Supabase SQL editor AFTER
--- review, in the phased order below. Do NOT run Phase 2 until the issue-report
--- upload PR (Phase 2a) is deployed to prod. See
--- docs/security/storage-hardening-plan.md.
+-- STORAGE HARDENING (#231). State of this file:
+--   * Phase 1 (application_resumes → private): ALREADY APPLIED to prod on
+--     2026-06-15 — the block below is an AFTER-THE-FACT RECORD, not a pending
+--     action. Do NOT re-run it expecting a change; it is kept for the audit
+--     trail (same convention as the RLS lockdown #232).
+--   * Phase 2 (issues-media-files → private): NOT applied — DRAFT. Run via the
+--     Supabase SQL editor AFTER review, and only after the issue-report upload
+--     PR (Phase 2a) is deployed to prod.
+-- See docs/security/storage-hardening-plan.md for the full sequenced plan.
 --
 -- Confirmed live 2026-06-15: storage.objects RLS is ENABLED; service_role
 -- bypasses it (backend uploads keep working). The only frontend-anon storage
@@ -10,10 +15,14 @@
 -- ============================================================================
 
 -- ── Phase 1 — application_resumes → private  [APPLIED 2026-06-15] ────────────
--- 12 résumés (PII) were publicly readable by URL. The bucket is written only by
--- the backend (careers.py, service-role) and read by NO code, so flipping it
--- private broke nothing in the app. Applied via MCP; verified public=false.
+-- STATUS: DONE. Applied to prod on 2026-06-15 via MCP; verified public=false.
+-- This block is a record of what was run, NOT a pending step — re-running it is
+-- a no-op (bucket is already private). 12 résumés (PII) were publicly readable
+-- by URL. The bucket is written only by the backend (careers.py, service-role)
+-- and read by NO code, so flipping it private broke nothing in the app.
+BEGIN;
 UPDATE storage.buckets SET public = false WHERE id = 'application_resumes';
+COMMIT;
 -- Rollback: UPDATE storage.buckets SET public = true WHERE id = 'application_resumes';
 --
 -- CDN NOTE: Supabase fronts public objects with Cloudflare. Fresh/un-cached
@@ -33,8 +42,8 @@ UPDATE storage.buckets SET public = false WHERE id = 'application_resumes';
 --
 -- BEGIN;
 -- UPDATE storage.buckets SET public = false WHERE id = 'issues-media-files';
--- DROP POLICY "Allow uploads"     ON storage.objects;  -- anon INSERT (issues-media-files)
--- DROP POLICY "Allow public read" ON storage.objects;  -- anon SELECT (issues-media-files)
+-- DROP POLICY IF EXISTS "Allow uploads"     ON storage.objects;  -- anon INSERT (issues-media-files)
+-- DROP POLICY IF EXISTS "Allow public read" ON storage.objects;  -- anon SELECT (issues-media-files)
 -- COMMIT;
 
 
