@@ -2,7 +2,7 @@
 import pytest
 
 from services import gradebook_service as svc
-from services.gradebook_service import apply_curve
+from services.gradebook_service import apply_curve, category_grade, current_grade
 
 
 # ── category_grade ───────────────────────────────────────────────────────────
@@ -140,3 +140,59 @@ class TestApplyCurve:
         result = apply_curve(0.75, class_mean=0.75, class_sd=-0.05,
                              avg_target=0.83, sd_delta=0.10)
         assert result == 0.75
+
+
+class TestCategoryGradeCurved:
+    ITEMS = [
+        {"id": "a1", "points_possible": "100", "points_earned": "80",
+         "curve_class_mean": 0.68, "curve_class_sd": 0.12,
+         "curve_avg_target": None, "curve_sd_delta": None},
+        {"id": "a2", "points_possible": "100", "points_earned": "60",
+         "curve_class_mean": 0.55, "curve_class_sd": 0.10,
+         "curve_avg_target": None, "curve_sd_delta": None},
+    ]
+
+    def test_raw_mode_ignores_curve(self):
+        result = category_grade(self.ITEMS, curve_mode="raw",
+                                curve_avg_target=0.83, curve_sd_delta=0.10)
+        # raw average of 0.80 and 0.60
+        assert abs(result - 0.70) < 1e-9
+
+    def test_curved_mode_applies_curve(self):
+        # a1: z=(0.80-0.68)/0.12=1.0 → 0.83+0.10=0.93
+        # a2: z=(0.60-0.55)/0.10=0.5 → 0.83+0.05=0.88
+        # mean = (0.93+0.88)/2 = 0.905
+        result = category_grade(self.ITEMS, curve_mode="curved",
+                                curve_avg_target=0.83, curve_sd_delta=0.10)
+        assert abs(result - 0.905) < 1e-9
+
+    def test_curved_skips_items_without_curve_data(self):
+        items = [
+            {"id": "a1", "points_possible": "100", "points_earned": "80",
+             "curve_class_mean": None, "curve_class_sd": None,
+             "curve_avg_target": None, "curve_sd_delta": None},
+        ]
+        result = category_grade(items, curve_mode="curved",
+                                curve_avg_target=0.83, curve_sd_delta=0.10)
+        # No curve data → raw score used
+        assert abs(result - 0.80) < 1e-9
+
+
+class TestCurrentGradeFinalCurve:
+    def test_final_curve_applied_after_weighted_average(self):
+        cats = [{"id": "c1", "weight": 100.0, "drop_lowest": 0}]
+        assigns = [
+            {"id": "a1", "category_id": "c1", "points_possible": "100",
+             "points_earned": "68",
+             "curve_class_mean": None, "curve_class_sd": None,
+             "curve_avg_target": None, "curve_sd_delta": None},
+        ]
+        # raw grade = 68%; final curve: mean=0.68, SD=0.12, avg_target=0.83
+        # z = (0.68-0.68)/0.12 = 0 → curved = 0.83 = 83%
+        result = current_grade(
+            cats, assigns,
+            curve_mode="curved",
+            curve_avg_target=0.83, curve_sd_delta=0.10,
+            curve_final_mean=0.68, curve_final_sd=0.12,
+        )
+        assert abs(result - 83.0) < 1e-6

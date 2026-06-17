@@ -106,15 +106,16 @@ def dropped_assignment_ids(
 def category_grade(
     items: Iterable[AssignmentRow],
     drop_lowest: int = 0,
+    curve_mode: str = "raw",
+    curve_avg_target: Optional[float] = None,
+    curve_sd_delta: Optional[float] = None,
 ) -> Optional[float]:
     """Return the 0–1 grade for one category, or None if no graded items.
 
-    Each assignment is weighted equally: the category score is the mean of
-    individual (earned/possible) ratios, not a total-points ratio. A 54-point
-    assignment and a 12-point assignment each count as one unit.
-
-    The lowest `drop_lowest` graded items (by earned/possible) are excluded
-    before averaging.
+    Each assignment is weighted equally (mean of earned/possible ratios).
+    When curve_mode='curved' and an assignment has curve_class_mean and
+    curve_class_sd set, apply_curve() is called on its score before averaging.
+    Assignments without curve data are used at their raw score.
     """
     items = list(items)
     dropped = set(dropped_assignment_ids(items, drop_lowest))
@@ -128,7 +129,19 @@ def category_grade(
             continue
         if item.get("id") in dropped:
             continue
-        scores.append(float(earned) / float(possible))
+        raw_pct = float(earned) / float(possible)
+        if curve_mode == "curved":
+            item_mean = item.get("curve_class_mean")
+            item_sd = item.get("curve_class_sd")
+            item_avg = item.get("curve_avg_target") or curve_avg_target
+            item_sd_delta = item.get("curve_sd_delta") or curve_sd_delta
+            if (item_mean is not None and item_sd is not None
+                    and item_avg is not None and item_sd_delta is not None):
+                raw_pct = apply_curve(
+                    float(raw_pct), float(item_mean), float(item_sd),
+                    float(item_avg), float(item_sd_delta)
+                )
+        scores.append(raw_pct)
     if not scores:
         return None
     return sum(scores) / len(scores)
@@ -137,13 +150,18 @@ def category_grade(
 def current_grade(
     categories: list[CategoryRow],
     assignments: Iterable[AssignmentRow],
+    curve_mode: str = "raw",
+    curve_avg_target: Optional[float] = None,
+    curve_sd_delta: Optional[float] = None,
+    curve_final_mean: Optional[float] = None,
+    curve_final_sd: Optional[float] = None,
 ) -> Optional[float]:
     """Return the 0–100 current grade across all categories, or None.
 
-    For each category with at least one graded item, computes the
-    category_grade (respecting per-category drop_lowest) and weights it
-    by the category's weight. Categories with no graded items drop out —
-    total weight is renormalized so contributing weights sum to 100.
+    When curve_mode='curved':
+    - Per-assignment curves are applied inside category_grade().
+    - If curve_final_mean, curve_final_sd, curve_avg_target, and curve_sd_delta
+      are all set, a bell curve is also applied to the final weighted average.
     """
     by_cat: dict[str, list[AssignmentRow]] = {c["id"]: [] for c in categories}
     for a in assignments:
@@ -154,7 +172,12 @@ def current_grade(
     total_weight = 0.0
     weighted_sum = 0.0
     for cat in categories:
-        grade = category_grade(by_cat[cat["id"]], cat.get("drop_lowest", 0))
+        grade = category_grade(
+            by_cat[cat["id"]], cat.get("drop_lowest", 0),
+            curve_mode=curve_mode,
+            curve_avg_target=curve_avg_target,
+            curve_sd_delta=curve_sd_delta,
+        )
         if grade is None:
             continue
         total_weight += float(cat["weight"])
@@ -162,7 +185,21 @@ def current_grade(
 
     if total_weight == 0:
         return None
-    return (weighted_sum / total_weight) * 100.0
+
+    result = (weighted_sum / total_weight) * 100.0
+
+    if (curve_mode == "curved"
+            and curve_final_mean is not None
+            and curve_final_sd is not None
+            and curve_avg_target is not None
+            and curve_sd_delta is not None):
+        result = apply_curve(
+            result / 100.0,
+            curve_final_mean, curve_final_sd,
+            curve_avg_target, curve_sd_delta,
+        ) * 100.0
+
+    return result
 
 
 def all_dropped_ids(
