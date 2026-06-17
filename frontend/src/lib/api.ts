@@ -1050,6 +1050,24 @@ export const setLetterScale = (
     { method: 'PATCH', body: JSON.stringify({ user_id: userId, scale }) },
   );
 
+export async function setCurveSettings(
+  userId: string,
+  courseId: string,
+  settings: {
+    curve_mode?: "raw" | "curved";
+    curve_avg_target?: number | null;
+    curve_sd_delta?: number | null;
+    curve_final_mean?: number | null;
+    curve_final_sd?: number | null;
+  },
+): Promise<{ updated: boolean }> {
+  return fetchJSON(`/api/gradebook/courses/${courseId}/curve`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, ...settings }),
+  });
+}
+
 export const applySyllabus = (payload: {
   userId: string;
   courseId: string;
@@ -1144,6 +1162,25 @@ export const saveGradescopeCredentials = (
   fetchJSON<{ ok: true }>(`/api/gradescope/credentials`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, ...input }),
+  });
+
+/** Live BU SSO + Duo via headless Chromium on the backend. Long-running:
+ *  the request stays open until the user taps Approve on their phone, or
+ *  the server-side timeout fires (default 120s). */
+export const connectGradescopeViaBuSso = (
+  userId: string,
+  buUsername: string,
+  buPassword: string,
+  duoTimeoutSeconds = 120,
+) =>
+  fetchJSON<{ ok: true }>(`/api/gradescope/credentials/bu-sso`, {
+    method: 'POST',
+    body: JSON.stringify({
+      user_id: userId,
+      bu_username: buUsername,
+      bu_password: buPassword,
+      duo_timeout_seconds: duoTimeoutSeconds,
+    }),
   });
 
 export const deleteGradescopeCredentials = (userId: string) =>
