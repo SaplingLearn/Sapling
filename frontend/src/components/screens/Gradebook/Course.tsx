@@ -24,6 +24,7 @@ import { GradescopeSyncModal } from "@/components/Gradebook/GradescopeSyncModal"
 import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { percentColor } from "@/components/Gradebook/CourseCard";
 import { projectGrade, droppedAssignmentIds } from "@/components/Gradebook/GradeProjector";
+import { GradePredictorPanel } from "@/components/Gradebook/GradePredictorPanel";
 import type {
   GradebookCourse,
   GradeCategory,
@@ -110,6 +111,10 @@ export function GradebookCourseScreen({ courseId }: Props) {
     open: boolean;
     initial: import("@/lib/types").GradedAssignment | null;
   }>({ open: false, initial: null });
+  const [predictorOpen, setPredictorOpen] = React.useState(false);
+  const [hypotheticals, setHypotheticals] = React.useState<
+    Map<string, { earned: number; possible: number }>
+  >(new Map());
 
   const refresh = React.useCallback(async () => {
     if (!userId) return;
@@ -188,6 +193,13 @@ export function GradebookCourseScreen({ courseId }: Props) {
   const onEditGrade = React.useCallback(
     async (id: string, points: number | null) => {
       if (!userId || !data) return;
+      // Clear any hypothetical for this assignment now that it has a real score
+      setHypotheticals((h) => {
+        if (!h.has(id)) return h;
+        const next = new Map(h);
+        next.delete(id);
+        return next;
+      });
       const prev = data;
       setData({
         ...data,
@@ -212,6 +224,67 @@ export function GradebookCourseScreen({ courseId }: Props) {
     el.scrollIntoView({ behavior: "smooth", block: "start" });
     setHighlightedCategory(categoryId);
     window.setTimeout(() => setHighlightedCategory(null), 1600);
+  }, []);
+
+  const ungradedAssignments = React.useMemo(
+    () => (data?.assignments ?? []).filter((a) => a.points_earned === null),
+    [data],
+  );
+
+  const augmentedAssignments = React.useMemo(() => {
+    if (!predictorOpen || !data) return data?.assignments ?? [];
+    return data.assignments.map((a) => {
+      const hyp = hypotheticals.get(a.id);
+      if (a.points_earned !== null || !hyp) return a;
+      return {
+        ...a,
+        points_earned: hyp.earned,
+        points_possible: hyp.possible > 0 ? hyp.possible : a.points_possible,
+      };
+    });
+  }, [predictorOpen, data, hypotheticals]);
+
+  const predictedProjection = React.useMemo(
+    () =>
+      predictorOpen && data
+        ? projectGrade(data.categories, augmentedAssignments)
+        : null,
+    [predictorOpen, data, augmentedAssignments],
+  );
+
+  const predictedLetter = React.useMemo(() => {
+    if (!predictedProjection || !data) return null;
+    const scale =
+      data.letter_scale && data.letter_scale.length > 0
+        ? data.letter_scale
+        : DEFAULT_SCALE;
+    const pct = predictedProjection.current;
+    return (
+      [...scale].sort((a, b) => b.min - a.min).find((t) => pct >= t.min)
+        ?.letter ?? null
+    );
+  }, [predictedProjection, data]);
+
+  const handleHypotheticalChange = React.useCallback(
+    (id: string, earned: number, possible: number) => {
+      setHypotheticals((prev) => {
+        const next = new Map(prev);
+        next.set(id, { earned, possible });
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleResetPredictor = React.useCallback(() => {
+    setHypotheticals(new Map());
+  }, []);
+
+  const handleTogglePredictor = React.useCallback(() => {
+    setPredictorOpen((prev) => {
+      if (prev) setHypotheticals(new Map()); // reset hypotheticals on close
+      return !prev;
+    });
   }, []);
 
   React.useEffect(() => {
@@ -280,11 +353,23 @@ export function GradebookCourseScreen({ courseId }: Props) {
               <Masthead data={data} />
               <GradeCompositionBar
                 categories={data.categories}
-                assignments={data.assignments}
+                assignments={predictorOpen ? augmentedAssignments : data.assignments}
                 letterScale={data.letter_scale}
-                currentPercent={data.percent}
+                currentPercent={predictorOpen ? (predictedProjection?.current ?? null) : data.percent}
                 onEditWeights={() => setEditWeights(true)}
                 onSegmentClick={focusCategory}
+                isPredicted={predictorOpen}
+              />
+              <GradePredictorPanel
+                open={predictorOpen}
+                onToggle={handleTogglePredictor}
+                ungradedAssignments={ungradedAssignments}
+                categories={data.categories}
+                hypotheticals={hypotheticals}
+                onHypotheticalChange={handleHypotheticalChange}
+                onReset={handleResetPredictor}
+                predictedPercent={predictedProjection?.current ?? null}
+                predictedLetter={predictedLetter}
               />
               <AssignmentList
                 assignments={data.assignments}
