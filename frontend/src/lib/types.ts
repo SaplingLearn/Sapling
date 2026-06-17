@@ -289,6 +289,11 @@ export interface GradedAssignment {
   assignment_type: string | null;
   notes: string | null;
   source: "manual" | "syllabus" | "gradescope";
+  // Bell curve fields — null when no curve applied
+  curve_class_mean: number | null;
+  curve_class_sd: number | null;
+  curve_avg_target: number | null;
+  curve_sd_delta: number | null;
 }
 
 export interface GradebookCourseSummary {
@@ -314,6 +319,11 @@ export interface GradebookCourse {
   percent: number | null;
   letter: string | null;
   letter_scale: LetterScaleTier[] | null;
+  curve_mode: "raw" | "curved";
+  curve_avg_target: number | null;
+  curve_sd_delta: number | null;
+  curve_final_mean: number | null;
+  curve_final_sd: number | null;
   categories: GradeCategory[];
   assignments: GradedAssignment[];
   // Server-flattened list of currently-dropped assignment IDs across all
