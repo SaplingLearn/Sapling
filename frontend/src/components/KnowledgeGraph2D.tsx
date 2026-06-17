@@ -12,7 +12,7 @@ import {
   type SimulationNodeDatum,
   type SimulationLinkDatum,
 } from "d3-force";
-import type { GraphEdge, GraphNode } from "@/lib/data";
+import { hashSeed, type GraphEdge, type GraphNode } from "@/lib/data";
 
 export type GraphVariant = "orb" | "constellation" | "organism";
 
@@ -53,12 +53,9 @@ type Props = {
 // Deterministic per-node shade derived from the course color + node id.
 // Keeps each course visually unified while giving every node its own tone,
 // and produces identical output across pages because it depends only on the
-// stable inputs (no per-screen overrides).
-function hashId(id: string): number {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
+// stable inputs (no per-screen overrides). Hashing is delegated to the
+// shared, overflow-safe `hashSeed` in lib/data (the old local copy used
+// `Math.abs(h)`, which stays negative for INT_MIN).
 
 function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
@@ -81,7 +78,7 @@ function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
 function shadeFor(baseHex: string, nodeId: string): string {
   const hsl = hexToHsl(baseHex);
   if (!hsl) return baseHex;
-  const seed = hashId(nodeId);
+  const seed = hashSeed(nodeId);
   const dh = (seed % 51) - 25;
   const ds = ((seed >> 5) % 17) - 8;
   const dl = ((seed >> 10) % 25) - 12;
