@@ -17,8 +17,9 @@
 -- ── Phase 1 — application_resumes → private  [APPLIED 2026-06-15] ────────────
 -- STATUS: DONE. Applied to prod on 2026-06-15 via MCP; verified public=false.
 -- This block is a record of what was run, NOT a pending step — re-running it is
--- a no-op (bucket is already private). 12 résumés (PII) were publicly readable
--- by URL. The bucket is written only by the backend (careers.py, service-role)
+-- a no-op (bucket is already private). ~12-13 résumés (PII) were publicly
+-- readable by URL (observed snapshot 2026-06-15; re-verify the exact count at
+-- apply time). The bucket is written only by the backend (careers.py, service-role)
 -- and read by NO code, so flipping it private broke nothing in the app.
 BEGIN;
 UPDATE storage.buckets SET public = false WHERE id = 'application_resumes';

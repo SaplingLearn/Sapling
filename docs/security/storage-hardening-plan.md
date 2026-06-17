@@ -15,11 +15,15 @@ of this doc, which had two wrong claims (noted below).
 
 > ⚠️ **Merge-ordering constraint (cross-PR):** an OLDER copy of this same file
 > (`docs/security/storage-hardening-plan.md`) lives in PR #232. **#238 supersedes
-> that content.** To avoid a silent revert, **#238 must merge AFTER #232**, OR
-> #232 must drop this file from its diff before either merges. If #232 lands
-> after #238 it will overwrite this doc with stale content (re-introducing the
-> two corrected-below errors and the pre-Phase-1 status). See the ordering note
-> at the bottom of this doc.
+> that content.** This file is add/add between the two branches, so merging the
+> second of the two PRs raises an **explicit `CONFLICT (add/add)`** on this file
+> (Git will not silently overwrite it) — that conflict **must be resolved in
+> #238's favor**, since #238 supersedes the storage plan. To avoid having to
+> resolve it at all, **merge #238 AFTER #232**, OR #232 must drop this file from
+> its diff before either merges. If the conflict is mis-resolved toward #232's
+> copy, this doc reverts to stale content (re-introducing the two corrected-below
+> errors and the pre-Phase-1 status). See the ordering note at the bottom of this
+> doc.
 
 ## Live findings (re-confirmed via MCP + code)
 
@@ -27,9 +31,15 @@ Three buckets exist (`storage.objects` RLS is **enabled**; `service_role` bypass
 
 | Bucket | `public` | objects | Written by | Read by (in code) |
 |---|---|---|---|---|
-| `application_resumes` (résumé PII) | **true** | **13** | backend service-role (`careers.py::_upload_resume`) | **nothing** — no code reads it |
+| `application_resumes` (résumé PII) | **true** | **~12-13**¹ | backend service-role (`careers.py::_upload_resume`) | **nothing** — no code reads it |
 | `issues-media-files` (issue screenshots) | **true** | 2 | **frontend anon** (`ReportIssueFlow.tsx`) | **frontend anon** `getPublicUrl` |
 | `avatars` | true | 2 | backend service-role (`storage_service.py`) | public `<img>` |
+
+¹ Object counts are an **observed snapshot as of 2026-06-15**, not a live invariant.
+The `application_resumes` count was recorded as ~12-13 résumés across MCP/code
+checks; treat it as approximate and **re-verify the exact count at apply time**.
+The bucket is written only by `careers.py::_upload_resume` and read by nothing,
+so all objects in it are résumés.
 
 `storage.objects` policies (only two, **both scoped to one bucket**):
 - `"Allow public read"` — SELECT, `{public}`, `USING bucket_id='issues-media-files'`
@@ -50,7 +60,8 @@ The **only live frontend-anon storage path is `issues-media-files`** (ReportIssu
 ## Sequenced remediation
 
 ### Phase 1 — `application_resumes` → private  ✅ APPLIED 2026-06-15
-This was the priority (12 résumés, PII, publicly readable by URL) and the
+This was the priority (~12-13 résumés, PII, publicly readable by URL — snapshot
+2026-06-15, re-verify at apply; see footnote above) and the
 safest: nothing in the app reads this bucket, and the upload is service-role
 (unaffected by the public flag or RLS). Applied via MCP; `public=false`
 confirmed. Verified closed: a fresh/cache-busted anon GET of a résumé returns
@@ -153,11 +164,16 @@ ships.
 ## Cross-PR ordering constraint (must read before merging)
 
 An older copy of this file (`docs/security/storage-hardening-plan.md`) is also
-included in **PR #232**. The content in **#238 supersedes** it. Therefore:
+included in **PR #232**. The content in **#238 supersedes** it. This file is
+add/add across the two branches, so whichever PR merges second produces an
+**explicit `CONFLICT (add/add)`** on this file at merge time — Git does **not**
+silently overwrite either copy. Therefore:
 
 - **#238 must merge AFTER #232**, OR
 - **#232 must remove this file from its diff** before either merges.
 
-If #232 merges after #238, it will silently overwrite this doc with the stale
-version (pre-Phase-1 status + the two errors corrected above). Coordinate the
-merge order or drop the file from #232 to prevent a silent revert.
+If #232 merges after #238, the merge will surface an explicit add/add conflict on
+this file. **Resolve it in #238's favor** (keep this superseding version) — do
+**not** take #232's older copy, which would revert the doc to the pre-Phase-1
+status plus the two errors corrected above. Coordinating the merge order (or
+dropping the file from #232) avoids having to resolve the conflict at all.
