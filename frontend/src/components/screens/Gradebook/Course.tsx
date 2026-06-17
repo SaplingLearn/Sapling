@@ -371,6 +371,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
                 predictedPercent={predictedProjection?.current ?? null}
                 predictedLetter={predictedLetter}
               />
+              {/* AssignmentList always receives real grades — the predictor is display-only */}
               <AssignmentList
                 assignments={data.assignments}
                 categories={data.categories}
