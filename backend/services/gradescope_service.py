@@ -17,6 +17,8 @@ Caveats worth being honest about:
 from __future__ import annotations
 
 import logging
+import re
+import time
 from typing import Any
 
 import requests
@@ -28,6 +30,30 @@ from gradescopeapi.classes.connection import GSConnection
 
 logger = logging.getLogger(__name__)
 
+# Playwright is optional — only the BU SSO flow needs it. Deployments
+# without a Chromium binary (e.g. CF Workers) can still use the other
+# auth modes; we surface a clean ImportError-style message instead of
+# crashing at import time.
+#
+# Using the SYNC API on purpose: Playwright's async API requires the
+# host loop to be ProactorEventLoop on Windows, but uvicorn under FastAPI
+# on Windows can be Selector — they conflict at subprocess launch. The
+# sync API runs Playwright in its own greenlet-driven loop and is the
+# documented pattern for FastAPI + Windows. We call it from the route via
+# asyncio.to_thread so the FastAPI event loop stays unblocked.
+try:
+    from playwright.sync_api import (  # type: ignore[import-not-found]
+        sync_playwright,
+        TimeoutError as PlaywrightTimeoutError,
+        Locator,
+        Page,
+    )
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:  # pragma: no cover - depends on env
+    PLAYWRIGHT_AVAILABLE = False
+    Locator = Any  # type: ignore[misc,assignment]
+    Page = Any  # type: ignore[misc,assignment]
+
 
 class GradescopeAuthError(Exception):
     """Raised when login fails (invalid creds, captcha, blocked, etc.)."""
@@ -36,6 +62,10 @@ class GradescopeAuthError(Exception):
 class GradescopeFetchError(Exception):
     """Raised when a downstream scrape fails (page format changed, course
     inaccessible, network glitch, etc.)."""
+
+
+class GradescopeDuoTimeout(GradescopeAuthError):
+    """Raised when the user didn't tap their Duo push within the deadline."""
 
 
 # Look like a recent desktop Chrome. The library's default `python-requests`
@@ -275,3 +305,341 @@ def list_assignments(conn: GSConnection, course_id: str) -> list[dict[str, Any]]
             }
         )
     return out
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# BU SSO via Playwright
+# ────────────────────────────────────────────────────────────────────────────
+# Drive a headless Chromium through Gradescope's "School Credentials" entry
+# → Boston University → Shibboleth WebLogin → Duo. We hold open until the
+# page redirects back to gradescope.com (which happens only after the user
+# taps Approve on their phone), then harvest the session cookies. BU
+# password lives in-memory for the duration of the request and is never
+# persisted; only the resulting cookies are stored.
+#
+# Selectors are best-effort and may need tuning after a real run — BU's
+# Shibboleth template and Gradescope's IdP picker both change occasionally.
+# Each step tries multiple fallback selectors before failing.
+
+# Gradescope's normal login page. The school picker is hidden behind a
+# "School Credentials" button on this page — we click it first, then the
+# typeahead appears.
+_GRADESCOPE_LOGIN = "https://www.gradescope.com/login"
+_BU_SCHOOL_NAME = "Boston University"
+
+# "School Credentials" entry button on /login. The text varies a little
+# between Gradescope rev'd (sometimes "Sign in with school credentials").
+_SCHOOL_CREDS_BUTTON_SELECTORS = [
+    "a:has-text('School Credentials')",
+    "button:has-text('School Credentials')",
+    "a:has-text('school credentials')",
+    "a:has-text('Sign in with school')",
+    "a[href*='saml']",
+]
+
+# Typeahead input on the school picker page. Multiple candidates because
+# the picker's markup changes more often than the rest of the flow.
+_BU_IDP_SEARCH_SELECTORS = [
+    "input[placeholder*='school' i]",
+    "input[placeholder*='institution' i]",
+    "input[placeholder*='search' i]",
+    "input[name*='school' i]",
+    "input[name*='institution' i]",
+    "input[type='search']",
+    # last-resort: any visible text-ish input
+    "input:not([type='hidden']):not([type='password']):not([type='submit'])",
+]
+_SHIB_USERNAME_SELECTORS = [
+    "input[name='j_username']",
+    "input#username",
+    "input[name='username']",
+]
+_SHIB_PASSWORD_SELECTORS = [
+    "input[name='j_password']",
+    "input#password",
+    "input[name='password']",
+]
+_SHIB_SUBMIT_SELECTORS = [
+    "button[name='_eventId_proceed']",
+    "button:has-text('Continue')",
+    "button:has-text('Login')",
+    "button[type='submit']",
+    "input[type='submit']",
+]
+
+# Post-Duo continuation buttons. Shibboleth's "Trust this browser?" page
+# and SAML POST-back pages tend to render one of these. Order matters —
+# the more specific the label, the earlier we try. "No"-prefixed labels
+# are intentionally absent.
+_POST_DUO_BUTTON_LABELS = [
+    r"^yes,?\s*trust",      # "Yes, trust browser"
+    r"trust\s*browser",
+    r"^yes,?\s*this is",    # "Yes, this is my device"
+    r"^remember\s*me",
+    r"^continue$",
+    r"^proceed$",
+    r"^submit$",
+]
+# Fallback selectors when get_by_role doesn't find a button.
+_POST_DUO_FALLBACK_SELECTORS = [
+    "input[type='submit'][value*='Continue' i]",
+    "input[type='submit'][value*='Trust' i]",
+    "input[type='submit'][value*='Submit' i]",
+    "a:has-text('Continue')",
+]
+
+
+def _dump_page_state(page: "Page") -> str:
+    """Build a short diagnostic string for error messages when a selector
+    step fails. Includes URL, page title, and a summary of every input
+    element on the page so we can adjust selectors without guessing."""
+    try:
+        url = page.url
+    except Exception:
+        url = "<unknown>"
+    try:
+        title = page.title()
+    except Exception:
+        title = "<unknown>"
+    try:
+        inputs = page.eval_on_selector_all(
+            "input, button, a",
+            """els => els.slice(0, 40).map(e => {
+                if (e.tagName === 'INPUT') {
+                    return `input[name='${e.name||''}' type='${e.type||''}' placeholder='${e.placeholder||''}' id='${e.id||''}']`;
+                }
+                if (e.tagName === 'BUTTON') {
+                    return `button[text='${(e.innerText||'').slice(0, 40)}' name='${e.name||''}']`;
+                }
+                if (e.tagName === 'A') {
+                    return `a[text='${(e.innerText||'').slice(0, 40)}' href='${(e.href||'').slice(0, 60)}']`;
+                }
+                return e.tagName;
+            })""",
+        )
+        elements_str = "; ".join(inputs)
+    except Exception as ex:
+        elements_str = f"<eval failed: {ex}>"
+    return f"page={url} title={title!r} elements=[{elements_str}]"
+
+
+def _first_visible(page: "Page", selectors: list[str], timeout_ms: int) -> "Locator":
+    """Return the first selector in `selectors` that resolves to a visible
+    element within `timeout_ms` per selector. Raises GradescopeAuthError
+    if none match — that's how we know BU/Shibboleth markup drifted."""
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).first
+            loc.wait_for(state="visible", timeout=timeout_ms)
+            return loc
+        except PlaywrightTimeoutError:
+            continue
+    raise GradescopeAuthError(
+        f"Couldn't find any of these elements on the page: {selectors}. "
+        "BU/Shibboleth markup may have changed."
+    )
+
+
+def login_via_bu_sso(
+    bu_username: str,
+    bu_password: str,
+    duo_timeout_seconds: int = 120,
+) -> dict[str, str]:
+    """Run a full BU-SSO + Duo dance and return the resulting Gradescope
+    cookies. Caller is responsible for storing them. Synchronous so it can
+    be invoked from a worker thread via asyncio.to_thread without
+    bumping into Windows event-loop quirks.
+
+    Raises:
+        GradescopeAuthError      — bad creds, missing selectors, Duo denied
+        GradescopeDuoTimeout     — Duo push not approved within deadline
+    """
+    if not PLAYWRIGHT_AVAILABLE:
+        raise GradescopeAuthError(
+            "Playwright is not installed on the backend. Run "
+            "`pip install playwright && playwright install chromium`."
+        )
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            context = browser.new_context(
+                user_agent=_BROWSER_HEADERS["User-Agent"],
+                viewport={"width": 1280, "height": 800},
+                locale="en-US",
+            )
+            # Knock out a couple of the most obvious headless tells. Real
+            # anti-bot evasion is its own discipline; this is the floor.
+            context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+            )
+            page = context.new_page()
+
+            # Step 1: Land on Gradescope's login page. wait_until='commit'
+            # returns as soon as the navigation commits, ~1s faster than
+            # 'domcontentloaded'. The selector waits below will block on
+            # whatever element we need anyway.
+            try:
+                page.goto(_GRADESCOPE_LOGIN, timeout=20000, wait_until="commit")
+            except PlaywrightTimeoutError as e:
+                raise GradescopeAuthError(f"Couldn't reach Gradescope: {e}") from e
+
+            # Step 2: Click "School Credentials" to reveal the IdP picker.
+            try:
+                school_btn = _first_visible(
+                    page, _SCHOOL_CREDS_BUTTON_SELECTORS, 6000
+                )
+                school_btn.click()
+            except GradescopeAuthError as e:
+                raise GradescopeAuthError(
+                    f"Couldn't find the 'School Credentials' button on /login. "
+                    f"{_dump_page_state(page)}. Original: {e}"
+                ) from e
+
+            # Step 3: Type "Boston University" into the school search.
+            # Skipping wait_for_load_state — the selector wait below
+            # already blocks until the search input is visible.
+            try:
+                search = _first_visible(page, _BU_IDP_SEARCH_SELECTORS, 8000)
+                search.fill(_BU_SCHOOL_NAME)
+                bu_option = page.get_by_text(_BU_SCHOOL_NAME, exact=False).first
+                bu_option.wait_for(state="visible", timeout=5000)
+                bu_option.click()
+            except (PlaywrightTimeoutError, GradescopeAuthError) as e:
+                raise GradescopeAuthError(
+                    f"Couldn't pick Boston University from Gradescope's school picker. "
+                    f"{_dump_page_state(page)}. Original: {e}"
+                ) from e
+
+            # Step 4: Wait for redirect to shib.bu.edu (just URL — don't
+            # block on load state, since the selector wait below handles
+            # readiness).
+            try:
+                page.wait_for_url("**shib.bu.edu/**", timeout=15000)
+            except PlaywrightTimeoutError as e:
+                raise GradescopeAuthError(
+                    f"Didn't land on BU's WebLogin (currently at {page.url}): {e}"
+                ) from e
+
+            # Step 5: Fill BU username + password, click Continue. Trimmed
+            # per-selector timeouts — these elements appear within the
+            # first DOM commit, so 5s is plenty.
+            username_field = _first_visible(page, _SHIB_USERNAME_SELECTORS, 5000)
+            username_field.fill(bu_username)
+            password_field = _first_visible(page, _SHIB_PASSWORD_SELECTORS, 3000)
+            password_field.fill(bu_password)
+            submit = _first_visible(page, _SHIB_SUBMIT_SELECTORS, 3000)
+            # NOTE: from here until the Duo push lands on the user's phone,
+            # latency is out of our hands (BU → Duo servers → APNs/FCM).
+            submit.click()
+
+            # Step 5: Wait for the redirect chain to end on gradescope.com,
+            # clicking through any post-Duo interstitials along the way.
+            #
+            # The flow after Continue is usually:
+            #   submit -> Duo iframe -> (user taps Approve on phone) ->
+            #   "Trust this browser?" page -> SAML POST -> gradescope.com
+            #
+            # Those middle steps need clicks. We poll every ~1.5s, check if
+            # we've landed on Gradescope, and otherwise look for known
+            # continuation buttons ("Yes, trust browser", "Continue",
+            # "Submit") and click whichever is visible.
+            deadline = time.monotonic() + duo_timeout_seconds
+            last_diag_url = ""
+            while time.monotonic() < deadline:
+                current_url = page.url or ""
+                if "gradescope.com" in current_url and "/login" not in current_url:
+                    break
+                # Try to click through any visible continuation button.
+                # Order matters: most-specific labels first so we don't
+                # mis-click a "No" when "Yes, trust browser" exists.
+                for label_pat in _POST_DUO_BUTTON_LABELS:
+                    try:
+                        btn = page.get_by_role(
+                            "button", name=re.compile(label_pat, re.I)
+                        ).first
+                        btn.click(timeout=600)
+                        break
+                    except PlaywrightTimeoutError:
+                        continue
+                    except Exception:
+                        continue
+                else:
+                    # No button clicked this iteration. Also try inputs of
+                    # type=submit and bare <a> "Continue" links.
+                    for sel in _POST_DUO_FALLBACK_SELECTORS:
+                        try:
+                            page.locator(sel).first.click(timeout=600)
+                            break
+                        except Exception:
+                            continue
+                last_diag_url = current_url
+                page.wait_for_timeout(1500)
+            else:
+                # Loop ran out the clock without breaking on success.
+                body_text = ""
+                try:
+                    body_text = page.locator("body").inner_text(timeout=3000)
+                except Exception:
+                    pass
+                lowered = body_text.lower()
+                url = page.url or last_diag_url
+                if "shib.bu.edu" in url:
+                    if any(k in lowered for k in ("login failed", "incorrect", "invalid")):
+                        raise GradescopeAuthError(
+                            "BU login failed — username or password is incorrect."
+                        )
+                    if any(k in lowered for k in ("denied", "rejected", "declined")):
+                        raise GradescopeAuthError(
+                            "Duo push was denied. Try again and tap Approve."
+                        )
+                    if "captcha" in lowered:
+                        raise GradescopeAuthError(
+                            "BU WebLogin asked for a CAPTCHA — the automated flow "
+                            "can't solve those. Use cookie paste instead."
+                        )
+                    raise GradescopeDuoTimeout(
+                        f"Stuck on Shibboleth after Duo for {duo_timeout_seconds}s. "
+                        f"{_dump_page_state(page)}"
+                    )
+                raise GradescopeAuthError(
+                    f"SSO ended at an unexpected URL: {url}. {_dump_page_state(page)}"
+                )
+
+            # Step 6: Tiny settle so cookies are committed by the browser
+            # before we read them. domcontentloaded fires fast and is
+            # enough — networkidle waits for trailing analytics calls,
+            # which we don't care about.
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=4000)
+            except PlaywrightTimeoutError:
+                pass
+
+            if "/login" in (page.url or ""):
+                raise GradescopeAuthError(
+                    "Reached Gradescope but it bounced us back to /login — "
+                    "SAML assertion may have been rejected."
+                )
+
+            # Step 7: Harvest the Gradescope session cookies.
+            all_cookies = context.cookies()
+            gs_cookies = {
+                c["name"]: c["value"]
+                for c in all_cookies
+                if "gradescope.com" in (c.get("domain") or "")
+            }
+            if "_gradescope_session" not in gs_cookies:
+                raise GradescopeAuthError(
+                    "Couldn't find a Gradescope session cookie after SSO. "
+                    f"Found: {list(gs_cookies.keys())}"
+                )
+
+            return {
+                "_gradescope_session": gs_cookies["_gradescope_session"],
+                "signed_token": gs_cookies.get("signed_token", "") or "",
+            }
+        finally:
+            try:
+                browser.close()
+            except Exception:
+                pass

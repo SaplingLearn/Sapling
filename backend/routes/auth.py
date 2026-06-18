@@ -24,6 +24,7 @@ from config import (
     AUTH_SCOPES,
     FRONTEND_URL,
     SESSION_SECRET,
+    SECURE_COOKIES,
 )
 from db.connection import table
 from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
@@ -247,7 +248,7 @@ def google_login(popup_id: str = Query(None)):
         value=cookie_value,
         max_age=_OAUTH_COOKIE_MAX_AGE,
         httponly=True,
-        secure=True,
+        secure=SECURE_COOKIES,
         samesite="lax",
         path="/",
     )
@@ -275,7 +276,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
             value="",
             max_age=0,
             httponly=True,
-            secure=True,
+            secure=SECURE_COOKIES,
             samesite="lax",
             path="/",
         )
@@ -383,7 +384,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
             value="",
             max_age=0,
             httponly=True,
-            secure=True,
+            secure=SECURE_COOKIES,
             samesite="lax",
             path="/",
         )
@@ -412,7 +413,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         value="",
         max_age=0,
         httponly=True,
-        secure=True,
+        secure=SECURE_COOKIES,
         samesite="lax",
         path="/",
     )

@@ -407,8 +407,6 @@ class CurveSettingsBody(BaseModel):
     curve_mode: Literal["raw", "curved"] = "raw"
     curve_avg_target: Optional[float] = Field(default=None, ge=0, le=1)
     curve_sd_delta: Optional[float] = Field(default=None, ge=0, le=1)
-    curve_final_mean: Optional[float] = Field(default=None, ge=0, le=1)
-    curve_final_sd: Optional[float] = Field(default=None, ge=0, le=1)
 
 
 class LetterScaleTier(BaseModel):

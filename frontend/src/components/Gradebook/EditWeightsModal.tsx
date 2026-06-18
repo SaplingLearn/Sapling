@@ -22,6 +22,8 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
   const [mounted, setMounted] = React.useState(false);
   const [drafts, setDrafts] = React.useState<Draft[]>([]);
   const [saving, setSaving] = React.useState(false);
+  const dragIndex = React.useRef<number | null>(null);
+  const [dragOver, setDragOver] = React.useState<number | null>(null);
 
   React.useEffect(() => setMounted(true), []);
   React.useEffect(() => {
@@ -53,6 +55,32 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
       { name: "", weight: 0, sort_order: arr.length, drop_lowest: 0 },
     ]);
 
+  const handleDragStart = (i: number) => {
+    dragIndex.current = i;
+  };
+  const handleDragOver = (e: React.DragEvent, i: number) => {
+    e.preventDefault();
+    if (dragIndex.current !== null && dragIndex.current !== i) setDragOver(i);
+  };
+  const handleDrop = (i: number) => {
+    const from = dragIndex.current;
+    if (from === null || from === i) return;
+    setDrafts((arr) => {
+      const next = [...arr];
+      const [item] = next.splice(from, 1);
+      next.splice(i, 0, item);
+      return next.map((d, idx) => ({ ...d, sort_order: idx }));
+    });
+    dragIndex.current = null;
+    setDragOver(null);
+  };
+  const handleDragEnd = () => {
+    dragIndex.current = null;
+    setDragOver(null);
+  };
+
+  const COLS = "24px minmax(0, 1fr) 80px 80px 28px";
+
   return createPortal(
     <div
       role="dialog"
@@ -81,13 +109,13 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
         >
           Weights must sum to 100%. Set <strong>Drop</strong> to the number of
           lowest-scoring graded assignments to exclude from that category&apos;s
-          average — e.g. &quot;drop 2 lowest homeworks.&quot;
+          average (e.g. &quot;drop 2 lowest homeworks&quot;). Drag the handle to reorder.
         </p>
         <div
           className="mono"
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) 80px 80px 28px",
+            gridTemplateColumns: COLS,
             gap: 6,
             fontSize: 10,
             letterSpacing: "0.12em",
@@ -96,6 +124,7 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
             padding: "0 2px 6px",
           }}
         >
+          <span />
           <span>Name</span>
           <span style={{ textAlign: "right" }}>Weight</span>
           <span style={{ textAlign: "right" }}>Drop</span>
@@ -104,15 +133,40 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
         <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
           {drafts.map((d, i) => (
             <li
-              key={i}
+              key={d.id ?? i}
+              draggable
+              onDragStart={() => handleDragStart(i)}
+              onDragOver={(e) => handleDragOver(e, i)}
+              onDrop={() => handleDrop(i)}
+              onDragEnd={handleDragEnd}
               style={{
                 display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr) 80px 80px 28px",
+                gridTemplateColumns: COLS,
                 gap: 6,
                 alignItems: "center",
                 marginBottom: 8,
+                borderRadius: 6,
+                outline: dragOver === i ? "2px solid var(--accent)" : "none",
+                outlineOffset: 2,
+                opacity: dragIndex.current === i ? 0.4 : 1,
+                transition: "opacity 0.15s",
               }}
             >
+              <span
+                title="Drag to reorder"
+                style={{
+                  cursor: "grab",
+                  color: "var(--text-muted)",
+                  fontSize: 16,
+                  lineHeight: 1,
+                  userSelect: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                ⠿
+              </span>
               <input
                 value={d.name}
                 placeholder="Category name"

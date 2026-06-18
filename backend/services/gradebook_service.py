@@ -155,15 +155,12 @@ def current_grade(
     curve_mode: str = "raw",
     curve_avg_target: Optional[float] = None,
     curve_sd_delta: Optional[float] = None,
-    curve_final_mean: Optional[float] = None,
-    curve_final_sd: Optional[float] = None,
 ) -> Optional[float]:
     """Return the 0–100 current grade across all categories, or None.
 
-    When curve_mode='curved':
-    - Per-assignment curves are applied inside category_grade().
-    - If curve_final_mean, curve_final_sd, curve_avg_target, and curve_sd_delta
-      are all set, a bell curve is also applied to the final weighted average.
+    When curve_mode='curved', per-assignment curves are applied inside
+    category_grade(). The final grade is the natural weighted average of
+    those curved scores — no separate final-grade curve step.
     """
     by_cat: dict[str, list[AssignmentRow]] = {c["id"]: [] for c in categories}
     for a in assignments:
@@ -188,20 +185,7 @@ def current_grade(
     if total_weight == 0:
         return None
 
-    result = (weighted_sum / total_weight) * 100.0
-
-    if (curve_mode == "curved"
-            and curve_final_mean is not None
-            and curve_final_sd is not None
-            and curve_avg_target is not None
-            and curve_sd_delta is not None):
-        result = apply_curve(
-            result / 100.0,
-            curve_final_mean, curve_final_sd,
-            curve_avg_target, curve_sd_delta,
-        ) * 100.0
-
-    return result
+    return (weighted_sum / total_weight) * 100.0
 
 
 def all_dropped_ids(
@@ -229,13 +213,16 @@ def letter_for(percent: Optional[float], scale: Optional[list[dict]]) -> Optiona
     """
     if percent is None:
         return None
+    # Round to 1 decimal to match display precision and avoid floating-point
+    # boundary errors (e.g. 89.9999…% falsely missing the 90.0 A- threshold).
+    rounded = round(percent, 1)
     if scale:
         ordered = sorted(scale, key=lambda x: -float(x.get("min", 0)))
         for tier in ordered:
-            if percent >= float(tier["min"]):
+            if rounded >= float(tier["min"]):
                 return str(tier["letter"])
         return None
     for floor, letter in DEFAULT_LETTER_SCALE:
-        if percent >= floor:
+        if rounded >= floor:
             return letter
     return None

@@ -1,4 +1,4 @@
-import type { GradedAssignment, GradebookCourse } from "@/lib/types";
+import type { GradedAssignment } from "@/lib/types";
 
 /**
  * Apply a bell curve adjustment to a single score percentage (0–1).
@@ -41,28 +41,6 @@ export function applyCurveToAssignment(
   return { ...a, points_earned: curved * (a.points_possible ?? 1) };
 }
 
-/**
- * Apply a final-grade bell curve to a 0–100 percentage.
- * Returns pct unchanged if the course has no final curve configured.
- */
-export function applyFinalCurve(
-  pct: number,
-  course: Pick<GradebookCourse, "curve_final_mean" | "curve_final_sd" | "curve_avg_target" | "curve_sd_delta">,
-): number {
-  if (
-    course.curve_final_mean == null ||
-    course.curve_final_sd == null ||
-    course.curve_avg_target == null ||
-    course.curve_sd_delta == null
-  ) return pct;
-  return applyCurve(
-    pct / 100,
-    course.curve_final_mean,
-    course.curve_final_sd,
-    course.curve_avg_target,
-    course.curve_sd_delta,
-  ) * 100;
-}
 
 /** Returns true when the assignment has enough data for a curve to be applied. */
 export function hasCurveData(a: GradedAssignment): boolean {

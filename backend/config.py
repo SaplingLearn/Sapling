@@ -15,6 +15,7 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 PORT = int(os.getenv("PORT", "5000"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
+SECURE_COOKIES = os.getenv("SECURE_COOKIES", "false").lower() == "true"
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",

@@ -18,7 +18,7 @@ import {
   syncGradescopeCourse,
   setCurveSettings,
 } from "@/lib/api";
-import { applyCurveToAssignment, applyFinalCurve, hasCurveData } from "@/components/Gradebook/curveUtils";
+import { applyCurveToAssignment, hasCurveData } from "@/components/Gradebook/curveUtils";
 import { EditWeightsModal } from "@/components/Gradebook/EditWeightsModal";
 import { AssignmentList } from "@/components/Gradebook/AssignmentList";
 import { AssignmentModal, type AssignmentDraft } from "@/components/Gradebook/AssignmentModal";
@@ -36,11 +36,59 @@ import type {
 } from "@/lib/types";
 
 const DEFAULT_SCALE: LetterScaleTier[] = [
-  { letter: "A", min: 90 },
-  { letter: "B", min: 80 },
-  { letter: "C", min: 70 },
-  { letter: "D", min: 60 },
+  { letter: "A",  min: 93 },
+  { letter: "A-", min: 90 },
+  { letter: "B+", min: 87 },
+  { letter: "B",  min: 83 },
+  { letter: "B-", min: 80 },
+  { letter: "C+", min: 77 },
+  { letter: "C",  min: 73 },
+  { letter: "C-", min: 70 },
+  { letter: "D+", min: 67 },
+  { letter: "D",  min: 63 },
+  { letter: "D-", min: 60 },
+  { letter: "F",  min: 0  },
 ];
+
+// Mirrors backend current_grade() exactly: equal-weighted mean per category,
+// drop_lowest respected, categories with no graded items skipped.
+function computeCurrentGrade(
+  categories: import("@/lib/types").GradeCategory[],
+  assignments: import("@/lib/types").GradedAssignment[],
+): number | null {
+  const byCat: Record<string, import("@/lib/types").GradedAssignment[]> = {};
+  for (const c of categories) byCat[c.id] = [];
+  for (const a of assignments) {
+    if (a.category_id && a.category_id in byCat) byCat[a.category_id].push(a);
+  }
+  let totalWeight = 0;
+  let weightedSum = 0;
+  for (const cat of categories) {
+    if (cat.weight <= 0) continue;
+    let graded = (byCat[cat.id] ?? []).filter(
+      (a) => a.points_earned !== null && a.points_possible != null && (a.points_possible as number) > 0,
+    );
+    if (graded.length === 0) continue;
+    // Apply drop_lowest: sort by score ascending, drop the N lowest.
+    const drop = Math.max(0, cat.drop_lowest ?? 0);
+    if (drop > 0 && drop < graded.length) {
+      graded = [...graded]
+        .sort((a, b) =>
+          (a.points_earned as number) / (a.points_possible as number) -
+          (b.points_earned as number) / (b.points_possible as number),
+        )
+        .slice(drop);
+    } else if (drop >= graded.length) {
+      continue;
+    }
+    const scores = graded.map((a) => (a.points_earned as number) / (a.points_possible as number));
+    const catGrade = scores.reduce((s, v) => s + v, 0) / scores.length;
+    totalWeight += cat.weight;
+    weightedSum += cat.weight * catGrade;
+  }
+  if (totalWeight === 0) return null;
+  return (weightedSum / totalWeight) * 100;
+}
 
 function compactLetterScale(
   scale: LetterScaleTier[] | null,
@@ -62,7 +110,8 @@ function compactLetterScale(
 }
 
 function tierFor(scale: LetterScaleTier[], pct: number): string | undefined {
-  return [...scale].sort((a, b) => b.min - a.min).find((t) => pct >= t.min)?.letter;
+  const rounded = Math.round(pct * 10) / 10;
+  return [...scale].sort((a, b) => b.min - a.min).find((t) => rounded >= t.min)?.letter;
 }
 
 function majorTicks(scale: LetterScaleTier[]): { letter: string; min: number }[] {
@@ -94,8 +143,6 @@ function CurveSettingsModal({
   onSave: (settings: {
     curve_avg_target: number | null;
     curve_sd_delta: number | null;
-    curve_final_mean: number | null;
-    curve_final_sd: number | null;
   }) => Promise<void>;
 }) {
   const [mounted, setMounted] = React.useState(false);
@@ -104,12 +151,6 @@ function CurveSettingsModal({
   );
   const [sdDelta, setSdDelta] = React.useState<string>(
     course.curve_sd_delta != null ? (course.curve_sd_delta * 100).toFixed(0) : "10"
-  );
-  const [finalMean, setFinalMean] = React.useState<string>(
-    course.curve_final_mean != null ? (course.curve_final_mean * 100).toFixed(0) : ""
-  );
-  const [finalSd, setFinalSd] = React.useState<string>(
-    course.curve_final_sd != null ? (course.curve_final_sd * 100).toFixed(0) : ""
   );
   const [saving, setSaving] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
@@ -157,29 +198,6 @@ function CurveSettingsModal({
             </label>
           </div>
         </div>
-        <div style={{ display: "grid", gap: 10, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
-          <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase",
-            letterSpacing: "0.1em", fontFamily: "var(--font-mono)" }}>
-            Final Grade Curve (optional)
-          </p>
-          <p style={{ margin: 0, fontSize: 12, color: "var(--text-dim)" }}>
-            If your professor curves the final grade at the end of semester, enter the class stats here.
-          </p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <label style={{ flex: 1 }}>
-              Class Final Avg (%)
-              <input type="number" min={0} max={100} value={finalMean} placeholder="—"
-                onChange={(e) => setFinalMean(e.target.value)}
-                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }} />
-            </label>
-            <label style={{ flex: 1 }}>
-              Class Final SD (%)
-              <input type="number" min={0} max={100} value={finalSd} placeholder="—"
-                onChange={(e) => setFinalSd(e.target.value)}
-                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }} />
-            </label>
-          </div>
-        </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20,
           paddingTop: 12, borderTop: "1px solid var(--border)" }}>
           <button type="button" onClick={onClose}>Cancel</button>
@@ -192,8 +210,6 @@ function CurveSettingsModal({
                 await onSave({
                   curve_avg_target: toFloat(avgTarget),
                   curve_sd_delta: toFloat(sdDelta),
-                  curve_final_mean: toFloat(finalMean),
-                  curve_final_sd: toFloat(finalSd),
                 });
                 onClose();
               } finally { setSaving(false); }
@@ -245,8 +261,9 @@ export function GradebookCourseScreen({ courseId }: Props) {
     initial: import("@/lib/types").GradedAssignment | null;
   }>({ open: false, initial: null });
   const [predictorOpen, setPredictorOpen] = React.useState(false);
+  const [predictorCurveEnabled, setPredictorCurveEnabled] = React.useState(false);
   const [hypotheticals, setHypotheticals] = React.useState<
-    Map<string, { earned: number; possible: number }>
+    Map<string, { earned: number; possible: number; curveClassMean: number | null; curveClassSd: number | null }>
   >(new Map());
   const [curveSettingsOpen, setCurveSettingsOpen] = React.useState(false);
 
@@ -367,16 +384,27 @@ export function GradebookCourseScreen({ courseId }: Props) {
 
   const augmentedAssignments = React.useMemo(() => {
     if (!predictorOpen || !data) return data?.assignments ?? [];
+    const curvePolicy = predictorCurveEnabled ? {
+      curve_avg_target: data.curve_avg_target ?? 0.83,
+      curve_sd_delta: data.curve_sd_delta ?? 0.10,
+    } : null;
     return data.assignments.map((a) => {
       const hyp = hypotheticals.get(a.id);
-      if (a.points_earned !== null || !hyp) return a;
-      return {
-        ...a,
-        points_earned: hyp.earned,
-        points_possible: hyp.possible > 0 ? hyp.possible : a.points_possible,
-      };
+      let result = a;
+      if (a.points_earned === null && hyp) {
+        result = {
+          ...a,
+          points_earned: hyp.earned,
+          points_possible: hyp.possible > 0 ? hyp.possible : a.points_possible,
+          // Predictor override takes priority over stored assignment class stats
+          curve_class_mean: hyp.curveClassMean !== null ? hyp.curveClassMean : a.curve_class_mean,
+          curve_class_sd: hyp.curveClassSd !== null ? hyp.curveClassSd : a.curve_class_sd,
+        };
+      }
+      if (curvePolicy) result = applyCurveToAssignment(result, curvePolicy);
+      return result;
     });
-  }, [predictorOpen, data, hypotheticals]);
+  }, [predictorOpen, data, hypotheticals, predictorCurveEnabled]);
 
   const predictedProjection = React.useMemo(
     () =>
@@ -386,24 +414,29 @@ export function GradebookCourseScreen({ courseId }: Props) {
     [predictorOpen, data, augmentedAssignments],
   );
 
-  const predictedLetter = React.useMemo(() => {
+  const predictedCurvedPercent = React.useMemo(() => {
     if (!predictedProjection || !data) return null;
+    const raw = predictedProjection.current;
+    return raw;
+  }, [predictedProjection, data]);
+
+  const predictedLetter = React.useMemo(() => {
+    if (predictedCurvedPercent == null || !data) return null;
     const scale =
       data.letter_scale && data.letter_scale.length > 0
         ? data.letter_scale
         : DEFAULT_SCALE;
-    const pct = predictedProjection.current;
     return (
-      [...scale].sort((a, b) => b.min - a.min).find((t) => pct >= t.min)
+      [...scale].sort((a, b) => b.min - a.min).find((t) => predictedCurvedPercent >= t.min)
         ?.letter ?? null
     );
-  }, [predictedProjection, data]);
+  }, [predictedCurvedPercent, data]);
 
   const handleHypotheticalChange = React.useCallback(
-    (id: string, earned: number, possible: number) => {
+    (id: string, score: { earned: number; possible: number; curveClassMean: number | null; curveClassSd: number | null }) => {
       setHypotheticals((prev) => {
         const next = new Map(prev);
-        next.set(id, { earned, possible });
+        next.set(id, score);
         return next;
       });
     },
@@ -422,9 +455,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
   }, []);
 
   const hasCurve = React.useMemo(
-    () =>
-      (data?.assignments ?? []).some(hasCurveData) ||
-      data?.curve_final_mean != null,
+    () => (data?.assignments ?? []).some(hasCurveData),
     [data],
   );
 
@@ -438,9 +469,16 @@ export function GradebookCourseScreen({ courseId }: Props) {
   }, [data]);
 
   const curvedPercent = React.useMemo(() => {
-    if (!data || data.curve_mode !== "curved" || data.percent == null) return data?.percent ?? null;
-    return applyFinalCurve(data.percent, data);
-  }, [data]);
+    if (!data) return null;
+    // When curved, recompute from curvedAssignments client-side so the bar
+    // pin updates instantly on toggle (before refresh() returns from the server).
+    // computeCurrentGrade mirrors backend logic: skips ungraded categories,
+    // avoiding the projectGrade divergence that dragged 95% → 76%.
+    if (data.curve_mode === "curved") {
+      return computeCurrentGrade(data.categories, curvedAssignments);
+    }
+    return data.percent;
+  }, [data, curvedAssignments]);
 
   const handleToggleCurveMode = React.useCallback(async () => {
     if (!data || !userId) return;
@@ -448,26 +486,25 @@ export function GradebookCourseScreen({ courseId }: Props) {
     setData((prev) => prev ? { ...prev, curve_mode: newMode } : prev);
     try {
       await setCurveSettings(userId, courseId, { curve_mode: newMode });
+      await refresh(); // Server recomputes data.percent with the new curve_mode
     } catch {
       setData((prev) => prev ? { ...prev, curve_mode: data.curve_mode } : prev);
     }
-  }, [data, userId, courseId]);
+  }, [data, userId, courseId, refresh]);
 
   const handleSaveCurveSettings = React.useCallback(
     async (settings: {
       curve_avg_target: number | null;
       curve_sd_delta: number | null;
-      curve_final_mean: number | null;
-      curve_final_sd: number | null;
     }) => {
       if (!data || !userId) return;
       await setCurveSettings(userId, courseId, {
         curve_mode: data.curve_mode,
         ...settings,
       });
-      setData((prev) => prev ? { ...prev, ...settings } : prev);
+      await refresh(); // Recompute server grade with new curve policy
     },
-    [data, userId, courseId],
+    [data, userId, courseId, refresh],
   );
 
   React.useEffect(() => {
@@ -503,41 +540,42 @@ export function GradebookCourseScreen({ courseId }: Props) {
         }
         actions={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            {hasCurve && data && (
+            {data && (
               <>
-                <div style={{ display: "flex", background: "var(--bg-subtle)", borderRadius: 20, padding: 2 }}>
-                  {(["raw", "curved"] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={data.curve_mode !== mode ? handleToggleCurveMode : undefined}
-                      style={{
-                        padding: "4px 12px",
-                        borderRadius: 18,
-                        fontSize: 11,
-                        fontWeight: 500,
-                        background: data.curve_mode === mode ? "var(--accent)" : "transparent",
-                        color: data.curve_mode === mode ? "#fff" : "var(--text-dim)",
-                        border: 0,
-                        cursor: data.curve_mode !== mode ? "pointer" : "default",
-                        fontFamily: "var(--font-sans)",
-                      }}
-                    >
-                      {mode === "raw" ? "Raw" : "Curved"}
-                    </button>
-                  ))}
-                </div>
-                {data.curve_mode === "curved" && (
-                  <button
-                    type="button"
-                    onClick={() => setCurveSettingsOpen(true)}
-                    className="btn btn--sm"
-                    title="Bell curve settings"
-                    style={{ fontSize: 13 }}
-                  >
-                    ⚙
-                  </button>
+                {hasCurve && (
+                  <div style={{ display: "flex", background: "var(--bg-subtle)", borderRadius: 20, padding: 2 }}>
+                    {(["raw", "curved"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={data.curve_mode !== mode ? handleToggleCurveMode : undefined}
+                        style={{
+                          padding: "4px 12px",
+                          borderRadius: 18,
+                          fontSize: 11,
+                          fontWeight: 500,
+                          background: data.curve_mode === mode ? "var(--accent)" : "transparent",
+                          color: data.curve_mode === mode ? "#fff" : "var(--text-dim)",
+                          border: 0,
+                          cursor: data.curve_mode !== mode ? "pointer" : "default",
+                          fontFamily: "var(--font-sans)",
+                        }}
+                      >
+                        {mode === "raw" ? "Raw" : "Curved"}
+                      </button>
+                    ))}
+                  </div>
                 )}
+                <button
+                  type="button"
+                  onClick={() => setCurveSettingsOpen(true)}
+                  className="btn"
+                  title="Bell curve policy"
+                  style={{ padding: "4px 12px", fontSize: 12, display: "flex", alignItems: "center", gap: 5 }}
+                >
+                  <span>⚙</span>
+                  <span>Curve</span>
+                </button>
               </>
             )}
             <button
@@ -546,7 +584,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
               className="btn"
               style={{ padding: "4px 12px", fontSize: 12 }}
             >
-              Letter scale
+              Letter Scale
             </button>
           </div>
         }
@@ -586,7 +624,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
                 currentPercent={
                   predictorOpen
                     ? (predictedProjection?.current ?? null)
-                    : curvedPercent
+                    : null
                 }
                 onEditWeights={() => setEditWeights(true)}
                 onSegmentClick={focusCategory}
@@ -600,8 +638,11 @@ export function GradebookCourseScreen({ courseId }: Props) {
                 hypotheticals={hypotheticals}
                 onHypotheticalChange={handleHypotheticalChange}
                 onReset={handleResetPredictor}
-                predictedPercent={predictedProjection?.current ?? null}
+                predictedPercent={predictedCurvedPercent}
                 predictedLetter={predictedLetter}
+                isCurved={data.curve_mode === "curved"}
+                predictorCurveEnabled={predictorCurveEnabled}
+                onTogglePredictorCurve={() => setPredictorCurveEnabled((v) => !v)}
               />
               {/* AssignmentList always receives real grades — the predictor is display-only */}
               <AssignmentList
@@ -754,9 +795,6 @@ function Masthead({ data }: { data: GradebookCourse }) {
             letterSpacing: "-0.02em",
             color: "var(--text)",
             margin: 0,
-            maxWidth: "24ch",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
           }}
         >
           {data.course_name}
@@ -1179,7 +1217,7 @@ function GradeCompositionBar({
                     style={{ marginLeft: 6, color: "var(--accent)" }}
                     title={`Drops ${drop} lowest`}
                   >
-                    · drop {drop}
+                    · {drop} Drops
                   </span>
                 )}
               </div>
@@ -1302,9 +1340,10 @@ function CompositionStatus({
   scale: LetterScaleTier[];
   isPredicted?: boolean;
 }) {
+  const roundedCurrent = Math.round(current * 10) / 10;
   const nextUp = [...scale]
     .sort((a, b) => a.min - b.min)
-    .find((t) => current < t.min);
+    .find((t) => roundedCurrent < t.min);
   let action: string;
   if (!nextUp) action = "At the Top of the Scale";
   else if (projection && projection.floor >= nextUp.min)

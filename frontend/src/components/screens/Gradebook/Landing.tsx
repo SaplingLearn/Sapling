@@ -284,7 +284,7 @@ function EmptyState({
         }}
       >
         Drop in a syllabus and Sapling lays out every assignment, due date, and
-        weight — so you can see what&apos;s coming, not just what already happened.
+        weight, so you can see what&apos;s coming, not just what already happened.
       </p>
       <button
         type="button"

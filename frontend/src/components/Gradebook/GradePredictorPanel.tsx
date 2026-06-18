@@ -5,6 +5,8 @@ import type { GradedAssignment, GradeCategory } from "@/lib/types";
 interface HypotheticalScore {
   earned: number;
   possible: number;
+  curveClassMean: number | null;  // overrides stored assignment class stats
+  curveClassSd: number | null;
 }
 
 interface Props {
@@ -13,10 +15,13 @@ interface Props {
   ungradedAssignments: GradedAssignment[];
   categories: GradeCategory[];
   hypotheticals: Map<string, HypotheticalScore>;
-  onHypotheticalChange: (id: string, earned: number, possible: number) => void;
+  onHypotheticalChange: (id: string, score: HypotheticalScore) => void;
   onReset: () => void;
   predictedPercent: number | null;
   predictedLetter: string | null;
+  isCurved: boolean;
+  predictorCurveEnabled: boolean;
+  onTogglePredictorCurve: () => void;
 }
 
 export function GradePredictorPanel({
@@ -29,6 +34,9 @@ export function GradePredictorPanel({
   onReset,
   predictedPercent,
   predictedLetter,
+  isCurved,
+  predictorCurveEnabled,
+  onTogglePredictorCurve,
 }: Props) {
   const catMap = React.useMemo(
     () => new Map(categories.map((c) => [c.id, c.name])),
@@ -43,7 +51,21 @@ export function GradePredictorPanel({
         (hypotheticals.get(a.id)?.possible ?? 0) > 0,
     );
 
-  if (ungradedAssignments.length === 0) return null;
+  if (ungradedAssignments.length === 0) {
+    return (
+      <div
+        style={{
+          borderTop: "1px solid var(--border)",
+          padding: "10px 0",
+          fontSize: 12,
+          color: "var(--text-muted)",
+          fontFamily: "var(--font-sans)",
+        }}
+      >
+        Predict your grade by adding an unscored assignment.
+      </div>
+    );
+  }
 
   return (
     <div style={{ marginBottom: "var(--pad-xl)" }}>
@@ -81,7 +103,7 @@ export function GradePredictorPanel({
           Predict My Grade
         </span>
         <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
-          — set hypothetical scores for {ungradedAssignments.length} ungraded assignment
+          Set hypothetical scores for {ungradedAssignments.length} ungraded assignment
           {ungradedAssignments.length !== 1 ? "s" : ""}
         </span>
       </button>
@@ -96,6 +118,9 @@ export function GradePredictorPanel({
           predictedPercent={predictedPercent}
           predictedLetter={predictedLetter}
           allHaveTotal={allHaveTotal}
+          isCurved={isCurved}
+          predictorCurveEnabled={predictorCurveEnabled}
+          onTogglePredictorCurve={onTogglePredictorCurve}
         />
       )}
     </div>
@@ -111,77 +136,83 @@ function PredictorBody({
   predictedPercent,
   predictedLetter,
   allHaveTotal,
+  isCurved,
+  predictorCurveEnabled,
+  onTogglePredictorCurve,
 }: {
   ungradedAssignments: GradedAssignment[];
   catMap: Map<string | null, string>;
   hypotheticals: Map<string, HypotheticalScore>;
-  onHypotheticalChange: (id: string, earned: number, possible: number) => void;
+  onHypotheticalChange: (id: string, score: HypotheticalScore) => void;
   onReset: () => void;
   predictedPercent: number | null;
   predictedLetter: string | null;
   allHaveTotal: boolean;
+  isCurved: boolean;
+  predictorCurveEnabled: boolean;
+  onTogglePredictorCurve: () => void;
 }) {
   return (
     <div
       style={{
         background: "var(--bg-subtle)",
         border: "1px solid var(--border)",
-        borderTop: "none",
-        borderRadius: "0 0 var(--r-md) var(--r-md)",
+        borderRadius: "var(--r-md)",
         padding: "var(--pad-md) var(--pad-lg)",
+        marginTop: 8,
       }}
     >
-      {/* Result badge */}
+      {/* Header */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 10,
-          padding: "10px 14px",
-          background: "var(--bg-panel)",
-          border: "1px solid var(--accent-border)",
-          borderRadius: "var(--r-sm)",
+          justifyContent: "space-between",
           marginBottom: 16,
+          paddingBottom: 12,
+          borderBottom: "1px solid var(--border)",
         }}
       >
-        <span
-          className="mono"
-          style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)" }}
-        >
-          Predicted
-        </span>
-        {!allHaveTotal ? (
-          <span style={{ fontSize: 13, color: "var(--text-dim)", fontStyle: "italic" }}>
-            Set totals to enable prediction
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span
+            className="mono"
+            style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-muted)" }}
+          >
+            {!allHaveTotal ? "Set totals to enable prediction" : "Hypothetical Scores"}
           </span>
-        ) : (
-          <>
-            <span
-              style={{
-                fontFamily: "var(--font-display)",
-                fontSize: 26,
-                fontWeight: 500,
-                color: "var(--accent)",
-                letterSpacing: "-0.02em",
-                lineHeight: 1,
-              }}
-            >
-              {predictedLetter ?? "—"}
-            </span>
-            <span
-              className="mono"
-              style={{ fontSize: 18, fontWeight: 600, color: "var(--accent)", letterSpacing: "-0.02em" }}
-            >
-              {predictedPercent !== null ? `${predictedPercent.toFixed(1)}%` : "—"}
-            </span>
-            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>(hypothetical)</span>
-          </>
-        )}
+          {isCurved && (
+            <div style={{ display: "flex", background: "var(--bg)", borderRadius: 20, padding: 2, border: "1px solid var(--border)" }}>
+              {(["Raw", "Curved"] as const).map((mode) => {
+                const active = mode === "Curved" ? predictorCurveEnabled : !predictorCurveEnabled;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={active ? undefined : onTogglePredictorCurve}
+                    style={{
+                      padding: "3px 10px",
+                      borderRadius: 18,
+                      fontSize: 10,
+                      fontWeight: 500,
+                      background: active ? "var(--accent)" : "transparent",
+                      color: active ? "#fff" : "var(--text-dim)",
+                      border: 0,
+                      cursor: active ? "default" : "pointer",
+                      fontFamily: "var(--font-sans)",
+                    }}
+                  >
+                    {mode}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
         <button
           type="button"
           onClick={onReset}
-          className="btn btn--ghost btn--sm"
-          style={{ marginLeft: "auto" }}
+          className="btn"
+          style={{ padding: "4px 12px", fontSize: 12, background: "#fff" }}
         >
           Reset All
         </button>
@@ -195,13 +226,14 @@ function PredictorBody({
             assignment={a}
             categoryName={catMap.get(a.category_id) ?? "Uncategorized"}
             hyp={hypotheticals.get(a.id) ?? null}
-            onChange={(earned, possible) => onHypotheticalChange(a.id, earned, possible)}
+            isCurved={predictorCurveEnabled}
+            onChange={(score) => onHypotheticalChange(a.id, score)}
           />
         ))}
       </div>
 
       <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 14, marginBottom: 0 }}>
-        Scores shown are hypothetical only — nothing is saved until you enter grades above.
+        Scores shown are hypothetical only. Nothing is saved until you enter grades above.
       </p>
     </div>
   );
@@ -211,27 +243,34 @@ function AssignmentSliderRow({
   assignment,
   categoryName,
   hyp,
+  isCurved,
   onChange,
 }: {
   assignment: GradedAssignment;
   categoryName: string;
   hyp: HypotheticalScore | null;
-  onChange: (earned: number, possible: number) => void;
+  isCurved: boolean;
+  onChange: (score: HypotheticalScore) => void;
 }) {
   const hasSetTotal = assignment.points_possible !== null && (assignment.points_possible as number) > 0;
   const possible = hyp?.possible ?? (hasSetTotal ? (assignment.points_possible as number) : 100);
   const earned = hyp?.earned ?? Math.round(possible / 2);
   const sliderMax = possible > 0 ? possible : 100;
+  // Predictor override takes priority; falls back to stored assignment class stats
+  const curveClassMean = hyp?.curveClassMean !== undefined ? hyp.curveClassMean : (assignment.curve_class_mean ?? null);
+  const curveClassSd = hyp?.curveClassSd !== undefined ? hyp.curveClassSd : (assignment.curve_class_sd ?? null);
+
+  const emit = (patch: Partial<HypotheticalScore>) =>
+    onChange({ earned, possible, curveClassMean, curveClassSd, ...patch });
 
   const handleEarnedChange = (val: number) => {
     const clamped = Math.max(0, Math.min(val, possible));
-    onChange(clamped, possible);
+    emit({ earned: clamped });
   };
 
   const handlePossibleChange = (val: number) => {
     if (val <= 0) return;
-    const newEarned = Math.min(earned, val);
-    onChange(newEarned, val);
+    emit({ possible: val, earned: Math.min(earned, val) });
   };
 
   const dueDisplay = assignment.due_date
@@ -270,10 +309,15 @@ function AssignmentSliderRow({
         >
           {categoryName}
           {assignment.due_date ? ` · ${dueDisplay}` : ""}
-          {!hasSetTotal && !hyp?.possible && (
-            <span style={{ color: "var(--warn)", marginLeft: 4 }}>· no total set</span>
-          )}
         </div>
+        {!hasSetTotal && !hyp?.possible && (
+          <div
+            className="mono"
+            style={{ fontSize: 11, color: "var(--err)", marginTop: 3, fontWeight: 500 }}
+          >
+            ⚠ No Total Score
+          </div>
+        )}
       </div>
 
       {/* Slider */}
@@ -351,6 +395,70 @@ function AssignmentSliderRow({
           />
         )}
       </div>
+
+      {/* Inline class stats — shown when curved mode is on; overrides stored assignment stats */}
+      {isCurved && (
+        <div
+          style={{
+            gridColumn: "1 / -1",
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            marginTop: 6,
+            paddingTop: 6,
+            borderTop: "1px dashed var(--border)",
+          }}
+        >
+          <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+            Bell Curve:
+          </span>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+            <span style={{ color: "var(--text-dim)" }}>Class Avg</span>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="any"
+              placeholder={assignment.curve_class_mean != null ? `${(assignment.curve_class_mean * 100).toFixed(0)}` : "—"}
+              value={hyp?.curveClassMean != null ? (hyp.curveClassMean * 100).toFixed(0) : ""}
+              onChange={(e) =>
+                emit({ curveClassMean: e.target.value === "" ? null : Number(e.target.value) / 100 })
+              }
+              style={{
+                width: 44, padding: "2px 4px", border: "1px solid var(--accent-border)",
+                borderRadius: 4, textAlign: "right", fontSize: 11,
+                fontFamily: "var(--font-mono)", background: "var(--accent-soft)",
+              }}
+            />
+            <span style={{ color: "var(--text-muted)" }}>%</span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+            <span style={{ color: "var(--text-dim)" }}>SD</span>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="any"
+              placeholder={assignment.curve_class_sd != null ? `${(assignment.curve_class_sd * 100).toFixed(0)}` : "—"}
+              value={hyp?.curveClassSd != null ? (hyp.curveClassSd * 100).toFixed(0) : ""}
+              onChange={(e) =>
+                emit({ curveClassSd: e.target.value === "" ? null : Number(e.target.value) / 100 })
+              }
+              style={{
+                width: 44, padding: "2px 4px", border: "1px solid var(--accent-border)",
+                borderRadius: 4, textAlign: "right", fontSize: 11,
+                fontFamily: "var(--font-mono)", background: "var(--accent-soft)",
+              }}
+            />
+            <span style={{ color: "var(--text-muted)" }}>%</span>
+          </label>
+          {(curveClassMean !== null || curveClassSd !== null) && (
+            <span className="mono" style={{ fontSize: 10, color: "var(--accent)", marginLeft: 2 }}>
+              ✓ Curve Active
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

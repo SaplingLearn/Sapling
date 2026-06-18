@@ -178,21 +178,3 @@ class TestCategoryGradeCurved:
         assert abs(result - 0.80) < 1e-9
 
 
-class TestCurrentGradeFinalCurve:
-    def test_final_curve_applied_after_weighted_average(self):
-        cats = [{"id": "c1", "weight": 100.0, "drop_lowest": 0}]
-        assigns = [
-            {"id": "a1", "category_id": "c1", "points_possible": "100",
-             "points_earned": "68",
-             "curve_class_mean": None, "curve_class_sd": None,
-             "curve_avg_target": None, "curve_sd_delta": None},
-        ]
-        # raw grade = 68%; final curve: mean=0.68, SD=0.12, avg_target=0.83
-        # z = (0.68-0.68)/0.12 = 0 → curved = 0.83 = 83%
-        result = current_grade(
-            cats, assigns,
-            curve_mode="curved",
-            curve_avg_target=0.83, curve_sd_delta=0.10,
-            curve_final_mean=0.68, curve_final_sd=0.12,
-        )
-        assert abs(result - 83.0) < 1e-6

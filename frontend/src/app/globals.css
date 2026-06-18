@@ -91,14 +91,18 @@
   --rarity-epic-bg:      color-mix(in oklab, #7b4b99 14%, transparent);
   --rarity-legendary-bg: color-mix(in oklab, #b4862c 14%, transparent);
 
-  --c-sage: #4e873c;
-  --c-sky: #3e6f8a;
-  --c-rose: #a8456b;
-  --c-amber: #b4862c;
-  --c-plum: #7b4b99;
-  --c-rust: #b4562c;
-  --c-teal: #3a7f77;
-  --c-ink: #3f3b31;
+  /* Category palette — 10 colors, one per hue family, no repeats. */
+  --c-crimson: #c03535;   /* red          */
+  --c-rust:    #c06020;   /* orange       */
+  --c-amber:   #a88020;   /* amber        */
+  --c-brown:   #7a4220;   /* brown        */
+  --c-sage:    #3e8030;   /* green        */
+  --c-teal:    #207878;   /* teal         */
+  --c-sky:     #2868b0;   /* blue         */
+  --c-plum:    #7030a8;   /* purple       */
+  --c-magenta: #b02888;   /* magenta      */
+  --c-rose:    #b83060;   /* rose         */
+  --c-ink:    #3f3b31;
 
   /* Grade-band semantic colors. Used by the Gradebook landing and any
    * future "grade pill" surface. Tied to the 90/80/70/60 letter scale. */
@@ -219,6 +223,12 @@ body { font-size: 14px; line-height: 1.5; }
 .anim-d7 { animation-delay: 560ms; }
 .anim-d8 { animation-delay: 640ms; }
 
+/* Used by the Gradescope BU SSO modal's "waiting for Duo" spinner. */
+@keyframes gs-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 /* Gradebook course-card hover — small lift on pointer-supporting devices.
  * Uses CSS :hover instead of JS handlers so it never leaks an inline
  * transform if the card re-renders mid-hover. */
@@ -234,8 +244,8 @@ body { font-size: 14px; line-height: 1.5; }
  * hover/focus so the row stays editorial when read and obvious when
  * interacted with. */
 .assignment-grade-input {
-  width: 72px;
-  padding: 6px 8px;
+  width: 48px;
+  padding: 4px 0 4px 6px;
   text-align: right;
   background: transparent;
   border: 1px solid transparent;
@@ -269,6 +279,23 @@ body { font-size: 14px; line-height: 1.5; }
   border-color: var(--err);
   color: var(--err);
 }
+
+.assignment-row {
+  transition: background 0.12s;
+}
+.assignment-row::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+}
+@media (hover: hover) {
+  .assignment-row:hover { background: var(--accent-soft); }
+}
+
 
 /* Course-detail two-column shell: assignment list (primary action surface)
  * on the left, sticky projection sidebar on the right. Collapses to a

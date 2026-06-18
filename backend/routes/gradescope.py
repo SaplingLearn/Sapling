@@ -17,6 +17,7 @@ Endpoints (mounted under /api/gradescope):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -53,6 +54,20 @@ class CredentialsBody(BaseModel):
     # cookies mode
     gradescope_session: str | None = None
     signed_token: str | None = None
+
+
+class BuSsoBody(BaseModel):
+    """Live BU SSO + Duo flow. Username + password are used in-memory only;
+    we never persist them. The resulting session cookies are persisted as
+    if the user had pasted them themselves (auth_mode='cookies')."""
+
+    user_id: str
+    bu_username: str = Field(min_length=1)
+    bu_password: str = Field(min_length=1)
+    # Caps the time the headless browser spends parked on the Duo iframe
+    # waiting for the user's tap. Frontend should match this on its
+    # request-timeout side.
+    duo_timeout_seconds: int = Field(default=120, ge=15, le=300)
 
 
 class LinkBody(BaseModel):
@@ -199,6 +214,67 @@ def save_credentials(body: CredentialsBody, request: Request):
     now_iso = datetime.now(timezone.utc).isoformat()
     payload["updated_at"] = now_iso
     table("gradescope_credentials").upsert(payload, on_conflict="user_id")
+    return {"ok": True}
+
+
+@router.post("/credentials/bu-sso")
+async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
+    """Live BU SSO via Playwright. Drives a headless Chromium through
+    Gradescope → School Credentials → BU WebLogin → Duo. Blocks the
+    request until the user taps Duo on their phone (or times out), then
+    persists the resulting session cookies as auth_mode='cookies'.
+
+    BU password is held in memory for the duration of the request only;
+    we never write it to disk. The frontend should configure a request
+    timeout slightly longer than `duo_timeout_seconds` so the spinner can
+    sit while we wait for the tap.
+    """
+    require_self(body.user_id, request)
+
+    try:
+        # sync_playwright wants its own event loop; run the whole flow in
+        # a worker thread so FastAPI's loop stays free and Playwright
+        # doesn't fight Windows's SelectorEventLoop. ~30s–125s blocking
+        # call (mostly idle while we wait on Duo).
+        cookies = await asyncio.to_thread(
+            gradescope_service.login_via_bu_sso,
+            body.bu_username,
+            body.bu_password,
+            body.duo_timeout_seconds,
+        )
+    except gradescope_service.GradescopeDuoTimeout as e:
+        # 408 reads more honestly than 401 here — the credentials may be
+        # fine, the user just didn't tap in time.
+        raise HTTPException(status_code=408, detail=str(e) or "Duo push timed out.")
+    except gradescope_service.GradescopeAuthError as e:
+        raise HTTPException(status_code=401, detail=str(e) or "Gradescope auth failed.")
+    except Exception as e:
+        # Never let a blank `crashed:` reach the client again — surface
+        # type, message, and a request id so the user can paste a useful
+        # error.
+        logger.exception("Unexpected error in BU SSO flow")
+        msg = str(e) or repr(e) or "no message"
+        raise HTTPException(
+            status_code=500,
+            detail=f"SSO flow crashed: {type(e).__name__}: {msg}",
+        )
+
+    cookie_blob = json.dumps({
+        "_gradescope_session": cookies.get("_gradescope_session"),
+        "signed_token": cookies.get("signed_token") or None,
+    })
+    now_iso = datetime.now(timezone.utc).isoformat()
+    table("gradescope_credentials").upsert(
+        {
+            "user_id": body.user_id,
+            "auth_mode": "cookies",
+            "email_encrypted": None,
+            "password_encrypted": None,
+            "cookies_encrypted": encrypt(cookie_blob),
+            "updated_at": now_iso,
+        },
+        on_conflict="user_id",
+    )
     return {"ok": True}
 
 

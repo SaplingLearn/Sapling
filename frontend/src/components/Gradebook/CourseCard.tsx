@@ -167,8 +167,8 @@ export function CourseCard({ course, variant, courseColor }: CourseCardProps) {
         <span
           title={
             isPlaceholder
-              ? "No assignments graded yet — your letter appears after the first grade lands."
-              : "Letter scale  A 90+   B 80+   C 70+   D 60+   F below 60"
+              ? "No assignments graded yet. Your letter appears after the first grade lands."
+              : "Letter scale: A 90+, B 80+, C 70+, D 60+, F below 60"
           }
           style={{
             position: "relative",
@@ -223,16 +223,16 @@ export function CourseCard({ course, variant, courseColor }: CourseCardProps) {
           }}
         >
           <span
-            className="mono"
             style={{
-              fontSize: isHero ? 26 : 18,
-              fontWeight: 600,
+              fontSize: course.percent === null ? (isHero ? 20 : 16) : (isHero ? 36 : 26),
+              fontWeight: 500,
               lineHeight: 1,
               letterSpacing: "-0.02em",
               color: percentColor(course.percent),
+              fontFamily: "var(--font-display)",
             }}
           >
-            {course.percent === null ? "Awaiting first grade" : `${course.percent.toFixed(1)}%`}
+            {course.percent === null ? "Awaiting First Assignment" : `${course.percent.toFixed(1)}%`}
           </span>
           <span
             className="mono"

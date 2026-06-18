@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import {
   getGradescopeStatus,
   saveGradescopeCredentials,
+  connectGradescopeViaBuSso,
   listGradescopeCourses,
   listGradescopeLinks,
   linkGradescopeCourse,
@@ -32,6 +33,8 @@ type Stage =
   | "choose-mode"
   | "credentials"
   | "cookies"
+  | "bu-sso-form"
+  | "bu-sso-waiting"
   | "connected" // settings-mode: creds saved, no course to sync
   | "link"
   | "ready"
@@ -58,6 +61,10 @@ export function GradescopeSyncModal({
   // Cookie-paste form
   const [gradescopeSession, setGradescopeSession] = React.useState("");
   const [signedToken, setSignedToken] = React.useState("");
+
+  // BU SSO form
+  const [buUsername, setBuUsername] = React.useState("");
+  const [buPassword, setBuPassword] = React.useState("");
 
   // Linking
   const [courses, setCourses] = React.useState<GradescopeCourse[]>([]);
@@ -109,6 +116,8 @@ export function GradescopeSyncModal({
     setPassword("");
     setGradescopeSession("");
     setSignedToken("");
+    setBuUsername("");
+    setBuPassword("");
     refreshState();
   }, [open, refreshState]);
 
@@ -128,6 +137,46 @@ export function GradescopeSyncModal({
     } catch (e: any) {
       const msg = (e?.message ?? "").toString();
       setError(msg.includes("Invalid") ? "Invalid Gradescope credentials." : msg);
+    }
+  }
+
+  async function onSubmitBuSso(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const username = buUsername.trim();
+    if (!username || !buPassword) {
+      setError("Enter your BU username and password.");
+      return;
+    }
+    // Move to "waiting for Duo" stage immediately so the user knows
+    // their phone is about to buzz. The fetch promise stays open for up
+    // to ~125s while Playwright drives the SSO + Duo flow on the server.
+    setStage("bu-sso-waiting");
+    try {
+      await connectGradescopeViaBuSso(userId, username, buPassword, 120);
+      // Clear the password from memory as soon as we don't need it.
+      setBuPassword("");
+      setBuUsername("");
+      await refreshState();
+    } catch (e: any) {
+      const msg = (e?.message ?? "").toString();
+      setBuPassword(""); // never leave a wrong password sitting in state
+      if (/408|duo.*timeout|wasn.?t approved/i.test(msg)) {
+        setError(
+          "Duo push wasn't approved in time. Tap Approve quickly when your phone buzzes.",
+        );
+      } else if (/login failed|incorrect|invalid/i.test(msg)) {
+        setError("BU login failed. Username or password is incorrect.");
+      } else if (/denied|declined|rejected/i.test(msg)) {
+        setError("Duo push was denied. Try again and tap Approve.");
+      } else if (/captcha/i.test(msg)) {
+        setError(
+          "BU asked for a CAPTCHA. The automated flow can't solve those. Use the cookie-paste option instead.",
+        );
+      } else {
+        setError(msg || "SSO failed unexpectedly.");
+      }
+      setStage("bu-sso-form");
     }
   }
 
@@ -152,7 +201,7 @@ export function GradescopeSyncModal({
       const msg = (e?.message ?? "").toString();
       setError(
         msg.includes("expired") || msg.includes("invalid")
-          ? "Those cookies didn't authenticate — copy them again from a freshly signed-in tab."
+          ? "Those cookies didn't authenticate. Copy them again from a freshly signed-in tab."
           : msg,
       );
     }
@@ -255,13 +304,17 @@ export function GradescopeSyncModal({
                 ? "Sign in with Gradescope password"
                 : stage === "cookies"
                   ? "Paste your Gradescope session"
-                  : stage === "connected"
-                    ? "Gradescope is connected"
-                    : stage === "link"
-                      ? "Pick the matching Gradescope course"
-                      : stage === "done"
-                        ? "Sync complete"
-                        : "Pull grades from Gradescope"}
+                  : stage === "bu-sso-form"
+                    ? "Sign in with BU SSO"
+                    : stage === "bu-sso-waiting"
+                      ? "Waiting for Duo approval"
+                      : stage === "connected"
+                        ? "Gradescope is connected"
+                        : stage === "link"
+                          ? "Pick the matching Gradescope course"
+                          : stage === "done"
+                            ? "Sync complete"
+                            : "Pull grades from Gradescope"}
           </h2>
         </header>
 
@@ -297,9 +350,29 @@ export function GradescopeSyncModal({
                 setError(null);
                 setStage("cookies");
               }}
+              onPickBuSso={() => {
+                setError(null);
+                setStage("bu-sso-form");
+              }}
               onCancel={onClose}
             />
           )}
+
+          {stage === "bu-sso-form" && (
+            <BuSsoFormStep
+              username={buUsername}
+              password={buPassword}
+              setUsername={setBuUsername}
+              setPassword={setBuPassword}
+              onSubmit={onSubmitBuSso}
+              onBack={() => {
+                setError(null);
+                setStage("choose-mode");
+              }}
+            />
+          )}
+
+          {stage === "bu-sso-waiting" && <BuSsoWaitingStep />}
 
           {stage === "cookies" && (
             <CookiePasteStep
@@ -567,7 +640,7 @@ export function GradescopeSyncModal({
                   {linkedGsCourseId}
                 </span>{" "}
                 and update grades in {saplingCourseLabel}. New assignments
-                land as Uncategorized — you can re-categorize them after.
+                land as Uncategorized. You can re-categorize them after.
               </p>
               {lastSyncedAt && (
                 <p
@@ -707,10 +780,12 @@ function SyncStat({
 function ChooseModeStep({
   onPickPassword,
   onPickCookies,
+  onPickBuSso,
   onCancel,
 }: {
   onPickPassword: () => void;
   onPickCookies: () => void;
+  onPickBuSso: () => void;
   onCancel: () => void;
 }) {
   return (
@@ -724,10 +799,16 @@ function ChooseModeStep({
           margin: "0 0 18px",
         }}
       >
-        Two ways to connect. Pick whichever matches how you sign in to
+        Three ways to connect. Pick whichever matches how you sign in to
         Gradescope.
       </p>
 
+      <ModeCard
+        title="BU SSO + Duo"
+        body="If you sign in to Gradescope through BU. Enter your BU username and password here; tap Approve when your phone buzzes. Your BU password is used in-memory only. Sapling never writes it to disk. Only the resulting Gradescope session cookies are stored."
+        onClick={onPickBuSso}
+      />
+      <div style={{ height: 12 }} />
       <ModeCard
         title="Email + password"
         body="If you set a Gradescope-side password (no SSO). We log in on your behalf each sync; password is encrypted at rest."
@@ -735,8 +816,8 @@ function ChooseModeStep({
       />
       <div style={{ height: 12 }} />
       <ModeCard
-        title="Session cookies (SSO)"
-        body="If you sign in through your school (BU and other Shibboleth schools). You paste your browser session cookies; sync runs without ever touching your school password. Cookies last about two weeks before you have to re-paste."
+        title="Session cookies (manual)"
+        body="If you'd rather paste session cookies yourself. Works for any school. Cookies last about two weeks before you have to re-paste."
         onClick={onPickCookies}
       />
 
@@ -746,6 +827,204 @@ function ChooseModeStep({
         </button>
       </div>
     </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// BU SSO username + password form. On submit, we move to the waiting
+// stage and the backend runs the Playwright + Duo dance.
+// ───────────────────────────────────────────────────────────────────────────
+function BuSsoFormStep({
+  username,
+  password,
+  setUsername,
+  setPassword,
+  onSubmit,
+  onBack,
+}: {
+  username: string;
+  password: string;
+  setUsername: (v: string) => void;
+  setPassword: (v: string) => void;
+  onSubmit: (e: React.FormEvent) => void;
+  onBack: () => void;
+}) {
+  return (
+    <form onSubmit={onSubmit}>
+      <p
+        style={{
+          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+          fontSize: 14,
+          lineHeight: 1.6,
+          color: "var(--text-dim)",
+          margin: "0 0 18px",
+        }}
+      >
+        Enter your BU login. Sapling drives a headless browser through{" "}
+        <span className="mono" style={{ color: "var(--text)" }}>shib.bu.edu</span>{" "}
+        on your behalf. Your password is held in memory for the request
+        only, never written to disk. When you submit, your phone will
+        buzz with a Duo push; tap{" "}
+        <strong style={{ color: "var(--text)" }}>Approve</strong>.
+      </p>
+
+      <label
+        className="mono"
+        style={{
+          display: "block",
+          fontSize: 11,
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          color: "var(--text-muted)",
+          marginBottom: 6,
+        }}
+      >
+        BU username
+      </label>
+      <input
+        type="text"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+        required
+        autoComplete="username"
+        placeholder="e.g. jackhe"
+        style={{
+          width: "100%",
+          padding: "10px 12px",
+          borderRadius: "var(--r-sm)",
+          border: "1px solid var(--border)",
+          background: "var(--bg-input)",
+          color: "var(--text)",
+          fontSize: 14,
+          marginBottom: 14,
+        }}
+      />
+      <label
+        className="mono"
+        style={{
+          display: "block",
+          fontSize: 11,
+          letterSpacing: "0.12em",
+          textTransform: "uppercase",
+          color: "var(--text-muted)",
+          marginBottom: 6,
+        }}
+      >
+        BU password
+      </label>
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        required
+        autoComplete="current-password"
+        style={{
+          width: "100%",
+          padding: "10px 12px",
+          borderRadius: "var(--r-sm)",
+          border: "1px solid var(--border)",
+          background: "var(--bg-input)",
+          color: "var(--text)",
+          fontSize: 14,
+          marginBottom: 20,
+        }}
+      />
+
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={onBack}
+          style={{ padding: "6px 10px", fontSize: 12 }}
+        >
+          ← Back
+        </button>
+        <button type="submit" className="btn btn--primary">
+          Sign in &amp; send Duo push
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Spinner + reassurance while Playwright drives BU WebLogin and the user
+// taps Duo on their phone. The request stays open the whole time; no
+// polling is needed.
+// ───────────────────────────────────────────────────────────────────────────
+function BuSsoWaitingStep() {
+  const [elapsed, setElapsed] = React.useState(0);
+  React.useEffect(() => {
+    const t = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div style={{ paddingTop: 8 }}>
+      <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 14 }}>
+        <Spinner />
+        <div>
+          <div
+            style={{
+              fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+              fontWeight: 500,
+              fontSize: 18,
+              color: "var(--text)",
+              letterSpacing: "-0.01em",
+              marginBottom: 2,
+            }}
+          >
+            Approve the Duo push on your phone.
+          </div>
+          <div
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: "var(--text-muted)",
+              letterSpacing: "-0.01em",
+            }}
+          >
+            Waiting · {elapsed}s
+          </div>
+        </div>
+      </div>
+      <p
+        style={{
+          fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
+          fontSize: 13,
+          lineHeight: 1.6,
+          color: "var(--text-dim)",
+          margin: 0,
+        }}
+      >
+        Sapling is signing in at shib.bu.edu now. The push usually arrives
+        within a few seconds. We&apos;ll finish automatically once you tap
+        Approve. Keep this window open.
+      </p>
+    </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        width: 28,
+        height: 28,
+        borderRadius: "50%",
+        border: "3px solid var(--border)",
+        borderTopColor: "var(--accent)",
+        animation: "gs-spin 0.9s linear infinite",
+        flexShrink: 0,
+      }}
+    />
   );
 }
 

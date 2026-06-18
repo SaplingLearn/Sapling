@@ -112,7 +112,7 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
     require_self(user_id, request)
 
     enrollment = table("user_courses").select(
-        "course_id,letter_scale,curve_mode,curve_avg_target,curve_sd_delta,curve_final_mean,curve_final_sd,courses!inner(id,course_code,course_name,semester)",
+        "course_id,letter_scale,curve_mode,curve_avg_target,curve_sd_delta,courses!inner(id,course_code,course_name,semester)",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
         limit=1,
     )
@@ -123,8 +123,6 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
     curve_mode = enrollment[0].get("curve_mode") or "raw"
     curve_avg_target = enrollment[0].get("curve_avg_target")
     curve_sd_delta = enrollment[0].get("curve_sd_delta")
-    curve_final_mean = enrollment[0].get("curve_final_mean")
-    curve_final_sd = enrollment[0].get("curve_final_sd")
 
     cats = table("course_categories").select(
         "id,user_id,course_id,name,weight,sort_order,drop_lowest",
@@ -157,8 +155,6 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
         curve_mode=curve_mode,
         curve_avg_target=curve_avg_target,
         curve_sd_delta=curve_sd_delta,
-        curve_final_mean=curve_final_mean,
-        curve_final_sd=curve_final_sd,
     )
     letter = gradebook_service.letter_for(percent, letter_scale)
     dropped_ids = gradebook_service.all_dropped_ids(cats, assigns)
@@ -174,8 +170,6 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
         "curve_mode": curve_mode,
         "curve_avg_target": curve_avg_target,
         "curve_sd_delta": curve_sd_delta,
-        "curve_final_mean": curve_final_mean,
-        "curve_final_sd": curve_final_sd,
         "categories": cats,
         "assignments": assigns,
         "dropped_assignment_ids": dropped_ids,

@@ -322,8 +322,6 @@ export interface GradebookCourse {
   curve_mode: "raw" | "curved";
   curve_avg_target: number | null;
   curve_sd_delta: number | null;
-  curve_final_mean: number | null;
-  curve_final_sd: number | null;
   categories: GradeCategory[];
   assignments: GradedAssignment[];
   // Server-flattened list of currently-dropped assignment IDs across all

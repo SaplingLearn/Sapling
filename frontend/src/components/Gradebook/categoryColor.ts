@@ -4,13 +4,16 @@
 // Hash uses djb2; result mods into the brand color palette.
 
 export const CATEGORY_PALETTE = [
-  "var(--c-sage)",
-  "var(--c-amber)",
-  "var(--c-sky)",
-  "var(--c-rose)",
+  "var(--c-crimson)",
   "var(--c-rust)",
-  "var(--c-plum)",
+  "var(--c-amber)",
+  "var(--c-brown)",
+  "var(--c-sage)",
   "var(--c-teal)",
+  "var(--c-sky)",
+  "var(--c-plum)",
+  "var(--c-magenta)",
+  "var(--c-rose)",
 ];
 
 export function categoryColor(name: string): string {

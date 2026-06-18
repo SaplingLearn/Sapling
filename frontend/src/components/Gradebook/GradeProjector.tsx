@@ -161,12 +161,20 @@ interface Props {
   isPredicted?: boolean;
 }
 
-// Default scale used when a course has no per-course letter scale set.
+// Default scale — matches backend DEFAULT_LETTER_SCALE exactly.
 const DEFAULT_SCALE: LetterScaleTier[] = [
-  { letter: "A", min: 90 },
-  { letter: "B", min: 80 },
-  { letter: "C", min: 70 },
-  { letter: "D", min: 60 },
+  { letter: "A",  min: 93 },
+  { letter: "A-", min: 90 },
+  { letter: "B+", min: 87 },
+  { letter: "B",  min: 83 },
+  { letter: "B-", min: 80 },
+  { letter: "C+", min: 77 },
+  { letter: "C",  min: 73 },
+  { letter: "C-", min: 70 },
+  { letter: "D+", min: 67 },
+  { letter: "D",  min: 63 },
+  { letter: "D-", min: 60 },
+  { letter: "F",  min: 0  },
 ];
 
 function majorTicks(scale: LetterScaleTier[]): { letter: string; min: number }[] {
@@ -186,8 +194,8 @@ function majorTicks(scale: LetterScaleTier[]): { letter: string; min: number }[]
 }
 
 function tierFor(scale: LetterScaleTier[], pct: number): string | undefined {
-  // First tier from the top whose min the value clears.
-  return [...scale].sort((a, b) => b.min - a.min).find((t) => pct >= t.min)?.letter;
+  const rounded = Math.round(pct * 10) / 10;
+  return [...scale].sort((a, b) => b.min - a.min).find((t) => rounded >= t.min)?.letter;
 }
 
 export function GradeProjector({
@@ -222,9 +230,10 @@ export function GradeProjector({
     );
   }
 
+  const roundedCurrent = Math.round(current * 10) / 10;
   const nextUp = [...scale]
     .sort((a, b) => a.min - b.min)
-    .find((t) => current < t.min);
+    .find((t) => roundedCurrent < t.min);
 
   // Build the "actionable" line for the middle stat.
   let actionLabel: string;
@@ -237,7 +246,7 @@ export function GradeProjector({
     actionValue = "Already guaranteed";
   } else if (projection && projection.ceiling < nextUp.min) {
     actionLabel = `${nextUp.letter} (${nextUp.min}+)`;
-    actionValue = `Out of reach by ${(nextUp.min - projection.ceiling).toFixed(1)} pts`;
+    actionValue = `Out of reach by ${(nextUp.min - projection.ceiling).toFixed(1)}%`;
   } else if (projection) {
     // Fraction of the floor->ceiling span you need to cover to hit the target.
     const span = projection.ceiling - projection.floor;

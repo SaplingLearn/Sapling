@@ -74,6 +74,7 @@ export function AssignmentList({
 
   const uncategorized = grouped.get(null) ?? [];
   const hasAny = assignments.length > 0;
+  const [hoveredTab, setHoveredTab] = React.useState<string | null>(null);
 
   return (
     <section>
@@ -178,6 +179,86 @@ export function AssignmentList({
           </button>
         </div>
       </div>
+
+      {hasAny && (
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            flexWrap: "wrap",
+            marginBottom: 28,
+          }}
+        >
+          {sortedCats.map((cat) => {
+            const items = grouped.get(cat.id) ?? [];
+            if (items.length === 0) return null;
+            const isActive = highlightedCategory === cat.id;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => {
+                  const el = document.getElementById(`category-${cat.id}`);
+                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                onMouseEnter={() => setHoveredTab(cat.id)}
+                onMouseLeave={() => setHoveredTab(null)}
+                style={{
+                  padding: "5px 14px",
+                  borderRadius: "var(--r-full)",
+                  border: `1.5px solid ${isActive ? categoryColor(cat.name) : hoveredTab === cat.id ? "var(--border-strong)" : "var(--border)"}`,
+                  background: isActive
+                    ? `color-mix(in oklch, ${categoryColor(cat.name)}, transparent 85%)`
+                    : hoveredTab === cat.id ? "var(--bg-subtle)" : "var(--bg)",
+                  color: isActive ? categoryColor(cat.name) : hoveredTab === cat.id ? "var(--text)" : "var(--text-dim)",
+                  fontSize: 12,
+                  fontWeight: isActive ? 600 : 400,
+                  fontFamily: "var(--font-sans)",
+                  cursor: "pointer",
+                  transition: "border-color 0.12s, background 0.12s, color 0.12s",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {cat.name}
+                <span
+                  className="mono"
+                  style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 5 }}
+                >
+                  {items.length}
+                </span>
+              </button>
+            );
+          })}
+          {uncategorized.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById("category-uncategorized");
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              onMouseEnter={() => setHoveredTab("__uncategorized__")}
+              onMouseLeave={() => setHoveredTab(null)}
+              style={{
+                padding: "5px 14px",
+                borderRadius: "var(--r-full)",
+                border: `1.5px solid ${hoveredTab === "__uncategorized__" ? "var(--border-strong)" : "var(--border)"}`,
+                background: hoveredTab === "__uncategorized__" ? "var(--bg-subtle)" : "var(--bg)",
+                color: hoveredTab === "__uncategorized__" ? "var(--text)" : "var(--text-dim)",
+                fontSize: 12,
+                fontFamily: "var(--font-sans)",
+                cursor: "pointer",
+                transition: "border-color 0.12s, background 0.12s, color 0.12s",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Uncategorized
+              <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: 5 }}>
+                {uncategorized.length}
+              </span>
+            </button>
+          )}
+        </div>
+      )}
 
       {!hasAny ? (
         <EmptyEntries onAdd={onAdd} />
@@ -311,7 +392,7 @@ function CategoryGroup({
               lineHeight: 1.4,
             }}
           >
-            drops {droppedCount}/{dropLowest}
+            {dropLowest} Drops
           </span>
         )}
       </div>
@@ -340,10 +421,10 @@ function CategoryGroup({
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
-                padding: "14px 8px",
-                borderBottom: "1px solid var(--border)",
+                padding: "14px 12px",
+                margin: "0 -12px",
                 borderRadius: 6,
-                margin: "0 -8px",
+                position: "relative",
               }}
             >
               <button
@@ -363,9 +444,10 @@ function CategoryGroup({
                 <div
                   style={{
                     display: "flex",
-                    alignItems: "baseline",
+                    alignItems: "center",
                     gap: 8,
                     minWidth: 0,
+                    overflow: "hidden",
                   }}
                 >
                   <span
@@ -374,34 +456,44 @@ function CategoryGroup({
                       fontWeight: 500,
                       fontSize: 15,
                       color: isDropped ? "var(--text-muted)" : "var(--text)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
                       textDecoration: isDropped ? "line-through" : "none",
                       textDecorationColor: "var(--text-muted)",
                       textDecorationThickness: 1,
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      minWidth: 0,
+                      flexShrink: 1,
                     }}
                   >
                     {a.title}
                   </span>
                   {isDropped && (
                     <span
-                      className="mono"
+                      className="chip chip--accent"
                       title="This is currently your lowest score in the category and is excluded from the average."
+                      style={{ flexShrink: 0 }}
+                    >
+                      Dropped
+                    </span>
+                  )}
+                  {hasCurvedScore && (
+                    <span
+                      className="mono"
+                      title="Bell curve has been applied to this assignment's score."
                       style={{
+                        flexShrink: 0,
                         fontSize: 9,
                         letterSpacing: "0.08em",
                         textTransform: "uppercase",
-                        color: "var(--accent)",
-                        background: "var(--accent-soft)",
-                        border: "1px solid var(--accent-border)",
+                        color: "var(--c-sky)",
+                        background: "color-mix(in oklch, var(--c-sky), transparent 88%)",
+                        border: "1px solid color-mix(in oklch, var(--c-sky), transparent 70%)",
                         borderRadius: "var(--r-full)",
-                        padding: "1px 6px",
+                        padding: "2px 8px",
                         fontWeight: 600,
-                        flexShrink: 0,
                       }}
                     >
-                      dropped
+                      Curved
                     </span>
                   )}
                 </div>
@@ -417,55 +509,50 @@ function CategoryGroup({
                   {a.due_date ? `Due ${a.due_date.slice(5, 7)}/${a.due_date.slice(8, 10)}/${a.due_date.slice(0, 4)}` : "No Due Date"}
                 </div>
               </button>
-              <input
-                type="number"
-                placeholder="—"
-                defaultValue={a.points_earned ?? ""}
-                min={0}
-                step="any"
-                onBlur={(e) => {
-                  const v = e.target.value === "" ? null : Number(e.target.value);
-                  if (Number.isNaN(v as number)) return;
-                  if (v !== a.points_earned) onEditGrade(a.id, v);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                }}
-                aria-label={`Points earned for ${a.title}`}
-                title={
-                  a.points_possible !== null
-                    ? `0–${a.points_possible} pts (extra credit allowed)`
-                    : "Points earned"
-                }
-                className="assignment-grade-input"
-                style={{ opacity: isDropped ? 0.4 : 1 }}
-              />
-              <span
-                className="mono"
-                style={{
-                  fontSize: 13,
-                  color: "var(--text-muted)",
-                  minWidth: 40,
-                  textAlign: "left",
-                  opacity: isDropped ? 0.4 : 1,
-                }}
-              >
-                / {a.points_possible ?? "—"}
-              </span>
-              {hasCurvedScore && curved && (
-                <span
-                  className="mono"
-                  title="Curved score"
-                  style={{
-                    fontSize: 12,
-                    color: "var(--accent)",
-                    whiteSpace: "nowrap",
-                    opacity: isDropped ? 0.4 : 1,
+              <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                <input
+                  type="number"
+                  placeholder="—"
+                  defaultValue={a.points_earned ?? ""}
+                  min={0}
+                  step="any"
+                  onBlur={(e) => {
+                    const v = e.target.value === "" ? null : Number(e.target.value);
+                    if (Number.isNaN(v as number)) return;
+                    if (v !== a.points_earned) onEditGrade(a.id, v);
                   }}
-                >
-                  → {curved.points_earned!.toFixed(1)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  }}
+                  aria-label={`Points earned for ${a.title}`}
+                  title={
+                    a.points_possible !== null
+                      ? `0–${a.points_possible} pts (extra credit allowed)`
+                      : "Points earned"
+                  }
+                  className="assignment-grade-input"
+                  style={{ opacity: isDropped ? 0.4 : 1 }}
+                />
+                <span className="mono" style={{ fontSize: 13, color: "var(--text-muted)", opacity: isDropped ? 0.4 : 1 }}>/</span>
+                <span className="mono" style={{ fontSize: 13, color: "var(--text-muted)", opacity: isDropped ? 0.4 : 1, whiteSpace: "nowrap" }}>
+                  {a.points_possible ?? "—"}
                 </span>
-              )}
+                {hasCurvedScore && curved && (
+                  <span
+                    className="mono"
+                    title="Curved score"
+                    style={{
+                      fontSize: 12,
+                      color: "var(--accent)",
+                      whiteSpace: "nowrap",
+                      opacity: isDropped ? 0.4 : 1,
+                      marginLeft: 4,
+                    }}
+                  >
+                    → {curved.points_earned!.toFixed(1)}
+                  </span>
+                )}
+              </div>
             </li>
           );
         })}
