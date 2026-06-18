@@ -5,6 +5,9 @@ import { categoryColor } from "@/components/Gradebook/categoryColor";
 
 interface Props {
   assignments: GradedAssignment[];
+  /** When curve mode is active, the curved versions of assignments (same IDs,
+   * curved points_earned). Displayed as an overlay next to the raw score. */
+  curvedAssignments?: GradedAssignment[];
   categories: GradeCategory[];
   /** Assignment IDs currently excluded from their category's grade by a
    * drop-lowest policy. Used to visually mute the row + show a chip. */
@@ -26,6 +29,7 @@ interface Props {
 
 export function AssignmentList({
   assignments,
+  curvedAssignments,
   categories,
   droppedIds,
   onAdd,
@@ -44,6 +48,11 @@ export function AssignmentList({
     [categories],
   );
 
+  const curvedById = React.useMemo(() => {
+    if (!curvedAssignments) return new Map<string, GradedAssignment>();
+    return new Map(curvedAssignments.map((a) => [a.id, a]));
+  }, [curvedAssignments]);
+
   const grouped = React.useMemo(() => {
     const map = new Map<string | null, GradedAssignment[]>();
     for (const a of assignments) {
@@ -51,10 +60,10 @@ export function AssignmentList({
       list.push(a);
       map.set(a.category_id, list);
     }
-    // Preserve a stable order within a group — by due date asc, nulls last.
+    // Most recent due date first, nulls last.
     for (const [, list] of map) {
       list.sort((a, b) => {
-        if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date);
+        if (a.due_date && b.due_date) return b.due_date.localeCompare(a.due_date);
         if (a.due_date) return -1;
         if (b.due_date) return 1;
         return a.title.localeCompare(b.title);
@@ -116,7 +125,7 @@ export function AssignmentList({
                   ? "Syncing…"
                   : gradescopeReady
                     ? "Sync from Gradescope"
-                    : "Set up Gradescope sync"}
+                    : "Set Up Gradescope Sync"}
               </button>
               {(gradescopeLastSyncedAt || onGradescopeSettings) && (
                 <div
@@ -132,7 +141,7 @@ export function AssignmentList({
                 >
                   {gradescopeLastSyncedAt && (
                     <span title={new Date(gradescopeLastSyncedAt).toLocaleString()}>
-                      synced {timeAgo(gradescopeLastSyncedAt)}
+                      Synced {timeAgo(gradescopeLastSyncedAt)}
                     </span>
                   )}
                   {onGradescopeSettings && (
@@ -152,7 +161,7 @@ export function AssignmentList({
                         cursor: "pointer",
                       }}
                     >
-                      settings
+                      Settings
                     </button>
                   )}
                 </div>
@@ -165,7 +174,7 @@ export function AssignmentList({
             className="btn btn--primary"
             style={{ padding: "8px 14px", fontSize: 13 }}
           >
-            + Add assignment
+            + Add Assignment
           </button>
         </div>
       </div>
@@ -186,6 +195,7 @@ export function AssignmentList({
                 items={items}
                 dropLowest={cat.drop_lowest ?? 0}
                 droppedIds={dropped}
+                curvedById={curvedById}
                 onEditGrade={onEditGrade}
                 onEditFull={onEditFull}
                 highlighted={highlightedCategory === cat.id}
@@ -200,6 +210,7 @@ export function AssignmentList({
               items={uncategorized}
               dropLowest={0}
               droppedIds={dropped}
+              curvedById={curvedById}
               onEditGrade={onEditGrade}
               onEditFull={onEditFull}
               highlighted={false}
@@ -218,6 +229,7 @@ function CategoryGroup({
   items,
   dropLowest,
   droppedIds,
+  curvedById,
   onEditGrade,
   onEditFull,
   highlighted,
@@ -228,6 +240,7 @@ function CategoryGroup({
   items: GradedAssignment[];
   dropLowest: number;
   droppedIds: Set<string>;
+  curvedById: Map<string, GradedAssignment>;
   onEditGrade: (id: string, pointsEarned: number | null) => void;
   onEditFull: (a: GradedAssignment) => void;
   highlighted: boolean;
@@ -314,16 +327,23 @@ function CategoryGroup({
       >
         {items.map((a) => {
           const isDropped = droppedIds.has(a.id);
+          const curved = curvedById.get(a.id);
+          const hasCurvedScore =
+            curved != null &&
+            curved.points_earned !== null &&
+            curved.points_earned !== a.points_earned;
           return (
             <li
               key={a.id}
+              className="assignment-row"
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
-                padding: "14px 0",
+                padding: "14px 8px",
                 borderBottom: "1px solid var(--border)",
-                opacity: isDropped ? 0.55 : 1,
+                borderRadius: 6,
+                margin: "0 -8px",
               }}
             >
               <button
@@ -353,7 +373,7 @@ function CategoryGroup({
                       fontFamily: "var(--font-serif), 'Spectral', Georgia, serif",
                       fontWeight: 500,
                       fontSize: 15,
-                      color: "var(--text)",
+                      color: isDropped ? "var(--text-muted)" : "var(--text)",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -394,13 +414,7 @@ function CategoryGroup({
                     letterSpacing: "-0.01em",
                   }}
                 >
-                  {a.due_date ? `due ${a.due_date}` : "no due date"}
-                  {a.assignment_type ? (
-                    <>
-                      <span style={{ color: "var(--text-muted)" }}> · </span>
-                      {a.assignment_type}
-                    </>
-                  ) : null}
+                  {a.due_date ? `Due ${a.due_date.slice(5, 7)}/${a.due_date.slice(8, 10)}/${a.due_date.slice(0, 4)}` : "No Due Date"}
                 </div>
               </button>
               <input
@@ -408,7 +422,6 @@ function CategoryGroup({
                 placeholder="—"
                 defaultValue={a.points_earned ?? ""}
                 min={0}
-                max={a.points_possible ?? undefined}
                 step="any"
                 onBlur={(e) => {
                   const v = e.target.value === "" ? null : Number(e.target.value);
@@ -425,6 +438,7 @@ function CategoryGroup({
                     : "Points earned"
                 }
                 className="assignment-grade-input"
+                style={{ opacity: isDropped ? 0.4 : 1 }}
               />
               <span
                 className="mono"
@@ -433,10 +447,25 @@ function CategoryGroup({
                   color: "var(--text-muted)",
                   minWidth: 40,
                   textAlign: "left",
+                  opacity: isDropped ? 0.4 : 1,
                 }}
               >
                 / {a.points_possible ?? "—"}
               </span>
+              {hasCurvedScore && curved && (
+                <span
+                  className="mono"
+                  title="Curved score"
+                  style={{
+                    fontSize: 12,
+                    color: "var(--accent)",
+                    whiteSpace: "nowrap",
+                    opacity: isDropped ? 0.4 : 1,
+                  }}
+                >
+                  → {curved.points_earned!.toFixed(1)}
+                </span>
+              )}
             </li>
           );
         })}

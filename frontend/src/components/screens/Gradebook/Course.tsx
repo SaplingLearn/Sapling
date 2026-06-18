@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { TopBar } from "@/components/TopBar";
 import { useUser } from "@/context/UserContext";
@@ -15,7 +16,9 @@ import {
   getGradescopeStatus,
   listGradescopeLinks,
   syncGradescopeCourse,
+  setCurveSettings,
 } from "@/lib/api";
+import { applyCurveToAssignment, applyFinalCurve, hasCurveData } from "@/components/Gradebook/curveUtils";
 import { EditWeightsModal } from "@/components/Gradebook/EditWeightsModal";
 import { AssignmentList } from "@/components/Gradebook/AssignmentList";
 import { AssignmentModal, type AssignmentDraft } from "@/components/Gradebook/AssignmentModal";
@@ -79,6 +82,136 @@ interface Props {
   courseId: string;
 }
 
+function CurveSettingsModal({
+  open,
+  course,
+  onClose,
+  onSave,
+}: {
+  open: boolean;
+  course: import("@/lib/types").GradebookCourse;
+  onClose: () => void;
+  onSave: (settings: {
+    curve_avg_target: number | null;
+    curve_sd_delta: number | null;
+    curve_final_mean: number | null;
+    curve_final_sd: number | null;
+  }) => Promise<void>;
+}) {
+  const [mounted, setMounted] = React.useState(false);
+  const [avgTarget, setAvgTarget] = React.useState<string>(
+    course.curve_avg_target != null ? (course.curve_avg_target * 100).toFixed(0) : "83"
+  );
+  const [sdDelta, setSdDelta] = React.useState<string>(
+    course.curve_sd_delta != null ? (course.curve_sd_delta * 100).toFixed(0) : "10"
+  );
+  const [finalMean, setFinalMean] = React.useState<string>(
+    course.curve_final_mean != null ? (course.curve_final_mean * 100).toFixed(0) : ""
+  );
+  const [finalSd, setFinalSd] = React.useState<string>(
+    course.curve_final_sd != null ? (course.curve_final_sd * 100).toFixed(0) : ""
+  );
+  const [saving, setSaving] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+  if (!mounted || !open) return null;
+
+  const toFloat = (s: string): number | null =>
+    s.trim() === "" ? null : Number(s) / 100;
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
+      }}
+      onClick={onClose}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: "var(--bg)", borderRadius: 12, padding: 24,
+        minWidth: 400, maxWidth: 480,
+      }}>
+        <h3 style={{ margin: "0 0 4px" }}>Bell Curve Settings</h3>
+        <p style={{ margin: "0 0 16px", fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>
+          The curve policy comes from your syllabus. The class average maps to a target
+          grade; each standard deviation above or below shifts the grade by a fixed amount.
+        </p>
+        <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
+          <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase",
+            letterSpacing: "0.1em", fontFamily: "var(--font-mono)" }}>
+            Course Policy (from syllabus)
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <label style={{ flex: 1 }}>
+              Average maps to (%)
+              <input type="number" min={0} max={100} value={avgTarget}
+                onChange={(e) => setAvgTarget(e.target.value)}
+                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }} />
+            </label>
+            <label style={{ flex: 1 }}>
+              Grade per SD (%)
+              <input type="number" min={0} max={50} value={sdDelta}
+                onChange={(e) => setSdDelta(e.target.value)}
+                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }} />
+            </label>
+          </div>
+        </div>
+        <div style={{ display: "grid", gap: 10, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+          <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase",
+            letterSpacing: "0.1em", fontFamily: "var(--font-mono)" }}>
+            Final Grade Curve (optional)
+          </p>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--text-dim)" }}>
+            If your professor curves the final grade at the end of semester, enter the class stats here.
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <label style={{ flex: 1 }}>
+              Class Final Avg (%)
+              <input type="number" min={0} max={100} value={finalMean} placeholder="—"
+                onChange={(e) => setFinalMean(e.target.value)}
+                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }} />
+            </label>
+            <label style={{ flex: 1 }}>
+              Class Final SD (%)
+              <input type="number" min={0} max={100} value={finalSd} placeholder="—"
+                onChange={(e) => setFinalSd(e.target.value)}
+                style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }} />
+            </label>
+          </div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20,
+          paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+          <button type="button" onClick={onClose}>Cancel</button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={async () => {
+              setSaving(true);
+              try {
+                await onSave({
+                  curve_avg_target: toFloat(avgTarget),
+                  curve_sd_delta: toFloat(sdDelta),
+                  curve_final_mean: toFloat(finalMean),
+                  curve_final_sd: toFloat(finalSd),
+                });
+                onClose();
+              } finally { setSaving(false); }
+            }}
+            style={{
+              background: "var(--accent)", color: "#fff",
+              border: 0, borderRadius: 6, padding: "6px 14px", cursor: "pointer",
+            }}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function GradebookCourseScreen({ courseId }: Props) {
   const { userId, userReady } = useUser();
   const toast = useToast();
@@ -115,6 +248,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
   const [hypotheticals, setHypotheticals] = React.useState<
     Map<string, { earned: number; possible: number }>
   >(new Map());
+  const [curveSettingsOpen, setCurveSettingsOpen] = React.useState(false);
 
   const refresh = React.useCallback(async () => {
     if (!userId) return;
@@ -287,6 +421,55 @@ export function GradebookCourseScreen({ courseId }: Props) {
     });
   }, []);
 
+  const hasCurve = React.useMemo(
+    () =>
+      (data?.assignments ?? []).some(hasCurveData) ||
+      data?.curve_final_mean != null,
+    [data],
+  );
+
+  const curvedAssignments = React.useMemo(() => {
+    if (!data || data.curve_mode !== "curved") return data?.assignments ?? [];
+    const policy = {
+      curve_avg_target: data.curve_avg_target ?? 0.83,
+      curve_sd_delta: data.curve_sd_delta ?? 0.10,
+    };
+    return data.assignments.map((a) => applyCurveToAssignment(a, policy));
+  }, [data]);
+
+  const curvedPercent = React.useMemo(() => {
+    if (!data || data.curve_mode !== "curved" || data.percent == null) return data?.percent ?? null;
+    return applyFinalCurve(data.percent, data);
+  }, [data]);
+
+  const handleToggleCurveMode = React.useCallback(async () => {
+    if (!data || !userId) return;
+    const newMode = data.curve_mode === "curved" ? "raw" : "curved";
+    setData((prev) => prev ? { ...prev, curve_mode: newMode } : prev);
+    try {
+      await setCurveSettings(userId, courseId, { curve_mode: newMode });
+    } catch {
+      setData((prev) => prev ? { ...prev, curve_mode: data.curve_mode } : prev);
+    }
+  }, [data, userId, courseId]);
+
+  const handleSaveCurveSettings = React.useCallback(
+    async (settings: {
+      curve_avg_target: number | null;
+      curve_sd_delta: number | null;
+      curve_final_mean: number | null;
+      curve_final_sd: number | null;
+    }) => {
+      if (!data || !userId) return;
+      await setCurveSettings(userId, courseId, {
+        curve_mode: data.curve_mode,
+        ...settings,
+      });
+      setData((prev) => prev ? { ...prev, ...settings } : prev);
+    },
+    [data, userId, courseId],
+  );
+
   React.useEffect(() => {
     if (!data) return;
     const onKey = (e: KeyboardEvent) => {
@@ -319,14 +502,53 @@ export function GradebookCourseScreen({ courseId }: Props) {
           </Link>
         }
         actions={
-          <button
-            type="button"
-            onClick={() => setEditScale(true)}
-            className="btn"
-            style={{ padding: "4px 12px", fontSize: 12 }}
-          >
-            Letter scale
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {hasCurve && data && (
+              <>
+                <div style={{ display: "flex", background: "var(--bg-subtle)", borderRadius: 20, padding: 2 }}>
+                  {(["raw", "curved"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={data.curve_mode !== mode ? handleToggleCurveMode : undefined}
+                      style={{
+                        padding: "4px 12px",
+                        borderRadius: 18,
+                        fontSize: 11,
+                        fontWeight: 500,
+                        background: data.curve_mode === mode ? "var(--accent)" : "transparent",
+                        color: data.curve_mode === mode ? "#fff" : "var(--text-dim)",
+                        border: 0,
+                        cursor: data.curve_mode !== mode ? "pointer" : "default",
+                        fontFamily: "var(--font-sans)",
+                      }}
+                    >
+                      {mode === "raw" ? "Raw" : "Curved"}
+                    </button>
+                  ))}
+                </div>
+                {data.curve_mode === "curved" && (
+                  <button
+                    type="button"
+                    onClick={() => setCurveSettingsOpen(true)}
+                    className="btn btn--sm"
+                    title="Bell curve settings"
+                    style={{ fontSize: 13 }}
+                  >
+                    ⚙
+                  </button>
+                )}
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setEditScale(true)}
+              className="btn"
+              style={{ padding: "4px 12px", fontSize: 12 }}
+            >
+              Letter scale
+            </button>
+          </div>
         }
       />
       <main
@@ -353,9 +575,19 @@ export function GradebookCourseScreen({ courseId }: Props) {
               <Masthead data={data} />
               <GradeCompositionBar
                 categories={data.categories}
-                assignments={predictorOpen ? augmentedAssignments : data.assignments}
+                assignments={
+                  predictorOpen
+                    ? augmentedAssignments
+                    : data.curve_mode === "curved"
+                      ? curvedAssignments
+                      : data.assignments
+                }
                 letterScale={data.letter_scale}
-                currentPercent={predictorOpen ? (predictedProjection?.current ?? null) : data.percent}
+                currentPercent={
+                  predictorOpen
+                    ? (predictedProjection?.current ?? null)
+                    : curvedPercent
+                }
                 onEditWeights={() => setEditWeights(true)}
                 onSegmentClick={focusCategory}
                 isPredicted={predictorOpen}
@@ -374,6 +606,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
               {/* AssignmentList always receives real grades — the predictor is display-only */}
               <AssignmentList
                 assignments={data.assignments}
+                curvedAssignments={data.curve_mode === "curved" ? curvedAssignments : undefined}
                 categories={data.categories}
                 droppedIds={droppedAssignmentIds(data.categories, data.assignments)}
                 highlightedCategory={highlightedCategory}
@@ -455,6 +688,13 @@ export function GradebookCourseScreen({ courseId }: Props) {
               refresh();
               refreshGscope();
             }}
+          />
+
+          <CurveSettingsModal
+            open={curveSettingsOpen}
+            course={data}
+            onClose={() => setCurveSettingsOpen(false)}
+            onSave={handleSaveCurveSettings}
           />
         </>
       )}
@@ -1070,7 +1310,7 @@ function CompositionStatus({
   else if (projection && projection.floor >= nextUp.min)
     action = `${nextUp.letter} already guaranteed`;
   else if (projection && projection.ceiling < nextUp.min)
-    action = `${nextUp.letter} out of reach by ${(nextUp.min - projection.ceiling).toFixed(1)} pts`;
+    action = `${nextUp.letter} out of reach by ${(nextUp.min - projection.ceiling).toFixed(1)}%`;
   else if (projection) {
     const span = projection.ceiling - projection.floor;
     const need = nextUp.min - projection.floor;
@@ -1116,7 +1356,7 @@ function CompositionStatus({
       >
         · {action}
         {isPredicted && (
-          <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>(predicted)</span>
+          <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>(Predicted)</span>
         )}
       </span>
     </div>
