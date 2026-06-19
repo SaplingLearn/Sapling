@@ -372,6 +372,78 @@ def _coerce_unit(value, default: float = 0.0) -> float:
     return max(0.0, min(1.0, f))
 
 
+# Symmetric (undirected) relationship types: A→B and B→A are the same edge, so
+# dedup must ignore orientation. Directional types (prerequisite, builds_on)
+# keep their orientation — A→B and B→A are genuinely different edges.
+_SYMMETRIC_RELATIONSHIP_TYPES = {"related", "similar"}
+
+
+def apply_mastery_event(
+    node: dict,
+    delta: float,
+    *,
+    reason: str = "",
+    event_type: str = "interaction",
+    user_id: str | None = None,
+) -> dict:
+    """Apply a single mastery event to one graph node — the sanctioned
+    primitive for every mastery write. Quiz scoring and apply_graph_update's
+    updated_nodes loop both route through here, so mastery/event logic lives
+    in exactly one place (the "graph writes go through one path" convention).
+
+    `node` must carry: id, concept_name, mastery_score, times_studied,
+    mastery_events, course_id. Clamps the new score to [0, 1], appends a
+    capped (last-20) mastery event recording the *effective* delta (after
+    clamping), and bumps times_studied/last_studied_at. Returns
+    ``{"concept", "before", "after", "course_id"}``.
+
+    When `user_id` is given, the write is additionally scoped by user_id —
+    defense-in-depth against a cross-user write even though callers are
+    expected to have owner-scoped their read first (see the quiz IDOR fix).
+
+    Course-context refresh is intentionally NOT done here — the caller owns
+    it (batched per-course in apply_graph_update; backgrounded in quiz).
+
+    NOTE (#9, deferred): this read-modify-write is not atomic. Concurrent
+    writers to the same node can clobber mastery_events/mastery_score. The
+    DB-side atomic append (Postgres RPC) is tracked as a follow-up alongside
+    the migration-runner work (#197); keeping every mastery write on this one
+    path is what makes that future fix a single-place change.
+    """
+    before = node.get("mastery_score") or 0.0
+    after = max(0.0, min(1.0, before + delta))
+
+    existing_events = node.get("mastery_events") or []
+    new_event = {
+        "ts": datetime.utcnow().isoformat(),
+        "delta": round(after - before, 4),
+        "reason": reason,
+        "event_type": event_type,
+    }
+    updated_events = (existing_events + [new_event])[-20:]
+
+    filters = {"id": f"eq.{node['id']}"}
+    if user_id is not None:
+        filters["user_id"] = f"eq.{user_id}"
+    table("graph_nodes").update(
+        {
+            "mastery_score": after,
+            "mastery_tier": get_mastery_tier(after),
+            "times_studied": (node.get("times_studied") or 0) + 1,
+            "last_studied_at": datetime.utcnow().isoformat(),
+            "mastery_events": updated_events,
+        },
+        filters=filters,
+    )
+
+    return {
+        "concept": node.get("concept_name"),
+        "before": before,
+        "after": after,
+        "course_id": node.get("course_id"),
+    }
+
+
 def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None = None) -> list:
     """
     Apply a graph_update dict to the DB. Returns mastery_changes list.
@@ -451,33 +523,21 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         if not row:
             continue
 
-        before = row["mastery_score"]
-        after = max(0.0, min(1.0, before + delta))
-
-        existing_events = row.get("mastery_events") or []
-        new_event = {
-            "ts": datetime.utcnow().isoformat(),
-            "delta": delta,
-            "reason": upd.get("reason", ""),
-            "event_type": upd.get("event_type", "interaction"),
-        }
-        updated_events = (existing_events + [new_event])[-20:]
-
-        table("graph_nodes").update(
-            {
-                "mastery_score": after,
-                "mastery_tier": get_mastery_tier(after),
-                "times_studied": (row.get("times_studied") or 0) + 1,
-                "last_studied_at": datetime.utcnow().isoformat(),
-                "mastery_events": updated_events,
-            },
-            filters={"id": f"eq.{row['id']}"},
+        change = apply_mastery_event(
+            row,
+            delta,
+            reason=upd.get("reason", ""),
+            event_type=upd.get("event_type", "interaction"),
+            user_id=user_id,
         )
-        mastery_changes.append({"concept": row["concept_name"], "before": before, "after": after})
+        mastery_changes.append({
+            "concept": change["concept"],
+            "before": change["before"],
+            "after": change["after"],
+        })
 
-        cid = row.get("course_id")
-        if cid:
-            touched_courses.add(cid)
+        if change["course_id"]:
+            touched_courses.add(change["course_id"])
 
     if mastery_changes:
         update_streak(user_id)
@@ -509,6 +569,17 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
                 "target_node_id": f"eq.{tgt['id']}",
             },
         )
+        # For undirected relationship types, A→B and B→A are the same edge, so
+        # the reverse orientation also counts as an existing duplicate (#24).
+        if not existing_edge and relationship_type in _SYMMETRIC_RELATIONSHIP_TYPES:
+            existing_edge = table("graph_edges").select(
+                "id",
+                filters={
+                    "user_id": f"eq.{user_id}",
+                    "source_node_id": f"eq.{tgt['id']}",
+                    "target_node_id": f"eq.{src['id']}",
+                },
+            )
         if not existing_edge:
             table("graph_edges").insert({
                 "id": str(uuid.uuid4()),

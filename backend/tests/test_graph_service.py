@@ -513,6 +513,164 @@ class TestApplyGraphUpdate:
             mocks["graph_edges"].insert.assert_not_called()
 
 
+# ── apply_mastery_event (single sanctioned mastery-write primitive) ───────────
+
+class TestApplyMasteryEvent:
+    """#128/#6/#9: the shared primitive both quiz.py and apply_graph_update
+    route through. Writes one mastery event to a node — clamp, append a capped
+    event recording the *effective* delta, bump times_studied. Course-context
+    refresh is intentionally the caller's job (batched upstream)."""
+
+    def _node(self, **over):
+        node = {
+            "id": "n1", "concept_name": "Loops", "mastery_score": 0.5,
+            "times_studied": 1, "mastery_events": [], "course_id": "c1",
+        }
+        node.update(over)
+        return node
+
+    def _capture_factory(self, captured):
+        def factory(name):
+            m = MagicMock()
+
+            def _update(data, filters=None, *a, **k):
+                captured["payload"] = data
+                captured["filters"] = filters
+                return []
+
+            m.update.side_effect = _update
+            return m
+        return factory
+
+    def test_returns_change_with_clamped_after(self):
+        from services.graph_service import apply_mastery_event
+        captured = {}
+        with patch("services.graph_service.table", side_effect=self._capture_factory(captured)):
+            change = apply_mastery_event(
+                self._node(mastery_score=0.95), 0.5,
+                reason="Quiz: 5/5 correct", event_type="correct",
+            )
+        assert change["before"] == pytest.approx(0.95)
+        assert change["after"] == 1.0  # clamped to [0, 1]
+        assert change["concept"] == "Loops"
+        assert change["course_id"] == "c1"
+
+    def test_writes_node_by_id_with_new_tier_and_bumped_times(self):
+        from config import get_mastery_tier
+        from services.graph_service import apply_mastery_event
+        captured = {}
+        with patch("services.graph_service.table", side_effect=self._capture_factory(captured)):
+            apply_mastery_event(self._node(mastery_score=0.1, times_studied=1), 0.3)
+        assert captured["filters"] == {"id": "eq.n1"}  # no user_id scope unless asked
+        assert captured["payload"]["mastery_score"] == pytest.approx(0.4)
+        assert captured["payload"]["mastery_tier"] == get_mastery_tier(0.4)
+        assert captured["payload"]["times_studied"] == 2  # bumped from 1
+
+    def test_scopes_write_by_user_id_when_provided(self):
+        """Owner-scoped write — defense-in-depth against cross-user writes."""
+        from services.graph_service import apply_mastery_event
+        captured = {}
+        with patch("services.graph_service.table", side_effect=self._capture_factory(captured)):
+            apply_mastery_event(self._node(), 0.1, user_id="user_andres")
+        assert captured["filters"] == {"id": "eq.n1", "user_id": "eq.user_andres"}
+
+    def test_appends_capped_mastery_event(self):
+        from services.graph_service import apply_mastery_event
+        captured = {}
+        node = self._node(mastery_events=[{"ts": "x", "delta": 0.0} for _ in range(20)])
+        with patch("services.graph_service.table", side_effect=self._capture_factory(captured)):
+            apply_mastery_event(node, 0.05, reason="r", event_type="partial")
+        events = captured["payload"]["mastery_events"]
+        assert len(events) == 20  # still capped at 20 after append
+        assert events[-1]["event_type"] == "partial"
+        assert events[-1]["reason"] == "r"
+
+    def test_event_delta_is_effective_not_requested(self):
+        """The recorded delta reflects the clamped change, not the raw ask."""
+        from services.graph_service import apply_mastery_event
+        captured = {}
+        with patch("services.graph_service.table", side_effect=self._capture_factory(captured)):
+            apply_mastery_event(self._node(mastery_score=0.95), 0.5)  # asks +0.5, clamps
+        assert captured["payload"]["mastery_events"][-1]["delta"] == pytest.approx(0.05)
+
+    def test_does_not_refresh_course_context(self):
+        """Context refresh is the caller's responsibility (batched upstream)."""
+        from services.graph_service import apply_mastery_event
+        captured = {}
+        with patch("services.graph_service.table", side_effect=self._capture_factory(captured)):
+            with patch("services.course_context_service.update_course_context") as mock_ctx:
+                apply_mastery_event(self._node(), 0.1)
+        mock_ctx.assert_not_called()
+
+
+# ── edge dedup orientation (#24) ──────────────────────────────────────────────
+
+class TestEdgeDedupOrientation:
+    """#24: dedup for symmetric relationship types ignores source/target
+    orientation (A→B and B→A are the same edge); directional types keep
+    both orientations distinct."""
+
+    def _nodes(self):
+        return [
+            {"id": "n1", "concept_name": "A", "mastery_score": 0.0,
+             "times_studied": 0, "course_id": "c1", "mastery_events": []},
+            {"id": "n2", "concept_name": "B", "mastery_score": 0.0,
+             "times_studied": 0, "course_id": "c1", "mastery_events": []},
+        ]
+
+    def _factory(self, nodes, stored_orientation):
+        """graph_edges.select returns a hit only for `stored_orientation`."""
+        edges_mock = MagicMock()
+
+        def _select(columns="*", filters=None, *a, **k):
+            filters = filters or {}
+            pair = (filters.get("source_node_id"), filters.get("target_node_id"))
+            return [{"id": "e1"}] if pair == stored_orientation else []
+
+        edges_mock.select.side_effect = _select
+        edges_mock.insert.return_value = []
+
+        nodes_mock = MagicMock()
+        nodes_mock.select.return_value = nodes
+        nodes_mock.update.return_value = []
+        nodes_mock.insert.return_value = []
+
+        def factory(name):
+            if name == "graph_edges":
+                return edges_mock
+            if name == "graph_nodes":
+                return nodes_mock
+            m = MagicMock()
+            m.select.return_value = []
+            return m
+
+        return factory, edges_mock
+
+    def test_symmetric_related_edge_skips_reverse_duplicate(self):
+        # Stored edge is n1→n2; the LLM emits B→A (n2→n1) tagged 'related'.
+        factory, edges_mock = self._factory(self._nodes(), ("eq.n1", "eq.n2"))
+        graph_update = {
+            "new_nodes": [], "updated_nodes": [],
+            "new_edges": [{"source": "B", "target": "A",
+                           "relationship_type": "related", "strength": 0.7}],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            apply_graph_update("u1", graph_update, course_id="c1")
+        edges_mock.insert.assert_not_called()
+
+    def test_directional_prerequisite_keeps_reverse_orientation(self):
+        # Stored edge n1→n2 prerequisite; LLM emits n2→n1 prerequisite → distinct.
+        factory, edges_mock = self._factory(self._nodes(), ("eq.n1", "eq.n2"))
+        graph_update = {
+            "new_nodes": [], "updated_nodes": [],
+            "new_edges": [{"source": "B", "target": "A",
+                           "relationship_type": "prerequisite", "strength": 0.7}],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            apply_graph_update("u1", graph_update, course_id="c1")
+        edges_mock.insert.assert_called_once()
+
+
 # ── get_recommendations ───────────────────────────────────────────────────────
 
 class TestGetRecommendations:

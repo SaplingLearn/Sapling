@@ -10,13 +10,12 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from agents.quiz import quiz_agent, Quiz, QuizQuestion
 from agents.deps import SaplingDeps
-from config import get_mastery_tier
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from services.auth_guard import require_self
 from services.encryption import decrypt_if_present
 from services.gemini_service import MODEL_LITE, MODEL_SMART, call_gemini_json
-from services.graph_service import get_graph, update_streak
+from services.graph_service import apply_mastery_event, get_graph, update_streak
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
 from services.request_context import current_request_id
@@ -389,20 +388,17 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     total = len(questions)
 
+    # The attempt's concept node must belong to the attempt's owner. A missing
+    # or foreign node means we'd otherwise write mastery to someone else's row
+    # (IDOR) — refuse before any write. The one owner-scoped fetch carries
+    # everything the mastery write and the ctx prompt need.
     node_rows = table("graph_nodes").select(
-        "mastery_score,times_studied,mastery_events",
+        "mastery_score,times_studied,mastery_events,course_id,concept_name",
         filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
     )
     if not node_rows:
-        # The attempt's concept node must belong to the attempt's owner.
-        # A missing/foreign node means we'd otherwise write mastery to
-        # someone else's row (IDOR) — refuse before any write.
         raise HTTPException(status_code=404, detail="Concept node not found")
-    node = node_rows[0]
-    mastery_before = node["mastery_score"]
-    mastery_after = max(0.0, min(1.0, mastery_before + (score * 0.03) - ((total - score) * 0.02)))
-    new_tier = get_mastery_tier(mastery_after)
-    times_studied = node["times_studied"] + 1
+    node = {"id": concept_node_id, **node_rows[0]}
 
     score_ratio = score / total if total > 0 else 0.0
     if score_ratio >= 0.7:
@@ -412,25 +408,21 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     else:
         event_type = "confusion"
 
-    existing_events = node.get("mastery_events") or []
-    quiz_event = {
-        "ts": datetime.utcnow().isoformat(),
-        "delta": round(mastery_after - mastery_before, 4),
-        "reason": f"Quiz: {score}/{total} correct",
-        "event_type": event_type,
-    }
-    updated_events = (existing_events + [quiz_event])[-20:]
-
-    table("graph_nodes").update(
-        {
-            "mastery_score": mastery_after,
-            "mastery_tier": new_tier,
-            "times_studied": times_studied,
-            "last_studied_at": datetime.utcnow().isoformat(),
-            "mastery_events": updated_events,
-        },
-        filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
+    # Route the mastery write through the shared graph_service primitive rather
+    # than re-implementing mastery/event logic and writing graph_nodes directly
+    # (#128/#6). user_id keeps the write owner-scoped (IDOR defense-in-depth).
+    change = apply_mastery_event(
+        node,
+        (score * 0.03) - ((total - score) * 0.02),
+        reason=f"Quiz: {score}/{total} correct",
+        event_type=event_type,
+        user_id=user_id,
     )
+    mastery_before = change["before"]
+    mastery_after = change["after"]
+    node_course_id = change["course_id"]
+    concept_name = node_rows[0].get("concept_name") or "Unknown"
+
     table("quiz_attempts").update(
         {
             "score": score,
@@ -443,12 +435,18 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     update_streak(user_id)
 
-    node2_rows = table("graph_nodes").select(
-        "concept_name",
-        filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
-    )
+    # Refresh the per-course aggregate the quiz just changed. Backgrounded so a
+    # slow aggregation/summary never blocks the submit response (#6).
+    if node_course_id:
+        def _refresh_course_ctx(cid: str):
+            try:
+                from services.course_context_service import update_course_context
+                update_course_context(cid)
+            except Exception:
+                pass
+        background_tasks.add_task(_refresh_course_ctx, node_course_id)
+
     user_rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
-    concept_name = node2_rows[0]["concept_name"] if node2_rows else "Unknown"
     student_name = decrypt_if_present(user_rows[0]["name"]) if user_rows else "Student"
 
     existing_ctx = get_quiz_context(user_id, concept_node_id)

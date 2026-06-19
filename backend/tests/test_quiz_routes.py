@@ -365,6 +365,70 @@ class TestQuizNodeOwnership:
         )
 
 
+# ── POST /api/quiz/submit — shared course-context refresh (#128/#6) ──────────
+
+class TestSubmitCourseContextRefresh:
+    """Quiz submission must refresh the per-course aggregate for the node's
+    course. Previously the route wrote graph_nodes directly and never called
+    update_course_context, leaving the shared course context stale (#6)."""
+
+    def _factory(self, course_id):
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz1", "user_id": "user_andres",
+                    "concept_node_id": "node1", "difficulty": "medium",
+                    "questions_json": SAMPLE_QUESTIONS,
+                }]
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "mastery_score": 0.5, "times_studied": 1,
+                    "mastery_events": [], "course_id": course_id,
+                    "concept_name": "Loops",
+                }]
+            elif name == "users":
+                mock.select.return_value = [{"name": "Andres"}]
+            else:
+                mock.select.return_value = []
+            mock.update.return_value = []
+            return mock
+        return factory
+
+    def _submit(self):
+        return client.post("/api/quiz/submit", json={
+            "quiz_id": "quiz1",
+            "answers": [
+                {"question_id": 1, "selected_label": "A"},
+                {"question_id": 2, "selected_label": "D"},
+            ],
+        })
+
+    def test_refreshes_course_context_for_node_course(self):
+        with (
+            patch("routes.quiz.table", side_effect=self._factory("c1")),
+            patch("routes.quiz.update_streak"),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.call_gemini_json", return_value={}),
+            patch("services.course_context_service.update_course_context") as mock_ctx,
+        ):
+            r = self._submit()
+        assert r.status_code == 200
+        mock_ctx.assert_called_once_with("c1")
+
+    def test_no_refresh_when_node_has_no_course(self):
+        with (
+            patch("routes.quiz.table", side_effect=self._factory(None)),
+            patch("routes.quiz.update_streak"),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.call_gemini_json", return_value={}),
+            patch("services.course_context_service.update_course_context") as mock_ctx,
+        ):
+            r = self._submit()
+        assert r.status_code == 200
+        mock_ctx.assert_not_called()
+
+
 # ── POST /api/quiz/generate ──────────────────────────────────────────────────
 
 
