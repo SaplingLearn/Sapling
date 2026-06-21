@@ -116,8 +116,6 @@ app.add_middleware(
 # request, including ones that fail inside CORS.
 app.add_middleware(RequestIDMiddleware)
 
-logfire.instrument_fastapi(app)
-
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
