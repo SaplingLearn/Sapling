@@ -17,3 +17,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_created
 -- #160 graph_edges has zero indexes; graph render filters by user_id.
 CREATE INDEX IF NOT EXISTS idx_graph_edges_user
     ON graph_edges(user_id);
+
+-- Node-endpoint lookups: cascade delete scans by source_node_id.
+CREATE INDEX IF NOT EXISTS idx_graph_edges_source
+    ON graph_edges(source_node_id);
