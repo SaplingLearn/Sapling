@@ -211,6 +211,14 @@ BEGIN
   END IF;
 END $$;
 
+-- Library listing filters user_id/created_at; study-guide context filters
+-- user_id + course_id. The partial unique on (user_id, request_id) doesn't
+-- serve a bare user_id scan (#177).
+CREATE INDEX IF NOT EXISTS idx_documents_user_created
+    ON documents(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_documents_user_course
+    ON documents(user_id, course_id);
+
 -- Study guides
 CREATE TABLE IF NOT EXISTS study_guides (
     id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
