@@ -443,7 +443,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
                 from services.course_context_service import update_course_context
                 update_course_context(cid)
             except Exception:
-                pass
+                logger.exception(
+                    "Background course context refresh failed",
+                    extra={"course_id": cid},
+                )
         background_tasks.add_task(_refresh_course_ctx, node_course_id)
 
     user_rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
