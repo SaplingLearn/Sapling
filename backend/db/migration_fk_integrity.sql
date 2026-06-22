@@ -34,3 +34,14 @@ END $$;
 DELETE FROM notes
  WHERE user_id   NOT IN (SELECT id FROM users)
     OR course_id NOT IN (SELECT id FROM courses);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'notes_user_id_fkey'
+  ) THEN
+    ALTER TABLE notes
+      ADD CONSTRAINT notes_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES users(id);
+  END IF;
+END $$;
