@@ -580,8 +580,10 @@ def login_via_bu_sso(
                 body_text = ""
                 try:
                     body_text = page.locator("body").inner_text(timeout=3000)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Non-fatal: fall back to empty body text for the
+                    # diagnostic keyword checks below.
+                    logger.debug("Could not read page body text for SSO diagnostics", exc_info=exc)
                 lowered = body_text.lower()
                 url = page.url or last_diag_url
                 if "shib.bu.edu" in url:
@@ -613,7 +615,9 @@ def login_via_bu_sso(
             try:
                 page.wait_for_load_state("domcontentloaded", timeout=4000)
             except PlaywrightTimeoutError:
-                pass
+                # Intentional non-fatal: the settle is best-effort; continue
+                # to the cookie-harvest checks even if the load state lags.
+                logger.debug("Timed out waiting for domcontentloaded; continuing with cookie harvest checks.")
 
             if "/login" in (page.url or ""):
                 raise GradescopeAuthError(
