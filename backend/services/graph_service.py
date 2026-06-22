@@ -3,6 +3,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, date, timedelta
 
+import httpx
+
 from config import get_mastery_tier
 from db.connection import table
 
