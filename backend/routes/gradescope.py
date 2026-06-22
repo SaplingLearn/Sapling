@@ -32,6 +32,7 @@ from db.connection import table
 from services import gradescope_service
 from services.auth_guard import require_self
 from services.encryption import encrypt, decrypt, encrypt_if_present
+from services.request_limits import check_rate_limit
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -154,6 +155,25 @@ def _user_owns_course(user_id: str, sapling_course_id: str) -> bool:
     return bool(rows)
 
 
+def _enforce_gs_rate_limit(user_id: str, action: str, *, limit: int, window_sec: int) -> None:
+    """Per-user sliding-window guard for the live-scrape / headless-browser
+    endpoints. Each of these drives a real login + scrape against Gradescope
+    (and bu-sso launches a Chromium that blocks a worker thread up to ~300s),
+    so without a cap an authenticated user could exhaust workers or get the
+    app's IP throttled/banned by Gradescope.
+    """
+    retry = check_rate_limit(
+        f"gradescope:{action}:{user_id}", limit=limit, window_sec=window_sec
+    )
+    if retry is not None:
+        # main.py's HTTPException handler drops exc.headers, so the retry budget
+        # rides in the detail string rather than a Retry-After header.
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many Gradescope {action} requests. Retry in {retry}s.",
+        )
+
+
 # ── Credentials CRUD ───────────────────────────────────────────────────────
 
 
@@ -170,6 +190,8 @@ def save_credentials(body: CredentialsBody, request: Request):
         their browser session cookies.
     """
     require_self(body.user_id, request)
+    # Each save tests a live login against Gradescope before persisting.
+    _enforce_gs_rate_limit(body.user_id, "credential", limit=10, window_sec=300)
 
     if body.auth_mode == "password":
         if not body.email or not body.password:
@@ -233,6 +255,9 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
     sit while we wait for the tap.
     """
     require_self(body.user_id, request)
+    # Strictest cap: each call launches a Chromium that pins a worker thread for
+    # up to duo_timeout_seconds and fires a Duo push at the user's phone.
+    _enforce_gs_rate_limit(body.user_id, "bu-sso", limit=3, window_sec=600)
 
     try:
         # sync_playwright wants its own event loop; run the whole flow in
@@ -315,6 +340,7 @@ def get_status(user_id: str, request: Request):
 def list_gradescope_courses(user_id: str, request: Request):
     """Hit Gradescope live with the saved creds, list student-role courses."""
     require_self(user_id, request)
+    _enforce_gs_rate_limit(user_id, "courses", limit=10, window_sec=300)
     creds = _load_creds(user_id)
     if not creds:
         raise HTTPException(status_code=404, detail="No Gradescope credentials saved")
@@ -392,6 +418,7 @@ def _due_to_date_string(iso: str | None) -> str | None:
 def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[str, Any]:
     """Pull assignments from the linked Gradescope course and upsert into the Sapling gradebook."""
     require_self(user_id, request)
+    _enforce_gs_rate_limit(user_id, "sync", limit=10, window_sec=300)
     if not _user_owns_course(user_id, sapling_course_id):
         raise HTTPException(status_code=404, detail="Sapling course not found for user")
 
