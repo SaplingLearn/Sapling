@@ -3,6 +3,12 @@
 -- Run this in: Supabase Dashboard → SQL Editor → New query
 -- ============================================================
 
+-- Applied-migration ledger (#197) — backs db/migrate.py ordered runner.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version    TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Users
 CREATE TABLE IF NOT EXISTS users (
     id                    TEXT PRIMARY KEY,
