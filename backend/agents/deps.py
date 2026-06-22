@@ -7,7 +7,7 @@ agent code and the rest of the backend (DB, auth context, logging).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -27,6 +27,9 @@ class SaplingDeps:
             that need to scope reads to *this* conversation (e.g.
             read_session_history_tool). Optional — agent runs that don't
             happen inside a session (eval mode, batch tasks) leave it None.
+        graph_updates: Accumulates graph update payloads emitted by tools
+            during a run so the route can persist them in graph_update_json
+            for concepts_covered derivation in end_session.
     """
 
     user_id: str
@@ -34,3 +37,4 @@ class SaplingDeps:
     supabase: Any
     request_id: str
     session_id: str | None = None
+    graph_updates: list = field(default_factory=list)
