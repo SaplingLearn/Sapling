@@ -154,6 +154,11 @@ function CurveSettingsModal({
   );
   const [saving, setSaving] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
+  React.useEffect(() => {
+    if (!open) return;
+    setAvgTarget(course.curve_avg_target != null ? (course.curve_avg_target * 100).toFixed(0) : "83");
+    setSdDelta(course.curve_sd_delta != null ? (course.curve_sd_delta * 100).toFixed(0) : "10");
+  }, [open, course]);
   if (!mounted || !open) return null;
 
   const toFloat = (s: string): number | null =>

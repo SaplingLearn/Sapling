@@ -28,6 +28,7 @@ router = APIRouter()
 
 
 def _user_owns_course(user_id: str, course_id: str) -> bool:
+    """Return True if user_id has an enrollment row for course_id."""
     rows = table("user_courses").select(
         "id",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
@@ -37,6 +38,7 @@ def _user_owns_course(user_id: str, course_id: str) -> bool:
 
 
 def _user_owns_category(user_id: str, category_id: str) -> dict | None:
+    """Return the category row if it belongs to user_id, else None."""
     rows = table("course_categories").select(
         "id,user_id,course_id,name,weight,sort_order,drop_lowest",
         filters={"id": f"eq.{category_id}", "user_id": f"eq.{user_id}"},
@@ -178,6 +180,7 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
 
 @router.post("/courses/{course_id}/categories")
 def create_category(course_id: str, body: CreateCategoryBody, request: Request):
+    """Create a new grade category for the given course."""
     require_self(body.user_id, request)
     if not _user_owns_course(body.user_id, course_id):
         raise HTTPException(status_code=404, detail="Course not in your gradebook")
@@ -196,6 +199,7 @@ def create_category(course_id: str, body: CreateCategoryBody, request: Request):
 
 @router.patch("/courses/{course_id}/categories")
 def bulk_update_categories(course_id: str, body: BulkUpdateCategoriesBody, request: Request):
+    """Replace all categories for a course. Validates that weights sum to 100%."""
     require_self(body.user_id, request)
     if not _user_owns_course(body.user_id, course_id):
         raise HTTPException(status_code=404, detail="Course not in your gradebook")
@@ -236,6 +240,7 @@ def bulk_update_categories(course_id: str, body: BulkUpdateCategoriesBody, reque
 
 @router.delete("/categories/{category_id}")
 def delete_category(category_id: str, request: Request, user_id: str = Query(...)):
+    """Delete a category if it belongs to user_id."""
     require_self(user_id, request)
     cat = _user_owns_category(user_id, category_id)
     if not cat:
@@ -245,6 +250,7 @@ def delete_category(category_id: str, request: Request, user_id: str = Query(...
 
 
 def _user_owns_assignment(user_id: str, assignment_id: str) -> dict | None:
+    """Return the assignment row if it belongs to user_id, else None."""
     rows = table("assignments").select(
         "id,user_id,course_id,category_id",
         filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"},
@@ -255,6 +261,7 @@ def _user_owns_assignment(user_id: str, assignment_id: str) -> dict | None:
 
 @router.post("/assignments")
 def create_assignment(body: CreateAssignmentBody, request: Request):
+    """Create a graded assignment; encrypts points_possible, points_earned, and notes at rest."""
     require_self(body.user_id, request)
     if not _user_owns_course(body.user_id, body.course_id):
         raise HTTPException(status_code=404, detail="Course not in your gradebook")
@@ -292,6 +299,7 @@ def create_assignment(body: CreateAssignmentBody, request: Request):
 
 @router.patch("/assignments/{assignment_id}")
 def update_assignment_route(assignment_id: str, body: UpdateAssignmentBody, request: Request):
+    """Partial-update an assignment. Encrypts any point/notes fields before writing."""
     require_self(body.user_id, request)
     if not _user_owns_assignment(body.user_id, assignment_id):
         raise HTTPException(status_code=404, detail="Assignment not found")
@@ -319,6 +327,7 @@ def update_assignment_route(assignment_id: str, body: UpdateAssignmentBody, requ
 
 @router.delete("/assignments/{assignment_id}")
 def delete_assignment_route(assignment_id: str, request: Request, user_id: str = Query(...)):
+    """Delete an assignment belonging to user_id."""
     require_self(user_id, request)
     if not _user_owns_assignment(user_id, assignment_id):
         raise HTTPException(status_code=404, detail="Assignment not found")
@@ -420,6 +429,7 @@ def apply_syllabus(body: SyllabusApplyBody, request: Request):
 
 @router.patch("/courses/{course_id}/scale")
 def set_letter_scale(course_id: str, body: SetLetterScaleBody, request: Request):
+    """Override the default A/B/C… letter scale for a course. Pass scale=null to reset to default."""
     require_self(body.user_id, request)
     if not _user_owns_course(body.user_id, course_id):
         raise HTTPException(status_code=404, detail="Course not in your gradebook")

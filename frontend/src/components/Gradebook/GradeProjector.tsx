@@ -49,6 +49,7 @@ export function projectGrade(
   assignments: GradedAssignment[],
 ): GradeProjection | null {
   let weightSum = 0;
+  let currentWeightSum = 0;
   let weightedCurrent = 0;
   let weightedFloor = 0;
   let weightedCeiling = 0;
@@ -97,14 +98,17 @@ export function projectGrade(
       ceilingDS.count > 0 ? ceilingDS.scoreSum / ceilingDS.count : 0;
 
     weightSum += cat.weight;
-    weightedCurrent += cat.weight * catCurrent;
     weightedFloor += cat.weight * catFloor;
     weightedCeiling += cat.weight * catCeiling;
+    if (currentDS.count > 0) {
+      currentWeightSum += cat.weight;
+      weightedCurrent += cat.weight * catCurrent;
+    }
   }
 
   if (weightSum === 0) return null;
   return {
-    current: (weightedCurrent / weightSum) * 100,
+    current: currentWeightSum > 0 ? (weightedCurrent / currentWeightSum) * 100 : 0,
     floor: (weightedFloor / weightSum) * 100,
     ceiling: (weightedCeiling / weightSum) * 100,
   };

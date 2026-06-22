@@ -95,6 +95,7 @@ class StoredCreds(BaseModel):
 
 
 def _load_creds(user_id: str) -> StoredCreds | None:
+    """Fetch and decrypt stored Gradescope credentials for user_id. Returns None if none saved."""
     rows = table("gradescope_credentials").select(
         "auth_mode,email_encrypted,password_encrypted,cookies_encrypted",
         filters={"user_id": f"eq.{user_id}"},
@@ -143,6 +144,7 @@ def _establish_connection(creds: StoredCreds) -> GSConnection:
 
 
 def _user_owns_course(user_id: str, sapling_course_id: str) -> bool:
+    """Return True if user_id is enrolled in sapling_course_id."""
     rows = table("user_courses").select(
         "id",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{sapling_course_id}"},
@@ -280,6 +282,7 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
 
 @router.delete("/credentials")
 def delete_credentials(user_id: str, request: Request):
+    """Remove stored Gradescope credentials for user_id."""
     require_self(user_id, request)
     table("gradescope_credentials").delete(filters={"user_id": f"eq.{user_id}"})
     return {"ok": True}
@@ -287,6 +290,7 @@ def delete_credentials(user_id: str, request: Request):
 
 @router.get("/status")
 def get_status(user_id: str, request: Request):
+    """Return whether the user has saved credentials and when they last synced."""
     require_self(user_id, request)
     rows = table("gradescope_credentials").select(
         "auth_mode,last_synced_at,updated_at",
@@ -325,6 +329,7 @@ def list_gradescope_courses(user_id: str, request: Request):
 
 @router.get("/links")
 def list_links(user_id: str, request: Request):
+    """List all sapling-course → gradescope-course mappings for user_id."""
     require_self(user_id, request)
     rows = table("gradescope_course_links").select(
         "id,sapling_course_id,gradescope_course_id,last_synced_at",
@@ -335,6 +340,7 @@ def list_links(user_id: str, request: Request):
 
 @router.post("/link")
 def upsert_link(body: LinkBody, request: Request):
+    """Create or replace the link between a Sapling course and a Gradescope course."""
     require_self(body.user_id, request)
     if not _user_owns_course(body.user_id, body.sapling_course_id):
         raise HTTPException(status_code=404, detail="Sapling course not found for user")
@@ -356,6 +362,7 @@ def upsert_link(body: LinkBody, request: Request):
 
 @router.delete("/link/{sapling_course_id}")
 def remove_link(sapling_course_id: str, user_id: str, request: Request):
+    """Remove the Gradescope link for a Sapling course."""
     require_self(user_id, request)
     table("gradescope_course_links").delete(
         filters={
@@ -382,6 +389,7 @@ def _due_to_date_string(iso: str | None) -> str | None:
 
 @router.post("/sync/{sapling_course_id}")
 def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[str, Any]:
+    """Pull assignments from the linked Gradescope course and upsert into the Sapling gradebook."""
     require_self(user_id, request)
     if not _user_owns_course(user_id, sapling_course_id):
         raise HTTPException(status_code=404, detail="Sapling course not found for user")

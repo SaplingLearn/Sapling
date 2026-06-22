@@ -325,7 +325,9 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         )
         resp.raise_for_status()
         user_info = resp.json()
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):
+        return _fail_redirect("userinfo_fetch_failed")
+    if not isinstance(user_info, dict):
         return _fail_redirect("userinfo_fetch_failed")
 
     email = user_info.get("email", "")

@@ -108,6 +108,8 @@ def _is_duplicate_bucket(resp: httpx.Response) -> bool:
         body = resp.json()
     except ValueError:
         return False
+    if not isinstance(body, dict):
+        return False
     return str(body.get("statusCode")) == "409" or body.get("error") == "Duplicate"
 
 

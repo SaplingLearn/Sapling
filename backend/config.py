@@ -15,7 +15,8 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 PORT = int(os.getenv("PORT", "5000"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
-SECURE_COOKIES = os.getenv("SECURE_COOKIES", "false").lower() == "true"
+_sc_env = os.getenv("SECURE_COOKIES")
+SECURE_COOKIES: bool = _sc_env.lower() == "true" if _sc_env is not None else FRONTEND_URL.startswith("https://")
 
 # Deployment mode (#174). Defaults to "production" so the config is fail-closed:
 # a deployment that sets nothing gets the strict checks. Set APP_ENV=local (or

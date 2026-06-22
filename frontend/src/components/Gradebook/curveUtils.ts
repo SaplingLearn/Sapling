@@ -34,7 +34,9 @@ export function applyCurveToAssignment(
     a.curve_class_mean == null ||
     a.curve_class_sd == null
   ) return a;
-  const rawPct = a.points_earned / (a.points_possible ?? 1);
+  const rawPct = (a.points_possible != null && a.points_possible > 0)
+    ? a.points_earned / a.points_possible
+    : 0;
   const avgTarget = a.curve_avg_target ?? coursePolicy.curve_avg_target;
   const sdDelta = a.curve_sd_delta ?? coursePolicy.curve_sd_delta;
   const curved = applyCurve(rawPct, a.curve_class_mean, a.curve_class_sd, avgTarget, sdDelta);
