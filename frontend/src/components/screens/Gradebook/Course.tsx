@@ -50,46 +50,6 @@ const DEFAULT_SCALE: LetterScaleTier[] = [
   { letter: "F",  min: 0  },
 ];
 
-// Mirrors backend current_grade() exactly: equal-weighted mean per category,
-// drop_lowest respected, categories with no graded items skipped.
-function computeCurrentGrade(
-  categories: import("@/lib/types").GradeCategory[],
-  assignments: import("@/lib/types").GradedAssignment[],
-): number | null {
-  const byCat: Record<string, import("@/lib/types").GradedAssignment[]> = {};
-  for (const c of categories) byCat[c.id] = [];
-  for (const a of assignments) {
-    if (a.category_id && a.category_id in byCat) byCat[a.category_id].push(a);
-  }
-  let totalWeight = 0;
-  let weightedSum = 0;
-  for (const cat of categories) {
-    if (cat.weight <= 0) continue;
-    let graded = (byCat[cat.id] ?? []).filter(
-      (a) => a.points_earned !== null && a.points_possible != null && (a.points_possible as number) > 0,
-    );
-    if (graded.length === 0) continue;
-    // Apply drop_lowest: sort by score ascending, drop the N lowest.
-    const drop = Math.max(0, cat.drop_lowest ?? 0);
-    if (drop > 0 && drop < graded.length) {
-      graded = [...graded]
-        .sort((a, b) =>
-          (a.points_earned as number) / (a.points_possible as number) -
-          (b.points_earned as number) / (b.points_possible as number),
-        )
-        .slice(drop);
-    } else if (drop >= graded.length) {
-      continue;
-    }
-    const scores = graded.map((a) => (a.points_earned as number) / (a.points_possible as number));
-    const catGrade = scores.reduce((s, v) => s + v, 0) / scores.length;
-    totalWeight += cat.weight;
-    weightedSum += cat.weight * catGrade;
-  }
-  if (totalWeight === 0) return null;
-  return (weightedSum / totalWeight) * 100;
-}
-
 function compactLetterScale(
   scale: LetterScaleTier[] | null,
 ): { letter: string; min: number }[] {
@@ -473,18 +433,6 @@ export function GradebookCourseScreen({ courseId }: Props) {
     };
     return data.assignments.map((a) => applyCurveToAssignment(a, policy));
   }, [data]);
-
-  const curvedPercent = React.useMemo(() => {
-    if (!data) return null;
-    // When curved, recompute from curvedAssignments client-side so the bar
-    // pin updates instantly on toggle (before refresh() returns from the server).
-    // computeCurrentGrade mirrors backend logic: skips ungraded categories,
-    // avoiding the projectGrade divergence that dragged 95% → 76%.
-    if (data.curve_mode === "curved") {
-      return computeCurrentGrade(data.categories, curvedAssignments);
-    }
-    return data.percent;
-  }, [data, curvedAssignments]);
 
   const handleToggleCurveMode = React.useCallback(async () => {
     if (!data || !userId) return;
