@@ -229,6 +229,13 @@ CREATE TABLE IF NOT EXISTS study_guides (
     content      JSONB NOT NULL
 );
 
+-- Cached-guide listing (user_id, generated_at) + cache-hit lookup
+-- (user_id, course_id, exam_id) both full-scan without these (#178).
+CREATE INDEX IF NOT EXISTS idx_study_guides_user
+    ON study_guides(user_id, generated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_study_guides_lookup
+    ON study_guides(user_id, course_id, exam_id);
+
 -- Per-concept aggregated course stats (across all enrolled students)
 CREATE TABLE IF NOT EXISTS course_concept_stats (
     id                    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
