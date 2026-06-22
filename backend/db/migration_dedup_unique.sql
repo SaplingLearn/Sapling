@@ -38,3 +38,14 @@ WITH ranked AS (
 ), losers AS (SELECT id FROM ranked WHERE rn > 1)
 UPDATE quiz_attempts SET concept_node_id = NULL
  WHERE concept_node_id IN (SELECT id FROM losers);
+
+-- 3. Delete quiz_context rows tied to a duplicate node (NOT NULL FK).
+WITH ranked AS (
+  SELECT id, row_number() OVER (
+    PARTITION BY user_id, lower(concept_name), course_id
+    ORDER BY mastery_score DESC NULLS LAST, times_studied DESC NULLS LAST, id
+  ) AS rn
+  FROM graph_nodes
+), losers AS (SELECT id FROM ranked WHERE rn > 1)
+DELETE FROM quiz_context
+ WHERE concept_node_id IN (SELECT id FROM losers);
