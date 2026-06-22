@@ -1,11 +1,13 @@
-# Fully-resolved, hash-pinned lockfile for the fast (non-OCR) dependency set —
-# the same subset CI installs and the app imports at runtime. The OCR stack
-# (torch / docling / transformers) is intentionally excluded: it is multi-GB,
-# installed from the CPU wheel index in Docker, and excluded from the fast CI
-# gate (see .github/workflows/ci.yml). Regenerate after editing requirements.txt:
+# Fully-resolved, hash-pinned, cross-platform lockfile for the fast (non-OCR)
+# dependency set — the same subset CI installs and the app imports at runtime.
+# The OCR stack (torch / docling / transformers) is intentionally excluded: it
+# is multi-GB, installed from the CPU wheel index in Docker, and excluded from
+# the fast CI gate (see .github/workflows/ci.yml). Regenerate after editing
+# requirements.txt:
 #
 #    grep -vE '^(torch|docling|transformers)' requirements.txt > /tmp/req.in
-#    uv pip compile /tmp/req.in -o requirements.lock --generate-hashes
+#    uv pip compile /tmp/req.in -o requirements.lock \
+#        --generate-hashes --universal --python-version 3.13
 #
 # Guarded by tests/test_requirements_lock.py (lock must cover requirements.txt).
 annotated-doc==0.0.4 \
@@ -36,7 +38,7 @@ beautifulsoup4==4.15.0 \
     --hash=sha256:288e3ca7d54b06f2ac191970bc275c1939cb46d450b255bf6718b04aa37ab4f7 \
     --hash=sha256:d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9
     # via
-    #   -r /tmp/req-ci.in
+    #   -r /tmp/req.in
     #   gradescopeapi
 certifi==2026.6.17 \
     --hash=sha256:024c88eeec92ca068db80f02b8b07c9cef7b9fe261d1d535abfd5abd6f6af432 \
@@ -45,7 +47,7 @@ certifi==2026.6.17 \
     #   httpcore
     #   httpx
     #   requests
-cffi==2.0.0 \
+cffi==2.0.0 ; platform_python_implementation != 'PyPy' \
     --hash=sha256:00bdf7acc5f795150faa6957054fbbca2439db2f775ce831222b66f192f03beb \
     --hash=sha256:07b271772c100085dd28b74fa0cd81c8fb1a3ba18b21e03d7c27f3436a10606b \
     --hash=sha256:087067fa8953339c723661eda6b54bc98c5625757ea62e95eb4898ad5e776e9f \
@@ -270,6 +272,13 @@ cobble==0.1.4 \
     --hash=sha256:36c91b1655e599fd428e2b95fdd5f0da1ca2e9f1abb0bc871dec21a0e78a2b44 \
     --hash=sha256:de38be1539992c8a06e569630717c485a5f91be2192c461ea2b220607dfa78aa
     # via mammoth
+colorama==0.4.6 ; sys_platform == 'win32' \
+    --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
+    --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
+    # via
+    #   click
+    #   pytest
+    #   uvicorn
 cryptography==45.0.7 \
     --hash=sha256:06ce84dc14df0bf6ea84666f958e6080cdb6fe1231be2a51f3fc1267d9f3fb34 \
     --hash=sha256:16ede8a4f7929b4b7ff3642eba2bf79aa1d71f24ab6ee443935c0d269b6bc513 \
@@ -309,7 +318,7 @@ cryptography==45.0.7 \
     --hash=sha256:f5414a788ecc6ee6bc58560e85ca624258a55ca434884445440a810796ea0e0b \
     --hash=sha256:fa26fa54c0a9384c27fcdc905a2fb7d60ac6e47d14bc2692145f2b3b1e2cfdbd
     # via
-    #   -r /tmp/req-ci.in
+    #   -r /tmp/req.in
     #   google-auth
 distro==1.9.0 \
     --hash=sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed \
@@ -322,7 +331,7 @@ dnspython==2.8.0 \
 email-validator==2.3.0 \
     --hash=sha256:80f13f623413e6b197ae73bb10bf4eb0908faf509ad8362c5edeb0be7fd450b4 \
     --hash=sha256:9fc05c37f2f6cf439ff414f8fc46d917929974a82244c20eb10231ba60c54426
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 et-xmlfile==2.0.0 \
     --hash=sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa \
     --hash=sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54
@@ -335,7 +344,7 @@ fastapi==0.138.0 \
     --hash=sha256:b6f54fd1bd72c80b0f899f172c61a600f6f7af9b43d4d772a018f35624048cb0 \
     --hash=sha256:d445a4877636ad191e7053e08c9bf98cb921a6756776848400bb773d1740c061
     # via
-    #   -r /tmp/req-ci.in
+    #   -r /tmp/req.in
     #   gradescopeapi
 genai-prices==0.0.66 \
     --hash=sha256:86b83f107c1cf04bb449a120cd8d4439ceb6843660d9128cde560eb511686d7b \
@@ -348,7 +357,7 @@ google-api-core==2.31.0 \
 google-api-python-client==2.197.0 \
     --hash=sha256:0f8b89aa75768161dd4f5092d6bcb386c13236b32e0d9a938c02f71342094d14 \
     --hash=sha256:32e03977eda4a66eafc6ae58dc9ec46426b6025636d5ef019c5703013eddd4e5
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 google-auth==2.55.0 \
     --hash=sha256:a17cef9dedf98c4ebae2fb0c48c8f75952c877cbc2efe09f329ef16c2783d88a \
     --hash=sha256:fcd3a130f575fa36403d38774af1c64a4fbfbca09215f0589d2372b5119697cb
@@ -365,12 +374,12 @@ google-auth-httplib2==0.4.0 \
 google-auth-oauthlib==1.4.0 \
     --hash=sha256:18b5e28880eb8eba9065c436becdc0ee8e4b59117a73a510679c82f70cd363d2 \
     --hash=sha256:251314f213a9ee46a5ae73988e84fd7cca8bb68e7ecf4bfd45940f9e7f51d070
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 google-genai==2.9.0 \
     --hash=sha256:2a79e2b08e8439f5f25c2b42f98e3f3e8ea4be9c9265f5d7321580dbaf2764f4 \
     --hash=sha256:a8a10e9113f460cc668c1d9deeb62ba393ad1ba704bf3166d5a0f32a434f9415
     # via
-    #   -r /tmp/req-ci.in
+    #   -r /tmp/req.in
     #   pydantic-ai-slim
 googleapis-common-protos==1.75.0 \
     --hash=sha256:53a062ff3c32552fbd62c11fe23768b78e4ddf0494d5e5fd97d3f4689c75fbbd \
@@ -381,7 +390,7 @@ googleapis-common-protos==1.75.0 \
 gradescopeapi==1.8.0 \
     --hash=sha256:3a304547e45ecba2f4abfc7dd29ef71daa0d32c3a55b43e4f1cac7db2fae4bf1 \
     --hash=sha256:79430374d8d792717ce153c914ebb86f1598821da660356bbf3b7a8349e4026f
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 greenlet==3.5.2 \
     --hash=sha256:01e32e9d2b1714a2b06184cb3071ff2a2fd9bc7d065e39198ab21f7253dad421 \
     --hash=sha256:0488ca77c94da5e09d1d9958f98b58cebba1b8fd9664c24898499133de927574 \
@@ -544,7 +553,7 @@ httpx==0.28.1 \
     --hash=sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
     # via
-    #   -r /tmp/req-ci.in
+    #   -r /tmp/req.in
     #   google-genai
     #   pydantic-ai-slim
     #   pydantic-graph
@@ -653,7 +662,7 @@ levenshtein==0.27.3 \
 logfire==4.37.0 \
     --hash=sha256:7ee0cb64b59c356a41a1701fb84597037f8db1fa15df7a3715ef363e5a1de06a \
     --hash=sha256:a20823e6dbb3204614a3ea5e79c91df42405c5112393ec9d8e34ef45b60d315f
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 logfire-api==4.37.0 \
     --hash=sha256:0f62debd6ed593d51307277bd6d5636b57bda07935b5604b96db10fe64441af4 \
     --hash=sha256:1d756f8ba23aa56d438e0ba2c0f529a00fcac975b8785c561b058267f9465088
@@ -799,7 +808,7 @@ lxml==6.1.1 \
 mammoth==1.12.0 \
     --hash=sha256:10955a55d9173167b550de3aeb8f2ed48b420756fd66378156b2f78661a33dd5 \
     --hash=sha256:d195ae2403b98276d7646e252035b6f70adb255987bb267e9eac6bc6531fe38f
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 markdown-it-py==4.2.0 \
     --hash=sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49 \
     --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
@@ -815,7 +824,7 @@ oauthlib==3.3.1 \
 openpyxl==3.1.5 \
     --hash=sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2 \
     --hash=sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 opentelemetry-api==1.42.1 \
     --hash=sha256:51a69edacadbc03a8950ace1c4c21099cacc538820ac2c9e36277e78cebba714 \
     --hash=sha256:56c63bea9f77b62856be8c47600474acad853b2924b99b1687c4cb6297166716
@@ -976,7 +985,7 @@ pillow==12.2.0 \
     --hash=sha256:fb043ee2f06b41473269765c2feae53fc2e2fbf96e5e22ca94fb5ad677856f06 \
     --hash=sha256:fc3d34d4a8fbec3e88a79b92e5465e0f9b842b628675850d860b8bd300b159f5
     # via
-    #   -r /tmp/req-ci.in
+    #   -r /tmp/req.in
     #   pytesseract
     #   python-pptx
 playwright==1.60.0 \
@@ -988,7 +997,7 @@ playwright==1.60.0 \
     --hash=sha256:6e4f6700a4c2250efff8e690a81d66e3855754fb587b6b87cf5c784014f91537 \
     --hash=sha256:9566821ce6030a1f9e7146a24e19355ab0d98805fd0f9be50bb3d8fef1750c02 \
     --hash=sha256:ec94e416ea320711e0ad4bf185dcbf41833672961e90773e1885255d7db7b7e7
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 pluggy==1.6.0 \
     --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \
     --hash=sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746
@@ -1022,7 +1031,7 @@ pyasn1-modules==0.4.2 \
     --hash=sha256:29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a \
     --hash=sha256:677091de870a80aae844b1ca6134f54652fa2c8c5a52aa396440ac3106e941e6
     # via google-auth
-pycparser==3.0 \
+pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy' \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
     # via cffi
@@ -1040,7 +1049,7 @@ pydantic-ai-slim==1.107.0 \
     --hash=sha256:1af49bbae06a6c598f72c54d4734ba377100cac493c9a05fa8e089bebeae0da6 \
     --hash=sha256:4616f689a92fcfecfecf2a7af27aca22f139a873cf6d7a8929eaeee9c0eedbb4
     # via
-    #   -r /tmp/req-ci.in
+    #   -r /tmp/req.in
     #   pydantic-evals
 pydantic-core==2.46.4 \
     --hash=sha256:00c603d540afdd6b80eb39f078f33ebd46211f02f33e34a32d9f053bba711de0 \
@@ -1167,7 +1176,7 @@ pydantic-core==2.46.4 \
 pydantic-evals==1.107.0 \
     --hash=sha256:153378eda4847d48ca5e6b995e6221e5f0e4f4641771a1eed244fa2065923b27 \
     --hash=sha256:2df2f6deb82226f0404137ebecf9389c2270e08e30c066e239ae9090173826ec
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 pydantic-graph==1.107.0 \
     --hash=sha256:278dd89b3e33f3a2963ac949f27a53aef705c5d883a8ce5d06d23e6e3cfbd972 \
     --hash=sha256:71add94fe7e14c703977a895117c475aae6c0b02a774a036c4d00d9a63c78b00
@@ -1189,7 +1198,7 @@ pyparsing==3.3.2 \
 pypdf==6.13.3 \
     --hash=sha256:c6e3f86afb625791510b02ad5480e94b63970bb957df75d44657c282ecc52224 \
     --hash=sha256:f3cb822769725f1bac658c406cfc9460399043f3750c2d3e4650e0a85eacabd7
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 pypdfium2==5.10.1 \
     --hash=sha256:09fda0609dc4749c9865a0315c447d6f2583a580693bcabd69980d3fbb22ad51 \
     --hash=sha256:0de53d2710ca9509fc2812340acc57c3f043697609068592d87de654f8cabf44 \
@@ -1213,22 +1222,22 @@ pypdfium2==5.10.1 \
     --hash=sha256:ebb9e63f92d15fc41b359fe7a187233dfae37548800e1fa09cb2fc466ac89951 \
     --hash=sha256:f257d2011eb43c846b7e9f5a802e28646b29732763e4a35dd6ca76f9be580538 \
     --hash=sha256:f2803020952afa57e1e148adc19369b835154e1fa251a1ca85008ab6466a710f
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 pytesseract==0.3.13 \
     --hash=sha256:4bf5f880c99406f52a3cfc2633e42d9dc67615e69d8a509d74867d3baddb5db9 \
     --hash=sha256:7a99c6c2ac598360693d83a416e36e0b33a67638bb9d77fdcac094a3589d4b34
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 pytest==9.1.1 \
     --hash=sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313 \
     --hash=sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c
     # via
-    #   -r /tmp/req-ci.in
+    #   -r /tmp/req.in
     #   gradescopeapi
     #   pytest-anyio
 pytest-anyio==0.0.0 \
     --hash=sha256:b41234e9e9ad7ea1dbfefcc1d6891b23d5ef7c9f07ccf804c13a9cc338571fd3 \
     --hash=sha256:dc8b5c4741cb16ff90be37fddd585ca943ed12bbeb563de7ace6cd94441d8746
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 python-dateutil==2.9.0.post0 \
     --hash=sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3 \
     --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
@@ -1237,21 +1246,21 @@ python-dotenv==1.2.2 \
     --hash=sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a \
     --hash=sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3
     # via
-    #   -r /tmp/req-ci.in
+    #   -r /tmp/req.in
     #   gradescopeapi
     #   uvicorn
 python-levenshtein==0.27.3 \
     --hash=sha256:27dc2d65aeb62a7d6852388f197073296370779286c0860b087357f3b8129a62 \
     --hash=sha256:5d6168a8e8befb25abf04d2952368a446722be10e8ced218d0dc4fd3703a43a1
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 python-multipart==0.0.32 \
     --hash=sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e \
     --hash=sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 python-pptx==1.0.2 \
     --hash=sha256:160838e0b8565a8b1f67947675886e9fea18aa5e795db7ae531606d68e785cba \
     --hash=sha256:479a8af0eaf0f0d76b6f00b0887732874ad2e3188230315290cd1f9dd9cc7095
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 pyyaml==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \
     --hash=sha256:0150219816b6a1fa26fb4699fb7daa9caf09eb1999f3b70fb6e786805e80375a \
@@ -1417,7 +1426,7 @@ rapidfuzz==3.14.5 \
 recost==0.1.3 \
     --hash=sha256:75ae532fb87b183d660a5e0e5842a378adb5823c30dbcbfa366f0692c2feb29a \
     --hash=sha256:a20a734900fff1f6e6f1d010a13fa89329f3dc5238549db211b41161a52c3b0d
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 requests==2.34.2 \
     --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0 \
     --hash=sha256:f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed
@@ -1462,7 +1471,7 @@ ruff==0.15.18 \
     --hash=sha256:a81beadbbff2c9c245561ae3f77b16709d87f35eec650d0501679239d3449b22 \
     --hash=sha256:b2c9257fcbd4a3e5b977a1904e6facca016bafe2edc17df24db67cfaee03b4e4 \
     --hash=sha256:dac80dc8d26b2257dbefabed62f5d255c3937b4ccb122da1fc634794fa3578b3
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
@@ -1478,7 +1487,7 @@ soupsieve==2.8.4 \
 sse-starlette==3.4.5 \
     --hash=sha256:83072538bc211a2f68b7b0422226c4af3e9b62e106e07034664b832ca019842a \
     --hash=sha256:e71bad53323f65573c3864a6c3bd0c1eb6e5f092b2e48082b0c35927d19ca296
-    # via -r /tmp/req-ci.in
+    # via -r /tmp/req.in
 starlette==1.3.1 \
     --hash=sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0 \
     --hash=sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6
@@ -1535,8 +1544,8 @@ urllib3==2.7.0 \
 uvicorn==0.49.0 \
     --hash=sha256:ba3d14c3ee7e41c6c654c46c9eb489d33213cdd30aa1696eab1374337c13f68f \
     --hash=sha256:ebf4271aa580d9de97f93192d4595176df6e91f9aae919ca73e4fc07df1e66a3
-    # via -r /tmp/req-ci.in
-uvloop==0.22.1 \
+    # via -r /tmp/req.in
+uvloop==0.22.1 ; platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32' \
     --hash=sha256:017bd46f9e7b78e81606329d07141d3da446f8798c6baeec124260e22c262772 \
     --hash=sha256:0530a5fbad9c9e4ee3f2b33b148c6a64d47bbad8000ea63704fa8260f4cf728e \
     --hash=sha256:05e4b5f86e621cf3927631789999e697e58f0d2d32675b67d9ca9eb0bca55743 \
