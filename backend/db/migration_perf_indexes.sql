@@ -1,0 +1,11 @@
+-- Migration: performance indexes for hot-path read/filter queries
+-- Run once in the Supabase SQL editor (idempotent — safe to re-run).
+--
+-- Adds the missing indexes called out in the backend performance audit:
+--   #161  messages(session_id, created_at)        — chat-history load
+--   #160  graph_edges(user_id | source | target)  — graph render + cascade delete
+--   #176  sessions(user_id, started_at DESC)       — history list + profile stats
+--   #177  documents(user_id, created_at | course)  — library list + study-guide ctx
+--   #178  study_guides + quiz_attempts filters     — guide cache + achievement counts
+--
+-- Every statement uses CREATE INDEX IF NOT EXISTS so re-running is a no-op.
