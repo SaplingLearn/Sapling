@@ -35,9 +35,16 @@ INSERT INTO cosmetics (type, name, slug, asset_url, css_value, rarity, unlock_so
 ON CONFLICT (slug) DO NOTHING;
 
 -- Add foreign key constraints to user_settings
-ALTER TABLE user_settings
-    ADD CONSTRAINT fk_user_settings_avatar_frame
-    FOREIGN KEY (equipped_avatar_frame_id) REFERENCES cosmetics(id);
+-- Postgres has no ADD CONSTRAINT IF NOT EXISTS, so guard each one behind a
+-- pg_constraint check (same pattern as migration_gradebook.sql) — #196.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_user_settings_avatar_frame') THEN
+    ALTER TABLE user_settings
+      ADD CONSTRAINT fk_user_settings_avatar_frame
+      FOREIGN KEY (equipped_avatar_frame_id) REFERENCES cosmetics(id);
+  END IF;
+END $$;
 
 ALTER TABLE user_settings
     ADD CONSTRAINT fk_user_settings_banner
