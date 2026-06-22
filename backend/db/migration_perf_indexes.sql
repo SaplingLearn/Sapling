@@ -33,3 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_started
 -- #177 documents: library listing filters user_id, orders created_at desc.
 CREATE INDEX IF NOT EXISTS idx_documents_user_created
     ON documents(user_id, created_at DESC);
+
+-- Study-guide context fetch filters user_id + course_id.
+CREATE INDEX IF NOT EXISTS idx_documents_user_course
+    ON documents(user_id, course_id);
