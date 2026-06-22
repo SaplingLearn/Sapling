@@ -78,3 +78,8 @@ WITH ranked AS (
 )
 DELETE FROM graph_edges
  WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
+
+-- Backs the upsert(on_conflict="user_id,source_node_id,target_node_id") that
+-- replaces the racy select-then-insert in graph_service.apply_graph_update.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_unique
+    ON graph_edges(user_id, source_node_id, target_node_id);
