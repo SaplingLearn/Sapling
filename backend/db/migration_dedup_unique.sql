@@ -1,0 +1,13 @@
+-- Migration: UNIQUE constraints behind graph-node and graph-edge dedup
+-- Run once in the Supabase SQL editor (Postgres 15+ for NULLS NOT DISTINCT).
+--
+-- Today dedup is best-effort in application code (a select-then-insert race in
+-- services/graph_service.py) plus a manual db/dedup_nodes.py cleanup script.
+-- Two concurrent apply_graph_update calls both miss the existence check and
+-- write duplicates. This migration makes duplicates impossible at the DB level:
+--   #181  graph_nodes  UNIQUE(user_id, lower(concept_name), course_id)
+--   #195  graph_edges  UNIQUE(user_id, source_node_id, target_node_id)
+--
+-- Existing duplicate rows must be collapsed before the unique index can build,
+-- so each section dedups first (keeping the strongest/oldest row) and repoints
+-- or removes dependents, mirroring db/dedup_nodes.py.
