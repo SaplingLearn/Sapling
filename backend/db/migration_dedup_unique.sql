@@ -49,3 +49,14 @@ WITH ranked AS (
 ), losers AS (SELECT id FROM ranked WHERE rn > 1)
 DELETE FROM quiz_context
  WHERE concept_node_id IN (SELECT id FROM losers);
+
+-- 4. Finally delete the duplicate nodes themselves (winners — rn = 1 — stay).
+WITH ranked AS (
+  SELECT id, row_number() OVER (
+    PARTITION BY user_id, lower(concept_name), course_id
+    ORDER BY mastery_score DESC NULLS LAST, times_studied DESC NULLS LAST, id
+  ) AS rn
+  FROM graph_nodes
+)
+DELETE FROM graph_nodes
+ WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
