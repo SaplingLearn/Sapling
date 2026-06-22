@@ -25,3 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_graph_edges_source
 -- ...and the mirror direction for the second cascade-delete scan.
 CREATE INDEX IF NOT EXISTS idx_graph_edges_target
     ON graph_edges(target_node_id);
+
+-- #176 sessions: history list filters user_id, orders started_at desc.
+CREATE INDEX IF NOT EXISTS idx_sessions_user_started
+    ON sessions(user_id, started_at DESC);
