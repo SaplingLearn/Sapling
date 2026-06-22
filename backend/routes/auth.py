@@ -57,6 +57,15 @@ OAUTH_STATE_COOKIE = "sapling_oauth_state"
 _OAUTH_COOKIE_MAX_AGE = 600
 _POPUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
+# TTL of the one-shot HMAC token handed to the frontend on the OAuth-callback
+# redirect. This is NOT the session lifetime (#168): the frontend session BFF
+# (frontend/src/app/api/auth/session) verifies this token once and re-mints a
+# long-lived `sapling_session` cookie (SESSION_MAX_AGE = 30 days) in the same
+# backend-compatible HMAC format, which `auth_guard._decode_session` accepts.
+# So this token only needs to outlive the redirect round-trip. Configurable for
+# environments with slow OAuth hops. See docs/decisions/0018-session-token-lifecycle.md.
+_REDIRECT_TOKEN_TTL_SECONDS = int(os.getenv("SAPLING_AUTH_REDIRECT_TOKEN_TTL", "300"))
+
 # Fallback in-memory store for environments without SESSION_SECRET; entries
 # are keyed by nonce and expire after _OAUTH_COOKIE_MAX_AGE seconds.
 _OAUTH_FALLBACK_STORE: dict[str, tuple[float, dict]] = {}
