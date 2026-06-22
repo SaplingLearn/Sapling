@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS user_courses (
     nickname        TEXT,
     enrolled_at     TIMESTAMPTZ DEFAULT now(),
     letter_scale    JSONB,
+    curve_mode      TEXT NOT NULL DEFAULT 'raw' CHECK (curve_mode IN ('raw', 'curved')),
+    curve_avg_target NUMERIC,
+    curve_sd_delta  NUMERIC,
     syllabus_doc_id TEXT, -- FK declared after documents block
     UNIQUE (user_id, course_id)
 );
@@ -162,6 +165,10 @@ CREATE TABLE IF NOT EXISTS assignments (
     points_possible TEXT, -- encrypted base64 text (AES-256-GCM via services/encryption.py)
     points_earned   TEXT, -- encrypted base64 text (AES-256-GCM via services/encryption.py)
     source          TEXT DEFAULT 'manual',
+    curve_class_mean NUMERIC, -- plaintext class statistics (not student-identifying)
+    curve_class_sd   NUMERIC,
+    curve_avg_target NUMERIC,
+    curve_sd_delta   NUMERIC,
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 
