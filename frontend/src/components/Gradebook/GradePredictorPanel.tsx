@@ -263,6 +263,11 @@ function AssignmentSliderRow({
   const emit = (patch: Partial<HypotheticalScore>) =>
     onChange({ earned, possible, curveClassMean, curveClassSd, ...patch });
 
+  const parseFinite = (s: string): number | null => {
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  };
+
   const handleEarnedChange = (val: number) => {
     const clamped = Math.max(0, Math.min(val, possible));
     emit({ earned: clamped });
@@ -352,7 +357,7 @@ function AssignmentSliderRow({
           value={earned}
           min={0}
           step="any"
-          onChange={(e) => handleEarnedChange(Number(e.target.value))}
+          onChange={(e) => { const v = parseFinite(e.target.value); if (v !== null) handleEarnedChange(v); }}
           style={{
             width: 52,
             padding: "4px 6px",
@@ -421,9 +426,11 @@ function AssignmentSliderRow({
               step="any"
               placeholder={assignment.curve_class_mean != null ? `${(assignment.curve_class_mean * 100).toFixed(0)}` : "—"}
               value={hyp?.curveClassMean != null ? (hyp.curveClassMean * 100).toFixed(0) : ""}
-              onChange={(e) =>
-                emit({ curveClassMean: e.target.value === "" ? null : Number(e.target.value) / 100 })
-              }
+              onChange={(e) => {
+                if (e.target.value === "") { emit({ curveClassMean: null }); return; }
+                const v = parseFinite(e.target.value);
+                if (v !== null) emit({ curveClassMean: v / 100 });
+              }}
               style={{
                 width: 44, padding: "2px 4px", border: "1px solid var(--accent-border)",
                 borderRadius: 4, textAlign: "right", fontSize: 11,
@@ -441,9 +448,11 @@ function AssignmentSliderRow({
               step="any"
               placeholder={assignment.curve_class_sd != null ? `${(assignment.curve_class_sd * 100).toFixed(0)}` : "—"}
               value={hyp?.curveClassSd != null ? (hyp.curveClassSd * 100).toFixed(0) : ""}
-              onChange={(e) =>
-                emit({ curveClassSd: e.target.value === "" ? null : Number(e.target.value) / 100 })
-              }
+              onChange={(e) => {
+                if (e.target.value === "") { emit({ curveClassSd: null }); return; }
+                const v = parseFinite(e.target.value);
+                if (v !== null) emit({ curveClassSd: v / 100 });
+              }}
               style={{
                 width: 44, padding: "2px 4px", border: "1px solid var(--accent-border)",
                 borderRadius: 4, textAlign: "right", fontSize: 11,

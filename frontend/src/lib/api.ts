@@ -1068,7 +1068,7 @@ export async function setCurveSettings(
     curve_final_sd?: number | null;
   },
 ): Promise<{ updated: boolean }> {
-  return fetchJSON(`/api/gradebook/courses/${courseId}/curve`, {
+  return fetchJSON(`/api/gradebook/courses/${encodeURIComponent(courseId)}/curve`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId, ...settings }),

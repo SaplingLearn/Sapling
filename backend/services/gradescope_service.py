@@ -641,5 +641,5 @@ def login_via_bu_sso(
         finally:
             try:
                 browser.close()
-            except Exception:
-                pass
+            except Exception as _close_err:
+                logger.debug("browser.close() failed: %s", _close_err)

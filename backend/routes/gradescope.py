@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -124,7 +125,7 @@ def _load_creds(user_id: str) -> StoredCreds | None:
         logger.exception("Failed to decrypt Gradescope creds")
         raise HTTPException(
             status_code=500, detail=f"Stored credentials unreadable: {e}"
-        )
+        ) from e
 
 
 def _establish_connection(creds: StoredCreds) -> GSConnection:
@@ -463,8 +464,6 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
                 )
                 updated += 1
             else:
-                import uuid
-
                 table("assignments").insert({
                     "id": str(uuid.uuid4()),
                     "user_id": user_id,

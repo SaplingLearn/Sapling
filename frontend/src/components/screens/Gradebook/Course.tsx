@@ -389,7 +389,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
 
   const augmentedAssignments = React.useMemo(() => {
     if (!predictorOpen || !data) return data?.assignments ?? [];
-    const curvePolicy = predictorCurveEnabled ? {
+    const curvePolicy = predictorCurveEnabled && data.curve_mode === "curved" ? {
       curve_avg_target: data.curve_avg_target ?? 0.83,
       curve_sd_delta: data.curve_sd_delta ?? 0.10,
     } : null;
@@ -431,8 +431,9 @@ export function GradebookCourseScreen({ courseId }: Props) {
       data.letter_scale && data.letter_scale.length > 0
         ? data.letter_scale
         : DEFAULT_SCALE;
+    const rounded = Math.round(predictedCurvedPercent * 10) / 10;
     return (
-      [...scale].sort((a, b) => b.min - a.min).find((t) => predictedCurvedPercent >= t.min)
+      [...scale].sort((a, b) => b.min - a.min).find((t) => rounded >= t.min)
         ?.letter ?? null
     );
   }, [predictedCurvedPercent, data]);

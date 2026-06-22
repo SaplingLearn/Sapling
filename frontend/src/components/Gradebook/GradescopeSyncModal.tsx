@@ -208,6 +208,7 @@ export function GradescopeSyncModal({
   }
 
   async function onPickCourse(gsCourseId: string) {
+    if (!saplingCourseId) return;
     setError(null);
     try {
       await linkGradescopeCourse(userId, saplingCourseId, gsCourseId);
