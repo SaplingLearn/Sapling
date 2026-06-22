@@ -427,12 +427,18 @@ def get_students(request: Request):
     """Return a lightweight profile for every user in the DB."""
     user_id = get_session_user_id(request)
     users = table("users").select("id,name,streak_count")
-    courses_rows = table("courses").select("user_id,course_name")
+    # courses is a shared catalog with no user_id after the #12 migration;
+    # enrollment lives in user_courses. Selecting courses.user_id 400s in
+    # PostgREST. Join through user_courses and embed the course name (#158).
+    enrollment_rows = table("user_courses").select("user_id,courses(course_name)")
     nodes_rows = table("graph_nodes").select("user_id,mastery_tier,concept_name,mastery_score")
 
     courses_by_user: dict = defaultdict(list)
-    for c in courses_rows:
-        courses_by_user[c["user_id"]].append(c["course_name"])
+    for row in enrollment_rows:
+        course = row.get("courses")
+        name = course.get("course_name") if isinstance(course, dict) else None
+        if name:
+            courses_by_user[row["user_id"]].append(name)
 
     mastery_by_user: dict = defaultdict(
         lambda: {"mastered": 0, "learning": 0, "struggling": 0, "unexplored": 0, "total": 0}
