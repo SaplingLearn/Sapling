@@ -9,3 +9,7 @@
 --   #178  study_guides + quiz_attempts filters     — guide cache + achievement counts
 --
 -- Every statement uses CREATE INDEX IF NOT EXISTS so re-running is a no-op.
+
+-- #161 messages: every chat load filters session_id, orders created_at asc.
+CREATE INDEX IF NOT EXISTS idx_messages_session_created
+    ON messages(session_id, created_at);
