@@ -46,9 +46,14 @@ BEGIN
   END IF;
 END $$;
 
-ALTER TABLE user_settings
-    ADD CONSTRAINT fk_user_settings_banner
-    FOREIGN KEY (equipped_banner_id) REFERENCES cosmetics(id);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_user_settings_banner') THEN
+    ALTER TABLE user_settings
+      ADD CONSTRAINT fk_user_settings_banner
+      FOREIGN KEY (equipped_banner_id) REFERENCES cosmetics(id);
+  END IF;
+END $$;
 
 ALTER TABLE user_settings
     ADD CONSTRAINT fk_user_settings_name_color
