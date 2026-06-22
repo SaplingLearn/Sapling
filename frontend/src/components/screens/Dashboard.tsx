@@ -21,7 +21,7 @@ import {
   type Assignment,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import type { GraphNode, GraphEdge } from "@/lib/data";
+import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
 const QUOTES = [
   "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
@@ -31,21 +31,6 @@ const QUOTES = [
   "The beautiful thing about learning is that no one can take it away from you. — B.B. King",
   "Tell me and I forget. Teach me and I remember. Involve me and I learn. — Franklin",
 ];
-
-function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
-  const course = courses.find((c) => c.course_name === n.subject);
-  return {
-    id: n.id,
-    name: n.concept_name,
-    subject: n.subject,
-    color: n.course_color || course?.color || "var(--c-sage)",
-    is_subject_root: n.is_subject_root,
-    mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
-    mastery_score: n.mastery_score,
-    course_id: n.course_id || course?.course_id || "",
-    last_studied_at: n.last_studied_at || undefined,
-  };
-}
 
 function apiToGraphEdge(e: ApiEdge): GraphEdge {
   return { source: e.source as string, target: e.target as string, strength: e.strength };
@@ -138,7 +123,7 @@ function StreakMark({ state, day }: { state: "done" | "today" | "missed" | "futu
   if (state === "done") {
     return (
       <svg viewBox="0 0 32 32" width="30" height="30" aria-label="completed">
-        <path d={STREAK_SHIELD_PATH} fill="#e87734" />
+        <path d={STREAK_SHIELD_PATH} fill="var(--alert-warn)" />
         <path
           d="M10.5 16.5 L14.2 20.2 L22 12.4"
           stroke="#fff"
@@ -153,7 +138,7 @@ function StreakMark({ state, day }: { state: "done" | "today" | "missed" | "futu
   if (state === "today") {
     return (
       <svg viewBox="0 0 32 32" width="30" height="30" aria-label="today">
-        <circle cx="16" cy="16" r="13" fill="#e94b5c" />
+        <circle cx="16" cy="16" r="13" fill="var(--alert-err)" />
         <path
           d="M16 10 V22 M10 16 H22"
           stroke="#fff"
@@ -451,10 +436,10 @@ export function Dashboard() {
         )}
         <div style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
           {([
-            ["mastered", "#4a7d5c"],
-            ["learning", "#c89b5e"],
-            ["struggling", "#b25855"],
-            ["unexplored", "#9a9a9a"],
+            ["mastered", "var(--state-mastery)"],
+            ["learning", "var(--state-progress)"],
+            ["struggling", "var(--state-struggle)"],
+            ["unexplored", "var(--state-neutral)"],
           ] as const).map(([t, color]) => (
             <div key={t} style={{ display: "flex", alignItems: "center", gap: 5 }}>
               <span style={{ width: 10, height: 10, borderRadius: "50%", background: color }} />

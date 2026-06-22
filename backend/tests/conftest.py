@@ -11,11 +11,45 @@ unaffected.
 """
 import sys
 import os
+from unittest.mock import MagicMock
+
 import pytest
 
 os.environ.setdefault("ENCRYPTION_KEY", "0" * 64)  # 32-byte all-zero key for deterministic tests
+# Tests run as local mode so validate_config() (invoked by the one test that
+# enters the FastAPI lifespan) doesn't reject the short dummy SESSION_SECRET the
+# CI env supplies. Production defaults APP_ENV=production (strict). #174.
+os.environ.setdefault("APP_ENV", "test")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_supabase_client(monkeypatch):
+    """Hermetic safety net (#210): no test may make a real Supabase call.
+
+    Every db access ultimately flows through `db.connection._client` (the single
+    persistent httpx.Client behind SupabaseTable). Routes/services that call
+    `db.connection.table()` directly — e.g. `apply_graph_update` inside the
+    document-upload legacy pipeline — would otherwise escape a test's per-route
+    `table` mock and hit the network (the whole `test_documents_routes` module
+    was failing/quarantined for exactly this reason). Replace that client with a
+    stub returning benign empty responses. Tests that need specific db data still
+    patch their own `table`/service reference; this only catches what escapes.
+    """
+    import db.connection as dbconn
+
+    def _empty_response(*_args, **_kwargs):
+        resp = MagicMock(name="supabase_response")
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = []
+        resp.headers = {}
+        return resp
+
+    fake_client = MagicMock(name="hermetic_supabase_client")
+    for verb in ("get", "post", "patch", "delete"):
+        getattr(fake_client, verb).side_effect = _empty_response
+    monkeypatch.setattr(dbconn, "_client", fake_client)
 
 
 @pytest.fixture(autouse=True)
@@ -53,6 +87,7 @@ def _bypass_session_auth(monkeypatch):
             return None
         return _checker
 
+    auth_guard._real_decode_session = auth_guard._decode_session
     auth_guard._real_require_self = auth_guard.require_self
     auth_guard._real_get_session_user_id = auth_guard.get_session_user_id
     auth_guard._real_require_admin = auth_guard.require_admin

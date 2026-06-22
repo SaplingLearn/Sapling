@@ -12,31 +12,16 @@ import { getGraph, getCourses, getSessions, deleteGraphNode, type EnrolledCourse
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import type { GraphNode, GraphEdge } from "@/lib/data";
+import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
 
 const TIER_META: Record<Exclude<Tier, "all">, { label: string; color: string }> = {
-  mastered: { label: "Mastered", color: "#4a7d5c" },
-  learning: { label: "Learning", color: "#c89b5e" },
-  struggling: { label: "Struggling", color: "#b25855" },
-  unexplored: { label: "Unexplored", color: "#9a9a9a" },
+  mastered: { label: "Mastered", color: "var(--state-mastery)" },
+  learning: { label: "Learning", color: "var(--state-progress)" },
+  struggling: { label: "Struggling", color: "var(--state-struggle)" },
+  unexplored: { label: "Unexplored", color: "var(--state-neutral)" },
 };
-
-function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode {
-  const course = courses.find((c) => c.course_name === n.subject);
-  return {
-    id: n.id,
-    name: n.concept_name,
-    subject: n.subject,
-    color: n.course_color || course?.color || "var(--c-sage)",
-    is_subject_root: n.is_subject_root,
-    mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
-    mastery_score: n.mastery_score,
-    course_id: n.course_id || course?.course_id || "",
-    last_studied_at: n.last_studied_at || undefined,
-  };
-}
 
 export function Tree() {
   const router = useRouter();

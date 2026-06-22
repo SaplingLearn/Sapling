@@ -53,6 +53,45 @@ function supabaseClient() {
   }
 }
 
+// #124: room_messages.text is column-encrypted at rest; only the REST read path
+// decrypts it. Realtime postgres_changes payloads carry the raw CIPHERTEXT, so
+// rendering payload.new.text directly shows other users' messages as gibberish
+// until a manual reload. Treat a realtime message event as a "something changed"
+// signal and re-fetch through the decrypting REST endpoint instead of trusting
+// the payload.
+//
+// (This fixes DISPLAY only. It does not address the realtime channel's missing
+// authorization — that's the separate RLS/Realtime-Authorization work.)
+type RealtimeMsgAction =
+  | { type: "ignore" }
+  | { type: "refetch" }
+  | { type: "applyOwnFlags"; id: string; is_deleted: boolean; edited_at: string | null };
+
+export function planMessageRealtimeAction(
+  event: "INSERT" | "UPDATE",
+  row: { id?: string; user_id?: string; is_deleted?: boolean; edited_at?: string | null } | null | undefined,
+  currentUserId: string | null | undefined,
+): RealtimeMsgAction {
+  if (!row || !row.id) return { type: "ignore" };
+  const isOwn = row.user_id === currentUserId;
+  if (event === "INSERT") {
+    // Own inserts are shown optimistically and reconciled by the POST response;
+    // foreign inserts carry ciphertext text → re-fetch decrypted via REST.
+    return isOwn ? { type: "ignore" } : { type: "refetch" };
+  }
+  // UPDATE (edit / soft-delete): own edits keep their optimistic plaintext and
+  // take only the server-side flags; foreign edits re-fetch (ciphertext text).
+  if (isOwn) {
+    return {
+      type: "applyOwnFlags",
+      id: row.id,
+      is_deleted: !!row.is_deleted,
+      edited_at: row.edited_at ?? null,
+    };
+  }
+  return { type: "refetch" };
+}
+
 function CreateJoinBar({ onDone }: { onDone: () => void }) {
   const { userId } = useUser();
   const toast = useToast();
@@ -144,29 +183,38 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
       .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "room_messages", filter: `room_id=eq.${roomId}` },
         (payload: any) => {
-          const row = payload.new as RoomMessageRow;
-          setMessages(prev => {
-            const withoutTmp = prev.filter(m => !m.id.startsWith("tmp_") || m.text !== row.text || m.user_id !== row.user_id);
-            if (withoutTmp.some(m => m.id === row.id)) return withoutTmp;
-            return [...withoutTmp, { ...row, reactions: [], reply_to: null }];
-          });
+          // #124: foreign inserts carry ciphertext text — re-fetch decrypted via
+          // REST rather than appending payload.new. Own echoes are ignored (the
+          // optimistic UI + POST reconciliation already have them).
+          const action = planMessageRealtimeAction("INSERT", payload.new, userId);
+          if (action.type === "refetch") void load();
         })
       .on("postgres_changes",
         { event: "UPDATE", schema: "public", table: "room_messages", filter: `room_id=eq.${roomId}` },
         (payload: any) => {
-          const row = payload.new as RoomMessageRow;
-          setMessages(prev => prev.map(m => m.id === row.id ? { ...m, ...row } : m));
+          const action = planMessageRealtimeAction("UPDATE", payload.new, userId);
+          if (action.type === "refetch") {
+            // #124: foreign edit/delete — re-fetch decrypted via REST.
+            void load();
+          } else if (action.type === "applyOwnFlags") {
+            // Own edit/delete keeps its optimistic plaintext; take server flags.
+            setMessages(prev => prev.map(m =>
+              m.id === action.id
+                ? { ...m, is_deleted: action.is_deleted, edited_at: action.edited_at ?? m.edited_at }
+                : m,
+            ));
+          }
         })
-      .on("postgres_changes",
-        { event: "INSERT", schema: "public", table: "room_reactions" },
-        () => { void load(); })
-      .on("postgres_changes",
-        { event: "DELETE", schema: "public", table: "room_reactions" },
-        () => { void load(); })
+      // #231: the room_reactions realtime subscription was dead code — the
+      // table is not in the supabase_realtime publication, so these handlers
+      // never fired. Removed. Reactions still update on load/refresh via REST;
+      // live reactions can be restored post-RLS by publishing room_reactions
+      // with a membership-scoped policy (see
+      // docs/security/realtime-jwt-bridge-design.md).
       .subscribe();
 
     return () => { supa.removeChannel(channel); };
-  }, [roomId, load]);
+  }, [roomId, load, userId]);
 
   // Presence / typing channel.
   React.useEffect(() => {
@@ -253,7 +301,28 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
     const r = replyTo;
     setReplyTo(null);
     try {
-      await sendRoomMessage(roomId, userId, userName || "Me", text, undefined, r?.id);
+      // Replace the optimistic temp row with the server's decrypted message
+      // (matched by real id). This is the authoritative dedup: the realtime
+      // INSERT echo can't reconcile because it carries ciphertext, never the
+      // plaintext we appended (issue #131).
+      const res = await sendRoomMessage(roomId, userId, userName || "Me", text, undefined, r?.id);
+      const saved = res?.message as RoomMessageRow | undefined;
+      if (saved?.id) {
+        // Drop the tmp row, then upsert the saved row by id (replace if the
+        // realtime echo already landed it, else append). reply_to/reactions
+        // come from the optimistic tmp since the POST response omits them.
+        const reconciled: RoomMessageRow = {
+          ...saved,
+          reply_to: saved.reply_to ?? tmp.reply_to,
+          reactions: saved.reactions ?? [],
+        };
+        setMessages(prev => {
+          const next = prev.filter(m => m.id !== tmpId);
+          return next.some(m => m.id === saved.id)
+            ? next.map(m => m.id === saved.id ? { ...m, ...reconciled, reactions: m.reactions ?? reconciled.reactions } : m)
+            : [...next, reconciled];
+        });
+      }
     } catch (err) {
       setMessages(prev => prev.filter(m => m.id !== tmpId));
       toast.error(`Send failed: ${String(err)}`);
@@ -307,7 +376,15 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
       if (up.error) throw up.error;
       const pub = supa.storage.from("chat-images").getPublicUrl(path);
       const url: string = pub.data.publicUrl;
-      await sendRoomMessage(roomId, userId, userName || "Me", "", url);
+      const res = await sendRoomMessage(roomId, userId, userName || "Me", "", url);
+      // Append from the POST response (own realtime echoes are skipped to avoid
+      // duplicates), deduping by id in case the echo already landed.
+      const saved = res?.message as RoomMessageRow | undefined;
+      if (saved?.id) {
+        setMessages(prev => prev.some(m => m.id === saved.id)
+          ? prev
+          : [...prev, { ...saved, reply_to: saved.reply_to ?? null, reactions: saved.reactions ?? [] }]);
+      }
       toast.success("Image sent");
     } catch (err) {
       toast.error(`Upload failed: ${String(err)}`);
@@ -377,7 +454,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
               <div style={{ position: "relative" }}>
                 {!self && <div style={{ fontSize: 11, color: "var(--text-dim)", fontWeight: 600, marginBottom: 2 }}>{m.user_name}</div>}
                 {m.reply_to && (
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", borderLeft: "2px solid var(--accent)", paddingLeft: 6, marginBottom: 4 }}>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", borderLeft: "1px solid var(--border)", paddingLeft: 6, marginBottom: 4 }}>
                     ↪ <strong>{m.reply_to.user_name}</strong>: {m.reply_to.text?.slice(0, 60) || "(deleted)"}
                   </div>
                 )}
@@ -524,7 +601,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
             }}
             placeholder="Message the room… (@ to mention)"
             style={{
-              flex: 1, border: 0, background: "transparent", outline: "none",
+              flex: 1, border: 0, background: "transparent",
               fontSize: 14, padding: "6px 0", resize: "none", fontFamily: "inherit", color: "inherit",
             }}
           />

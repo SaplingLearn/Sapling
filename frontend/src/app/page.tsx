@@ -7,6 +7,7 @@ import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } 
 import OnboardingFlow from '@/components/OnboardingFlow';
 import HowItWorks from '@/components/HowItWorks';
 import SignInModal from '@/components/SignInModal';
+import { BRAND_FOREST } from '@/lib/brand';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
@@ -651,7 +652,7 @@ export default function LandingPage() {
   }
 
   return (
-    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), 'Inter', sans-serif", color: 'var(--brand-text1, #1a1a1a)', background: 'transparent' }}>
+    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), sans-serif", color: 'var(--brand-text1, #1a1a1a)', background: 'transparent' }}>
       <div ref={ambientGlowRef} className="landing-ambient-glow" />
 
       {/* ═══ Initial load intro overlay ═══ */}
@@ -670,7 +671,7 @@ export default function LandingPage() {
             <div className="landing-intro-orbit-node landing-intro-orbit-node--purple" />
           </div>
           <div className="text-center">
-            <div className="font-playfair text-3xl sm:text-4xl font-semibold bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent">
+            <div className="font-playfair text-3xl sm:text-4xl font-semibold text-[var(--brand-forest)]">
               Sapling
             </div>
             <div className="mt-2 text-xs sm:text-sm font-jetbrains tracking-[0.2em] uppercase text-[var(--brand-text2)]">
@@ -693,13 +694,13 @@ export default function LandingPage() {
         }}
       >
         <div className="max-w-[88%] mx-auto flex items-center justify-between w-full">
-          <div className="flex items-center cursor-pointer group" style={{ gap: '4px' }} onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '26px', height: '26px', flexShrink: 0, position: 'relative', top: '-2px' }} />
+          <button type="button" aria-label="Sapling — scroll to top" className="flex items-center cursor-pointer group" style={{ gap: '4px' }} onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+            <img src="/sapling-icon.svg" alt="" style={{ width: '26px', height: '26px', flexShrink: 0, position: 'relative', top: '-2px' }} />
             <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: '#1a5c2a', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Sapling</span>
-          </div>
+          </button>
           <div className="flex items-center">
             <button onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
-            <button onClick={startOnboarding} className="relative overflow-hidden group bg-[#1B6C42] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
+            <button onClick={startOnboarding} className="relative overflow-hidden group bg-[var(--brand-forest)] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
               Get Started
             </button>
           </div>
@@ -719,45 +720,12 @@ export default function LandingPage() {
           style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease' }}
         >
           <div
-            className="floating-card absolute w-48 liquid-glass rounded-2xl p-4"
-            style={{ position: 'absolute', top: '28%', left: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 0.8s' }}
-            data-base-rot="-6" data-float-delay="0" data-float-dur="5000"
-          >
-            <span className="font-jetbrains text-xs text-[#3B82F6] font-medium block mb-3">CS 101</span>
-            <div className="h-1 rounded-full bg-white/45 w-full overflow-hidden mb-2">
-              <div className="h-full bg-[#3B82F6] w-[55%] rounded-full" />
-            </div>
-            <span className="text-xs text-[var(--brand-text2)] opacity-80 block">55% mastered</span>
-          </div>
-
-          <div
-            className="floating-card absolute w-52 liquid-glass rounded-2xl p-4"
-            style={{ position: 'absolute', top: '52%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.4s' }}
-            data-base-rot="2" data-float-delay="1600" data-float-dur="5200"
-          >
-            <div className="flex flex-col gap-2 text-left">
-              <div className="flex items-center justify-between text-xs text-[var(--brand-text2)]">
-                <span>Total nodes</span>
-                <span className="font-jetbrains text-[var(--brand-text1)]">2,413</span>
-              </div>
-              <div className="flex items-center justify-between text-xs text-[var(--brand-text2)]">
-                <span>Mastered</span>
-                <span className="font-jetbrains text-[#1B6C42]">68%</span>
-              </div>
-              <div className="flex items-center justify-between text-xs text-[var(--brand-text2)]">
-                <span>On track</span>
-                <span className="font-jetbrains text-[#D97706]">24%</span>
-              </div>
-            </div>
-          </div>
-
-          <div
             className="floating-card absolute w-52 liquid-glass rounded-2xl p-5"
             style={{ position: 'absolute', top: '24%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
             data-base-rot="4" data-float-delay="1000" data-float-dur="6000"
           >
             <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#1B6C42]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Mastered</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--brand-forest)]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Mastered</span></div>
               <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#D97706]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Learning</span></div>
               <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#EF4444]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Struggling</span></div>
               <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#9CA3AF]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Unexplored</span></div>
@@ -788,7 +756,7 @@ export default function LandingPage() {
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 300ms',
-          }} className="font-playfair text-5xl sm:text-7xl md:text-8xl lg:text-[10rem] font-semibold leading-[1.15] tracking-tight pb-8 px-4 bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient">
+          }} className="font-playfair text-5xl sm:text-7xl md:text-8xl lg:text-[10rem] font-semibold leading-[1.15] tracking-tight pb-8 px-4 text-[var(--brand-forest)]">
             <span>{heroText1 || '\u00A0'}</span>
           </h1>
 
@@ -809,9 +777,9 @@ export default function LandingPage() {
               <button
                 onClick={() => { setBetaModalOpen(true); if (betaEverSubmitted) setBetaSubmitted(true); }}
                 className={`relative overflow-hidden group px-10 py-4 rounded-full font-medium text-base tracking-wide text-white shadow-[0_4px_14px_rgba(27,108,66,0.18)] hover:shadow-[0_6px_20px_rgba(27,108,66,0.28)] transition-all duration-500 hover:scale-[1.02] active:scale-[0.98] landing-btn-shimmer${betaEverSubmitted ? '' : ' beta-glow-btn'}`}
-                style={{ background: '#2D8F5C', border: 'none' }}
-                onMouseEnter={e => { e.currentTarget.style.background = '#236F48'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = '#2D8F5C'; }}
+                style={{ background: 'var(--brand-forest-bright)', border: 'none' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--brand-forest-bright-hover)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'var(--brand-forest-bright)'; }}
               >
                 Sign up for Beta Testing
               </button>
@@ -828,45 +796,88 @@ export default function LandingPage() {
 
       {/* ═══ Features Section ═══ */}
       <div style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease', pointerEvents: onboardingPhase !== 'idle' ? 'none' : 'auto' }}>
-        <section id="features" className="landing-section relative py-32 z-10">
+        <section id="features" className="landing-section relative py-32 md:py-40 z-10 overflow-hidden">
           <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
-            <div className="sapling-mesh-blob sapling-mesh-blob--3" style={{ top: '10%', left: '-8%', opacity: 0.28, width: '30vw', height: '30vw' }} />
+            <div className="sapling-mesh-blob sapling-mesh-blob--3" style={{ top: '6%', left: '-10%', opacity: 0.32, width: '36vw', height: '36vw' }} />
+            <div className="sapling-mesh-blob sapling-mesh-blob--2" style={{ bottom: '10%', right: '-12%', opacity: 0.20, width: '32vw', height: '32vw' }} />
           </div>
           <div className="absolute top-0 left-0 w-full h-px landing-divider" />
-          <div className="max-w-6xl mx-auto px-6 lg:px-8 relative z-[1]">
-            <div className="text-center mb-16 landing-fade-up">
-              <span className="font-jetbrains text-xs tracking-[0.3em] text-[#1B6C42] uppercase font-medium">Features</span>
-              <h2 className="font-playfair text-4xl md:text-6xl font-semibold text-[var(--brand-text1)] mt-4 leading-tight tracking-tight">
-                Everything You Need<br />to Learn Smarter
-              </h2>
-              <p className="font-inter text-[var(--brand-text2)] text-lg mt-6 max-w-lg mx-auto font-light leading-relaxed">
-                Six powerful tools. One beautiful platform. Built for how your brain actually works.
-              </p>
+
+          <div className="max-w-7xl mx-auto px-6 lg:px-12 relative z-[1]">
+            {/* Editorial heading: asymmetric split, breathing room. */}
+            <div className="grid md:grid-cols-12 gap-8 md:gap-12 mb-20 md:mb-28 landing-fade-up">
+              <div className="md:col-span-7">
+                <span className="font-jetbrains text-[0.7rem] tracking-[0.32em] text-[var(--brand-forest)] uppercase font-medium">In the Sapling kit</span>
+                <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--brand-text1)] mt-5 leading-[1.02] tracking-tight">
+                  Tools that bend to <em className="not-italic text-[var(--brand-forest)]">your study</em>, not the other way around.
+                </h2>
+              </div>
+              <div className="md:col-span-4 md:col-start-9 md:pt-8 flex flex-col justify-end">
+                <p className="font-inter text-[var(--brand-text2)] text-base leading-relaxed font-light">
+                  Six instruments, tuned to one another. Each is a verb you reach for; together they make a quiet system that learns you back.
+                </p>
+                <div className="mt-6 flex items-center gap-3">
+                  <span className="block h-px w-12 bg-[var(--brand-forest)]" />
+                  <span className="font-jetbrains text-[0.65rem] tracking-[0.3em] text-[var(--brand-text2)] uppercase">Scroll the catalog</span>
+                </div>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {/* Editorial feature catalog: hairline rows, no boxes. */}
+            <ol className="landing-feature-list border-t border-[var(--brand-text2)]/15">
               {[
-                { icon: Network, color: '#1B6C42', bg: 'bg-[#1B6C42]/10', title: 'Interactive Knowledge Graph', desc: 'Every concept becomes a node in a living 3D network. Watch them glow green as you master topics and see how everything connects.' },
-                { icon: Sparkles, color: '#D97706', bg: 'bg-[#D97706]/10', title: 'AI-Powered Study Paths', desc: 'Our AI analyzes your knowledge gaps and builds the optimal sequence so you always study the right thing at the right time.' },
-                { icon: FilePlus2, color: '#14B8A6', bg: 'bg-[#14B8A6]/10', title: 'Upload Any Coursework', desc: 'Drop in syllabi, textbooks, or notes. Sapling extracts every concept and maps it to your knowledge graph automatically.' },
-                { icon: Brain, color: '#EF4444', bg: 'bg-[#EF4444]/10', title: 'Adaptive Quizzes', desc: 'Questions that adapt to your level in real-time. They get harder as you improve and meet you where you are when you struggle.' },
-                { icon: CalendarClock, color: '#1B6C42', bg: 'bg-[#1B6C42]/10', title: 'Spaced Repetition', desc: 'Scientifically-timed reviews move concepts from short-term to long-term memory. Sapling handles the scheduling.' },
-                { icon: Users, color: '#3B82F6', bg: 'bg-[#3B82F6]/10', title: 'Study Rooms', desc: 'Join live study rooms with classmates. Compare knowledge maps. Learn together in real-time.' },
+                { icon: Network,       title: 'Knowledge Graph',     desc: 'Every concept becomes a node in a living 3D network. Watch them glow as you master topics and see how everything connects.' },
+                { icon: Sparkles,      title: 'Adaptive Study Paths', desc: 'The AI reads your knowledge gaps and lays out the optimal sequence — so you always study the right thing at the right time.' },
+                { icon: FilePlus2,     title: 'Universal Upload',     desc: 'Drop in syllabi, textbooks, or notes. Sapling extracts every concept and maps it onto your graph automatically.' },
+                { icon: Brain,         title: 'Adaptive Quizzes',     desc: 'Questions that re-tune to your level in real time. They press where you are strong and meet you where you struggle.' },
+                { icon: CalendarClock, title: 'Spaced Repetition',    desc: 'Scientifically-timed reviews move concepts from short-term to long-term memory. Sapling handles the scheduling.' },
+                { icon: Users,         title: 'Live Study Rooms',     desc: 'Join classmates in shared rooms. Compare knowledge maps. Learn together, in real time, on the same canvas.' },
               ].map((feature, i) => (
-                <div
+                <li
                   key={feature.title}
-                  className={`landing-spotlight-card landing-card-float-${i + 1} group liquid-glass rounded-2xl p-8 transition-[border-color,box-shadow] duration-500 hover:shadow-[0_12px_40px_rgba(0,0,0,0.06)] landing-fade-up`}
-                  style={{ transitionDelay: `${i * 80}ms` }}
+                  className="landing-feature-row group relative border-b border-[var(--brand-text2)]/15 landing-fade-up"
+                  style={{ transitionDelay: `${i * 70}ms` }}
                 >
-                  <div className="relative z-10">
-                    <div className={`landing-icon-container w-12 h-12 rounded-xl flex items-center justify-center mb-5 ${feature.bg}`}>
-                      <feature.icon style={{ color: feature.color }} className="w-6 h-6" strokeWidth={1.5} />
+                  <div className="grid md:grid-cols-12 items-center gap-6 md:gap-8 py-9 md:py-12 px-2 md:px-4 transition-colors duration-500">
+                    {/* Index marker. */}
+                    <div className="md:col-span-1 font-jetbrains text-[0.7rem] tracking-[0.3em] text-[var(--brand-text2)] transition-colors duration-500 group-hover:text-[var(--brand-forest)]">
+                      <span className="inline-block tabular-nums">0{i + 1}</span>
+                      <span className="hidden md:inline-block ml-3 align-middle h-px w-6 bg-[var(--brand-text2)]/30 group-hover:bg-[var(--brand-forest)]/60 transition-colors duration-500" />
                     </div>
-                    <h3 className="text-[var(--brand-text1)] font-medium text-lg mb-3 tracking-tight">{feature.title}</h3>
-                    <p className="text-[var(--brand-text2)] text-sm leading-relaxed font-light">{feature.desc}</p>
+
+                    {/* Title with bare inline icon — no circle, no color. */}
+                    <div className="md:col-span-5 flex items-center gap-4 md:gap-5 min-w-0">
+                      <feature.icon
+                        aria-hidden
+                        className="landing-feature-icon shrink-0 w-5 h-5 md:w-6 md:h-6 text-[var(--brand-text1)] transition-transform duration-700 ease-out group-hover:scale-110 group-hover:-rotate-6"
+                        strokeWidth={1.5}
+                      />
+                      <h3 className="landing-feature-title font-playfair text-2xl md:text-3xl lg:text-4xl font-semibold text-[var(--brand-text1)] tracking-tight leading-[1.05]">
+                        {feature.title}
+                      </h3>
+                    </div>
+
+                    {/* Description: shifted left, generous width for body copy. */}
+                    <div className="md:col-span-6">
+                      <p className="font-inter text-[var(--brand-text2)] text-[0.95rem] leading-relaxed font-light max-w-[52ch]">
+                        {feature.desc}
+                      </p>
+                    </div>
                   </div>
-                </div>
+
+                  {/* Hover-driven underline sweep, brand green. */}
+                  <span
+                    aria-hidden
+                    className="landing-feature-underline pointer-events-none absolute left-0 bottom-0 h-[2px] w-0 bg-[var(--brand-forest)] group-hover:w-full transition-[width] duration-[900ms] ease-out"
+                  />
+                </li>
               ))}
+            </ol>
+
+            {/* Tail mark: editorial closing rule. */}
+            <div className="mt-10 flex items-center gap-4 landing-fade-up">
+              <span className="block h-px flex-1 bg-[var(--brand-text2)]/15" />
+              <span className="font-jetbrains text-[0.65rem] tracking-[0.32em] text-[var(--brand-text2)] uppercase">— end of catalog</span>
             </div>
           </div>
         </section>
@@ -891,11 +902,11 @@ export default function LandingPage() {
           </div>
           <div className="relative z-10 max-w-3xl mx-auto px-6 landing-fade-up">
             <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--brand-text1)] tracking-tight leading-[1.05]">
-              Ready to <br /> Start <span className="bg-gradient-to-r from-[#1B6C42] via-[#2D8F5C] to-[#1B6C42] bg-clip-text text-transparent landing-animate-gradient pr-2">Growing?</span>
+              Ready to <br /> Start <span className="text-[var(--brand-forest)] pr-2">Growing?</span>
             </h2>
             <p className="text-[var(--brand-text2)] text-lg mt-6 font-light">Join students who learn smarter, not harder.</p>
             <div className="mt-10 flex flex-col items-center">
-              <button onClick={startOnboarding} className="relative overflow-hidden group bg-[#1B6C42] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
+              <button onClick={startOnboarding} className="relative overflow-hidden group bg-[var(--brand-forest)] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
                 Get Started
               </button>
             </div>
@@ -944,7 +955,7 @@ export default function LandingPage() {
             onClick={e => e.stopPropagation()}
           >
             <h2 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 32, lineHeight: 1.1, fontWeight: 600, letterSpacing: '-0.02em', color: '#1a1a1a' }}>
-              You&apos;re on the <span style={{ fontStyle: 'italic', color: '#1B6C42' }}>tree.</span>
+              You&apos;re on the <span style={{ fontStyle: 'italic', color: 'var(--brand-forest)' }}>tree.</span>
             </h2>
             <p style={{ margin: '10px 0 0', fontSize: 17, color: '#4b5563', fontStyle: 'italic' }}>
               See you in the inbox - The Team
@@ -1007,7 +1018,7 @@ export default function LandingPage() {
               <div>
                 <div style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace", fontSize: 10.5, color: '#6b7280', letterSpacing: '0.22em', marginBottom: 14, textTransform: 'uppercase', fontWeight: 600 }}>Early access</div>
                 <h2 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 44, lineHeight: 1.05, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
-                  Learn early.<br /><span style={{ fontStyle: 'italic', fontWeight: 800, color: '#1B6C42', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif" }}>Grow</span> with us.
+                  Learn early.<br /><span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif" }}>Grow</span> with us.
                 </h2>
                 <p style={{ margin: '14px 0 0', fontSize: 13.5, lineHeight: 1.55, color: '#4b5563', maxWidth: 360 }}>
                   Sapling is being built alongside the students who&apos;ll use it most. Join early and help shape what it becomes.
@@ -1055,14 +1066,14 @@ export default function LandingPage() {
               </div>
               <h1 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
                 Join the<br />
-                <span style={{ fontStyle: 'italic', fontWeight: 800, color: '#1B6C42', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif" }}>Newsletter</span>
+                <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif" }}>Newsletter</span>
               </h1>
               <p style={{ margin: '14px 0 0', fontSize: 15, color: '#4b5563', lineHeight: 1.5 }}>
                 Hear fun stories from students like you.
               </p>
               <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {([
-                  { dot: '#1B6C42', title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
+                  { dot: BRAND_FOREST, title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
                   { dot: '#D97706', title: 'Real notes from the team.', body: "What we're figuring out as we build. Honest, occasional, and worth opening." },
                   { dot: '#8A63D2', title: 'Your input shapes what we build.', body: 'Early polls, roadmap previews, and a direct line to the people building it.' },
                 ] as Array<{ dot: string; title: string; body: string }>).map(({ dot, title, body }) => (
@@ -1113,12 +1124,12 @@ export default function LandingPage() {
                       width: '100%', padding: '14px 16px', fontSize: 14,
                       background: 'rgba(255,255,255,0.6)',
                       border: '1.5px solid rgba(107,114,128,0.25)',
-                      borderRadius: 10, outline: 'none',
+                      borderRadius: 10,
                       transition: 'border-color 0.15s, box-shadow 0.15s',
                       fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
                       color: '#1a1a1a', boxSizing: 'border-box',
                     }}
-                    onFocus={e => { e.target.style.borderColor = '#1B6C42'; e.target.style.boxShadow = '0 0 0 3px rgba(27,108,66,0.12)'; }}
+                    onFocus={e => { e.target.style.borderColor = 'var(--brand-forest)'; e.target.style.boxShadow = '0 0 0 3px rgba(27,108,66,0.12)'; }}
                     onBlur={e => { e.target.style.borderColor = 'rgba(107,114,128,0.25)'; e.target.style.boxShadow = 'none'; }}
                   />
                   {betaEmailError && (
@@ -1132,7 +1143,7 @@ export default function LandingPage() {
                   disabled={betaSubmitting}
                   style={{
                     width: '100%', padding: '14px 16px', borderRadius: 10,
-                    background: betaSubmitting ? '#4b5563' : '#1B6C42', color: '#fff',
+                    background: betaSubmitting ? '#4b5563' : 'var(--brand-forest)', color: '#fff',
                     fontSize: 14, fontWeight: 600, letterSpacing: '0.02em',
                     boxShadow: '0 8px 24px rgba(27,108,66,0.3)',
                     border: 'none', cursor: betaSubmitting ? 'default' : 'pointer',
@@ -1140,7 +1151,7 @@ export default function LandingPage() {
                     fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
                   }}
                   onMouseEnter={e => { if (!betaSubmitting) e.currentTarget.style.background = '#155A35'; }}
-                  onMouseLeave={e => { if (!betaSubmitting) e.currentTarget.style.background = '#1B6C42'; }}
+                  onMouseLeave={e => { if (!betaSubmitting) e.currentTarget.style.background = 'var(--brand-forest)'; }}
                 >
                   {betaSubmitting ? 'Planting your node…' : <>Sign Me Up <span style={{ opacity: 0.7 }}>→</span></>}
                 </button>

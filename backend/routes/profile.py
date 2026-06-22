@@ -346,7 +346,9 @@ def update_settings(user_id: str, body: UpdateSettingsBody, request: Request):
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
 
-    return table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})[0]
+    # #126 (#19): return through the decrypting helper (like GET) so the
+    # response carries plaintext bio/location, not the stored ciphertext.
+    return _get_or_create_settings(user_id)
 
 
 # ── Equip Cosmetic ───────────────────────────────────────────────────────────

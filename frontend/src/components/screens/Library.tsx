@@ -1,12 +1,19 @@
 "use client";
 import React from "react";
+import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { Pill } from "../Pill";
 import { DocumentUploadModal } from "../DocumentUploadModal";
 import { LibraryGridSkeleton, LibraryListSkeleton } from "../Skeleton";
-import { MarkdownChat } from "../MarkdownChat";
+
+// Lazy-load to keep mermaid/katex/highlight.js out of the OpenNext
+// server bundle. See ChatPanel.tsx for the rationale.
+const MarkdownChat = dynamic(
+  () => import("../MarkdownChat").then((m) => m.MarkdownChat),
+  { ssr: false, loading: () => null },
+);
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";

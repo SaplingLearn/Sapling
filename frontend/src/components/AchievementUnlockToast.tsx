@@ -28,8 +28,6 @@ export function AchievementUnlockToast({ achievement }: Props) {
         display: "flex",
         alignItems: "center",
         gap: 10,
-        borderLeft: `3px solid ${borderColor}`,
-        paddingLeft: 10,
       }}
     >
       <div
@@ -82,14 +80,18 @@ export function AchievementUnlockToast({ achievement }: Props) {
       </div>
       <div
         style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
           fontSize: 10,
           fontWeight: 600,
           textTransform: "uppercase",
           letterSpacing: "0.04em",
-          color: borderColor,
+          color: "var(--text)",
           flexShrink: 0,
         }}
       >
+        <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: borderColor, flexShrink: 0 }} />
         {achievement.rarity}
       </div>
     </div>

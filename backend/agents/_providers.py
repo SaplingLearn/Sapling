@@ -26,7 +26,10 @@ from pydantic_ai.providers.google import GoogleProvider
 from config import GEMINI_API_KEY
 
 
-AgentTask = Literal["classifier", "summary", "concepts", "syllabus", "quiz", "chat_tutor"]
+AgentTask = Literal[
+    "classifier", "summary", "concepts", "syllabus", "quiz", "chat_tutor",
+    "note_summary", "note_concepts", "note_chat",
+]
 
 
 # Defaults are conservative. Bumping a model up costs more; the env var
@@ -46,6 +49,9 @@ _DEFAULTS: dict[AgentTask, str] = {
     # (`feat(learn): use gemini-2.5-pro for tutor chat`) and PR #74
     # (`fix(learn): allow thinking on gemini-2.5-pro multiturn calls`).
     "chat_tutor": "gemini-2.5-pro",
+    "note_summary": "gemini-2.5-flash-lite",
+    "note_concepts": "gemini-2.5-flash-lite",
+    "note_chat": "gemini-2.5-flash",
 }
 
 

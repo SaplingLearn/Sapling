@@ -2,11 +2,15 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { verifySession } from '@/lib/sessionToken'
 
+// Every route in the (shell) group is gated here. #189: /profile/[userId]
+// was the one shell route missing from both this list and config.matcher, so
+// the middleware never ran there and an unauthenticated visitor could
+// enumerate /profile/<any-id>. Gate it consistently with its siblings.
 const PROTECTED = [
   '/dashboard', '/learn', '/quiz', '/study', '/tree',
   '/library', '/calendar', '/social',
   '/settings', '/achievements', '/admin',
-  '/gradebook', '/course-planner', '/notetaker'
+  '/gradebook', '/course-planner', '/notetaker', '/profile'
 ]
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL
@@ -70,6 +74,7 @@ export const config = {
     '/calendar/:path*', '/social/:path*',
     '/settings/:path*', '/achievements/:path*',
     '/admin/:path*',
-    '/gradebook/:path*', '/course-planner/:path*', '/notetaker/:path*'
+    '/gradebook/:path*', '/course-planner/:path*', '/notetaker/:path*',
+    '/profile/:path*'
   ]
 }

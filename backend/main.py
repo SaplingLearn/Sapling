@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET
+from config import FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET, validate_config
 
 # App-wide log format. Per-request log lines (with request_id, duration,
 # status) are emitted from RequestIDMiddleware; this just sets the
@@ -21,7 +21,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope
+from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.newsletter import router as newsletter_router
@@ -71,6 +71,9 @@ logfire.instrument_pydantic_ai()
 # that no migration ever made" bugs.
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    # #174: fail loudly at startup if required secrets are missing, before
+    # serving any request, rather than booting and failing opaquely later.
+    validate_config()
     await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
@@ -82,7 +85,6 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
-logfire.instrument_fastapi(app)
 
 if recost_api_key and RecostMiddleware is not None:
     app.add_middleware(
@@ -91,9 +93,18 @@ if recost_api_key and RecostMiddleware is not None:
         project_id=RECOST_PROJECT_ID,
     )
 
+_extra = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+_allowed_origins = list({
+    FRONTEND_URL.rstrip("/"),
+    "http://localhost:3000",
+    "https://saplinglearn.com",
+    "https://www.saplinglearn.com",
+    *_extra,
+} - {""})
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:3000"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -154,6 +165,7 @@ app.include_router(admin_router,       prefix="/api/admin")
 app.include_router(newsletter_router,  prefix="/api/newsletter")
 app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")
+app.include_router(notes.router,       prefix="/api/notes")
 
 
 @app.get("/api/health")
@@ -162,13 +174,18 @@ def health():
 
 
 @app.get("/api/users")
-def list_users():
+def list_users(request: Request):
     """List users with decrypted display names.
 
     The `users.name` column is encrypted at rest (see
     services.encryption); decrypt before returning so clients render the
     human-readable name, not ciphertext. Sort by the decrypted value.
+
+    Requires an authenticated session: this returns decrypted legal names,
+    so an unauthenticated caller must never reach the roster (401).
     """
+    from services.auth_guard import get_session_user_id
+    get_session_user_id(request)  # 401 if unauthenticated
     from db.connection import table
     from services.encryption import decrypt_if_present
     rows = table("users").select("id,name,room_id")
@@ -185,8 +202,17 @@ def list_users():
 
 
 @app.get("/api/gemini-test")
-def gemini_test():
-    """Test Gemini connectivity. Shows clear error if API key is missing/wrong."""
+def gemini_test(request: Request):
+    """Admin-only Gemini connectivity check. Shows a clear error if the API
+    key is missing/wrong.
+
+    Gated behind `require_admin` (#198): every hit makes a real, billable
+    `call_gemini` round-trip, so an unauthenticated caller could burn Gemini
+    quota at will and use the `{"ok": ...}` response as an oracle for whether
+    the API key is configured. Only admins may trigger LLM spend here.
+    """
+    from services.auth_guard import require_admin
+    require_admin(request)  # 403 unless the session belongs to an admin; 401 if unauthenticated
     from services.gemini_service import call_gemini
     try:
         reply = call_gemini('Reply with exactly the text: Gemini OK', retries=0)

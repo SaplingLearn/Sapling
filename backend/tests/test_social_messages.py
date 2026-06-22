@@ -48,8 +48,34 @@ class TestGetRoomMessages:
         assert ids == ["m1", "m2", "m3"]  # ascending
         assert body["has_more"] is False  # fewer than default limit (50)
 
-    def test_has_more_true_when_page_is_full(self):
+    def test_exact_page_boundary_reports_no_more(self):
+        # Off-by-one guard (issue #131): exactly `limit` rows must NOT report a
+        # phantom extra page. The route over-fetches limit+1; the DB returns only
+        # `limit` rows here, so has_more is False.
         rows = [_mk_msg(i, f"2026-04-{i:02d}T00:00:00Z") for i in range(1, 6)]  # 5 rows
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "room_messages":
+                m.select.return_value = list(reversed(rows))  # DB returns desc
+            elif name == "room_reactions":
+                m.select.return_value = []
+            elif name == "room_members":
+                m.select.return_value = [{"user_id": "user_andres"}]
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.social.table", side_effect=table_side_effect):
+            r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=5")
+
+        body = r.json()
+        assert body["has_more"] is False
+        assert len(body["messages"]) == 5
+
+    def test_has_more_true_when_probe_row_present(self):
+        # The route requests limit+1; when the DB returns limit+1 rows, an extra
+        # page exists. The probe row is dropped, so the page holds exactly `limit`.
+        rows = [_mk_msg(i, f"2026-04-{i:02d}T00:00:00Z") for i in range(1, 7)]  # 6 rows for limit=5
         def table_side_effect(name):
             m = MagicMock()
             if name == "room_messages":
@@ -68,6 +94,8 @@ class TestGetRoomMessages:
         body = r.json()
         assert body["has_more"] is True
         assert len(body["messages"]) == 5
+        # Probe row (oldest, m1) is dropped; page is the 5 newest, ascending.
+        assert [m["id"] for m in body["messages"]] == ["m2", "m3", "m4", "m5", "m6"]
 
     def test_before_filter_is_passed_through(self):
         captured = {}
@@ -94,7 +122,7 @@ class TestGetRoomMessages:
         assert r.status_code == 200
         assert captured["filters"]["created_at"] == "lt.2026-04-02T00:00:00Z"
         assert captured["order"] == "created_at.desc"
-        assert captured["limit"] == 20
+        assert captured["limit"] == 21  # requested 20 + 1 probe row for has_more
 
     def test_invalid_before_rejected(self):
         # Guards against PostgREST operator injection (e.g. ?before=null or
@@ -140,7 +168,7 @@ class TestGetRoomMessages:
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=9999")
 
         assert r.status_code == 200
-        assert captured["limit"] == 200  # clamped
+        assert captured["limit"] == 201  # clamped to 200, +1 probe row
 
     def test_limit_floor_is_one(self):
         captured = {}
@@ -163,4 +191,4 @@ class TestGetRoomMessages:
             r = client.get(f"/api/social/rooms/{ROOM_ID}/messages?limit=0")
 
         assert r.status_code == 200
-        assert captured["limit"] == 1
+        assert captured["limit"] == 2  # floored to 1, +1 probe row

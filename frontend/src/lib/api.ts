@@ -5,6 +5,7 @@ import type {
   GradebookSummary, GradebookCourse, GradeCategory, GradedAssignment, LetterScaleTier,
   ExtractedSyllabusCategory,
   AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
+  Note, LinkedConcept,
 } from '@/lib/types';
 
 import { handleLocalRequest } from '@/lib/localData';
@@ -180,6 +181,12 @@ export const deleteSession = (sessionId: string, userId: string) =>
   fetchJSON<{ deleted: boolean }>(
     `/api/learn/sessions/${sessionId}?user_id=${encodeURIComponent(userId)}`,
     { method: 'DELETE' }
+  );
+
+export const renameSession = (sessionId: string, userId: string, topic: string) =>
+  fetchJSON<{ updated: boolean; session: { id: string; topic: string } }>(
+    `/api/learn/sessions/${sessionId}`,
+    { method: 'PATCH', body: JSON.stringify({ user_id: userId, topic }) }
   );
 
 export const resumeSession = (sessionId: string) =>
@@ -1223,4 +1230,93 @@ export const syncGradescopeCourse = (userId: string, saplingCourseId: string) =>
   fetchJSON<GradescopeSyncResult>(
     `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}`,
     { method: 'POST' },
+  );
+
+// ── Notes ──────────────────────────────────────────────────────────────────
+
+export const listNotes = (userId: string, courseId?: string) => {
+  const qs = courseId ? `?course_id=${encodeURIComponent(courseId)}` : '';
+  return fetchJSON<{ notes: Note[] }>(`/api/notes/user/${userId}${qs}`);
+};
+
+export const createNote = (
+  userId: string,
+  courseId: string,
+  title = '',
+  body = '',
+  tags: string[] = [],
+) =>
+  fetchJSON<Note>('/api/notes', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, course_id: courseId, title, body, tags }),
+  });
+
+export const getNote = (noteId: string, userId: string) =>
+  fetchJSON<Note>(`/api/notes/${noteId}?user_id=${encodeURIComponent(userId)}`);
+
+export const patchNote = (
+  noteId: string,
+  userId: string,
+  patch: Partial<Pick<Note, 'title' | 'body' | 'tags' | 'course_id'>>,
+  // `keepalive` lets a final autosave survive a page unload (tab close /
+  // navigation) instead of being cancelled mid-flight.
+  opts?: { keepalive?: boolean },
+) =>
+  fetchJSON<Note>(`/api/notes/${noteId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ user_id: userId, ...patch }),
+    keepalive: opts?.keepalive,
+  });
+
+export const deleteNote = (noteId: string, userId: string) =>
+  fetchJSON<{ deleted: boolean }>(
+    `/api/notes/${noteId}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const listNoteConcepts = (noteId: string, userId: string) =>
+  fetchJSON<{ concepts: LinkedConcept[] }>(
+    `/api/notes/${noteId}/concepts?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const linkNoteConcept = (noteId: string, userId: string, conceptNodeId: string) =>
+  fetchJSON<{ linked: boolean }>(`/api/notes/${noteId}/concepts`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, concept_node_id: conceptNodeId }),
+  });
+
+export const unlinkNoteConcept = (noteId: string, userId: string, conceptNodeId: string) =>
+  fetchJSON<{ unlinked: boolean }>(
+    `/api/notes/${noteId}/concepts/${encodeURIComponent(conceptNodeId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const summarizeNote = (noteId: string, userId: string) =>
+  fetchJSON<{ summary: string }>(`/api/notes/${noteId}/summarize`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+export const extractNoteConcepts = (noteId: string, userId: string) =>
+  fetchJSON<{ concepts: string[]; linked: number }>(
+    `/api/notes/${noteId}/extract-concepts`,
+    { method: 'POST', body: JSON.stringify({ user_id: userId }) },
+  );
+
+export const noteChat = (noteId: string, userId: string, message: string) =>
+  fetchJSON<{ reply: string }>(`/api/notes/${noteId}/chat`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, message }),
+  });
+
+export const sendNoteToTutor = (noteId: string, userId: string) =>
+  fetchJSON<{ topic: string; course_id: string; preface: string }>(
+    `/api/notes/${noteId}/send-to-tutor`,
+    { method: 'POST', body: JSON.stringify({ user_id: userId }) },
+  );
+
+export const generateQuizFromNote = (noteId: string, userId: string) =>
+  fetchJSON<{ concept_node_id: string; concept_name: string }>(
+    `/api/notes/${noteId}/generate-quiz`,
+    { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );

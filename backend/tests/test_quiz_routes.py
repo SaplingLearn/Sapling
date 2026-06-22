@@ -240,6 +240,131 @@ class TestSubmitQuiz:
         assert r.json()["score"] == 2
 
 
+# ── Cross-user node ownership (IDOR regression, issue #157) ─────────────────
+
+
+class TestQuizNodeOwnership:
+    """User A must not be able to generate or submit a quiz against a
+    concept node owned by user B. Both paths must 404 (not 200) so an
+    attacker can't read a victim's concept content nor corrupt the
+    victim's mastery fields.
+
+    The graph_nodes table is owner-scoped: a SELECT scoped to a user_id
+    that doesn't own the node returns no rows. The factory below models
+    real DB behaviour — an *unscoped* read (the bug) still leaks B's node,
+    so these tests fail on unscoped code and pass only once the route
+    filters every node read by the caller's user_id.
+    """
+
+    NODE_OWNER = "user_beatriz"   # victim B owns the node
+    ATTACKER = "user_andres"      # attacker A
+
+    def _node_row(self) -> dict:
+        return {
+            "id": "node_b",
+            "user_id": self.NODE_OWNER,
+            "course_id": "course1",
+            "concept_name": "Beatriz Secret Concept",
+            "mastery_score": 0.5,
+            "times_studied": 3,
+            "mastery_events": [],
+        }
+
+    def _ownership_aware_graph_select(self, columns="*", filters=None, **_):
+        """Faithfully model DB row-filtering for the victim's node.
+
+        The row comes back when the query matches by id and EITHER no
+        user_id scope is applied (the *buggy* unscoped read, which leaks
+        B's node to anyone) OR the scope names the owner. A scope naming
+        a non-owner (the attacker) returns nothing — so unscoped code
+        leaks/writes (test fails) and only owner-scoped reads 404 for A.
+        """
+        filters = filters or {}
+        if filters.get("id") != "eq.node_b":
+            return []
+        user_filter = filters.get("user_id")
+        if user_filter is None or user_filter == f"eq.{self.NODE_OWNER}":
+            return [self._node_row()]
+        return []
+
+    def test_generate_against_foreign_node_returns_404(self):
+        """A POSTs /generate with B's concept_node_id but A's user_id.
+        The owner-scoped node read misses → 404, before any quiz_attempts
+        row is created and before the agent ever runs."""
+        def factory(name):
+            mock = MagicMock()
+            if name == "graph_nodes":
+                mock.select.side_effect = self._ownership_aware_graph_select
+            else:
+                mock.select.return_value = []
+                mock.insert.return_value = []
+            return mock
+
+        agent_run = AsyncMock()
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": self.ATTACKER,
+                "concept_node_id": "node_b",
+                "num_questions": 1,
+                "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 404
+        # The agent must never run for a foreign node — no content leak.
+        agent_run.assert_not_called()
+
+    def test_submit_against_foreign_node_returns_404_and_writes_nothing(self):
+        """A owns the quiz_attempts row (so require_self passes), but the
+        attempt's concept_node_id points at B's node. The owner-scoped
+        node read (using the attempt's user_id == A) misses → 404, and no
+        graph_nodes.update fires, so B's mastery stays intact."""
+        update_calls: list = []
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz_a",
+                    "user_id": self.ATTACKER,        # attempt belongs to A
+                    "concept_node_id": "node_b",     # but targets B's node
+                    "difficulty": "medium",
+                    "questions_json": SAMPLE_QUESTIONS,
+                }]
+                mock.update.return_value = []
+            elif name == "graph_nodes":
+                mock.select.side_effect = self._ownership_aware_graph_select
+                mock.update.side_effect = lambda *a, **k: update_calls.append((a, k)) or []
+            else:
+                mock.select.return_value = []
+                mock.update.return_value = []
+            return mock
+
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.update_streak"),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.call_gemini_json", return_value={}),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz_a",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+
+        assert r.status_code == 404
+        # No mastery write to the victim's node (or any node) occurred.
+        assert update_calls == [], (
+            "submit_quiz wrote to graph_nodes for a foreign concept node — "
+            "IDOR regression (issue #157)."
+        )
+
+
 # ── POST /api/quiz/generate ──────────────────────────────────────────────────
 
 

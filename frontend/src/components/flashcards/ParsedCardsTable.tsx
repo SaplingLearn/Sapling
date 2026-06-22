@@ -76,21 +76,24 @@ export function ParsedCardsTable({ cards, onChange, reverseEnabled, onReverseTog
             {cards.map((c, i) => (
               <tr key={i} style={{
                 borderTop: "1px solid var(--border)",
-                borderLeft: c.error ? "3px solid var(--err)" : "3px solid transparent",
+                background: c.error ? "var(--err-soft)" : "transparent",
               }} title={c.error}>
-                <td style={{ padding: "4px 8px", color: "var(--text-muted)" }}>{c.row}</td>
+                <td style={{ padding: "4px 8px", color: "var(--text-muted)" }}>
+                  {c.error && <span aria-hidden="true" style={{ color: "var(--err)", fontWeight: 700, marginRight: 3 }}>!</span>}
+                  {c.row}
+                </td>
                 <td style={{ padding: "4px 8px" }}>
                   <input
                     value={c.front}
                     onChange={e => updateRow(i, { front: e.target.value })}
-                    style={{ width: "100%", background: "transparent", border: "none", outline: "none", color: "var(--text)" }}
+                    style={{ width: "100%", background: "transparent", border: "none", color: "var(--text)" }}
                   />
                 </td>
                 <td style={{ padding: "4px 8px" }}>
                   <input
                     value={c.back}
                     onChange={e => updateRow(i, { back: e.target.value })}
-                    style={{ width: "100%", background: "transparent", border: "none", outline: "none", color: "var(--text)" }}
+                    style={{ width: "100%", background: "transparent", border: "none", color: "var(--text)" }}
                   />
                 </td>
                 <td>

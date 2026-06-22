@@ -279,7 +279,15 @@ def create_assignment(body: CreateAssignmentBody, request: Request):
         "curve_avg_target": body.curve_avg_target,
         "curve_sd_delta": body.curve_sd_delta,
     })
-    return {"assignment": inserted[0] if inserted else None}
+    # #126 (#18): the insert representation returns the stored ciphertext for
+    # points/notes. Decrypt before returning so the client never receives
+    # ciphertext, matching the read path in get_course.
+    row = inserted[0] if inserted else None
+    if row:
+        row["points_possible"] = decrypt_numeric(row.get("points_possible"))
+        row["points_earned"] = decrypt_numeric(row.get("points_earned"))
+        row["notes"] = decrypt_if_present(row.get("notes"))
+    return {"assignment": row}
 
 
 @router.patch("/assignments/{assignment_id}")

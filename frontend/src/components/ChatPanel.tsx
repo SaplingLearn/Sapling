@@ -1,8 +1,18 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { Icon } from "./Icon";
-import { MarkdownChat } from "./MarkdownChat";
+
+// MarkdownChat statically imports mermaid, katex, highlight.js, and the
+// remark/rehype stack. Static-importing it from a client component still
+// pulls those modules through next.config.ts → transpilePackages, which
+// bloats the OpenNext worker bundle on Cloudflare. Lazy-load with
+// ssr:false so the heavy markdown stack is a separate client chunk.
+const MarkdownChat = dynamic(
+  () => import("./MarkdownChat").then((m) => m.MarkdownChat),
+  { ssr: false, loading: () => null },
+);
 
 export type ChatRole = "user" | "assistant";
 export interface ChatMsg {
@@ -145,6 +155,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
         }}
       >
         <textarea
+          aria-label="Message"
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => {
@@ -162,7 +173,6 @@ const ChatInputBar = React.memo(function ChatInputBar({
             background: "transparent",
             fontSize: 14,
             lineHeight: 1.5,
-            outline: "none",
             padding: "6px 0",
             fontFamily: "var(--font-sans)",
             maxHeight: 160,

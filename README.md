@@ -18,15 +18,16 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 
 ## Features
 
-* **Live Knowledge Graph** — Your understanding is visualized as a growing node graph. Mastery scores update dynamically after every session and quiz, with per-course color shading and mastery-based opacity.
+* **Live Knowledge Graph** — Your understanding is visualized as a growing node graph, with a 2D (D3/SVG, default) or 3D (WebGL) view toggle. Mastery scores update dynamically after every session and quiz, with per-course color shading and mastery-based opacity.
 * **Three Teaching Modes** — Socratic (guided reasoning), Expository (direct explanation), and TeachBack (you explain, Sapling corrects). Chat supports inline math (KaTeX), Mermaid diagrams, function plots, and theorem callouts.
-* **Adaptive Quizzes** — AI-generated quizzes targeting your weakest concepts, with difficulty scaling based on your performance.
+* **Adaptive Quizzes** — AI-generated quizzes targeting your weakest concepts, with difficulty scaling based on your performance and spaced-repetition scheduling that resurfaces concepts you've missed before.
 * **Flashcards** — Generate AI flashcards per course, or import them from paste, file (CSV/Markdown/Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (Easy / Hard / Forgot).
 * **Gradebook** — Track your real-world grade per course. Categories + weights, per-assignment scores, per-course letter-scale overrides, and current grade calculation. Upload a syllabus and Sapling extracts categories and assignments automatically.
 * **Study Guide** — Generate a Gemini-powered exam study guide from your uploaded course materials. Guides are cached per exam and can be regenerated at any time.
 * **Class Intelligence** — Aggregates anonymized class-wide patterns to surface common misconceptions and weak areas, personalizing your sessions.
 * **Calendar & Syllabus Tracking** — Paste your syllabus and Sapling extracts assignments, deadlines, and topics automatically.
 * **Document Library** — Upload PDFs and notes (up to 100 MB each); Sapling extracts summaries, key concept notes, and flashcard topics to enrich your knowledge graph and study guides. Uploads use a streaming SSE pipeline so the UI shows live per-phase progress (*"Classifying..." → "Extracting summary, concepts, and syllabus..." → "Saved."*). Concept notes can be re-scanned manually per doc or per course.
+* **Notetaker** — Write typed notes per course with debounced autosave and tags. Per note, Sapling can AI-summarize, extract concepts (merged into your knowledge graph and linked back to the note), answer questions in a note-grounded AI chat, send the note to the tutor, or generate a quiz targeting the note's weakest linked concept.
 * **Study Rooms** — Invite classmates, compare knowledge graphs, and track relative mastery across your group.
 * **Room Chat** — Real-time text chat with avatars inside each study room.
 * **User Profiles** — Public profiles with academic info, bio, featured achievements, and equipped cosmetics.
@@ -38,9 +39,9 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 
 ## Tech Stack
 
-* **Frontend** — Next.js 16 (TypeScript, App Router) with D3.js for interactive graph visualization. Vitest with jsdom + React Testing Library for unit + component tests.
-* **Backend** — FastAPI (Python) serving a REST API. Document ingestion runs through a Pydantic AI agentic pipeline (4 typed worker agents fanned out in parallel via `asyncio.gather`); other LLM-driven routes still use the structured-prompt helper in `services/gemini_service.py` until they're migrated.
-* **AI** — Google Gemini, with per-task model routing configurable via env vars. Defaults: `gemini-2.5-flash-lite` for classifier + summary; `gemini-2.5-flash` for concept extraction + syllabus parsing; `gemini-2.5-flash-lite` for quiz generation and concept suggestions. Override per task via `SAPLING_MODEL_<TASK>`.
+* **Frontend** — Next.js 16 (TypeScript, App Router). The knowledge graph renders in 2D via D3.js (default) or 3D via `react-force-graph-3d` (three.js/WebGL), lazy-loaded so the 3D stack only enters the bundle when toggled on. Vitest with jsdom + React Testing Library for unit + component tests.
+* **Backend** — FastAPI (Python) serving a REST API. Document ingestion runs through a Pydantic AI agentic pipeline (4 typed worker agents fanned out in parallel via `asyncio.gather`). Quiz generation, the chat tutor, syllabus extraction, and the notetaker (summary / concepts / chat) are also Pydantic AI agents; the remaining LLM-driven routes still use the structured-prompt helper in `services/gemini_service.py` until they're migrated.
+* **AI** — Google Gemini, with per-task model routing configurable via env vars. Defaults: `gemini-2.5-flash-lite` for classifier, summary, quiz generation, and note summary/concepts; `gemini-2.5-flash` for concept extraction, syllabus parsing, and note chat; `gemini-2.5-pro` for the chat tutor. Override per task via `SAPLING_MODEL_<TASK>`.
 * **Streaming** — `sse-starlette` Server-Sent Events on `POST /api/documents/upload` for live per-phase progress. The frontend SSE consumer (`frontend/src/lib/sse.ts`) parses the wire format from a fetch ReadableStream so it works with multipart POSTs (which `EventSource` can't do).
 * **Observability** — [Logfire](https://logfire.pydantic.dev) auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom span scrubber (`backend/services/logfire_scrubber.py`) truncates and SHA-256-fingerprints risky attribute paths (prompt text, model output, message content) before egress so user-uploaded document text never ships verbatim. `genai-prices` provides per-call cost telemetry. Per-request structured logging includes a correlation ID, status, and duration.
 * **OCR** — Docling (layout-aware PDF → Markdown) with GOT-OCR 2.0 fallback for math/handwriting; Tesseract retained as a legacy fallback.
@@ -129,6 +130,21 @@ npm run dev                # → http://localhost:3000
 - `POST` `/api/documents/doc/{doc_id}/scan-concepts` — Re-extract concepts from a stored document into the course graph
 - `POST` `/api/documents/course/{course_id}/scan-concepts` — Extend a course's concept graph from its label alone
 
+**Notes**
+- `GET`    `/api/notes/user/{user_id}` — List a user's notes (filter by `course_id`)
+- `POST`   `/api/notes` — Create a note
+- `GET`    `/api/notes/{note_id}` — Fetch a single note
+- `PATCH`  `/api/notes/{note_id}` — Update a note (title, body, tags, course)
+- `DELETE` `/api/notes/{note_id}` — Delete a note
+- `GET`    `/api/notes/{note_id}/concepts` — List concepts linked to a note
+- `POST`   `/api/notes/{note_id}/concepts` — Link a graph concept to a note
+- `DELETE` `/api/notes/{note_id}/concepts/{concept_node_id}` — Unlink a concept
+- `POST`   `/api/notes/{note_id}/summarize` — AI-summarize the note (agent-backed)
+- `POST`   `/api/notes/{note_id}/extract-concepts` — Extract concepts, merge into the graph, link back to the note
+- `POST`   `/api/notes/{note_id}/chat` — Ask a question grounded in the note (agent-backed)
+- `POST`   `/api/notes/{note_id}/send-to-tutor` — Build a tutor handoff (topic + preface) from the note
+- `POST`   `/api/notes/{note_id}/generate-quiz` — Pick the note's weakest linked concept to quiz on
+
 **Social**
 - `POST` `/api/social/rooms/create` — Create a study room
 - `POST` `/api/social/rooms/join` — Join a study room by invite code
@@ -163,14 +179,22 @@ npm run dev                # → http://localhost:3000
 - `DELETE` `/api/profile/{user_id}` — Delete account
 
 **Admin**
-- `POST` `/api/admin/roles` — Create a role
-- `POST` `/api/admin/roles/assign` — Assign a role to a user
-- `POST` `/api/admin/roles/revoke` — Revoke a role from a user
-- `POST` `/api/admin/achievements` — Create an achievement
-- `POST` `/api/admin/achievements/triggers` — Create an achievement trigger
+- `GET`/`POST` `/api/admin/roles` — List / create roles
+- `PATCH`/`DELETE` `/api/admin/roles/{role_id}` — Update / delete a role
+- `POST`/`DELETE` `/api/admin/roles/assign` · `/api/admin/roles/revoke` — Assign / revoke a role
+- `GET`/`POST`/`DELETE` `/api/admin/roles/cosmetics` (+ `/api/admin/roles/{role_id}/cosmetics`) — Link cosmetics to roles
+- `GET`/`POST` `/api/admin/achievements` — List / create achievements
+- `PATCH`/`DELETE` `/api/admin/achievements/{achievement_id}` — Update / delete an achievement
 - `POST` `/api/admin/achievements/grant` — Manually grant an achievement
-- `POST` `/api/admin/cosmetics` — Create a cosmetic item
-- `POST` `/api/admin/approve/{user_id}` — Approve a pending user
+- `GET`/`POST`/`PATCH`/`DELETE` achievement triggers (`/api/admin/achievements/{achievement_id}/triggers`, `/api/admin/achievements/triggers`, `/api/admin/achievements/triggers/{trigger_id}`)
+- `GET`/`POST`/`DELETE` `/api/admin/achievements/cosmetics` (+ `/api/admin/achievements/{achievement_id}/cosmetics`) — Link cosmetics to achievements
+- `GET`/`POST` `/api/admin/cosmetics` — List / create cosmetic items
+- `PATCH`/`DELETE` `/api/admin/cosmetics/{cosmetic_id}` — Update / delete a cosmetic
+- `GET` `/api/admin/users` — Paginated, searchable user list
+- `PATCH` `/api/admin/users/{user_id}/approve` · `/unapprove` — Approve / unapprove a user
+- `POST` `/api/admin/allowlist/approve` · `/api/admin/allowlist/revoke` — Manage the email allowlist
+- `GET` `/api/admin/audit` — Paginated admin audit log (filter by action / target)
+- `GET` `/api/admin/analytics/overview` — Totals, 30-day series, and role counts
 
 **Feedback**
 - `POST` `/api/feedback/feedback` — Submit session or general feedback
@@ -199,6 +223,11 @@ npm run dev                # → http://localhost:3000
 | `SAPLING_MODEL_SUMMARY` | — | Override summary-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_CONCEPTS` | — | Override concept-extraction-agent model (default `gemini-2.5-flash`) |
 | `SAPLING_MODEL_SYLLABUS` | — | Override syllabus-extraction-agent model (default `gemini-2.5-flash`) |
+| `SAPLING_MODEL_QUIZ` | — | Override quiz-generation-agent model (default `gemini-2.5-flash-lite`) |
+| `SAPLING_MODEL_CHAT_TUTOR` | — | Override chat-tutor-agent model (default `gemini-2.5-pro`) |
+| `SAPLING_MODEL_NOTE_SUMMARY` | — | Override note-summary-agent model (default `gemini-2.5-flash-lite`) |
+| `SAPLING_MODEL_NOTE_CONCEPTS` | — | Override note-concepts-agent model (default `gemini-2.5-flash-lite`) |
+| `SAPLING_MODEL_NOTE_CHAT` | — | Override note-chat-agent model (default `gemini-2.5-flash`) |
 | `OCR_ASYNC_ENABLED` | — | When `true`, the streaming `/upload` route runs OCR off the request critical path with a `progress:extracting_text` SSE event. Default `false`. |
 | `DBOS_ENABLED` | — | When `true` AND `dbos` is installed AND `DBOS_DATABASE_URL` is set, `process_document` runs as a checkpointed DBOS workflow with per-step resume on crash. Default `false` (decorators are no-op passthroughs). See `docs/decisions/0011-durable-execution-dbos.md`. |
 | `DBOS_DATABASE_URL` | — | Postgres connection string for DBOS metadata (separate from Supabase). Required only when `DBOS_ENABLED=true`. |
@@ -212,13 +241,13 @@ npm run dev                # → http://localhost:3000
 
 ## Tests
 
-**Backend** — pytest, mocked Gemini + Supabase. ~430 tests, ~40s.
+**Backend** — pytest, mocked Gemini + Supabase. ~660 tests.
 ```bash
 cd backend
 python -m pytest tests/ -q --ignore=tests/evals
 ```
 
-**Frontend** — Vitest. Pure-logic tests (`sse.ts`, `api.ts`) run in node; component tests (`DocumentUploadModal.test.tsx`) use jsdom + React Testing Library + `@testing-library/jest-dom`. Per-file `// @vitest-environment jsdom` directive keeps the lib tests fast.
+**Frontend** — Vitest. Pure-logic tests (`sse.ts`, `api.ts`) run in node; component tests (e.g. `DocumentUploadModal`, `TopNav`, `KnowledgeGraph3D`) use jsdom + React Testing Library + `@testing-library/jest-dom`. Per-file `// @vitest-environment jsdom` directive keeps the lib tests fast.
 ```bash
 cd frontend
 npm install
@@ -227,7 +256,7 @@ npm test            # vitest run
 npm run test:watch  # vitest watch
 ```
 
-**Evals** (live Gemini, on demand) — 70 cases across the 4 worker agents (`document_classification`, `document_summary`, `concept_extraction`, `syllabus_extraction`). Three modes via `SAPLING_EVAL_MODE`:
+**Evals** (live Gemini, on demand) — 95 cases across 6 agents: the 4 worker agents (`document_classification`, `document_summary`, `concept_extraction`, `syllabus_extraction`) plus the chat tutor (`chat_tutor`) and quiz generator (`quiz_generation`). Three modes via `SAPLING_EVAL_MODE`:
 ```bash
 cd backend
 # Replay (default; no network, requires recorded cassettes):
@@ -237,13 +266,13 @@ SAPLING_EVAL_MODE=record python tests/evals/document_classification.py
 # Live (hits live Gemini, no recording):
 SAPLING_EVAL_MODE=live   python tests/evals/document_classification.py
 ```
-The `.github/workflows/evals.yml` workflow runs replay-mode in CI; it's currently `workflow_dispatch`-only until cassette coverage is complete (4 / 70 recorded today).
+The `.github/workflows/evals.yml` workflow runs replay-mode in CI; it's currently `workflow_dispatch`-only until cassette coverage is complete (4 / 95 recorded today).
 
 ## Architecture & Dev Context
 
 **Live architecture overview** — `docs/architecture.md`.
 
-**Architectural Decision Records** — `docs/decisions/` (append-only, MADR-minimal format). Twelve ADRs as of merge:
+**Architectural Decision Records** — `docs/decisions/` (append-only, MADR-minimal format). Seventeen ADRs as of merge:
 - `0001` — Adopt Pydantic AI as the agent framework
 - `0002` — Markdown-based dev-context vault structure
 - `0003` — Per-call `usage_limits=` and inline system prompts
@@ -256,6 +285,11 @@ The `.github/workflows/evals.yml` workflow runs replay-mode in CI; it's currentl
 - `0010` — OCR async / two-phase upload (partial — feature flag shipped, full design deferred)
 - `0011` — Durable execution via DBOS (partial — optional shim shipped, real DBOS opt-in)
 - `0012` — Concept-by-concept streaming (deferred — needs eval data on Gemini's emission ordering first)
+- `0013` — Refactor #2 (quiz generation) shipped as `quiz_agent`
+- `0014` — Adaptive quiz iteration (spaced repetition + history + difficulty)
+- `0015` — Refactor #3 (chat tutor) shipped as `chat_tutor_agent`
+- `0016` — Refactor #4 (syllabus extraction) unified onto the agent
+- `0017` — Notetaker dynamic implementation (CRUD + four agent-backed actions)
 
 **Things that didn't work** — `docs/attempts/` (each entry has a mandatory "What I'd try next" section).
 

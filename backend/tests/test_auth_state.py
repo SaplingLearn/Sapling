@@ -71,8 +71,10 @@ class TestOAuthCookieRoundTrip:
 
     def test_fallback_in_memory_store_round_trip(self, monkeypatch):
         # Without SESSION_SECRET, encode stashes the payload in an in-memory
-        # dict keyed by nonce. Decode retrieves it.
+        # dict keyed by nonce. Decode retrieves it. #174: this unsigned
+        # fallback is local-dev only, so the test must declare local mode.
         monkeypatch.setattr(auth_module, "SESSION_SECRET", "")
+        monkeypatch.setattr(auth_module, "IS_LOCAL", True)
         auth_module._OAUTH_FALLBACK_STORE.clear()
         payload = {"n": "fallback-nonce", "cv": "verifier", "popup_id": "p"}
         cookie = auth_module._encode_oauth_cookie(payload)
@@ -81,6 +83,7 @@ class TestOAuthCookieRoundTrip:
 
     def test_fallback_unknown_nonce_returns_none(self, monkeypatch):
         monkeypatch.setattr(auth_module, "SESSION_SECRET", "")
+        monkeypatch.setattr(auth_module, "IS_LOCAL", True)
         auth_module._OAUTH_FALLBACK_STORE.clear()
         # Build a cookie payload whose nonce was never registered
         bogus = base64.urlsafe_b64encode(

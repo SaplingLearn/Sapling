@@ -33,6 +33,8 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
   const popupRef = useRef<Window | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
   const watchdogRef = useRef<number | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<Element | null>(null);
 
   const cleanupPopupListeners = useCallback(() => {
     if (channelRef.current) {
@@ -74,10 +76,44 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { close(); return; }
+      if (e.key === "Tab" && panelRef.current) {
+        const focusable = Array.from(
+          panelRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        );
+        if (focusable.length === 0) { e.preventDefault(); return; }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, close]);
+
+  // Move focus into the modal on open; restore it to the trigger on close.
+  useEffect(() => {
+    if (!open) return;
+    previousFocusRef.current = document.activeElement;
+    const focusTimer = setTimeout(() => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusable = panel.querySelector<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      (focusable ?? panel).focus();
+    }, 20);
+    return () => {
+      clearTimeout(focusTimer);
+      const prev = previousFocusRef.current;
+      if (prev instanceof HTMLElement) prev.focus();
+    };
+  }, [open]);
 
   if (!open) return null;
 
@@ -182,6 +218,8 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       onClick={close}
     >
       <div
+        ref={panelRef}
+        tabIndex={-1}
         className={`relative w-full ${closing ? "modal-card-out" : "modal-card-in"}`}
         style={{
           maxWidth: 440,
@@ -222,7 +260,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           fontSize: 34, lineHeight: 1.05, fontWeight: 600,
           letterSpacing: "-0.02em", color: "#1a1a1a",
         }}>
-          Welcome <span style={{ fontStyle: "italic", color: "#1B6C42" }}>back.</span>
+          Welcome <span style={{ fontStyle: "italic", color: "var(--brand-forest)" }}>back.</span>
         </h2>
         <p style={{ margin: "12px 0 0", fontSize: 14, color: "#4b5563", lineHeight: 1.55 }}>
           Sign in with your school Google account to continue.
@@ -261,7 +299,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           }}
           onMouseEnter={e => {
             if (waiting) return;
-            e.currentTarget.style.borderColor = "#1B6C42";
+            e.currentTarget.style.borderColor = "var(--brand-forest)";
             e.currentTarget.style.boxShadow = "0 6px 18px rgba(27,108,66,0.15)";
           }}
           onMouseLeave={e => {
@@ -300,9 +338,9 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
 
         <p style={{ margin: "16px 0 0", fontSize: 11.5, color: "#6b7280", textAlign: "center", lineHeight: 1.5 }}>
           By signing in, you agree to the{" "}
-          <a href="/terms" style={{ color: "#1B6C42", textDecoration: "underline" }}>terms</a>
+          <a href="/terms" style={{ color: "var(--brand-forest)", textDecoration: "underline" }}>terms</a>
           {" "}and{" "}
-          <a href="/privacy" style={{ color: "#1B6C42", textDecoration: "underline" }}>privacy policy</a>.
+          <a href="/privacy" style={{ color: "var(--brand-forest)", textDecoration: "underline" }}>privacy policy</a>.
         </p>
       </div>
     </div>

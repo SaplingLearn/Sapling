@@ -13,18 +13,21 @@ A FastAPI + Supabase backend that ingests student documents, calls Gemini to cla
 
 ## Repo map
 
-- backend/main.py:24 — FastAPI app, CORS, and every router mount.
-- backend/routes/documents.py:149 — `_process_document` single-call classify/summarize/extract (refactor target #1).
-- backend/routes/documents.py:265 — `upload_document` POST `/api/documents/upload` pipeline.
-- backend/routes/learn.py:152 — `build_system_prompt` for the streaming tutor (SSE).
+- backend/main.py:84 — FastAPI app, CORS, and every router mount (mounts at :139).
+- backend/routes/documents.py:181 — `_process_document` single-call classify/summarize/extract (refactor target #1).
+- backend/routes/documents.py:577 — `upload_document` POST `/api/documents/upload` pipeline.
+- backend/routes/learn.py:239 — `build_system_prompt` for the streaming tutor (SSE).
 - backend/routes/quiz.py:1 — quiz session create/answer/score endpoints.
+- backend/routes/notes.py:31 — `/api/notes` notetaker CRUD, concept link/unlink, and agent actions (`summarize`/`extract-concepts`/`chat`/`send-to-tutor`/`generate-quiz`).
 - backend/routes/auth.py:1 — Google OAuth + HMAC session token issuance.
-- backend/services/gemini_service.py:62 — `call_gemini` plain-text call (LLM seam being deprecated).
-- backend/services/gemini_service.py:129 — `call_gemini_json` JSON-mode helper used by document/quiz prompts.
+- backend/services/gemini_service.py:64 — `call_gemini` plain-text call (LLM seam being deprecated).
+- backend/services/gemini_service.py:135 — `call_gemini_json` JSON-mode helper used by document/quiz prompts.
+- backend/services/notes_service.py:45 — notes CRUD with column encryption (`create_note`/`update_note`/`save_summary`/`link_concept`).
 - backend/services/graph_service.py:375 — `apply_graph_update` (becomes a Pydantic AI tool).
 - backend/services/extraction_service.py:1 — OCR engine router (Docling / GOT-OCR / Tesseract).
 - backend/services/auth_guard.py:1 — `require_self` / `require_admin` FastAPI dependencies.
-- backend/db/connection.py:71 — `table()` factory; the only sanctioned Supabase entry point.
+- backend/agents/note_summary.py, note_concepts.py, note_chat.py — Pydantic AI agents backing the `/api/notes` agent actions (model slots in `agents/_providers.py`).
+- backend/db/connection.py:102 — `table()` factory; the only sanctioned Supabase entry point.
 
 ## Commands
 
@@ -41,7 +44,12 @@ Docker (full stack from repo root):
 docker-compose up
 ```
 
-Lint: # TODO: no lint command defined (no ruff/flake8/black config in repo).
+Lint (run from `backend/`):
+
+```
+ruff check .                    # lint, gated in CI against the ruff.toml baseline (#193)
+ruff format .                   # formatter — available, not yet CI-gated (see ruff.toml)
+```
 
 ## Conventions
 
@@ -60,4 +68,4 @@ Lint: # TODO: no lint command defined (no ruff/flake8/black config in repo).
 
 ## Gotchas
 
-- Column-level encryption is on for sensitive columns (`users.name`/`first_name`/`last_name`/`bio`/`location`, Google OAuth tokens, `messages.content`, `room_messages.text`, `sessions.summary_json`, `documents.summary` + `concept_notes`, gradebook + calendar assignment notes/points). Helpers live in `backend/services/encryption.py`; use `encrypt_if_present` at write boundaries and `decrypt_if_present` / `decrypt_numeric` at read boundaries (including before injecting into AI prompts). `ENCRYPTION_KEY` must be set (32 bytes as 64 hex chars; generate via `python -c "import secrets; print(secrets.token_hex(32))"`).
+- Column-level encryption is on for sensitive columns (`users.name`/`first_name`/`last_name`/`bio`/`location`, Google OAuth tokens, `messages.content`, `room_messages.text`, `sessions.summary_json`, `documents.summary` + `concept_notes`, `notes.title`/`body`/`last_summary`, gradebook + calendar assignment notes/points). Helpers live in `backend/services/encryption.py`; use `encrypt_if_present` at write boundaries and `decrypt_if_present` / `decrypt_numeric` at read boundaries (including before injecting into AI prompts). `ENCRYPTION_KEY` must be set (32 bytes as 64 hex chars; generate via `python -c "import secrets; print(secrets.token_hex(32))"`).

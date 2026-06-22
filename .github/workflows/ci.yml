@@ -1,0 +1,91 @@
+name: CI
+
+# Closes the #162 gap: nothing ran the test suites / typecheck / lint on PRs.
+# This gates every PR and push to main on the backend pytest suite and the
+# frontend tsc + vitest + eslint checks.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      # The OCR stack (torch / docling / transformers) is multi-GB and pulls
+      # models at runtime; those integration tests are excluded from the fast
+      # gate below and covered by the manual evals workflow. Everything else
+      # (routes, services, agents, auth, encryption, graph, quiz, …) runs here.
+      - name: Install backend deps (excluding heavy OCR stack)
+        run: |
+          grep -vE '^(torch|docling|transformers)' requirements.txt > /tmp/req-ci.txt
+          pip install -r /tmp/req-ci.txt
+      # #193: ruff lint, gated against the baseline in backend/ruff.toml. New
+      # violations (new files, or new rule categories in existing files) fail.
+      - name: Lint (ruff — baselined ratchet)
+        run: ruff check .
+      - name: Run pytest
+        env:
+          # Non-secret dummy values so config validation / DB-URL construction /
+          # encryption-key import all succeed in CI. The gated tests mock their
+          # own Supabase/Gemini calls (conftest stubs the auth guard).
+          ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+          GEMINI_API_KEY: dummy-not-used-in-tests
+          SUPABASE_URL: https://dummy.supabase.co
+          SUPABASE_SERVICE_KEY: dummy-service-key
+          SESSION_SECRET: dummy-session-secret
+        # Only the OCR integration tests are excluded (heavy deps, run via the
+        # manual evals workflow). The earlier #210 quarantine of
+        # test_documents_routes + the graph self-edges test is gone — they're
+        # hermetic now (shared db-client mock in conftest) and gate normally.
+        run: |
+          python -m pytest tests/ -q \
+            --ignore=tests/evals \
+            --ignore=tests/test_docling_integration.py \
+            --ignore=tests/test_ocr_pipeline.py \
+            --ignore=tests/test_extraction_backends.py \
+            --ignore=tests/test_extraction_service.py
+
+  frontend:
+    name: Frontend (lint + tsc + vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # node 22, not 20: a transitive dep (@cloudflare/kv-asset-handler) requires
+          # node >=22, and .npmrc engine-strict=true enforces it during `npm ci`.
+          # (Cloudflare Workers Builds also builds the app on node 22.)
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # The bundled npm can be <10.9, but package.json engines requires
+      # npm >=10.9.0 <11, so pin it before `npm ci`.
+      - name: Pin npm to the engines-required version
+        run: npm install -g npm@10.9.2 --engine-strict=false
+      - run: npm ci
+      - name: Lint (eslint flat config — replaces the removed `next lint`)
+        run: npx eslint .
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Test
+        run: npm test

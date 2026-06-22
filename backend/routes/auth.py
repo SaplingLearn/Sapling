@@ -25,6 +25,7 @@ from config import (
     FRONTEND_URL,
     SESSION_SECRET,
     SECURE_COOKIES,
+    IS_LOCAL,
 )
 from db.connection import table
 from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
@@ -106,6 +107,15 @@ def _encode_oauth_cookie(payload: dict) -> str:
         sig_bytes = _hmac.new(SESSION_SECRET.encode(), payload_b64.encode(), hashlib.sha256).digest()
         sig_b64 = base64.urlsafe_b64encode(sig_bytes).decode().rstrip("=")
         return f"{payload_b64}.{sig_b64}"
+    # #174: the unsigned in-memory fallback is local-dev only. Outside local it
+    # is a silent, insecure degradation (unsigned OAuth state) — fail closed.
+    # (validate_config already blocks startup without SESSION_SECRET in prod;
+    # this is defense in depth at the use site.)
+    if not IS_LOCAL:
+        raise RuntimeError(
+            "SESSION_SECRET is required outside local dev; refusing to issue "
+            "unsigned OAuth state."
+        )
     nonce = payload.get("n", "")
     if nonce:
         _OAUTH_FALLBACK_STORE[nonce] = (_time.monotonic() + _OAUTH_COOKIE_MAX_AGE, payload)
@@ -133,6 +143,11 @@ def _decode_oauth_cookie(cookie_value: str | None) -> dict | None:
         except Exception:
             return None
         return payload if isinstance(payload, dict) else None
+    # #174: the unsigned in-memory path is local-dev only. Outside local,
+    # refuse to accept unsigned OAuth state (symmetric with the encode-side
+    # guard) so no unsigned cookie is ever honored in production.
+    if not IS_LOCAL:
+        return None
     try:
         padded = cookie_value + "=" * (-len(cookie_value) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())

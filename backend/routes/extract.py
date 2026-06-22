@@ -1,7 +1,7 @@
 import os
 import sys
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 
 from services.extraction_service import (
     extract_text_from_image_bytes,
@@ -11,8 +11,33 @@ from services.extraction_service import (
 from services.extraction_backends.docling_backend import docling_available
 from services.extraction_backends.got_ocr_backend import got_ocr_available
 from services.extraction_backends.tesseract_backend import tesseract_available
+from services.auth_guard import get_session_user_id
+from services.request_limits import check_rate_limit, read_within_limit
 
 router = APIRouter()
+
+# #182: these endpoints run multi-second Docling/tesseract OCR. They were
+# unauthenticated, unbounded, and unthrottled — an anonymous caller could drive
+# unbounded OCR load/cost. Require a session, cap upload size, and rate-limit.
+MAX_OCR_BYTES = 20 * 1024 * 1024  # 20 MB
+_OCR_RATE_LIMIT = 10              # requests...
+_OCR_RATE_WINDOW = 60             # ...per 60s, per user
+
+
+def _enforce_ocr_limits(request: Request) -> str:
+    """Require an authenticated session (401) and a per-user rate limit (429).
+    Returns the authenticated user_id."""
+    user_id = get_session_user_id(request)
+    retry = check_rate_limit(f"ocr:{user_id}", limit=_OCR_RATE_LIMIT, window_sec=_OCR_RATE_WINDOW)
+    if retry is not None:
+        # NB: the app's global HTTPException handler (main.py) doesn't forward
+        # exc.headers, so the retry budget is conveyed in the detail string
+        # rather than a Retry-After header.
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many OCR requests. Retry in {retry}s.",
+        )
+    return user_id
 
 
 def _ocr_unavailable_error(detail: str) -> HTTPException:
@@ -44,14 +69,16 @@ def extraction_health():
 
 @router.post("/pdf")
 async def extract_pdf(
+    request: Request,
     file: UploadFile = File(...),
     force_ocr: bool = Query(False),
     max_pages: int = Query(25, ge=1, le=200),
     lang: str = Query("eng"),
 ):
+    _enforce_ocr_limits(request)  # 401 unauthenticated, 429 rate-limited (#182)
     if file.content_type not in ALLOWED_PDF_TYPES:
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
-    pdf_bytes = await file.read()
+    pdf_bytes = await read_within_limit(file, MAX_OCR_BYTES)  # 413 if oversize (#182)
     if not pdf_bytes:
         raise HTTPException(status_code=400, detail="Empty file")
 
@@ -94,12 +121,14 @@ async def extract_pdf(
 
 @router.post("/image")
 async def extract_image(
+    request: Request,
     file: UploadFile = File(...),
     lang: str = Query("eng"),
 ):
+    _enforce_ocr_limits(request)  # 401 unauthenticated, 429 rate-limited (#182)
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=400, detail="Only PNG/JPG/WEBP images are supported")
-    image_bytes = await file.read()
+    image_bytes = await read_within_limit(file, MAX_OCR_BYTES)  # 413 if oversize (#182)
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Empty file")
 

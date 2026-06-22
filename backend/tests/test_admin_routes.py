@@ -13,6 +13,8 @@ Tests cover:
 
 All DB access and admin auth are mocked.
 """
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -611,10 +613,19 @@ class TestAuditLogRead:
 
 class TestAnalyticsOverview:
     def test_returns_totals_and_series(self):
+        # Seed signup dates relative to "now" so they always land inside the
+        # route's rolling 30-day window (admin.py builds signups_by_day for the
+        # last 30 days). A previously hardcoded 2026-05-01 fell out of that
+        # window as time passed, rotting this test. The 3-/2-day offsets keep
+        # margin from both window edges and the UTC midnight boundary.
+        signup_day = (datetime.now(timezone.utc) - timedelta(days=3)).date()
+        pending_day = (datetime.now(timezone.utc) - timedelta(days=2)).date()
+        signup_iso = f"{signup_day.isoformat()}T00:00:00Z"
+        pending_iso = f"{pending_day.isoformat()}T00:00:00Z"
         users = [
-            {"id": "u1", "is_approved": True,  "created_at": "2026-05-01T00:00:00Z"},
-            {"id": "u2", "is_approved": True,  "created_at": "2026-05-01T00:00:00Z"},
-            {"id": "u3", "is_approved": False, "created_at": "2026-05-02T00:00:00Z"},
+            {"id": "u1", "is_approved": True,  "created_at": signup_iso},
+            {"id": "u2", "is_approved": True,  "created_at": signup_iso},
+            {"id": "u3", "is_approved": False, "created_at": pending_iso},
         ]
         roles = [{"id": "rA", "slug": "admin", "name": "Admin", "color": "#dc2626"}]
         user_roles = [{"role_id": "rA"}, {"role_id": "rA"}, {"role_id": "rA"}]
@@ -640,6 +651,9 @@ class TestAnalyticsOverview:
         assert body["totals"]["approved"] == 2
         assert body["totals"]["pending"] == 1
         assert body["totals"]["admins"] == 3
-        assert any(d["date"] == "2026-05-01" and d["count"] == 2 for d in body["signups_by_day"])
+        assert any(
+            d["date"] == signup_day.isoformat() and d["count"] == 2
+            for d in body["signups_by_day"]
+        )
         assert body["role_counts"][0]["slug"] == "admin"
         assert body["role_counts"][0]["count"] == 3

@@ -36,7 +36,9 @@ playwright>=1.45,<2
 # Testing
 pytest
 pytest-anyio
-email-validator
+
+# Linting (#193): `ruff check` is gated in CI against the baseline in ruff.toml.
+ruff
 
 # Pydantic AI agents (see docs/decisions/0001-adopt-pydantic-ai.md)
 pydantic-ai-slim[google]>=0.0.20

@@ -210,7 +210,11 @@ def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
     if "course_id" in patch and patch["course_id"] == "":
         patch["course_id"] = None
 
-    table("assignments").update(patch, filters={"id": f"eq.{assignment_id}"})
+    # Scope the write by user_id too (defense in depth): the scoped SELECT above
+    # already 404s a non-owned id, but don't rely on that guard alone (#123).
+    table("assignments").update(
+        patch, filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}
+    )
     return {"updated": True}
 
 
@@ -222,7 +226,10 @@ def delete_assignment(assignment_id: str, request: FastAPIRequest, user_id: str 
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Assignment not found")
-    table("assignments").delete(filters={"id": f"eq.{assignment_id}"})
+    # Scope the delete by user_id too (defense in depth), not just the guard above.
+    table("assignments").delete(
+        filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}
+    )
     return {"deleted": True}
 
 
@@ -356,9 +363,10 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
             "end": {"date": a["due_date"]},
         }
         created = service.events().insert(calendarId="primary", body=event).execute()
+        # Scope the write-back by user_id too (defense in depth), matching export.
         table("assignments").update(
             {"google_event_id": created["id"]},
-            filters={"id": f"eq.{a['id']}"},
+            filters={"id": f"eq.{a['id']}", "user_id": f"eq.{body.user_id}"},
         )
         synced += 1
 
@@ -376,9 +384,15 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
     exported = 0
     skipped = 0
     for aid in body.assignment_ids:
+        # #123: scope by user_id, not just id. Without this an authenticated
+        # caller could pass another user's assignment UUIDs to read+decrypt
+        # their private notes, push them into the caller's calendar, and stamp
+        # google_event_id onto the victim's row. Every sibling endpoint
+        # (update/delete/sync) already scopes by user_id; a non-owned id now
+        # returns no row and is skipped.
         rows = table("assignments").select(
             "id,title,due_date,notes,google_event_id,courses!left(course_code,course_name)",
-            filters={"id": f"eq.{aid}"},
+            filters={"id": f"eq.{aid}", "user_id": f"eq.{body.user_id}"},
         )
         if not rows:
             continue
@@ -400,9 +414,11 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
             "end": {"date": a["due_date"]},
         }
         created = service.events().insert(calendarId="primary", body=event).execute()
+        # Scope the write-back by user_id too (defense in depth): never stamp
+        # google_event_id onto a row the caller doesn't own.
         table("assignments").update(
             {"google_event_id": created["id"]},
-            filters={"id": f"eq.{aid}"},
+            filters={"id": f"eq.{aid}", "user_id": f"eq.{body.user_id}"},
         )
         exported += 1
 

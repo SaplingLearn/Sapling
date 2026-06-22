@@ -14,7 +14,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from db.connection import table
-from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody
+from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.auth_guard import require_self, get_session_user_id
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.gemini_service import (
@@ -711,6 +711,35 @@ def list_sessions(user_id: str, request: Request, limit: int = 10):
             "is_active": s.get("ended_at") is None,
         })
     return {"sessions": result}
+
+
+@router.patch("/sessions/{session_id}")
+def rename_session(session_id: str, body: RenameSessionBody, request: Request):
+    require_self(body.user_id, request)
+    topic = body.topic.strip()
+    if not topic or len(topic) > 120:
+        raise HTTPException(status_code=400, detail="Topic must be 1-120 characters")
+
+    if session_id in PENDING_SESSIONS:
+        pending = PENDING_SESSIONS[session_id]
+        if pending["user_id"] != body.user_id:
+            raise HTTPException(status_code=403, detail="Session user mismatch")
+        pending["topic"] = topic
+        return {"updated": True, "session": {"id": session_id, "topic": topic}}
+
+    owner_rows = table("sessions").select(
+        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
+    )
+    if not owner_rows:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if owner_rows[0].get("user_id") != body.user_id:
+        raise HTTPException(status_code=403, detail="Session user mismatch")
+
+    table("sessions").update(
+        {"topic": topic},
+        filters={"id": f"eq.{session_id}"},
+    )
+    return {"updated": True, "session": {"id": session_id, "topic": topic}}
 
 
 @router.delete("/sessions/{session_id}")
