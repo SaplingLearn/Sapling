@@ -3,6 +3,12 @@ Remove duplicate graph_nodes rows where (user_id, concept_name) appears more tha
 Keeps the row with the highest mastery_score (tiebreak: most times_studied).
 Also cleans up dependent rows in graph_edges, quiz_attempts, and quiz_context.
 
+As of #181 this is a one-time backfill, not an ongoing safeguard: the UNIQUE
+index idx_graph_nodes_user_concept_course (see migration_dedup_unique.sql) now
+prevents duplicates from being created in the first place, and
+apply_graph_update recovers from the resulting 409. Keep this script only for
+cleaning environments seeded before that migration.
+
 Run from the backend/ directory:
     python db/dedup_nodes.py
 """
