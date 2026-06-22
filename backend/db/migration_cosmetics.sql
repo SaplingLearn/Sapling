@@ -73,9 +73,14 @@ BEGIN
   END IF;
 END $$;
 
-ALTER TABLE user_settings
-    ADD CONSTRAINT fk_user_settings_featured_role
-    FOREIGN KEY (featured_role_id) REFERENCES roles(id);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_user_settings_featured_role') THEN
+    ALTER TABLE user_settings
+      ADD CONSTRAINT fk_user_settings_featured_role
+      FOREIGN KEY (featured_role_id) REFERENCES roles(id);
+  END IF;
+END $$;
 
 -- Storage: the admin cosmetic creation UI uploads frame/banner assets to a
 -- public Supabase Storage bucket named `cosmetic-assets`. Create it once with:
