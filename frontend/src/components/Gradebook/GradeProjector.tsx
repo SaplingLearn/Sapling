@@ -198,7 +198,10 @@ function majorTicks(scale: LetterScaleTier[]): { letter: string; min: number }[]
 }
 
 function tierFor(scale: LetterScaleTier[], pct: number): string | undefined {
-  const rounded = Math.round(pct * 10) / 10;
+  // Round to 4dp to match backend letter_for() exactly — strips float noise
+  // without promoting values semantically below a boundary (89.95 stays B+,
+  // not A-, which a 1dp round would wrongly push to 90.0).
+  const rounded = Math.round(pct * 1e4) / 1e4;
   return [...scale].sort((a, b) => b.min - a.min).find((t) => rounded >= t.min)?.letter;
 }
 
@@ -234,7 +237,7 @@ export function GradeProjector({
     );
   }
 
-  const roundedCurrent = Math.round(current * 10) / 10;
+  const roundedCurrent = Math.round(current * 1e4) / 1e4;
   const nextUp = [...scale]
     .sort((a, b) => a.min - b.min)
     .find((t) => roundedCurrent < t.min);

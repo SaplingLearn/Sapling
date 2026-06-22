@@ -70,7 +70,9 @@ function compactLetterScale(
 }
 
 function tierFor(scale: LetterScaleTier[], pct: number): string | undefined {
-  const rounded = Math.round(pct * 10) / 10;
+  // 4dp to match backend letter_for() — a 1dp round would push 89.95 to 90.0 (A-)
+  // while the server keeps it B+.
+  const rounded = Math.round(pct * 1e4) / 1e4;
   return [...scale].sort((a, b) => b.min - a.min).find((t) => rounded >= t.min)?.letter;
 }
 
@@ -391,7 +393,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
       data.letter_scale && data.letter_scale.length > 0
         ? data.letter_scale
         : DEFAULT_SCALE;
-    const rounded = Math.round(predictedCurvedPercent * 10) / 10;
+    const rounded = Math.round(predictedCurvedPercent * 1e4) / 1e4;
     return (
       [...scale].sort((a, b) => b.min - a.min).find((t) => rounded >= t.min)
         ?.letter ?? null
@@ -1294,7 +1296,7 @@ function CompositionStatus({
   scale: LetterScaleTier[];
   isPredicted?: boolean;
 }) {
-  const roundedCurrent = Math.round(current * 10) / 10;
+  const roundedCurrent = Math.round(current * 1e4) / 1e4;
   const nextUp = [...scale]
     .sort((a, b) => a.min - b.min)
     .find((t) => roundedCurrent < t.min);
