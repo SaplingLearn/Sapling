@@ -27,3 +27,14 @@ WITH ranked AS (
 DELETE FROM graph_edges
  WHERE source_node_id IN (SELECT id FROM losers)
     OR target_node_id IN (SELECT id FROM losers);
+
+-- 2. Null quiz_attempts.concept_node_id (nullable FK) pointing at a duplicate.
+WITH ranked AS (
+  SELECT id, row_number() OVER (
+    PARTITION BY user_id, lower(concept_name), course_id
+    ORDER BY mastery_score DESC NULLS LAST, times_studied DESC NULLS LAST, id
+  ) AS rn
+  FROM graph_nodes
+), losers AS (SELECT id FROM ranked WHERE rn > 1)
+UPDATE quiz_attempts SET concept_node_id = NULL
+ WHERE concept_node_id IN (SELECT id FROM losers);
