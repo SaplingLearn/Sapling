@@ -41,3 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_documents_user_course
 -- #178 study_guides: cached-guide listing filters user_id, orders generated_at.
 CREATE INDEX IF NOT EXISTS idx_study_guides_user
     ON study_guides(user_id, generated_at DESC);
+
+-- Cache-hit lookup keys on (user_id, course_id, exam_id).
+CREATE INDEX IF NOT EXISTS idx_study_guides_lookup
+    ON study_guides(user_id, course_id, exam_id);
