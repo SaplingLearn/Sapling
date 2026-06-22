@@ -152,6 +152,10 @@ CREATE TABLE IF NOT EXISTS quiz_attempts (
     completed_at    TIMESTAMPTZ
 );
 
+-- Achievement counts + history aggregations filter user_id (#178).
+CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user
+    ON quiz_attempts(user_id);
+
 -- Per-user per-concept quiz context (adaptive history for Gemini)
 CREATE TABLE IF NOT EXISTS quiz_context (
     id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
