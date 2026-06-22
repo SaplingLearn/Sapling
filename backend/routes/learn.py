@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
+from agents import ORCHESTRATOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from db.connection import table
@@ -486,7 +487,11 @@ async def _chat_via_agent(
         )
 
     model_override = _resolve_model_pref(model_pref)
-    run_kwargs: dict = {"deps": deps, "message_history": message_history}
+    run_kwargs: dict = {
+        "deps": deps,
+        "message_history": message_history,
+        "usage_limits": ORCHESTRATOR_LIMITS,
+    }
     if model_override is not None:
         run_kwargs["model"] = model_override
 
@@ -499,9 +504,17 @@ async def _chat_via_agent(
     result = await agent.run(user_message, **run_kwargs)
     reply = result.output  # str — chat_tutor agents return plain Markdown.
 
+    # Merge all graph update payloads accumulated by tools during this run
+    # into a single dict so the route can persist graph_update_json and
+    # end_session can derive concepts_covered correctly.
+    merged_graph_update: dict = {}
+    for gu in deps.graph_updates:
+        for key, items in gu.items():
+            merged_graph_update.setdefault(key, []).extend(items)
+
     return {
         "reply": reply,
-        "graph_update": {},
+        "graph_update": merged_graph_update,
         "mastery_changes": [],
     }
 
@@ -599,7 +612,8 @@ async def chat(body: ChatBody, request: Request):
     # own writes so a fallback doesn't double-insert. Encryption happens
     # inside save_message (`encrypt_if_present`).
     save_message(body.session_id, "user", body.message)
-    save_message(body.session_id, "assistant", response["reply"])
+    graph_update = response.get("graph_update") or None
+    save_message(body.session_id, "assistant", response["reply"], graph_update)
 
     return response
 

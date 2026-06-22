@@ -32,7 +32,7 @@ from agents.tools.chat_context import (
     read_user_progress_tool,
     search_course_materials_tool,
 )
-from agents.tools.graph import apply_graph_update_tool
+from agents.tools.graph import apply_graph_update_tool, update_mastery_tool
 
 
 TutorMode = Literal["socratic", "expository", "teachback"]
@@ -50,6 +50,12 @@ _SHARED_PREAMBLE = (
     "fabricate context.\n\n"
     "Tone: warm, concise, no filler. Use math/code blocks where helpful "
     "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Don't over-explain.\n\n"
+    "Knowledge graph tools:\n"
+    "- apply_graph_update_tool: register NEW concepts the student hasn't seen before.\n"
+    "- update_mastery_tool: adjust mastery on EXISTING concepts this turn. "
+    "Use +0.1 to +0.3 when they answer correctly; −0.05 to −0.1 for gaps. "
+    "Call this at the END of every turn where the student demonstrated "
+    "understanding or revealed a misconception.\n\n"
 )
 
 _SOCRATIC_PROMPT = _SHARED_PREAMBLE + (
@@ -104,6 +110,7 @@ _TOOLS = [
     read_session_history_tool,
     read_user_progress_tool,
     apply_graph_update_tool,
+    update_mastery_tool,
 ]
 
 

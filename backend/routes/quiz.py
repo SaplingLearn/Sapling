@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
+from agents import ORCHESTRATOR_LIMITS
 from agents.quiz import quiz_agent, Quiz, QuizQuestion
 from agents.deps import SaplingDeps
 from config import get_mastery_tier
@@ -183,7 +184,7 @@ async def _quiz_via_agent(
         )
 
     model_override = _resolve_model_pref(model_pref)
-    run_kwargs: dict = {"deps": deps}
+    run_kwargs: dict = {"deps": deps, "usage_limits": ORCHESTRATOR_LIMITS}
     if model_override is not None:
         run_kwargs["model"] = model_override
     result = await quiz_agent.run(user_message, **run_kwargs)
