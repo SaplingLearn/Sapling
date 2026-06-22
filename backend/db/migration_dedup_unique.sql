@@ -60,3 +60,9 @@ WITH ranked AS (
 )
 DELETE FROM graph_nodes
  WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
+
+-- Now the rows are unique, build the constraint. lower(concept_name) matches the
+-- app's _normalize_concept (casefold + already-collapsed whitespace). NULLS NOT
+-- DISTINCT (PG15+) so two course-less nodes for the same concept also collide.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_nodes_user_concept_course
+    ON graph_nodes(user_id, lower(concept_name), course_id) NULLS NOT DISTINCT;
