@@ -11,3 +11,8 @@
 -- already uses in migration_gradebook.sql, because Postgres has no
 -- ADD CONSTRAINT IF NOT EXISTS. Pre-existing orphan rows are deleted first so
 -- the ALTER TABLE can validate.
+
+-- #179 graph_edges.user_id: remove edges whose user_id has no users row, then
+-- add the FK other learning tables already enforce.
+DELETE FROM graph_edges
+ WHERE user_id NOT IN (SELECT id FROM users);
