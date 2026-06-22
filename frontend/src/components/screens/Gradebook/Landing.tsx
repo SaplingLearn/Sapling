@@ -170,7 +170,7 @@ export function GradebookLanding() {
     const idx = anchors.indexOf(active as HTMLAnchorElement);
     if (idx === -1) return;
 
-    let nextIdx = idx;
+    let nextIdx: number;
     if (e.key === "ArrowRight" || e.key === "ArrowDown") {
       nextIdx = Math.min(idx + 1, anchors.length - 1);
     } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
