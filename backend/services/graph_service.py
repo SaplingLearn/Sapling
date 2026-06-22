@@ -415,15 +415,38 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         init_m = _coerce_unit(new_node.get("initial_mastery"), 0.0)
 
         new_id = str(uuid.uuid4())
-        table("graph_nodes").insert({
-            "id": new_id,
-            "user_id": user_id,
-            "concept_name": name,
-            "mastery_score": init_m,
-            "mastery_tier": get_mastery_tier(init_m),
-            "course_id": node_course_id,
-            "mastery_events": [],
-        })
+        try:
+            table("graph_nodes").insert({
+                "id": new_id,
+                "user_id": user_id,
+                "concept_name": name,
+                "mastery_score": init_m,
+                "mastery_tier": get_mastery_tier(init_m),
+                "course_id": node_course_id,
+                "mastery_events": [],
+            })
+        except httpx.HTTPStatusError as exc:
+            # A concurrent apply_graph_update created this same normalized concept
+            # first. The UNIQUE index (#181) turns that race into a 409 instead of
+            # a silent duplicate; recover by resolving the row that won so the rest
+            # of this batch (updated_nodes / new_edges) still links to it.
+            if getattr(exc.response, "status_code", None) != 409:
+                raise
+            refetch = {"user_id": f"eq.{user_id}"}
+            if node_course_id:
+                refetch["course_id"] = f"eq.{node_course_id}"
+            winner = next(
+                (r for r in (table("graph_nodes").select(
+                    "id,concept_name,mastery_score,times_studied,course_id,mastery_events",
+                    filters=refetch,
+                ) or [])
+                 if _normalize_concept(r.get("concept_name") or "") == norm),
+                None,
+            )
+            if winner:
+                by_name[norm] = winner
+                inserted_in_batch[norm] = winner
+            continue
         # Track in-batch inserts so subsequent updated_nodes / new_edges in the
         # same call resolve against just-created nodes.
         inserted_in_batch[norm] = {
