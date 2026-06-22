@@ -13,3 +13,7 @@
 -- #161 messages: every chat load filters session_id, orders created_at asc.
 CREATE INDEX IF NOT EXISTS idx_messages_session_created
     ON messages(session_id, created_at);
+
+-- #160 graph_edges has zero indexes; graph render filters by user_id.
+CREATE INDEX IF NOT EXISTS idx_graph_edges_user
+    ON graph_edges(user_id);
