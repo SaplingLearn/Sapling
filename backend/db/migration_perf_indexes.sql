@@ -29,3 +29,7 @@ CREATE INDEX IF NOT EXISTS idx_graph_edges_target
 -- #176 sessions: history list filters user_id, orders started_at desc.
 CREATE INDEX IF NOT EXISTS idx_sessions_user_started
     ON sessions(user_id, started_at DESC);
+
+-- #177 documents: library listing filters user_id, orders created_at desc.
+CREATE INDEX IF NOT EXISTS idx_documents_user_created
+    ON documents(user_id, created_at DESC);
