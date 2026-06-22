@@ -91,6 +91,12 @@ CREATE TABLE IF NOT EXISTS graph_nodes (
 
 CREATE INDEX IF NOT EXISTS idx_graph_nodes_user_course ON graph_nodes(user_id, course_id);
 
+-- Idempotency backstop for apply_graph_update: no duplicate concept per
+-- (user, normalized name, course). NULLS NOT DISTINCT (PG15+) so course-less
+-- duplicates also collide (#181).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_nodes_user_concept_course
+    ON graph_nodes(user_id, lower(concept_name), course_id) NULLS NOT DISTINCT;
+
 -- Knowledge graph edges
 CREATE TABLE IF NOT EXISTS graph_edges (
     id                TEXT PRIMARY KEY,
