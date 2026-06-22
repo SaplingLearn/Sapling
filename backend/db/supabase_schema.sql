@@ -108,6 +108,11 @@ CREATE TABLE IF NOT EXISTS graph_edges (
     relationship_type TEXT DEFAULT 'related'
 );
 
+-- Idempotency backstop for edge creation: one edge per (user, source, target).
+-- Backs the upsert in apply_graph_update (#195).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_unique
+    ON graph_edges(user_id, source_node_id, target_node_id);
+
 -- Learning sessions
 CREATE TABLE IF NOT EXISTS sessions (
     id           TEXT PRIMARY KEY,
