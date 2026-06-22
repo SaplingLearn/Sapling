@@ -495,8 +495,8 @@ CREATE TABLE IF NOT EXISTS user_cosmetics (
 
 CREATE TABLE notes (
     id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    course_id TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id),      -- #180
+    course_id TEXT NOT NULL REFERENCES courses(id),  -- #180
     title TEXT,
     body TEXT,
     tags TEXT[] NOT NULL DEFAULT '{}',
