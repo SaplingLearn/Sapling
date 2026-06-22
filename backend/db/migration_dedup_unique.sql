@@ -11,3 +11,19 @@
 -- Existing duplicate rows must be collapsed before the unique index can build,
 -- so each section dedups first (keeping the strongest/oldest row) and repoints
 -- or removes dependents, mirroring db/dedup_nodes.py.
+
+-- #181 node dedup. The window ranks rows within each (user, normalized concept,
+-- course) group; rn > 1 are the duplicates to collapse. Same ranking is reused
+-- by each dependent-cleanup statement so they target an identical "losers" set.
+
+-- 1. Remove edges that reference a soon-to-be-removed duplicate node.
+WITH ranked AS (
+  SELECT id, row_number() OVER (
+    PARTITION BY user_id, lower(concept_name), course_id
+    ORDER BY mastery_score DESC NULLS LAST, times_studied DESC NULLS LAST, id
+  ) AS rn
+  FROM graph_nodes
+), losers AS (SELECT id FROM ranked WHERE rn > 1)
+DELETE FROM graph_edges
+ WHERE source_node_id IN (SELECT id FROM losers)
+    OR target_node_id IN (SELECT id FROM losers);
