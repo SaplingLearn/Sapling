@@ -27,3 +27,10 @@ BEGIN
       FOREIGN KEY (user_id) REFERENCES users(id);
   END IF;
 END $$;
+
+-- #180 notes.user_id / notes.course_id: notes is core user data but both
+-- columns are bare TEXT. Remove rows pointing at a non-existent user or course
+-- (e.g. notes left dangling after a course delete) before adding the FKs.
+DELETE FROM notes
+ WHERE user_id   NOT IN (SELECT id FROM users)
+    OR course_id NOT IN (SELECT id FROM courses);
