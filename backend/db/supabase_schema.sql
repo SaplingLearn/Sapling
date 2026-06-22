@@ -121,6 +121,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     name         TEXT
 );
 
+-- History listing + profile stats filter user_id, order started_at desc (#176).
+CREATE INDEX IF NOT EXISTS idx_sessions_user_started
+    ON sessions(user_id, started_at DESC);
+
 -- Chat messages within a session
 CREATE TABLE IF NOT EXISTS messages (
     id                TEXT PRIMARY KEY,
