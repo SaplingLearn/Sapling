@@ -1,0 +1,13 @@
+-- Migration: foreign-key integrity for graph_edges + notes
+-- Run once in the Supabase SQL editor (idempotent — safe to re-run).
+--
+-- Closes the orphan-row gaps where a user_id/course_id is a bare TEXT column
+-- with no REFERENCES, inconsistent with every sibling table:
+--   #179  graph_edges.user_id  -> users(id)
+--   #180  notes.user_id        -> users(id)
+--   #180  notes.course_id      -> courses(id)
+--
+-- Each constraint is added behind the same pg_constraint guard the codebase
+-- already uses in migration_gradebook.sql, because Postgres has no
+-- ADD CONSTRAINT IF NOT EXISTS. Pre-existing orphan rows are deleted first so
+-- the ALTER TABLE can validate.
