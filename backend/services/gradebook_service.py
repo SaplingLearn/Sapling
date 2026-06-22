@@ -213,9 +213,10 @@ def letter_for(percent: Optional[float], scale: Optional[list[dict]]) -> Optiona
     """
     if percent is None:
         return None
-    # Round to 1 decimal to match display precision and avoid floating-point
-    # boundary errors (e.g. 89.9999…% falsely missing the 90.0 A- threshold).
-    rounded = round(percent, 1)
+    # Round to 4 decimal places to strip floating-point noise (e.g. 89.99999999…
+    # from arithmetic should still reach the 90.0 threshold) without promoting
+    # values that are semantically below a boundary (92.999 must stay A-, not A).
+    rounded = round(percent, 4)
     if scale:
         ordered = sorted(scale, key=lambda x: -float(x.get("min", 0)))
         for tier in ordered:
