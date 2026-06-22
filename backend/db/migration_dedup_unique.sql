@@ -66,3 +66,15 @@ DELETE FROM graph_nodes
 -- DISTINCT (PG15+) so two course-less nodes for the same concept also collide.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_nodes_user_concept_course
     ON graph_nodes(user_id, lower(concept_name), course_id) NULLS NOT DISTINCT;
+
+-- #195 edge dedup: collapse duplicate (user, source, target) edges, keeping the
+-- oldest (then lowest id) so the constraint below can build.
+WITH ranked AS (
+  SELECT id, row_number() OVER (
+    PARTITION BY user_id, source_node_id, target_node_id
+    ORDER BY created_at ASC NULLS LAST, id
+  ) AS rn
+  FROM graph_edges
+)
+DELETE FROM graph_edges
+ WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
