@@ -21,3 +21,7 @@ CREATE INDEX IF NOT EXISTS idx_graph_edges_user
 -- Node-endpoint lookups: cascade delete scans by source_node_id.
 CREATE INDEX IF NOT EXISTS idx_graph_edges_source
     ON graph_edges(source_node_id);
+
+-- ...and the mirror direction for the second cascade-delete scan.
+CREATE INDEX IF NOT EXISTS idx_graph_edges_target
+    ON graph_edges(target_node_id);
