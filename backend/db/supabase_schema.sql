@@ -94,7 +94,7 @@ CREATE INDEX IF NOT EXISTS idx_graph_nodes_user_course ON graph_nodes(user_id, c
 -- Knowledge graph edges
 CREATE TABLE IF NOT EXISTS graph_edges (
     id                TEXT PRIMARY KEY,
-    user_id           TEXT NOT NULL,
+    user_id           TEXT NOT NULL REFERENCES users(id),  -- #179
     source_node_id    TEXT NOT NULL REFERENCES graph_nodes(id),
     target_node_id    TEXT NOT NULL REFERENCES graph_nodes(id),
     strength          DOUBLE PRECISION DEFAULT 0.5,
