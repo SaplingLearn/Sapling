@@ -404,11 +404,15 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         )
         return resp
 
-    # Build a short-lived HMAC token so the frontend can verify this redirect
-    # without a second round-trip to the backend.
+    # One-shot HMAC token so the frontend can verify this redirect without a
+    # second round-trip. The frontend exchanges it for the real, long-lived
+    # `sapling_session` cookie (see _REDIRECT_TOKEN_TTL_SECONDS above) — it is
+    # NOT the session itself, so it expires quickly.
     auth_token = ""
     if SESSION_SECRET:
-        payload = json.dumps({"user_id": user_id, "exp": int(_time.time()) + 300}).encode()
+        payload = json.dumps(
+            {"user_id": user_id, "exp": int(_time.time()) + _REDIRECT_TOKEN_TTL_SECONDS}
+        ).encode()
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         sig_bytes = _hmac.new(SESSION_SECRET.encode(), payload_b64.encode(), hashlib.sha256).digest()
         sig_b64 = base64.urlsafe_b64encode(sig_bytes).decode().rstrip("=")
