@@ -487,11 +487,13 @@ CREATE TABLE IF NOT EXISTS user_cosmetics (
 -- filters work for tag-based search. last_summary is the cached output of
 -- the most recent /summarize action; null until the user runs it.
 --
+-- notes.user_id / notes.course_id DO carry hard FKs (#180) — they are core
+-- user data and must not dangle past a user/course delete.
+--
 -- note_concepts is a junction table linking notes <-> graph_nodes.
 -- ON DELETE CASCADE on note_id ensures deleting a note cleans up its
--- links. The graph_node FK is intentionally NOT a hard FK because
--- graph_nodes uses TEXT ids managed by application code (no enforced FK
--- pattern elsewhere in this codebase — see graph_edges.source_node_id).
+-- links. Only the note_concepts.concept_node_id link is intentionally NOT a
+-- hard FK, because graph_nodes uses TEXT ids managed by application code.
 
 CREATE TABLE notes (
     id TEXT PRIMARY KEY,
