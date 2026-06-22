@@ -472,7 +472,7 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
                     **record_write,
                 })
                 inserted += 1
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to upsert Gradescope assignment %s", gs_id)
             failed += 1
 
