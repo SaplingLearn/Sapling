@@ -45,3 +45,14 @@ BEGIN
       FOREIGN KEY (user_id) REFERENCES users(id);
   END IF;
 END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'notes_course_id_fkey'
+  ) THEN
+    ALTER TABLE notes
+      ADD CONSTRAINT notes_course_id_fkey
+      FOREIGN KEY (course_id) REFERENCES courses(id);
+  END IF;
+END $$;
