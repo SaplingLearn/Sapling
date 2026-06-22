@@ -9,6 +9,7 @@ import json
 import base64
 import hashlib
 import hmac as _hmac
+import os
 import re
 import secrets
 import time as _time
