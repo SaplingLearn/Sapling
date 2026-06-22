@@ -535,14 +535,17 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
             },
         )
         if not existing_edge:
-            table("graph_edges").insert({
+            # upsert (not insert) so a concurrent caller that passed the same
+            # existence check can't create a duplicate — the UNIQUE index (#195)
+            # collapses the race into a no-op merge instead of a 409.
+            table("graph_edges").upsert({
                 "id": str(uuid.uuid4()),
                 "user_id": user_id,
                 "source_node_id": src["id"],
                 "target_node_id": tgt["id"],
                 "strength": strength,
                 "relationship_type": relationship_type,
-            })
+            }, on_conflict="user_id,source_node_id,target_node_id")
 
     if touched_courses:
         from services.course_context_service import update_course_context
