@@ -45,3 +45,7 @@ CREATE INDEX IF NOT EXISTS idx_study_guides_user
 -- Cache-hit lookup keys on (user_id, course_id, exam_id).
 CREATE INDEX IF NOT EXISTS idx_study_guides_lookup
     ON study_guides(user_id, course_id, exam_id);
+
+-- quiz_attempts: achievement counts + history aggregations filter user_id.
+CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user
+    ON quiz_attempts(user_id);
