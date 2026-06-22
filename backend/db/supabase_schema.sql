@@ -102,6 +102,12 @@ CREATE TABLE IF NOT EXISTS graph_edges (
     relationship_type TEXT DEFAULT 'related'
 );
 
+-- graph_edges has no FK-backed index; graph render + cascade delete scan by
+-- user_id and by either node endpoint (#160).
+CREATE INDEX IF NOT EXISTS idx_graph_edges_user   ON graph_edges(user_id);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_node_id);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_node_id);
+
 -- Learning sessions
 CREATE TABLE IF NOT EXISTS sessions (
     id           TEXT PRIMARY KEY,
