@@ -135,6 +135,10 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at        TIMESTAMPTZ DEFAULT now()
 );
 
+-- Fastest-growing table; every chat load filters session_id, orders created_at (#161).
+CREATE INDEX IF NOT EXISTS idx_messages_session_created
+    ON messages(session_id, created_at);
+
 -- Quiz attempts
 CREATE TABLE IF NOT EXISTS quiz_attempts (
     id              TEXT PRIMARY KEY,
