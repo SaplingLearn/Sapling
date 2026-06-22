@@ -67,3 +67,8 @@ Thumbs.db
 # ---- Superpowers brainstorm sessions ----
 .superpowers/
 
+
+# ---- Editor swap / scratch files (#175) ----
+*.sw[a-p]
+.*.sw[a-p]
+*~
