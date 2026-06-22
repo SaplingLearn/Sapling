@@ -16,3 +16,14 @@
 -- add the FK other learning tables already enforce.
 DELETE FROM graph_edges
  WHERE user_id NOT IN (SELECT id FROM users);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'graph_edges_user_id_fkey'
+  ) THEN
+    ALTER TABLE graph_edges
+      ADD CONSTRAINT graph_edges_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES users(id);
+  END IF;
+END $$;
