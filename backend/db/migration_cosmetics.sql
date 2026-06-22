@@ -64,9 +64,14 @@ BEGIN
   END IF;
 END $$;
 
-ALTER TABLE user_settings
-    ADD CONSTRAINT fk_user_settings_title
-    FOREIGN KEY (equipped_title_id) REFERENCES cosmetics(id);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_user_settings_title') THEN
+    ALTER TABLE user_settings
+      ADD CONSTRAINT fk_user_settings_title
+      FOREIGN KEY (equipped_title_id) REFERENCES cosmetics(id);
+  END IF;
+END $$;
 
 ALTER TABLE user_settings
     ADD CONSTRAINT fk_user_settings_featured_role
