@@ -84,7 +84,7 @@ jobs:
         run: npm install -g npm@10.9.2 --engine-strict=false
       - run: npm ci
       - name: Lint (eslint flat config — replaces the removed `next lint`)
-        run: npx eslint .
+        run: npx eslint . --max-warnings -1
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Test
