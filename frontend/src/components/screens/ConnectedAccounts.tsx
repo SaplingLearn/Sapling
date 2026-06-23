@@ -30,8 +30,8 @@ export function ConnectedAccounts() {
     try {
       const s = await getGradescopeStatus(userId);
       setStatus(s);
-    } catch (e: any) {
-      toast.error(`Couldn't load Gradescope status: ${e?.message ?? ""}`);
+    } catch (e: unknown) {
+      toast.error(`Couldn't load Gradescope status: ${e instanceof Error ? e.message : ""}`);
       setStatus({ has_credentials: false, auth_mode: null, last_synced_at: null });
     } finally {
       setLoading(false);
@@ -49,8 +49,8 @@ export function ConnectedAccounts() {
       await deleteGradescopeCredentials(userId);
       toast.info("Gradescope disconnected.");
       await refresh();
-    } catch (e: any) {
-      toast.error(`Couldn't disconnect: ${e?.message ?? ""}`);
+    } catch (e: unknown) {
+      toast.error(`Couldn't disconnect: ${e instanceof Error ? e.message : ""}`);
     }
   }
 
@@ -227,7 +227,7 @@ function ProviderCard({
           }}
         >
           Pulls assignments and grades from your enrolled courses. For SSO
-          (BU and other Shibboleth schools), pick the "session cookies"
+          (BU and other Shibboleth schools), pick the &ldquo;session cookies&rdquo;
           option when connecting.
         </p>
         {connected && status?.last_synced_at && (

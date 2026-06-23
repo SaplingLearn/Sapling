@@ -102,8 +102,8 @@ export function GradescopeSyncModal({
         setCourses(gs.courses);
         setStage("link");
       }
-    } catch (e: any) {
-      setError(e?.message ?? "Couldn't load Gradescope status");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Couldn't load Gradescope status");
       setStage("choose-mode");
     }
   }, [userId, saplingCourseId]);
@@ -134,8 +134,8 @@ export function GradescopeSyncModal({
       });
       setPassword("");
       await refreshState();
-    } catch (e: any) {
-      const msg = (e?.message ?? "").toString();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "";
       setError(msg.includes("Invalid") ? "Invalid Gradescope credentials." : msg);
     }
   }
@@ -158,8 +158,8 @@ export function GradescopeSyncModal({
       setBuPassword("");
       setBuUsername("");
       await refreshState();
-    } catch (e: any) {
-      const msg = (e?.message ?? "").toString();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "";
       setBuPassword(""); // never leave a wrong password sitting in state
       if (/408|duo.*timeout|wasn.?t approved/i.test(msg)) {
         setError(
@@ -197,8 +197,8 @@ export function GradescopeSyncModal({
       setGradescopeSession("");
       setSignedToken("");
       await refreshState();
-    } catch (e: any) {
-      const msg = (e?.message ?? "").toString();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "";
       setError(
         msg.includes("expired") || msg.includes("invalid")
           ? "Those cookies didn't authenticate. Copy them again from a freshly signed-in tab."
@@ -214,8 +214,8 @@ export function GradescopeSyncModal({
       await linkGradescopeCourse(userId, saplingCourseId, gsCourseId);
       setLinkedGsCourseId(gsCourseId);
       setStage("ready");
-    } catch (e: any) {
-      setError(e?.message ?? "Couldn't link course");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Couldn't link course");
     }
   }
 
@@ -228,8 +228,8 @@ export function GradescopeSyncModal({
       setResult(res);
       setStage("done");
       onSynced?.();
-    } catch (e: any) {
-      setError(e?.message ?? "Sync failed");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Sync failed");
       setStage("ready");
     }
   }
@@ -240,8 +240,8 @@ export function GradescopeSyncModal({
       await deleteGradescopeCredentials(userId);
       setLinkedGsCourseId(null);
       setStage("choose-mode");
-    } catch (e: any) {
-      setError(e?.message ?? "Couldn't remove credentials");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Couldn't remove credentials");
     }
   }
 

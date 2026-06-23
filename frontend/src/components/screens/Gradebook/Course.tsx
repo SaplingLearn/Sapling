@@ -240,9 +240,10 @@ export function GradebookCourseScreen({ courseId }: Props) {
     try {
       const fresh = await getGradebookCourse(userId, courseId);
       setData(fresh);
-    } catch (err: any) {
-      setFetchError(err.message || "Unknown error");
-      toast.error(`Couldn't load course: ${err.message}`);
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : "Unknown error";
+      setFetchError(errMsg);
+      toast.error(`Couldn't load course: ${errMsg}`);
     }
   }, [userId, courseId, toast]);
 
@@ -291,8 +292,8 @@ export function GradebookCourseScreen({ courseId }: Props) {
       if (res.failed > 0) toast.error(summary);
       else toast.success(summary);
       await Promise.all([refresh(), refreshGscope()]);
-    } catch (err: any) {
-      const msg = err?.message ?? "Sync failed";
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Sync failed";
       toast.error(msg);
       if (/401|invalid|credentials|link/i.test(msg)) {
         setSyncOpen(true);
@@ -328,9 +329,9 @@ export function GradebookCourseScreen({ courseId }: Props) {
       try {
         await updateGradedAssignment(userId, id, { points_earned: points });
         await refresh();
-      } catch (err: any) {
+      } catch (err: unknown) {
         setData(prev);
-        toast.error(`Couldn't save: ${err.message}`);
+        toast.error(`Couldn't save: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
     [userId, data, refresh, toast],
@@ -1402,7 +1403,7 @@ function CompositionTooltip({ tip }: { tip: TipState }) {
   const left = flipX ? x - OFFSET - TIP_W : x + OFFSET;
   const top = flipY ? y - OFFSET - TIP_H_EST : y + OFFSET;
 
-  let title = category.name;
+  const title = category.name;
   let body: React.ReactNode = null;
   if (kind === "earned" && pts) {
     body = (
