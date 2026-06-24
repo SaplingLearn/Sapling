@@ -50,23 +50,57 @@ class TestSearchCourses:
         assert len(res.json()["courses"]) == 2
 
 
+def _make_factory(tables, *, course_rows, enrollment_rows, offering_rows=None):
+    """Build a shared table() mock factory across onboarding + academics.
+
+    Seeds a current ``terms`` row and a matching ``course_offerings`` row so
+    ``resolve_offering(create=True)`` resolves to an EXISTING offering without
+    inserting (keeps tests deterministic). ``enrollment_rows`` controls the
+    "already enrolled?" check on ``enrollments``.
+    """
+    if offering_rows is None:
+        offering_rows = [{"id": "off-1"}]
+
+    def factory(name):
+        if name not in tables:
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [{"id": "user_123"}]
+            elif name == "courses":
+                m.select.return_value = course_rows
+            elif name == "terms":
+                m.select.return_value = [
+                    {
+                        "id": "term-current",
+                        "term": "Summer",
+                        "year": 2026,
+                        "label": "Summer 2026",
+                        "start_date": "2026-05-01",
+                        "end_date": "2026-08-31",
+                        "sort_key": 20262,
+                    }
+                ]
+            elif name == "course_offerings":
+                m.select.return_value = offering_rows
+            elif name == "enrollments":
+                m.select.return_value = enrollment_rows
+            tables[name] = m
+        return tables[name]
+
+    return factory
+
+
 class TestSaveOnboardingProfile:
     def test_success_enrolls_in_courses(self):
         tables = {}
+        factory = _make_factory(
+            tables,
+            course_rows=[{"id": "some-id"}],
+            enrollment_rows=[],  # not enrolled
+        )
 
-        def factory(name):
-            if name not in tables:
-                m = MagicMock()
-                if name == "users":
-                    m.select.return_value = [{"id": "user_123"}]
-                elif name == "courses":
-                    m.select.return_value = [{"id": "some-id"}]
-                elif name == "user_courses":
-                    m.select.return_value = []  # not enrolled
-                tables[name] = m
-            return tables[name]
-
-        with patch("routes.onboarding.table", side_effect=factory):
+        with patch("routes.onboarding.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory):
             res = client.post("/api/onboarding/profile", json=VALID_PAYLOAD)
 
         assert res.status_code == 200
@@ -86,51 +120,45 @@ class TestSaveOnboardingProfile:
         assert update_data["minors"] == ["Mathematics"]
         assert update_data["learning_style"] == "visual"
 
-        # Two enrollments were created
-        assert tables["user_courses"].insert.call_count == 2
+        # Two enrollments were created, keyed on offering_id (not course_id)
+        assert tables["enrollments"].insert.call_count == 2
+        insert_row = tables["enrollments"].insert.call_args[0][0]
+        assert insert_row["offering_id"] == "off-1"
+        assert insert_row["user_id"] == "user_123"
+        assert "course_id" not in insert_row
+        # The legacy user_courses table is no longer touched
+        assert "user_courses" not in tables
 
     def test_skips_nonexistent_course(self):
         tables = {}
+        factory = _make_factory(
+            tables,
+            course_rows=[],  # course not found
+            enrollment_rows=[],
+        )
 
-        def factory(name):
-            if name not in tables:
-                m = MagicMock()
-                if name == "users":
-                    m.select.return_value = [{"id": "user_123"}]
-                elif name == "courses":
-                    m.select.return_value = []  # course not found
-                elif name == "user_courses":
-                    m.select.return_value = []
-                tables[name] = m
-            return tables[name]
-
-        with patch("routes.onboarding.table", side_effect=factory):
+        with patch("routes.onboarding.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory):
             res = client.post("/api/onboarding/profile", json=VALID_PAYLOAD)
 
         assert res.status_code == 200
         # No enrollments since courses don't exist
-        assert "user_courses" not in tables or tables.get("user_courses", MagicMock()).insert.call_count == 0
+        assert "enrollments" not in tables or tables["enrollments"].insert.call_count == 0
 
     def test_skips_enrollment_if_already_enrolled(self):
         tables = {}
+        factory = _make_factory(
+            tables,
+            course_rows=[{"id": "some-id"}],
+            enrollment_rows=[{"id": "enr-already"}],  # already enrolled
+        )
 
-        def factory(name):
-            if name not in tables:
-                m = MagicMock()
-                if name == "users":
-                    m.select.return_value = [{"id": "user_123"}]
-                elif name == "courses":
-                    m.select.return_value = [{"id": "some-id"}]
-                elif name == "user_courses":
-                    m.select.return_value = [{"id": "uc-already"}]
-                tables[name] = m
-            return tables[name]
-
-        with patch("routes.onboarding.table", side_effect=factory):
+        with patch("routes.onboarding.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory):
             res = client.post("/api/onboarding/profile", json=VALID_PAYLOAD)
 
         assert res.status_code == 200
-        tables["user_courses"].insert.assert_not_called()
+        tables["enrollments"].insert.assert_not_called()
 
     def test_user_not_found_returns_404(self):
         mock = MagicMock()
@@ -168,20 +196,14 @@ class TestSaveOnboardingProfile:
         del payload["minors"]
 
         tables = {}
+        factory = _make_factory(
+            tables,
+            course_rows=[{"id": "some-id"}],
+            enrollment_rows=[],
+        )
 
-        def factory(name):
-            if name not in tables:
-                m = MagicMock()
-                if name == "users":
-                    m.select.return_value = [{"id": "user_123"}]
-                elif name == "courses":
-                    m.select.return_value = [{"id": "some-id"}]
-                elif name == "user_courses":
-                    m.select.return_value = []
-                tables[name] = m
-            return tables[name]
-
-        with patch("routes.onboarding.table", side_effect=factory):
+        with patch("routes.onboarding.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory):
             res = client.post("/api/onboarding/profile", json=payload)
 
         assert res.status_code == 200

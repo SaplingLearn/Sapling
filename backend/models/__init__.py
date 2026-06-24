@@ -102,7 +102,11 @@ class ImportSaveBody(BaseModel):
 # ── Graph (Courses) ─────────────────────────────────────────────────────────
 
 class AddCourseBody(BaseModel):
-    """Body for enrolling a user in a course (creating a user_courses record)."""
+    """Body for enrolling a user in a course.
+
+    ``course_id`` is the abstract catalog course id; enrollment resolves it to a
+    current-term offering (see services/academics.resolve_offering).
+    """
     course_id: str
     color: Optional[str] = None
     nickname: Optional[str] = None
@@ -202,7 +206,7 @@ class OnboardingBody(BaseModel):
     year: str
     majors: list[str] = Field(min_length=1)
     minors: list[str] = []
-    course_ids: list[str] = Field(min_length=1)
+    course_ids: list[str] = Field(min_length=1)  # abstract catalog course ids; enroll resolves each to a current-term offering
     learning_style: str
 
 

@@ -1,12 +1,14 @@
 """
 services/course_context_service.py
 
-Builds and caches shared course-level context from real DB data.
-Aggregates graph_nodes mastery data and quiz_context across all students in a course.
+Builds and caches shared class-level context from real DB data.
+Aggregates graph_nodes mastery data and quiz_context across all students in an
+offering (a course taught in a term). The graph is keyed on the abstract course;
+analytics are keyed on the offering.
 
 Stores data in:
-- course_concept_stats: per-concept aggregated metrics
-- course_summary: course-wide summary with Gemini-generated text
+- offering_concept_stats: per-concept aggregated metrics (per offering)
+- offering_summary: class-wide summary with Gemini-generated text (per offering)
 """
 
 import json
@@ -63,36 +65,34 @@ Write in a professional but approachable tone. Be specific and data-driven."""
         )
 
 
-def get_course_context(course_id: str) -> dict:
+def get_course_context(offering_id: str) -> dict:
     """
-    Return the cached course context including summary and concept stats.
-    Returns dict with course_summary + course_concept_stats, or {} if not found.
+    Return the cached class context for an offering: summary + concept stats.
+    Offering-scoped (one class instance in one term). Returns {} if not found.
     """
-    if not course_id:
+    if not offering_id:
         return {}
-    
+
     try:
-        # Get course summary
-        summary_rows = table("course_summary").select(
+        # Get the offering summary
+        summary_rows = table("offering_summary").select(
             "*",
-            filters={"course_id": f"eq.{course_id}"},
+            filters={"offering_id": f"eq.{offering_id}"},
         )
         if not summary_rows:
             return {}
-        
-        summary = summary_rows[0]
-        semester = summary["semester"]
 
-        # Get concept stats for this course, scoped to the same semester
-        stats_rows = table("course_concept_stats").select(
+        summary = summary_rows[0]
+
+        # Get concept stats for this offering
+        stats_rows = table("offering_concept_stats").select(
             "*",
-            filters={"course_id": f"eq.{course_id}", "semester": f"eq.{semester}"},
+            filters={"offering_id": f"eq.{offering_id}"},
         )
-        
+
         return {
             "course_summary": {
-                "course_id": summary["course_id"],
-                "semester": summary["semester"],
+                "offering_id": summary["offering_id"],
                 "student_count": summary["student_count"],
                 "avg_class_mastery": summary["avg_class_mastery"],
                 "top_struggling_concepts": summary.get("top_struggling_concepts", []),
@@ -106,43 +106,49 @@ def get_course_context(course_id: str) -> dict:
         return {}
 
 
-def update_course_context(course_id: str) -> None:
+def update_course_context(offering_id: str) -> None:
     """
-    Aggregate mastery + quiz data for all students enrolled in the course and upsert
-    into course_concept_stats and course_summary tables.
-    Called automatically after any graph update.
+    Aggregate mastery + quiz data for all students enrolled in an **offering**
+    (a course taught in a term) and upsert into offering_concept_stats and
+    offering_summary. Offering-scoped. Called automatically after any graph update.
+
+    The knowledge graph is keyed on the *abstract* course id, so we resolve the
+    offering → its abstract course to read graph_nodes.
     """
-    if not course_id:
+    if not offering_id:
         return
 
-    # ── 1. Get all students enrolled in this course via user_courses ───────────
-    enrollment_rows = table("user_courses").select(
+    # ── 1. Get all students enrolled in this offering via enrollments ─────────
+    enrollment_rows = table("enrollments").select(
         "user_id",
-        filters={"course_id": f"eq.{course_id}"},
+        filters={"offering_id": f"eq.{offering_id}"},
     )
     if not enrollment_rows:
         # No students enrolled — purge any stale aggregates
-        table("course_concept_stats").delete({"course_id": f"eq.{course_id}"})
-        table("course_summary").delete({"course_id": f"eq.{course_id}"})
+        table("offering_concept_stats").delete({"offering_id": f"eq.{offering_id}"})
+        table("offering_summary").delete({"offering_id": f"eq.{offering_id}"})
         return
 
     user_ids = [r["user_id"] for r in enrollment_rows]
     student_count = len(user_ids)
 
-    # ── 2. Get course info (including canonical semester) for the summary ──────
+    # ── 2. Resolve the offering → abstract course (graph key) + term label ────
+    from services.academics import offering_course_id
+    abstract_course_id = offering_course_id(offering_id)
+    if not abstract_course_id:
+        return
     course_rows = table("courses").select(
-        "course_code,course_name,semester",
-        filters={"id": f"eq.{course_id}"},
+        "course_code,course_name",
+        filters={"id": f"eq.{abstract_course_id}"},
     )
-    course_info = course_rows[0] if course_rows else {"course_code": "", "course_name": "", "semester": "Spring 2026"}
-    semester = course_info.get("semester") or "Spring 2026"
+    course_info = course_rows[0] if course_rows else {"course_code": "", "course_name": ""}
 
-    # ── 3. All graph nodes for this course across every enrolled student ──────
+    # ── 3. All graph nodes for this (abstract) course across enrolled students ─
     # Build user_id filter for PostgREST
     user_filter = ",".join(user_ids)
     node_rows = table("graph_nodes").select(
         "id,concept_name,mastery_score,mastery_tier,user_id",
-        filters={"course_id": f"eq.{course_id}", "user_id": f"in.({user_filter})"},
+        filters={"course_id": f"eq.{abstract_course_id}", "user_id": f"in.({user_filter})"},
     )
     if not node_rows:
         return  # No graph data yet for this course
@@ -247,11 +253,10 @@ def update_course_context(course_id: str) -> None:
         ctx_rows = _fetch_quiz_context_rows(node_ids_for_concept)
         cm, ee, pg = _parse_quiz_context_to_arrays(ctx_rows)
 
-        table("course_concept_stats").upsert(
+        table("offering_concept_stats").upsert(
             {
-                "course_id": course_id,
+                "offering_id": offering_id,
                 "concept_name": name,
-                "semester": semester,
                 "student_count": metrics["student_count"],
                 "avg_mastery_score": metrics["avg_mastery_score"],
                 "pct_mastered": metrics["pct_mastered"],
@@ -262,7 +267,7 @@ def update_course_context(course_id: str) -> None:
                 "prerequisite_gaps": pg,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
-            on_conflict="course_id,concept_name,semester",
+            on_conflict="offering_id,concept_name",
         )
 
     # ── 8. Compute course-wide summary metrics ────────────────────────────────
@@ -296,9 +301,9 @@ def update_course_context(course_id: str) -> None:
     current_hash = _generate_data_hash(stats_for_hash)
 
     # ── 9. Check if summary needs regeneration ─────────────────────────────────
-    existing_summary_rows = table("course_summary").select(
+    existing_summary_rows = table("offering_summary").select(
         "summary_hash,summary_text",
-        filters={"course_id": f"eq.{course_id}", "semester": f"eq.{semester}"},
+        filters={"offering_id": f"eq.{offering_id}"},
     )
     
     existing_hash = existing_summary_rows[0]["summary_hash"] if existing_summary_rows else None
@@ -316,11 +321,10 @@ def update_course_context(course_id: str) -> None:
     else:
         summary_text = existing_summary_rows[0].get("summary_text", "")
 
-    # ── 10. Upsert into course_summary ────────────────────────────────────────
-    table("course_summary").upsert(
+    # ── 10. Upsert into offering_summary ──────────────────────────────────────
+    table("offering_summary").upsert(
         {
-            "course_id": course_id,
-            "semester": semester,
+            "offering_id": offering_id,
             "student_count": student_count,
             "avg_class_mastery": avg_class_mastery,
             "top_struggling_concepts": top_struggling_concepts,
@@ -329,5 +333,5 @@ def update_course_context(course_id: str) -> None:
             "summary_hash": current_hash,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         },
-        on_conflict="course_id,semester",
+        on_conflict="offering_id",
     )

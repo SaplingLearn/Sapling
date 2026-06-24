@@ -44,14 +44,40 @@ def _simple_mock(select_returns=None):
     return mock
 
 
-def _enrollment_row(course_id: str, code: str = "", name: str = "Course"):
+def _cached_mock_table(data: dict):
+    """Like `_mock_table` but caches one mock per table name so a test can assert
+    on a specific table's `.insert`/`.delete`/`.update` calls (the factory is
+    shared between `services.graph_service.table` and `services.academics.table`)."""
+    mocks: dict = {}
+
+    def factory(name):
+        if name not in mocks:
+            m = MagicMock()
+            m.select.return_value = data.get(name, [])
+            m.insert.return_value = []
+            m.update.return_value = []
+            m.delete.return_value = []
+            m.upsert.return_value = []
+            mocks[name] = m
+        return mocks[name]
+    return factory, mocks
+
+
+def _enrollment_row(course_id: str, code: str = "", name: str = "Course",
+                    term: str = "Spring 2026", offering_id: str | None = None):
+    """A row in the enrollments→course_offerings→courses/terms join shape that
+    graph_service._reshape_enrollment expects. `course_id` is the ABSTRACT id."""
     return {
         "id": f"e-{course_id}",
-        "course_id": course_id,
+        "offering_id": offering_id or f"off-{course_id}",
         "color": None,
         "nickname": None,
         "enrolled_at": "2026-01-01",
-        "courses": {"course_code": code, "course_name": name, "school": "", "department": ""},
+        "course_offerings": {
+            "course_id": course_id,
+            "courses": {"course_code": code, "course_name": name, "department": ""},
+            "terms": {"label": term},
+        },
     }
 
 
@@ -63,7 +89,7 @@ class TestGetGraph:
             "users": [{"streak_count": 5}],
             "graph_nodes": [],
             "graph_edges": [],
-            "user_courses": [],
+            "enrollments": [],
         })
         with patch("services.graph_service.table", side_effect=factory):
             result = get_graph("u1")
@@ -84,7 +110,7 @@ class TestGetGraph:
             "users": [{"streak_count": 0}],
             "graph_nodes": nodes,
             "graph_edges": [],
-            "user_courses": [_enrollment_row("c1", "M", "Math")],
+            "enrollments": [_enrollment_row("c1", "M", "Math")],
         })
         with patch("services.graph_service.table", side_effect=factory):
             stats = get_graph("u1")["stats"]
@@ -102,10 +128,10 @@ class TestGetGraph:
             {"id": "n2", "concept_name": "Functions", "mastery_tier": "mastered", "mastery_score": 0.8,
              "subject": "CS101", "course_id": "c1", "times_studied": 3, "user_id": "u1"},
         ]
-        enrollment = [{"course_id": "c1", "courses": {"course_code": "CS101", "course_name": "Intro CS"}}]
+        enrollment = [_enrollment_row("c1", "CS101", "Intro CS")]
         factory = _mock_table({
             "users": [{"streak_count": 0}],
-            "user_courses": enrollment,
+            "enrollments": enrollment,
             "graph_nodes": nodes,
             "graph_edges": [],
         })
@@ -119,12 +145,10 @@ class TestGetGraph:
 
     def test_legacy_seed_same_as_course_title_shows_only_subject_hub(self):
         """Course enrolled but no concept nodes — only the subject hub appears."""
-        enrollment = [
-            {"course_id": "c1", "courses": {"course_code": "", "course_name": "EK 103: LINEAR ALGEBRA"}}
-        ]
+        enrollment = [_enrollment_row("c1", "", "EK 103: LINEAR ALGEBRA")]
         factory = _mock_table({
             "users": [{"streak_count": 0}],
-            "user_courses": enrollment,
+            "enrollments": enrollment,
             "graph_nodes": [],
             "graph_edges": [],
         })
@@ -137,10 +161,10 @@ class TestGetGraph:
         assert roots[0]["mastery_score"] == 0.0
 
     def test_course_with_no_graph_nodes_still_shows_subject_hub(self):
-        enrollment = [{"course_id": "c1", "courses": {"course_code": "", "course_name": "Philosophy"}}]
+        enrollment = [_enrollment_row("c1", "", "Philosophy")]
         factory = _mock_table({
             "users": [{"streak_count": 0}],
-            "user_courses": enrollment,
+            "enrollments": enrollment,
             "graph_nodes": [],
             "graph_edges": [],
         })
@@ -159,7 +183,7 @@ class TestGetGraph:
             "users": [{"streak_count": 0}],
             "graph_nodes": nodes,
             "graph_edges": edges,
-            "user_courses": [_enrollment_row("c-x", "", "X")],
+            "enrollments": [_enrollment_row("c-x", "", "X")],
         })
         with patch("services.graph_service.table", side_effect=factory):
             result = get_graph("u1")
@@ -170,7 +194,7 @@ class TestGetGraph:
         assert graph_edges[0]["strength"] == 0.9
 
     def test_streak_defaults_to_zero_when_no_user_row(self):
-        factory = _mock_table({"users": [], "graph_nodes": [], "graph_edges": [], "user_courses": []})
+        factory = _mock_table({"users": [], "graph_nodes": [], "graph_edges": [], "enrollments": []})
         with patch("services.graph_service.table", side_effect=factory):
             result = get_graph("u1")
         assert result["stats"]["streak"] == 0
@@ -182,13 +206,9 @@ class TestGetCourses:
     def test_returns_courses_with_node_count(self):
         def factory(name):
             mock = MagicMock()
-            if name == "user_courses":
-                mock.select.return_value = [{
-                    "id": "e1", "course_id": "c1", "color": "#fff",
-                    "nickname": None, "enrolled_at": "2026-01-01",
-                    "courses": {"course_code": "MATH101", "course_name": "Math",
-                                "school": "BU", "department": "Math"},
-                }]
+            if name == "enrollments":
+                mock.select.return_value = [_enrollment_row(
+                    "c1", "MATH101", "Math", term="Spring 2026", offering_id="off-1")]
             elif name == "graph_nodes":
                 mock.select.return_value = [{"id": "n1"}, {"id": "n2"}]
             else:
@@ -199,7 +219,9 @@ class TestGetCourses:
             result = get_courses("u1")
 
         assert len(result) == 1
+        assert result[0]["course_id"] == "c1"          # abstract course id
         assert result[0]["course_name"] == "Math"
+        assert result[0]["term"] == "Spring 2026"      # term surfaced
         assert result[0]["node_count"] == 2
 
     def test_returns_empty_on_exception(self):
@@ -217,49 +239,62 @@ class TestGetCourses:
 
 class TestAddCourse:
     def test_inserts_new_course(self):
-        def factory(name):
-            mock = MagicMock()
-            if name == "user_courses":
-                # First call: check existing enrollment → not found
-                mock.select.return_value = []
-            elif name == "courses":
-                # Check canonical course exists → found
-                mock.select.return_value = [{"id": "c1"}]
-            else:
-                mock.select.return_value = []
-            mock.insert.return_value = []
-            return mock
-
-        with patch("services.graph_service.table", side_effect=factory):
+        # `courses` (abstract) exists; resolve_offering finds an existing offering
+        # in the current term; no existing enrollment → insert against offering_id.
+        factory, mocks = _cached_mock_table({
+            "courses": [{"id": "c1"}],
+            "enrollments": [],                       # existing-enrollment check → none
+            "terms": [{"id": "t1", "sort_key": 1}],
+            "course_offerings": [{"id": "off-1"}],   # resolve_offering → existing
+        })
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory), \
+             patch("services.course_context_service.update_course_context"):
             result = add_course("u1", "c1")
 
         assert result["course_id"] == "c1"
         assert result["already_existed"] is False
+        inserted = mocks["enrollments"].insert.call_args[0][0]
+        assert inserted["offering_id"] == "off-1"
+        assert "course_id" not in inserted             # enrollments key on the offering
 
     def test_skips_insert_for_existing_course(self):
-        mock = _simple_mock(select_returns=[{"id": "existing"}])
-        with patch("services.graph_service.table", return_value=mock):
+        factory, mocks = _cached_mock_table({
+            "courses": [{"id": "c1"}],
+            "enrollments": [{"id": "existing"}],       # already enrolled in this offering
+            "terms": [{"id": "t1", "sort_key": 1}],
+            "course_offerings": [{"id": "off-1"}],
+        })
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory):
             result = add_course("u1", "c1")
 
         assert result["already_existed"] is True
+        mocks["enrollments"].insert.assert_not_called()
 
 
 # ── delete_course ─────────────────────────────────────────────────────────────
 
 class TestDeleteCourse:
     def test_unenrolls_user_from_course(self):
-        mock = MagicMock()
-        mock.delete.return_value = []
-        with patch("services.graph_service.table", return_value=mock):
+        # The user has one offering of the abstract course → delete that enrollment.
+        factory, mocks = _cached_mock_table({
+            "course_offerings": [{"id": "off-1"}],
+            "enrollments": [{"offering_id": "off-1"}],
+        })
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory), \
+             patch("services.course_context_service.update_course_context"):
             result = delete_course("u1", "course-id-1")
 
         assert result == {"deleted": True}
-        mock.delete.assert_called_once()
+        mocks["enrollments"].delete.assert_called_once()
 
     def test_unenroll_with_no_prior_nodes(self):
-        mock = MagicMock()
-        mock.delete.return_value = []
-        with patch("services.graph_service.table", return_value=mock):
+        # No offerings for the course → nothing to delete, still succeeds.
+        factory, _ = _cached_mock_table({"course_offerings": [], "enrollments": []})
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory):
             result = delete_course("u1", "empty-course-id")
         assert result == {"deleted": True}
 
