@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -67,7 +67,7 @@ class TestUpdateMasteryTool:
 
         with patch(
             "agents.tools.graph.apply_graph_update", return_value=mock_changes
-        ) as mock_ag, patch("agents.tools.graph.asyncio.to_thread", new=AsyncMock(return_value=mock_changes)):
+        ), patch("agents.tools.graph.asyncio.to_thread", new=AsyncMock(return_value=mock_changes)):
             result = _run(update_mastery_tool(ctx, update))
 
         assert "0.40→0.55" in result or "Recursion" in result
@@ -396,7 +396,6 @@ class TestOrchestratorLimitsWired:
         """After a successful agent run, the assistant message must be saved
         with the merged graph_update so graph_update_json is not NULL and
         end_session can derive concepts_covered."""
-        from routes.learn import save_message
 
         saved_calls = []
 
@@ -432,7 +431,7 @@ class TestOrchestratorLimitsWired:
             from fastapi.testclient import TestClient
             _client = TestClient(app)
 
-            resp = _client.post("/api/learn/chat", json={
+            _client.post("/api/learn/chat", json={
                 "session_id": "s1",
                 "user_id": "u1",
                 "message": "Explain recursion",
@@ -456,7 +455,6 @@ class TestEndSessionConceptsCovered:
         """end_session must return non-empty concepts_covered when messages
         have graph_update_json set — this is the fix for bug #13."""
         from routes.learn import end_session
-        from fastapi import Request as _Request
 
         graph_update_payload = {
             "new_nodes": [{"concept_name": "BFS"}],
