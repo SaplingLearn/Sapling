@@ -1,29 +1,35 @@
 # Storage hardening — sequenced plan (#231)
 
+> ⚠️ **DO NOT MERGE / DO NOT APPLY.** This is a plan/record document. The Phase 1
+> SQL is an after-the-fact record (already applied); the Phase 2b SQL is a draft
+> to run by hand via the Supabase SQL editor after review — nothing here should be
+> "merged and run" as a migration.
+
 **Status (per phase):**
 - **Phase 1 (`application_resumes` → private): ✅ APPLIED to prod 2026-06-15.**
   Done via MCP; `public=false` verified. The SQL block in
   `backend/db/security/storage_lockdown.sql` for Phase 1 is an after-the-fact
   **record**, not a pending action.
-- **Phase 2 (`issues-media-files` → private): ⏳ NOT applied — DRAFT for review.**
-  Requires the Phase 2a app-code PR to ship + deploy first. Do not run Phase 2
-  SQL until then.
+- **Phase 2a (route issue-report screenshots through the backend): ✅ LANDED on `main`.**
+  `backend/routes/feedback.py` defines `POST /api/issue-reports/screenshot`
+  (auth-gated via `get_session_user_id` → 401; type/size-validated via
+  `services/request_limits.read_within_limit`; service-role upload returning the
+  storage **path**), `frontend/src/components/ReportIssueFlow.tsx` POSTs the file
+  to that endpoint instead of using `supabase.storage`, and
+  `backend/tests/test_issue_screenshot_auth.py` is the regression test. Verify
+  it is deployed to prod before Phase 2b.
+- **Phase 2b (`issues-media-files` → private + drop anon policies): ⏳ NOT applied — DRAFT for review.**
+  This is the only remaining storage step. Run the Phase 2b SQL only after the
+  deployed 2a is confirmed working in prod.
 
-Nothing in Phase 2 has touched live. Re-confirmed live against the Sapling
+Nothing in Phase 2b has touched live. Re-confirmed live against the Sapling
 project (`jxqcmjqtjlpuxfrxmrdv`) on 2026-06-15 — supersedes the earlier version
 of this doc, which had two wrong claims (noted below).
 
-> ⚠️ **Merge-ordering constraint (cross-PR):** an OLDER copy of this same file
-> (`docs/security/storage-hardening-plan.md`) lives in PR #232. **#238 supersedes
-> that content.** This file is add/add between the two branches, so merging the
-> second of the two PRs raises an **explicit `CONFLICT (add/add)`** on this file
-> (Git will not silently overwrite it) — that conflict **must be resolved in
-> #238's favor**, since #238 supersedes the storage plan. To avoid having to
-> resolve it at all, **merge #238 AFTER #232**, OR #232 must drop this file from
-> its diff before either merges. If the conflict is mis-resolved toward #232's
-> copy, this doc reverts to stale content (re-introducing the two corrected-below
-> errors and the pre-Phase-1 status). See the ordering note at the bottom of this
-> doc.
+> ℹ️ **Note (vs `main`):** this plan document already exists on `main` (it landed
+> via the #231 remediation-plan PR), so this PR is a **modification** of the
+> existing file, not a new add. The branch is also behind `main`, which already
+> carries Phase 2a; the status above reflects `main`, not this stale branch.
 
 ## Live findings (re-confirmed via MCP + code)
 
@@ -31,15 +37,15 @@ Three buckets exist (`storage.objects` RLS is **enabled**; `service_role` bypass
 
 | Bucket | `public` | objects | Written by | Read by (in code) |
 |---|---|---|---|---|
-| `application_resumes` (résumé PII) | **true** | **~12-13**¹ | backend service-role (`careers.py::_upload_resume`) | **nothing** — no code reads it |
-| `issues-media-files` (issue screenshots) | **true** | 2 | **frontend anon** (`ReportIssueFlow.tsx`) | **frontend anon** `getPublicUrl` |
-| `avatars` | true | 2 | backend service-role (`storage_service.py`) | public `<img>` |
+| `application_resumes` (résumé PII) | **true** | all objects are résumés¹ | backend service-role (`careers.py::_upload_resume`) | **nothing** — no code reads it |
+| `issues-media-files` (issue screenshots) | **true** | issue screenshots | **frontend anon** (`ReportIssueFlow.tsx`) | **frontend anon** `getPublicUrl` |
+| `avatars` | true | avatars | backend service-role (`storage_service.py`) | public `<img>` |
 
-¹ Object counts are an **observed snapshot as of 2026-06-15**, not a live invariant.
-The `application_resumes` count was recorded as ~12-13 résumés across MCP/code
-checks; treat it as approximate and **re-verify the exact count at apply time**.
-The bucket is written only by `careers.py::_upload_resume` and read by nothing,
-so all objects in it are résumés.
+¹ The `application_resumes` bucket is written only by `careers.py::_upload_resume`
+(service-role) and read by nothing, so **every object in it is a résumé**. The
+exact object count varies as applications come in; this doc deliberately does not
+pin a number — it is irrelevant to the hardening decision (the whole bucket holds
+PII regardless of count).
 
 `storage.objects` policies (only two, **both scoped to one bucket**):
 - `"Allow public read"` — SELECT, `{public}`, `USING bucket_id='issues-media-files'`
@@ -60,8 +66,8 @@ The **only live frontend-anon storage path is `issues-media-files`** (ReportIssu
 ## Sequenced remediation
 
 ### Phase 1 — `application_resumes` → private  ✅ APPLIED 2026-06-15
-This was the priority (~12-13 résumés, PII, publicly readable by URL — snapshot
-2026-06-15, re-verify at apply; see footnote above) and the
+This was the priority (a bucket of résumé PII, publicly readable by URL; see the
+findings table above) and the
 safest: nothing in the app reads this bucket, and the upload is service-role
 (unaffected by the public flag or RLS). Applied via MCP; `public=false`
 confirmed. Verified closed: a fresh/cache-busted anon GET of a résumé returns
@@ -99,29 +105,28 @@ storage CDN cache (dashboard) or letting it age out for full hygiene.
 - **Future (only if in-app résumé viewing is ever added):** a backend
   signed-URL endpoint. Not needed now — there is no current reader.
 
-### Phase 2 — `issues-media-files` → private (app change SHIPS + DEPLOYS first, THEN Supabase)
+### Phase 2 — `issues-media-files` → private (app change SHIPPED first; Supabase flip remains)
 This bucket is read+written by the frontend with the anon key, so the policy
 flip must come **after** the app stops using anon storage, or issue-report
-uploads/displays break.
+uploads/displays break. The app change (2a) has already landed on `main`; the
+Supabase flip (2b) is the remaining step.
 
-- **Step 2a — app code (PR + deploy), BEFORE any policy change:**
-  - **Backend:** new `POST /api/issue-reports/screenshot`, auth-gated
-    (`get_session_user_id` → 401), validates content-type + size via
-    `services/request_limits.read_within_limit` + an image allowlist (the
-    #220/#229 pattern), uploads to `issues-media-files` with the service key
-    (mirror `careers._upload_resume`), returns the storage **path** (not a
-    public URL). Add a signed-URL read endpoint (or include short-TTL signed
-    URLs when serving `issue_reports.screenshot_urls`).
-  - **Frontend:** `ReportIssueFlow.tsx` stops using `supabase.storage` (anon);
-    POSTs the file to the new endpoint and stores the returned path. Any
-    screenshot display fetches a signed URL from the backend.
-  - **Negative test (fails pre-fix), per conventions:** the new endpoint returns
-    401 unauthenticated and rejects bad type/size; and `ReportIssueFlow` no
-    longer references the anon `supabase.storage` client. Scoped commit,
-    sole-authored, no trailers.
-  - **Deploy 2a to prod (backend + frontend) and verify the issue-report flow
-    works end-to-end** before doing 2b.
-- **Step 2b — Supabase-side (dashboard SQL), AFTER 2a is live:**
+- **Step 2a — app code (PR + deploy):  ✅ LANDED on `main`.**
+  - **Backend:** `POST /api/issue-reports/screenshot` exists in
+    `backend/routes/feedback.py` — auth-gated (`get_session_user_id` → 401),
+    validates content-type + size via `services/request_limits.read_within_limit`
+    + an image allowlist (the #220/#229 pattern), uploads to `issues-media-files`
+    with the service key (mirrors `careers._upload_resume`), returns the storage
+    **path** (not a public URL).
+  - **Frontend:** `frontend/src/components/ReportIssueFlow.tsx` no longer uses
+    `supabase.storage`; it POSTs the file to that endpoint and stores the
+    returned path.
+  - **Regression test (failed pre-fix → 404):**
+    `backend/tests/test_issue_screenshot_auth.py` asserts the endpoint requires
+    auth (401) and bounds type (415) / size (413).
+  - **Before 2b:** confirm 2a is **deployed to prod** and the issue-report flow
+    works end-to-end (the code is on `main`; verify the deploy).
+- **Step 2b — Supabase-side (dashboard SQL), AFTER 2a is verified live:**
   ```sql
   BEGIN;
   UPDATE storage.buckets SET public = false WHERE id = 'issues-media-files';
@@ -153,27 +158,21 @@ INSERT policy. Leave it.
 
 ## What's app-code vs Supabase-side, and the order
 1. **Phase 1 (Supabase only):** flip `application_resumes` private. ✅ **DONE — applied 2026-06-15.** No deploy.
-2. **Phase 2a (app-code PR + deploy):** route issue-report screenshots through the backend; stop frontend anon storage use. Negative test. *Not started.*
-3. **Phase 2b (Supabase only):** flip `issues-media-files` private + drop its two `{public}` policies. *Pending — only after 2a is deployed and verified.*
+2. **Phase 2a (app-code PR + deploy):** route issue-report screenshots through the backend; stop frontend anon storage use. ✅ **LANDED on `main`** (`feedback.py` endpoint, `ReportIssueFlow.tsx`, `test_issue_screenshot_auth.py`). Verify the prod deploy before 2b.
+3. **Phase 2b (Supabase only):** flip `issues-media-files` private + drop its two `{public}` policies. *Pending — the only remaining step; run only after the deployed 2a is verified in prod.*
 
 The SQL lives in `backend/db/security/storage_lockdown.sql` (+ rollback): the
 Phase 1 block is the **applied record** (like the RLS lockdown's #232); the
-Phase 2 block is **draft — do not run until reviewed**, and 2b not until 2a
-ships.
+Phase 2b block is **draft — do not run until reviewed**, and not until the
+deployed 2a is verified in prod.
 
-## Cross-PR ordering constraint (must read before merging)
+## Relationship to the existing doc on `main` and to #232
 
-An older copy of this file (`docs/security/storage-hardening-plan.md`) is also
-included in **PR #232**. The content in **#238 supersedes** it. This file is
-add/add across the two branches, so whichever PR merges second produces an
-**explicit `CONFLICT (add/add)`** on this file at merge time — Git does **not**
-silently overwrite either copy. Therefore:
-
-- **#238 must merge AFTER #232**, OR
-- **#232 must remove this file from its diff** before either merges.
-
-If #232 merges after #238, the merge will surface an explicit add/add conflict on
-this file. **Resolve it in #238's favor** (keep this superseding version) — do
-**not** take #232's older copy, which would revert the doc to the pre-Phase-1
-status plus the two errors corrected above. Coordinating the merge order (or
-dropping the file from #232) avoids having to resolve the conflict at all.
+This plan document already lives on `main` (it landed via the #231
+remediation-plan PR), so this PR **modifies** the existing file — there is no
+add/add scenario, and the storage-plan content is already merged. The earlier
+#232 branch carried its own (older) copy of this file; that copy has been
+superseded by the version on `main`. There is therefore no merge-order
+constraint to manage here: keep this PR scoped to the genuine delta over `main`
+(the status corrections above), and let `main` remain the source of truth for the
+plan content.
