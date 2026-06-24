@@ -135,7 +135,9 @@ def main(argv: list[str] | None = None) -> None:
 
     database_url = os.getenv("DATABASE_URL")
     if args.apply:
-        done = apply(database_url or "")
+        if not database_url:
+            raise SystemExit("DATABASE_URL is required for --apply")
+        done = apply(database_url)
         print(f"Applied {len(done)} migration(s): {', '.join(done) or '(none — up to date)'}")
     else:
         _status(database_url)
