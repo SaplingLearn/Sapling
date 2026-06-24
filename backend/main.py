@@ -85,7 +85,6 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
-logfire.instrument_fastapi(app)
 
 if recost_api_key and RecostMiddleware is not None:
     app.add_middleware(
@@ -94,9 +93,18 @@ if recost_api_key and RecostMiddleware is not None:
         project_id=RECOST_PROJECT_ID,
     )
 
+_extra = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+_allowed_origins = list({
+    FRONTEND_URL.rstrip("/"),
+    "http://localhost:3000",
+    "https://saplinglearn.com",
+    "https://www.saplinglearn.com",
+    *_extra,
+} - {""})
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:3000"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

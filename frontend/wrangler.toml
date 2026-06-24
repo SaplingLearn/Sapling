@@ -20,3 +20,17 @@ COOKIE_DOMAIN = ".saplinglearn.com"
 
 [observability]
 enabled = true
+
+# --- Staging environment (deploy: `npm run cf:deploy:staging`) ---
+# Same code as prod; points at the staging backend and scopes cookies to the
+# staging subdomain only (NOT .saplinglearn.com — that would share with prod).
+[env.staging]
+name = "frontend-staging"
+
+[env.staging.vars]
+NEXT_PUBLIC_API_URL = "https://api.staging.saplinglearn.com"
+BACKEND_URL = "https://api.staging.saplinglearn.com"
+COOKIE_DOMAIN = ".staging.saplinglearn.com"
+
+[env.staging.observability]
+enabled = true

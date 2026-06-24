@@ -22,6 +22,16 @@ SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
 IS_LOCAL = APP_ENV in {"local", "development", "dev", "test"}
 
+# Sign-in email-domain allowlist. Comma-separated; empty value = allow any domain.
+# Default preserves prod's @bu.edu-only behavior. Staging can widen this (e.g.
+# "bu.edu,saplinglearn.com") or set it empty to allow any Google account — safe
+# on staging because Cloudflare Access already gates who reaches the app at all.
+ALLOWED_EMAIL_DOMAINS = [
+    d.strip().lstrip("@").lower()
+    for d in os.getenv("ALLOWED_EMAIL_DOMAINS", "bu.edu").split(",")
+    if d.strip()
+]
+
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",
