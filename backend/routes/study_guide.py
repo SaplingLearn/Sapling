@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from db.connection import table
+from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import require_self
 from services.encryption import decrypt_if_present, decrypt_json
 from services.gemini_service import call_gemini_json
@@ -17,8 +18,13 @@ from services.gemini_service import call_gemini_json
 router = APIRouter()
 
 
-def _generate_and_insert(user_id: str, course_id: str, exam_id: str) -> dict:
-    """Generate a study guide, insert it into study_guides, and return {content, generated_at}."""
+def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
+    """Generate a study guide, insert it into study_guides, and return
+    {content, generated_at}.
+
+    Study guides + the documents that feed them key on the OFFERING (0025);
+    the caller resolves the abstract course id to an offering first.
+    """
     # 1. Fetch exam info
     exams = table("assignments").select(
         "id,user_id,title,due_date,assignment_type,course_id",
@@ -31,10 +37,14 @@ def _generate_and_insert(user_id: str, course_id: str, exam_id: str) -> dict:
     exam_title = exam.get("title", "")
     due_date = exam.get("due_date", "")
 
-    # 2. Fetch documents for this user+course
+    # 2. Fetch documents for this user+offering
     docs = table("documents").select(
         "summary,concept_notes",
-        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+        filters={
+            "user_id": f"eq.{user_id}",
+            "offering_id": f"eq.{offering_id}",
+            "deleted_at": "is.null",
+        },
     ) or []
 
     # 3. Build combined context
@@ -103,7 +113,7 @@ def _generate_and_insert(user_id: str, course_id: str, exam_id: str) -> dict:
     row = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
-        "course_id": course_id,
+        "offering_id": offering_id,
         "exam_id": exam_id,
         "generated_at": now,
         "content": content,
@@ -117,26 +127,35 @@ def _generate_and_insert(user_id: str, course_id: str, exam_id: str) -> dict:
 def get_cached_guides(user_id: str, request: Request):
     require_self(user_id, request)
     guides = table("study_guides").select(
-        "id,course_id,exam_id,generated_at,content",
+        "id,offering_id,exam_id,generated_at,content",
         filters={"user_id": f"eq.{user_id}"},
         order="generated_at.desc",
     )
-    # Enrich with course_name
-    course_ids = list({g["course_id"] for g in guides})
+    # Each guide keys on an offering; the frontend speaks abstract course ids.
+    # Map each offering → its abstract course id, then enrich with course_name.
+    offering_to_course: dict[str, str | None] = {}
     course_map: dict[str, str] = {}
-    for cid in course_ids:
-        rows = table("courses").select("id,course_name", filters={"id": f"eq.{cid}"}, limit=1)
-        if rows:
-            course_map[cid] = rows[0]["course_name"]
+    for g in guides:
+        off_id = g.get("offering_id")
+        if off_id and off_id not in offering_to_course:
+            cid = offering_course_id(off_id)
+            offering_to_course[off_id] = cid
+            if cid and cid not in course_map:
+                rows = table("courses").select(
+                    "id,course_name", filters={"id": f"eq.{cid}"}, limit=1
+                )
+                if rows:
+                    course_map[cid] = rows[0]["course_name"]
 
     result = []
     for g in guides:
         content = g.get("content") or {}
+        course_id = offering_to_course.get(g.get("offering_id"))
         result.append({
             "id": g["id"],
-            "course_id": g["course_id"],
+            "course_id": course_id,
             "exam_id": g["exam_id"],
-            "course_name": course_map.get(g["course_id"], ""),
+            "course_name": course_map.get(course_id or "", ""),
             "exam_title": content.get("exam", ""),
             "overview": content.get("overview", ""),
             "generated_at": g["generated_at"],
@@ -182,11 +201,14 @@ def get_guide(
     exam_id: str = Query(...),
 ):
     require_self(user_id, request)
+    # The query param is the abstract course id; study guides key on the
+    # offering. Resolve to the current-term offering for cache + generation.
+    offering_id = resolve_offering(course_id)
     cached = table("study_guides").select(
-        "id,user_id,course_id,exam_id,content,generated_at",
+        "id,user_id,offering_id,exam_id,content,generated_at",
         filters={
             "user_id": f"eq.{user_id}",
-            "course_id": f"eq.{course_id}",
+            "offering_id": f"eq.{offering_id}",
             "exam_id": f"eq.{exam_id}",
         },
         limit=1,
@@ -195,7 +217,7 @@ def get_guide(
         row = cached[0]
         return {"guide": row["content"], "generated_at": row["generated_at"], "cached": True}
 
-    result = _generate_and_insert(user_id, course_id, exam_id)
+    result = _generate_and_insert(user_id, offering_id, exam_id)
     return {"guide": result["content"], "generated_at": result["generated_at"], "cached": False}
 
 
@@ -208,12 +230,13 @@ def regenerate_guide(request: Request, body: dict = Body(...)):
         raise HTTPException(status_code=400, detail="user_id, course_id, and exam_id are required.")
     require_self(user_id, request)
 
+    offering_id = resolve_offering(course_id)
     table("study_guides").delete(
         filters={
             "user_id": f"eq.{user_id}",
-            "course_id": f"eq.{course_id}",
+            "offering_id": f"eq.{offering_id}",
             "exam_id": f"eq.{exam_id}",
         }
     )
-    result = _generate_and_insert(user_id, course_id, exam_id)
+    result = _generate_and_insert(user_id, offering_id, exam_id)
     return {"success": True, "guide": result["content"], "generated_at": result["generated_at"]}
