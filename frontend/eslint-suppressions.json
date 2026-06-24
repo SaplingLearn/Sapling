@@ -1,14 +1,4 @@
 {
-  "src/app/(shell)/notetaker/page.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "src/app/(shell)/profile/[userId]/page.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
   "src/app/page.tsx": {
     "@next/next/no-html-link-for-pages": {
       "count": 1
@@ -17,14 +7,6 @@
       "count": 2
     },
     "react-hooks/immutability": {
-      "count": 1
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 2
-    }
-  },
-  "src/components/ChatPanel.tsx": {
-    "react-hooks/set-state-in-effect": {
       "count": 1
     }
   },
@@ -46,50 +28,16 @@
   "src/components/DocumentUploadModal.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 3
     }
   },
   "src/components/FeedbackFlow.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    },
     "react/no-unescaped-entities": {
       "count": 1
-    }
-  },
-  "src/components/Gradebook/AssignmentModal.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 2
-    }
-  },
-  "src/components/Gradebook/EditWeightsModal.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 2
-    }
-  },
-  "src/components/Gradebook/LetterScaleEditor.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 2
     }
   },
   "src/components/Gradebook/SyllabusUploadFlow.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 2
-    }
-  },
-  "src/components/HowItWorks.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "src/components/KnowledgeGraph.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
     }
   },
   "src/components/KnowledgeGraph2D.tsx": {
@@ -103,11 +51,6 @@
   "src/components/KnowledgeGraph3D.test.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 6
-    }
-  },
-  "src/components/ManageCoursesModal.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 2
     }
   },
   "src/components/ModelToggle.tsx": {
@@ -125,17 +68,7 @@
       "count": 1
     }
   },
-  "src/components/SideNav.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
   "src/components/SignInModal.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "src/components/ToastProvider.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
     }
@@ -145,49 +78,15 @@
       "count": 3
     }
   },
-  "src/components/TopNav.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 2
-    }
-  },
-  "src/components/flashcards/FlashcardImportModal.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "src/components/flashcards/tabs/PasteTab.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "src/components/screens/Achievements.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
   "src/components/screens/Admin.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 3
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 6
     },
     "react/no-unescaped-entities": {
       "count": 2
     }
   },
-  "src/components/screens/Calendar.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 2
-    }
-  },
   "src/components/screens/Dashboard.tsx": {
-    "react-hooks/purity": {
-      "count": 3
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 6
-    },
     "react/no-unescaped-entities": {
       "count": 2
     }
@@ -195,17 +94,11 @@
   "src/components/screens/Gradebook/Course.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
     }
   },
   "src/components/screens/Gradebook/Landing.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 2
     }
   },
   "src/components/screens/Learn.tsx": {
@@ -216,48 +109,16 @@
   "src/components/screens/Library.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 3
-    }
-  },
-  "src/components/screens/Onboarding.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 1
-    }
-  },
-  "src/components/screens/Settings.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 2
     }
   },
   "src/components/screens/Social.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 9
-    },
-    "react-hooks/purity": {
-      "count": 1
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 4
-    }
-  },
-  "src/components/screens/Study.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 5
     }
   },
   "src/components/screens/Tree.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 2
-    }
-  },
-  "src/context/UserContext.tsx": {
-    "react-hooks/set-state-in-effect": {
-      "count": 2
     }
   },
   "src/lib/api.test.ts": {
