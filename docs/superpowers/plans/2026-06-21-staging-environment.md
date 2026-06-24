@@ -496,13 +496,19 @@ git commit -m "test(db): dirty fixtures reproducing #179/#181/#184 on staging"
 
 ## Phase 4 — Staging frontend on Cloudflare Workers
 
-### Task 11: Add the staging Worker environment
+### Task 11: Add the staging Worker environment [config DONE on `main`]
 
-**Files:**
-- Modify: `frontend/wrangler.toml`
-- Modify: `frontend/package.json`
+> **Status: the repo changes are already merged on `main`.** `frontend/wrangler.toml` already
+> contains the `[env.staging]` / `[env.staging.vars]` / `[env.staging.observability]` blocks shown
+> below (the merged `[env.staging.vars]` matches exactly: `NEXT_PUBLIC_API_URL`, `BACKEND_URL`,
+> `COOKIE_DOMAIN`), and `frontend/package.json` already has the `cf:deploy:staging` script. **Do not
+> re-add them.** Only Step 3 (the actual deploy) remains — and it is operator work, not a code edit.
 
-- [ ] **Step 1: Add `[env.staging]` to `wrangler.toml`** (mirrors the top-level config but points at staging)
+**Files (already merged — reference only):**
+- `frontend/wrangler.toml`
+- `frontend/package.json`
+
+- [x] **Step 1: `[env.staging]` in `wrangler.toml`** (already on `main`; mirrors the top-level config but points at staging)
 
 ```toml
 [env.staging]
@@ -517,25 +523,18 @@ COOKIE_DOMAIN = ".staging.saplinglearn.com"
 enabled = true
 ```
 
-- [ ] **Step 2: Add the deploy script to `package.json`** (alongside the existing `cf:deploy`)
+- [x] **Step 2: `cf:deploy:staging` script in `package.json`** (already on `main`, alongside the existing `cf:deploy`)
 
 ```json
 "cf:deploy:staging": "opennextjs-cloudflare build && wrangler deploy --env staging"
 ```
 
-(Match the exact build command used by the existing `cf:deploy` script.)
-
-- [ ] **Step 3: Deploy and verify**
+- [ ] **Step 3 (remaining — operator): Deploy and verify**
 
 Run: `cd frontend && npm run cf:deploy:staging`
 Expected: Wrangler deploys a `frontend-staging` worker with no error; the temporary `*.workers.dev` URL loads the app.
 
-- [ ] **Step 4: Commit**
-
-```bash
-git add frontend/wrangler.toml frontend/package.json
-git commit -m "feat(frontend): staging Worker environment"
-```
+> Step 4 (commit) no longer applies — the `wrangler.toml`/`package.json` changes are already on `main`.
 
 ---
 
