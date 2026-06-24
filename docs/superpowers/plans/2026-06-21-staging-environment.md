@@ -430,25 +430,31 @@ git commit -m "feat(db): synthetic staging seed data"
 -- they bypass the app's guards. Each row targets a specific open issue so its fix
 -- can be proven on staging.
 
--- #179: orphan graph_edges.user_id (no such user) — an FK migration must reject/clean this.
-INSERT INTO graph_edges (id, user_id, source_id, target_id)
-VALUES ('stg-edge-orphan', 'stg-user-DOES-NOT-EXIST', 'stg-node-1', 'stg-node-2');
-
--- #181: duplicate graph nodes (same user + label) — a UNIQUE-backed dedup must collapse these.
-INSERT INTO graph_nodes (id, user_id, label) VALUES
+-- #181: duplicate graph nodes (same user + concept_name) — a UNIQUE-backed dedup must collapse these.
+-- (Inserted first: graph_edges below references these node ids via FK.)
+INSERT INTO graph_nodes (id, user_id, concept_name) VALUES
   ('stg-node-dup-a', 'stg-user-1', 'Photosynthesis'),
   ('stg-node-dup-b', 'stg-user-1', 'Photosynthesis');
 
--- #184: a quiz that generated zero questions — the UI must not strand the user.
-INSERT INTO quizzes (id, user_id, question_count) VALUES ('stg-quiz-empty', 'stg-user-1', 0);
+-- #179: orphan graph_edges.user_id (no such user) — an FK migration must reject/clean this.
+-- Note: graph_edges uses source_node_id/target_node_id (both REFERENCE graph_nodes(id)),
+-- so the endpoint nodes must exist; only user_id is the dangling reference here.
+INSERT INTO graph_edges (id, user_id, source_node_id, target_node_id)
+VALUES ('stg-edge-orphan', 'stg-user-DOES-NOT-EXIST', 'stg-node-dup-a', 'stg-node-dup-b');
+
+-- #184: a quiz attempt that generated zero questions — the UI must not strand the user.
+-- There is no `quizzes` table; quizzes are recorded as quiz_attempts rows. An empty quiz
+-- has total = 0 and an empty questions_json array.
+INSERT INTO quiz_attempts (id, user_id, total, questions_json)
+VALUES ('stg-quiz-empty', 'stg-user-1', 0, '[]'::jsonb);
 ```
 
-> NOTE: column names above are illustrative — confirm each against the live staging schema (table editor) before applying, and adjust to match. Keep ids `stg-*`.
+> NOTE: column names above match `0001_baseline_schema.sql` on `main` (`graph_edges.source_node_id`/`target_node_id`, `graph_nodes.concept_name`, `quiz_attempts` — there is no `quizzes` table). Still confirm against the live staging schema before applying if the schema has since changed. Keep ids `stg-*`.
 
 - [ ] **Step 2: Apply to staging via the direct connection**
 
 Run: `psql "<staging-direct-url>" -f backend/db/dirty_fixtures.sql` (or load it through a one-off psycopg call).
-Expected: 3 INSERTs succeed (they violate app logic, not yet DB constraints).
+Expected: all 3 INSERT statements succeed (they violate app logic, not yet DB constraints).
 
 - [ ] **Step 3: Commit**
 
@@ -629,4 +635,4 @@ git commit -m "docs: staging→prod promotion workflow"
 
 - **Spec coverage:** every spec component (Supabase project, Railway env, Worker env, OAuth client, DNS, seed+fixtures, migration runner, access control, git model) maps to a task above. The "prerequisite" #163 (dep pinning) is out of scope for this plan — track separately.
 - **Baseline caveat:** Phase 0's runner applies migrations to *fresh* DBs. To bring it to the **existing prod** DB without re-running already-applied SQL, run `python -m db.migrate --baseline` once against prod first (records all current files as applied), then normal runs apply only new migrations. Call this out when wiring prod (Phase 7).
-- **Dirty-fixture columns** are illustrative and must be reconciled with the live schema before applying (noted in Task 8).
+- **Dirty-fixture columns** now match `0001_baseline_schema.sql` on `main`; re-confirm against the live schema only if it has since changed (noted in Task 8).
