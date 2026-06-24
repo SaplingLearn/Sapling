@@ -427,12 +427,23 @@ def get_students(request: Request):
     """Return a lightweight profile for every user in the DB."""
     user_id = get_session_user_id(request)
     users = table("users").select("id,name,streak_count")
-    courses_rows = table("courses").select("user_id,course_name")
+    # A user's courses now resolve through the enrollment chain
+    # (enrollments → course_offerings → courses); the abstract `courses` catalog
+    # no longer carries a per-user row. Read the offering's abstract course name
+    # via the embedded join and dedup, since one abstract course may have several
+    # offerings (per term/section) the user is enrolled in.
+    enrollment_rows = table("enrollments").select(
+        "user_id,course_offerings(courses(course_name))"
+    )
     nodes_rows = table("graph_nodes").select("user_id,mastery_tier,concept_name,mastery_score")
 
-    courses_by_user: dict = defaultdict(list)
-    for c in courses_rows:
-        courses_by_user[c["user_id"]].append(c["course_name"])
+    courses_by_user: dict = defaultdict(set)
+    for e in enrollment_rows:
+        offering = e.get("course_offerings") or {}
+        course = offering.get("courses") or {} if isinstance(offering, dict) else {}
+        course_name = course.get("course_name") if isinstance(course, dict) else None
+        if course_name:
+            courses_by_user[e["user_id"]].add(course_name)
 
     mastery_by_user: dict = defaultdict(
         lambda: {"mastered": 0, "learning": 0, "struggling": 0, "unexplored": 0, "total": 0}
