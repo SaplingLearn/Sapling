@@ -103,7 +103,11 @@ CREATE TABLE IF NOT EXISTS graph_edges (
 );
 
 -- graph_edges has no FK-backed index; graph render + cascade delete scan by
--- user_id and by either node endpoint (#160).
+-- user_id and by either node endpoint (#160). The endpoint indexes are kept as
+-- bare single-column (not composite with user_id) on purpose: they also serve
+-- the bulk dedup deletes in db/dedup_nodes.py:51, which filter source_node_id /
+-- target_node_id via `in.(...)` WITHOUT user_id — a leading-user_id composite
+-- could not satisfy that bare-endpoint scan.
 CREATE INDEX IF NOT EXISTS idx_graph_edges_user   ON graph_edges(user_id);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_node_id);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_node_id);
