@@ -26,3 +26,7 @@ CREATE TABLE issue_reports (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_issue_reports_user ON issue_reports(user_id);
+
+-- Absorbed from 0019_newsletter_approved_at (drift fix; prod already has this column).
+-- Admin allowlist endpoints (routes/admin.py) read/write it; NULL = pending approval.
+ALTER TABLE newsletter_emails ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
