@@ -84,7 +84,10 @@ jobs:
         run: npm install -g npm@10.9.2 --engine-strict=false
       - run: npm ci
       - name: Lint (eslint flat config — replaces the removed `next lint`)
-        run: npx eslint .
+        # --max-warnings=-1 (with '=') means "no warning limit" so warnings don't
+        # fail CI. Written as `--max-warnings -1` the bare `-1` is parsed as an
+        # option ("No -NUM option defined") and eslint exits 2 before tsc/vitest run.
+        run: npx eslint . --max-warnings=-1
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Test
