@@ -103,6 +103,14 @@ def apply(database_url: str) -> list[str]:
     return applied_now
 
 
+def _ledger_exists(cur) -> bool:
+    cur.execute(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+        "WHERE table_name = 'schema_migrations')"
+    )
+    return bool(cur.fetchone()[0])
+
+
 def _status(database_url: str | None) -> None:
     if not database_url:
         print("No DATABASE_URL set — showing manifest order only:\n")
@@ -111,9 +119,10 @@ def _status(database_url: str | None) -> None:
         return
     import psycopg
 
+    # Read-only: never create the ledger here (contract is "no DB writes").
+    # A missing ledger simply means nothing has been applied yet.
     with psycopg.connect(database_url) as conn, conn.cursor() as cur:
-        cur.execute(read_sql(_LEDGER_FILE))
-        already = _applied_versions(cur)
+        already = _applied_versions(cur) if _ledger_exists(cur) else set()
     for name in MANIFEST:
         print(f"  [{'x' if name in already else ' '}] {name}")
 
