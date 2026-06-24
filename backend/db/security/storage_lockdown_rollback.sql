@@ -11,9 +11,11 @@ BEGIN;
 UPDATE storage.buckets SET public = true WHERE id = 'application_resumes';
 COMMIT;
 
--- ── Rollback Phase 2 — issues-media-files back to public + anon policies ─────
--- Only needed if Phase 2 was applied. DROP IF EXISTS before CREATE keeps this
--- idempotent (re-running won't fail on already-present policies).
+-- ── Rollback Phase 2b — issues-media-files back to public + anon policies ────
+-- Only needed if Phase 2b was applied. DROP IF EXISTS before CREATE keeps this
+-- idempotent (re-running won't fail on already-present policies). NOTE: this only
+-- restores the bucket/policy state; it does NOT revert the Phase 2a app code on
+-- main, which no longer uses the anon storage path.
 -- BEGIN;
 -- UPDATE storage.buckets SET public = true WHERE id = 'issues-media-files';
 -- DROP POLICY IF EXISTS "Allow public read" ON storage.objects;
