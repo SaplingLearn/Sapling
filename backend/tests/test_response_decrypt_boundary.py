@@ -24,8 +24,7 @@ class TestGradebookCreateAssignmentResponse:
     def test_response_is_decrypted_not_ciphertext(self):
         stored = {
             "id": "a1",
-            "user_id": "user_andres",
-            "course_id": "c1",
+            "enrollment_id": "enr1",
             "category_id": None,
             "title": "HW1",
             "due_date": "2026-03-01",
@@ -35,7 +34,9 @@ class TestGradebookCreateAssignmentResponse:
             "notes": encrypt_if_present("Study chapters 1-3"),
             "source": "manual",
         }
-        with patch("routes.gradebook._user_owns_course", return_value=True), \
+        # Resolve to an enrollment (academics-split shape) and capture the insert.
+        enr = {"id": "enr1", "user_id": "user_andres", "offering_id": "off1"}
+        with patch("routes.gradebook._resolve_enrollment", return_value=enr), \
              patch("routes.gradebook.table") as t:
             t.return_value.insert.return_value = [dict(stored)]
             r = client.post(
