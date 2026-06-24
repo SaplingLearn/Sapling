@@ -8,6 +8,11 @@
 --    location). Rename it to course_offerings; all inbound FKs follow the rename.
 ALTER TABLE courses RENAME TO course_offerings;
 
+-- 1a. The renamed table inherits its baseline `id TEXT PRIMARY KEY` with no default. Give it
+--     the same gen_random_uuid()::text default as every other table in this redesign so the app
+--     does not have to supply ids on insert.
+ALTER TABLE course_offerings ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+
 -- 2. Add the offering's structural columns (nullable for now; backfilled below).
 ALTER TABLE course_offerings ADD COLUMN IF NOT EXISTS course_id  TEXT;
 ALTER TABLE course_offerings ADD COLUMN IF NOT EXISTS term_id    TEXT;
@@ -78,6 +83,9 @@ ALTER TABLE course_offerings ADD CONSTRAINT course_offerings_unique
 --    keeps its data (none today), its user FK, and its UNIQUE(user_id, *) — all follow renames.
 ALTER TABLE user_courses RENAME TO enrollments;
 ALTER TABLE enrollments RENAME COLUMN course_id TO offering_id;
+-- Same as course_offerings: the renamed table inherits its baseline `id TEXT PRIMARY KEY`
+-- with no default; give it the redesign's gen_random_uuid()::text default.
+ALTER TABLE enrollments ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
 --    enrollments.offering_id now references course_offerings(id) (inherited from step 1's rename).
 --    enrollments.syllabus_doc_id -> documents FK is re-established in 0025 (documents is recreated there).
 
