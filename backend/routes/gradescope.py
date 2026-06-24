@@ -122,11 +122,11 @@ def _load_creds(user_id: str) -> StoredCreds | None:
                 gradescope_session=payload.get("_gradescope_session"),
                 signed_token=payload.get("signed_token"),
             )
-    except Exception as e:
-        logger.exception("Failed to decrypt Gradescope creds")
+    except Exception:
+        logger.exception("Failed to decrypt Gradescope creds for user_id=%s", user_id)
         raise HTTPException(
-            status_code=500, detail=f"Stored credentials unreadable: {e}"
-        ) from e
+            status_code=500, detail="Stored credentials could not be read."
+        )
 
 
 def _establish_connection(creds: StoredCreds) -> GSConnection:
@@ -464,6 +464,27 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
         if r.get("gradescope_assignment_id")
     }
 
+    # Build a normalized category-name → id map for auto-matching new assignments.
+    # A new assignment whose title contains a category name (e.g. "Homework 3"
+    # contains "homework") is automatically categorized; otherwise category_id
+    # stays None and the user can link it manually.
+    cats = table("course_categories").select(
+        "id,name",
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{sapling_course_id}"},
+    )
+    cats_by_name: dict[str, str] = {
+        c["name"].lower().strip(): c["id"]
+        for c in cats
+        if c.get("name") and c.get("id")
+    }
+
+    def _infer_category_id(title: str) -> str | None:
+        t = title.lower()
+        for name, cat_id in cats_by_name.items():
+            if name in t:
+                return cat_id
+        return None
+
     inserted = updated = skipped = failed = 0
     for a in gs_assignments:
         gs_id = a.get("id")
@@ -478,11 +499,15 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
         record_write: dict[str, Any] = {
             "title": title,
             "due_date": due_date,
-            "points_earned": encrypt_if_present(points_earned),
-            "points_possible": encrypt_if_present(points_possible),
             "source": "gradescope",
             "gradescope_assignment_id": gs_id,
         }
+        # Only include grade fields when Gradescope returned a value —
+        # absent grades (None) must not overwrite previously synced data.
+        if points_earned is not None:
+            record_write["points_earned"] = encrypt_if_present(points_earned)
+        if points_possible is not None:
+            record_write["points_possible"] = encrypt_if_present(points_possible)
         try:
             if gs_id in by_gs_id:
                 table("assignments").update(
@@ -495,7 +520,7 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
                     "id": str(uuid.uuid4()),
                     "user_id": user_id,
                     "course_id": sapling_course_id,
-                    "category_id": None,  # user can re-categorize later
+                    "category_id": _infer_category_id(title),
                     **record_write,
                 })
                 inserted += 1

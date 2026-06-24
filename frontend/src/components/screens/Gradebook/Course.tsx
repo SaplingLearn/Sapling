@@ -352,9 +352,10 @@ export function GradebookCourseScreen({ courseId }: Props) {
 
   const augmentedAssignments = React.useMemo(() => {
     if (!predictorOpen || !data) return data?.assignments ?? [];
-    const curvePolicy = predictorCurveEnabled && data.curve_mode === "curved" ? {
-      curve_avg_target: data.curve_avg_target ?? 0.83,
-      curve_sd_delta: data.curve_sd_delta ?? 0.10,
+    const curvePolicy = predictorCurveEnabled && data.curve_mode === "curved"
+      && data.curve_avg_target != null && data.curve_sd_delta != null ? {
+      curve_avg_target: data.curve_avg_target,
+      curve_sd_delta: data.curve_sd_delta,
     } : null;
     return data.assignments.map((a) => {
       const hyp = hypotheticals.get(a.id);

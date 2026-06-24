@@ -24,9 +24,16 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup
 
-from gradescopeapi import DEFAULT_GRADESCOPE_BASE_URL
-from gradescopeapi.classes.account import Account
-from gradescopeapi.classes.connection import GSConnection
+try:
+    from gradescopeapi import DEFAULT_GRADESCOPE_BASE_URL
+    from gradescopeapi.classes.account import Account
+    from gradescopeapi.classes.connection import GSConnection
+    GRADESCOPEAPI_AVAILABLE = True
+except ImportError:  # pragma: no cover - depends on env
+    GRADESCOPEAPI_AVAILABLE = False
+    DEFAULT_GRADESCOPE_BASE_URL = "https://www.gradescope.com"
+    GSConnection = Any  # type: ignore[misc,assignment]
+    Account = Any  # type: ignore[misc,assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +94,14 @@ _BROWSER_HEADERS = {
 }
 
 
+def _require_gradescopeapi() -> None:
+    if not GRADESCOPEAPI_AVAILABLE:
+        raise GradescopeAuthError(
+            "gradescopeapi package is not installed. "
+            "Run `pip install gradescopeapi` to enable Gradescope sync."
+        )
+
+
 def login_with_cookies(
     signed_token: str | None,
     gradescope_session: str | None,
@@ -103,6 +118,7 @@ def login_with_cookies(
     `signed_token` is the "remember me" cookie — optional, present on
     long-lived sessions; including it extends the session's lifetime.
     """
+    _require_gradescopeapi()
     base_url = DEFAULT_GRADESCOPE_BASE_URL
     if not gradescope_session:
         raise GradescopeAuthError("Missing _gradescope_session cookie")
@@ -165,6 +181,7 @@ def login(email: str, password: str) -> GSConnection:
     (`account.get_courses()`, `account.get_assignments()`, etc.) continues
     to work as designed.
     """
+    _require_gradescopeapi()
     base_url = DEFAULT_GRADESCOPE_BASE_URL
     session = requests.Session()
     session.headers.update(_BROWSER_HEADERS)
@@ -243,6 +260,7 @@ def list_student_courses(conn: GSConnection) -> list[dict[str, Any]]:
     """Surface student-role courses only. Instructor courses are dropped —
     this integration is scoped to a student's own gradebook.
     """
+    _require_gradescopeapi()
     try:
         all_courses = conn.account.get_courses()  # type: ignore[union-attr]
     except Exception as e:
@@ -282,6 +300,7 @@ def list_assignments(conn: GSConnection, course_id: str) -> list[dict[str, Any]]
 
     Date fields are ISO strings (or None). Grades are numeric (or None).
     """
+    _require_gradescopeapi()
     try:
         assignments = conn.account.get_assignments(course_id)  # type: ignore[union-attr]
     except Exception as e:

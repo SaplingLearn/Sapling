@@ -54,7 +54,7 @@ def get_summary(request: Request, user_id: str = Query(...), semester: str = Que
     require_self(user_id, request)
 
     enrollments = table("user_courses").select(
-        "course_id,letter_scale,courses!inner(id,course_code,course_name,semester)",
+        "course_id,letter_scale,curve_mode,curve_avg_target,curve_sd_delta,courses!inner(id,course_code,course_name,semester)",
         filters={
             "user_id": f"eq.{user_id}",
             "courses.semester": f"eq.{semester}",
@@ -93,7 +93,12 @@ def get_summary(request: Request, user_id: str = Query(...), semester: str = Que
         course_assigns = assigns_by_course[cid]
         graded = [a for a in course_assigns
                   if a.get("points_possible") and a.get("points_earned") is not None]
-        percent = gradebook_service.current_grade(cats_by_course[cid], course_assigns)
+        percent = gradebook_service.current_grade(
+            cats_by_course[cid], course_assigns,
+            curve_mode=e.get("curve_mode") or "raw",
+            curve_avg_target=e.get("curve_avg_target"),
+            curve_sd_delta=e.get("curve_sd_delta"),
+        )
         letter = gradebook_service.letter_for(percent, e.get("letter_scale"))
         out.append({
             "course_id": cid,
@@ -149,7 +154,10 @@ def get_course(course_id: str, request: Request, user_id: str = Query(...)):
             by_cat[cid].append(a)
     for c in cats:
         c["category_grade"] = gradebook_service.category_grade(
-            by_cat[c["id"]], c.get("drop_lowest", 0)
+            by_cat[c["id"]], c.get("drop_lowest", 0),
+            curve_mode=curve_mode,
+            curve_avg_target=curve_avg_target,
+            curve_sd_delta=curve_sd_delta,
         )
 
     percent = gradebook_service.current_grade(
