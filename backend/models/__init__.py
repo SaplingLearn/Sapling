@@ -359,33 +359,44 @@ class CreateCosmeticBody(BaseModel):
 
 # ── Gradebook ────────────────────────────────────────────────────────────────
 
+# Enrollment / gradebook key on the abstract course_id + an optional `semester`
+# (a term label, e.g. "Spring 2026"; default = current term). The route maps
+# (course_id, semester) -> the user's enrollment via services.academics.
+AssignmentType = Literal["homework", "exam", "reading", "project", "quiz", "other"]
+
+
 class CategoryItem(BaseModel):
     id: Optional[str] = None              # null on create
     name: str
     weight: float = Field(ge=0, le=100)
     sort_order: int = 0
+    drop_lowest: int = Field(default=0, ge=0)  # gradebook_categories.drop_lowest
 
 
 class CreateCategoryBody(BaseModel):
     user_id: str
+    semester: Optional[str] = None        # term label; default = current term
     name: str
     weight: float = Field(ge=0, le=100)
+    drop_lowest: int = Field(default=0, ge=0)
 
 
 class BulkUpdateCategoriesBody(BaseModel):
     user_id: str
+    semester: Optional[str] = None
     categories: list[CategoryItem]        # full replacement set
 
 
 class CreateAssignmentBody(BaseModel):
     user_id: str
     course_id: str
+    semester: Optional[str] = None
     title: str
     category_id: Optional[str] = None
     points_possible: Optional[float] = Field(default=None, gt=0)
     points_earned: Optional[float] = Field(default=None, ge=0)
     due_date: Optional[str] = None
-    assignment_type: Optional[str] = None
+    assignment_type: Optional[AssignmentType] = None
     notes: Optional[str] = None
 
 
@@ -396,7 +407,7 @@ class UpdateAssignmentBody(BaseModel):
     points_possible: Optional[float] = Field(default=None, gt=0)
     points_earned: Optional[float] = Field(default=None, ge=0)
     due_date: Optional[str] = None
-    assignment_type: Optional[str] = None
+    assignment_type: Optional[AssignmentType] = None
     notes: Optional[str] = None
 
 
@@ -407,12 +418,23 @@ class LetterScaleTier(BaseModel):
 
 class SetLetterScaleBody(BaseModel):
     user_id: str
+    semester: Optional[str] = None
     scale: Optional[list[LetterScaleTier]] = None  # null clears the override
+
+
+class SetCurveBody(BaseModel):
+    """Per-enrollment bell-curve policy (enrollments.curve_*)."""
+    user_id: str
+    semester: Optional[str] = None
+    curve_mode: Literal["raw", "curved"] = "raw"
+    curve_avg_target: Optional[float] = None
+    curve_sd_delta: Optional[float] = None
 
 
 class SyllabusApplyBody(BaseModel):
     user_id: str
     course_id: str
+    semester: Optional[str] = None
     doc_id: str
     categories: list[CategoryItem]
     assignments: list[dict]               # uses the same shape as syllabus extraction
