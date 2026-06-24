@@ -208,22 +208,32 @@ class TestResumeSession:
 # ── POST /api/learn/mode-switch ───────────────────────────────────────────────
 
 class TestModeSwitch:
-    def _make_table_factory(self, user_name: str, topic: str):
-        """Return a table() side-effect that answers users and sessions queries."""
+    def _make_table_factory(self, topic: str):
+        """Return a table() side-effect that answers sessions queries.
+
+        The display name no longer lives on `users` (migration 0024 moved it to
+        user_profiles); get_user_name resolves it via services.profiles, which
+        these tests patch through `routes.learn.get_display_name`.
+        """
         def factory(name):
             mock = MagicMock()
-            if name == "users":
-                mock.select.return_value = [{"name": user_name}]
-            elif name == "sessions":
+            if name == "sessions":
                 mock.select.return_value = [{"topic": topic}]
             else:
                 mock.select.return_value = []
             return mock
         return factory
 
+    def _patches(self, user_name: str, topic: str):
+        """table factory + display-name patch for the mode-switch greeting."""
+        return (
+            patch("routes.learn.table", side_effect=self._make_table_factory(topic)),
+            patch("routes.learn.get_display_name", return_value=user_name),
+        )
+
     def test_returns_200_with_reply(self):
-        factory = self._make_table_factory("Andres Garcia", "Recursion")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Andres Garcia", "Recursion")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "expository"},
@@ -233,8 +243,8 @@ class TestModeSwitch:
 
     def test_reply_uses_first_name_only(self):
         """Message must greet with first name only, not full name."""
-        factory = self._make_table_factory("Andres Garcia", "Recursion")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Andres Garcia", "Recursion")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "socratic"},
@@ -244,8 +254,8 @@ class TestModeSwitch:
         assert "Garcia" not in reply
 
     def test_reply_contains_mode_display_name(self):
-        factory = self._make_table_factory("Maria", "Sorting algorithms")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Maria", "Sorting algorithms")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "expository"},
@@ -254,8 +264,8 @@ class TestModeSwitch:
         assert "Expository" in reply
 
     def test_reply_contains_current_topic(self):
-        factory = self._make_table_factory("Jake", "Binary Search Trees")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Jake", "Binary Search Trees")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "teachback"},
@@ -264,8 +274,8 @@ class TestModeSwitch:
         assert "Binary Search Trees" in reply
 
     def test_reply_has_no_em_dash(self):
-        factory = self._make_table_factory("Sam", "Graphs")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Sam", "Graphs")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "socratic"},
@@ -275,8 +285,8 @@ class TestModeSwitch:
         assert "\u2013" not in reply  # en-dash (extra guard)
 
     def test_reply_has_no_markdown_bold(self):
-        factory = self._make_table_factory("Sam", "Graphs")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Sam", "Graphs")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "socratic"},
@@ -285,8 +295,8 @@ class TestModeSwitch:
         assert "**" not in reply
 
     def test_message_is_saved_to_db(self):
-        factory = self._make_table_factory("Lea", "Linked Lists")
-        with patch("routes.learn.table", side_effect=factory) as t:
+        tbl, name = self._patches("Lea", "Linked Lists")
+        with tbl as t, name:
             client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "teachback"},

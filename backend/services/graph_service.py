@@ -68,12 +68,17 @@ def _get_course_nodes(user_id: str, course_id: str) -> list:
 
 
 def ensure_user_exists(user_id: str) -> None:
-    """Create a user row if one doesn't exist yet (prevents FK violations)."""
+    """Create a user row if one doesn't exist yet (prevents FK violations).
+
+    Insert only columns that still live on `users` after the 0024 identity split
+    — the public profile (incl. `name`) moved to `user_profiles`. A stub user has
+    no display name yet; onboarding/oauth populate `user_profiles` separately, so
+    we deliberately do NOT create a profile row here.
+    """
     existing = table("users").select("id", filters={"id": f"eq.{user_id}"})
     if not existing:
-        name = user_id.replace("user_", "").replace("_", " ").title()
         try:
-            table("users").insert({"id": user_id, "name": name, "streak_count": 0})
+            table("users").insert({"id": user_id, "streak_count": 0})
         except Exception:
             pass  # already exists (race condition) — safe to ignore
 

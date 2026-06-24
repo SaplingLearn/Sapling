@@ -48,16 +48,19 @@ def _normalize(text: str) -> str:
 
 def dedup_against_existing(
     user_id: str,
-    course_id: str | None,
+    offering_id: str | None,
     cards: list[Card],
     topic: str | None = None,
 ) -> tuple[list[Card], list[Card]]:
     """Return (keep, skipped) where skipped have a near-duplicate front
     (Levenshtein <= 3 on normalized front) among the user's existing cards
-    in the same course (or topic when course_id is None)."""
+    in the same offering (or topic when offering_id is None).
+
+    Flashcards key on the course offering after migration 0025 (the link column
+    was renamed course_id -> offering_id)."""
     filters = {"user_id": f"eq.{user_id}"}
-    if course_id:
-        filters["course_id"] = f"eq.{course_id}"
+    if offering_id:
+        filters["offering_id"] = f"eq.{offering_id}"
     elif topic:
         filters["topic"] = f"eq.{topic}"
 
