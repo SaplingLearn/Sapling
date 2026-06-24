@@ -20,12 +20,25 @@ export interface GradeProjection {
 // "Drop the lowest N" helper. Sort score-asc, drop the N lowest, return the
 // sum of scores and count of kept items. Each assignment is equally weighted —
 // the category grade is scoreSum/count, not total-earned/total-possible.
+//
+// Tie-break mirrors the backend and droppedAssignmentIds() exactly: lowest
+// score first, then higher points_possible, then id asc — so on tied score
+// ratios the predictor drops the same assignment the badge/server does.
 function dropAndSum(
-  items: { score: number; earned: number; possible: number }[],
+  items: { id: string; score: number; earned: number; possible: number }[],
   drop: number,
 ): { scoreSum: number; count: number } {
   if (drop >= items.length) return { scoreSum: 0, count: 0 };
-  const kept = drop <= 0 ? items : [...items].sort((a, b) => a.score - b.score).slice(drop);
+  const kept =
+    drop <= 0
+      ? items
+      : [...items]
+          .sort((a, b) => {
+            if (a.score !== b.score) return a.score - b.score;
+            if (a.possible !== b.possible) return b.possible - a.possible;
+            return a.id.localeCompare(b.id);
+          })
+          .slice(drop);
   return {
     scoreSum: kept.reduce((s, x) => s + x.score, 0),
     count: kept.length,
@@ -71,7 +84,7 @@ export function projectGrade(
       .map((a) => {
         const p = a.points_possible as number;
         const e = a.points_earned as number;
-        return { score: e / p, earned: e, possible: p };
+        return { id: a.id, score: e / p, earned: e, possible: p };
       });
     const currentDS = dropAndSum(currentItems, drop);
     const catCurrent =
@@ -81,7 +94,7 @@ export function projectGrade(
     const floorItems = items.map((a) => {
       const p = a.points_possible as number;
       const e = a.points_earned !== null ? (a.points_earned as number) : 0;
-      return { score: e / p, earned: e, possible: p };
+      return { id: a.id, score: e / p, earned: e, possible: p };
     });
     const floorDS = dropAndSum(floorItems, drop);
     const catFloor =
@@ -91,7 +104,7 @@ export function projectGrade(
     const ceilingItems = items.map((a) => {
       const p = a.points_possible as number;
       const e = a.points_earned !== null ? (a.points_earned as number) : p;
-      return { score: e / p, earned: e, possible: p };
+      return { id: a.id, score: e / p, earned: e, possible: p };
     });
     const ceilingDS = dropAndSum(ceilingItems, drop);
     const catCeiling =
