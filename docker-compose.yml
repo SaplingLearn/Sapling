@@ -16,6 +16,11 @@ services:
         BACKEND_URL: http://backend:5000
     env_file:
       - ./frontend/.env
+    environment:
+      # next.config.ts rewrites() proxies /api/* to BACKEND_URL at server
+      # runtime; supply it here so the rewrite path resolves to the backend
+      # service instead of the localhost:5000 config default.
+      BACKEND_URL: http://backend:5000
     ports:
       - "3000:3000"
     depends_on:
