@@ -101,7 +101,11 @@ def _insert_if_absent(table_name: str, row_id: str, row: dict) -> None:
 
 def _exists_by(table_name: str, eq_filters: dict) -> bool:
     filters = {col: f"eq.{val}" for col, val in eq_filters.items()}
-    rows = table(table_name).select("id", filters=filters, limit=1) or []
+    # Select a column we're already filtering on (always present) rather than a
+    # hardcoded "id": user_profiles is keyed on user_id and has no `id` column,
+    # so `select=id` 400s there. The filter keys are the natural/PK columns.
+    select_col = next(iter(eq_filters))
+    rows = table(table_name).select(select_col, filters=filters, limit=1) or []
     return len(rows) > 0
 
 
