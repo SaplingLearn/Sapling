@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS course_categories (
     name        TEXT NOT NULL,
     weight      NUMERIC NOT NULL,
     sort_order  INTEGER DEFAULT 0,
+    drop_lowest INTEGER NOT NULL DEFAULT 0 CHECK (drop_lowest >= 0),
     created_at  TIMESTAMPTZ DEFAULT now()
 );
 
@@ -169,10 +170,49 @@ CREATE TABLE IF NOT EXISTS assignments (
     curve_class_sd   NUMERIC,
     curve_avg_target NUMERIC,
     curve_sd_delta   NUMERIC,
+    gradescope_assignment_id TEXT, -- Gradescope idempotency key for sync upserts
     created_at      TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_assignments_user_due ON assignments(user_id, due_date);
+
+-- Partial unique index: only enforce uniqueness when the id is non-null,
+-- so manual / syllabus assignments stay unconstrained.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assignments_gradescope_id
+  ON assignments(course_id, gradescope_assignment_id)
+  WHERE gradescope_assignment_id IS NOT NULL;
+
+-- Gradescope sync: encrypted per-user credentials, one row per user.
+--   'password' mode: email + password ciphertext (fresh login each sync).
+--   'cookies' mode: pasted browser session cookies (required for SSO).
+CREATE TABLE IF NOT EXISTS gradescope_credentials (
+    user_id            TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    auth_mode          TEXT NOT NULL DEFAULT 'password',
+    email_encrypted    TEXT,
+    password_encrypted TEXT,
+    cookies_encrypted  TEXT,
+    last_synced_at     TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT gradescope_credentials_payload_chk CHECK (
+        (auth_mode = 'password' AND email_encrypted IS NOT NULL AND password_encrypted IS NOT NULL)
+        OR (auth_mode = 'cookies' AND cookies_encrypted IS NOT NULL)
+    )
+);
+
+-- Per-(user, sapling-course) link to a Gradescope course id.
+CREATE TABLE IF NOT EXISTS gradescope_course_links (
+    id                    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    sapling_course_id     TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    gradescope_course_id  TEXT NOT NULL,
+    last_synced_at        TIMESTAMPTZ,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, sapling_course_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gradescope_links_user
+  ON gradescope_course_links(user_id);
 
 -- Documents (uploaded course materials)
 CREATE TABLE IF NOT EXISTS documents (
