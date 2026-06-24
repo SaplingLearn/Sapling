@@ -11,6 +11,14 @@
 -- already uses in migration_gradebook.sql, because Postgres has no
 -- ADD CONSTRAINT IF NOT EXISTS. Pre-existing orphan rows are deleted first so
 -- the ALTER TABLE can validate.
+--
+-- ON DELETE semantics: these FKs have no ON DELETE clause, so they default to
+-- NO ACTION (RESTRICT). A referenced users/courses row cannot be hard-deleted
+-- while a graph_edges/notes row still points at it. This guarantees no orphans
+-- but does NOT cascade-delete dependents. Today nothing hard-deletes
+-- users/courses (delete_account is a soft delete; delete_course only removes
+-- the user_courses enrollment row), so RESTRICT never actually fires. Switch
+-- to ON DELETE CASCADE (and add a hard-delete path) if cleanup is ever wanted.
 
 -- #179 graph_edges.user_id: remove edges whose user_id has no users row, then
 -- add the FK other learning tables already enforce.

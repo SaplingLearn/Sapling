@@ -92,6 +92,9 @@ CREATE TABLE IF NOT EXISTS graph_nodes (
 CREATE INDEX IF NOT EXISTS idx_graph_nodes_user_course ON graph_nodes(user_id, course_id);
 
 -- Knowledge graph edges
+-- graph_edges.user_id carries a hard FK (#179) with no ON DELETE clause, so it
+-- defaults to NO ACTION (RESTRICT): a users row cannot be hard-deleted while
+-- edges still reference it. This prevents orphaned edges; it does not cascade.
 CREATE TABLE IF NOT EXISTS graph_edges (
     id                TEXT PRIMARY KEY,
     user_id           TEXT NOT NULL REFERENCES users(id),  -- #179
@@ -491,8 +494,14 @@ CREATE TABLE IF NOT EXISTS user_cosmetics (
 -- filters work for tag-based search. last_summary is the cached output of
 -- the most recent /summarize action; null until the user runs it.
 --
--- notes.user_id / notes.course_id DO carry hard FKs (#180) — they are core
--- user data and must not dangle past a user/course delete.
+-- notes.user_id / notes.course_id carry hard FKs (#180) — they are core user
+-- data. The FKs have no ON DELETE clause, so they default to NO ACTION
+-- (RESTRICT): a user or course row cannot be hard-deleted while notes still
+-- reference it. This guarantees notes never become orphaned, but it does NOT
+-- cascade-delete them. Today nothing hard-deletes users/courses
+-- (delete_account is a soft delete; delete_course only removes the
+-- user_courses enrollment row), so RESTRICT never fires. If cleanup-on-delete
+-- is ever wanted, switch these to ON DELETE CASCADE and add a hard-delete path.
 --
 -- note_concepts is a junction table linking notes <-> graph_nodes.
 -- ON DELETE CASCADE on note_id ensures deleting a note cleans up its
