@@ -43,6 +43,13 @@ def _table_factory(users, enrollment_rows, node_rows):
     return table_side_effect
 
 
+def _names_for(users):
+    """Display names now live on user_profiles; the route resolves them via
+    services.profiles.get_display_names (patched here). Each fixture user's
+    `name` key stands in for that user's decrypted profile name."""
+    return {u["id"]: u["name"] for u in users}
+
+
 class TestGetStudents:
     def test_courses_resolved_via_enrollments(self):
         users = [{"id": "u1", "name": "Alice", "streak_count": 3}]
@@ -53,7 +60,7 @@ class TestGetStudents:
         with patch(
             "routes.social.table",
             side_effect=_table_factory(users, enrollments, []),
-        ):
+        ), patch("routes.social.get_display_names", return_value=_names_for(users)):
             r = client.get("/api/social/students")
 
         assert r.status_code == 200
@@ -73,7 +80,7 @@ class TestGetStudents:
         with patch(
             "routes.social.table",
             side_effect=_table_factory(users, enrollments, []),
-        ):
+        ), patch("routes.social.get_display_names", return_value=_names_for(users)):
             r = client.get("/api/social/students")
 
         assert r.status_code == 200
@@ -92,7 +99,7 @@ class TestGetStudents:
         with patch(
             "routes.social.table",
             side_effect=_table_factory(users, enrollments, []),
-        ):
+        ), patch("routes.social.get_display_names", return_value=_names_for(users)):
             r = client.get("/api/social/students")
 
         assert r.status_code == 200
@@ -105,7 +112,7 @@ class TestGetStudents:
         with patch(
             "routes.social.table",
             side_effect=_table_factory(users, [], []),
-        ):
+        ), patch("routes.social.get_display_names", return_value=_names_for(users)):
             r = client.get("/api/social/students")
 
         assert r.status_code == 200
@@ -125,7 +132,7 @@ class TestGetStudents:
         with patch(
             "routes.social.table",
             side_effect=_table_factory(users, enrollments, node_rows),
-        ):
+        ), patch("routes.social.get_display_names", return_value=_names_for(users)):
             r = client.get("/api/social/students")
 
         assert r.status_code == 200

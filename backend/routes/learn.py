@@ -18,6 +18,7 @@ from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.auth_guard import require_self, get_session_user_id
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
+from services.profiles import get_display_name
 from services.gemini_service import (
     MODEL_LITE,
     MODEL_SMART,
@@ -379,10 +380,8 @@ def save_message(session_id: str, role: str, content: str, graph_update: dict = 
 
 
 def get_user_name(user_id: str) -> str:
-    rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
-    if not rows:
-        return "Student"
-    return decrypt_if_present(rows[0]["name"]) or "Student"
+    # Display name lives on user_profiles (0024); resolve + decrypt via helper.
+    return get_display_name(user_id) or "Student"
 
 
 def _consume_pending(session_id: str, user_id: str) -> None:

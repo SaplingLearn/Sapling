@@ -13,7 +13,7 @@ from agents.deps import SaplingDeps
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from services.auth_guard import require_self
-from services.encryption import decrypt_if_present
+from services.profiles import get_display_name
 from services.gemini_service import MODEL_LITE, MODEL_SMART, call_gemini_json
 from services.graph_service import apply_graph_update, get_graph
 from services.quiz_context_service import get_quiz_context, save_quiz_context
@@ -458,9 +458,9 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         "concept_name",
         filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
     )
-    user_rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
     concept_name = node2_rows[0]["concept_name"] if node2_rows else "Unknown"
-    student_name = decrypt_if_present(user_rows[0]["name"]) if user_rows else "Student"
+    # Display name lives on user_profiles (0024); resolve + decrypt via helper.
+    student_name = get_display_name(user_id) or "Student"
 
     existing_ctx = get_quiz_context(user_id, concept_node_id)
     ctx_prompt = (

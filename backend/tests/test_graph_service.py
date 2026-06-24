@@ -15,6 +15,7 @@ from services.graph_service import (
     delete_course,
     apply_graph_update,
     get_recommendations,
+    ensure_user_exists,
 )
 
 
@@ -81,6 +82,36 @@ def _enrollment_row(course_id: str, code: str = "", name: str = "Course",
             "terms": {"label": term},
         },
     }
+
+
+# ── ensure_user_exists ────────────────────────────────────────────────────────
+
+class TestEnsureUserExists:
+    def test_insert_payload_omits_name_after_identity_split(self):
+        """`name` moved to user_profiles (migration 0024); the users insert must
+        not reference it or the real-DB write raises."""
+        factory, mocks = _cached_mock_table({"users": []})  # no existing row
+        with patch("services.graph_service.table", side_effect=factory):
+            ensure_user_exists("u1")
+
+        users = mocks["users"]
+        users.insert.assert_called_once()
+        payload = users.insert.call_args[0][0]
+        assert "name" not in payload
+        assert payload == {"id": "u1", "streak_count": 0}
+
+    def test_does_not_create_profile_row(self):
+        """A stub user has no display name yet; onboarding/oauth own user_profiles."""
+        factory, mocks = _cached_mock_table({"users": []})
+        with patch("services.graph_service.table", side_effect=factory):
+            ensure_user_exists("u1")
+        assert "user_profiles" not in mocks
+
+    def test_skips_insert_when_user_exists(self):
+        factory, mocks = _cached_mock_table({"users": [{"id": "u1"}]})
+        with patch("services.graph_service.table", side_effect=factory):
+            ensure_user_exists("u1")
+        mocks["users"].insert.assert_not_called()
 
 
 # ── get_graph ─────────────────────────────────────────────────────────────────

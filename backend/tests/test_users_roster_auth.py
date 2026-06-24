@@ -9,7 +9,7 @@ The autouse `_bypass_session_auth` fixture in conftest.py stubs the auth
 guard so authenticated-path tests don't need real tokens; the
 unauthenticated test restores the real guard to assert the 401.
 """
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -36,20 +36,32 @@ class TestListUsersAuth:
         assert r.status_code == 401
 
     def test_authenticated_returns_200_with_decrypted_names(self):
-        rows = [
-            {"id": "u1", "name": "ENC_BOB", "room_id": "r1"},
-            {"id": "u2", "name": "ENC_ALICE", "room_id": "r2"},
+        # users now carries id + current_room_id (0024 dropped name, renamed
+        # room_id); the display name resolves off user_profiles via
+        # services.profiles.get_display_names, which decrypts. The route imports
+        # both names locally from their modules, so patch at the source modules.
+        users_rows = [
+            {"id": "u1", "current_room_id": "r1"},
+            {"id": "u2", "current_room_id": "r2"},
         ]
-        decrypt_map = {"ENC_BOB": "Bob", "ENC_ALICE": "Alice"}
+        names_map = {"u1": "Bob", "u2": "Alice"}
 
-        with patch("db.connection.table") as t, patch(
-            "services.encryption.decrypt_if_present",
-            side_effect=lambda v: decrypt_map.get(v, v),
+        def by_name(name):
+            m = MagicMock()
+            m.select.return_value = users_rows if name == "users" else []
+            return m
+
+        with patch("db.connection.table", side_effect=by_name), patch(
+            "services.profiles.get_display_names", return_value=names_map
         ):
-            t.return_value.select.return_value = rows
             r = client.get("/api/users")
 
         assert r.status_code == 200
-        names = [u["name"] for u in r.json()["users"]]
+        result = r.json()["users"]
+        names = [u["name"] for u in result]
         # Sorted by decrypted name, lowercased.
         assert names == ["Alice", "Bob"]
+        # Legacy room_id response key preserved, sourced from current_room_id.
+        by_id = {u["name"]: u for u in result}
+        assert by_id["Bob"]["room_id"] == "r1"
+        assert by_id["Alice"]["room_id"] == "r2"
