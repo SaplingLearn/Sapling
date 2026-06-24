@@ -456,10 +456,12 @@ async def _chat_via_agent(
     """Run chat_tutor_agent and return the legacy response shape.
 
     Returns ``{"reply": str, "graph_update": dict, "mastery_changes": list}``.
-    `graph_update` and `mastery_changes` come back empty here because
-    `apply_graph_update_tool` (registered on chat_tutor) already
-    persisted any graph changes during the agent run. The frontend's
-    Learn-page reducer accepts empty values gracefully.
+    Graph changes are persisted in-band during the agent run by
+    `apply_graph_update_tool` / `update_mastery_tool` (registered on
+    chat_tutor); the tools also accumulate their payloads on `deps` so the
+    route can echo `graph_update` (for graph_update_json / concepts_covered)
+    and the real `mastery_changes` deltas back to the client, matching the
+    legacy path. Both are empty when nothing changed this turn.
 
     `use_shared_context=False` flips the model into "no class-aggregate"
     mode by appending a constraint instruction to the user message —
@@ -515,7 +517,10 @@ async def _chat_via_agent(
     return {
         "reply": reply,
         "graph_update": merged_graph_update,
-        "mastery_changes": [],
+        # Real before/after deltas accumulated by update_mastery_tool, for
+        # parity with the legacy path (which returns apply_graph_update's
+        # changes directly). Empty when no mastery moved this turn.
+        "mastery_changes": deps.mastery_changes,
     }
 
 
