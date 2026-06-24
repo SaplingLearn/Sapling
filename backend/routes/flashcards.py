@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from db.connection import table
+from services.academics import resolve_offering
 from services.gemini_service import generate_flashcards as _generate
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
@@ -109,21 +110,28 @@ def _get_course_documents(user_id: str, course_name: str) -> list[dict]:
     """
     Return all library documents for the user that belong to the course
     matching `course_name`. Falls back to all user documents if no course match.
+
+    Documents key on the offering (0025): match the abstract course by name,
+    resolve it to the current-term offering, then read documents by offering.
     """
     try:
         course_rows = table("courses").select(
             "id", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{course_name}"}, limit=1
         )
         if course_rows:
-            course_id = course_rows[0]["id"]
+            offering_id = resolve_offering(course_rows[0]["id"])
             docs = table("documents").select(
                 "file_name,category,summary,concept_notes",
-                filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+                filters={
+                    "user_id": f"eq.{user_id}",
+                    "offering_id": f"eq.{offering_id}",
+                    "deleted_at": "is.null",
+                },
             )
         else:
             docs = table("documents").select(
                 "file_name,category,summary,concept_notes",
-                filters={"user_id": f"eq.{user_id}"},
+                filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
             )
         docs = docs or []
         for d in docs:
@@ -248,7 +256,7 @@ def get_flashcards(user_id: str, request: Request, topic: str | None = None):
 
     try:
         rows = table("flashcards").select(
-            "id,user_id,topic,course_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at",
+            "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at",
             filters=filters, order="created_at.desc"
         )
         return {"flashcards": rows or []}
@@ -316,12 +324,16 @@ _MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 def import_commit(body: ImportCommitBody, request: Request):
     require_self(body.user_id, request)
 
+    # The body carries an abstract course id (optional); flashcards key on the
+    # offering. Resolve it (None stays None — flashcards.offering_id is nullable).
+    offering_id = resolve_offering(body.course_id) if body.course_id else None
+
     cards = [{"front": c.front, "back": c.back} for c in body.cards]
     skipped_count = 0
 
     if body.dedup:
         keep, skipped = dedup_against_existing(
-            body.user_id, body.course_id, cards, topic=body.topic
+            body.user_id, offering_id, cards, topic=body.topic
         )
         cards = keep
         skipped_count = len(skipped)
@@ -332,7 +344,7 @@ def import_commit(body: ImportCommitBody, request: Request):
             "id": str(uuid.uuid4()),
             "user_id": body.user_id,
             "topic": body.topic,
-            "course_id": body.course_id,
+            "offering_id": offering_id,
             "front": c["front"],
             "back": c["back"],
             "times_reviewed": 0,
@@ -415,7 +427,11 @@ def import_generate(body: ImportGenerateBody, request: Request):
             raise HTTPException(status_code=400, detail="`document_id` is required for library_doc source")
         rows = table("documents").select(
             "id,user_id,summary,concept_notes,file_name",
-            filters={"id": f"eq.{body.document_id}", "user_id": f"eq.{body.user_id}"},
+            filters={
+                "id": f"eq.{body.document_id}",
+                "user_id": f"eq.{body.user_id}",
+                "deleted_at": "is.null",
+            },
             limit=1,
         )
         if not rows:

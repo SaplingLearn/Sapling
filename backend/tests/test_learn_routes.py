@@ -450,9 +450,9 @@ class TestChatViaAgent:
     Mirror's PR #71's pattern in `tests/test_quiz_routes.py`.
     """
 
-    def _make_table_factory(self, *, history_rows=None, course_id="course1"):
+    def _make_table_factory(self, *, history_rows=None, offering_id="off1"):
         """Default table factory: messages reads return `history_rows` (or
-        empty), sessions reads return a course id, users return a name.
+        empty), sessions reads return an offering id (0025), users a name.
         """
         rows = history_rows or []
 
@@ -461,7 +461,7 @@ class TestChatViaAgent:
             if name == "messages":
                 mock.select.return_value = rows
             elif name == "sessions":
-                mock.select.return_value = [{"course_id": course_id}]
+                mock.select.return_value = [{"offering_id": offering_id}]
             elif name == "users":
                 mock.select.return_value = [{"name": "Andres"}]
             elif name == "graph_nodes":
@@ -621,7 +621,7 @@ class TestChatViaAgent:
 
                 mock.insert.side_effect = _capture
             elif name == "sessions":
-                mock.select.return_value = [{"course_id": "course1"}]
+                mock.select.return_value = [{"offering_id": "off1"}]
             elif name == "users":
                 mock.select.return_value = [{"name": "Andres"}]
             else:

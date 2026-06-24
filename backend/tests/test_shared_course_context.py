@@ -444,19 +444,20 @@ class TestLearnHelpers(unittest.TestCase):
         self.assertEqual(result, "")
 
     @patch("routes.learn.table")
-    def test_get_session_course_id_found(self, mock_table):
-        mock_table.return_value.select.return_value = [{"course_id": "course-1"}]
+    def test_get_session_offering_id_found(self, mock_table):
+        # Sessions key on the offering (0025); the helper returns it.
+        mock_table.return_value.select.return_value = [{"offering_id": "off-1"}]
 
-        from routes.learn import _get_session_course_id
-        result = _get_session_course_id("session-abc")
-        self.assertEqual(result, "course-1")
+        from routes.learn import _get_session_offering_id
+        result = _get_session_offering_id("session-abc")
+        self.assertEqual(result, "off-1")
 
     @patch("routes.learn.table")
-    def test_get_session_course_id_not_found(self, mock_table):
+    def test_get_session_offering_id_not_found(self, mock_table):
         mock_table.return_value.select.return_value = []
 
-        from routes.learn import _get_session_course_id
-        result = _get_session_course_id("session-missing")
+        from routes.learn import _get_session_offering_id
+        result = _get_session_offering_id("session-missing")
         self.assertEqual(result, "")
 
     @patch("services.course_context_service.get_course_context", return_value={})

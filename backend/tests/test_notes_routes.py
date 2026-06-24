@@ -22,46 +22,59 @@ def client():
 class TestListNotes:
     def test_returns_notes_for_user(self, client):
         notes = [
-            {"id": "n1", "user_id": "u1", "course_id": "c1",
+            {"id": "n1", "user_id": "u1", "offering_id": "off1",
              "title": "A", "body": "", "tags": [],
              "last_summary": None, "last_summary_at": None,
              "created_at": "2026-05-11T00:00:00Z",
              "updated_at": "2026-05-11T00:00:00Z"},
         ]
-        async def fake_list(user_id, course_id=None):
+        async def fake_list(user_id, offering_id=None):
             assert user_id == "u1"
-            assert course_id is None
+            assert offering_id is None
             return notes
         with patch("routes.notes.list_notes", side_effect=fake_list):
             r = client.get("/api/notes/user/u1")
         assert r.status_code == 200
         assert r.json() == {"notes": notes}
 
-    def test_course_filter_passes_through(self, client):
-        async def fake_list(user_id, course_id=None):
-            assert course_id == "c2"
+    def test_course_filter_resolves_to_offering(self, client):
+        # The query param is the abstract course id; the service is called
+        # with the resolved offering id.
+        async def fake_list(user_id, offering_id=None):
+            assert offering_id == "off-c2"
             return []
-        with patch("routes.notes.list_notes", side_effect=fake_list):
+        with (
+            patch("routes.notes.resolve_offering", return_value="off-c2") as ro,
+            patch("routes.notes.list_notes", side_effect=fake_list),
+        ):
             r = client.get("/api/notes/user/u1?course_id=c2")
         assert r.status_code == 200
+        ro.assert_called_once_with("c2")
 
 
 class TestCreateNote:
     def test_creates_with_required_fields(self, client):
-        async def fake_create(user_id, course_id, title, body, tags):
-            return {"id": "n1", "user_id": user_id, "course_id": course_id,
+        async def fake_create(user_id, offering_id, title, body, tags):
+            return {"id": "n1", "user_id": user_id, "offering_id": offering_id,
                     "title": title, "body": body, "tags": tags,
                     "last_summary": None, "last_summary_at": None,
                     "created_at": "2026-05-11T00:00:00Z",
                     "updated_at": "2026-05-11T00:00:00Z"}
-        with patch("routes.notes.create_note", side_effect=fake_create):
+        with (
+            patch("routes.notes.resolve_offering", return_value="off1") as ro,
+            patch("routes.notes.create_note", side_effect=fake_create),
+        ):
             r = client.post(
                 "/api/notes",
                 json={"user_id": "u1", "course_id": "c1",
                       "title": "T", "body": "B", "tags": ["a"]},
             )
         assert r.status_code == 200
-        assert r.json()["id"] == "n1"
+        body = r.json()
+        assert body["id"] == "n1"
+        # Abstract course id resolved to the current-term offering on create.
+        ro.assert_called_once_with("c1", create=True)
+        assert body["offering_id"] == "off1"
 
     def test_missing_course_id_returns_422(self, client):
         r = client.post(
@@ -179,7 +192,7 @@ class TestSummarizeRoute:
             captured["called"] = True
             return FakeResult()
         async def fake_get_note(note_id, user_id):
-            return {"id": note_id, "user_id": user_id, "course_id": "c1",
+            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
                     "title": "T", "body": "Long body…", "tags": [],
                     "last_summary": None, "last_summary_at": None,
                     "created_at": "", "updated_at": ""}
@@ -187,10 +200,11 @@ class TestSummarizeRoute:
             captured["saved"] = summary
             return {"id": note_id, "last_summary": summary,
                     "last_summary_at": "2026-05-11T00:00:00Z",
-                    "user_id": user_id, "course_id": "c1",
+                    "user_id": user_id, "offering_id": "off1",
                     "title": "T", "body": "Long body…", "tags": [],
                     "created_at": "", "updated_at": ""}
         with patch("routes.notes.note_summary_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
              patch("routes.notes.get_note", side_effect=fake_get_note), \
              patch("routes.notes.save_summary", side_effect=fake_save_summary):
             r = client.post(
@@ -219,12 +233,14 @@ class TestExtractConceptsRoute:
         async def fake_run(*args, **kwargs):
             return FakeResult()
         async def fake_get_note(note_id, user_id):
-            return {"id": note_id, "user_id": user_id, "course_id": "c1",
+            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
                     "title": "T", "body": "B", "tags": [],
                     "last_summary": None, "last_summary_at": None,
                     "created_at": "", "updated_at": ""}
         merged: list[str] = []
         async def fake_apply(user_id, course_id, concept_names):
+            # The graph keys on the abstract course id (offering → course).
+            assert course_id == "c1"
             merged.extend(concept_names)
             return len(concept_names)
         async def fake_lookup(user_id, course_id, names):
@@ -235,6 +251,7 @@ class TestExtractConceptsRoute:
             return True
 
         with patch("routes.notes.note_concepts_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
              patch("routes.notes.get_note", side_effect=fake_get_note), \
              patch("routes.notes.apply_concepts_to_graph", side_effect=fake_apply), \
              patch("routes.notes._lookup_concept_nodes_by_name", side_effect=fake_lookup), \
@@ -257,11 +274,12 @@ class TestNoteChatRoute:
         async def fake_run(*args, **kwargs):
             return FakeResult()
         async def fake_get_note(note_id, user_id):
-            return {"id": note_id, "user_id": user_id, "course_id": "c1",
+            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
                     "title": "T", "body": "B", "tags": [],
                     "last_summary": None, "last_summary_at": None,
                     "created_at": "", "updated_at": ""}
         with patch("routes.notes.note_chat_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
              patch("routes.notes.get_note", side_effect=fake_get_note):
             r = client.post(
                 "/api/notes/n1/chat",
@@ -274,19 +292,21 @@ class TestNoteChatRoute:
 class TestSendToTutorRoute:
     def test_returns_topic_and_course(self, client):
         async def fake_get_note(note_id, user_id):
-            return {"id": note_id, "user_id": user_id, "course_id": "c1",
+            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
                     "title": "Photosynthesis — light vs dark reactions",
                     "body": "B", "tags": [],
                     "last_summary": "A short summary",
                     "last_summary_at": "2026-05-11T00:00:00Z",
                     "created_at": "", "updated_at": ""}
-        with patch("routes.notes.get_note", side_effect=fake_get_note):
+        with patch("routes.notes.get_note", side_effect=fake_get_note), \
+             patch("routes.notes.offering_course_id", return_value="c1"):
             r = client.post(
                 "/api/notes/n1/send-to-tutor",
                 json={"user_id": "u1"},
             )
         assert r.status_code == 200
         body = r.json()
+        # The tutor session starts from the abstract course id (graph key).
         assert body["course_id"] == "c1"
         # topic uses the note title (first 80 chars, single line).
         assert body["topic"].startswith("Photosynthesis")
