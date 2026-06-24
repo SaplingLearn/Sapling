@@ -15,7 +15,8 @@ services:
       args:
         BACKEND_URL: http://backend:5000
     env_file:
-      - ./frontend/.env
+      - path: ./frontend/.env
+        required: false
     environment:
       # next.config.ts rewrites() proxies /api/* to BACKEND_URL at server
       # runtime; supply it here so the rewrite path resolves to the backend
