@@ -11,6 +11,20 @@
 -- Existing duplicate rows must be collapsed before the unique index can build,
 -- so each section dedups first (keeping the strongest/oldest row) and repoints
 -- or removes dependents, mirroring db/dedup_nodes.py.
+--
+-- Concurrency/safety: this script wraps the whole dedup + index build in a
+-- single transaction (BEGIN/COMMIT below). That makes the dependent-cleanup
+-- statements atomic with the node delete, and — critically — guarantees no row
+-- can be inserted between the dedup DELETEs and the CREATE UNIQUE INDEX, which
+-- would otherwise make the index build fail. Because the build runs inside a
+-- transaction it takes a brief ACCESS EXCLUSIVE / SHARE lock on graph_nodes and
+-- graph_edges, so plain (non-CONCURRENTLY) index creation is intentional —
+-- CONCURRENTLY cannot run inside a transaction block. The trade-off is that
+-- writes block for the duration of the build rather than racing it; on these
+-- table sizes that window is short. If you ever need a fully online build with
+-- live writes, run dedup + CREATE UNIQUE INDEX CONCURRENTLY *outside* a
+-- transaction instead — but then you MUST quiesce writes during the dedup phase
+-- to keep the index buildable.
 
 -- #181 node dedup. The window ranks rows within each (user, normalized concept,
 -- course) group; rn > 1 are the duplicates to collapse. Same ranking is reused
@@ -28,6 +42,8 @@
 -- under lower). Postgres has no casefold(); accepting lower() here is a deliberate,
 -- documented divergence. The app already whitespace-collapses concept_name before
 -- insert, so the new write path stays consistent with this index.
+
+BEGIN;
 
 -- 1. Remove edges that reference a soon-to-be-removed duplicate node.
 WITH ranked AS (
@@ -97,3 +113,5 @@ DELETE FROM graph_edges
 -- replaces the racy select-then-insert in graph_service.apply_graph_update.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_unique
     ON graph_edges(user_id, source_node_id, target_node_id);
+
+COMMIT;
