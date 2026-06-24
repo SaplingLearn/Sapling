@@ -28,6 +28,10 @@ BEGIN
   END IF;
 END $$;
 
+-- Index the FK referencing column: Postgres does not auto-index the
+-- referencing side of a foreign key, and sibling tables index this path.
+CREATE INDEX IF NOT EXISTS idx_graph_edges_user_id ON graph_edges(user_id);
+
 -- #180 notes.user_id / notes.course_id: notes is core user data but both
 -- columns are bare TEXT. Remove rows pointing at a non-existent user or course
 -- (e.g. notes left dangling after a course delete) before adding the FKs.

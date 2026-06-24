@@ -102,6 +102,10 @@ CREATE TABLE IF NOT EXISTS graph_edges (
     relationship_type TEXT DEFAULT 'related'
 );
 
+-- Index the FK referencing column: Postgres does not auto-index the
+-- referencing side of a foreign key, and sibling tables index this path.
+CREATE INDEX IF NOT EXISTS idx_graph_edges_user_id ON graph_edges(user_id);
+
 -- Learning sessions
 CREATE TABLE IF NOT EXISTS sessions (
     id           TEXT PRIMARY KEY,
