@@ -188,9 +188,17 @@ def _prune_fallback_store() -> None:
 def get_me(request: Request):
     """Return approval and onboarding status for a given user_id."""
     user_id = get_session_user_id(request)
-    user = table("users").select("id,is_approved,onboarding_completed,username,name,avatar_url", filters={"id": f"eq.{user_id}"})
+    user = table("users").select(
+        "id,is_approved,onboarding_completed", filters={"id": f"eq.{user_id}"}
+    )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Profile fields (username/name/avatar_url) moved to user_profiles in migration 0024.
+    profile_rows = table("user_profiles").select(
+        "username,name,avatar_url", filters={"user_id": f"eq.{user_id}"}
+    )
+    profile = profile_rows[0] if profile_rows else {}
 
     # Fetch user roles
     role_rows = table("user_roles").select(
@@ -237,9 +245,9 @@ def get_me(request: Request):
         "user_id": user_id,
         "is_approved": bool(user[0]["is_approved"]),
         "onboarding_completed": bool(user[0].get("onboarding_completed", False)),
-        "username": user[0].get("username"),
-        "name": decrypt_if_present(user[0].get("name")) or "",
-        "avatar_url": user[0].get("avatar_url") or "",
+        "username": profile.get("username"),
+        "name": decrypt_if_present(profile.get("name")) or "",
+        "avatar_url": profile.get("avatar_url") or "",
         "roles": roles,
         "equipped_cosmetics": equipped_cosmetics,
         "is_admin": is_admin,
@@ -345,23 +353,32 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
     if not _email_domain_allowed(email):
         return _fail_redirect("invalid_domain")
 
+    # Profile fields (name/first_name/last_name/avatar_url) live on user_profiles
+    # after migration 0024; `users` keeps identity + auth + activity only.
+    profile_fields = {
+        "name": encrypt_if_present(name),
+        "first_name": encrypt_if_present(first_name),
+        "last_name": encrypt_if_present(last_name),
+        "avatar_url": avatar_url,
+    }
+
     # Determine user_id: check if this Google ID already exists
     existing = table("users").select("id,is_approved", filters={"google_id": f"eq.{google_id}"})
     if existing:
         user_id = existing[0]["id"]
         is_approved = existing[0]["is_approved"]
-        # Update name/avatar in case they changed
+        # Update auth fields on users; refresh profile fields on user_profiles.
         from datetime import datetime as _dt, timezone as _tz
         table("users").update(
             {
-                "name": encrypt_if_present(name),
-                "first_name": encrypt_if_present(first_name),
-                "last_name": encrypt_if_present(last_name),
-                "avatar_url": avatar_url,
                 "email": encrypt_if_present(email),
                 "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
             },
             filters={"id": f"eq.{user_id}"},
+        )
+        table("user_profiles").upsert(
+            {"user_id": user_id, **profile_fields},
+            on_conflict="user_id",
         )
     else:
         # Email-based account merge is disabled because emails are now encrypted
@@ -372,23 +389,22 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         from datetime import datetime as _dt, timezone as _tz
         table("users").insert({
             "id": user_id,
-            "name": encrypt_if_present(name),
-            "first_name": encrypt_if_present(first_name),
-            "last_name": encrypt_if_present(last_name),
             "email": encrypt_if_present(email),
             "google_id": google_id,
-            "avatar_url": avatar_url,
             "auth_provider": "google",
             "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
         })
+        table("user_profiles").insert({"user_id": user_id, **profile_fields})
 
     # Store OAuth tokens (calendar access included)
+    # expires_at is TIMESTAMPTZ after migration 0024 — pass None (not "") when
+    # there is no expiry, since "" is not a valid timestamptz.
     table("oauth_tokens").upsert(
         {
             "user_id": user_id,
             "access_token": encrypt(creds.token),
             "refresh_token": encrypt_if_present(creds.refresh_token),
-            "expires_at": creds.expiry.isoformat() if creds.expiry else "",
+            "expires_at": creds.expiry.isoformat() if creds.expiry else None,
         },
         on_conflict="user_id",
     )

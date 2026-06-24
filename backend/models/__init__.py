@@ -213,11 +213,13 @@ class OnboardingBody(BaseModel):
 # ── Profile & Settings ───────────────────────────────────────────────────────
 
 class UpdateProfileBody(BaseModel):
+    # Profile fields now live on user_profiles (see migration 0024). `display_name`
+    # was a user_settings duplicate of the profile `name` and was dropped; profile
+    # name is set during onboarding / OAuth, not via this patch body.
     username: Optional[str] = None
     bio: Optional[str] = None
     location: Optional[str] = None
     website: Optional[str] = None
-    display_name: Optional[str] = None
 
 
 class UpdateSettingsBody(BaseModel):
@@ -268,12 +270,9 @@ class PublicProfileResponse(BaseModel):
 
 
 class SettingsResponse(BaseModel):
+    # display_name/username/bio/location/website were dropped from user_settings in
+    # migration 0024 (now owned by user_profiles — one source of truth per field).
     user_id: str
-    display_name: Optional[str] = None
-    username: Optional[str] = None
-    bio: Optional[str] = None
-    location: Optional[str] = None
-    website: Optional[str] = None
     profile_visibility: str = "public"
     activity_status_visible: bool = True
     notification_email: bool = True
