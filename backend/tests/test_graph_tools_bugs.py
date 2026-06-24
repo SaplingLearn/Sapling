@@ -191,7 +191,10 @@ class TestGraphUpdatesAccumulation:
         )
 
         async def fake_to_thread(fn, *args, **kwargs):
-            return []
+            return [
+                {"concept": "DFS", "before": 0.3, "after": 0.4},
+                {"concept": "BFS", "before": 0.5, "after": 0.45},
+            ]
 
         with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
             _run(update_mastery_tool(ctx, update))
@@ -203,13 +206,61 @@ class TestGraphUpdatesAccumulation:
         assert "DFS" in names
         assert "BFS" in names
 
+    def test_update_mastery_tool_skips_append_when_no_change(self):
+        """A concept the model named but that doesn't exist in the graph
+        yields no `changes` and must NOT be appended to graph_updates —
+        otherwise end_session would over-report it as concepts_covered."""
+        ctx = _make_ctx()
+        update = MasteryUpdateInput(
+            updates=[ConceptMasteryUpdate(concept_name="GhostTopic", mastery_delta=0.2)]
+        )
+
+        async def fake_to_thread(fn, *args, **kwargs):
+            return []  # concept not in graph → nothing persisted
+
+        with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
+            _run(update_mastery_tool(ctx, update))
+
+        assert ctx.deps.graph_updates == []
+        assert ctx.deps.mastery_changes == []
+
+    def test_update_mastery_tool_only_appends_changed_concepts(self):
+        """When only some named concepts actually change, graph_updates must
+        contain only the persisted ones (built from the returned changes)."""
+        ctx = _make_ctx()
+        update = MasteryUpdateInput(
+            updates=[
+                ConceptMasteryUpdate(concept_name="Real", mastery_delta=0.1),
+                ConceptMasteryUpdate(concept_name="Ghost", mastery_delta=0.1),
+            ]
+        )
+
+        async def fake_to_thread(fn, *args, **kwargs):
+            return [{"concept": "Real", "before": 0.2, "after": 0.3}]
+
+        with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
+            _run(update_mastery_tool(ctx, update))
+
+        assert len(ctx.deps.graph_updates) == 1
+        names = [n["concept_name"] for n in ctx.deps.graph_updates[0]["updated_nodes"]]
+        assert names == ["Real"]
+        assert ctx.deps.mastery_changes == [
+            {"concept": "Real", "before": 0.2, "after": 0.3}
+        ]
+
     def test_multiple_tool_calls_accumulate_independently(self):
         """Two consecutive tool calls (simulating a multi-turn agent run)
         must each append their own payload — not overwrite."""
         ctx = _make_ctx()
 
         async def fake_to_thread(fn, *args, **kwargs):
-            return []
+            # Echo a change for any updated_nodes concept so the persisted-
+            # only gate in update_mastery_tool sees a real change.
+            payload = args[1]
+            return [
+                {"concept": n["concept_name"], "before": 0.3, "after": 0.5}
+                for n in payload.get("updated_nodes", [])
+            ]
 
         with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
             _run(apply_graph_update_tool(ctx, GraphUpdateInput(concepts=["Heaps"])))
@@ -227,7 +278,11 @@ class TestGraphUpdatesAccumulation:
         ctx = _make_ctx()
 
         async def fake_to_thread(fn, *args, **kwargs):
-            return []
+            payload = args[1]
+            return [
+                {"concept": n["concept_name"], "before": 0.3, "after": 0.4}
+                for n in payload.get("updated_nodes", [])
+            ]
 
         with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
             _run(apply_graph_update_tool(ctx, GraphUpdateInput(concepts=["A", "B"])))
