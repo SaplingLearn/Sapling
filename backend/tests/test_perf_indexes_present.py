@@ -1,17 +1,27 @@
 """
-Drift guard for the performance-index migration (#160, #161, #176, #177, #178).
+Drift guard for the performance-index work (#160, #161, #176, #177, #178).
 
 There is no live Postgres in the unit suite, so we can't EXPLAIN the queries
 here. What we *can* cheaply guarantee is that every index the audit called for
-exists in BOTH the canonical schema (`supabase_schema.sql`, applied to fresh
-environments) and the hand-applied migration (`migration_perf_indexes.sql`,
-applied to existing prod). The two drifting apart is the exact failure mode
-issue #197 is about, so this test pins them together.
+is declared in BOTH places that must stay in sync:
+
+  * db/migrations/0001_baseline_schema.sql — the canonical schema applied to
+    fresh environments at baseline time.
+  * db/migrations/0019_perf_indexes.sql — the standalone migration that
+    backfills existing databases baselined before the indexes existed.
+
+The two drifting apart is the exact failure mode the perf rollout guards
+against, so this test pins them together.
 """
 import os
 import re
 
-_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "db")
+_MIGRATIONS = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "db", "migrations"
+)
+
+BASELINE = "0001_baseline_schema.sql"
+PERF_MIGRATION = "0019_perf_indexes.sql"
 
 # index name -> table it must be declared on
 EXPECTED_INDEXES = {
@@ -29,33 +39,35 @@ EXPECTED_INDEXES = {
 
 
 def _read(name: str) -> str:
-    with open(os.path.join(_DB, name), encoding="utf-8") as fh:
+    with open(os.path.join(_MIGRATIONS, name), encoding="utf-8") as fh:
         return fh.read()
 
 
-def test_migration_declares_every_audited_index():
-    sql = _read("migration_perf_indexes.sql")
+def _assert_declares_every_index(fname: str) -> None:
+    sql = _read(fname)
     for index, table in EXPECTED_INDEXES.items():
-        assert index in sql, f"{index} missing from migration_perf_indexes.sql"
+        assert index in sql, f"{index} missing from {fname}"
         # Verify the index is actually declared ON the right table, not just
         # that the table name happens to appear somewhere (e.g. in a comment).
-        # The CREATE may span lines, and may include CONCURRENTLY, so match
-        # the index name followed by an ON <table>( clause across whitespace.
+        # The CREATE may span lines, so match the index name followed by an
+        # ON <table>( clause across whitespace.
         pattern = re.escape(index) + r"\s+ON\s+" + re.escape(table) + r"\s*\("
         assert re.search(pattern, sql), (
-            f"{index} is not declared ON {table}( in migration_perf_indexes.sql"
+            f"{index} is not declared ON {table}( in {fname}"
         )
 
 
-def test_schema_mirrors_every_migration_index():
-    sql = _read("supabase_schema.sql")
-    for index in EXPECTED_INDEXES:
-        assert index in sql, f"{index} not mirrored into supabase_schema.sql"
+def test_baseline_schema_declares_every_audited_index():
+    _assert_declares_every_index(BASELINE)
+
+
+def test_perf_migration_declares_every_audited_index():
+    _assert_declares_every_index(PERF_MIGRATION)
 
 
 def test_indexes_are_idempotent_create_if_not_exists():
-    # Both files must use IF NOT EXISTS so a re-run is a no-op (#197 hygiene).
-    for fname in ("migration_perf_indexes.sql", "supabase_schema.sql"):
+    # Both files must use IF NOT EXISTS so a re-run is a no-op.
+    for fname in (BASELINE, PERF_MIGRATION):
         sql = _read(fname)
         for index in EXPECTED_INDEXES:
             line = next((ln for ln in sql.splitlines() if index in ln), "")
