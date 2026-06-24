@@ -9,6 +9,7 @@ applied to existing prod). The two drifting apart is the exact failure mode
 issue #197 is about, so this test pins them together.
 """
 import os
+import re
 
 _DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "db")
 
@@ -36,7 +37,14 @@ def test_migration_declares_every_audited_index():
     sql = _read("migration_perf_indexes.sql")
     for index, table in EXPECTED_INDEXES.items():
         assert index in sql, f"{index} missing from migration_perf_indexes.sql"
-        assert table in sql, f"{table} target missing for {index}"
+        # Verify the index is actually declared ON the right table, not just
+        # that the table name happens to appear somewhere (e.g. in a comment).
+        # The CREATE may span lines, and may include CONCURRENTLY, so match
+        # the index name followed by an ON <table>( clause across whitespace.
+        pattern = re.escape(index) + r"\s+ON\s+" + re.escape(table) + r"\s*\("
+        assert re.search(pattern, sql), (
+            f"{index} is not declared ON {table}( in migration_perf_indexes.sql"
+        )
 
 
 def test_schema_mirrors_every_migration_index():
