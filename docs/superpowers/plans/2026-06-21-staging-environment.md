@@ -4,7 +4,9 @@
 
 **Goal:** Stand up an admin-only, fully-hosted staging environment that mirrors prod (Cloudflare Workers frontend + Railway backend + a dedicated Supabase project) so DB migrations and bugfixes can be verified before reaching prod.
 
-**Architecture:** Staging is the same code as prod, differing only by environment variables. A new psycopg-based migration runner gives a reproducible apply path (closes #197). Staging is gated at the edge with Cloudflare Access. Deploys are trunk-based: `main` continuously deploys to staging; a `production` branch (fast-forwarded from a verified commit of `main`) deploys to prod.
+**Architecture:** Staging is the same code as prod, differing only by environment variables. A psycopg-based migration runner gives a reproducible apply path — **already merged on `main`** (see #197), so the runner/migrations work below is documented for context, not redone here. Staging is gated at the edge with Cloudflare Access. Deploys are trunk-based: `main` continuously deploys to staging; a `production` branch (fast-forwarded from a verified commit of `main`) deploys to prod.
+
+> **Re-baseline note (Phase 0 is done):** This plan was written before the migration runner landed on `main`. As of current `main`, `backend/db/migrate.py`, the ordered `backend/db/migrations/0001…0018` set, `psycopg[binary]>=3.2,<4` in `requirements.txt`, the idempotent `0009_cosmetics.sql`, `backend/tests/test_migrate.py`, the `frontend/wrangler.toml` `[env.staging]` block, and the `package.json` `cf:deploy:staging` script all already exist. Phase 0 (Tasks 1–5) and Task 11 are therefore **already done** and are kept below for reference only — do not re-implement them. The genuinely-remaining work is Tasks 6–10 and 12–15.
 
 **Tech Stack:** FastAPI + Supabase (PostgREST for app, direct Postgres via psycopg for migrations), Next.js on Cloudflare Workers, Railway environments, Cloudflare Access (Zero Trust), Google OAuth.
 
@@ -21,29 +23,42 @@
 
 ## File Structure
 
-**Created:**
+**Already on `main` (done — do not recreate):**
 - `backend/db/migrate.py` — migration runner CLI (psycopg, direct connection).
-- `backend/db/migrations/` — new directory holding ordered, numbered `NNNN_*.sql` migrations.
+- `backend/db/migrations/` — directory holding ordered, numbered `NNNN_*.sql` migrations (`0001…0018`).
+- `backend/tests/test_migrate.py` — unit tests for the runner's pure functions.
+- `backend/requirements.txt` — already pins `psycopg[binary]>=3.2,<4`.
+- `backend/db/migrations/0009_cosmetics.sql` — already idempotent (#196).
+- `frontend/wrangler.toml` — already has the `[env.staging]` block.
+- `frontend/package.json` — already has the `cf:deploy:staging` script.
+
+**Created (remaining):**
 - `backend/db/seed_staging.py` — inserts fake app data (encrypted via helpers, through `table()`).
 - `backend/db/dirty_fixtures.sql` — deliberately-broken rows that reproduce the backlog's failure modes.
-- `backend/tests/test_migrate.py` — unit tests for the runner's pure functions.
 
-**Modified:**
-- `backend/requirements.txt` — add `psycopg[binary]>=3.2,<4`.
-- `backend/db/migration_cosmetics.sql` → moved into `migrations/` and made idempotent (#196).
-- `frontend/wrangler.toml` — add `[env.staging]` block.
-- `frontend/package.json` — add `cf:deploy:staging` script.
+**Modified (remaining):**
 - `backend/config.py` — recognize `APP_ENV=staging` (drives `noindex`).
 - `backend/main.py` — emit `X-Robots-Tag: noindex` when `APP_ENV=staging`.
-- `backend/.env.example` — document `SUPABASE_DB_URL` and `APP_ENV=staging`.
+- `backend/.env.example` — document `SUPABASE_DB_URL` and `APP_ENV=staging` (see Task 6.5).
 
 **Operator runbooks (no repo files):** Supabase staging project, Google staging OAuth client, Railway staging environment, Cloudflare DNS + Access, deploy wiring.
 
 ---
 
-## Phase 0 — Migration runner (closes #197, hardens #196)
+## Phase 0 — Migration runner (ALREADY MERGED ON `main` — reference only)
 
-### Task 1: Add psycopg dependency
+> **Status: DONE on `main`.** Tasks 1–5 below were implemented and merged after this plan was
+> written (addressing #197, hardening #196). **Do not re-run them** — they would conflict with
+> merged code. They are retained verbatim only so the design rationale is traceable. To confirm,
+> the following already exist on `main`: `backend/requirements.txt` pins `psycopg[binary]>=3.2,<4`;
+> `backend/db/migrations/0001_baseline_schema.sql … 0018_documents_request_id.sql`;
+> `backend/db/migrate.py` with `discover_migrations`/`pending_migrations`/`run`/`main`;
+> `backend/tests/test_migrate.py`; and an idempotent `backend/db/migrations/0009_cosmetics.sql`.
+
+<details>
+<summary>Phase 0 tasks (already merged — click to expand for reference)</summary>
+
+### Task 1: Add psycopg dependency [DONE on `main`]
 
 **Files:**
 - Modify: `backend/requirements.txt`
@@ -68,7 +83,7 @@ git add backend/requirements.txt
 git commit -m "build: add psycopg for the migration runner (#197)"
 ```
 
-### Task 2: Create the ordered migrations directory
+### Task 2: Create the ordered migrations directory [DONE on `main`]
 
 **Files:**
 - Create: `backend/db/migrations/` (move existing `migration_*.sql` here with numeric prefixes)
@@ -114,7 +129,7 @@ git add -A backend/db
 git commit -m "refactor(db): move migrations into ordered migrations/ dir (#197)"
 ```
 
-### Task 3: Migration runner — pure functions (TDD)
+### Task 3: Migration runner — pure functions (TDD) [DONE on `main`]
 
 **Files:**
 - Create: `backend/db/migrate.py`
@@ -196,7 +211,7 @@ git add backend/db/migrate.py backend/tests/test_migrate.py
 git commit -m "feat(db): migration runner discovery/pending logic (#197)"
 ```
 
-### Task 4: Migration runner — DB I/O + CLI
+### Task 4: Migration runner — DB I/O + CLI [DONE on `main`]
 
 **Files:**
 - Modify: `backend/db/migrate.py`
@@ -293,7 +308,7 @@ git add backend/db/migrate.py
 git commit -m "feat(db): migration runner apply/baseline + CLI (#197)"
 ```
 
-### Task 5: Make migration_cosmetics idempotent (#196)
+### Task 5: Make migration_cosmetics idempotent (#196) [DONE on `main`]
 
 **Files:**
 - Modify: `backend/db/migrations/0009_cosmetics.sql`
@@ -326,6 +341,8 @@ Expected: second run prints "No pending migrations." and never errors on a dupli
 git add backend/db/migrations/0009_cosmetics.sql
 git commit -m "fix(db): make cosmetics FK constraints idempotent (#196)"
 ```
+
+</details>
 
 ---
 
