@@ -9,7 +9,7 @@ import type {
 
 import { handleLocalRequest } from '@/lib/localData';
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
+export const API_URL = '';
 export const IS_LOCAL_MODE = process.env.NEXT_PUBLIC_LOCAL_MODE === 'true';
 
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
