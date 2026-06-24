@@ -30,6 +30,9 @@ class SaplingDeps:
         graph_updates: Accumulates graph update payloads emitted by tools
             during a run so the route can persist them in graph_update_json
             for concepts_covered derivation in end_session.
+        mastery_changes: Accumulates the real before/after mastery deltas
+            returned by apply_graph_update so the route can surface them in
+            the chat response for parity with the legacy path.
     """
 
     user_id: str
@@ -38,3 +41,4 @@ class SaplingDeps:
     request_id: str
     session_id: str | None = None
     graph_updates: list = field(default_factory=list)
+    mastery_changes: list = field(default_factory=list)

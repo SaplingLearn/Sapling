@@ -144,9 +144,21 @@ async def update_mastery_tool(
         {"updated_nodes": updated_nodes},
         ctx.deps.course_id,
     )
-    ctx.deps.graph_updates.append({"updated_nodes": updated_nodes})
 
+    # Only persist concepts that actually produced a change. A concept the
+    # model named but that doesn't exist in the graph yields no `changes`
+    # and is never written, so it must not leak into graph_update_json (it
+    # would over-report concepts_covered in end_session). Rebuild the
+    # appended updated_nodes from the concepts that genuinely changed.
     if changes:
+        changed_names = {c["concept"] for c in changes}
+        persisted_nodes = [
+            n for n in updated_nodes if n["concept_name"] in changed_names
+        ]
+        if persisted_nodes:
+            ctx.deps.graph_updates.append({"updated_nodes": persisted_nodes})
+        # Surface the real before/after deltas for parity with the legacy path.
+        ctx.deps.mastery_changes.extend(changes)
         parts = [f"{c['concept']} {c['before']:.2f}→{c['after']:.2f}" for c in changes]
         return f"Mastery updated: {', '.join(parts)}."
     return (
