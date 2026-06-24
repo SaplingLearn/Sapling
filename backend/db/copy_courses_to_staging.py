@@ -42,27 +42,47 @@ COLUMNS = [
     "created_at",
 ]
 
-PAGE = 1000  # PostgREST max rows per response
+PAGE = 1000  # rows requested per PostgREST Range page
 
 
 def fetch_prod_courses(base_url: str, service_key: str) -> list[dict]:
-    headers = {"apikey": service_key, "Authorization": f"Bearer {service_key}"}
+    # Page via the PostgREST Range header with Prefer: count=exact, and loop until
+    # we've fetched the total reported in Content-Range. Inferring completion from
+    # batch length vs PAGE is unreliable: if prod's db-max-rows is below PAGE the
+    # first response is short and the loop would stop early, under-fetching silently.
+    headers = {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Prefer": "count=exact",
+    }
     select = ",".join(COLUMNS)
     rows: list[dict] = []
     offset = 0
+    total: int | None = None
     with httpx.Client(timeout=30) as client:
         while True:
+            range_headers = {**headers, "Range-Unit": "items", "Range": f"{offset}-{offset + PAGE - 1}"}
             r = client.get(
                 f"{base_url}/rest/v1/courses",
-                params={"select": select, "order": "id", "limit": PAGE, "offset": offset},
-                headers=headers,
+                params={"select": select, "order": "id"},
+                headers=range_headers,
             )
             r.raise_for_status()
             batch = r.json()
             rows.extend(batch)
-            if len(batch) < PAGE:
+
+            # Content-Range looks like "0-999/1234" (or "*/1234" when empty).
+            content_range = r.headers.get("Content-Range", "")
+            if total is None and "/" in content_range:
+                tail = content_range.split("/", 1)[1].strip()
+                if tail.isdigit():
+                    total = int(tail)
+
+            if not batch:
                 break
-            offset += PAGE
+            offset += len(batch)
+            if total is not None and offset >= total:
+                break
     return rows
 
 
