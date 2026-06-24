@@ -100,15 +100,25 @@ def update_streak(user_id: str) -> None:
     )
 
 
+def _event_ts(e: dict) -> str | None:
+    """Pull a timestamp off a mastery event row. node_mastery_events rows key on
+    ``created_at``; tolerate the legacy ``ts`` key too."""
+    return e.get("created_at") or e.get("ts")
+
+
 def _compute_velocity(events: list) -> float:
-    """Mastery gained per day over the last 14 days. Returns 0.0 if insufficient data."""
+    """Mastery gained per day over the last 14 days. Returns 0.0 if insufficient data.
+
+    Operates on ``node_mastery_events`` rows ({delta, created_at, ...}); the legacy
+    JSON-blob ``ts`` key is still accepted via ``_event_ts``.
+    """
     if not events:
         return 0.0
     cutoff = datetime.utcnow() - timedelta(days=14)
     recent = []
     for e in events:
         try:
-            ts = datetime.fromisoformat(e["ts"].replace("Z", "+00:00")).replace(tzinfo=None)
+            ts = datetime.fromisoformat(_event_ts(e).replace("Z", "+00:00")).replace(tzinfo=None)
             if ts > cutoff:
                 recent.append(e)
         except Exception:
@@ -119,7 +129,7 @@ def _compute_velocity(events: list) -> float:
     if positive_gain == 0:
         return 0.0
     try:
-        first_ts = datetime.fromisoformat(recent[0]["ts"].replace("Z", "+00:00")).replace(tzinfo=None)
+        first_ts = datetime.fromisoformat(_event_ts(recent[0]).replace("Z", "+00:00")).replace(tzinfo=None)
         days = max(1, (datetime.utcnow() - first_ts).days)
     except Exception:
         days = 1
@@ -150,9 +160,25 @@ def get_graph(user_id: str) -> dict:
         if e["source_node_id"] in node_ids and e["target_node_id"] in node_ids
     ]
 
+    # Mastery events live in the append-only node_mastery_events table (the
+    # graph_nodes.mastery_events JSONB column was dropped in 0023). Batch-read all
+    # of this user's node events in one query, then group by node id.
+    events_by_node: dict[str, list] = {}
+    if node_ids:
+        try:
+            event_rows = table("node_mastery_events").select(
+                "node_id,delta,reason,created_at",
+                filters={"node_id": f"in.({','.join(node_ids)})"},
+                order="created_at.asc",
+            ) or []
+        except Exception:
+            event_rows = []
+        for ev in event_rows:
+            events_by_node.setdefault(ev.get("node_id"), []).append(ev)
+
     # Enrich each node with learning velocity; trim event history for API response
     for n in nodes:
-        events = n.get("mastery_events") or []
+        events = events_by_node.get(n["id"], [])
         n["learning_velocity"] = _compute_velocity(events)
         n["mastery_events"] = events[-5:]  # keep last 5 for UI; full history lives in DB
 
@@ -442,12 +468,13 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
     if course_id:
         fetch_filters["course_id"] = f"eq.{course_id}"
     existing_rows = table("graph_nodes").select(
-        "id,concept_name,mastery_score,times_studied,course_id,mastery_events",
+        "id,concept_name,mastery_score,times_studied,course_id",
         filters=fetch_filters,
     ) or []
 
-    # Normalized name → row, scoped to (user_id [, course_id]). Last write wins
-    # if duplicates pre-exist; the dedup script in db/dedup_nodes.py cleans those.
+    # Normalized name → row, scoped to (user_id [, course_id]). The UNIQUE
+    # (user_id, course_id, concept_name) constraint from 0023 prevents duplicates;
+    # this map resolves updated_nodes / new_edges against pre-existing rows.
     by_name: dict[str, dict] = {}
     for row in existing_rows:
         norm = _normalize_concept(row.get("concept_name") or "")
@@ -468,24 +495,32 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         init_m = _coerce_unit(new_node.get("initial_mastery"), 0.0)
 
         new_id = str(uuid.uuid4())
-        table("graph_nodes").insert({
-            "id": new_id,
-            "user_id": user_id,
-            "concept_name": name,
-            "mastery_score": init_m,
-            "mastery_tier": get_mastery_tier(init_m),
-            "course_id": node_course_id,
-            "mastery_events": [],
-        })
+        # UNIQUE-backed upsert (0023) replaces the old select-then-insert. On a
+        # pre-existing (user_id, course_id, concept_name) the row is merged rather
+        # than duplicated. Read the canonical id back from the representation so
+        # later edge/update writes target the surviving row.
+        returned = table("graph_nodes").upsert(
+            {
+                "id": new_id,
+                "user_id": user_id,
+                "concept_name": name,
+                "mastery_score": init_m,
+                "mastery_tier": get_mastery_tier(init_m),
+                "course_id": node_course_id,
+            },
+            on_conflict="user_id,course_id,concept_name",
+        )
+        canonical_id = new_id
+        if returned and isinstance(returned, list) and isinstance(returned[0], dict):
+            canonical_id = returned[0].get("id", new_id)
         # Track in-batch inserts so subsequent updated_nodes / new_edges in the
         # same call resolve against just-created nodes.
         inserted_in_batch[norm] = {
-            "id": new_id,
+            "id": canonical_id,
             "concept_name": name,
             "mastery_score": init_m,
             "times_studied": 0,
             "course_id": node_course_id,
-            "mastery_events": [],
         }
         if node_course_id:
             touched_courses.add(node_course_id)
@@ -509,25 +544,25 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         before = row["mastery_score"]
         after = max(0.0, min(1.0, before + delta))
 
-        existing_events = row.get("mastery_events") or []
-        new_event = {
-            "ts": datetime.utcnow().isoformat(),
-            "delta": delta,
-            "reason": upd.get("reason", ""),
-            "event_type": upd.get("event_type", "interaction"),
-        }
-        updated_events = (existing_events + [new_event])[-20:]
-
+        now = datetime.utcnow().isoformat()
+        # Update only the scalar columns — the mastery_events JSONB blob is gone (0023).
         table("graph_nodes").update(
             {
                 "mastery_score": after,
                 "mastery_tier": get_mastery_tier(after),
                 "times_studied": (row.get("times_studied") or 0) + 1,
-                "last_studied_at": datetime.utcnow().isoformat(),
-                "mastery_events": updated_events,
+                "last_studied_at": now,
             },
             filters={"id": f"eq.{row['id']}"},
         )
+        # Append-only mastery event (fixes the non-atomic read-modify-write, #247).
+        table("node_mastery_events").insert({
+            "id": str(uuid.uuid4()),
+            "node_id": row["id"],
+            "delta": delta,
+            "reason": upd.get("reason", ""),
+            "created_at": now,
+        })
         mastery_changes.append({"concept": row["concept_name"], "before": before, "after": after})
 
         cid = row.get("course_id")
@@ -556,23 +591,20 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         if src["id"] == tgt["id"]:
             continue
 
-        existing_edge = table("graph_edges").select(
-            "id",
-            filters={
-                "user_id": f"eq.{user_id}",
-                "source_node_id": f"eq.{src['id']}",
-                "target_node_id": f"eq.{tgt['id']}",
-            },
-        )
-        if not existing_edge:
-            table("graph_edges").insert({
+        # UNIQUE-backed upsert (0023) on (user_id, source, target, relationship_type)
+        # replaces the old select-then-insert; the DB dedups, so re-emitted edges
+        # are idempotent.
+        table("graph_edges").upsert(
+            {
                 "id": str(uuid.uuid4()),
                 "user_id": user_id,
                 "source_node_id": src["id"],
                 "target_node_id": tgt["id"],
                 "strength": strength,
                 "relationship_type": relationship_type,
-            })
+            },
+            on_conflict="user_id,source_node_id,target_node_id,relationship_type",
+        )
 
     if touched_courses:
         # touched_courses holds abstract course ids (the graph key). Analytics is
