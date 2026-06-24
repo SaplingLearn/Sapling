@@ -23,13 +23,21 @@ class TestGetCourseIdForTopic:
 
     def test_matches_enrolled_course_code(self):
         from routes.learn import _get_course_id_for_topic
+        # Enrollment keys on an offering; the abstract course id (returned to the
+        # session + graph) lives at course_offerings.course_id, behind the offering.
         uc = MagicMock()
         uc.select.return_value = [
-            {"course_id": "cid-math", "courses": {"course_code": "MATH", "course_name": "Calculus"}},
+            {
+                "offering_id": "off-math",
+                "course_offerings": {
+                    "course_id": "cid-math",
+                    "courses": {"course_code": "MATH", "course_name": "Calculus"},
+                },
+            },
         ]
 
         def factory(name):
-            if name == "user_courses":
+            if name == "enrollments":
                 return uc
             m = MagicMock()
             m.select.return_value = []
@@ -42,11 +50,17 @@ class TestGetCourseIdForTopic:
         from routes.learn import _get_course_id_for_topic
         uc = MagicMock()
         uc.select.return_value = [
-            {"course_id": "cid-bio", "courses": {"course_code": "", "course_name": "Biology 101"}},
+            {
+                "offering_id": "off-bio",
+                "course_offerings": {
+                    "course_id": "cid-bio",
+                    "courses": {"course_code": "", "course_name": "Biology 101"},
+                },
+            },
         ]
 
         def factory(name):
-            if name == "user_courses":
+            if name == "enrollments":
                 return uc
             m = MagicMock()
             m.select.return_value = []
@@ -60,13 +74,16 @@ class TestGetCourseIdForTopic:
         uc = MagicMock()
         uc.select.return_value = [
             {
-                "course_id": "cid-x",
-                "courses": {"course_code": "CS", "course_name": "Intro"},
+                "offering_id": "off-x",
+                "course_offerings": {
+                    "course_id": "cid-x",
+                    "courses": {"course_code": "CS", "course_name": "Intro"},
+                },
             },
         ]
 
         def factory(name):
-            if name == "user_courses":
+            if name == "enrollments":
                 return uc
             if name == "graph_nodes":
                 m = MagicMock()
@@ -88,7 +105,7 @@ class TestGetCourseIdForTopic:
         gn.select.return_value = [{"course_id": "cid-from-node"}]
 
         def factory(name):
-            if name == "user_courses":
+            if name == "enrollments":
                 return uc
             if name == "graph_nodes":
                 return gn

@@ -175,15 +175,21 @@ def get_public_profile(user_id: str):
     roles = _get_user_roles(user_id)
     equipped = _get_equipped_cosmetics(settings)
 
-    # Resolve school from user's enrolled courses
+    # Resolve school from user's enrolled courses.
+    # School now lives behind enrollments.offering_id → course_offerings.course_id
+    # → courses.school_id (a FK, currently unpopulated). Read through the join but
+    # tolerate a missing/None school; it surfaces as None until school_id is linked.
     school = None
-    enrollments = table("user_courses").select(
-        "courses(school)",
+    enrollments = table("enrollments").select(
+        "course_offerings(courses(school_id))",
         filters={"user_id": f"eq.{user_id}"},
         limit=1,
     )
-    if enrollments and enrollments[0].get("courses", {}).get("school"):
-        school = enrollments[0]["courses"]["school"]
+    if enrollments:
+        offering = enrollments[0].get("course_offerings") or {}
+        course = offering.get("courses") or {} if isinstance(offering, dict) else {}
+        if isinstance(course, dict) and course.get("school_id"):
+            school = course["school_id"]
 
     profile = {
         "id": user["id"],

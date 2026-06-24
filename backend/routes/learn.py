@@ -135,27 +135,35 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     if not topic_trim:
         return ""
     
-    # First, check if topic matches a course code or name in user's enrolled courses
+    # First, check if topic matches a course code or name in user's enrolled
+    # courses. Enrollment keys on an offering; the abstract course (which the
+    # session + knowledge graph key on) sits behind
+    # offering_id → course_offerings.course_id → courses. Match the topic against
+    # the abstract course's code/name and return the abstract course_id.
     try:
-        enrolled = table("user_courses").select(
-            "course_id,courses!inner(course_code,course_name)",
+        enrolled = table("enrollments").select(
+            "offering_id,course_offerings!inner(course_id,courses!inner(course_code,course_name))",
             filters={"user_id": f"eq.{user_id}"},
         )
         for row in enrolled:
-            course = row.get("courses", {}) if isinstance(row.get("courses"), dict) else {}
-            course_code = course.get("course_code", "")
-            course_name = course.get("course_name", "")
-            
+            offering = row.get("course_offerings", {})
+            if not isinstance(offering, dict):
+                continue
+            abstract_course_id = offering.get("course_id")
+            course = offering.get("courses", {}) if isinstance(offering.get("courses"), dict) else {}
+            course_code = course.get("course_code", "") or ""
+            course_name = course.get("course_name", "") or ""
+
             # Match on course_code (exact or case-insensitive)
-            if topic_trim.upper() == course_code.upper():
-                return row["course_id"]
+            if course_code and topic_trim.upper() == course_code.upper():
+                return abstract_course_id
             # Match on course_name
-            if topic_trim.lower() == course_name.lower():
-                return row["course_id"]
+            if course_name and topic_trim.lower() == course_name.lower():
+                return abstract_course_id
             # Same label as graph subject roots (graph_service)
             label = f"{course_code} - {course_name}" if course_code else course_name
             if label and topic_trim == label:
-                return row["course_id"]
+                return abstract_course_id
     except Exception as e:
         print(f"Failed to resolve course_id for topic={topic_trim!r} user_id={user_id!r}: {e}")
     
@@ -281,6 +289,7 @@ def build_system_prompt(
             )
 
     if use_shared_context and course_id:
+        # TODO(db/study-code): pass the session's offering_id once sessions carry it; abstract id degrades to {} for now
         ctx = get_course_context(course_id)
         if ctx:
             course_info = _get_course_info(course_id)
