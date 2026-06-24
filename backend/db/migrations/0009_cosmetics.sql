@@ -34,26 +34,41 @@ INSERT INTO cosmetics (type, name, slug, asset_url, css_value, rarity, unlock_so
     ('title', 'Classic', 'classic_title', NULL, NULL, 'common', 'default')
 ON CONFLICT (slug) DO NOTHING;
 
--- Add foreign key constraints to user_settings
-ALTER TABLE user_settings
-    ADD CONSTRAINT fk_user_settings_avatar_frame
-    FOREIGN KEY (equipped_avatar_frame_id) REFERENCES cosmetics(id);
+-- Add foreign key constraints to user_settings (idempotent — #196).
+-- Postgres has no ADD CONSTRAINT IF NOT EXISTS, so guard each on pg_constraint
+-- so re-running this migration never errors on an already-present constraint.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_user_settings_avatar_frame') THEN
+    ALTER TABLE user_settings
+      ADD CONSTRAINT fk_user_settings_avatar_frame
+      FOREIGN KEY (equipped_avatar_frame_id) REFERENCES cosmetics(id);
+  END IF;
 
-ALTER TABLE user_settings
-    ADD CONSTRAINT fk_user_settings_banner
-    FOREIGN KEY (equipped_banner_id) REFERENCES cosmetics(id);
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_user_settings_banner') THEN
+    ALTER TABLE user_settings
+      ADD CONSTRAINT fk_user_settings_banner
+      FOREIGN KEY (equipped_banner_id) REFERENCES cosmetics(id);
+  END IF;
 
-ALTER TABLE user_settings
-    ADD CONSTRAINT fk_user_settings_name_color
-    FOREIGN KEY (equipped_name_color_id) REFERENCES cosmetics(id);
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_user_settings_name_color') THEN
+    ALTER TABLE user_settings
+      ADD CONSTRAINT fk_user_settings_name_color
+      FOREIGN KEY (equipped_name_color_id) REFERENCES cosmetics(id);
+  END IF;
 
-ALTER TABLE user_settings
-    ADD CONSTRAINT fk_user_settings_title
-    FOREIGN KEY (equipped_title_id) REFERENCES cosmetics(id);
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_user_settings_title') THEN
+    ALTER TABLE user_settings
+      ADD CONSTRAINT fk_user_settings_title
+      FOREIGN KEY (equipped_title_id) REFERENCES cosmetics(id);
+  END IF;
 
-ALTER TABLE user_settings
-    ADD CONSTRAINT fk_user_settings_featured_role
-    FOREIGN KEY (featured_role_id) REFERENCES roles(id);
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_user_settings_featured_role') THEN
+    ALTER TABLE user_settings
+      ADD CONSTRAINT fk_user_settings_featured_role
+      FOREIGN KEY (featured_role_id) REFERENCES roles(id);
+  END IF;
+END $$;
 
 -- Storage: the admin cosmetic creation UI uploads frame/banner assets to a
 -- public Supabase Storage bucket named `cosmetic-assets`. Create it once with:

@@ -25,6 +25,7 @@ from config import (
     FRONTEND_URL,
     SESSION_SECRET,
     IS_LOCAL,
+    ALLOWED_EMAIL_DOMAINS,
 )
 from db.connection import table
 from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
@@ -40,6 +41,19 @@ except ImportError:
     GOOGLE_AVAILABLE = False
 
 router = APIRouter()
+
+
+def _email_domain_allowed(email: str) -> bool:
+    """Whether `email`'s domain is permitted to sign in.
+
+    Controlled by config.ALLOWED_EMAIL_DOMAINS (default ["bu.edu"]). An empty
+    allowlist permits any domain — used on staging, which is already gated by
+    Cloudflare Access.
+    """
+    if not ALLOWED_EMAIL_DOMAINS:
+        return True
+    domain = email.strip().lower().rsplit("@", 1)[-1]
+    return domain in ALLOWED_EMAIL_DOMAINS
 
 
 def _stamp_last_sign_in_for_test(user_id: str) -> None:
@@ -327,8 +341,8 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
     first_name = name_parts[0] if name_parts else ""
     last_name = name_parts[1] if len(name_parts) > 1 else ""
 
-    # Restrict to @bu.edu accounts
-    if not email.endswith("@bu.edu"):
+    # Restrict sign-in to the configured email-domain allowlist (default @bu.edu)
+    if not _email_domain_allowed(email):
         return _fail_redirect("invalid_domain")
 
     # Determine user_id: check if this Google ID already exists
