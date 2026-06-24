@@ -89,7 +89,11 @@ def fetch_prod_courses(base_url: str, service_key: str) -> list[dict]:
 def upsert_staging(db_url: str, rows: list[dict]) -> int:
     cols = ", ".join(COLUMNS)
     placeholders = ", ".join(["%s"] * len(COLUMNS))
-    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in COLUMNS if c != "id")
+    # Keep `created_at` in the INSERT (set on first seed) but exclude it from the
+    # UPDATE: it is effectively immutable, so re-runs must not overwrite staging's
+    # existing value with prod's.
+    immutable = {"id", "created_at"}
+    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in COLUMNS if c not in immutable)
     sql = (
         f"INSERT INTO courses ({cols}) VALUES ({placeholders}) "
         f"ON CONFLICT (id) DO UPDATE SET {updates}"
