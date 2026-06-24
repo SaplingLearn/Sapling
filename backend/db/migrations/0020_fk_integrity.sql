@@ -1,16 +1,19 @@
--- Migration: foreign-key integrity for graph_edges + notes
--- Run once in the Supabase SQL editor (idempotent — safe to re-run).
+-- Migration: foreign-key integrity for graph_edges + notes (#179, #180)
 --
--- Closes the orphan-row gaps where a user_id/course_id is a bare TEXT column
--- with no REFERENCES, inconsistent with every sibling table:
+-- Backfills, on already-migrated databases, the FK constraints that fresh
+-- databases now get inline from 0001_baseline_schema.sql. graph_edges.user_id
+-- and notes.user_id / notes.course_id historically shipped as bare TEXT columns
+-- with no REFERENCES, inconsistent with every sibling learning table:
 --   #179  graph_edges.user_id  -> users(id)
 --   #180  notes.user_id        -> users(id)
 --   #180  notes.course_id      -> courses(id)
 --
--- Each constraint is added behind the same pg_constraint guard the codebase
--- already uses in migration_gradebook.sql, because Postgres has no
--- ADD CONSTRAINT IF NOT EXISTS. Pre-existing orphan rows are deleted first so
--- the ALTER TABLE can validate.
+-- migrate.py wraps each migration in a single transaction, so this is plain
+-- (non-CONCURRENT) DDL. Each constraint is added behind a pg_constraint guard
+-- because Postgres has no ADD CONSTRAINT IF NOT EXISTS, which also makes this
+-- migration a no-op on fresh databases that already have the inline FKs from
+-- the baseline. Pre-existing orphan rows are deleted first so the ALTER TABLE
+-- can validate.
 --
 -- ON DELETE semantics: these FKs have no ON DELETE clause, so they default to
 -- NO ACTION (RESTRICT). A referenced users/courses row cannot be hard-deleted
