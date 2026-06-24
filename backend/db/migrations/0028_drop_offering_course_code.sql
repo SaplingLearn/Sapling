@@ -1,0 +1,12 @@
+-- 0028: drop the vestigial `course_code` column left on `course_offerings`.
+--
+-- 0020 renamed `courses` -> `course_offerings` and dropped the now-abstract columns
+-- (course_name/department/credits/description/semester/school) but MISSED `course_code`,
+-- which stayed behind as `NOT NULL` (inherited from the original 0001 `courses` table).
+-- The abstract `course_code` now lives on the `courses` table, reached via
+-- `course_offerings.course_id`. The leftover NOT NULL column silently broke every INSERT
+-- of a NEW offering — the app's `resolve_offering(create=True)` / `add_course` and
+-- `seed_staging.py` insert `{id, course_id, term_id, ...}` with no `course_code`, so the
+-- row's `course_code` is NULL and trips the not-null constraint (Postgres 23502).
+-- Existing rows merely lose a redundant column.
+ALTER TABLE course_offerings DROP COLUMN IF EXISTS course_code;
