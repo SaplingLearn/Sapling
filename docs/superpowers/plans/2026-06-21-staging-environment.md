@@ -360,6 +360,36 @@ Expected: prints "Applied N migration(s)" listing `0001_…` through `0018_…`.
 - [ ] **Step 4:** Create the `avatars` and `cosmetic-assets` storage buckets in the staging project (Storage → New bucket), matching prod.
 - [ ] **Step 5 (verify):** Run `SUPABASE_DB_URL=<staging-direct-url> python -m db.migrate` again → expect "No pending migrations." Confirms the tracking table is populated.
 
+### Task 6.5: Document `SUPABASE_DB_URL` and `APP_ENV` in `.env.example`
+
+**Files:**
+- Modify: `backend/.env.example`
+
+The migration runner (`db/migrate.py`) hard-errors when `SUPABASE_DB_URL` is unset, and the
+`noindex`/`IS_STAGING` work (Task 13) keys off `APP_ENV`, yet neither variable is documented in
+`backend/.env.example` on `main`. Add both so a fresh checkout knows they exist.
+
+- [ ] **Step 1: Add the two variables to `backend/.env.example`** (in the Supabase section, after `SUPABASE_SERVICE_KEY`):
+
+```
+# Direct Postgres connection string (Settings → Database → Connection string → "Direct connection",
+# port 5432, NOT the pooler). Required by the migration runner (python -m db.migrate); unused by the
+# app runtime, which goes through PostgREST.
+SUPABASE_DB_URL=postgresql://postgres:[password]@db.your-project-ref.supabase.co:5432/postgres
+
+# Deployment environment. Defaults to "production" when unset (strict, fail-closed checks).
+# Set APP_ENV=local for local dev (relaxes SESSION_SECRET); set APP_ENV=staging on the staging
+# deploy (drives the noindex header). "staging" is NOT in IS_LOCAL, so it stays fail-closed.
+APP_ENV=production
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add backend/.env.example
+git commit -m "docs(env): document SUPABASE_DB_URL and APP_ENV in .env.example"
+```
+
 ### Task 7: Synthetic seed data
 
 **Files:**
