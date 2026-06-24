@@ -59,7 +59,7 @@ deliberately shared are the Cloudflare account/zone and (optionally) the Gemini 
 | Frontend staging | `[env.staging]` in `frontend/wrangler.toml`, deployed `--env staging` | Native Workers named-environment pattern; no second repo/worker to maintain. |
 | Database | New Supabase **staging project**, own `ENCRYPTION_KEY` | Total isolation; staging key means no prod ciphertext is ever decryptable in staging. |
 | Test data | Synthetic seed **+ deliberately broken rows** | Broken rows reproduce the issues' failure modes so fixes are provably correct. No prod PII. |
-| Migration plumbing | **Phase 0: minimal migration runner** (`schema_migrations` table + ordered apply script) | Closes #197; makes "apply to staging then prod" reproducible and drift-free. |
+| Migration plumbing | **Phase 0: minimal migration runner** (`schema_migrations` table + ordered apply script) — **already merged on `main`** (see #197) | Makes "apply to staging then prod" reproducible and drift-free. |
 | Subdomains | `staging.saplinglearn.com` + `api.staging.saplinglearn.com` | Mirrors the prod `app` / `api` split; both already inside the Cloudflare zone. |
 | Auth | Separate "Sapling Staging" Google OAuth client | Keeps prod consent screen / quotas / redirect URIs clean. |
 | Git model | **Trunk-based**: `main` is the single source of truth; staging & prod deploy the *same commit* | Staging differs by config, not code — nothing to reconcile, no long-lived branch to drift. |
@@ -71,13 +71,13 @@ Staging is mostly configuration + new DB tooling — **no business-logic file ch
 
 | File | Change | Why |
 |---|---|---|
-| `frontend/wrangler.toml` | **New** `[env.staging]` block (`BACKEND_URL`, `NEXT_PUBLIC_API_URL`, `COOKIE_DOMAIN`) | Points the staging Worker at the staging backend. |
-| `frontend/package.json` | Add `cf:deploy:staging` script (`wrangler deploy --env staging`) | Convenience. |
-| `backend/db/migrate.py` | **New** migration runner (~50 lines) + `schema_migrations` table | Ordered, idempotent apply path. Closes #197. |
-| `backend/db/migration_*.sql` | Numeric prefixes for ordering; make `migration_cosmetics.sql` idempotent | Locks apply order; fixes #196. |
+| `frontend/wrangler.toml` | `[env.staging]` block (`BACKEND_URL`, `NEXT_PUBLIC_API_URL`, `COOKIE_DOMAIN`) — **already on `main`** | Points the staging Worker at the staging backend. |
+| `frontend/package.json` | `cf:deploy:staging` script (`wrangler deploy --env staging`) — **already on `main`** | Convenience. |
+| `backend/db/migrate.py` | Migration runner (~50 lines) + `schema_migrations` table — **already on `main`** (see #197) | Ordered, idempotent apply path. |
+| `backend/db/migrations/*.sql` | Numeric prefixes for ordering; `0009_cosmetics.sql` made idempotent — **already on `main`** (#196) | Locks apply order. |
 | `backend/db/seed_staging.py` | **New** | Fake users/courses/graphs, encrypted with the *staging* key via `encrypt_if_present`. |
 | `backend/db/dirty_fixtures.sql` | **New** | The deliberately-broken rows. |
-| `backend/config.py` | *Optional*: recognize `APP_ENV=staging` | Only if the app must know it's staging (emit `noindex`, show a STAGING banner). |
+| `backend/config.py` | Recognize `APP_ENV=staging` (`IS_STAGING`) | Lets the app know it's staging (emit `noindex`, optional STAGING banner). `staging` stays outside `IS_LOCAL`, so fail-closed checks still apply. |
 
 Everything else lives in **dashboards, not the repo**: Railway staging environment + variables,
 Cloudflare Worker route + Access policy, the Google staging OAuth client, and DNS.
@@ -86,10 +86,9 @@ Cloudflare Worker route + Access policy, the Google staging OAuth client, and DN
 
 ### Component 1 — Staging Supabase project
 
-A brand-new Supabase project (free tier is fine for staging). Bootstrapped by applying, in
-order: `backend/db/supabase_schema.sql`, every `backend/db/migration_*.sql`, the
-`avatars` storage bucket, then the seed (Component 6). Reconstructing the *correct* order is
-exactly the gap #197 describes — see the migration runner below.
+A brand-new Supabase project (free tier is fine for staging). Bootstrapped by applying the
+ordered `backend/db/migrations/0001…0018` set via the migration runner (already on `main`,
+see #197), then creating the `avatars` storage bucket and running the seed (Component 6).
 
 - Own `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`.
 - Own `ENCRYPTION_KEY` (32 bytes / 64 hex, generated fresh — **never** reuse prod's).
@@ -145,21 +144,22 @@ not encrypted content) can be a raw `dirty_fixtures.sql`:
 | `GOOGLE_CLIENT_ID` / `_SECRET` | prod OAuth client | **staging OAuth client** |
 | `GOOGLE_REDIRECT_URI` / `GOOGLE_AUTH_REDIRECT_URI` | `api.saplinglearn.com/...` | `api.staging.saplinglearn.com/...` |
 | `FRONTEND_URL` (CORS) | `https://saplinglearn.com` | `https://staging.saplinglearn.com` |
-| `APP_ENV` | `production` | `production` (staging behaves fail-closed like prod) |
+| `APP_ENV` | `production` | `staging` (drives `noindex`; still outside `IS_LOCAL`, so it stays fail-closed like prod) |
 | `GEMINI_API_KEY` | prod key | shared, or separate to isolate quota/cost |
 | `BACKEND_URL` / `COOKIE_DOMAIN` (Worker) | `api.saplinglearn.com` / `.saplinglearn.com` | `api.staging.saplinglearn.com` / `.staging.saplinglearn.com` |
 
-### Migration runner (Phase 0 — closes #197)
+### Migration runner (Phase 0 — already merged on `main`, see #197)
 
 A minimal, dependency-free runner so the same ordered set of migrations applies identically to
-staging then prod:
+staging then prod. **This is already implemented and merged on `main`** (see #197); it is
+described here for context, not as remaining work:
 
 - A `schema_migrations` table (`filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ DEFAULT now()`).
-- A small `backend/db/migrate.py` that lists `migration_*.sql` in lexicographic order, skips any
+- `backend/db/migrate.py` lists `migrations/*.sql` in lexicographic order, skips any
   already recorded in `schema_migrations`, applies the rest in a transaction, and records them.
-- Rename/prefix existing migrations with a sortable numeric prefix to lock ordering, and make the
-  known non-idempotent one (`migration_cosmetics.sql`, #196) idempotent (`IF NOT EXISTS` guards)
-  as part of bringing them under the runner.
+- The existing migrations were prefixed with sortable numeric prefixes (`0001…0018`) to lock
+  ordering, and the known non-idempotent one (now `0009_cosmetics.sql`, #196) was made idempotent
+  (`IF NOT EXISTS` guards) as part of bringing them under the runner.
 
 This is the backbone that makes "promote staging → prod" trustworthy; without it the two
 databases drift the moment someone hand-applies SQL to one and not the other.
@@ -211,7 +211,7 @@ Staging is admin-only, gated at the **edge** so no app business-logic changes ar
 
 ## Build phases
 
-- **Phase 0** — migration runner + ordered/idempotent migrations (closes #197, hardens #196).
+- **Phase 0** — migration runner + ordered/idempotent migrations (**already merged on `main`**; addressed #197, hardened #196).
 - **Phase 1** — staging Supabase project; apply schema via the runner; `seed_staging.py` + `dirty_fixtures.sql`.
 - **Phase 2** — staging Google OAuth client + redirect URIs.
 - **Phase 3** — Railway `staging` environment + variables + `api.staging.saplinglearn.com` domain.
