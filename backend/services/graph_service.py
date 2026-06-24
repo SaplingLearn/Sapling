@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, date, timedelta
 
@@ -7,6 +8,8 @@ import httpx
 
 from config import get_mastery_tier
 from db.connection import table
+
+logger = logging.getLogger(__name__)
 
 
 def _user_enrolled_courses(user_id: str) -> list[dict]:
@@ -446,6 +449,17 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
             if winner:
                 by_name[norm] = winner
                 inserted_in_batch[norm] = winner
+            else:
+                # A 409 fired but the conflicting row could not be re-read. This
+                # should be rare (read-after-write visibility gap, or a 409 that
+                # is not this concept collision). Log it so the dropped node —
+                # whose dependent updated_nodes/new_edges now go unresolved — is
+                # observable instead of silently swallowed.
+                logger.warning(
+                    "graph node 409 recovery found no matching row for "
+                    "concept=%r user=%s course=%s; skipping node",
+                    name, user_id, node_course_id,
+                )
             continue
         # Track in-batch inserts so subsequent updated_nodes / new_edges in the
         # same call resolve against just-created nodes.
