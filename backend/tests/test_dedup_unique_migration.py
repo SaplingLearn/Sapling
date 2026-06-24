@@ -19,8 +19,9 @@ def test_migration_creates_both_unique_indexes():
     sql = _read("migration_dedup_unique.sql")
     assert "idx_graph_nodes_user_concept_course" in sql
     assert "idx_graph_edges_unique" in sql
-    # node index must be case-insensitive + null-collapsing
-    assert "lower(concept_name)" in sql
+    # Node index must mirror the app's _normalize_concept: collapse whitespace
+    # (regexp_replace) AND lower-case, plus null-collapsing.
+    assert "lower(regexp_replace(btrim(concept_name), '\\s+', ' ', 'g'))" in sql
     assert "NULLS NOT DISTINCT" in sql
 
 

@@ -95,7 +95,7 @@ CREATE INDEX IF NOT EXISTS idx_graph_nodes_user_course ON graph_nodes(user_id, c
 -- (user, normalized name, course). NULLS NOT DISTINCT (PG15+) so course-less
 -- duplicates also collide (#181).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_nodes_user_concept_course
-    ON graph_nodes(user_id, lower(concept_name), course_id) NULLS NOT DISTINCT;
+    ON graph_nodes(user_id, lower(regexp_replace(btrim(concept_name), '\s+', ' ', 'g')), course_id) NULLS NOT DISTINCT;
 
 -- Knowledge graph edges
 CREATE TABLE IF NOT EXISTS graph_edges (
