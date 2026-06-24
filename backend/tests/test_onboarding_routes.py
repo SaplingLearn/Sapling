@@ -66,6 +66,8 @@ def _make_factory(tables, *, course_rows, enrollment_rows, offering_rows=None):
             m = MagicMock()
             if name == "users":
                 m.select.return_value = [{"id": "user_123"}]
+            elif name == "user_profiles":
+                m.select.return_value = []
             elif name == "courses":
                 m.select.return_value = course_rows
             elif name == "terms":
@@ -108,17 +110,23 @@ class TestSaveOnboardingProfile:
         assert data["user_id"] == "user_123"
         assert len(data["courses_linked"]) == 2
 
-        # User profile was updated
+        # onboarding_completed flag stays on `users`; profile fields moved to
+        # user_profiles (migration 0024).
         from services.encryption import decrypt
         tables["users"].update.assert_called_once()
-        update_data = tables["users"].update.call_args[0][0]
-        assert decrypt(update_data["first_name"]) == "Jose"
-        assert decrypt(update_data["last_name"]) == "Cruz"
-        assert decrypt(update_data["name"]) == "Jose Cruz"
-        assert update_data["year"] == "junior"
-        assert update_data["majors"] == ["Computer Science"]
-        assert update_data["minors"] == ["Mathematics"]
-        assert update_data["learning_style"] == "visual"
+        users_update = tables["users"].update.call_args[0][0]
+        assert users_update == {"onboarding_completed": True}
+
+        tables["user_profiles"].upsert.assert_called_once()
+        profile_data = tables["user_profiles"].upsert.call_args[0][0]
+        assert profile_data["user_id"] == "user_123"
+        assert decrypt(profile_data["first_name"]) == "Jose"
+        assert decrypt(profile_data["last_name"]) == "Cruz"
+        assert decrypt(profile_data["name"]) == "Jose Cruz"
+        assert profile_data["year"] == "junior"
+        assert profile_data["majors"] == ["Computer Science"]
+        assert profile_data["minors"] == ["Mathematics"]
+        assert profile_data["learning_style"] == "visual"
 
         # Two enrollments were created, keyed on offering_id (not course_id)
         assert tables["enrollments"].insert.call_count == 2
@@ -207,5 +215,5 @@ class TestSaveOnboardingProfile:
             res = client.post("/api/onboarding/profile", json=payload)
 
         assert res.status_code == 200
-        update_data = tables["users"].update.call_args[0][0]
-        assert update_data["minors"] == []
+        profile_data = tables["user_profiles"].upsert.call_args[0][0]
+        assert profile_data["minors"] == []

@@ -37,10 +37,18 @@ def save_onboarding_profile(body: OnboardingBody, request: Request):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Update user profile fields
-    name = f"{body.first_name} {body.last_name}".strip()
+    # onboarding_completed is an auth/status flag and stays on `users`.
     table("users").update(
+        {"onboarding_completed": True},
+        filters={"id": f"eq.{body.user_id}"},
+    )
+
+    # Profile fields moved to user_profiles in migration 0024 (one source of truth).
+    # name/first_name/last_name are 🔒-encrypted; the rest are plaintext.
+    name = f"{body.first_name} {body.last_name}".strip()
+    table("user_profiles").upsert(
         {
+            "user_id": body.user_id,
             "name": encrypt_if_present(name),
             "first_name": encrypt_if_present(body.first_name),
             "last_name": encrypt_if_present(body.last_name),
@@ -48,9 +56,8 @@ def save_onboarding_profile(body: OnboardingBody, request: Request):
             "majors": body.majors,
             "minors": body.minors,
             "learning_style": body.learning_style,
-            "onboarding_completed": True,
         },
-        filters={"id": f"eq.{body.user_id}"},
+        on_conflict="user_id",
     )
 
     # Enroll user in selected courses (resolve each abstract course → current-term offering)

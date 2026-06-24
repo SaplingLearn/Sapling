@@ -28,21 +28,51 @@ from services.achievement_service import get_user_stat
 router = APIRouter()
 
 
-def _get_user_or_404(user_id: str) -> dict:
-    rows = table("users").select(
-        "id,username,name,first_name,last_name,email,avatar_url,year,majors,minors,bio,location,website,streak_count,created_at",
-        filters={"id": f"eq.{user_id}"},
-    )
+# Identity columns that stay on `users` after the 0024 split.
+_USERS_COLS = "id,email,streak_count,created_at"
+
+# Profile columns live on `user_profiles` (1:1 with users). 🔒 = encrypted at rest.
+_PROFILE_COLS = (
+    "user_id,username,name,first_name,last_name,avatar_url,"
+    "year,majors,minors,bio,location,website,learning_style"
+)
+_PROFILE_ENCRYPTED = ("name", "first_name", "last_name", "bio", "location")
+
+
+def _get_or_create_profile(user_id: str) -> dict:
+    """Return the decrypted user_profiles row, creating it if missing."""
+    rows = table("user_profiles").select(_PROFILE_COLS, filters={"user_id": f"eq.{user_id}"})
     if not rows:
-        raise HTTPException(status_code=404, detail="User not found")
+        table("user_profiles").insert({"user_id": user_id})
+        rows = table("user_profiles").select(_PROFILE_COLS, filters={"user_id": f"eq.{user_id}"})
+    if not rows:
+        return {"user_id": user_id}
     row = rows[0]
-    for col in ("name", "first_name", "last_name", "email", "bio", "location"):
+    for col in _PROFILE_ENCRYPTED:
         row[col] = decrypt_if_present(row.get(col))
     return row
 
 
+def _get_user_or_404(user_id: str) -> dict:
+    """Identity + profile merged into the legacy single-dict shape.
+
+    `users` now holds only id/email/auth/activity; the public profile fields live
+    on `user_profiles` (migration 0024). We read both and merge so callers keep the
+    same flat dict they relied on before the split.
+    """
+    rows = table("users").select(_USERS_COLS, filters={"id": f"eq.{user_id}"})
+    if not rows:
+        raise HTTPException(status_code=404, detail="User not found")
+    user = rows[0]
+    user["email"] = decrypt_if_present(user.get("email"))
+    profile = _get_or_create_profile(user_id)
+    # Merge profile fields onto the identity row (id/email/streak/created_at win).
+    merged = {**profile, **user}
+    return merged
+
+
 _SETTINGS_COLS = (
-    "user_id,username,display_name,bio,location,website,"
+    "user_id,"
     "profile_visibility,activity_status_visible,"
     "notification_email,notification_push,notification_in_app,"
     "theme,font_size,accent_color,"
@@ -58,10 +88,7 @@ def _get_or_create_settings(user_id: str) -> dict:
         rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
     if not rows:
         return {"user_id": user_id}
-    row = rows[0]
-    for col in ("bio", "location"):
-        row[col] = decrypt_if_present(row.get(col))
-    return row
+    return rows[0]
 
 
 def _get_user_roles(user_id: str) -> list:
@@ -158,10 +185,11 @@ def check_username(username: str = Query(...), user_id: Optional[str] = Query(No
     name = (username or "").strip().lower()
     if not _USERNAME_RE.match(name):
         return {"available": False, "reason": "invalid"}
-    existing = table("users").select("id", filters={"username": f"eq.{name}"})
+    # username now lives on user_profiles (keyed by user_id).
+    existing = table("user_profiles").select("user_id", filters={"username": f"eq.{name}"})
     if not existing:
         return {"available": True}
-    if user_id and existing[0]["id"] == user_id:
+    if user_id and existing[0]["user_id"] == user_id:
         return {"available": True, "reason": "self"}
     return {"available": False, "reason": "taken"}
 
@@ -229,35 +257,28 @@ def update_profile(user_id: str, body: UpdateProfileBody, request: Request):
     require_self(user_id, request)
     _get_user_or_404(user_id)
 
-    updates_user = {}
-    updates_settings = {}
+    # All of these fields now live on user_profiles (migration 0024) — one source of truth.
+    updates_profile = {}
 
     if body.username is not None:
-        # Check uniqueness
-        existing = table("users").select("id", filters={"username": f"eq.{body.username}"})
-        if existing and existing[0]["id"] != user_id:
+        # Check uniqueness against user_profiles.
+        existing = table("user_profiles").select(
+            "user_id", filters={"username": f"eq.{body.username}"}
+        )
+        if existing and existing[0]["user_id"] != user_id:
             raise HTTPException(status_code=409, detail="Username already taken")
-        updates_user["username"] = body.username
-        updates_settings["username"] = body.username
+        updates_profile["username"] = body.username
 
-    if body.display_name is not None:
-        updates_settings["display_name"] = body.display_name
     if body.bio is not None:
-        updates_user["bio"] = encrypt_if_present(body.bio)
-        updates_settings["bio"] = encrypt_if_present(body.bio)
+        updates_profile["bio"] = encrypt_if_present(body.bio)
     if body.location is not None:
-        updates_user["location"] = encrypt_if_present(body.location)
-        updates_settings["location"] = encrypt_if_present(body.location)
+        updates_profile["location"] = encrypt_if_present(body.location)
     if body.website is not None:
-        updates_user["website"] = body.website
-        updates_settings["website"] = body.website
+        updates_profile["website"] = body.website
 
-    if updates_user:
-        table("users").update(updates_user, filters={"id": f"eq.{user_id}"})
-    if updates_settings:
-        updates_settings["updated_at"] = datetime.now(timezone.utc).isoformat()
-        _get_or_create_settings(user_id)
-        table("user_settings").update(updates_settings, filters={"user_id": f"eq.{user_id}"})
+    if updates_profile:
+        _get_or_create_profile(user_id)  # ensure a row exists to update
+        table("user_profiles").update(updates_profile, filters={"user_id": f"eq.{user_id}"})
 
     return {"updated": True}
 
@@ -319,7 +340,11 @@ async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Req
 
     avatar_url = upload_avatar(user_id, file_bytes, body.content_type)
 
-    table("users").update({"avatar_url": avatar_url}, filters={"id": f"eq.{user_id}"})
+    # avatar_url moved to user_profiles in migration 0024.
+    _get_or_create_profile(user_id)  # ensure a row exists to update
+    table("user_profiles").update(
+        {"avatar_url": avatar_url}, filters={"user_id": f"eq.{user_id}"}
+    )
     return {"avatar_url": avatar_url}
 
 
@@ -338,8 +363,8 @@ def update_settings(user_id: str, body: UpdateSettingsBody, request: Request):
     _get_or_create_settings(user_id)
 
     # Whitelist: only these fields may be patched via this endpoint.
-    # EXCLUDES bio/location (encrypted later, set via /profile patch) and any
-    # role/admin/approval fields to prevent privilege escalation.
+    # bio/location/username/website live on user_profiles now (set via /profile
+    # patch); role/admin/approval fields are excluded to prevent privilege escalation.
     ALLOWED = {
         "profile_visibility", "activity_status_visible",
         "notification_email", "notification_push", "notification_in_app",
@@ -352,8 +377,6 @@ def update_settings(user_id: str, body: UpdateSettingsBody, request: Request):
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
 
-    # #126 (#19): return through the decrypting helper (like GET) so the
-    # response carries plaintext bio/location, not the stored ciphertext.
     return _get_or_create_settings(user_id)
 
 
