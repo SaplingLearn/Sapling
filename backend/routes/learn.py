@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
+from agents import ORCHESTRATOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from db.connection import table
@@ -483,10 +484,12 @@ async def _chat_via_agent(
     """Run chat_tutor_agent and return the legacy response shape.
 
     Returns ``{"reply": str, "graph_update": dict, "mastery_changes": list}``.
-    `graph_update` and `mastery_changes` come back empty here because
-    `apply_graph_update_tool` (registered on chat_tutor) already
-    persisted any graph changes during the agent run. The frontend's
-    Learn-page reducer accepts empty values gracefully.
+    Graph changes are persisted in-band during the agent run by
+    `apply_graph_update_tool` / `update_mastery_tool` (registered on
+    chat_tutor); the tools also accumulate their payloads on `deps` so the
+    route can echo `graph_update` (for graph_update_json / concepts_covered)
+    and the real `mastery_changes` deltas back to the client, matching the
+    legacy path. Both are empty when nothing changed this turn.
 
     `use_shared_context=False` flips the model into "no class-aggregate"
     mode by appending a constraint instruction to the user message —
@@ -514,7 +517,11 @@ async def _chat_via_agent(
         )
 
     model_override = _resolve_model_pref(model_pref)
-    run_kwargs: dict = {"deps": deps, "message_history": message_history}
+    run_kwargs: dict = {
+        "deps": deps,
+        "message_history": message_history,
+        "usage_limits": ORCHESTRATOR_LIMITS,
+    }
     if model_override is not None:
         run_kwargs["model"] = model_override
 
@@ -527,10 +534,21 @@ async def _chat_via_agent(
     result = await agent.run(user_message, **run_kwargs)
     reply = result.output  # str — chat_tutor agents return plain Markdown.
 
+    # Merge all graph update payloads accumulated by tools during this run
+    # into a single dict so the route can persist graph_update_json and
+    # end_session can derive concepts_covered correctly.
+    merged_graph_update: dict = {}
+    for gu in deps.graph_updates:
+        for key, items in gu.items():
+            merged_graph_update.setdefault(key, []).extend(items)
+
     return {
         "reply": reply,
-        "graph_update": {},
-        "mastery_changes": [],
+        "graph_update": merged_graph_update,
+        # Real before/after deltas accumulated by update_mastery_tool, for
+        # parity with the legacy path (which returns apply_graph_update's
+        # changes directly). Empty when no mastery moved this turn.
+        "mastery_changes": deps.mastery_changes,
     }
 
 
@@ -632,7 +650,8 @@ async def chat(body: ChatBody, request: Request):
     # own writes so a fallback doesn't double-insert. Encryption happens
     # inside save_message (`encrypt_if_present`).
     save_message(body.session_id, "user", body.message)
-    save_message(body.session_id, "assistant", response["reply"])
+    graph_update = response.get("graph_update") or None
+    save_message(body.session_id, "assistant", response["reply"], graph_update)
 
     return response
 
