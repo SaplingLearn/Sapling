@@ -29,7 +29,10 @@ from db.connection import table
 from services.encryption import encrypt_if_present
 from main import app
 
-RUNID = "e2etest"
+# Deterministic default keeps the run idempotent + self-healing (a re-run reclaims a
+# crashed run's rows via upsert-on-PK). Set E2E_RUNID to a unique value for
+# concurrent/parallel runs so they don't share fixture PKs (CodeRabbit #279).
+RUNID = os.getenv("E2E_RUNID", "e2etest")
 SCHOOL_ID = f"e2e-school-{RUNID}"
 COURSE_ID = f"e2e-course-{RUNID}"
 OFFERING_ID = f"e2e-off-{RUNID}"
@@ -114,11 +117,16 @@ def teardown_fixture() -> None:
         ("courses", {"id": f"eq.{COURSE_ID}"}),
         ("schools", {"id": f"eq.{SCHOOL_ID}"}),
     )
+    errors = []
     for tbl, flt in deletes:
         try:
             table(tbl).delete(flt)
-        except Exception:
-            pass
+        except Exception as e:  # tolerate (table absent / no rows) but don't hide real failures
+            errors.append(f"{tbl} {flt}: {type(e).__name__}: {e}")
+    if errors:
+        print("  [teardown] WARNING - some deletes failed; staging may have orphan e2e rows:")
+        for msg in errors:
+            print(f"    - {msg}")
 
 
 def check_auth() -> None:

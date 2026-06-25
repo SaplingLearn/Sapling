@@ -64,8 +64,9 @@ def run() -> None:
         # Build answers: pick label "A" for every question (correct or not is
         # irrelevant — we only care about the submit path and mastery write).
         answers = [
-            {"question_id": q["id"], "selected_label": "A"}
+            {"question_id": q.get("id"), "selected_label": "A"}
             for q in questions[:2]
+            if q.get("id") is not None
         ] or [{"question_id": 1, "selected_label": "A"}]
     else:
         quiz_id = f"e2e-bogus-{RUNID}"
