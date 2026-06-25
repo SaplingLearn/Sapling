@@ -24,8 +24,16 @@ os.environ.setdefault("APP_ENV", "test")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "e2e_staging: opt-in HTTP E2E against the REAL staging DB (writes a throwaway "
+        "fixture). Bypasses the hermetic DB + auth fixtures; skipped unless RUN_STAGING_E2E=1.",
+    )
+
+
 @pytest.fixture(autouse=True)
-def _hermetic_supabase_client(monkeypatch):
+def _hermetic_supabase_client(request, monkeypatch):
     """Hermetic safety net (#210): no test may make a real Supabase call.
 
     Every db access ultimately flows through `db.connection._client` (the single
@@ -36,7 +44,12 @@ def _hermetic_supabase_client(monkeypatch):
     was failing/quarantined for exactly this reason). Replace that client with a
     stub returning benign empty responses. Tests that need specific db data still
     patch their own `table`/service reference; this only catches what escapes.
+
+    The opt-in `e2e_staging` test is the one exception: it intentionally talks to
+    the real staging DB, so we leave the live client in place for it.
     """
+    if request.node.get_closest_marker("e2e_staging"):
+        return
     import db.connection as dbconn
 
     def _empty_response(*_args, **_kwargs):
@@ -53,7 +66,7 @@ def _hermetic_supabase_client(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _bypass_session_auth(monkeypatch):
+def _bypass_session_auth(request, monkeypatch):
     """Stub the auth guard so tests don't need to mint session tokens.
 
     Tests historically called routes with `user_id` in the body/query/path
@@ -62,7 +75,12 @@ def _bypass_session_auth(monkeypatch):
     To keep the existing test contract working, we replace
     `require_self` / `require_admin` / `get_session_user_id` with stubs
     in every place they were imported.
+
+    The opt-in `e2e_staging` test exercises the REAL auth path (it mints valid
+    HMAC sessions and asserts 401 without one), so we leave the guard intact for it.
     """
+    if request.node.get_closest_marker("e2e_staging"):
+        return
     from services import auth_guard
 
     def _decode_session_stub(request):
