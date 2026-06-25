@@ -9,6 +9,7 @@ from db.connection import table
 from models import CreateRoomBody, JoinRoomBody, MatchBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
 from services.auth_guard import require_self, get_session_user_id
 from services.encryption import encrypt_if_present, decrypt_if_present
+from services.profiles import get_display_name, get_display_names
 from services.graph_service import get_graph
 from services.matching_service import find_study_matches
 from services.gemini_service import call_gemini
@@ -104,14 +105,13 @@ def room_overview(room_id: str, request: Request):
 
     members = []
     if member_ids:
-        user_rows = table("users").select(
-            "id,name", filters={"id": f"in.({','.join(member_ids)})"}
-        )
-        for u in user_rows:
+        # Names live on user_profiles (0024); resolve in bulk and decrypt.
+        name_map = get_display_names(member_ids)
+        for uid in member_ids:
             members.append({
-                "user_id": u["id"],
-                "name": decrypt_if_present(u["name"]),
-                "graph": get_graph(u["id"]),
+                "user_id": uid,
+                "name": name_map.get(uid, ""),
+                "graph": get_graph(uid),
             })
 
     member_summaries = []
@@ -154,10 +154,7 @@ def room_activity(room_id: str, request: Request):
     )
 
     user_ids = list(set(a["user_id"] for a in activity_rows))
-    user_name_map = {}
-    if user_ids:
-        user_rows = table("users").select("id,name", filters={"id": f"in.({','.join(user_ids)})"})
-        user_name_map = {u["id"]: decrypt_if_present(u["name"]) for u in user_rows}
+    user_name_map = get_display_names(user_ids) if user_ids else {}
 
     activities = [
         {
@@ -181,10 +178,11 @@ def match_partners(room_id: str, body: MatchBody, request: Request):
 
     members_with_graphs = []
     if member_ids:
-        user_rows = table("users").select("id,name", filters={"id": f"in.({','.join(member_ids)})"})
+        # Names live on user_profiles (0024); resolve in bulk and decrypt.
+        name_map = get_display_names(member_ids)
         members_with_graphs = [
-            {"user_id": u["id"], "name": decrypt_if_present(u["name"]), "graph": get_graph(u["id"])}
-            for u in user_rows
+            {"user_id": uid, "name": name_map.get(uid, ""), "graph": get_graph(uid)}
+            for uid in member_ids
         ]
 
     try:
@@ -216,18 +214,20 @@ def school_match(body: MatchBody, request: Request):
     excl_list = list(excluded_ids)
 
     school_users = table("users").select(
-        "id,name",
+        "id",
         filters={"id": f"not.in.({','.join(excl_list)})"},
     )
 
+    # Names live on user_profiles (0024); resolve in bulk and decrypt.
+    school_ids = [u["id"] for u in school_users]
+    name_map = get_display_names(school_ids)
     members_with_graphs = [
-        {"user_id": u["id"], "name": decrypt_if_present(u["name"]), "graph": get_graph(u["id"])}
-        for u in school_users
+        {"user_id": uid, "name": name_map.get(uid, ""), "graph": get_graph(uid)}
+        for uid in school_ids
     ]
 
     requester_graph = get_graph(body.user_id)
-    requester_rows = table("users").select("name", filters={"id": f"eq.{body.user_id}"})
-    requester_name = decrypt_if_present(requester_rows[0]["name"]) if requester_rows else body.user_id
+    requester_name = get_display_name(body.user_id) or body.user_id
 
     all_members = [
         {"user_id": body.user_id, "name": requester_name, "graph": requester_graph}
@@ -426,13 +426,26 @@ def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody, req
 def get_students(request: Request):
     """Return a lightweight profile for every user in the DB."""
     user_id = get_session_user_id(request)
-    users = table("users").select("id,name,streak_count")
-    courses_rows = table("courses").select("user_id,course_name")
+    users = table("users").select("id,streak_count")
+    # Display names live on user_profiles (0024); resolve in bulk and decrypt.
+    name_map = get_display_names([u["id"] for u in users])
+    # A user's courses now resolve through the enrollment chain
+    # (enrollments → course_offerings → courses); the abstract `courses` catalog
+    # no longer carries a per-user row. Read the offering's abstract course name
+    # via the embedded join and dedup, since one abstract course may have several
+    # offerings (per term/section) the user is enrolled in.
+    enrollment_rows = table("enrollments").select(
+        "user_id,course_offerings(courses(course_name))"
+    )
     nodes_rows = table("graph_nodes").select("user_id,mastery_tier,concept_name,mastery_score")
 
-    courses_by_user: dict = defaultdict(list)
-    for c in courses_rows:
-        courses_by_user[c["user_id"]].append(c["course_name"])
+    courses_by_user: dict = defaultdict(set)
+    for e in enrollment_rows:
+        offering = e.get("course_offerings") or {}
+        course = offering.get("courses") or {} if isinstance(offering, dict) else {}
+        course_name = course.get("course_name") if isinstance(course, dict) else None
+        if course_name:
+            courses_by_user[e["user_id"]].add(course_name)
 
     mastery_by_user: dict = defaultdict(
         lambda: {"mastered": 0, "learning": 0, "struggling": 0, "unexplored": 0, "total": 0}
@@ -456,7 +469,7 @@ def get_students(request: Request):
     students = [
         {
             "user_id": u["id"],
-            "name": decrypt_if_present(u["name"]),
+            "name": name_map.get(u["id"], ""),
             "streak": u.get("streak_count") or 0,
             "courses": sorted(courses_by_user[u["id"]]),
             "stats": dict(mastery_by_user[u["id"]]),

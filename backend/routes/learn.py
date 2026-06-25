@@ -14,9 +14,11 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from db.connection import table
+from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.auth_guard import require_self, get_session_user_id
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
+from services.profiles import get_display_name
 from services.gemini_service import (
     MODEL_LITE,
     MODEL_SMART,
@@ -135,27 +137,35 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     if not topic_trim:
         return ""
     
-    # First, check if topic matches a course code or name in user's enrolled courses
+    # First, check if topic matches a course code or name in user's enrolled
+    # courses. Enrollment keys on an offering; the abstract course (which the
+    # session + knowledge graph key on) sits behind
+    # offering_id → course_offerings.course_id → courses. Match the topic against
+    # the abstract course's code/name and return the abstract course_id.
     try:
-        enrolled = table("user_courses").select(
-            "course_id,courses!inner(course_code,course_name)",
+        enrolled = table("enrollments").select(
+            "offering_id,course_offerings!inner(course_id,courses!inner(course_code,course_name))",
             filters={"user_id": f"eq.{user_id}"},
         )
         for row in enrolled:
-            course = row.get("courses", {}) if isinstance(row.get("courses"), dict) else {}
-            course_code = course.get("course_code", "")
-            course_name = course.get("course_name", "")
-            
+            offering = row.get("course_offerings", {})
+            if not isinstance(offering, dict):
+                continue
+            abstract_course_id = offering.get("course_id")
+            course = offering.get("courses", {}) if isinstance(offering.get("courses"), dict) else {}
+            course_code = course.get("course_code", "") or ""
+            course_name = course.get("course_name", "") or ""
+
             # Match on course_code (exact or case-insensitive)
-            if topic_trim.upper() == course_code.upper():
-                return row["course_id"]
+            if course_code and topic_trim.upper() == course_code.upper():
+                return abstract_course_id
             # Match on course_name
-            if topic_trim.lower() == course_name.lower():
-                return row["course_id"]
+            if course_name and topic_trim.lower() == course_name.lower():
+                return abstract_course_id
             # Same label as graph subject roots (graph_service)
             label = f"{course_code} - {course_name}" if course_code else course_name
             if label and topic_trim == label:
-                return row["course_id"]
+                return abstract_course_id
     except Exception as e:
         print(f"Failed to resolve course_id for topic={topic_trim!r} user_id={user_id!r}: {e}")
     
@@ -189,22 +199,34 @@ def _get_course_id_for_topic(topic: str, user_id: str) -> str:
     return ""
 
 
-def _get_session_course_id(session_id: str) -> str:
-    """Get the course_id from a session if it exists."""
-    rows = table("sessions").select("course_id", filters={"id": f"eq.{session_id}"}, limit=1)
-    if rows and rows[0].get("course_id"):
-        return rows[0]["course_id"]
+def _get_session_offering_id(session_id: str) -> str:
+    """Get the offering_id a session is scoped to, if any.
+
+    Sessions key on the offering (0025); the abstract course id (the graph
+    key) is derived from it via ``offering_course_id`` where needed.
+    """
+    rows = table("sessions").select("offering_id", filters={"id": f"eq.{session_id}"}, limit=1)
+    if rows and rows[0].get("offering_id"):
+        return rows[0]["offering_id"]
     return ""
 
 
-def _get_course_documents(user_id: str, course_id: str) -> list:
-    """Fetch uploaded document summaries and concept notes for a user's course."""
-    if not course_id:
+def _get_course_documents(user_id: str, offering_id: str) -> list:
+    """Fetch uploaded document summaries + concept notes for a user's offering.
+
+    Documents key on the offering (0025), so the tutor grounds itself in the
+    materials uploaded for this term's offering.
+    """
+    if not offering_id:
         return []
     try:
         docs = table("documents").select(
             "file_name,category,summary,concept_notes",
-            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+            filters={
+                "user_id": f"eq.{user_id}",
+                "offering_id": f"eq.{offering_id}",
+                "deleted_at": "is.null",
+            },
         ) or []
         for d in docs:
             d["summary"] = decrypt_if_present(d.get("summary"))
@@ -281,6 +303,9 @@ def build_system_prompt(
             )
 
     if use_shared_context and course_id:
+        # `course_id` is the abstract course id (resolved from the session's
+        # offering by the caller). course_context keys on the abstract course,
+        # so shared class-aggregate context resolves here.
         ctx = get_course_context(course_id)
         if ctx:
             course_info = _get_course_info(course_id)
@@ -355,10 +380,8 @@ def save_message(session_id: str, role: str, content: str, graph_update: dict = 
 
 
 def get_user_name(user_id: str) -> str:
-    rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
-    if not rows:
-        return "Student"
-    return decrypt_if_present(rows[0]["name"]) or "Student"
+    # Display name lives on user_profiles (0024); resolve + decrypt via helper.
+    return get_display_name(user_id) or "Student"
 
 
 def _consume_pending(session_id: str, user_id: str) -> None:
@@ -369,16 +392,17 @@ def _consume_pending(session_id: str, user_id: str) -> None:
     if pending["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Session user mismatch")
     
-    # Include course_id in session creation
+    # Sessions key on the offering (0025). The pending payload carries the
+    # offering id (resolved at start-session) alongside the abstract course id.
     session_data = {
         "id": session_id,
         "user_id": user_id,
         "mode": pending["mode"],
         "topic": pending["topic"],
     }
-    if pending.get("course_id"):
-        session_data["course_id"] = pending["course_id"]
-    
+    if pending.get("offering_id"):
+        session_data["offering_id"] = pending["offering_id"]
+
     table("sessions").insert(session_data)
     save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
 
@@ -399,10 +423,13 @@ def start_session(body: StartSessionBody, request: Request):
     student_name = get_user_name(body.user_id)
     graph_data = get_graph(body.user_id)
     
-    # Use course_id from body, or try to resolve from topic
+    # Use abstract course_id from body, or resolve it from the topic. The graph
+    # + shared context key on this abstract id; documents + the session row key
+    # on the offering it resolves to (current term).
     course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
-    documents = _get_course_documents(body.user_id, course_id)
-    
+    offering_id = resolve_offering(course_id, create=True) if course_id else ""
+    documents = _get_course_documents(body.user_id, offering_id)
+
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
         course_id=course_id, use_shared_context=body.use_shared_context,
@@ -427,7 +454,8 @@ def start_session(body: StartSessionBody, request: Request):
         "user_id": body.user_id,
         "mode": body.mode,
         "topic": body.topic,
-        "course_id": course_id,
+        "course_id": course_id,        # abstract — graph + shared-context key
+        "offering_id": offering_id,    # term-scoped — the session-row key
         "use_shared_context": body.use_shared_context,
         "assistant_reply": reply,
         "graph_update": graph_update,
@@ -524,9 +552,11 @@ async def _legacy_chat(body: ChatBody, request: Request) -> dict:
     # Exclude the just-saved user message so history is prior turns only
     history = get_conversation_history(body.session_id)[:-1]
 
-    # Get course_id from session if available
-    course_id = _get_session_course_id(body.session_id)
-    documents = _get_course_documents(body.user_id, course_id)
+    # The session keys on the offering; documents read by offering, while the
+    # graph + shared context key on the abstract course derived from it.
+    offering_id = _get_session_offering_id(body.session_id)
+    course_id = offering_course_id(offering_id) if offering_id else ""
+    documents = _get_course_documents(body.user_id, offering_id)
 
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
@@ -561,7 +591,10 @@ async def chat(body: ChatBody, request: Request):
         or str(uuid.uuid4())
     )
 
-    course_id = _get_session_course_id(body.session_id)
+    # The session keys on the offering; the agent's graph tools key on the
+    # abstract course derived from it.
+    offering_id = _get_session_offering_id(body.session_id)
+    course_id = offering_course_id(offering_id) if offering_id else ""
     # Load prior turns BEFORE writing the new user row, so the
     # message_history we hand the agent contains only the conversation
     # state up to (but not including) the current turn.
@@ -692,19 +725,25 @@ def end_session(body: EndSessionBody, request: Request):
 def list_sessions(user_id: str, request: Request, limit: int = 10):
     require_self(user_id, request)
     sessions = table("sessions").select(
-        "id,user_id,topic,mode,course_id,started_at,ended_at",
+        "id,user_id,topic,mode,offering_id,started_at,ended_at",
         filters={"user_id": f"eq.{user_id}"},
         order="started_at.desc",
         limit=limit,
     )
+    # Sessions key on the offering; the frontend speaks abstract course ids.
+    # Map each offering → its abstract course once.
+    offering_to_course: dict[str, str | None] = {}
     result = []
     for s in sessions:
+        off_id = s.get("offering_id")
+        if off_id and off_id not in offering_to_course:
+            offering_to_course[off_id] = offering_course_id(off_id)
         msgs = table("messages").select("id", filters={"session_id": f"eq.{s['id']}"})
         result.append({
             "id": s["id"],
             "topic": s["topic"],
             "mode": s["mode"],
-            "course_id": s.get("course_id"),
+            "course_id": offering_to_course.get(off_id),
             "started_at": s["started_at"],
             "ended_at": s.get("ended_at"),
             "message_count": len(msgs),
@@ -794,7 +833,7 @@ def resume_session(session_id: str, request: Request):
         }
 
     session_rows = table("sessions").select(
-        "id,user_id,topic,mode,started_at,ended_at,course_id",
+        "id,user_id,topic,mode,started_at,ended_at,offering_id",
         filters={"id": f"eq.{session_id}"},
     )
     if not session_rows:
@@ -802,13 +841,18 @@ def resume_session(session_id: str, request: Request):
     if session_rows[0].get("user_id") != user_id:
         raise HTTPException(status_code=403, detail="Session user mismatch")
 
+    # Expose the abstract course id (derived from the offering) for the
+    # frontend, alongside the stored offering id.
+    session = dict(session_rows[0])
+    session["course_id"] = offering_course_id(session.get("offering_id"))
+
     msgs = table("messages").select(
         "id,role,content,created_at",
         filters={"session_id": f"eq.{session_id}"},
         order="created_at.asc",
     )
     return {
-        "session": session_rows[0],
+        "session": session,
         "messages": [
             {**m, "content": decrypt_if_present(m["content"])} for m in msgs
         ],
@@ -831,11 +875,13 @@ def action(body: ActionBody, request: Request):
     student_name = get_user_name(body.user_id)
     graph_data = get_graph(body.user_id)
     history = get_conversation_history(body.session_id)
-    
-    # Get course_id from session
-    course_id = _get_session_course_id(body.session_id)
-    documents = _get_course_documents(body.user_id, course_id)
-    
+
+    # Session keys on the offering; docs read by offering, graph + shared
+    # context key on the abstract course derived from it.
+    offering_id = _get_session_offering_id(body.session_id)
+    course_id = offering_course_id(offering_id) if offering_id else ""
+    documents = _get_course_documents(body.user_id, offering_id)
+
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
         course_id=course_id, use_shared_context=body.use_shared_context,

@@ -23,13 +23,21 @@ class TestGetCourseIdForTopic:
 
     def test_matches_enrolled_course_code(self):
         from routes.learn import _get_course_id_for_topic
+        # Enrollment keys on an offering; the abstract course id (returned to the
+        # session + graph) lives at course_offerings.course_id, behind the offering.
         uc = MagicMock()
         uc.select.return_value = [
-            {"course_id": "cid-math", "courses": {"course_code": "MATH", "course_name": "Calculus"}},
+            {
+                "offering_id": "off-math",
+                "course_offerings": {
+                    "course_id": "cid-math",
+                    "courses": {"course_code": "MATH", "course_name": "Calculus"},
+                },
+            },
         ]
 
         def factory(name):
-            if name == "user_courses":
+            if name == "enrollments":
                 return uc
             m = MagicMock()
             m.select.return_value = []
@@ -42,11 +50,17 @@ class TestGetCourseIdForTopic:
         from routes.learn import _get_course_id_for_topic
         uc = MagicMock()
         uc.select.return_value = [
-            {"course_id": "cid-bio", "courses": {"course_code": "", "course_name": "Biology 101"}},
+            {
+                "offering_id": "off-bio",
+                "course_offerings": {
+                    "course_id": "cid-bio",
+                    "courses": {"course_code": "", "course_name": "Biology 101"},
+                },
+            },
         ]
 
         def factory(name):
-            if name == "user_courses":
+            if name == "enrollments":
                 return uc
             m = MagicMock()
             m.select.return_value = []
@@ -60,13 +74,16 @@ class TestGetCourseIdForTopic:
         uc = MagicMock()
         uc.select.return_value = [
             {
-                "course_id": "cid-x",
-                "courses": {"course_code": "CS", "course_name": "Intro"},
+                "offering_id": "off-x",
+                "course_offerings": {
+                    "course_id": "cid-x",
+                    "courses": {"course_code": "CS", "course_name": "Intro"},
+                },
             },
         ]
 
         def factory(name):
-            if name == "user_courses":
+            if name == "enrollments":
                 return uc
             if name == "graph_nodes":
                 m = MagicMock()
@@ -88,7 +105,7 @@ class TestGetCourseIdForTopic:
         gn.select.return_value = [{"course_id": "cid-from-node"}]
 
         def factory(name):
-            if name == "user_courses":
+            if name == "enrollments":
                 return uc
             if name == "graph_nodes":
                 return gn
@@ -191,22 +208,32 @@ class TestResumeSession:
 # ── POST /api/learn/mode-switch ───────────────────────────────────────────────
 
 class TestModeSwitch:
-    def _make_table_factory(self, user_name: str, topic: str):
-        """Return a table() side-effect that answers users and sessions queries."""
+    def _make_table_factory(self, topic: str):
+        """Return a table() side-effect that answers sessions queries.
+
+        The display name no longer lives on `users` (migration 0024 moved it to
+        user_profiles); get_user_name resolves it via services.profiles, which
+        these tests patch through `routes.learn.get_display_name`.
+        """
         def factory(name):
             mock = MagicMock()
-            if name == "users":
-                mock.select.return_value = [{"name": user_name}]
-            elif name == "sessions":
+            if name == "sessions":
                 mock.select.return_value = [{"topic": topic}]
             else:
                 mock.select.return_value = []
             return mock
         return factory
 
+    def _patches(self, user_name: str, topic: str):
+        """table factory + display-name patch for the mode-switch greeting."""
+        return (
+            patch("routes.learn.table", side_effect=self._make_table_factory(topic)),
+            patch("routes.learn.get_display_name", return_value=user_name),
+        )
+
     def test_returns_200_with_reply(self):
-        factory = self._make_table_factory("Andres Garcia", "Recursion")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Andres Garcia", "Recursion")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "expository"},
@@ -216,8 +243,8 @@ class TestModeSwitch:
 
     def test_reply_uses_first_name_only(self):
         """Message must greet with first name only, not full name."""
-        factory = self._make_table_factory("Andres Garcia", "Recursion")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Andres Garcia", "Recursion")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "socratic"},
@@ -227,8 +254,8 @@ class TestModeSwitch:
         assert "Garcia" not in reply
 
     def test_reply_contains_mode_display_name(self):
-        factory = self._make_table_factory("Maria", "Sorting algorithms")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Maria", "Sorting algorithms")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "expository"},
@@ -237,8 +264,8 @@ class TestModeSwitch:
         assert "Expository" in reply
 
     def test_reply_contains_current_topic(self):
-        factory = self._make_table_factory("Jake", "Binary Search Trees")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Jake", "Binary Search Trees")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "teachback"},
@@ -247,8 +274,8 @@ class TestModeSwitch:
         assert "Binary Search Trees" in reply
 
     def test_reply_has_no_em_dash(self):
-        factory = self._make_table_factory("Sam", "Graphs")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Sam", "Graphs")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "socratic"},
@@ -258,8 +285,8 @@ class TestModeSwitch:
         assert "\u2013" not in reply  # en-dash (extra guard)
 
     def test_reply_has_no_markdown_bold(self):
-        factory = self._make_table_factory("Sam", "Graphs")
-        with patch("routes.learn.table", side_effect=factory):
+        tbl, name = self._patches("Sam", "Graphs")
+        with tbl, name:
             r = client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "socratic"},
@@ -268,8 +295,8 @@ class TestModeSwitch:
         assert "**" not in reply
 
     def test_message_is_saved_to_db(self):
-        factory = self._make_table_factory("Lea", "Linked Lists")
-        with patch("routes.learn.table", side_effect=factory) as t:
+        tbl, name = self._patches("Lea", "Linked Lists")
+        with tbl as t, name:
             client.post(
                 "/api/learn/mode-switch",
                 json={"session_id": "s1", "user_id": "u1", "new_mode": "teachback"},
@@ -433,9 +460,9 @@ class TestChatViaAgent:
     Mirror's PR #71's pattern in `tests/test_quiz_routes.py`.
     """
 
-    def _make_table_factory(self, *, history_rows=None, course_id="course1"):
+    def _make_table_factory(self, *, history_rows=None, offering_id="off1"):
         """Default table factory: messages reads return `history_rows` (or
-        empty), sessions reads return a course id, users return a name.
+        empty), sessions reads return an offering id (0025), users a name.
         """
         rows = history_rows or []
 
@@ -444,7 +471,7 @@ class TestChatViaAgent:
             if name == "messages":
                 mock.select.return_value = rows
             elif name == "sessions":
-                mock.select.return_value = [{"course_id": course_id}]
+                mock.select.return_value = [{"offering_id": offering_id}]
             elif name == "users":
                 mock.select.return_value = [{"name": "Andres"}]
             elif name == "graph_nodes":
@@ -604,7 +631,7 @@ class TestChatViaAgent:
 
                 mock.insert.side_effect = _capture
             elif name == "sessions":
-                mock.select.return_value = [{"course_id": "course1"}]
+                mock.select.return_value = [{"offering_id": "off1"}]
             elif name == "users":
                 mock.select.return_value = [{"name": "Andres"}]
             else:

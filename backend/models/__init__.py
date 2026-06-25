@@ -102,7 +102,11 @@ class ImportSaveBody(BaseModel):
 # ── Graph (Courses) ─────────────────────────────────────────────────────────
 
 class AddCourseBody(BaseModel):
-    """Body for enrolling a user in a course (creating a user_courses record)."""
+    """Body for enrolling a user in a course.
+
+    ``course_id`` is the abstract catalog course id; enrollment resolves it to a
+    current-term offering (see services/academics.resolve_offering).
+    """
     course_id: str
     color: Optional[str] = None
     nickname: Optional[str] = None
@@ -202,18 +206,20 @@ class OnboardingBody(BaseModel):
     year: str
     majors: list[str] = Field(min_length=1)
     minors: list[str] = []
-    course_ids: list[str] = Field(min_length=1)
+    course_ids: list[str] = Field(min_length=1)  # abstract catalog course ids; enroll resolves each to a current-term offering
     learning_style: str
 
 
 # ── Profile & Settings ───────────────────────────────────────────────────────
 
 class UpdateProfileBody(BaseModel):
+    # Profile fields now live on user_profiles (see migration 0024). `display_name`
+    # was a user_settings duplicate of the profile `name` and was dropped; profile
+    # name is set during onboarding / OAuth, not via this patch body.
     username: Optional[str] = None
     bio: Optional[str] = None
     location: Optional[str] = None
     website: Optional[str] = None
-    display_name: Optional[str] = None
 
 
 class UpdateSettingsBody(BaseModel):
@@ -264,12 +270,9 @@ class PublicProfileResponse(BaseModel):
 
 
 class SettingsResponse(BaseModel):
+    # display_name/username/bio/location/website were dropped from user_settings in
+    # migration 0024 (now owned by user_profiles — one source of truth per field).
     user_id: str
-    display_name: Optional[str] = None
-    username: Optional[str] = None
-    bio: Optional[str] = None
-    location: Optional[str] = None
-    website: Optional[str] = None
     profile_visibility: str = "public"
     activity_status_visible: bool = True
     notification_email: bool = True
@@ -355,33 +358,44 @@ class CreateCosmeticBody(BaseModel):
 
 # ── Gradebook ────────────────────────────────────────────────────────────────
 
+# Enrollment / gradebook key on the abstract course_id + an optional `semester`
+# (a term label, e.g. "Spring 2026"; default = current term). The route maps
+# (course_id, semester) -> the user's enrollment via services.academics.
+AssignmentType = Literal["homework", "exam", "reading", "project", "quiz", "other"]
+
+
 class CategoryItem(BaseModel):
     id: Optional[str] = None              # null on create
     name: str
     weight: float = Field(ge=0, le=100)
     sort_order: int = 0
+    drop_lowest: int = Field(default=0, ge=0)  # gradebook_categories.drop_lowest
 
 
 class CreateCategoryBody(BaseModel):
     user_id: str
+    semester: Optional[str] = None        # term label; default = current term
     name: str
     weight: float = Field(ge=0, le=100)
+    drop_lowest: int = Field(default=0, ge=0)
 
 
 class BulkUpdateCategoriesBody(BaseModel):
     user_id: str
+    semester: Optional[str] = None
     categories: list[CategoryItem]        # full replacement set
 
 
 class CreateAssignmentBody(BaseModel):
     user_id: str
     course_id: str
+    semester: Optional[str] = None
     title: str
     category_id: Optional[str] = None
     points_possible: Optional[float] = Field(default=None, gt=0)
     points_earned: Optional[float] = Field(default=None, ge=0)
     due_date: Optional[str] = None
-    assignment_type: Optional[str] = None
+    assignment_type: Optional[AssignmentType] = None
     notes: Optional[str] = None
 
 
@@ -392,7 +406,7 @@ class UpdateAssignmentBody(BaseModel):
     points_possible: Optional[float] = Field(default=None, gt=0)
     points_earned: Optional[float] = Field(default=None, ge=0)
     due_date: Optional[str] = None
-    assignment_type: Optional[str] = None
+    assignment_type: Optional[AssignmentType] = None
     notes: Optional[str] = None
 
 
@@ -403,12 +417,23 @@ class LetterScaleTier(BaseModel):
 
 class SetLetterScaleBody(BaseModel):
     user_id: str
+    semester: Optional[str] = None
     scale: Optional[list[LetterScaleTier]] = None  # null clears the override
+
+
+class SetCurveBody(BaseModel):
+    """Per-enrollment bell-curve policy (enrollments.curve_*)."""
+    user_id: str
+    semester: Optional[str] = None
+    curve_mode: Literal["raw", "curved"] = "raw"
+    curve_avg_target: Optional[float] = None
+    curve_sd_delta: Optional[float] = None
 
 
 class SyllabusApplyBody(BaseModel):
     user_id: str
     course_id: str
+    semester: Optional[str] = None
     doc_id: str
     categories: list[CategoryItem]
     assignments: list[dict]               # uses the same shape as syllabus extraction

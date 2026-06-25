@@ -5,7 +5,7 @@ backend that ingests student documents, runs them through an LLM to
 classify/summarize/extract assignments, and serves a knowledge-graph-backed
 tutoring chat to a React frontend.
 
-_Last updated: 2026-06-08_
+_Last updated: 2026-06-24_
 
 ## Team & Responsibilities
 
@@ -176,12 +176,88 @@ Goal: a stable beta for real students.
 
 ## Milestones
 
-| Target          | Milestone                                                        |
-| --------------- | ---------------------------------------------------------------- |
-| End of June     | P0 data-exposure fixes shipped (#123/#124); doc pipeline refactored; semesters live (#142) |
-| End of July     | `gemini_service` retired as primary LLM seam (#152 cutover #151) |
-| End of August   | Graph-aware tutor end to end (#149); observability live          |
-| End of September| Stable beta with real students                                  |
+| Target          | Milestone                                                        | Status |
+| --------------- | ---------------------------------------------------------------- | ------ |
+| End of June     | P0 data-exposure fixes shipped (#123/#124); doc pipeline refactored; semesters live (#142) | ✅ P0s shipped (#123/#124); semesters folded into the DB modular redesign (offering/term split, migrations 0019–0028) — validated on staging, awaiting `epic → main` cutover |
+| End of July     | `gemini_service` retired as primary LLM seam (#152 cutover #151) | ⏳ on track |
+| End of August   | Graph-aware tutor end to end (#149); observability live          | ⏳ |
+| End of September| Stable beta with real students                                  | ⏳ |
 
 > Dates are targets, not commitments. Revisit this file at the start of each
 > sprint and adjust scope before adjusting dates.
+
+---
+
+## Shipped log
+
+_Append-only. Newest first. Cite the work, not the file dumps._
+
+### 2026-06-24 — DB modular redesign (epic, migrations 0019–0028)
+
+The dominant work this window. A full target-schema sweep on
+`epic/db-modular-redesign`, landed as eight reviewed domain slices and validated
+end to end (full mocked suite green + 14/14 service checks against live staging).
+Remaining step: deploy-to-staging smoke test, then the `epic → main` cutover.
+
+- **Catalog / offering / term split** — the abstract `courses` table is now split
+  into `courses` / `course_offerings` / `terms` with `enrollments`; the app is
+  rewired onto it via the new `services/academics.py` resolver. This is where the
+  long-standing **semesters (#142)** goal landed — term-scoped grades and classes
+  fall out of the offering/term model. (`788e8df`, `34f3241`, `72443e9`, `c26ecf4`)
+- **Identity split** — profile fields moved into `user_profiles`, `users` slimmed,
+  with cross-domain `users.name` readers/writers reconciled after the split.
+  (`310c4ac`, `16af571`)
+- **Enrollment-keyed gradebook** — semester-aware gradebook on the enrollment-keyed
+  schema (curve + drop-lowest). (`3c67fde`)
+- **Offering-keyed analytics** — social / students repointed off the abstract
+  `courses` table; study artifacts repointed onto the offering. (`736abc1`, `20e08bc`)
+- **Knowledge-graph integrity** — UNIQUE-backed upserts + an append-only
+  `node_mastery_events` log; graph writes still flow through `apply_graph_update`.
+  (`10f4081`)
+- **Ops cleanup** — text/uuid PKs on `feedback` / `issue_reports`; FK fixes
+  (`0028` drops the vestigial `course_offerings.course_code NOT NULL`). (`d87313e`,
+  `fc7ae87`)
+- **Idempotent staging seed** — `db/seed_staging.py` builds a fake demo dataset on
+  the new schema; `_exists_by` filters on the selected column (#258). (`0234ca3`,
+  `703b5a7`)
+
+### 2026-06-24 — Migration runner
+
+Migrations moved into an ordered `db/migrations/` dir with an apply/baseline
+runner + CLI on `psycopg` (#197); cosmetics FK constraints made idempotent (#196).
+(`d13fe3b`, `977d8f6`, `b6a9080`, `3541cb9`)
+
+### 2026-06-24 — Staging environment (#100)
+
+Staging frontend Worker env (`wrangler.toml`, Phase 4) and a configurable
+sign-in email-domain allowlist with staging templates. Staging is a separate
+Supabase project with its own `ENCRYPTION_KEY`. (`df34f77`, `43c6bc6`)
+
+### 2026-06-24 — Security wave (backend audit #136 P0/P1s)
+
+Both P0 data-exposure bugs closed plus a wave of related hardening:
+- **P0 #123** — calendar export scoped by `user_id` (cross-user IDOR closed),
+  with write-filter defense-in-depth. (`488a201`, `0cb7589`)
+- **P0 #124** — realtime chat now re-fetches room messages via decrypting REST so
+  ciphertext is never displayed. (`d7e0586`, FE PR #230)
+- **#125** cross-user doc leak (`search_course_materials` user-scoped, `59b2bac`);
+  **#126** encryption boundaries (encrypt syllabus notes at write, decrypt
+  gradebook/profile responses — `538478f`, `dae4179`); **#174** fail-closed config
+  validation (`9a456e5`); **#182** OCR auth + size cap + rate limit (`ff1d670`);
+  **#189/#190** profile-route gating + cookie-domain CSRF (`6437ca4`, `3e56d52`);
+  **#198/#199** gate gemini-test, bound careers/newsletter (`f4344b9`, `5bd3cbe`);
+  **#231** Phase 2a issue-screenshot upload routed through an auth-gated backend
+  (`6d6226f`).
+
+### 2026-06-24 — Frontend design + a11y waves; CI lint baseline
+
+- **Design wave 2** — removed the Liquid Glass system for solid panel surfaces,
+  consolidated brand greens into tokens, dropped fabricated hero stat cards
+  (#102/#103/#104/#106/#112). (`871aa42`, `f69c6ca`, `c4cd2dd`)
+- **A11y wave 2** — WCAG AA contrast on shared tokens, visible focus / accessible
+  names / modal focus, neutral rarity text (#107/#108). (`40d476e`, `6112b9b`)
+- **CI** — added the ruff lint ratchet + CI gate (#193/#194, `0f630d2`); frontend
+  eslint bulk-suppressions baseline so the Frontend check passes (`a8fa5db`,
+  `2369d8a`).
+- **Notetaker data-loss #133** — debounced autosave is now flushed, not dropped
+  (`5330b70`); plus social realtime correctness fixes (`a3d05c1`, `2d196cf`).
