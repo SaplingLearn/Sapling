@@ -431,9 +431,10 @@ export function GradebookCourseScreen({ courseId }: Props) {
 
   const curvedAssignments = React.useMemo(() => {
     if (!data || data.curve_mode !== "curved") return data?.assignments ?? [];
+    if (data.curve_avg_target === null || data.curve_sd_delta === null) return data.assignments;
     const policy = {
-      curve_avg_target: data.curve_avg_target ?? 0.83,
-      curve_sd_delta: data.curve_sd_delta ?? 0.10,
+      curve_avg_target: data.curve_avg_target,
+      curve_sd_delta: data.curve_sd_delta,
     };
     return data.assignments.map((a) => applyCurveToAssignment(a, policy));
   }, [data]);

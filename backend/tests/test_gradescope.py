@@ -123,6 +123,7 @@ def _table_factory(rows_by_table):
         m.select.return_value = rows_by_table.get(name, [])
         m.insert.side_effect = lambda d: [d] if isinstance(d, dict) else d
         m.update.side_effect = lambda d, filters=None: [d]
+        m.upsert.side_effect = lambda d, **kw: [d] if isinstance(d, dict) else d
         m.delete.return_value = []
         return m
     return factory
@@ -174,6 +175,7 @@ class TestRateLimiting:
                 client.post("/api/gradescope/credentials/bu-sso", json=body).status_code
                 for _ in range(4)
             ]
+        assert all(s != 429 for s in statuses[:3]), "first 3 calls must not be rate-limited"
         assert statuses[3] == 429
 
     def test_limit_is_per_user(self):
@@ -182,4 +184,4 @@ class TestRateLimiting:
             for _ in range(11):
                 client.get("/api/gradescope/courses", params={"user_id": "u1"})
             other = client.get("/api/gradescope/courses", params={"user_id": "u2"}).status_code
-        assert other != 429
+        assert other == 404

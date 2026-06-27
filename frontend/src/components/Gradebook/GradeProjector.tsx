@@ -18,8 +18,8 @@ export interface GradeProjection {
 }
 
 // "Drop the lowest N" helper. Sort score-asc, drop the N lowest, return the
-// sum of scores and count of kept items. Each assignment is equally weighted —
-// the category grade is scoreSum/count, not total-earned/total-possible.
+// sum of earned points and sum of possible points for the kept items.
+// Mirrors the backend points-weighted calculation: grade = totalEarned/totalPossible.
 //
 // Tie-break mirrors the backend and droppedAssignmentIds() exactly: lowest
 // score first, then higher points_possible, then id asc — so on tied score
@@ -27,8 +27,8 @@ export interface GradeProjection {
 function dropAndSum(
   items: { id: string; score: number; earned: number; possible: number }[],
   drop: number,
-): { scoreSum: number; count: number } {
-  if (drop >= items.length) return { scoreSum: 0, count: 0 };
+): { totalEarned: number; totalPossible: number } {
+  if (drop >= items.length) return { totalEarned: 0, totalPossible: 0 };
   const kept =
     drop <= 0
       ? items
@@ -40,8 +40,8 @@ function dropAndSum(
           })
           .slice(drop);
   return {
-    scoreSum: kept.reduce((s, x) => s + x.score, 0),
-    count: kept.length,
+    totalEarned: kept.reduce((s, x) => s + x.earned, 0),
+    totalPossible: kept.reduce((s, x) => s + x.possible, 0),
   };
 }
 
@@ -88,7 +88,7 @@ export function projectGrade(
       });
     const currentDS = dropAndSum(currentItems, drop);
     const catCurrent =
-      currentDS.count > 0 ? currentDS.scoreSum / currentDS.count : 0;
+      currentDS.totalPossible > 0 ? currentDS.totalEarned / currentDS.totalPossible : 0;
 
     // Floor scenario — ungraded = 0.
     const floorItems = items.map((a) => {
@@ -98,7 +98,7 @@ export function projectGrade(
     });
     const floorDS = dropAndSum(floorItems, drop);
     const catFloor =
-      floorDS.count > 0 ? floorDS.scoreSum / floorDS.count : 0;
+      floorDS.totalPossible > 0 ? floorDS.totalEarned / floorDS.totalPossible : 0;
 
     // Ceiling scenario — ungraded = full marks.
     const ceilingItems = items.map((a) => {
@@ -108,20 +108,20 @@ export function projectGrade(
     });
     const ceilingDS = dropAndSum(ceilingItems, drop);
     const catCeiling =
-      ceilingDS.count > 0 ? ceilingDS.scoreSum / ceilingDS.count : 0;
+      ceilingDS.totalPossible > 0 ? ceilingDS.totalEarned / ceilingDS.totalPossible : 0;
 
     weightSum += cat.weight;
     weightedFloor += cat.weight * catFloor;
     weightedCeiling += cat.weight * catCeiling;
-    if (currentDS.count > 0) {
+    if (currentDS.totalPossible > 0) {
       currentWeightSum += cat.weight;
       weightedCurrent += cat.weight * catCurrent;
     }
   }
 
-  if (weightSum === 0) return null;
+  if (weightSum === 0 || currentWeightSum === 0) return null;
   return {
-    current: currentWeightSum > 0 ? (weightedCurrent / currentWeightSum) * 100 : 0,
+    current: (weightedCurrent / currentWeightSum) * 100,
     floor: (weightedFloor / weightSum) * 100,
     ceiling: (weightedCeiling / weightSum) * 100,
   };

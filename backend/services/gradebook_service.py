@@ -112,14 +112,16 @@ def category_grade(
 ) -> Optional[float]:
     """Return the 0–1 grade for one category, or None if no graded items.
 
-    Each assignment is weighted equally (mean of earned/possible ratios).
-    When curve_mode='curved' and an assignment has curve_class_mean and
-    curve_class_sd set, apply_curve() is called on its score before averaging.
-    Assignments without curve data are used at their raw score.
+    Uses points-weighted calculation: sum(earned) / sum(possible). Higher-point
+    assignments carry proportionally more weight. When curve_mode='curved' and
+    an assignment has curve_class_mean and curve_class_sd set, apply_curve() is
+    called on its score before the weighted sum. Assignments without curve data
+    use their raw score.
     """
     items = list(items)
     dropped = set(dropped_assignment_ids(items, drop_lowest))
-    scores: list[float] = []
+    total_earned = 0.0
+    total_possible = 0.0
     for item in items:
         possible = item.get("points_possible")
         earned = item.get("points_earned")
@@ -143,10 +145,11 @@ def category_grade(
                     float(raw_pct), float(item_mean), float(item_sd),
                     float(item_avg), float(item_sd_delta)
                 )
-        scores.append(raw_pct)
-    if not scores:
+        total_earned += raw_pct * float(possible)
+        total_possible += float(possible)
+    if total_possible == 0:
         return None
-    return sum(scores) / len(scores)
+    return total_earned / total_possible
 
 
 def current_grade(

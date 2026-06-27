@@ -139,10 +139,10 @@ export function GradebookLanding() {
     setLoading(true);
     getGradebookSummary(userId, selected)
       .then((res) => {
-        setCourses(res.courses.length ? res.courses : (SAMPLE_COURSES[selected] ?? []));
+        setCourses(res.courses.length ? res.courses : []);
       })
       .catch(() => {
-        setCourses(SAMPLE_COURSES[selected] ?? []);
+        setCourses([]);
       })
       .finally(() => setLoading(false));
   }, [userId, selected]);

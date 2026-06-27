@@ -11,7 +11,7 @@
 --    Always one row per user. Switching modes overwrites the previous.
 CREATE TABLE IF NOT EXISTS gradescope_credentials (
   user_id            TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  auth_mode          TEXT NOT NULL DEFAULT 'password',
+  auth_mode          TEXT NOT NULL DEFAULT 'password' CHECK (auth_mode IN ('password', 'cookies')),
   email_encrypted    TEXT,
   password_encrypted TEXT,
   cookies_encrypted  TEXT,

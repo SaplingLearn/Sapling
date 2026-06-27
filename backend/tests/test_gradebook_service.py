@@ -23,8 +23,17 @@ class TestCategoryGrade:
             {"points_possible": 100, "points_earned": 92},
             {"points_possible": 50,  "points_earned": 40},
         ]
-        # mean([92/100, 40/50]) = mean([0.92, 0.80]) = 0.86
-        assert svc.category_grade(items) == pytest.approx(0.86)
+        # points-weighted: (92+40)/(100+50) = 132/150 ≈ 0.88
+        assert svc.category_grade(items) == pytest.approx(132 / 150)
+
+    def test_higher_point_assignments_carry_more_weight(self):
+        items = [
+            {"points_possible": 100, "points_earned": 92},  # 92%
+            {"points_possible": 10,  "points_earned": 5},   # 50%
+        ]
+        # points-weighted: (92+5)/(100+10) = 97/110 ≈ 0.8818
+        # unweighted mean would give (0.92+0.50)/2 = 0.71 — wrong
+        assert svc.category_grade(items) == pytest.approx(97 / 110)
 
     def test_skips_items_missing_points_possible(self):
         items = [
@@ -155,13 +164,13 @@ class TestCategoryGradeCurved:
     def test_raw_mode_ignores_curve(self):
         result = category_grade(self.ITEMS, curve_mode="raw",
                                 curve_avg_target=0.83, curve_sd_delta=0.10)
-        # raw average of 0.80 and 0.60
+        # points-weighted: (80+60)/(100+100) = 0.70 (equal points → same as mean)
         assert abs(result - 0.70) < 1e-9
 
     def test_curved_mode_applies_curve(self):
-        # a1: z=(0.80-0.68)/0.12=1.0 → 0.83+0.10=0.93
-        # a2: z=(0.60-0.55)/0.10=0.5 → 0.83+0.05=0.88
-        # mean = (0.93+0.88)/2 = 0.905
+        # a1: z=(0.80-0.68)/0.12=1.0 → 0.83+0.10=0.93 → 0.93*100=93 earned-equiv
+        # a2: z=(0.60-0.55)/0.10=0.5 → 0.83+0.05=0.88 → 0.88*100=88 earned-equiv
+        # points-weighted: (93+88)/(100+100) = 0.905 (equal points → same as mean)
         result = category_grade(self.ITEMS, curve_mode="curved",
                                 curve_avg_target=0.83, curve_sd_delta=0.10)
         assert abs(result - 0.905) < 1e-9
