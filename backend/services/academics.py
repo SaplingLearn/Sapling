@@ -135,3 +135,61 @@ def term_for_offering(offering_id: str) -> dict | None:
         return None
     terms = table("terms").select("*", filters={"id": f"eq.{term_id}"}, limit=1)
     return terms[0] if terms else None
+
+
+def user_enrollment_ids(user_id: str) -> list[dict]:
+    """The user's enrollments as ``{id, offering_id}`` rows (read + scoping helper)."""
+    if not user_id:
+        return []
+    return table("enrollments").select(
+        "id,offering_id", filters={"user_id": f"eq.{user_id}"}
+    ) or []
+
+
+def enrollment_id_for(user_id: str, course_id: str, *, create: bool = False) -> str | None:
+    """Resolve (user, abstract course) → the user's current-term enrollment id.
+
+    Prefer the user's enrollment in the course's current-term offering, else
+    their only offering of the course. With ``create=True``, ensure an offering
+    (current term) and an enrollment row exist so a write never silently drops.
+    """
+    if not user_id or not course_id:
+        return None
+
+    offering_ids = user_offering_ids_for_course(user_id, course_id)
+    if offering_ids:
+        chosen = offering_ids[0]
+        cur = current_term()
+        cur_id = cur["id"] if cur else None
+        if cur_id:
+            for oid in offering_ids:
+                t = term_for_offering(oid)
+                if t and t.get("id") == cur_id:
+                    chosen = oid
+                    break
+        rows = table("enrollments").select(
+            "id",
+            filters={"user_id": f"eq.{user_id}", "offering_id": f"eq.{chosen}"},
+            limit=1,
+        )
+        if rows:
+            return rows[0]["id"]
+
+    if not create:
+        return None
+
+    offering_id = resolve_offering(course_id, create=True)
+    if not offering_id:
+        return None
+    existing = table("enrollments").select(
+        "id",
+        filters={"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"},
+        limit=1,
+    )
+    if existing:
+        return existing[0]["id"]
+    new_id = str(uuid.uuid4())
+    table("enrollments").insert(
+        {"id": new_id, "user_id": user_id, "offering_id": offering_id}
+    )
+    return new_id
