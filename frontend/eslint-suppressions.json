@@ -91,11 +91,6 @@
       "count": 2
     }
   },
-  "src/components/screens/Gradebook/Course.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
   "src/components/screens/Gradebook/Landing.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1

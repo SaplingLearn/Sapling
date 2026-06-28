@@ -113,7 +113,7 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
                 onChange={(e) => setCourseId(e.target.value)}
                 style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
               >
-                <option value="">— Pick a course —</option>
+                <option value="">Pick a course</option>
                 {courses.map((c) => (
                   <option key={c.course_id} value={c.course_id}>
                     {c.course_code} · {c.course_name}

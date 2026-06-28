@@ -397,6 +397,10 @@ class CreateAssignmentBody(BaseModel):
     due_date: Optional[str] = None
     assignment_type: Optional[AssignmentType] = None
     notes: Optional[str] = None
+    curve_class_mean: Optional[float] = Field(default=None, ge=0, le=1)
+    curve_class_sd: Optional[float] = Field(default=None, ge=0, le=1)
+    curve_avg_target: Optional[float] = Field(default=None, ge=0, le=1)
+    curve_sd_delta: Optional[float] = Field(default=None, ge=0, le=1)
 
 
 class UpdateAssignmentBody(BaseModel):
@@ -408,6 +412,17 @@ class UpdateAssignmentBody(BaseModel):
     due_date: Optional[str] = None
     assignment_type: Optional[AssignmentType] = None
     notes: Optional[str] = None
+    curve_class_mean: Optional[float] = Field(default=None, ge=0, le=1)
+    curve_class_sd: Optional[float] = Field(default=None, ge=0, le=1)
+    curve_avg_target: Optional[float] = Field(default=None, ge=0, le=1)
+    curve_sd_delta: Optional[float] = Field(default=None, ge=0, le=1)
+
+
+class CurveSettingsBody(BaseModel):
+    user_id: str
+    curve_mode: Literal["raw", "curved"] = "raw"
+    curve_avg_target: Optional[float] = Field(default=None, ge=0, le=1)
+    curve_sd_delta: Optional[float] = Field(default=None, ge=0, le=1)
 
 
 class LetterScaleTier(BaseModel):

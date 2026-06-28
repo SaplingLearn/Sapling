@@ -279,6 +279,7 @@ def get_course(
         )
 
     percent, letter = _enrollment_grade(enr, cats, assigns)
+    dropped_ids = gradebook_service.all_dropped_ids(cats, assigns)
 
     return {
         "course_id": meta["course_id"],
@@ -293,6 +294,7 @@ def get_course(
         "curve_sd_delta": enr.get("curve_sd_delta"),
         "categories": cats,
         "assignments": assigns,
+        "dropped_assignment_ids": dropped_ids,
     }
 
 
@@ -300,6 +302,7 @@ def get_course(
 
 @router.post("/courses/{course_id}/categories")
 def create_category(course_id: str, body: CreateCategoryBody, request: Request):
+    """Create a new grade category for the given course."""
     require_self(body.user_id, request)
     enr = _resolve_enrollment(body.user_id, course_id, body.semester)
     if not enr:
@@ -318,6 +321,7 @@ def create_category(course_id: str, body: CreateCategoryBody, request: Request):
 
 @router.patch("/courses/{course_id}/categories")
 def bulk_update_categories(course_id: str, body: BulkUpdateCategoriesBody, request: Request):
+    """Replace all categories for a course. Validates that weights sum to 100%."""
     require_self(body.user_id, request)
     enr = _resolve_enrollment(body.user_id, course_id, body.semester)
     if not enr:
@@ -358,6 +362,7 @@ def bulk_update_categories(course_id: str, body: BulkUpdateCategoriesBody, reque
 
 @router.delete("/categories/{category_id}")
 def delete_category(category_id: str, request: Request, user_id: str = Query(...)):
+    """Delete a category if it belongs to user_id."""
     require_self(user_id, request)
     cat = _owned_category(user_id, category_id)
     if not cat:
@@ -370,6 +375,7 @@ def delete_category(category_id: str, request: Request, user_id: str = Query(...
 
 @router.post("/assignments")
 def create_assignment(body: CreateAssignmentBody, request: Request):
+    """Create a graded assignment; encrypts points_possible, points_earned, and notes at rest."""
     require_self(body.user_id, request)
     enr = _resolve_enrollment(body.user_id, body.course_id, body.semester)
     if not enr:
@@ -389,6 +395,10 @@ def create_assignment(body: CreateAssignmentBody, request: Request):
         "assignment_type": body.assignment_type,
         "notes": encrypt_if_present(body.notes),
         "source": "manual",
+        "curve_class_mean": body.curve_class_mean,
+        "curve_class_sd": body.curve_class_sd,
+        "curve_avg_target": body.curve_avg_target,
+        "curve_sd_delta": body.curve_sd_delta,
     })
     # #126 (#18): the insert representation returns the stored ciphertext for
     # points/notes. Decrypt before returning so the client never receives
@@ -403,6 +413,7 @@ def create_assignment(body: CreateAssignmentBody, request: Request):
 
 @router.patch("/assignments/{assignment_id}")
 def update_assignment_route(assignment_id: str, body: UpdateAssignmentBody, request: Request):
+    """Partial-update an assignment. Encrypts any point/notes fields before writing."""
     require_self(body.user_id, request)
     if not _owned_assignment(body.user_id, assignment_id):
         raise HTTPException(status_code=404, detail="Assignment not found")
@@ -410,7 +421,10 @@ def update_assignment_route(assignment_id: str, body: UpdateAssignmentBody, requ
         raise HTTPException(status_code=400, detail="Category not in your gradebook")
 
     incoming = body.model_dump(exclude_unset=True, exclude={"user_id"})
-    ALLOWED = {"title", "category_id", "due_date", "assignment_type"}
+    ALLOWED = {
+        "title", "category_id", "due_date", "assignment_type",
+        "curve_class_mean", "curve_class_sd", "curve_avg_target", "curve_sd_delta",
+    }
     ENCRYPTED_FIELDS = {"points_possible", "points_earned", "notes"}
     patch_data = {k: v for k, v in incoming.items() if k in ALLOWED}
     for k in ENCRYPTED_FIELDS:
@@ -427,6 +441,7 @@ def update_assignment_route(assignment_id: str, body: UpdateAssignmentBody, requ
 
 @router.delete("/assignments/{assignment_id}")
 def delete_assignment_route(assignment_id: str, request: Request, user_id: str = Query(...)):
+    """Delete an assignment belonging to user_id."""
     require_self(user_id, request)
     if not _owned_assignment(user_id, assignment_id):
         raise HTTPException(status_code=404, detail="Assignment not found")
@@ -526,6 +541,7 @@ def apply_syllabus(body: SyllabusApplyBody, request: Request):
 
 @router.patch("/courses/{course_id}/scale")
 def set_letter_scale(course_id: str, body: SetLetterScaleBody, request: Request):
+    """Override the default A/B/C… letter scale for a course. Pass scale=null to reset to default."""
     require_self(body.user_id, request)
     enr = _resolve_enrollment(body.user_id, course_id, body.semester)
     if not enr:

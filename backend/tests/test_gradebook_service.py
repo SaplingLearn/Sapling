@@ -22,8 +22,17 @@ class TestCategoryGrade:
             {"points_possible": 100, "points_earned": 92},
             {"points_possible": 50,  "points_earned": 40},
         ]
-        # (92 + 40) / (100 + 50) = 0.88
-        assert svc.category_grade(items) == pytest.approx(0.88)
+        # points-weighted: (92+40)/(100+50) = 132/150 ≈ 0.88
+        assert svc.category_grade(items) == pytest.approx(132 / 150)
+
+    def test_higher_point_assignments_carry_more_weight(self):
+        items = [
+            {"points_possible": 100, "points_earned": 92},  # 92%
+            {"points_possible": 10,  "points_earned": 5},   # 50%
+        ]
+        # points-weighted: (92+5)/(100+10) = 97/110 ≈ 0.8818
+        # unweighted mean would give (0.92+0.50)/2 = 0.71 — wrong
+        assert svc.category_grade(items) == pytest.approx(97 / 110)
 
     def test_skips_items_missing_points_possible(self):
         items = [

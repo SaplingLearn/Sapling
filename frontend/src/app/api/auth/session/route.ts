@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
     response.cookies.set('sapling_session', token, {
       httpOnly: true,
       sameSite: 'lax',
-      secure: true,
+      secure: process.env.NODE_ENV === 'production',
       path: '/',
       maxAge: SESSION_MAX_AGE,
       ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
@@ -119,7 +119,7 @@ export async function DELETE(request: NextRequest) {
   response.cookies.set('sapling_session', '', {
     httpOnly: true,
     sameSite: 'lax',
-    secure: true,
+    secure: process.env.NODE_ENV === 'production',
     path: '/',
     maxAge: 0,
     ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),

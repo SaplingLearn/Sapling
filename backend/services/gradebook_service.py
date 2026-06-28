@@ -62,6 +62,42 @@ LETTER_GRADE_POINTS: dict[str, float] = {
     "F": 0.0,
 }
 
+def _coerce_drop(value) -> int:
+    """Categories from the DB carry drop_lowest as int; tolerate Nones too."""
+    try:
+        n = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return n if n > 0 else 0
+
+
+def dropped_assignment_ids(
+    items: Iterable[AssignmentRow],
+    drop_lowest: int,
+) -> list[str]:
+    """Return ids of the `drop_lowest` lowest-scoring graded assignments in
+    a single category. Score is earned/possible — ties broken by larger
+    points_possible first (drop the higher-stakes failure), then by id for
+    determinism. Returns up to `drop_lowest` ids; fewer if not enough
+    graded items exist."""
+    n = _coerce_drop(drop_lowest)
+    if n <= 0:
+        return []
+    graded: list[tuple[float, float, str]] = []
+    for a in items:
+        p = a.get("points_possible")
+        e = a.get("points_earned")
+        aid = a.get("id")
+        if p is None or e is None or aid is None:
+            continue
+        if float(p) <= 0:
+            continue
+        graded.append((float(e) / float(p), float(p), str(aid)))
+    if not graded:
+        return []
+    graded.sort(key=lambda x: (x[0], -x[1], x[2]))
+    return [aid for (_, _, aid) in graded[:n]]
+
 
 def category_grade(
     items: Iterable[AssignmentRow],
@@ -84,7 +120,7 @@ def category_grade(
         earned = item.get("points_earned")
         if possible is None or earned is None:
             continue
-        if possible <= 0:
+        if float(possible) <= 0:
             continue
         graded.append((float(possible), float(earned)))
 
@@ -211,6 +247,23 @@ def current_grade(
     return raw
 
 
+def all_dropped_ids(
+    categories: list[CategoryRow],
+    assignments: Iterable[AssignmentRow],
+) -> list[str]:
+    """Flatten every category's currently-dropped assignment IDs. Useful for
+    the API to send to the frontend so dropped items can be flagged in the UI."""
+    by_cat: dict[str, list[AssignmentRow]] = {c["id"]: [] for c in categories}
+    for a in assignments:
+        cid = a.get("category_id")
+        if cid in by_cat:
+            by_cat[cid].append(a)
+    out: list[str] = []
+    for cat in categories:
+        out.extend(dropped_assignment_ids(by_cat[cat["id"]], cat.get("drop_lowest", 0)))
+    return out
+
+
 def letter_for(percent: Optional[float], scale: Optional[list[dict]]) -> Optional[str]:
     """Map a 0–100 percentage to a letter using the given scale (or default).
 
@@ -219,14 +272,18 @@ def letter_for(percent: Optional[float], scale: Optional[list[dict]]) -> Optiona
     """
     if percent is None:
         return None
+    # Round to 4 decimal places to strip floating-point noise (e.g. 89.99999999…
+    # from arithmetic should still reach the 90.0 threshold) without promoting
+    # values that are semantically below a boundary (92.999 must stay A-, not A).
+    rounded = round(percent, 4)
     if scale:
         ordered = sorted(scale, key=lambda x: -float(x.get("min", 0)))
         for tier in ordered:
-            if percent >= float(tier["min"]):
+            if rounded >= float(tier["min"]):
                 return str(tier["letter"])
         return None
     for floor, letter in DEFAULT_LETTER_SCALE:
-        if percent >= floor:
+        if rounded >= floor:
             return letter
     return None
 
