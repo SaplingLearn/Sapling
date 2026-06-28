@@ -436,10 +436,10 @@ export function Dashboard() {
         )}
         <div style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
           {([
-            ["mastered", "var(--state-mastery)"],
-            ["learning", "var(--state-progress)"],
-            ["struggling", "var(--state-struggle)"],
-            ["unexplored", "var(--state-neutral)"],
+            ["Mastered", "var(--state-mastery)"],
+            ["Learning", "var(--state-progress)"],
+            ["Struggling", "var(--state-struggle)"],
+            ["Unexplored", "var(--state-neutral)"],
           ] as const).map(([t, color]) => (
             <div key={t} style={{ display: "flex", alignItems: "center", gap: 5 }}>
               <span style={{ width: 10, height: 10, borderRadius: "50%", background: color }} />

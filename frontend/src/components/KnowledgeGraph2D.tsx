@@ -515,7 +515,7 @@ function KnowledgeGraph2DImpl({
                       {n.name}
                     </text>
                   )}
-                  {!n.is_subject_root && r > 10 && (
+                  {!n.is_subject_root && (
                     <text
                       x={n.x}
                       y={n.y + r + 13}
