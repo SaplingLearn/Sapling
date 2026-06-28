@@ -2,7 +2,6 @@
 import pytest
 
 from services import gradebook_service as svc
-from services.gradebook_service import apply_curve, category_grade
 
 
 # ── category_grade ───────────────────────────────────────────────────────────
