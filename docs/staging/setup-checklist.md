@@ -40,8 +40,13 @@ variables, Cloudflare worker secrets, or a local gitignored `backend/.env.stagin
 
 ### Step 4 — Cloudflare Workers (the frontend service)
 - [ ] The `[env.staging]` block in `frontend/wrangler.toml` is already in the repo (Phase 4). Deploy: `cd frontend && npm run cf:deploy:staging` → publishes a `frontend-staging` worker.
+- [ ] **Set the build-time env vars** `BACKEND_URL` and `NEXT_PUBLIC_API_URL` (both `https://api.staging.saplinglearn.com`) for the staging build. These are read by `next.config.ts`/client bundles at **build time** — `wrangler.toml [env.staging.vars]` is runtime-only and does NOT cover them. If you deploy via Cloudflare Workers Builds, add them as **Build variables** on the staging build; if you deploy locally, export them before `npm run cf:deploy:staging` (also export `NEXT_PUBLIC_LOCAL_MODE=false` so a stray local `.env.local` can't flip staging into mock mode). Miss `BACKEND_URL` and the `/api` rewrite bakes `http://localhost:5000` → every dashboard API call 500s (`next.config.ts` now fails the build loudly if it is unset). Paste the value with **no leading/trailing whitespace** — a stray space makes Next reject the rewrite at build time (`Invalid rewrite found`); `next.config.ts` trims it defensively but keep the dashboard value clean.
 - [ ] Add the worker secrets for the Access hop (Step 5):
       `wrangler secret put CF_ACCESS_CLIENT_ID --env staging` and `... CF_ACCESS_CLIENT_SECRET --env staging`.
+- [ ] Add `SESSION_SECRET` as a worker secret — **it must equal the Railway `SESSION_SECRET` (Step 3) exactly**:
+      `wrangler secret put SESSION_SECRET --env staging`. The frontend `/api/auth/session` route HMAC-verifies the
+      backend's `auth_token` and signs the `sapling_session` cookie with this; if it is missing the route returns
+      500 and sign-in fails with "Sign-in failed", if it mismatches the backend it returns 401 (same symptom).
 
 ### Step 5 — DNS + Cloudflare Access (the security gate)
 - [ ] `api.staging.saplinglearn.com` → point at the Railway target from Step 3 (proxied).
@@ -62,7 +67,8 @@ variables, Cloudflare worker secrets, or a local gitignored `backend/.env.stagin
 |---|---|---|---|---|
 | `SUPABASE_SERVICE_KEY` | ✅ | ❌ | ✅ (for migrate/seed) | ❌ never |
 | `SUPABASE_DB_URL` | ✅ | ❌ | ✅ | ❌ |
-| `ENCRYPTION_KEY` / `SESSION_SECRET` | ✅ | ❌ | ✅ (encryption key only, for seed) | ❌ |
+| `ENCRYPTION_KEY` | ✅ | ❌ | ✅ (for seed) | ❌ |
+| `SESSION_SECRET` | ✅ | ✅ (`wrangler secret put --env staging`, **same value as Railway**) | optional | ❌ |
 | `GOOGLE_CLIENT_ID` / `_SECRET` | ✅ | ❌ | ✅ | ❌ |
 | `CF_ACCESS_CLIENT_ID` / `_SECRET` | ❌ | ✅ (`wrangler secret put`) | ❌ | ❌ |
 | `BACKEND_URL` / `COOKIE_DOMAIN` (non-secret) | ❌ | ✅ (`wrangler.toml` vars) | ❌ | ✅ (config, not secret) |
