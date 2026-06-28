@@ -472,7 +472,7 @@ def _save_orchestrator_syllabus(*, user_id: str, course_id: str, filename: str,
         })
     if legacy:
         try:
-            save_assignments_to_db(user_id, legacy)
+            save_assignments_to_db(user_id, legacy, source="syllabus")
         except Exception:
             logger.exception("Assignment save failed for '%s' (best-effort)", filename)
 
@@ -985,7 +985,7 @@ async def _legacy_upload_pipeline(
         try:
             for a in ai["assignments"]:
                 a["course_id"] = course_id
-            save_assignments_to_db(user_id, ai["assignments"])
+            save_assignments_to_db(user_id, ai["assignments"], source="syllabus")
         except Exception:
             logger.exception("Assignment save failed for '%s' (best-effort)", filename)
 

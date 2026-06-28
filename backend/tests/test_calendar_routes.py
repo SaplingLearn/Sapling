@@ -13,6 +13,14 @@ from main import app
 client = TestClient(app)
 
 
+def _tbl(**rows_by_verb):
+    """Build a MagicMock table handle with canned per-verb return values."""
+    m = MagicMock()
+    for verb, val in rows_by_verb.items():
+        getattr(m, verb).return_value = val
+    return m
+
+
 # ── GET /api/calendar/status/{user_id} ───────────────────────────────────────
 
 class TestCalendarStatus:
@@ -45,14 +53,16 @@ class TestCalendarStatus:
 
 class TestSaveAssignments:
     def test_saves_multiple_assignments(self):
-        with patch("services.calendar_service.table") as t:
+        with patch("services.calendar_service.table") as t, \
+             patch("services.academics.user_enrollment_ids", return_value=[{"id": "e1", "offering_id": "o1"}]), \
+             patch("services.academics.enrollment_id_for", return_value="e1"):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = []
             body = {
                 "user_id": "user_andres",
                 "assignments": [
-                    {"title": "HW1",    "due_date": "2026-03-01", "assignment_type": "homework"},
-                    {"title": "Quiz 1", "due_date": "2026-03-10", "assignment_type": "quiz"},
+                    {"title": "HW1",    "due_date": "2026-03-01", "assignment_type": "homework", "course_id": "CS101"},
+                    {"title": "Quiz 1", "due_date": "2026-03-10", "assignment_type": "quiz",     "course_id": "CS101"},
                 ],
             }
             r = client.post("/api/calendar/save", json=body)
@@ -68,19 +78,23 @@ class TestSaveAssignments:
         assert r.json()["saved_count"] == 0
 
     def test_save_with_optional_fields_omitted(self):
-        with patch("services.calendar_service.table") as t:
+        with patch("services.calendar_service.table") as t, \
+             patch("services.academics.user_enrollment_ids", return_value=[{"id": "e1", "offering_id": "o1"}]), \
+             patch("services.academics.enrollment_id_for", return_value="e1"):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = []
             body = {
                 "user_id": "user_andres",
-                "assignments": [{"title": "Midterm", "due_date": "2026-04-01"}],
+                "assignments": [{"title": "Midterm", "due_date": "2026-04-01", "course_id": "CS101"}],
             }
             r = client.post("/api/calendar/save", json=body)
         assert r.status_code == 200
         assert r.json()["saved_count"] == 1
 
     def test_save_skips_duplicate_title_and_date(self):
-        with patch("services.calendar_service.table") as t:
+        with patch("services.calendar_service.table") as t, \
+             patch("services.academics.user_enrollment_ids", return_value=[{"id": "e1", "offering_id": "o1"}]), \
+             patch("services.academics.enrollment_id_for", return_value="e1"):
             t.return_value.select.return_value = [
                 {"title": "HW1", "due_date": "2026-03-01"},
             ]
@@ -88,8 +102,8 @@ class TestSaveAssignments:
             body = {
                 "user_id": "user_andres",
                 "assignments": [
-                    {"title": "HW1", "due_date": "2026-03-01", "assignment_type": "homework"},
-                    {"title": "HW2", "due_date": "2026-03-02", "assignment_type": "homework"},
+                    {"title": "HW1", "due_date": "2026-03-01", "assignment_type": "homework", "course_id": "CS101"},
+                    {"title": "HW2", "due_date": "2026-03-02", "assignment_type": "homework", "course_id": "CS101"},
                 ],
             }
             r = client.post("/api/calendar/save", json=body)
@@ -98,7 +112,9 @@ class TestSaveAssignments:
 
     def test_save_skips_when_iso_datetime_matches_existing_date(self):
         """#16: same title + same calendar day (ISO date vs datetime) → one row."""
-        with patch("services.calendar_service.table") as t:
+        with patch("services.calendar_service.table") as t, \
+             patch("services.academics.user_enrollment_ids", return_value=[{"id": "e1", "offering_id": "o1"}]), \
+             patch("services.academics.enrollment_id_for", return_value="e1"):
             t.return_value.select.return_value = [
                 {"title": "Final Exam", "due_date": "2026-05-01"},
             ]
@@ -106,7 +122,7 @@ class TestSaveAssignments:
             body = {
                 "user_id": "user_andres",
                 "assignments": [
-                    {"title": "Final Exam", "due_date": "2026-05-01T09:00:00", "assignment_type": "exam"},
+                    {"title": "Final Exam", "due_date": "2026-05-01T09:00:00", "assignment_type": "exam", "course_id": "CS101"},
                 ],
             }
             r = client.post("/api/calendar/save", json=body)
@@ -118,16 +134,20 @@ class TestSaveAssignments:
 
 class TestGetUpcoming:
     def test_returns_assignments_from_db(self):
+        # New enrollment-keyed schema: rows carry enrollment_id, not user_id/course_id.
         mock_rows = [
-            {"id": "a1", "user_id": "user_andres", "title": "HW1",
+            {"id": "a1", "enrollment_id": "e1", "title": "HW1",
              "due_date": "2026-03-01", "assignment_type": "homework",
-             "notes": None, "google_event_id": None, "course_id": None, "courses": None},
-            {"id": "a2", "user_id": "user_andres", "title": "Quiz",
+             "notes": None, "google_event_id": None, "source": None},
+            {"id": "a2", "enrollment_id": "e1", "title": "Quiz",
              "due_date": "2026-03-10", "assignment_type": "quiz",
-             "notes": None, "google_event_id": None, "course_id": None, "courses": None},
+             "notes": None, "google_event_id": None, "source": None},
         ]
-        with patch("routes.calendar.table") as t:
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
             t.return_value.select.return_value = mock_rows
+            ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
+            ac.offering_course_id.return_value = None  # no course → empty strings
             r = client.get("/api/calendar/upcoming/user_andres")
 
         assert r.status_code == 200
@@ -139,7 +159,9 @@ class TestGetUpcoming:
         assert assignments[0]["course_name"] == ""
 
     def test_returns_empty_list_when_none(self):
-        with patch("routes.calendar.table") as t:
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
+            ac.user_enrollment_ids.return_value = []
             t.return_value.select.return_value = []
             r = client.get("/api/calendar/upcoming/user_andres")
         assert r.status_code == 200
