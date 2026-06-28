@@ -18,6 +18,7 @@ from config import (
 )
 from db.connection import table
 from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
+from services import academics
 from services.auth_guard import require_self, get_session_user_id
 from services.calendar_service import extract_assignments_from_file, insert_new_assignments
 from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
@@ -87,6 +88,58 @@ def _require_google_creds(user_id: str) -> "Credentials":
     return _get_refreshed_credentials(token_rows[0])
 
 
+def _course_meta_cached(offering_id, cache):
+    if not offering_id:
+        return {}
+    if offering_id not in cache:
+        course_id = academics.offering_course_id(offering_id)
+        course = {}
+        if course_id:
+            rows = table("courses").select(
+                "id,course_code,course_name",
+                filters={"id": f"eq.{course_id}"}, limit=1,
+            )
+            course = rows[0] if rows else {}
+        cache[offering_id] = {
+            "course_id": course_id,
+            "course_code": course.get("course_code"),
+            "course_name": course.get("course_name"),
+        }
+    return cache[offering_id]
+
+
+def _read_assignments(user_id, *, due_gte=None, limit=None):
+    enrollments = academics.user_enrollment_ids(user_id)
+    if not enrollments:
+        return []
+    offering_by_enrollment = {e["id"]: e.get("offering_id") for e in enrollments}
+    ids = ",".join(offering_by_enrollment.keys())
+    filters = {"enrollment_id": f"in.({ids})"}
+    if due_gte:
+        filters["due_date"] = f"gte.{due_gte}"
+    rows = table("assignments").select(
+        "id,enrollment_id,title,due_date,assignment_type,notes,google_event_id,source",
+        filters=filters, order="due_date.asc", limit=limit,
+    )
+    cache = {}
+    out = []
+    for r in rows:
+        meta = _course_meta_cached(offering_by_enrollment.get(r.get("enrollment_id")), cache)
+        out.append({
+            "id": r["id"],
+            "user_id": user_id,
+            "title": r["title"],
+            "due_date": r["due_date"],
+            "assignment_type": r.get("assignment_type"),
+            "notes": decrypt_if_present(r.get("notes")),
+            "google_event_id": r.get("google_event_id"),
+            "course_id": meta.get("course_id"),
+            "course_code": meta.get("course_code") or "",
+            "course_name": meta.get("course_name") or "",
+        })
+    return out
+
+
 # ── Syllabus extraction ───────────────────────────────────────────────────────
 
 @router.post("/extract")
@@ -137,55 +190,14 @@ def save_assignments(body: SaveAssignmentsBody, request: FastAPIRequest):
 def get_upcoming(user_id: str, request: FastAPIRequest):
     require_self(user_id, request)
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    rows = table("assignments").select(
-        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,courses!left(course_code,course_name)",
-        filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
-        order="due_date.asc",
-        limit=20,
-    )
-    assignments = []
-    for r in rows:
-        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
-        assignments.append({
-            "id": r["id"],
-            "user_id": r["user_id"],
-            "title": r["title"],
-            "due_date": r["due_date"],
-            "assignment_type": r.get("assignment_type"),
-            "notes": decrypt_if_present(r.get("notes")),
-            "google_event_id": r.get("google_event_id"),
-            "course_id": r.get("course_id"),
-            "course_code": course.get("course_code") or "",
-            "course_name": course.get("course_name") or "",
-        })
-    return {"assignments": assignments}
+    return {"assignments": _read_assignments(user_id, due_gte=today, limit=20)}
 
 
 @router.get("/all/{user_id}")
 def get_all_assignments(user_id: str, request: FastAPIRequest):
     """Return all assignments for a user (past and future) for the calendar view."""
     require_self(user_id, request)
-    rows = table("assignments").select(
-        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,courses!left(course_code,course_name)",
-        filters={"user_id": f"eq.{user_id}"},
-        order="due_date.asc",
-    )
-    assignments = []
-    for r in rows:
-        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
-        assignments.append({
-            "id": r["id"],
-            "user_id": r["user_id"],
-            "title": r["title"],
-            "due_date": r["due_date"],
-            "assignment_type": r.get("assignment_type"),
-            "notes": decrypt_if_present(r.get("notes")),
-            "google_event_id": r.get("google_event_id"),
-            "course_id": r.get("course_id"),
-            "course_code": course.get("course_code") or "",
-            "course_name": course.get("course_name") or "",
-        })
-    return {"assignments": assignments}
+    return {"assignments": _read_assignments(user_id)}
 
 
 @router.patch("/assignments/{assignment_id}")
