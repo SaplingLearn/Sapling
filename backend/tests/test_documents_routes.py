@@ -379,7 +379,7 @@ class TestUploadDocument:
             r = _make_upload(filename="syllabus.pdf")
 
         assert r.status_code == 200
-        mock_save.assert_called_once_with("u1", assignments)
+        mock_save.assert_called_once_with("u1", assignments, source="syllabus")
 
     def test_non_syllabus_skips_assignment_extraction(self):
         ai_result = {
