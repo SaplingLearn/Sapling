@@ -5,6 +5,23 @@ import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
 
+// Guard against the silent footgun that took staging's dashboard down: a
+// deployment build (NODE_ENV=production) MUST set BACKEND_URL explicitly.
+// Falling back to http://localhost:5000 bakes a :5000 port into the /api
+// rewrite destination, which Next's path-to-regexp then misreads as a route
+// param named "5000" ("TypeError: Expected \"5000\" to be a string") so every
+// proxied /api/* call 500s at runtime. wrangler.toml [vars] is runtime-only and
+// does NOT fix this — the rewrite is baked at build time. Fail the build loudly
+// instead of shipping a worker that 500s on every API call.
+if (process.env.NODE_ENV === "production" && !process.env.BACKEND_URL) {
+  throw new Error(
+    "BACKEND_URL is required for production builds. Set it to the backend origin " +
+      "(prod: https://api.saplinglearn.com, staging: https://api.staging.saplinglearn.com) " +
+      "as a build-time env var or Cloudflare Workers Builds variable. Without it the /api " +
+      "rewrite bakes http://localhost:5000 and every proxied API call 500s.",
+  );
+}
+
 const nextConfig: NextConfig = {
   // `standalone` is ignored by @opennextjs/cloudflare (it does its own
   // packaging), but keeping it lets `next build` alone still produce a
