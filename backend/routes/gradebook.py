@@ -30,7 +30,6 @@ from models import (
     SetLetterScaleBody,
     SetCurveBody,
     SyllabusApplyBody,
-    CurveSettingsBody,
 )
 from services import academics, gradebook_service
 from services.auth_guard import require_self
