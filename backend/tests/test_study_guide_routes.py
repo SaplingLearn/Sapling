@@ -45,8 +45,10 @@ class TestGetExams:
 
 class TestGetCachedGuides:
     def test_enriches_with_course_name(self):
+        # Guides key on the offering (0025); the response exposes the abstract
+        # course id (resolved via offering_course_id) and its course name.
         guides = [{
-            "id": "g1", "course_id": "c1", "exam_id": "e1",
+            "id": "g1", "offering_id": "off1", "exam_id": "e1",
             "generated_at": "2026-04-01T00:00:00Z",
             "content": {"exam": "Midterm", "overview": "Covers ch1-5"},
         }]
@@ -61,11 +63,13 @@ class TestGetCachedGuides:
                 m.select.return_value = []
             return m
 
-        with patch("routes.study_guide.table", side_effect=table_side_effect):
+        with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.offering_course_id", return_value="c1"):
             r = client.get(f"/api/study-guide/{USER_ID}/cached")
 
         assert r.status_code == 200
         out = r.json()["guides"][0]
+        assert out["course_id"] == "c1"
         assert out["course_name"] == "Calc II"
         assert out["exam_title"] == "Midterm"
         assert out["overview"] == "Covers ch1-5"
@@ -100,12 +104,16 @@ class TestGetGuide:
 
     def test_generates_and_inserts_when_not_cached(self):
         fresh_content = {"exam": "Final", "topics": [{"name": "Topic 1"}]}
+        captured = {}
 
         def table_side_effect(name):
             m = MagicMock()
             if name == "study_guides":
                 m.select.return_value = []  # nothing cached
-                m.insert.return_value = [{}]
+                def _insert(row):
+                    captured["row"] = row
+                    return [{}]
+                m.insert.side_effect = _insert
             elif name == "assignments":
                 m.select.return_value = [{"title": "Final", "due_date": "2026-05-01"}]
             elif name == "documents":
@@ -115,6 +123,7 @@ class TestGetGuide:
             return m
 
         with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.resolve_offering", return_value="off1") as ro, \
              patch("routes.study_guide.call_gemini_json", return_value=fresh_content) as gem:
             r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
         assert r.status_code == 200
@@ -122,6 +131,10 @@ class TestGetGuide:
         assert body["cached"] is False
         assert body["guide"]["exam"] == "Final"
         gem.assert_called_once()
+        # Abstract course id resolved to the offering, and the row keys on it.
+        ro.assert_called_once_with(COURSE_ID)
+        assert captured["row"]["offering_id"] == "off1"
+        assert "course_id" not in captured["row"]
 
     def test_unknown_exam_returns_404(self):
         def table_side_effect(name):

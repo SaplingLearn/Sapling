@@ -42,12 +42,21 @@ class TestDedup:
         assert keep == new
         assert skipped == []
 
-    def test_filters_by_topic_when_course_id_is_none(self):
+    def test_filters_by_offering_id(self):
+        # Migration 0025 renamed the flashcards link column course_id -> offering_id.
+        with patch("services.flashcard_import_service.table") as t:
+            t.return_value.select.return_value = []
+            svc.dedup_against_existing("u1", "off1", [])
+            _, kwargs = t.return_value.select.call_args
+            assert kwargs["filters"] == {"user_id": "eq.u1", "offering_id": "eq.off1"}
+
+    def test_filters_by_topic_when_offering_id_is_none(self):
         with patch("services.flashcard_import_service.table") as t:
             t.return_value.select.return_value = []
             svc.dedup_against_existing("u1", None, [], topic="Bio")
             call_kwargs = t.return_value.select.call_args
             assert "Bio" in str(call_kwargs)
+            assert "offering_id" not in str(call_kwargs)
             assert "course_id" not in str(call_kwargs)
 
 

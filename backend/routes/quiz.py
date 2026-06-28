@@ -10,13 +10,12 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from agents.quiz import quiz_agent, Quiz, QuizQuestion
 from agents.deps import SaplingDeps
-from config import get_mastery_tier
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from services.auth_guard import require_self
-from services.encryption import decrypt_if_present
+from services.profiles import get_display_name
 from services.gemini_service import MODEL_LITE, MODEL_SMART, call_gemini_json
-from services.graph_service import get_graph, update_streak
+from services.graph_service import apply_graph_update, get_graph
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
 from services.request_context import current_request_id
@@ -26,6 +25,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
+
+# quiz_attempts.difficulty CHECK enum (0025).
+VALID_DIFFICULTIES = {"easy", "medium", "hard"}
 
 
 def _load_prompt(name: str) -> str:
@@ -297,6 +299,14 @@ async def _legacy_generate_quiz(body: GenerateQuizBody, request: Request) -> lis
 @router.post("/generate")
 async def generate_quiz(body: GenerateQuizBody, request: Request):
     require_self(body.user_id, request)
+    # quiz_attempts.difficulty is CHECK-constrained (0025); reject drift before
+    # we run the agent or write an attempt row.
+    if body.difficulty not in VALID_DIFFICULTIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid difficulty '{body.difficulty}'. "
+                   f"Must be one of {sorted(VALID_DIFFICULTIES)}.",
+        )
     node_rows = table("graph_nodes").select(
         "*",
         filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
@@ -389,20 +399,21 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     total = len(questions)
 
+    # Owner-scoped read: the attempt's concept node must belong to the
+    # attempt's owner. A missing/foreign node means we'd otherwise write
+    # mastery to someone else's row (IDOR) — refuse before any write.
+    # mastery_events was DROPPED in 0023 (events moved to node_mastery_events);
+    # we no longer read or write that column here.
     node_rows = table("graph_nodes").select(
-        "mastery_score,times_studied,mastery_events",
+        "concept_name,mastery_score,course_id",
         filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
     )
     if not node_rows:
-        # The attempt's concept node must belong to the attempt's owner.
-        # A missing/foreign node means we'd otherwise write mastery to
-        # someone else's row (IDOR) — refuse before any write.
         raise HTTPException(status_code=404, detail="Concept node not found")
     node = node_rows[0]
     mastery_before = node["mastery_score"]
     mastery_after = max(0.0, min(1.0, mastery_before + (score * 0.03) - ((total - score) * 0.02)))
-    new_tier = get_mastery_tier(mastery_after)
-    times_studied = node["times_studied"] + 1
+    mastery_delta = mastery_after - mastery_before
 
     score_ratio = score / total if total > 0 else 0.0
     if score_ratio >= 0.7:
@@ -412,25 +423,27 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     else:
         event_type = "confusion"
 
-    existing_events = node.get("mastery_events") or []
-    quiz_event = {
-        "ts": datetime.utcnow().isoformat(),
-        "delta": round(mastery_after - mastery_before, 4),
-        "reason": f"Quiz: {score}/{total} correct",
-        "event_type": event_type,
-    }
-    updated_events = (existing_events + [quiz_event])[-20:]
-
-    table("graph_nodes").update(
+    # Route the mastery write through the sanctioned graph path. The graph
+    # keys on the ABSTRACT course id; apply_graph_update looks the node up by
+    # (normalized) concept_name within (user_id, course_id), clamps mastery,
+    # bumps times_studied/last_studied_at, records the event (now in
+    # node_mastery_events), and updates the streak. We don't touch graph_nodes
+    # or node_mastery_events directly — that's the graph slice's territory.
+    apply_graph_update(
+        user_id,
         {
-            "mastery_score": mastery_after,
-            "mastery_tier": new_tier,
-            "times_studied": times_studied,
-            "last_studied_at": datetime.utcnow().isoformat(),
-            "mastery_events": updated_events,
+            "updated_nodes": [
+                {
+                    "concept_name": node["concept_name"],
+                    "mastery_delta": mastery_delta,
+                    "reason": f"Quiz: {score}/{total} correct",
+                    "event_type": event_type,
+                }
+            ]
         },
-        filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
+        course_id=node.get("course_id"),
     )
+
     table("quiz_attempts").update(
         {
             "score": score,
@@ -441,15 +454,13 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         filters={"id": f"eq.{body.quiz_id}"},
     )
 
-    update_streak(user_id)
-
     node2_rows = table("graph_nodes").select(
         "concept_name",
         filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
     )
-    user_rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
     concept_name = node2_rows[0]["concept_name"] if node2_rows else "Unknown"
-    student_name = decrypt_if_present(user_rows[0]["name"]) if user_rows else "Student"
+    # Display name lives on user_profiles (0024); resolve + decrypt via helper.
+    student_name = get_display_name(user_id) or "Student"
 
     existing_ctx = get_quiz_context(user_id, concept_node_id)
     ctx_prompt = (

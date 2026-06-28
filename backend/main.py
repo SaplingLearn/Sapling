@@ -21,7 +21,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes
+from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.newsletter import router as newsletter_router
@@ -166,6 +166,7 @@ app.include_router(newsletter_router,  prefix="/api/newsletter")
 app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")
 app.include_router(notes.router,       prefix="/api/notes")
+app.include_router(academics.router,   prefix="/api", tags=["academics"])
 
 
 @app.get("/api/health")
@@ -177,9 +178,10 @@ def health():
 def list_users(request: Request):
     """List users with decrypted display names.
 
-    The `users.name` column is encrypted at rest (see
-    services.encryption); decrypt before returning so clients render the
-    human-readable name, not ciphertext. Sort by the decrypted value.
+    The display name now lives on `user_profiles` (migration 0024 moved it out of
+    `users`); it is 🔒 encrypted there. Resolve it via services.profiles, which
+    decrypts. `users.room_id` was likewise renamed to `current_room_id` by 0024 —
+    select the new column but keep the legacy `room_id` response key.
 
     Requires an authenticated session: this returns decrypted legal names,
     so an unauthenticated caller must never reach the roster (401).
@@ -187,13 +189,14 @@ def list_users(request: Request):
     from services.auth_guard import get_session_user_id
     get_session_user_id(request)  # 401 if unauthenticated
     from db.connection import table
-    from services.encryption import decrypt_if_present
-    rows = table("users").select("id,name,room_id")
+    from services.profiles import get_display_names
+    rows = table("users").select("id,current_room_id")
+    names = get_display_names([r.get("id") for r in rows if r.get("id")])
     users = [
         {
             "id": r.get("id"),
-            "name": decrypt_if_present(r.get("name")) or "",
-            "room_id": r.get("room_id"),
+            "name": names.get(r.get("id"), ""),
+            "room_id": r.get("current_room_id"),
         }
         for r in rows
     ]
