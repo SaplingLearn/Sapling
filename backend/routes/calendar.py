@@ -108,6 +108,10 @@ def _course_meta_cached(offering_id, cache):
     return cache[offering_id]
 
 
+def _owned_enrollment_ids(user_id) -> set:
+    return {e["id"] for e in academics.user_enrollment_ids(user_id)}
+
+
 def _read_assignments(user_id, *, due_gte=None, limit=None):
     enrollments = academics.user_enrollment_ids(user_id)
     if not enrollments:
@@ -207,25 +211,23 @@ def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
         raise HTTPException(status_code=400, detail="user_id is required")
     require_self(user_id, request)
 
+    owned = _owned_enrollment_ids(user_id)
+    if not owned:
+        raise HTTPException(status_code=404, detail="Assignment not found")
     existing = table("assignments").select(
-        "id", filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}, limit=1,
+        "id",
+        filters={"id": f"eq.{assignment_id}", "enrollment_id": f"in.({','.join(owned)})"},
+        limit=1,
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    # Whitelist non-sensitive fields. `notes` is excluded; edit notes via /save flow.
-    ALLOWED = {"title", "course_id", "due_date", "assignment_type"}
+    ALLOWED = {"title", "due_date", "assignment_type"}  # course_id no longer settable here
     patch = {k: v for k, v in body.items() if k in ALLOWED}
     if not patch:
         return {"updated": False}
-
-    if "course_id" in patch and patch["course_id"] == "":
-        patch["course_id"] = None
-
-    # Scope the write by user_id too (defense in depth): the scoped SELECT above
-    # already 404s a non-owned id, but don't rely on that guard alone (#123).
     table("assignments").update(
-        patch, filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}
+        patch, filters={"id": f"eq.{assignment_id}", "enrollment_id": f"in.({','.join(owned)})"}
     )
     return {"updated": True}
 
@@ -233,14 +235,18 @@ def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
 @router.delete("/assignments/{assignment_id}")
 def delete_assignment(assignment_id: str, request: FastAPIRequest, user_id: str = Query(...)):
     require_self(user_id, request)
+    owned = _owned_enrollment_ids(user_id)
+    if not owned:
+        raise HTTPException(status_code=404, detail="Assignment not found")
     existing = table("assignments").select(
-        "id", filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}, limit=1,
+        "id",
+        filters={"id": f"eq.{assignment_id}", "enrollment_id": f"in.({','.join(owned)})"},
+        limit=1,
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Assignment not found")
-    # Scope the delete by user_id too (defense in depth), not just the guard above.
     table("assignments").delete(
-        filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}
+        filters={"id": f"eq.{assignment_id}", "enrollment_id": f"in.({','.join(owned)})"}
     )
     return {"deleted": True}
 
@@ -249,16 +255,11 @@ def delete_assignment(assignment_id: str, request: FastAPIRequest, user_id: str 
 def suggest_study_blocks(body: StudyBlockBody, request: FastAPIRequest):
     require_self(body.user_id, request)
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    assignments = table("assignments").select(
-        "id,title,due_date,courses!left(course_code,course_name)",
-        filters={"user_id": f"eq.{body.user_id}", "due_date": f"gte.{today}"},
-        order="due_date.asc",
-    )
+    assignments = _read_assignments(body.user_id, due_gte=today)
     blocks = []
     for a in assignments:
-        course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        cc = course.get("course_code") or ""
-        cn = course.get("course_name") or ""
+        cc = a.get("course_code") or ""
+        cn = a.get("course_name") or ""
         course_label = f"[{cc}] " if cc else (f"{cn}: " if cn else "")
         blocks.append({
             "topic": f"{course_label}{a['title']}" if course_label else a["title"],

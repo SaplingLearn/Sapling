@@ -151,10 +151,15 @@ class TestGetUpcoming:
 class TestSuggestStudyBlocks:
     def test_returns_at_most_5_blocks(self):
         many_assignments = [
-            {"id": f"a{i}", "title": f"Task {i}", "due_date": f"2026-03-{i:02d}", "course_name": "CS"}
+            {"id": f"a{i}", "enrollment_id": "e1", "title": f"Task {i}",
+             "due_date": f"2026-03-{i:02d}", "assignment_type": None,
+             "notes": None, "google_event_id": None, "source": None}
             for i in range(1, 9)
         ]
-        with patch("routes.calendar.table") as t:
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
+            ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
+            ac.offering_course_id.return_value = None
             t.return_value.select.return_value = many_assignments
             r = client.post("/api/calendar/suggest-study-blocks", json={"user_id": "user_andres"})
 
@@ -162,8 +167,13 @@ class TestSuggestStudyBlocks:
         assert len(r.json()["study_blocks"]) <= 5
 
     def test_block_shape_is_correct(self):
-        assignments = [{"id": "a1", "title": "HW1", "due_date": "2026-03-01", "course_name": "Math"}]
-        with patch("routes.calendar.table") as t:
+        assignments = [{"id": "a1", "enrollment_id": "e1", "title": "HW1",
+                        "due_date": "2026-03-01", "assignment_type": None,
+                        "notes": None, "google_event_id": None, "source": None}]
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
+            ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
+            ac.offering_course_id.return_value = None
             t.return_value.select.return_value = assignments
             r = client.post("/api/calendar/suggest-study-blocks", json={"user_id": "user_andres"})
 
@@ -174,7 +184,9 @@ class TestSuggestStudyBlocks:
         assert block["duration_minutes"] == 60
 
     def test_empty_assignments_returns_empty_blocks(self):
-        with patch("routes.calendar.table") as t:
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
+            ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
             t.return_value.select.return_value = []
             r = client.post("/api/calendar/suggest-study-blocks", json={"user_id": "user_andres"})
         assert r.json()["study_blocks"] == []
@@ -195,7 +207,9 @@ class TestDisconnect:
 
 class TestUpdateAssignment:
     def test_updates_whitelisted_fields(self):
-        with patch("routes.calendar.table") as t:
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
+            ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
             t.return_value.select.return_value = [{"id": "a1"}]
             t.return_value.update.return_value = [{}]
             r = client.patch(
@@ -210,7 +224,9 @@ class TestUpdateAssignment:
         assert r.status_code == 400
 
     def test_unknown_assignment_returns_404(self):
-        with patch("routes.calendar.table") as t:
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
+            ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
             t.return_value.select.return_value = []
             r = client.patch(
                 "/api/calendar/assignments/missing",
@@ -218,26 +234,23 @@ class TestUpdateAssignment:
             )
         assert r.status_code == 404
 
-    def test_empty_course_id_is_nulled(self):
-        captured = {}
-        def table_side_effect(name):
-            m = MagicMock()
-            m.select.return_value = [{"id": "a1"}]
-            def _update(patch, filters=None):
-                captured["patch"] = patch
-                return [{}]
-            m.update.side_effect = _update
-            return m
-        with patch("routes.calendar.table", side_effect=table_side_effect):
+    def test_course_id_no_longer_settable(self):
+        """course_id is derived from enrollment; patching it via PATCH is intentionally blocked."""
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
+            ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
+            t.return_value.select.return_value = [{"id": "a1"}]
             r = client.patch(
                 "/api/calendar/assignments/a1",
-                json={"user_id": "u1", "course_id": ""},
+                json={"user_id": "u1", "course_id": "some-course"},
             )
         assert r.status_code == 200
-        assert captured["patch"]["course_id"] is None
+        assert r.json() == {"updated": False}
 
     def test_no_valid_fields_returns_updated_false(self):
-        with patch("routes.calendar.table") as t:
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
+            ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
             t.return_value.select.return_value = [{"id": "a1"}]
             r = client.patch(
                 "/api/calendar/assignments/a1",
@@ -251,7 +264,9 @@ class TestUpdateAssignment:
 
 class TestDeleteAssignment:
     def test_deletes_assignment(self):
-        with patch("routes.calendar.table") as t:
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
+            ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
             t.return_value.select.return_value = [{"id": "a1"}]
             t.return_value.delete.return_value = []
             r = client.delete("/api/calendar/assignments/a1?user_id=u1")
@@ -259,7 +274,9 @@ class TestDeleteAssignment:
         assert r.json() == {"deleted": True}
 
     def test_missing_returns_404(self):
-        with patch("routes.calendar.table") as t:
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
+            ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
             t.return_value.select.return_value = []
             r = client.delete("/api/calendar/assignments/a1?user_id=u1")
         assert r.status_code == 404
