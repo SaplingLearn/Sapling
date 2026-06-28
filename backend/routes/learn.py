@@ -236,6 +236,23 @@ def _get_course_info(course_id: str) -> dict:
     return {"course_code": "", "course_name": ""}
 
 
+def _get_catalog_chunk(course_code: str) -> str:
+    """Return the catalog chunk_text for a BU course code, or empty string."""
+    if not course_code:
+        return ""
+    try:
+        rows = table("course_chunks").select(
+            "chunk_text",
+            filters={"course_id": f"eq.{course_code}", "category": "eq.catalog"},
+            limit=1,
+        )
+        if rows:
+            return rows[0].get("chunk_text", "")
+    except Exception as e:
+        print(f"[RAG] Failed to load catalog chunk for {course_code!r}: {e}")
+    return ""
+
+
 def build_system_prompt(
     mode: str,
     student_name: str,
@@ -280,17 +297,22 @@ def build_system_prompt(
                 + "\n\n---\n\n".join(doc_blocks)
             )
 
-    if use_shared_context and course_id:
-        ctx = get_course_context(course_id)
-        if ctx:
-            course_info = _get_course_info(course_id)
-            course_label = f"{course_info['course_code']} - {course_info['course_name']}" if course_info['course_code'] else course_info['course_name']
-            shared_block = (
-                SHARED_CONTEXT_TEMPLATE
-                .replace("{course_name}", course_label)
-                .replace("{shared_context_json}", json.dumps(ctx, indent=2))
-            )
-            parts.append(shared_block)
+    if course_id:
+        course_info = _get_course_info(course_id)
+        catalog_text = _get_catalog_chunk(course_info.get("course_code", ""))
+        if catalog_text:
+            parts.append("COURSE CATALOG INFO (BU official course data):\n\n" + catalog_text)
+
+        if use_shared_context:
+            ctx = get_course_context(course_id)
+            if ctx:
+                course_label = f"{course_info['course_code']} - {course_info['course_name']}" if course_info['course_code'] else course_info['course_name']
+                shared_block = (
+                    SHARED_CONTEXT_TEMPLATE
+                    .replace("{course_name}", course_label)
+                    .replace("{shared_context_json}", json.dumps(ctx, indent=2))
+                )
+                parts.append(shared_block)
 
     parts.append(MODE_PROMPTS.get(mode, MODE_PROMPTS["socratic"]))
     return "\n\n".join(parts)
@@ -478,6 +500,13 @@ async def _chat_via_agent(
         session_id=session_id,
     )
 
+    from services.rag_service import retrieve_chunks, format_rag_context
+    bu_code = _get_course_info(course_id).get("course_code") if course_id else None
+    rag_chunks = retrieve_chunks(user_message, course_id=bu_code or None, k=5)
+    rag_block = format_rag_context(rag_chunks)
+    if rag_block:
+        user_message = rag_block + "\n\n[STUDENT QUESTION]\n" + user_message
+
     if not use_shared_context:
         user_message = (
             user_message
@@ -528,11 +557,18 @@ async def _legacy_chat(body: ChatBody, request: Request) -> dict:
     course_id = _get_session_course_id(body.session_id)
     documents = _get_course_documents(body.user_id, course_id)
 
+    from services.rag_service import retrieve_chunks, format_rag_context
+    bu_code = _get_course_info(course_id).get("course_code") if course_id else None
+    rag_chunks = retrieve_chunks(body.message, course_id=bu_code or None, k=5)
+    rag_block = format_rag_context(rag_chunks)
+
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
         course_id=course_id, use_shared_context=body.use_shared_context,
         documents=documents,
     )
+    if rag_block:
+        system_prompt = system_prompt + "\n\n" + rag_block
 
     try:
         raw = call_gemini_multiturn(
