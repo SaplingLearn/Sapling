@@ -34,6 +34,9 @@ dist/
 *.sqlite
 *.sqlite3
 
+# ---- RAG data (large files — stored in Supabase Storage) ----
+backend/data/*.json
+
 # ---- Env / secrets ----
 .env
 .env.*
