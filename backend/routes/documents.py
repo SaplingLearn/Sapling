@@ -30,6 +30,7 @@ from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from db.connection import table
+from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
@@ -259,8 +260,8 @@ def list_documents(user_id: str, request: Request):
     require_self(user_id, request)
     _validate_user(user_id)
     docs = table("documents").select(
-        "id,user_id,course_id,file_name,category,summary,concept_notes,created_at,processed_at",
-        filters={"user_id": f"eq.{user_id}"},
+        "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
+        filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         order="created_at.desc",
     ) or []
     for d in docs:
@@ -278,11 +279,21 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
         _validate_user(user_id)
     else:
         user_id = get_session_user_id(request)
-    # Ensure the document belongs to the requesting user
-    docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
+    # Ensure the document belongs to the requesting user (and isn't already
+    # soft-deleted)
+    docs = table("documents").select(
+        "id",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
+        limit=1,
+    )
     if not docs:
         raise HTTPException(status_code=404, detail="Document not found.")
-    table("documents").delete(filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"})
+    # Soft delete (0025): stamp deleted_at; reads filter it out. The
+    # enrollments.syllabus_doc_id FK (ON DELETE SET NULL) stays intact.
+    table("documents").update(
+        {"deleted_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
+    )
     return {"deleted": True}
 
 
@@ -303,7 +314,11 @@ def update_document(document_id: str, request: Request, body: dict = Body(...)):
         _validate_user(user_id)
     else:
         user_id = get_session_user_id(request)
-    docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
+    docs = table("documents").select(
+        "id",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
+        limit=1,
+    )
     if not docs:
         raise HTTPException(status_code=404, detail="Document not found.")
     updated = table("documents").update(updates, filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"})
@@ -338,8 +353,12 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     """
     try:
         rows = table("documents").select(
-            "id,user_id,course_id,file_name,category,summary,concept_notes,created_at,processed_at",
-            filters={"user_id": f"eq.{user_id}", "request_id": f"eq.{request_id}"},
+            "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
+            filters={
+                "user_id": f"eq.{user_id}",
+                "request_id": f"eq.{request_id}",
+                "deleted_at": "is.null",
+            },
             limit=1,
         )
     except Exception:
@@ -363,7 +382,7 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
 def _persist_document(
     *,
     user_id: str,
-    course_id: str,
+    offering_id: str,
     filename: str,
     result: DocumentProcessingResult,
     request_id: str | None = None,
@@ -371,6 +390,7 @@ def _persist_document(
     """Insert a documents row from an orchestrator result.
 
     Shared by both upload_document_sync and the streaming upload_document.
+    The document keys on the OFFERING (0025), not the abstract course.
     summary + concept_notes are encrypted at the insert boundary; the
     returned row carries the plaintext shape so callers can pass it
     straight back to the client without an extra decrypt step.
@@ -386,7 +406,7 @@ def _persist_document(
     row = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
-        "course_id": course_id,
+        "offering_id": offering_id,
         "file_name": filename,
         "category": result.classification.category,
         "summary": encrypt_if_present(summary),
@@ -507,6 +527,12 @@ async def upload_document_sync(
 
     extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
 
+    # The upload form sends the ABSTRACT course id; documents key on the
+    # OFFERING. Resolve to the current-term offering once (create=True so a
+    # fresh upload lands in the real semester). The abstract course_id stays
+    # the key for the graph + course-context + calendar side effects below.
+    offering_id = resolve_offering(course_id, create=True)
+
     # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
     # Unify with the middleware-stamped request ID so agent traces and
     # client-facing error payloads share the same correlation key.
@@ -540,7 +566,7 @@ async def upload_document_sync(
         )
         return await _legacy_upload_pipeline(
             filename=filename, extracted_text=extracted_text,
-            course_id=course_id, user_id=user_id,
+            course_id=course_id, offering_id=offering_id, user_id=user_id,
             background_tasks=background_tasks,
             request_id=request_id,
         )
@@ -551,7 +577,7 @@ async def upload_document_sync(
         )
         return await _legacy_upload_pipeline(
             filename=filename, extracted_text=extracted_text,
-            course_id=course_id, user_id=user_id,
+            course_id=course_id, offering_id=offering_id, user_id=user_id,
             background_tasks=background_tasks,
             request_id=request_id,
         )
@@ -560,11 +586,11 @@ async def upload_document_sync(
                                 filename=filename, result=result)
     _graph_backstop(user_id=user_id, course_id=course_id,
                     filename=filename, result=result)
-    _, full_row = _persist_document(user_id=user_id, course_id=course_id,
+    _, full_row = _persist_document(user_id=user_id, offering_id=offering_id,
                                     filename=filename, result=result,
                                     request_id=request_id)
 
-    background_tasks.add_task(_invalidate_study_guide_cache, user_id, course_id)
+    background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
     background_tasks.add_task(update_course_context, course_id)
     background_tasks.add_task(_check_upload_achievements, user_id)
 
@@ -613,6 +639,9 @@ async def upload_document(
         or current_request_id()
         or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
     )
+    # Documents key on the offering (0025); the graph + course-context key on
+    # the abstract course id (kept in SaplingDeps for the agent's graph tools).
+    offering_id = resolve_offering(course_id, create=True)
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id,
@@ -773,7 +802,7 @@ async def upload_document(
                                         filename=filename, result=final_output)
             _graph_backstop(user_id=user_id, course_id=course_id,
                             filename=filename, result=final_output)
-            doc_id, _ = _persist_document(user_id=user_id, course_id=course_id,
+            doc_id, _ = _persist_document(user_id=user_id, offering_id=offering_id,
                                           filename=filename, result=final_output,
                                           request_id=request_id)
 
@@ -782,7 +811,7 @@ async def upload_document(
             # but attaches a done-callback so exceptions land in the log
             # instead of disappearing.
             _spawn_post_roll(
-                ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, course_id),
+                ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 ("update_course_context", update_course_context, course_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
             )
@@ -804,7 +833,7 @@ async def upload_document(
             ))
             async for sse_event in _stream_legacy_fallback(
                 filename=filename, extracted_text=extracted_text,
-                course_id=course_id, user_id=user_id,
+                course_id=course_id, offering_id=offering_id, user_id=user_id,
                 request_id=request_id,
             ):
                 yield sse_event
@@ -817,7 +846,7 @@ async def upload_document(
             ))
             async for sse_event in _stream_legacy_fallback(
                 filename=filename, extracted_text=extracted_text,
-                course_id=course_id, user_id=user_id,
+                course_id=course_id, offering_id=offering_id, user_id=user_id,
                 request_id=request_id,
             ):
                 yield sse_event
@@ -826,8 +855,8 @@ async def upload_document(
 
 
 async def _stream_legacy_fallback(
-    *, filename: str, extracted_text: str, course_id: str, user_id: str,
-    request_id: str | None = None,
+    *, filename: str, extracted_text: str, course_id: str, offering_id: str,
+    user_id: str, request_id: str | None = None,
 ):
     """Run _legacy_upload_pipeline and yield SSE progress/result/done events.
 
@@ -850,7 +879,7 @@ async def _stream_legacy_fallback(
     try:
         legacy_response = await _legacy_upload_pipeline(
             filename=filename, extracted_text=extracted_text,
-            course_id=course_id, user_id=user_id,
+            course_id=course_id, offering_id=offering_id, user_id=user_id,
             request_id=request_id,
         )
     except Exception:
@@ -877,16 +906,20 @@ async def _stream_legacy_fallback(
     ))
 
 
-def _invalidate_study_guide_cache(user_id: str, course_id: str) -> None:
-    """Background task: delete cached study guides so they regenerate fresh."""
+def _invalidate_study_guide_cache(user_id: str, offering_id: str) -> None:
+    """Background task: delete cached study guides so they regenerate fresh.
+
+    Study guides key on the offering (0025), matching the documents that
+    feed them.
+    """
     try:
         table("study_guides").delete(
-            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
+            filters={"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"}
         )
     except Exception:
         logger.exception(
-            "Failed to invalidate study guides cache for user=%s course=%s",
-            user_id, course_id,
+            "Failed to invalidate study guides cache for user=%s offering=%s",
+            user_id, offering_id,
         )
 
 
@@ -922,6 +955,7 @@ async def _legacy_upload_pipeline(
     filename: str,
     extracted_text: str,
     course_id: str,
+    offering_id: str,
     user_id: str,
     background_tasks: BackgroundTasks | None = None,
     request_id: str | None = None,
@@ -931,6 +965,10 @@ async def _legacy_upload_pipeline(
     Verbatim copy of the previous upload_document body from text-extraction
     onward. File validation already happened in the caller, so this function
     starts at the AI processing step.
+
+    The documents row keys on ``offering_id`` (0025); the graph,
+    assignment-calendar, and course-context side effects key on the abstract
+    ``course_id``.
 
     background_tasks is optional: in streaming-fallback contexts there is
     no FastAPI BackgroundTasks to attach to (the response IS the stream),
@@ -966,7 +1004,7 @@ async def _legacy_upload_pipeline(
     row = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
-        "course_id": course_id,
+        "offering_id": offering_id,
         "file_name": filename,
         "category": ai["category"],
         "summary": encrypt_if_present(ai["summary"] or None),
@@ -988,12 +1026,12 @@ async def _legacy_upload_pipeline(
             raise
 
     if background_tasks is not None:
-        background_tasks.add_task(_invalidate_study_guide_cache, user_id, course_id)
+        background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
         background_tasks.add_task(update_course_context, course_id)
         background_tasks.add_task(_check_upload_achievements, user_id)
     else:
         _spawn_post_roll(
-            ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, course_id),
+            ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
             ("update_course_context", update_course_context, course_id),
             ("check_upload_achievements", _check_upload_achievements, user_id),
         )
@@ -1076,14 +1114,16 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     _validate_user(user_id)
 
     rows = table("documents").select(
-        "id,user_id,course_id,file_name,summary,concept_notes",
-        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
+        "id,user_id,offering_id,file_name,summary,concept_notes",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         limit=1,
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Document not found.")
     doc = rows[0]
-    course_id = doc.get("course_id")
+    # The document keys on the offering; the concept graph keys on the
+    # abstract course. Resolve offering → abstract course before scanning.
+    course_id = offering_course_id(doc.get("offering_id"))
     if not course_id:
         raise HTTPException(status_code=400, detail="Document is not associated with a course.")
 

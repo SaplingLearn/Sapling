@@ -273,6 +273,8 @@ export interface GradeCategory {
   name: string;
   weight: number;
   sort_order: number;
+  // "Drop the N lowest graded assignments before averaging." 0 = no drops.
+  drop_lowest: number;
   category_grade?: number | null;  // 0–1, server-computed; only on detail
 }
 
@@ -287,6 +289,11 @@ export interface GradedAssignment {
   assignment_type: string | null;
   notes: string | null;
   source: "manual" | "syllabus" | "gradescope";
+  // Bell curve fields — null when no curve applied
+  curve_class_mean: number | null;
+  curve_class_sd: number | null;
+  curve_avg_target: number | null;
+  curve_sd_delta: number | null;
 }
 
 export interface GradebookCourseSummary {
@@ -312,8 +319,14 @@ export interface GradebookCourse {
   percent: number | null;
   letter: string | null;
   letter_scale: LetterScaleTier[] | null;
+  curve_mode: "raw" | "curved";
+  curve_avg_target: number | null;
+  curve_sd_delta: number | null;
   categories: GradeCategory[];
   assignments: GradedAssignment[];
+  // Server-flattened list of currently-dropped assignment IDs across all
+  // categories. Used by the UI to render a "dropped" badge in the list.
+  dropped_assignment_ids: string[];
 }
 
 export interface ExtractedSyllabusCategory {

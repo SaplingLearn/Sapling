@@ -72,13 +72,20 @@ class TestDeleteDocument:
         assert r.status_code == 200
         assert r.json() == {"deleted": True}
 
-    def test_calls_delete_with_correct_id(self):
+    def test_soft_deletes_with_correct_id(self):
+        """Delete is a soft delete (0025): it stamps deleted_at via an
+        update scoped to the document id, not a hard row removal."""
         with patch("routes.documents.table") as t:
             t.return_value.delete.return_value = None
             client.delete("/api/documents/doc/my-doc-uuid")
             t.assert_called_with("documents")
-            call_kwargs = t.return_value.delete.call_args
-            assert "my-doc-uuid" in str(call_kwargs)
+            # No hard delete fired.
+            t.return_value.delete.assert_not_called()
+            # A deleted_at stamp went out, scoped to the doc id.
+            update_args = t.return_value.update.call_args
+            assert "my-doc-uuid" in str(update_args)
+            payload = update_args[0][0]
+            assert payload.get("deleted_at") is not None
 
     def test_delete_with_user_validation(self):
         with _mock_validate_user(), patch("routes.documents.table") as t:
@@ -521,7 +528,10 @@ class TestUploadDocument:
 
     # ── Row persistence ───────────────────────────────────────────────────────
 
-    def test_persisted_row_contains_user_and_course(self):
+    def test_persisted_row_contains_user_and_offering(self):
+        """The documents row keys on the OFFERING (0025). The upload form
+        sends the abstract course id, which the route resolves to the
+        current-term offering before persisting."""
         ai_result = {
             "category": "other",
             "summary": "s",
@@ -530,6 +540,7 @@ class TestUploadDocument:
         }
         with (
             _mock_validate_user(),
+            patch("routes.documents.resolve_offering", return_value="off-99") as ro,
             patch("routes.documents.extract_text_from_file", return_value="t"),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.table") as t,
@@ -538,8 +549,11 @@ class TestUploadDocument:
             _make_upload(course_id="c-99", user_id="user_andres")
             insert_call = t.return_value.insert.call_args[0][0]
 
+        # The abstract course id was resolved to the offering for the row.
+        ro.assert_called_once_with("c-99", create=True)
         assert insert_call["user_id"] == "user_andres"
-        assert insert_call["course_id"] == "c-99"
+        assert insert_call["offering_id"] == "off-99"
+        assert "course_id" not in insert_call
 
     def test_falls_back_to_row_dict_when_insert_returns_empty(self):
         """If table.insert returns [], the endpoint should return the constructed row dict."""

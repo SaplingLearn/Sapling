@@ -107,7 +107,9 @@ def _make_table(questions=None):
 def _submit_quiz_mocks(questions=None):
     with (
         patch("routes.quiz.table", side_effect=_make_table(questions)),
-        patch("routes.quiz.update_streak"),
+        # Mastery writes now route through apply_graph_update (the sanctioned
+        # graph path) instead of a direct graph_nodes.update.
+        patch("routes.quiz.apply_graph_update"),
         patch("routes.quiz.get_quiz_context", return_value={}),
         patch("routes.quiz.call_gemini_json", return_value={}),
     ):
@@ -225,7 +227,7 @@ class TestSubmitQuiz:
             return mock
 
         with patch("routes.quiz.table", side_effect=factory):
-            with patch("routes.quiz.update_streak"):
+            with patch("routes.quiz.apply_graph_update"):
                 with patch("routes.quiz.get_quiz_context", return_value={}):
                     with patch("routes.quiz.call_gemini_json", return_value={}):
                         r = client.post("/api/quiz/submit", json={
@@ -343,9 +345,10 @@ class TestQuizNodeOwnership:
                 mock.update.return_value = []
             return mock
 
+        apply_mock = MagicMock()
         with (
             patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.update_streak"),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
             patch("routes.quiz.get_quiz_context", return_value={}),
             patch("routes.quiz.call_gemini_json", return_value={}),
         ):
@@ -358,11 +361,128 @@ class TestQuizNodeOwnership:
             })
 
         assert r.status_code == 404
-        # No mastery write to the victim's node (or any node) occurred.
+        # No mastery write to the victim's node (or any node) occurred — neither
+        # a direct graph_nodes.update nor the sanctioned apply_graph_update path.
         assert update_calls == [], (
             "submit_quiz wrote to graph_nodes for a foreign concept node — "
             "IDOR regression (issue #157)."
         )
+        apply_mock.assert_not_called()
+
+
+# ── POST /api/quiz/generate — difficulty enum (0025 CHECK) ──────────────────
+
+
+class TestGenerateQuizDifficultyEnum:
+    """quiz_attempts.difficulty is CHECK-constrained to easy|medium|hard
+    (0025). The route rejects drift with a 400 before running the agent or
+    writing an attempt row."""
+
+    def test_invalid_difficulty_returns_400(self):
+        agent_run = AsyncMock()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 1,
+                "difficulty": "impossible",  # not in the CHECK set
+                "use_shared_context": False,
+            })
+        assert r.status_code == 400
+        # The agent must not run for an invalid difficulty.
+        agent_run.assert_not_called()
+
+    def test_valid_difficulty_passes_validation(self):
+        from types import SimpleNamespace
+        fake_quiz = Quiz(questions=[
+            QuizQuestion(
+                question="Q?", type="multiple_choice", difficulty="hard",
+                options=["a", "b", "c", "d"], correct_answer="a",
+                explanation="x", concept="X",
+            ),
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+            ),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 1,
+                "difficulty": "hard",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 200
+
+
+# ── POST /api/quiz/submit — mastery routes through apply_graph_update ────────
+
+
+class TestSubmitQuizMasteryWrite:
+    """0023 dropped graph_nodes.mastery_events; submit_quiz must NOT touch
+    that column. Mastery writes route through apply_graph_update (the
+    sanctioned graph path), keyed by concept_name + the abstract course id."""
+
+    def test_mastery_write_routes_through_apply_graph_update(self):
+        apply_mock = MagicMock()
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz1",
+                    "user_id": "user_andres",
+                    "concept_node_id": "node1",
+                    "difficulty": "medium",
+                    "questions_json": SAMPLE_QUESTIONS,
+                }]
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "mastery_score": 0.5,
+                    "concept_name": "Loops",
+                    "course_id": "course1",
+                }]
+            elif name == "users":
+                mock.select.return_value = [{"name": "Andres"}]
+            else:
+                mock.select.return_value = []
+            mock.update.return_value = []
+            return mock
+
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.call_gemini_json", return_value={}),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+
+        assert r.status_code == 200
+        apply_mock.assert_called_once()
+        args, kwargs = apply_mock.call_args
+        # user_id first, abstract course id passed (graph keys on abstract).
+        assert args[0] == "user_andres"
+        assert kwargs["course_id"] == "course1"
+        updated = args[1]["updated_nodes"]
+        assert len(updated) == 1
+        assert updated[0]["concept_name"] == "Loops"
+        # Perfect score → positive mastery delta.
+        assert updated[0]["mastery_delta"] > 0
+        # The response still reports before/after.
+        data = r.json()
+        assert data["mastery_after"] > data["mastery_before"]
 
 
 # ── POST /api/quiz/generate ──────────────────────────────────────────────────

@@ -51,7 +51,7 @@ variables, Cloudflare worker secrets, or a local gitignored `backend/.env.stagin
 
 ### Step 6 — Local tooling + smoke test
 - [ ] `cp backend/.env.staging.example backend/.env.staging` and fill real values (gitignored — for running migrate/seed against staging from your machine).
-- [ ] Apply schema + seed (once `seed_staging.py` lands): `python -m db.migrate`, then the seed.
+- [ ] Apply schema, then seed demo data: `python -m db.migrate`, then `python -m db.seed_staging` (idempotent fake demo dataset — graph + gradebook + courses-with-term; safe to re-run).
 - [ ] Visit `https://staging.saplinglearn.com`: Access wall → Google login → upload a doc → graph renders.
 
 ---

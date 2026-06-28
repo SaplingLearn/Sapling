@@ -218,6 +218,8 @@ npm run dev                # → http://localhost:3000
 | `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (for sign-in and Calendar) |
 | `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
 | `SESSION_SECRET` | — | HMAC secret for session tokens (min 32 bytes) |
+| `ALLOWED_EMAIL_DOMAINS` | — | Comma-separated sign-in email-domain allowlist (default `bu.edu`). Empty value disables the check (any domain may sign in). |
+| `SUPABASE_DB_URL` | — | Supabase **direct** connection string (port 5432, not the pooler) — used only by the `db.migrate` migration runner, never at app runtime |
 | `LOGFIRE_TOKEN` | — | If set, traces ship to logfire.pydantic.dev. Without it, Logfire stays local-only. The Sapling scrubber redacts prompt/output content before egress regardless. |
 | `SAPLING_MODEL_CLASSIFIER` | — | Override classifier-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_SUMMARY` | — | Override summary-agent model (default `gemini-2.5-flash-lite`) |
@@ -299,19 +301,17 @@ The `.github/workflows/evals.yml` workflow runs replay-mode in CI; it's currentl
 
 ## Migrations
 
-The agentic refactor added one schema migration that must be applied to staging and prod before idempotency dedupe takes effect (the route code degrades gracefully if the column is missing, so deploying without running it is safe but the dedupe is a no-op):
+Schema lives as ordered SQL files in `backend/db/migrations/` (numeric prefix = apply order, `0001`–`0028`). A minimal runner (`backend/db/migrate.py`) applies pending files in order and records each in a tracking table, so it's idempotent — re-running only applies what's new. The runner connects directly with `psycopg` over the Supabase **direct** connection string (`SUPABASE_DB_URL`, not the pooler); this is the one sanctioned exception to the `db/connection.py::table()`-only convention, since runtime PostgREST can't execute DDL.
 
-```sql
--- backend/db/migration_documents_request_id.sql
-ALTER TABLE documents
-  ADD COLUMN IF NOT EXISTS request_id text;
-
-CREATE UNIQUE INDEX IF NOT EXISTS documents_request_id_user_unique
-  ON documents (user_id, request_id)
-  WHERE request_id IS NOT NULL;
+```bash
+cd backend
+SUPABASE_DB_URL=postgresql://... python -m db.migrate            # apply pending
+SUPABASE_DB_URL=postgresql://... python -m db.migrate --baseline # record all as applied without running (adopting an existing DB)
 ```
 
-Apply via the Supabase SQL editor or your migration tool of choice. Idempotent — safe to re-run.
+Migrations `0019`–`0028` are the **modular schema redesign**: courses split into an abstract `courses` table plus `course_offerings` and `terms`, `user_courses` became `enrollments`, identity split into `users` + `user_profiles`, the gradebook re-keyed onto `enrollment_id`, analytics re-keyed onto offerings, and the graph gained append-only `node_mastery_events`. The public API boundary still keys on the abstract `course_id`.
+
+For staging, after applying migrations you can lay down a self-contained fake demo dataset (graph + gradebook + courses-with-term) with `python -m db.seed_staging` — idempotent and **staging-only**, never run it against production. See `docs/staging/setup-checklist.md` for the full staging bring-up.
 
 ## License
 

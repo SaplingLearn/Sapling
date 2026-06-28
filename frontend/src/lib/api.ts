@@ -5,11 +5,12 @@ import type {
   GradebookSummary, GradebookCourse, GradeCategory, GradedAssignment, LetterScaleTier,
   ExtractedSyllabusCategory,
   AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
+  Note, LinkedConcept,
 } from '@/lib/types';
 
 import { handleLocalRequest } from '@/lib/localData';
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
+export const API_URL = '';
 export const IS_LOCAL_MODE = process.env.NEXT_PUBLIC_LOCAL_MODE === 'true';
 
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
@@ -1007,7 +1008,7 @@ export const createCategory = (
 export const bulkUpdateCategories = (
   userId: string,
   courseId: string,
-  categories: { id?: string; name: string; weight: number; sort_order: number }[],
+  categories: { id?: string; name: string; weight: number; sort_order: number; drop_lowest: number }[],
 ) =>
   fetchJSON<{ categories: GradeCategory[] }>(
     `/api/gradebook/courses/${encodeURIComponent(courseId)}/categories`,
@@ -1056,6 +1057,24 @@ export const setLetterScale = (
     { method: 'PATCH', body: JSON.stringify({ user_id: userId, scale }) },
   );
 
+export async function setCurveSettings(
+  userId: string,
+  courseId: string,
+  settings: {
+    curve_mode?: "raw" | "curved";
+    curve_avg_target?: number | null;
+    curve_sd_delta?: number | null;
+    curve_final_mean?: number | null;
+    curve_final_sd?: number | null;
+  },
+): Promise<{ updated: boolean }> {
+  return fetchJSON(`/api/gradebook/courses/${encodeURIComponent(courseId)}/curve`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, ...settings }),
+  });
+}
+
 export const applySyllabus = (payload: {
   userId: string;
   courseId: string;
@@ -1098,8 +1117,122 @@ export const uploadSyllabus = (input: {
   return uploadDocument(fd);
 };
 
-// Notes
-import type { Note, LinkedConcept } from '@/lib/types';
+// ── Gradescope sync ────────────────────────────────────────────────────────
+
+export type GradescopeAuthMode = 'password' | 'cookies';
+
+export interface GradescopeStatus {
+  has_credentials: boolean;
+  auth_mode: GradescopeAuthMode | null;
+  last_synced_at: string | null;
+  credentials_updated_at?: string | null;
+}
+
+export type GradescopeConnectInput =
+  | { auth_mode: 'password'; email: string; password: string }
+  | {
+      auth_mode: 'cookies';
+      gradescope_session: string;
+      signed_token?: string;
+    };
+
+export interface GradescopeCourse {
+  id: string;
+  name: string;
+  full_name: string;
+  semester: string;
+  year: string;
+  num_assignments: string;
+}
+
+export interface GradescopeLink {
+  id: string;
+  sapling_course_id: string;
+  gradescope_course_id: string;
+  last_synced_at: string | null;
+}
+
+export interface GradescopeSyncResult {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+}
+
+export const getGradescopeStatus = (userId: string) =>
+  fetchJSON<GradescopeStatus>(`/api/gradescope/status?user_id=${encodeURIComponent(userId)}`);
+
+export const saveGradescopeCredentials = (
+  userId: string,
+  input: GradescopeConnectInput,
+) =>
+  fetchJSON<{ ok: true }>(`/api/gradescope/credentials`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, ...input }),
+  });
+
+/** Live BU SSO + Duo via headless Chromium on the backend. Long-running:
+ *  the request stays open until the user taps Approve on their phone, or
+ *  the server-side timeout fires (default 120s). */
+export const connectGradescopeViaBuSso = (
+  userId: string,
+  buUsername: string,
+  buPassword: string,
+  duoTimeoutSeconds = 120,
+) =>
+  fetchJSON<{ ok: true }>(`/api/gradescope/credentials/bu-sso`, {
+    method: 'POST',
+    body: JSON.stringify({
+      user_id: userId,
+      bu_username: buUsername,
+      bu_password: buPassword,
+      duo_timeout_seconds: duoTimeoutSeconds,
+    }),
+  });
+
+export const deleteGradescopeCredentials = (userId: string) =>
+  fetchJSON<{ ok: true }>(
+    `/api/gradescope/credentials?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const listGradescopeCourses = (userId: string) =>
+  fetchJSON<{ courses: GradescopeCourse[] }>(
+    `/api/gradescope/courses?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const listGradescopeLinks = (userId: string) =>
+  fetchJSON<{ links: GradescopeLink[] }>(
+    `/api/gradescope/links?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const linkGradescopeCourse = (
+  userId: string,
+  saplingCourseId: string,
+  gradescopeCourseId: string,
+) =>
+  fetchJSON<{ link: GradescopeLink | null }>(`/api/gradescope/link`, {
+    method: 'POST',
+    body: JSON.stringify({
+      user_id: userId,
+      sapling_course_id: saplingCourseId,
+      gradescope_course_id: gradescopeCourseId,
+    }),
+  });
+
+export const unlinkGradescopeCourse = (userId: string, saplingCourseId: string) =>
+  fetchJSON<{ ok: true }>(
+    `/api/gradescope/link/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const syncGradescopeCourse = (userId: string, saplingCourseId: string) =>
+  fetchJSON<GradescopeSyncResult>(
+    `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'POST' },
+  );
+
+// ── Notes ──────────────────────────────────────────────────────────────────
 
 export const listNotes = (userId: string, courseId?: string) => {
   const qs = courseId ? `?course_id=${encodeURIComponent(courseId)}` : '';

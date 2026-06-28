@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from db.connection import table
 from models import OnboardingBody
+from services.academics import resolve_offering
 from services.auth_guard import require_self
 from services.encryption import encrypt_if_present
 
@@ -36,10 +37,18 @@ def save_onboarding_profile(body: OnboardingBody, request: Request):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Update user profile fields
-    name = f"{body.first_name} {body.last_name}".strip()
+    # onboarding_completed is an auth/status flag and stays on `users`.
     table("users").update(
+        {"onboarding_completed": True},
+        filters={"id": f"eq.{body.user_id}"},
+    )
+
+    # Profile fields moved to user_profiles in migration 0024 (one source of truth).
+    # name/first_name/last_name are 🔒-encrypted; the rest are plaintext.
+    name = f"{body.first_name} {body.last_name}".strip()
+    table("user_profiles").upsert(
         {
+            "user_id": body.user_id,
             "name": encrypt_if_present(name),
             "first_name": encrypt_if_present(body.first_name),
             "last_name": encrypt_if_present(body.last_name),
@@ -47,35 +56,40 @@ def save_onboarding_profile(body: OnboardingBody, request: Request):
             "majors": body.majors,
             "minors": body.minors,
             "learning_style": body.learning_style,
-            "onboarding_completed": True,
         },
-        filters={"id": f"eq.{body.user_id}"},
+        on_conflict="user_id",
     )
 
-    # Enroll user in selected courses
+    # Enroll user in selected courses (resolve each abstract course → current-term offering)
     enrolled_ids = []
     for course_id in body.course_ids:
-        # Verify course exists
+        # Verify abstract course exists in the catalog
         course = table("courses").select("id", filters={"id": f"eq.{course_id}"})
         if not course:
             continue
 
-        # Enroll if not already enrolled
-        existing = table("user_courses").select(
+        # Resolve the abstract course to a current-term offering, creating a
+        # NULL-section offering if the catalog lacks one for this term.
+        offering_id = resolve_offering(course_id, create=True)
+        if not offering_id:
+            continue
+
+        # Enroll if not already enrolled in this offering
+        existing = table("enrollments").select(
             "id",
             filters={
                 "user_id": f"eq.{body.user_id}",
-                "course_id": f"eq.{course_id}",
+                "offering_id": f"eq.{offering_id}",
             },
         )
         if not existing:
-            table("user_courses").insert({
+            table("enrollments").insert({
                 "id": str(uuid.uuid4()),
                 "user_id": body.user_id,
-                "course_id": course_id,
+                "offering_id": offering_id,
             })
 
-        enrolled_ids.append(course_id)
+        enrolled_ids.append(course_id)  # response still reports abstract course ids
 
     return {
         "user_id": body.user_id,
