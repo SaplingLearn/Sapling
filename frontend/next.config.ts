@@ -3,7 +3,12 @@ import type { NextConfig } from "next";
 // against Cloudflare bindings (R2/KV/env vars). Safe no-op in prod builds.
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
+// .trim() defends against a stray leading/trailing space in the build
+// variable: an untrimmed " https://..." makes the /api rewrite destination
+// start with a space, which Next rejects at build time as "Invalid rewrite
+// found". Trimming makes the build tolerant; the guard below still rejects a
+// genuinely malformed value.
+const BACKEND_URL = (process.env.BACKEND_URL ?? "").trim() || "http://localhost:5000";
 
 // Guard against the silent footgun that took staging's dashboard down: a
 // deployment build (NODE_ENV=production) MUST set BACKEND_URL explicitly.
@@ -13,13 +18,24 @@ const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
 // proxied /api/* call 500s at runtime. wrangler.toml [vars] is runtime-only and
 // does NOT fix this — the rewrite is baked at build time. Fail the build loudly
 // instead of shipping a worker that 500s on every API call.
-if (process.env.NODE_ENV === "production" && !process.env.BACKEND_URL) {
-  throw new Error(
-    "BACKEND_URL is required for production builds. Set it to the backend origin " +
-      "(prod: https://api.saplinglearn.com, staging: https://api.staging.saplinglearn.com) " +
-      "as a build-time env var or Cloudflare Workers Builds variable. Without it the /api " +
-      "rewrite bakes http://localhost:5000 and every proxied API call 500s.",
-  );
+if (process.env.NODE_ENV === "production") {
+  const configured = (process.env.BACKEND_URL ?? "").trim();
+  if (!configured) {
+    throw new Error(
+      "BACKEND_URL is required for production builds. Set it to the backend origin " +
+        "(prod: https://api.saplinglearn.com, staging: https://api.staging.saplinglearn.com) " +
+        "as a build-time env var or Cloudflare Workers Builds variable. Without it the /api " +
+        "rewrite bakes http://localhost:5000 and every proxied API call 500s.",
+    );
+  }
+  if (!/^https?:\/\//.test(configured)) {
+    throw new Error(
+      "BACKEND_URL must be an absolute http(s) origin, got " +
+        JSON.stringify(process.env.BACKEND_URL) +
+        ". A stray leading/trailing space is the usual cause (Next then rejects the " +
+        "/api rewrite as 'Invalid rewrite found') — check the Cloudflare Workers Builds variable.",
+    );
+  }
 }
 
 const nextConfig: NextConfig = {
