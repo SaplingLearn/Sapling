@@ -343,32 +343,29 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
     creds = _require_google_creds(body.user_id)
     service = build("calendar", "v3", credentials=creds)
 
+    owned = _owned_enrollment_ids(body.user_id)
+    if not owned:
+        return {"synced_count": 0}
+    in_clause = f"in.({','.join(owned)})"
     unsynced = table("assignments").select(
-        "id,title,due_date,notes,google_event_id,courses!left(course_code,course_name)",
-        filters={
-            "user_id": f"eq.{body.user_id}",
-            "google_event_id": "is.null",
-        },
+        "id,enrollment_id,title,due_date,notes,google_event_id",
+        filters={"enrollment_id": in_clause, "google_event_id": "is.null"},
     )
-    # Also catch empty-string google_event_id
     unsynced += table("assignments").select(
-        "id,title,due_date,notes,google_event_id,courses!left(course_code,course_name)",
-        filters={
-            "user_id": f"eq.{body.user_id}",
-            "google_event_id": "eq.",
-        },
+        "id,enrollment_id,title,due_date,notes,google_event_id",
+        filters={"enrollment_id": in_clause, "google_event_id": "eq."},
     )
 
+    enr_to_offering = {e["id"]: e.get("offering_id") for e in academics.user_enrollment_ids(body.user_id)}
+    cache = {}
     synced = 0
     for a in unsynced:
         if not a.get("due_date"):
             continue
-
-        course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        course_code = course.get("course_code") or ""
-        course_name = course.get("course_name") or ""
-        course_label = f"[{course_code}] " if course_code else (f"{course_name}: " if course_name else "")
-
+        meta = _course_meta_cached(enr_to_offering.get(a.get("enrollment_id")), cache)
+        cc = meta.get("course_code") or ""
+        cn = meta.get("course_name") or ""
+        course_label = f"[{cc}] " if cc else (f"{cn}: " if cn else "")
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
             "description": decrypt_if_present(a.get("notes")) or "",
@@ -376,10 +373,9 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
             "end": {"date": a["due_date"]},
         }
         created = service.events().insert(calendarId="primary", body=event).execute()
-        # Scope the write-back by user_id too (defense in depth), matching export.
         table("assignments").update(
             {"google_event_id": created["id"]},
-            filters={"id": f"eq.{a['id']}", "user_id": f"eq.{body.user_id}"},
+            filters={"id": f"eq.{a['id']}", "enrollment_id": in_clause},
         )
         synced += 1
 
@@ -394,18 +390,24 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
     creds = _require_google_creds(body.user_id)
     service = build("calendar", "v3", credentials=creds)
 
+    owned = _owned_enrollment_ids(body.user_id)
+    enr_to_offering = {e["id"]: e.get("offering_id") for e in academics.user_enrollment_ids(body.user_id)}
+    in_clause = f"in.({','.join(owned)})" if owned else "in.()"
+    cache = {}
+
     exported = 0
     skipped = 0
     for aid in body.assignment_ids:
-        # #123: scope by user_id, not just id. Without this an authenticated
-        # caller could pass another user's assignment UUIDs to read+decrypt
-        # their private notes, push them into the caller's calendar, and stamp
-        # google_event_id onto the victim's row. Every sibling endpoint
-        # (update/delete/sync) already scopes by user_id; a non-owned id now
-        # returns no row and is skipped.
+        # #123: scope by enrollment_id membership, not just id. Without this an
+        # authenticated caller could pass another user's assignment UUIDs to
+        # read+decrypt their private notes, push them into the caller's calendar,
+        # and stamp google_event_id onto the victim's row. Scoping to the caller's
+        # own enrollment ids means a non-owned id returns no row and is skipped.
+        if not owned:
+            continue
         rows = table("assignments").select(
-            "id,title,due_date,notes,google_event_id,courses!left(course_code,course_name)",
-            filters={"id": f"eq.{aid}", "user_id": f"eq.{body.user_id}"},
+            "id,enrollment_id,title,due_date,notes,google_event_id",
+            filters={"id": f"eq.{aid}", "enrollment_id": in_clause},
         )
         if not rows:
             continue
@@ -415,10 +417,10 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
             skipped += 1
             continue
 
-        course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        course_code = course.get("course_code") or ""
-        course_name = course.get("course_name") or ""
-        course_label = f"[{course_code}] " if course_code else (f"{course_name}: " if course_name else "")
+        meta = _course_meta_cached(enr_to_offering.get(a.get("enrollment_id")), cache)
+        cc = meta.get("course_code") or ""
+        cn = meta.get("course_name") or ""
+        course_label = f"[{cc}] " if cc else (f"{cn}: " if cn else "")
 
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
@@ -427,11 +429,11 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
             "end": {"date": a["due_date"]},
         }
         created = service.events().insert(calendarId="primary", body=event).execute()
-        # Scope the write-back by user_id too (defense in depth): never stamp
-        # google_event_id onto a row the caller doesn't own.
+        # Scope the write-back by enrollment_id membership (defense in depth):
+        # never stamp google_event_id onto a row the caller doesn't own.
         table("assignments").update(
             {"google_event_id": created["id"]},
-            filters={"id": f"eq.{aid}", "user_id": f"eq.{body.user_id}"},
+            filters={"id": f"eq.{aid}", "enrollment_id": in_clause},
         )
         exported += 1
 

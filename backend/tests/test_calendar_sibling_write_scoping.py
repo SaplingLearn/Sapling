@@ -47,24 +47,32 @@ class TestSiblingWriteScoping:
         assert ENROLLMENT_ID in delete_filters["enrollment_id"]
         assert delete_filters.get("id") == f"eq.{AID}"
 
-    def test_sync_scopes_writeback_by_user_id(self):
+    def test_sync_scopes_writeback_by_enrollment_id(self):
         unsynced = [{
-            "id": AID, "title": "HW", "due_date": "2026-03-01",
-            "notes": None, "google_event_id": None, "courses": {},
+            "id": AID, "enrollment_id": ENROLLMENT_ID, "title": "HW",
+            "due_date": "2026-03-01", "notes": None, "google_event_id": None,
         }]
 
         with patch("routes.calendar._require_google_creds", return_value=MagicMock()), \
              patch("routes.calendar.build") as build, \
              patch("routes.calendar.decrypt_if_present", return_value=""), \
-             patch("routes.calendar.table") as t:
+             patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
             service = MagicMock()
             service.events.return_value.insert.return_value.execute.return_value = {"id": "evt_1"}
             build.return_value = service
+            ac.user_enrollment_ids.return_value = [{"id": ENROLLMENT_ID, "offering_id": "o1"}]
+            # offering_course_id returns None so _course_meta_cached skips the
+            # courses table select (keeps select side_effect list simple).
+            ac.offering_course_id.return_value = None
             # select returns the unsynced row on the first call, [] thereafter.
             t.return_value.select.side_effect = [unsynced, []]
             r = client.post("/api/calendar/sync", json={"user_id": OWNER})
 
         assert r.status_code == 200
         update_filters = t.return_value.update.call_args.kwargs["filters"]
-        assert update_filters.get("user_id") == f"eq.{OWNER}"
+        # Write-back must scope by enrollment_id (not user_id, which no longer
+        # exists on the assignments table) — same IDOR guarantee, new key.
+        assert "enrollment_id" in update_filters
+        assert ENROLLMENT_ID in update_filters["enrollment_id"]
         assert update_filters.get("id") == f"eq.{AID}"
