@@ -20,21 +20,23 @@ logger = logging.getLogger(__name__)
 PROMPT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", "syllabus_extraction.txt")
 
 
-def load_existing_assignment_keys(user_id: str) -> set[tuple[str, str]]:
-    """All (title, due_date) keys for a user, using the same normalization as assignment_dedupe_key."""
+def load_existing_assignment_keys(user_id: str) -> set:
+    from services.academics import user_enrollment_ids
+    enrollments = user_enrollment_ids(user_id)
+    if not enrollments:
+        return set()
+    ids = ",".join(e["id"] for e in enrollments)
     existing_rows = table("assignments").select(
-        "title,due_date",
-        filters={"user_id": f"eq.{user_id}"},
+        "title,due_date", filters={"enrollment_id": f"in.({ids})"},
     )
     return {assignment_dedupe_key(r.get("title"), r.get("due_date")) for r in (existing_rows or [])}
 
 
-def insert_new_assignments(user_id: str, assignments: list[dict]) -> int:
-    """
-    Insert assignments that are not already present for this user (#16).
-    Same trimmed title + same calendar day (see assignment_dedupe_key) → skip.
-    Returns number of rows inserted.
-    """
+def insert_new_assignments(user_id: str, assignments: list[dict], *, source: str = "manual") -> int:
+    """Insert assignments (deduped per the user's enrollment set, #16) on the
+    enrollment-keyed schema. Each assignment must carry a ``course_id`` — it is
+    resolved to the user's enrollment (created if missing). Returns rows inserted."""
+    from services.academics import enrollment_id_for
     existing_keys = load_existing_assignment_keys(user_id)
     rows = []
     for a in assignments:
@@ -45,20 +47,19 @@ def insert_new_assignments(user_id: str, assignments: list[dict]) -> int:
         key = assignment_dedupe_key(title, due_raw)
         if key in existing_keys:
             continue
+        course_id = a.get("course_id")
+        enrollment_id = enrollment_id_for(user_id, course_id, create=True) if course_id else None
+        if not enrollment_id:
+            continue  # decision: every assignment is course-tied
         existing_keys.add(key)
         rows.append({
             "id": str(uuid.uuid4()),
-            "user_id": user_id,
+            "enrollment_id": enrollment_id,
             "title": title,
-            "course_id": a.get("course_id") or None,
             "due_date": key[1],
             "assignment_type": a.get("assignment_type") or "other",
-            # #126: encrypt at the write boundary. assignments.notes is an
-            # encrypted column; every other writer (calendar.py, gradebook.py)
-            # encrypts. Syllabus-extracted notes were being persisted as
-            # plaintext, defeating column encryption and spamming decrypt
-            # fallback warnings on read.
-            "notes": encrypt_if_present(a.get("notes")),
+            "notes": encrypt_if_present(a.get("notes")),  # #126: encrypt at write
+            "source": source,
         })
     if rows:
         table("assignments").insert(rows)
@@ -108,9 +109,9 @@ async def _extract_via_agent(
     return syllabus_to_wire_dict(result.output, raw_text=extracted_text)
 
 
-def save_assignments_to_db(user_id: str, assignments: list) -> int:
-    """Write extracted assignment dicts to the DB (deduped via insert_new_assignments)."""
-    return insert_new_assignments(user_id, assignments)
+def save_assignments_to_db(user_id: str, assignments: list, *, source: str = "syllabus") -> int:
+    """Write extracted assignment dicts (deduped via insert_new_assignments)."""
+    return insert_new_assignments(user_id, assignments, source=source)
 
 
 async def extract_assignments_from_file(

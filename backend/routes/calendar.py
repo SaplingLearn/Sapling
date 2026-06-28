@@ -178,11 +178,11 @@ def save_assignments(body: SaveAssignmentsBody, request: FastAPIRequest):
             "course_id": a.course_id,
             "due_date": a.due_date,
             "assignment_type": a.assignment_type,
-            "notes": encrypt_if_present(a.notes),
+            "notes": a.notes,  # raw; insert_new_assignments encrypts
         }
         for a in body.assignments
     ]
-    saved = insert_new_assignments(body.user_id, payload)
+    saved = insert_new_assignments(body.user_id, payload, source="manual")
     return {"saved_count": saved}
 
 
