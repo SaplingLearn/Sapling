@@ -8,6 +8,7 @@ import OnboardingFlow from '@/components/OnboardingFlow';
 import HowItWorks from '@/components/HowItWorks';
 import SignInModal from '@/components/SignInModal';
 import { BRAND_FOREST } from '@/lib/brand';
+import { submitOnboardingProfile, type OnboardingProfilePayload } from '@/lib/api';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
@@ -614,21 +615,22 @@ export default function LandingPage() {
   }
 
   async function handleOnboardingComplete(formData: { firstName: string; lastName: string; school: string; year: string; majors: string[]; minors: string[]; course_ids: string[]; style: string }) {
-    // Persist onboarding data to Supabase
+    // Persist onboarding data via the shared same-origin helper. The previous
+    // raw fetch hit NEXT_PUBLIC_API_URL (a cross-origin subdomain) without
+    // `credentials: 'include'`, so the sapling_session cookie was dropped and
+    // require_self 401'd — onboarding_completed never flipped to True, trapping
+    // the user in the "Get Started" flow on every sign-in. submitOnboardingProfile
+    // goes through fetchJSON (same-origin proxy + credentials + res.ok check).
     try {
-      await fetch(`${API_URL}/api/onboarding/profile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: userId,
-          first_name: formData.firstName,
-          last_name: formData.lastName,
-          year: formData.year,
-          majors: formData.majors,
-          minors: formData.minors,
-          course_ids: formData.course_ids,
-          learning_style: formData.style,
-        }),
+      await submitOnboardingProfile({
+        user_id: userId,
+        first_name: formData.firstName,
+        last_name: formData.lastName,
+        year: formData.year,
+        majors: formData.majors,
+        minors: formData.minors,
+        course_ids: formData.course_ids,
+        learning_style: formData.style as OnboardingProfilePayload['learning_style'],
       });
     } catch (e) {
       console.error('Failed to save onboarding profile:', e);
