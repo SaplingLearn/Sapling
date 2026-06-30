@@ -10,7 +10,7 @@ export function Toggle<T extends string>({
   onChange,
   size = "md",
 }: {
-  options: { value: T; label: React.ReactNode }[];
+  options: { value: T; label: React.ReactNode; title?: string }[];
   value: T;
   onChange: (v: T) => void;
   size?: "sm" | "md";
@@ -34,6 +34,7 @@ export function Toggle<T extends string>({
             key={o.value}
             type="button"
             onClick={() => onChange(o.value)}
+            title={o.title}
             aria-pressed={on}
             style={{
               padding: pad,

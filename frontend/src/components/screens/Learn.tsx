@@ -10,6 +10,7 @@ import { ChatPanel, type ChatMsg } from "../ChatPanel";
 import { SessionSummary } from "../SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../SharedContextToggle";
 import { ModelToggle, useModelPref } from "../ModelToggle";
+import { Toggle } from "@/components/ui";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { KnowledgeGraph } from "../KnowledgeGraph";
@@ -468,25 +469,12 @@ function LearnInner() {
               selectedCourseId={selectedCourseId}
             />
             <div className="label-micro" style={{ marginBottom: 8 }}>Mode</div>
-            <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
-              {MODES.map(m => (
-                <button
-                  key={m.id}
-                  onClick={() => setMode(m.id)}
-                  title={m.tip}
-                  style={{
-                    padding: "8px 16px",
-                    borderRadius: "var(--r-full)",
-                    fontSize: 13,
-                    fontWeight: 500,
-                    background: mode === m.id ? "var(--accent)" : "var(--bg-subtle)",
-                    color: mode === m.id ? "var(--accent-fg)" : "var(--text-dim)",
-                    border: mode === m.id ? "1px solid var(--accent)" : "1px solid var(--border)",
-                  }}
-                >
-                  {m.name}
-                </button>
-              ))}
+            <div style={{ marginBottom: 20 }}>
+              <Toggle
+                options={MODES.map(m => ({ value: m.id, label: m.name, title: m.tip }))}
+                value={mode}
+                onChange={setMode}
+              />
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
