@@ -116,7 +116,7 @@ export default function Dialog({
         alignItems: 'center',
         justifyContent: 'center',
         padding: '20px',
-        transition: 'background 220ms var(--ease-out)',
+        transition: 'background 220ms var(--ease)',
       }}
       onClick={e => { if (dismissible && e.target === e.currentTarget) onClose(); }}
     >
@@ -125,7 +125,7 @@ export default function Dialog({
         tabIndex={-1}
         style={{
           background: 'var(--bg-panel)',
-          borderRadius: 'var(--radius-lg)',
+          borderRadius: 'var(--r-lg)',
           padding,
           width: SIZE_WIDTH[size],
           maxWidth: 'min(95vw, calc(100vw - 32px))',
@@ -138,7 +138,7 @@ export default function Dialog({
           color: 'var(--text)',
           opacity: visible ? 1 : 0,
           transform: visible ? 'scale(1) translateY(0)' : 'scale(0.96) translateY(8px)',
-          transition: 'opacity 220ms var(--ease-out), transform 220ms var(--ease-out)',
+          transition: 'opacity 220ms var(--ease), transform 220ms var(--ease)',
           outline: 'none',
         }}
       >
@@ -172,7 +172,7 @@ export default function Dialog({
               justifyContent: 'center',
               background: 'none',
               border: 'none',
-              borderRadius: 'var(--radius-sm)',
+              borderRadius: 'var(--r-sm)',
               cursor: 'pointer',
               color: 'var(--text-muted)',
               padding: 0,

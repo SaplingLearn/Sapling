@@ -654,7 +654,7 @@ export default function LandingPage() {
   }
 
   return (
-    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), sans-serif", color: 'var(--brand-text1, #1a1a1a)', background: 'transparent' }}>
+    <div className="landing-page antialiased" style={{ fontFamily: "var(--font-inter), sans-serif", color: 'var(--text, #1a1a1a)', background: 'transparent' }}>
       <div ref={ambientGlowRef} className="landing-ambient-glow" />
 
       {/* ═══ Initial load intro overlay ═══ */}
@@ -676,7 +676,7 @@ export default function LandingPage() {
             <div className="font-playfair text-3xl sm:text-4xl font-semibold text-[var(--brand-forest)]">
               Sapling
             </div>
-            <div className="mt-2 text-xs sm:text-sm font-jetbrains tracking-[0.2em] uppercase text-[var(--brand-text2)]">
+            <div className="mt-2 text-xs sm:text-sm font-jetbrains tracking-[0.2em] uppercase text-[var(--text-dim)]">
               Growing your knowledge
             </div>
           </div>
@@ -701,7 +701,7 @@ export default function LandingPage() {
             <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: '#1a5c2a', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Sapling</span>
           </button>
           <div className="flex items-center">
-            <button onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
+            <button onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--text-dim)] hover:text-[var(--text)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
             <button onClick={startOnboarding} className="relative overflow-hidden group bg-[var(--brand-forest)] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
               Get Started
             </button>
@@ -727,10 +727,10 @@ export default function LandingPage() {
             data-base-rot="4" data-float-delay="1000" data-float-dur="6000"
           >
             <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--brand-forest)]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Mastered</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#D97706]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Learning</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#EF4444]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Struggling</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#9CA3AF]" /><span className="text-xs text-[var(--brand-text2)] uppercase tracking-wide">Unexplored</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--brand-forest)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Mastered</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#D97706]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Learning</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#EF4444]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Struggling</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#9CA3AF]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Unexplored</span></div>
             </div>
           </div>
 
@@ -740,12 +740,12 @@ export default function LandingPage() {
             data-base-rot="-6" data-float-delay="500" data-float-dur="4500"
           >
             <div className="liquid-glass-subtle rounded-xl py-2 flex items-center justify-center gap-2">
-              <PenSquare className="text-[var(--brand-text2)] w-4 h-4" strokeWidth={1.5} />
-              <span className="text-xs text-[var(--brand-text2)]">Quick Quiz</span>
+              <PenSquare className="text-[var(--text-dim)] w-4 h-4" strokeWidth={1.5} />
+              <span className="text-xs text-[var(--text-dim)]">Quick Quiz</span>
             </div>
             <div className="liquid-glass-subtle rounded-xl py-2 flex items-center justify-center gap-2">
-              <Users className="text-[var(--brand-text2)] w-4 h-4" strokeWidth={1.5} />
-              <span className="text-xs text-[var(--brand-text2)]">Study Room</span>
+              <Users className="text-[var(--text-dim)] w-4 h-4" strokeWidth={1.5} />
+              <span className="text-xs text-[var(--text-dim)]">Study Room</span>
             </div>
           </div>
         </div>
@@ -766,7 +766,7 @@ export default function LandingPage() {
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 500ms',
-          }} className="font-playfair text-2xl sm:text-3xl md:text-4xl text-[var(--brand-text2)] max-w-xl mx-auto mt-2 leading-relaxed tracking-tight font-medium">
+          }} className="font-playfair text-2xl sm:text-3xl md:text-4xl text-[var(--text-dim)] max-w-xl mx-auto mt-2 leading-relaxed tracking-tight font-medium">
             {heroText2 || '\u00A0'}
           </p>
 
@@ -792,7 +792,7 @@ export default function LandingPage() {
         {/* Scroll Indicator */}
         <div style={{ opacity: onboardingPhase !== 'idle' ? 0 : (heroMounted ? 1 : 0), transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 landing-animate-float-indicator flex flex-col items-center">
           <div className="w-px h-14 landing-divider-v" />
-          <span className="font-jetbrains text-xs tracking-[0.4em] text-[var(--brand-text2)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
+          <span className="font-jetbrains text-xs tracking-[0.4em] text-[var(--text-dim)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
         </div>
       </section>
 
@@ -810,23 +810,23 @@ export default function LandingPage() {
             <div className="grid md:grid-cols-12 gap-8 md:gap-12 mb-20 md:mb-28 landing-fade-up">
               <div className="md:col-span-7">
                 <span className="font-jetbrains text-[0.7rem] tracking-[0.32em] text-[var(--brand-forest)] uppercase font-medium">In the Sapling kit</span>
-                <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--brand-text1)] mt-5 leading-[1.02] tracking-tight">
+                <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--text)] mt-5 leading-[1.02] tracking-tight">
                   Tools that bend to <em className="not-italic text-[var(--brand-forest)]">your study</em>, not the other way around.
                 </h2>
               </div>
               <div className="md:col-span-4 md:col-start-9 md:pt-8 flex flex-col justify-end">
-                <p className="font-inter text-[var(--brand-text2)] text-base leading-relaxed font-light">
+                <p className="font-inter text-[var(--text-dim)] text-base leading-relaxed font-light">
                   Six instruments, tuned to one another. Each is a verb you reach for; together they make a quiet system that learns you back.
                 </p>
                 <div className="mt-6 flex items-center gap-3">
                   <span className="block h-px w-12 bg-[var(--brand-forest)]" />
-                  <span className="font-jetbrains text-[0.65rem] tracking-[0.3em] text-[var(--brand-text2)] uppercase">Scroll the catalog</span>
+                  <span className="font-jetbrains text-[0.65rem] tracking-[0.3em] text-[var(--text-dim)] uppercase">Scroll the catalog</span>
                 </div>
               </div>
             </div>
 
             {/* Editorial feature catalog: hairline rows, no boxes. */}
-            <ol className="landing-feature-list border-t border-[var(--brand-text2)]/15">
+            <ol className="landing-feature-list border-t border-[var(--text-dim)]/15">
               {[
                 { icon: Network,       title: 'Knowledge Graph',     desc: 'Every concept becomes a node in a living 3D network. Watch them glow as you master topics and see how everything connects.' },
                 { icon: Sparkles,      title: 'Adaptive Study Paths', desc: 'The AI reads your knowledge gaps and lays out the optimal sequence — so you always study the right thing at the right time.' },
@@ -837,31 +837,31 @@ export default function LandingPage() {
               ].map((feature, i) => (
                 <li
                   key={feature.title}
-                  className="landing-feature-row group relative border-b border-[var(--brand-text2)]/15 landing-fade-up"
+                  className="landing-feature-row group relative border-b border-[var(--text-dim)]/15 landing-fade-up"
                   style={{ transitionDelay: `${i * 70}ms` }}
                 >
                   <div className="grid md:grid-cols-12 items-center gap-6 md:gap-8 py-9 md:py-12 px-2 md:px-4 transition-colors duration-500">
                     {/* Index marker. */}
-                    <div className="md:col-span-1 font-jetbrains text-[0.7rem] tracking-[0.3em] text-[var(--brand-text2)] transition-colors duration-500 group-hover:text-[var(--brand-forest)]">
+                    <div className="md:col-span-1 font-jetbrains text-[0.7rem] tracking-[0.3em] text-[var(--text-dim)] transition-colors duration-500 group-hover:text-[var(--brand-forest)]">
                       <span className="inline-block tabular-nums">0{i + 1}</span>
-                      <span className="hidden md:inline-block ml-3 align-middle h-px w-6 bg-[var(--brand-text2)]/30 group-hover:bg-[var(--brand-forest)]/60 transition-colors duration-500" />
+                      <span className="hidden md:inline-block ml-3 align-middle h-px w-6 bg-[var(--text-dim)]/30 group-hover:bg-[var(--brand-forest)]/60 transition-colors duration-500" />
                     </div>
 
                     {/* Title with bare inline icon — no circle, no color. */}
                     <div className="md:col-span-5 flex items-center gap-4 md:gap-5 min-w-0">
                       <feature.icon
                         aria-hidden
-                        className="landing-feature-icon shrink-0 w-5 h-5 md:w-6 md:h-6 text-[var(--brand-text1)] transition-transform duration-700 ease-out group-hover:scale-110 group-hover:-rotate-6"
+                        className="landing-feature-icon shrink-0 w-5 h-5 md:w-6 md:h-6 text-[var(--text)] transition-transform duration-700 ease-out group-hover:scale-110 group-hover:-rotate-6"
                         strokeWidth={1.5}
                       />
-                      <h3 className="landing-feature-title font-playfair text-2xl md:text-3xl lg:text-4xl font-semibold text-[var(--brand-text1)] tracking-tight leading-[1.05]">
+                      <h3 className="landing-feature-title font-playfair text-2xl md:text-3xl lg:text-4xl font-semibold text-[var(--text)] tracking-tight leading-[1.05]">
                         {feature.title}
                       </h3>
                     </div>
 
                     {/* Description: shifted left, generous width for body copy. */}
                     <div className="md:col-span-6">
-                      <p className="font-inter text-[var(--brand-text2)] text-[0.95rem] leading-relaxed font-light max-w-[52ch]">
+                      <p className="font-inter text-[var(--text-dim)] text-[0.95rem] leading-relaxed font-light max-w-[52ch]">
                         {feature.desc}
                       </p>
                     </div>
@@ -878,8 +878,8 @@ export default function LandingPage() {
 
             {/* Tail mark: editorial closing rule. */}
             <div className="mt-10 flex items-center gap-4 landing-fade-up">
-              <span className="block h-px flex-1 bg-[var(--brand-text2)]/15" />
-              <span className="font-jetbrains text-[0.65rem] tracking-[0.32em] text-[var(--brand-text2)] uppercase">— end of catalog</span>
+              <span className="block h-px flex-1 bg-[var(--text-dim)]/15" />
+              <span className="font-jetbrains text-[0.65rem] tracking-[0.32em] text-[var(--text-dim)] uppercase">— end of catalog</span>
             </div>
           </div>
         </section>
@@ -903,10 +903,10 @@ export default function LandingPage() {
             <div className="sapling-mesh-blob sapling-mesh-blob--2" style={{ bottom: '0%', left: '-12%', opacity: 0.28, width: '32vw', height: '32vw' }} />
           </div>
           <div className="relative z-10 max-w-3xl mx-auto px-6 landing-fade-up">
-            <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--brand-text1)] tracking-tight leading-[1.05]">
+            <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--text)] tracking-tight leading-[1.05]">
               Ready to <br /> Start <span className="text-[var(--brand-forest)] pr-2">Growing?</span>
             </h2>
-            <p className="text-[var(--brand-text2)] text-lg mt-6 font-light">Join students who learn smarter, not harder.</p>
+            <p className="text-[var(--text-dim)] text-lg mt-6 font-light">Join students who learn smarter, not harder.</p>
             <div className="mt-10 flex flex-col items-center">
               <button onClick={startOnboarding} className="relative overflow-hidden group bg-[var(--brand-forest)] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
                 Get Started
@@ -920,17 +920,17 @@ export default function LandingPage() {
           <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
             <div className="flex items-center gap-2">
               <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '20px', height: '20px' }} />
-              <span className="text-sm font-light tracking-wide text-[var(--brand-text2)]">Sapling · © 2026</span>
+              <span className="text-sm font-light tracking-wide text-[var(--text-dim)]">Sapling · © 2026</span>
             </div>
             <div className="flex flex-wrap justify-center gap-6">
-              <a href="/about" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">About</a>
-              <a href="/careers" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Careers</a>
-              <a href="/terms" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Terms of Service</a>
-              <a href="/privacy" className="text-[var(--brand-text2)] hover:text-[var(--brand-text1)] text-sm transition-colors">Privacy Policy</a>
+              <a href="/about" className="text-[var(--text-dim)] hover:text-[var(--text)] text-sm transition-colors">About</a>
+              <a href="/careers" className="text-[var(--text-dim)] hover:text-[var(--text)] text-sm transition-colors">Careers</a>
+              <a href="/terms" className="text-[var(--text-dim)] hover:text-[var(--text)] text-sm transition-colors">Terms of Service</a>
+              <a href="/privacy" className="text-[var(--text-dim)] hover:text-[var(--text)] text-sm transition-colors">Privacy Policy</a>
             </div>
           </div>
           <div className="max-w-7xl mx-auto mt-8 pt-6 border-t border-white/25 text-center">
-            <p className="text-xs text-[var(--brand-text2)] opacity-75 font-light tracking-wide">
+            <p className="text-xs text-[var(--text-dim)] opacity-75 font-light tracking-wide">
               © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
             </p>
           </div>
