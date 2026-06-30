@@ -95,21 +95,19 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: pre-auth renders with warm `:root` values; duplicate-namespace tokens (`--radius-*`, `--ease-out`, `--brand-primary`) resolve to canonical via alias.
 
-- [ ] **Step 1: Remove the dead `:root` "Landing-page brand tokens" duplicates**
+- [ ] **Step 1: Alias the consumed `:root` cool tokens to canonical; delete only the 0-ref ones**
 
-In the `:root` block (`globals.css:95–105`), delete the lines that duplicate the cool palette, keeping only `--bg-mesh` (moves to the marketing layer in Task 3) and `--font-inter`:
-
-Delete:
+In the `:root` block (`globals.css:95–105`), the cool palette is declared here AND re-declared in `.landing-page`. Tokens with live consumers must be **aliased** (not deleted) so nothing renders uncolored before Task 6 migrates the references. Replace the seven lines (`97–103`) with:
 ```css
-  --brand-primary:   #2e7d52;
-  --brand-success:   #22c55e;
-  --brand-progress:  #e8a33a;
-  --brand-teal:      #2b8c96;
-  --brand-struggle:  #e85d4a;
-  --brand-text1:     #1a1a1a;
-  --brand-text2:     #4b5563;
+  /* Temporary aliases → canonical; consumers migrated in Task 6, aliases removed in Task 7. */
+  --brand-primary: var(--brand-forest);   /* 2 consumers (glass-input, rarity) */
+  --brand-text1:   var(--text);            /* 11 consumers (marketing copy) */
+  --brand-text2:   var(--text-dim);        /* 34 consumers (marketing copy) */
+  --brand-teal:    #2b8c96;                /* 1 consumer (--rarity-rare); re-pointed in Task 3 */
 ```
-Keep `--bg-mesh: #f0f4f2;` and `--font-inter: var(--font-sans);` for now (relocated/cleaned later).
+That deletes `--brand-success`, `--brand-progress`, `--brand-struggle` (0 refs — safe). Keep `--bg-mesh: #f0f4f2;` and `--font-inter: var(--font-sans);` for now (relocated/cleaned later).
+
+> **Why alias, not delete:** `--brand-text1/2` have 11+34 live consumers (migrated in Task 6). Deleting them now would render that text uncolored at the Task 5 checkpoint. Aliasing resolves them to warm values immediately, keeping every intermediate state correct.
 
 - [ ] **Step 2: In `.landing-page` (`733–799`), delete every re-declaration of a Layer-1 core token**
 
@@ -161,15 +159,7 @@ Replace the `.landing-page` radius/ease/dur block (`779–789`) with aliases to 
 ```
 (`--dur-fast`/`--dur-slow` now inherit `:root`; the explicit lines may simply be deleted instead of self-aliased — either is fine. `--dur-base` aliases to `:root`'s `--dur`.)
 
-- [ ] **Step 4: Alias the brand primary**
-
-In `:root`, immediately after `--brand-forest-bright-hover` (`globals.css:25`), add the temporary alias used by the two consumers:
-```css
-  /* Temporary alias for the two remaining --brand-primary consumers; removed in Task 7. */
-  --brand-primary: var(--brand-forest);
-```
-
-- [ ] **Step 5: Verify the build compiles and no core token is double-declared**
+- [ ] **Step 4: Verify the build compiles and no core token is double-declared**
 
 ```bash
 cd /home/andresl/Projects/sapling/frontend
@@ -178,11 +168,11 @@ grep -n 'var(--bg-glass)\|var(--bg-space)\|var(--bg-sidebar)' src --include='*.t
 ```
 Expected: build succeeds; the grep prints nothing (those tokens had 0 consumers).
 
-- [ ] **Step 6: Visual checkpoint**
+- [ ] **Step 5: Visual checkpoint**
 
 Screenshot `/`, the beta modal, the sign-in modal. Expected: they now render **warm** (paper background, warm borders/text) instead of cool slate, with layout intact.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/app/globals.css
