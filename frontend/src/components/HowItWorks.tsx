@@ -42,14 +42,14 @@ function SeedSVG({ active }: { active: boolean }) {
       <g style={{ transformOrigin: '100px 215px', transform: 'scale(0.55)' }}>
         {/* Stem */}
         <motion.path d="M100 215 L100 137"
-          stroke="#1a5c2a" strokeWidth="5" strokeLinecap="round"
+          stroke="#1B6C42" strokeWidth="5" strokeLinecap="round"
           initial={{ pathLength: 0 }}
           animate={active ? { pathLength: 1 } : { pathLength: 0 }}
           transition={{ duration: 0.55, ease: 'easeOut' }}
         />
         {/* Left leaf */}
         <motion.path d="M100 167 C100 167 58 155 52 119 C52 119 94 113 100 167 Z"
-          fill="#1a5c2a"
+          fill="#1B6C42"
           initial={{ scale: 0 }} animate={active ? { scale: 1 } : { scale: 0 }}
           transition={{ duration: 0.55, delay: 0.42, ease: [0.34, 1.56, 0.64, 1] }}
           style={{ transformOrigin: '100px 167px' }}
@@ -62,7 +62,7 @@ function SeedSVG({ active }: { active: boolean }) {
           style={{ transformOrigin: '100px 143px' }}
         />
         {/* Tip bud */}
-        <motion.circle cx="100" cy="131" r="7" fill="#1a5c2a"
+        <motion.circle cx="100" cy="131" r="7" fill="#1B6C42"
           initial={{ scale: 0 }} animate={active ? { scale: 1 } : { scale: 0 }}
           transition={{ duration: 0.38, delay: 0.32, ease: [0.34, 1.56, 0.64, 1] }}
           style={{ transformOrigin: '100px 131px' }}

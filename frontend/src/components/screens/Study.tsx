@@ -590,7 +590,7 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
                     disabled={!flipped}
                     title={`${r.label} (press ${r.hint})`}
                     style={{
-                      padding: "10px 20px", borderRadius: "var(--r-md)",
+                      padding: "10px 20px", borderRadius: "var(--r-sm)",
                       border: `1.5px solid ${r.color}`,
                       background: "transparent", color: r.color,
                       fontWeight: 600, fontSize: 13, textTransform: "capitalize",
