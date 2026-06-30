@@ -2,25 +2,27 @@
 import React from "react";
 
 // Shared badge for rarity / role / grade — anywhere a pill is tinted from a single
-// base hue. Reuses .chip for shape + typography and derives bg/border from `color`
-// via color-mix, centralizing the logic duplicated across RoleBadge / TitleFlair /
-// the Achievements inline badges.
+// base hue. Reuses .chip for shape + typography. The HUE is carried by the border +
+// a soft background; the TEXT stays neutral (--text) because colored text on a tinted
+// pill fails 4.5:1 contrast on several tiers (the rule the rarity badges already follow).
 export function Badge({
-  color = "var(--text-dim)",
+  color = "var(--border)",
+  bg,
   className,
   children,
   style,
   ...props
 }: React.HTMLAttributes<HTMLSpanElement> & {
-  color?: string;
+  color?: string; // the hue (border)
+  bg?: string; // optional explicit soft background; derived from `color` if omitted
 }) {
   return (
     <span
       className={["chip", className].filter(Boolean).join(" ")}
       style={{
-        background: `color-mix(in oklab, ${color} 12%, var(--bg-panel))`,
-        color,
-        borderColor: `color-mix(in oklab, ${color} 35%, transparent)`,
+        borderColor: color,
+        background: bg ?? `color-mix(in oklab, ${color} 12%, var(--bg-panel))`,
+        color: "var(--text)",
         ...style,
       }}
       {...props}
