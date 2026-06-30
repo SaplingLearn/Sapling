@@ -907,7 +907,7 @@ export default function LandingPage() {
             </h2>
             <p className="text-[var(--text-dim)] text-lg mt-6 font-light">Join students who learn smarter, not harder.</p>
             <div className="mt-10 flex flex-col items-center">
-              <Button variant="primary" size="lg" onClick={startOnboarding}>
+              <Button variant="primary" size="xl" onClick={startOnboarding}>
                 Get Started
               </Button>
             </div>

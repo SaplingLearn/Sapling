@@ -202,7 +202,8 @@ body { font-size: 14px; line-height: 1.5; }
 .btn--ghost:hover { background: var(--bg-soft); }
 .btn--danger { color: var(--err); border-color: rgba(168,58,58,0.3); }
 .btn--sm { padding: 5px 10px; font-size: 12px; }
-.btn--lg { padding: 13px 26px; font-size: 15px; font-weight: 600; }
+.btn--lg { padding: 9px 18px; font-size: 14px; font-weight: 600; }
+.btn--xl { padding: 14px 32px; font-size: 16px; font-weight: 600; }
 
 .card {
   background: var(--bg-panel); border: 1px solid var(--border);

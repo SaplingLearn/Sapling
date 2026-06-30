@@ -2,7 +2,7 @@
 import React from "react";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
-type Size = "sm" | "md" | "lg";
+type Size = "sm" | "md" | "lg" | "xl";
 
 // Shared button primitive. Wraps the canonical .btn classes in globals.css so
 // every action button is one shape (6px) with consistent hover/transitions.
