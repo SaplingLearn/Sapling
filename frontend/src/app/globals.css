@@ -687,7 +687,7 @@ input[type="reset"]:disabled {
   --rarity-common:       var(--text-dim);
   --rarity-common-bg:    rgba(107, 114, 128, 0.08);
   --rarity-uncommon:     var(--brand-forest);
-  --rarity-uncommon-bg:  rgba(46, 125, 82, 0.08);
+  --rarity-uncommon-bg:  rgba(27, 108, 66, 0.08);
   --rarity-rare:         #2b8c96;
   --rarity-rare-bg:      rgba(43, 140, 150, 0.08);
   --rarity-epic:         #8b5cf6;
