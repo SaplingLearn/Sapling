@@ -64,7 +64,7 @@
   --text-muted:#6f6857;  /* WCAG AA: darkened from --ink-400 (#8a8372, 3.4:1) to ≥4.5:1 on paper/inset */
   /* --accent (sage) is a distinct ROLE (highlights/focus), NOT a primary green.
      Do not consolidate into --brand-forest. */
-  --accent:    #8a9a5b;
+  --accent:    var(--brand-forest-bright);  /* sage retired → brighter forest (highlight/focus role) */
   --accent-fg: #ffffff;
   --accent-soft: var(--sap-50);
   --accent-border: var(--sap-200);
@@ -79,7 +79,9 @@
   /* Knowledge-status palette (mastery/progress/struggle legend + graph dots).
      Single source for the 3 previously-inlined copies in Dashboard / Tree /
      notetaker. Values are byte-identical to those inline copies. */
-  --state-mastery:  #4a7d5c;
+  /* Canonical "positive status" green — one value for mastery + grade-A (Phase 2 green collapse). */
+  --positive:       #3a7d4e;
+  --state-mastery:  var(--positive);
   --state-progress: #c89b5e;
   --state-struggle: #b25855;
   --state-neutral:  #9a9a9a;
@@ -111,7 +113,7 @@
 
   /* Grade-band semantic colors. Used by the Gradebook landing and any
    * future "grade pill" surface. Tied to the 90/80/70/60 letter scale. */
-  --grade-a: var(--c-sage);
+  --grade-a: var(--positive);
   --grade-b: var(--c-amber);
   --grade-c: var(--c-rust);
   --grade-d: var(--c-rose);
@@ -200,6 +202,7 @@ body { font-size: 14px; line-height: 1.5; }
 .btn--ghost:hover { background: var(--bg-soft); }
 .btn--danger { color: var(--err); border-color: rgba(168,58,58,0.3); }
 .btn--sm { padding: 5px 10px; font-size: 12px; }
+.btn--lg { padding: 13px 26px; font-size: 15px; font-weight: 600; }
 
 .card {
   background: var(--bg-panel); border: 1px solid var(--border);
