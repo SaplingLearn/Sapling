@@ -728,6 +728,11 @@ input[type="reset"]:disabled {
    signed-in app shell tokens. To be revisited and consolidated with
    the rest of the design system in a follow-up pass.
    ══════════════════════════════════════════════════════════════════ */
+/* .public-surface = the (public) route-group layout wrapper: hosts the marketing-layer
+   tokens for the whole pre-auth subtree WITHOUT the landing-only mesh background, so
+   content pages (about/careers/privacy/terms) keep the warm paper canvas. The landing
+   page additionally carries .landing-page for its mesh visual + descendant styling. */
+.public-surface,
 .landing-page {
   /* Marketing layer (Layer 2): additive tokens only — never redefine a :root token.
      The marketing-specific tokens (--display-hero, --surface-hero, --brand-glow) are
