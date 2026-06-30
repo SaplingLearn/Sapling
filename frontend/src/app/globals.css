@@ -62,6 +62,8 @@
   --text:      var(--ink-800);
   --text-dim:  var(--ink-600);
   --text-muted:#6f6857;  /* WCAG AA: darkened from --ink-400 (#8a8372, 3.4:1) to ≥4.5:1 on paper/inset */
+  /* --accent (sage) is a distinct ROLE (highlights/focus), NOT a primary green.
+     Do not consolidate into --brand-forest. */
   --accent:    #8a9a5b;
   --accent-fg: #ffffff;
   --accent-soft: var(--sap-50);
@@ -98,7 +100,6 @@
   --brand-text1:   var(--text);            /* 11 consumers (marketing copy) */
   --brand-text2:   var(--text-dim);        /* 34 consumers (marketing copy) */
   --brand-teal:    #2b8c96;                /* 1 consumer (--rarity-rare); re-pointed in Task 3 */
-  --bg-mesh:         #f0f4f2;
   --font-inter: var(--font-sans);
 
   /* Category palette — 10 colors, one per hue family, no repeats. */
@@ -630,8 +631,8 @@ body { font-size: 14px; line-height: 1.5; }
 }
 .glass-input:focus {
   outline: none;
-  border-color: var(--brand-primary);
-  box-shadow: 0 0 0 2px rgba(46, 125, 82, 0.2);
+  border-color: var(--brand-forest);
+  box-shadow: 0 0 0 2px rgba(27, 108, 66, 0.2);
 }
 
 /* Global pointer states for interactive controls */
@@ -691,9 +692,9 @@ input[type="reset"]:disabled {
   /* Derived from existing brand palette */
   --rarity-common:       var(--text-dim);
   --rarity-common-bg:    rgba(107, 114, 128, 0.08);
-  --rarity-uncommon:     var(--brand-primary);
+  --rarity-uncommon:     var(--brand-forest);
   --rarity-uncommon-bg:  rgba(46, 125, 82, 0.08);
-  --rarity-rare:         var(--brand-teal);
+  --rarity-rare:         #2b8c96;
   --rarity-rare-bg:      rgba(43, 140, 150, 0.08);
   --rarity-epic:         #8b5cf6;
   --rarity-epic-bg:      rgba(139, 92, 246, 0.08);
@@ -732,6 +733,14 @@ input[type="reset"]:disabled {
      The marketing-specific tokens (--display-hero, --surface-hero, --brand-glow) are
      added in Task 3. Core tokens (border, text, shadow, bg, accent) now inherit
      canonical warm values from :root. */
+
+  /* Marketing-specific additive tokens (Layer 2). */
+  --bg-mesh:       #f0f4f2;
+  --display-hero:  clamp(2.5rem, 5vw, 3rem);
+  --display-hero-weight: 700;
+  --surface-hero:  linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%);
+  --surface-hero-shadow: 0 20px 60px rgba(19, 38, 16, 0.12), inset 0 0 0 1px rgba(255,255,255,0.5);
+  --brand-glow:    color-mix(in oklch, var(--brand-forest) 70%, white);
 
   /* Namespace aliases → canonical app tokens (temporary; removed in Task 7). */
   --radius-sm:   var(--r-sm);
