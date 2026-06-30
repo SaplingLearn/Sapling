@@ -94,12 +94,6 @@
   --alert-warn: #e87734;
   --alert-err:  #e94b5c;
 
-  /* Landing-page brand tokens — being consolidated into the canonical palette.
-     Temporary aliases → canonical; consumers migrated in Task 6, aliases removed in Task 7. */
-  --brand-primary: var(--brand-forest);   /* 2 consumers (glass-input, rarity) */
-  --brand-text1:   var(--text);            /* 11 consumers (marketing copy) */
-  --brand-text2:   var(--text-dim);        /* 34 consumers (marketing copy) */
-  --brand-teal:    #2b8c96;                /* 1 consumer (--rarity-rare); re-pointed in Task 3 */
   --font-inter: var(--font-sans);
 
   /* Category palette — 10 colors, one per hue family, no repeats. */
@@ -657,7 +651,7 @@ input[type="reset"]:disabled {
 .landing-modal-panel {
   opacity: 0;
   transform: translateY(24px) scale(0.94);
-  transition: opacity 420ms var(--ease-out), transform 420ms var(--ease-out);
+  transition: opacity 420ms var(--ease), transform 420ms var(--ease);
 }
 
 .landing-modal-panel--visible {
@@ -747,15 +741,6 @@ input[type="reset"]:disabled {
   --surface-hero-shadow: 0 20px 60px rgba(19, 38, 16, 0.12), inset 0 0 0 1px rgba(255,255,255,0.5);
   --brand-glow:    color-mix(in oklch, var(--brand-forest) 70%, white);
 
-  /* Namespace aliases → canonical app tokens (temporary; removed in Task 7). */
-  --radius-sm:   var(--r-sm);
-  --radius-md:   var(--r-md);
-  --radius-lg:   var(--r-lg);
-  --radius-full: var(--r-full);
-  --ease-out:    var(--ease);
-  --ease-in-out: var(--ease);
-  --dur-base:    var(--dur);
-
   color: var(--text);
   font-family: var(--font-dm-sans), 'DM Sans', system-ui, sans-serif;
   font-size: 14px;
@@ -810,8 +795,8 @@ input[type="reset"]:disabled {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-md);
-  transition: transform 500ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),
-              box-shadow 500ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+  transition: transform 500ms var(--ease),
+              box-shadow 500ms var(--ease);
 }
 .landing-page .liquid-glass-strong {
   background: var(--bg-panel);
