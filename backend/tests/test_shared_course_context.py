@@ -12,7 +12,7 @@ import os
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch, MagicMock, call
+from unittest.mock import AsyncMock, patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

@@ -121,6 +121,9 @@ def _submit_quiz_mocks(questions=None):
         patch("routes.quiz.apply_graph_update"),
         patch("routes.quiz.get_quiz_context", return_value={}),
         patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
+        # Also neutralize the persistence side of the background update so these
+        # submit tests don't do a hidden (mocked-table) write or swallow errors.
+        patch("routes.quiz.save_quiz_context"),
     ):
         yield
 
