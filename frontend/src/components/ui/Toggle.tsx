@@ -9,18 +9,25 @@ export function Toggle<T extends string>({
   value,
   onChange,
   size = "md",
+  wrap = false,
 }: {
   options: { value: T; label: React.ReactNode; title?: string }[];
   value: T;
   onChange: (v: T) => void;
   size?: "sm" | "md";
+  // Allow the control to wrap onto multiple rows. Off by default (a segmented
+  // control is a short fixed set); on for unbounded lists like semesters, which
+  // would otherwise overflow horizontally. Uses block-level flex so the row is
+  // width-constrained and actually wraps.
+  wrap?: boolean;
 }) {
   const pad = size === "sm" ? "5px 12px" : "7px 15px";
   const fs = size === "sm" ? 12 : 13;
   return (
     <div
       style={{
-        display: "inline-flex",
+        display: wrap ? "flex" : "inline-flex",
+        flexWrap: wrap ? "wrap" : undefined,
         background: "var(--bg-soft)",
         borderRadius: "var(--r-full)",
         padding: 3,

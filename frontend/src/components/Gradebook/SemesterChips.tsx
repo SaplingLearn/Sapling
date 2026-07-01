@@ -16,6 +16,7 @@ export function SemesterChips({ semesters, selected, onSelect }: Props) {
         value={selected}
         onChange={onSelect}
         size="sm"
+        wrap
       />
     </div>
   );
