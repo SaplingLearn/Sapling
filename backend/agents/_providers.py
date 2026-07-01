@@ -29,6 +29,7 @@ from config import GEMINI_API_KEY
 AgentTask = Literal[
     "classifier", "summary", "concepts", "syllabus", "quiz", "chat_tutor",
     "note_summary", "note_concepts", "note_chat",
+    "study_guide", "social_summary",
 ]
 
 
@@ -52,6 +53,10 @@ _DEFAULTS: dict[AgentTask, str] = {
     "note_summary": "gemini-2.5-flash-lite",
     "note_concepts": "gemini-2.5-flash-lite",
     "note_chat": "gemini-2.5-flash",
+    # Study guide is quality-sensitive multi-topic generation → full Flash.
+    "study_guide": "gemini-2.5-flash",
+    # Social summary is short-form prose → the cheaper lite tier is enough.
+    "social_summary": "gemini-2.5-flash-lite",
 }
 
 

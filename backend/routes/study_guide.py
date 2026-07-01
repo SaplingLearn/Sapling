@@ -9,11 +9,14 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
+from agents._run import run_agent_sync
+from agents.deps import SaplingDeps
+from agents.study_guide import study_guide_agent
 from db.connection import table
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import require_self
 from services.encryption import decrypt_if_present, decrypt_json
-from services.gemini_service import call_gemini_json
+from services.request_context import current_request_id
 
 router = APIRouter()
 
@@ -80,33 +83,29 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
     combined_context = "\n\n".join(parts) if parts else "No course material available."
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    # 4. Call Gemini
-    prompt = (
-        "You are a study guide generator for a student exam prep tool.\n\n"
+    # 4. Generate the study guide via the study_guide agent. The agent owns the
+    #    persona + output schema; the user message carries the exam context.
+    user_message = (
         f"Exam: {exam_title}\n"
         f"Due date: {due_date}\n"
         f"Today: {today}\n\n"
-        f"Course material:\n{combined_context}\n\n"
-        "Generate a comprehensive study guide for this exam. Break the material into clear topics. "
-        "For each topic provide:\n"
-        "- A topic name\n"
-        "- 3-5 surface-level concept bullet points the student should understand\n"
-        "- One sentence explaining why this topic matters for the exam\n\n"
-        "Return ONLY a JSON object with this exact schema, no markdown fences:\n"
-        "{\n"
-        '  "exam": "<exam title>",\n'
-        '  "due_date": "<YYYY-MM-DD>",\n'
-        '  "overview": "<2-3 sentence overview of what this exam covers and how to approach it>",\n'
-        '  "topics": [\n'
-        "    {\n"
-        '      "name": "<topic name>",\n'
-        '      "importance": "<one sentence>",\n'
-        '      "concepts": ["<concept>", "<concept>", ...]\n'
-        "    }\n"
-        "  ]\n"
-        "}"
+        f"Course material:\n{combined_context}"
     )
-    content = call_gemini_json(prompt)
+    # course_id/session are unused by this toolless agent; deps satisfies the type.
+    from db.connection import _client  # opaque pass-through for SaplingDeps
+    deps = SaplingDeps(
+        user_id=user_id,
+        course_id=None,
+        supabase=_client,
+        request_id=current_request_id() or "",
+    )
+    try:
+        result = run_agent_sync(study_guide_agent.run(user_message, deps=deps))
+    except Exception as e:  # generation/transport failure → 502, not a raw 500
+        raise HTTPException(
+            status_code=502, detail="Study guide generation failed."
+        ) from e
+    content = result.output.model_dump()
 
     # 5. Insert into study_guides
     now = datetime.now(timezone.utc).isoformat()

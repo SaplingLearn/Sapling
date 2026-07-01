@@ -210,16 +210,19 @@ def gemini_test(request: Request):
     key is missing/wrong.
 
     Gated behind `require_admin` (#198): every hit makes a real, billable
-    `call_gemini` round-trip, so an unauthenticated caller could burn Gemini
-    quota at will and use the `{"ok": ...}` response as an oracle for whether
-    the API key is configured. Only admins may trigger LLM spend here.
+    agent round-trip, so an unauthenticated caller could burn Gemini quota at
+    will and use the `{"ok": ...}` response as an oracle for whether the API
+    key is configured. Only admins may trigger LLM spend here.
     """
     from services.auth_guard import require_admin
     require_admin(request)  # 403 unless the session belongs to an admin; 401 if unauthenticated
-    from services.gemini_service import call_gemini
+    from agents._run import run_agent_sync
+    from agents.health import health_probe_agent
     try:
-        reply = call_gemini('Reply with exactly the text: Gemini OK', retries=0)
-        return {"ok": True, "reply": reply.strip()}
+        result = run_agent_sync(
+            health_probe_agent.run('Reply with exactly the text: Gemini OK')
+        )
+        return {"ok": True, "reply": result.output.strip()}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
