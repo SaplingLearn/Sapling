@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
-import { Pill } from "../Pill";
+import { FilterPills, Toggle } from "@/components/ui";
 import { DocumentUploadModal } from "../DocumentUploadModal";
 import { LibraryGridSkeleton, LibraryListSkeleton } from "../Skeleton";
 
@@ -183,31 +183,21 @@ export function Library() {
           padding: "14px 32px", display: "flex", gap: 6, alignItems: "center",
           borderBottom: "1px solid var(--border)", flexWrap: "wrap",
         }}>
-          {cats.map((c) => (
-            <Pill key={c} active={cat === c} onClick={() => setCat(c)}>
-              {c.replace("_", " ")}
-            </Pill>
-          ))}
+          <FilterPills
+            options={cats.map((c) => ({ value: c, label: c.replace("_", " ") }))}
+            value={cat}
+            onChange={setCat}
+          />
           <div style={{ flex: 1 }} />
-          <div style={{
-            display: "flex", border: "1px solid var(--border)",
-            borderRadius: "var(--r-sm)", overflow: "hidden",
-          }}>
-            {(["grid", "list"] as View[]).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                style={{
-                  padding: "4px 10px", fontSize: 11, textTransform: "capitalize",
-                  background: view === v ? "var(--accent-soft)" : "transparent",
-                  color: view === v ? "var(--accent)" : "var(--text-dim)",
-                  border: "none", cursor: "pointer",
-                }}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
+          <Toggle
+            options={[
+              { value: "grid", label: "Grid" },
+              { value: "list", label: "List" },
+            ]}
+            value={view}
+            onChange={setView}
+            size="sm"
+          />
         </div>
 
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>

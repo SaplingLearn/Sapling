@@ -2,6 +2,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import type { LetterScaleTier } from "@/lib/types";
+import { Button } from "@/components/ui";
 
 const DEFAULT_SCALE: LetterScaleTier[] = [
   { min: 93, letter: "A" }, { min: 90, letter: "A-" },
@@ -93,23 +94,18 @@ export function LetterScaleEditor({ open, initial, onClose, onSave }: Props) {
           </button>
           <div style={{ display: "flex", gap: 8 }}>
             <button type="button" onClick={onClose}>Cancel</button>
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="sm"
               disabled={!monotonic || saving}
               onClick={async () => {
                 setSaving(true);
                 try { await onSave(tiers); onClose(); }
                 finally { setSaving(false); }
               }}
-              style={{
-                background: monotonic ? "var(--accent)" : "var(--bg-soft)",
-                color: monotonic ? "#fff" : "var(--text-dim)",
-                border: 0, borderRadius: 6, padding: "6px 14px",
-                cursor: monotonic ? "pointer" : "not-allowed",
-              }}
             >
               {saving ? "Saving…" : "Save"}
-            </button>
+            </Button>
           </div>
         </div>
         {!monotonic && (

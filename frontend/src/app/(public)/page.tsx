@@ -9,6 +9,7 @@ import HowItWorks from '@/components/HowItWorks';
 import SignInModal from '@/components/SignInModal';
 import { BRAND_FOREST } from '@/lib/brand';
 import { submitOnboardingProfile, type OnboardingProfilePayload } from '@/lib/api';
+import { Button } from "@/components/ui";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
@@ -698,13 +699,13 @@ export default function LandingPage() {
         <div className="max-w-[88%] mx-auto flex items-center justify-between w-full">
           <button type="button" aria-label="Sapling — scroll to top" className="flex items-center cursor-pointer group" style={{ gap: '4px' }} onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
             <img src="/sapling-icon.svg" alt="" style={{ width: '26px', height: '26px', flexShrink: 0, position: 'relative', top: '-2px' }} />
-            <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: '#1a5c2a', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Sapling</span>
+            <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: 'var(--brand-forest)', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Sapling</span>
           </button>
           <div className="flex items-center">
             <button onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--text-dim)] hover:text-[var(--text)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
-            <button onClick={startOnboarding} className="relative overflow-hidden group bg-[var(--brand-forest)] text-white px-7 py-2.5 rounded-full font-medium text-sm tracking-wide shadow-sm hover:shadow-md transition-all duration-400 hover:scale-[1.04] active:scale-[0.97] landing-btn-shimmer">
+            <Button variant="primary" size="lg" onClick={startOnboarding}>
               Get Started
-            </button>
+            </Button>
           </div>
         </div>
       </nav>
@@ -776,15 +777,13 @@ export default function LandingPage() {
             transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 700ms',
           }} className="flex flex-col items-center gap-4 mt-10">
             <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-              <button
+              <Button
+                variant="primary"
+                size="lg"
                 onClick={() => { setBetaModalOpen(true); if (betaEverSubmitted) setBetaSubmitted(true); }}
-                className={`relative overflow-hidden group px-10 py-4 rounded-full font-medium text-base tracking-wide text-white shadow-[0_4px_14px_rgba(27,108,66,0.18)] hover:shadow-[0_6px_20px_rgba(27,108,66,0.28)] transition-all duration-500 hover:scale-[1.02] active:scale-[0.98] landing-btn-shimmer${betaEverSubmitted ? '' : ' beta-glow-btn'}`}
-                style={{ background: 'var(--brand-forest-bright)', border: 'none' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--brand-forest-bright-hover)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'var(--brand-forest-bright)'; }}
               >
                 Sign up for Beta Testing
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -908,9 +907,9 @@ export default function LandingPage() {
             </h2>
             <p className="text-[var(--text-dim)] text-lg mt-6 font-light">Join students who learn smarter, not harder.</p>
             <div className="mt-10 flex flex-col items-center">
-              <button onClick={startOnboarding} className="relative overflow-hidden group bg-[var(--brand-forest)] text-white px-10 py-4 rounded-full font-medium text-base tracking-wide shadow-md hover:shadow-lg hover:bg-[#155A35] transition-all duration-500 hover:scale-[1.03] active:scale-[0.98] landing-btn-shimmer">
+              <Button variant="primary" size="xl" onClick={startOnboarding}>
                 Get Started
-              </button>
+              </Button>
             </div>
           </div>
         </section>
@@ -1015,7 +1014,7 @@ export default function LandingPage() {
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 22, height: 22 }} />
-                <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 17, color: '#1a5c2a', letterSpacing: '-0.02em' }}>Sapling</span>
+                <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 17, color: 'var(--brand-forest)', letterSpacing: '-0.02em' }}>Sapling</span>
               </div>
               <div>
                 <div style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace", fontSize: 10.5, color: '#6b7280', letterSpacing: '0.22em', marginBottom: 14, textTransform: 'uppercase', fontWeight: 600 }}>Early access</div>

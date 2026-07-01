@@ -13,6 +13,7 @@ import { getGradebookSummary, getCourses } from "@/lib/api";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GradebookCourseSummary } from "@/lib/types";
 import { SyllabusUploadFlow } from "@/components/Gradebook/SyllabusUploadFlow";
+import { Button } from "@/components/ui";
 
 const SAMPLE_SEMESTERS = ["Spring 2026", "Fall 2025"];
 const SAMPLE_COURSES: Record<string, GradebookCourseSummary[]> = {
@@ -193,21 +194,9 @@ export function GradebookLanding() {
       <TopBar
         title="Grades"
         actions={
-          <button
-            type="button"
-            onClick={() => setUploadOpen(true)}
-            style={{
-              padding: "6px 12px",
-              borderRadius: "var(--r-sm)",
-              background: "var(--accent)",
-              color: "var(--accent-fg)",
-              fontSize: 13,
-              border: 0,
-              cursor: "pointer",
-            }}
-          >
+          <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>
             Upload syllabus
-          </button>
+          </Button>
         }
       />
       <main
