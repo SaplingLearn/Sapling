@@ -51,3 +51,15 @@ class TestGeminiTestAuth:
 
         assert r.status_code == 200
         assert r.json() == {"ok": True, "reply": "Gemini OK"}
+
+    def test_admin_probe_failure_returns_ok_false(self):
+        # Autouse bypass reaches the handler; when the probe raises, the endpoint
+        # surfaces the error as {"ok": False, "error": ...} and still returns 200.
+        probe = AsyncMock(side_effect=RuntimeError("bad key"))
+        with patch("agents.health.health_probe_agent.run", new=probe):
+            r = client.get("/api/gemini-test")
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is False
+        assert "bad key" in body["error"]
