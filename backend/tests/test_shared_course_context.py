@@ -1,8 +1,8 @@
 """
 Unit tests for the shared course context system.
 
-Tests: course_context_service, graph_service (apply_graph_update side-effects),
-       learn.py (build_system_prompt), quiz.py (generate_quiz prompt augmentation).
+Tests: course_context_service (incl. course_summary agent), graph_service
+       (apply_graph_update side-effects), learn.py (build_system_prompt).
 
 Run from backend/:
     python -m pytest tests/test_shared_course_context.py -v
@@ -11,7 +11,8 @@ import sys
 import os
 import json
 import unittest
-from unittest.mock import patch, MagicMock, call
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch, MagicMock, call
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -517,149 +518,35 @@ class TestLearnHelpers(unittest.TestCase):
 # 5. quiz.py — generate_quiz prompt augmentation
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestQuizPromptAugmentation(unittest.TestCase):
-    """Legacy prompt-augmentation tests.
 
-    Post-refactor (ADR 0005), generate_quiz routes through quiz_agent
-    first and only falls through to the legacy `_legacy_generate_quiz`
-    path on agent failure. Each test below patches `quiz_agent.run` to
-    raise so the legacy code path actually executes — that is the path
-    these assertions describe (manual prompt-string augmentation against
-    course_context_service output).
-    """
+class TestCourseSummaryAgent(unittest.TestCase):
+    """#145: _generate_summary_with_gemini runs the course_summary agent and
+    degrades to a deterministic template string on agent failure."""
 
-    def _make_generate_body(self):
-        return {
-            "user_id": "user1",
-            "concept_node_id": "node-abc",
-            "difficulty": "medium",
-            "num_questions": 3,
-        }
-
-    def _force_legacy(self):
-        """Patch quiz_agent.run to raise so the route falls back to legacy."""
-        from unittest.mock import AsyncMock
-        return patch(
-            "routes.quiz.quiz_agent.run",
-            new=AsyncMock(side_effect=RuntimeError("force legacy fallback for tests")),
+    def test_returns_agent_summary_on_success(self):
+        from services import course_context_service as ccs
+        run = AsyncMock(
+            return_value=SimpleNamespace(
+                output=SimpleNamespace(summary="Agent class summary.")
+            )
         )
+        with patch.object(ccs.course_summary_agent, "run", new=run):
+            out = ccs._generate_summary_with_gemini(
+                "CS101", "Intro", 0.6, ["Loops"], ["Vars"], 12,
+            )
+        self.assertEqual(out, "Agent class summary.")
+        run.assert_called_once()
 
-    def _post_generate(self):
-        """POST to /api/quiz/generate via TestClient."""
-        from fastapi.testclient import TestClient
-        from main import app
-        return TestClient(app).post("/api/quiz/generate", json=self._make_generate_body())
-
-    # get_course_context is lazily imported inside _legacy_generate_quiz;
-    # patch at the source module so the `from ... import` resolves to our mock.
-    @patch("services.course_context_service.get_course_context")
-    @patch("routes.quiz.call_gemini_json")
-    @patch("routes.quiz.get_quiz_context", return_value=None)
-    @patch("routes.quiz.get_graph")
-    @patch("routes.quiz.table")
-    def test_misconceptions_appended_to_prompt(
-        self, mock_table, mock_graph, mock_quiz_ctx, mock_gemini, mock_ctx
-    ):
-        mock_table.return_value.select.return_value = [{
-            "id": "node-abc", "concept_name": "Pointers",
-            "mastery_score": 0.3, "course_id": "c1",
-        }]
-        mock_table.return_value.insert.return_value = None
-        mock_graph.return_value = {"nodes": [], "edges": []}
-        mock_ctx.return_value = {
-            "course_summary": {"avg_class_mastery": 0.4},
-            "concept_stats": [
-                {
-                    "concept_name": "Pointers",
-                    "common_misconceptions": ["Dangling pointers", "Memory leaks"],
-                    "prerequisite_gaps": ["Pointer arithmetic"],
-                }
-            ],
-        }
-        mock_gemini.return_value = {"questions": []}
-
-        with self._force_legacy():
-            self._post_generate()
-
-        actual_prompt = mock_gemini.call_args[0][0]
-        self.assertIn("Dangling pointers", actual_prompt)
-        self.assertIn("Memory leaks", actual_prompt)
-        self.assertIn("Pointer arithmetic", actual_prompt)
-
-    @patch("services.course_context_service.get_course_context", return_value={})
-    @patch("routes.quiz.call_gemini_json")
-    @patch("routes.quiz.get_quiz_context", return_value=None)
-    @patch("routes.quiz.get_graph")
-    @patch("routes.quiz.table")
-    def test_no_augmentation_when_ctx_empty(
-        self, mock_table, mock_graph, mock_quiz_ctx, mock_gemini, mock_ctx
-    ):
-        mock_table.return_value.select.return_value = [{
-            "id": "node-abc", "concept_name": "Loops",
-            "mastery_score": 0.5, "course_id": "c1",
-        }]
-        mock_table.return_value.insert.return_value = None
-        mock_graph.return_value = {"nodes": [], "edges": []}
-        mock_gemini.return_value = {"questions": []}
-
-        with self._force_legacy():
-            self._post_generate()
-
-        actual_prompt = mock_gemini.call_args[0][0]
-        self.assertNotIn("Common misconceptions seen across the class", actual_prompt)
-
-    @patch("services.course_context_service.get_course_context")
-    @patch("routes.quiz.call_gemini_json")
-    @patch("routes.quiz.get_quiz_context", return_value=None)
-    @patch("routes.quiz.get_graph")
-    @patch("routes.quiz.table")
-    def test_augmentation_capped_at_10_items(
-        self, mock_table, mock_graph, mock_quiz_ctx, mock_gemini, mock_ctx
-    ):
-        mock_table.return_value.select.return_value = [{
-            "id": "node-abc", "concept_name": "Pointers",
-            "mastery_score": 0.3, "course_id": "c1",
-        }]
-        mock_table.return_value.insert.return_value = None
-        mock_graph.return_value = {"nodes": [], "edges": []}
-        mock_ctx.return_value = {
-            "course_summary": {"avg_class_mastery": 0.4},
-            "concept_stats": [
-                {
-                    "concept_name": "Pointers",
-                    "common_misconceptions": [f"mistake_{i}" for i in range(20)],
-                    "prerequisite_gaps": [],
-                }
-            ],
-        }
-        mock_gemini.return_value = {"questions": []}
-
-        with self._force_legacy():
-            self._post_generate()
-
-        actual_prompt = mock_gemini.call_args[0][0]
-        self.assertIn("mistake_9", actual_prompt)
-        self.assertNotIn("mistake_10", actual_prompt)
-
-    @patch("routes.quiz.call_gemini_json")
-    @patch("routes.quiz.get_quiz_context", return_value=None)
-    @patch("routes.quiz.get_graph")
-    @patch("routes.quiz.table")
-    def test_no_augmentation_when_node_has_no_course_id(
-        self, mock_table, mock_graph, mock_quiz_ctx, mock_gemini
-    ):
-        mock_table.return_value.select.return_value = [{
-            "id": "node-abc", "concept_name": "GenericConcept",
-            "mastery_score": 0.5, "course_id": "",
-        }]
-        mock_table.return_value.insert.return_value = None
-        mock_graph.return_value = {"nodes": [], "edges": []}
-        mock_gemini.return_value = {"questions": []}
-
-        with self._force_legacy():
-            with patch("services.course_context_service.get_course_context") as mock_ctx:
-                self._post_generate()
-                mock_ctx.assert_not_called()
+    def test_falls_back_to_template_on_agent_failure(self):
+        from services import course_context_service as ccs
+        run = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch.object(ccs.course_summary_agent, "run", new=run):
+            out = ccs._generate_summary_with_gemini(
+                "CS101", "Intro", 0.6, ["Loops"], ["Vars"], 12,
+            )
+        # Deterministic template fallback — no second LLM call.
+        self.assertIn("Class average mastery", out)
+        self.assertIn("Loops", out)
 
 
 if __name__ == "__main__":
