@@ -75,6 +75,7 @@ ruff format .                   # formatter — available, not yet CI-gated (see
 - Display names are resolved via `services/profiles.py` (`get_display_name`/`get_display_names`), which decrypts off `user_profiles` — don't read name columns off `users`.
 - All current LLM calls route through `services/gemini_service.py` (`call_gemini`, `call_gemini_json`, `call_gemini_multiturn`). New LLM-driven code should be written as Pydantic AI agents in `backend/agents/` rather than extending `gemini_service.py`.
 - Knowledge-graph mutations go through `services/graph_service.py::apply_graph_update` — routes never write `graph_nodes`/`graph_edges` directly.
+- `functools.lru_cache` is reserved for **deterministic, per-process reads** (#98) — either immutable mappings that never need invalidation (e.g. `academics.offering_course_id`) or reads with a matching `clear_*_cache()` hook that every mutator calls (e.g. `course_context_service.get_course_context` is cleared by `update_course_context`). Cache only hashable-arg functions; return a deep copy if the cached value is mutable; never cache without a clear invalidation story. The autouse `_clear_lru_caches` fixture in `tests/conftest.py` resets these between tests.
 - Backend tests live in `backend/tests/` and run via `pytest`; shared fixtures (mock Supabase, mock Gemini) are in `tests/conftest.py`.
 - Routers are mounted in `main.py` with `/api/<name>` prefixes; new routes follow that pattern.
 

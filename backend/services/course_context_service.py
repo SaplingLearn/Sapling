@@ -11,9 +11,11 @@ Stores data in:
 - offering_summary: class-wide summary with Gemini-generated text (per offering)
 """
 
+import copy
 import json
 import hashlib
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from db.connection import table
 from services.gemini_service import call_gemini
@@ -65,14 +67,8 @@ Write in a professional but approachable tone. Be specific and data-driven."""
         )
 
 
-def get_course_context(offering_id: str) -> dict:
-    """
-    Return the cached class context for an offering: summary + concept stats.
-    Offering-scoped (one class instance in one term). Returns {} if not found.
-    """
-    if not offering_id:
-        return {}
-
+@lru_cache(maxsize=512)
+def _get_course_context_cached(offering_id: str) -> dict:
     try:
         # Get the offering summary
         summary_rows = table("offering_summary").select(
@@ -106,6 +102,26 @@ def get_course_context(offering_id: str) -> dict:
         return {}
 
 
+def get_course_context(offering_id: str) -> dict:
+    """
+    Return the cached class context for an offering: summary + concept stats.
+    Offering-scoped (one class instance in one term). Returns {} if not found.
+
+    Cached per-process (#98) and invalidated by ``update_course_context`` (which
+    runs after graph updates). Returns a deep copy so callers can't mutate the
+    shared cached value.
+    """
+    if not offering_id:
+        return {}
+    return copy.deepcopy(_get_course_context_cached(offering_id))
+
+
+def clear_course_context_cache() -> None:
+    """Drop the per-process course-context cache. Called whenever the underlying
+    aggregates change (``update_course_context``) and from test setup."""
+    _get_course_context_cached.cache_clear()
+
+
 def update_course_context(offering_id: str) -> None:
     """
     Aggregate mastery + quiz data for all students enrolled in an **offering**
@@ -127,6 +143,7 @@ def update_course_context(offering_id: str) -> None:
         # No students enrolled — purge any stale aggregates
         table("offering_concept_stats").delete({"offering_id": f"eq.{offering_id}"})
         table("offering_summary").delete({"offering_id": f"eq.{offering_id}"})
+        clear_course_context_cache()  # #98: aggregates changed → drop cached read
         return
 
     user_ids = [r["user_id"] for r in enrollment_rows]
@@ -335,3 +352,6 @@ def update_course_context(offering_id: str) -> None:
         },
         on_conflict="offering_id",
     )
+
+    # #98: the aggregates this offering's context reads from just changed.
+    clear_course_context_cache()
