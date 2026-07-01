@@ -703,7 +703,7 @@ export default function LandingPage() {
           </button>
           <div className="flex items-center">
             <button onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--text-dim)] hover:text-[var(--text)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
-            <Button variant="primary" size="lg" onClick={startOnboarding}>
+            <Button variant="primary" size="lg" style={{ padding: '6px 14px' }} onClick={startOnboarding}>
               Get Started
             </Button>
           </div>
@@ -779,7 +779,7 @@ export default function LandingPage() {
             <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
               <Button
                 variant="primary"
-                size="lg"
+                size="xl"
                 onClick={() => { setBetaModalOpen(true); if (betaEverSubmitted) setBetaSubmitted(true); }}
               >
                 Sign up for Beta Testing
