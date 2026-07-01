@@ -16,6 +16,7 @@ from db.connection import table
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import require_self
 from services.encryption import decrypt_if_present, decrypt_json
+from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
 
 router = APIRouter()
@@ -130,6 +131,14 @@ def get_cached_guides(user_id: str, request: Request):
         filters={"user_id": f"eq.{user_id}"},
         order="generated_at.desc",
     )
+    # ETag from the guides' (id, generated_at) — regenerate replaces rows with a
+    # fresh id + timestamp, so this captures add/remove/regenerate. A matching
+    # If-None-Match returns 304 and skips the per-offering course enrichment below.
+    etag = make_etag("guides", user_id, *sorted(f"{g['id']}:{g.get('generated_at')}" for g in guides))
+    not_modified = conditional(request, etag)
+    if not_modified is not None:
+        return not_modified
+
     # Each guide keys on an offering; the frontend speaks abstract course ids.
     # Map each offering → its abstract course id, then enrich with course_name.
     offering_to_course: dict[str, str | None] = {}
@@ -159,7 +168,7 @@ def get_cached_guides(user_id: str, request: Request):
             "overview": content.get("overview", ""),
             "generated_at": g["generated_at"],
         })
-    return {"guides": result}
+    return cached_json({"guides": result}, etag)
 
 
 @router.get("/{user_id}/courses")
