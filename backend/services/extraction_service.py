@@ -4,12 +4,14 @@ Public API kept stable for every existing caller. Engine selection happens via
 the OCR_ENGINE env var ("docling" default, "auto" for Docling+GOT-OCR fallback,
 "tesseract" for legacy behavior).
 """
+import hashlib
 import io
 import os
 from typing import Tuple
 
 from pypdf import PdfReader
 
+from services import cache
 from services.extraction_backends import tesseract_backend
 from services.extraction_backends.docling_backend import (
     DoclingUnavailableError,
@@ -138,7 +140,33 @@ def extract_text_from_pptx(file_bytes: bytes) -> str:
     return tesseract_backend.extract_text_from_pptx_impl(file_bytes)
 
 
+# OCR is content-addressed and deterministic, so cached extractions can live a
+# long time — the same file bytes always produce the same text for a given engine.
+_OCR_CACHE_TTL = 30 * 24 * 3600  # 30 days
+
+
 def extract_text_from_file(file_bytes: bytes, filename: str, content_type: str) -> str:
+    """Extract raw text from a PDF, DOCX, PPTX, plain-text, or image file.
+
+    Content-addressed cache (#97): re-extracting the same bytes (re-uploads,
+    retries, resubmissions) is a Redis hit instead of a full OCR run. Keyed on
+    sha256(file_bytes) + the engine config, so a different engine or a changed
+    file misses. No-op (and no hashing cost) when Redis isn't configured."""
+    if not cache.enabled():
+        return _extract_text_from_file_uncached(file_bytes, filename, content_type)
+    key = (
+        f"ocr:{hashlib.sha256(file_bytes).hexdigest()}"
+        f":{_engine()}:{_got_ocr_enabled()}"
+    )
+    hit = cache.get_str(key)
+    if hit is not None:
+        return hit
+    text = _extract_text_from_file_uncached(file_bytes, filename, content_type)
+    cache.set_str(key, text, ttl_seconds=_OCR_CACHE_TTL)
+    return text
+
+
+def _extract_text_from_file_uncached(file_bytes: bytes, filename: str, content_type: str) -> str:
     """Extract raw text from a PDF, DOCX, PPTX, plain-text, or image file."""
     lower = filename.lower()
     if content_type == "text/plain" or lower.endswith(".txt"):

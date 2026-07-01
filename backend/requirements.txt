@@ -53,3 +53,7 @@ sse-starlette>=2.0
 # Used by `python -m tests.evals.*` and the .github/workflows/evals.yml job.
 # Not imported at runtime by any production code path.
 pydantic-evals>=0.0.5
+
+# Optional cross-worker cache (#97). Only imported at runtime when REDIS_URL is
+# set; the app runs identically without it (services/cache.py degrades to no-op).
+redis>=5.0
