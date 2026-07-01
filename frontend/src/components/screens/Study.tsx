@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { TopBar } from "../TopBar";
 import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { Icon } from "../Icon";
-import { Pill } from "../Pill";
+import { FilterPills } from "@/components/ui";
 import { CustomSelect } from "../CustomSelect";
 
 // Lazy-load to keep mermaid/katex/highlight.js out of the OpenNext
@@ -523,10 +523,15 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <div style={{ padding: "14px 32px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
-          <Pill active={topicFilter === "all"} onClick={() => setTopicFilter("all")}>All topics</Pill>
-          {topics.map(t => (
-            <Pill key={t} active={topicFilter === t} onClick={() => setTopicFilter(t)}>{t}</Pill>
-          ))}
+          <FilterPills
+            options={[
+              { value: "all", label: "All topics" },
+              ...topics.map((t) => ({ value: t, label: t })),
+            ]}
+            value={topicFilter}
+            onChange={setTopicFilter}
+            gap={8}
+          />
           <div style={{ flex: 1 }} />
           {docsUsed !== null && (
             <span className="chip chip--accent" title="Library documents used as context for generation">
