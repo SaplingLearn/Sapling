@@ -5,7 +5,8 @@ import os
 import sqlite3
 import time
 import zipfile
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -225,17 +226,26 @@ class TestScrapeQuizlet:
                 svc.scrape_quizlet_url("https://quizlet.com/123/abc")
 
 
+# ── flashcard agent helpers (#146) ───────────────────────────────────────────
+
+def _agent_returning(cards):
+    """AsyncMock for flashcard_agent.run returning a Flashcards of these dicts."""
+    from agents.flashcard import Flashcards, FlashCard
+    fc = Flashcards(cards=[FlashCard(front=c["front"], back=c["back"]) for c in cards])
+    return AsyncMock(return_value=SimpleNamespace(output=fc))
+
+
 # ── extract_cards_from_image ─────────────────────────────────────────────────
 
 class TestExtractFromImage:
-    def test_runs_extraction_then_gemini_split(self):
+    def test_runs_extraction_then_agent_split(self):
+        run = _agent_returning([
+            {"front": "Mitosis", "back": "cell division"},
+            {"front": "Meiosis", "back": "halving"},
+        ])
         with patch("services.flashcard_import_service.extraction_service") as ext, \
-             patch("services.flashcard_import_service.call_gemini") as gem:
+             patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             ext.extract_text_from_file.return_value = "# Notes\nMitosis: cell division\nMeiosis: halving"
-            gem.return_value = json.dumps([
-                {"front": "Mitosis", "back": "cell division"},
-                {"front": "Meiosis", "back": "halving"},
-            ])
             cards = svc.extract_cards_from_image(b"\x89PNG_fake_bytes", filename="notes.png")
 
         ext.extract_text_from_file.assert_called_once()
@@ -245,34 +255,45 @@ class TestExtractFromImage:
         ]
 
     def test_returns_empty_on_empty_extraction(self):
+        run = _agent_returning([])
         with patch("services.flashcard_import_service.extraction_service") as ext, \
-             patch("services.flashcard_import_service.call_gemini") as gem:
+             patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             ext.extract_text_from_file.return_value = ""
             cards = svc.extract_cards_from_image(b"", filename="x.png")
         assert cards == []
-        gem.assert_not_called()
+        run.assert_not_called()
 
 
 # ── gemini_generate_cards ────────────────────────────────────────────────────
 
 class TestGenerateCards:
-    def test_calls_gemini_with_prompt_and_returns_parsed(self):
-        with patch("services.flashcard_import_service.call_gemini") as gem:
-            gem.return_value = json.dumps([
-                {"front": "Q1", "back": "A1"},
-                {"front": "Q2", "back": "A2"},
-            ])
+    def test_calls_agent_with_prompt_and_returns_cards(self):
+        run = _agent_returning([
+            {"front": "Q1", "back": "A1"},
+            {"front": "Q2", "back": "A2"},
+        ])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             cards = svc.gemini_generate_cards("source notes", count=2, difficulty="recall")
         assert cards == [{"front": "Q1", "back": "A1"}, {"front": "Q2", "back": "A2"}]
-        sent = gem.call_args.args[0]
+        sent = run.call_args.args[0]  # the rendered prompt handed to the agent
         assert "source notes" in sent
         assert "recall" in sent
         assert "2" in sent
 
-    def test_invalid_json_returns_empty(self):
-        with patch("services.flashcard_import_service.call_gemini") as gem:
-            gem.return_value = "not valid json"
+    def test_agent_failure_returns_empty(self):
+        run = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             assert svc.gemini_generate_cards("x", count=5, difficulty="recall") == []
+
+    def test_filters_cards_missing_a_side(self):
+        run = _agent_returning([
+            {"front": "keep", "back": "yes"},
+            {"front": "", "back": "no front"},
+            {"front": "no back", "back": ""},
+        ])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            cards = svc.gemini_generate_cards("x", count=3, difficulty="recall")
+        assert cards == [{"front": "keep", "back": "yes"}]
 
 
 # ── gemini_cleanup_cards ─────────────────────────────────────────────────────
@@ -280,15 +301,15 @@ class TestGenerateCards:
 class TestCleanupCards:
     def test_replaces_cards_in_input_order(self):
         cards = [{"front": "miotsis", "back": "cell div."}]
-        with patch("services.flashcard_import_service.call_gemini") as gem:
-            gem.return_value = json.dumps([{"front": "Mitosis", "back": "Cell division"}])
+        run = _agent_returning([{"front": "Mitosis", "back": "Cell division"}])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             out = svc.gemini_cleanup_cards(cards)
         assert out == [{"front": "Mitosis", "back": "Cell division"}]
 
-    def test_falls_back_to_input_on_invalid_response(self):
+    def test_falls_back_to_input_on_agent_failure(self):
         cards = [{"front": "X", "back": "Y"}]
-        with patch("services.flashcard_import_service.call_gemini") as gem:
-            gem.return_value = "garbage"
+        run = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             out = svc.gemini_cleanup_cards(cards)
         assert out == cards
 
@@ -297,9 +318,28 @@ class TestCleanupCards:
 
 class TestCloze:
     def test_generates_cloze_cards(self):
-        with patch("services.flashcard_import_service.call_gemini") as gem:
-            gem.return_value = json.dumps([
-                {"front": "{{...}} is the powerhouse of the cell.", "back": "Mitochondria"},
-            ])
+        run = _agent_returning([
+            {"front": "{{...}} is the powerhouse of the cell.", "back": "Mitochondria"},
+        ])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             cards = svc.gemini_cloze("Mitochondria is the powerhouse of the cell.")
         assert cards == [{"front": "{{...}} is the powerhouse of the cell.", "back": "Mitochondria"}]
+
+
+# ── generate_flashcards (moved off gemini_service in #146) ────────────────────
+
+class TestGenerateFlashcards:
+    def test_returns_agent_cards_with_grounded_prompt(self):
+        run = _agent_returning([
+            {"front": "What is a base case?", "back": "The stopping condition of a recursion."},
+        ])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            cards = svc.generate_flashcards(
+                "Recursion", count=1, weak_concepts=["base case"],
+            )
+        assert cards == [
+            {"front": "What is a base case?", "back": "The stopping condition of a recursion."},
+        ]
+        sent = run.call_args.args[0]
+        assert "Recursion" in sent
+        assert "base case" in sent  # weak-concept focus threaded into the prompt
