@@ -42,14 +42,14 @@ function SeedSVG({ active }: { active: boolean }) {
       <g style={{ transformOrigin: '100px 215px', transform: 'scale(0.55)' }}>
         {/* Stem */}
         <motion.path d="M100 215 L100 137"
-          stroke="#1a5c2a" strokeWidth="5" strokeLinecap="round"
+          stroke="#1B6C42" strokeWidth="5" strokeLinecap="round"
           initial={{ pathLength: 0 }}
           animate={active ? { pathLength: 1 } : { pathLength: 0 }}
           transition={{ duration: 0.55, ease: 'easeOut' }}
         />
         {/* Left leaf */}
         <motion.path d="M100 167 C100 167 58 155 52 119 C52 119 94 113 100 167 Z"
-          fill="#1a5c2a"
+          fill="#1B6C42"
           initial={{ scale: 0 }} animate={active ? { scale: 1 } : { scale: 0 }}
           transition={{ duration: 0.55, delay: 0.42, ease: [0.34, 1.56, 0.64, 1] }}
           style={{ transformOrigin: '100px 167px' }}
@@ -62,7 +62,7 @@ function SeedSVG({ active }: { active: boolean }) {
           style={{ transformOrigin: '100px 143px' }}
         />
         {/* Tip bud */}
-        <motion.circle cx="100" cy="131" r="7" fill="#1a5c2a"
+        <motion.circle cx="100" cy="131" r="7" fill="#1B6C42"
           initial={{ scale: 0 }} animate={active ? { scale: 1 } : { scale: 0 }}
           transition={{ duration: 0.38, delay: 0.32, ease: [0.34, 1.56, 0.64, 1] }}
           style={{ transformOrigin: '100px 131px' }}
@@ -220,7 +220,7 @@ function AppWindow({ children }: { children: React.ReactNode }) {
         <div className="w-3 h-3 rounded-full bg-[#28C840]" />
         <div className="flex-1 mx-4 rounded-full h-5 flex items-center px-3"
           style={{ background: 'rgba(0,0,0,0.05)' }}>
-          <span className="text-[10px] opacity-50 font-jetbrains" style={{ color: 'var(--brand-text2)' }}>
+          <span className="text-[10px] opacity-50 font-jetbrains" style={{ color: 'var(--text-dim)' }}>
             saplinglearn.com
           </span>
         </div>
@@ -243,7 +243,7 @@ function Step1Content({ active }: { active: boolean }) {
       {/* Google button */}
       <motion.div
         className="w-full max-w-[230px] bg-white rounded-xl py-2.5 flex items-center justify-center gap-2.5 shadow-sm text-sm font-medium overflow-hidden relative"
-        style={{ border: '1px solid rgba(0,0,0,0.1)', color: 'var(--brand-text1)' }}
+        style={{ border: '1px solid rgba(0,0,0,0.1)', color: 'var(--text)' }}
         initial={{ opacity: 0, y: 12 }}
         animate={active ? { opacity: 1, y: 0 } : { opacity: 0, y: 12 }}
         transition={{ duration: 0.4, delay: 0.1 }}
@@ -267,7 +267,7 @@ function Step1Content({ active }: { active: boolean }) {
       {(['🎓 Boston University', '📅 Sophomore'] as const).map((label, i) => (
         <motion.div key={label}
           className="w-full max-w-[230px] rounded-xl px-3 py-2 text-xs"
-          style={{ background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.07)', color: 'var(--brand-text2)' }}
+          style={{ background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.07)', color: 'var(--text-dim)' }}
           initial={{ opacity: 0, y: 10 }}
           animate={active ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }}
           transition={{ duration: 0.35, delay: 0.28 + i * 0.14 }}
@@ -336,7 +336,7 @@ function Step2Content({ active, showGraph }: { active: boolean; showGraph: boole
             </svg>
           </motion.div>
 
-          <span className="text-[10px] font-jetbrains" style={{ color: 'var(--brand-text2)' }}>syllabus.pdf</span>
+          <span className="text-[10px] font-jetbrains" style={{ color: 'var(--text-dim)' }}>syllabus.pdf</span>
 
           {/* Progress ring */}
           <svg viewBox="0 0 28 28" className="w-7 h-7 -rotate-90">
@@ -464,7 +464,7 @@ function Step3Content({ active }: { active: boolean }) {
         animate={active ? { x: 0, opacity: 1 } : { x: 56, opacity: 0 }}
         transition={{ duration: 0.55, delay: 1.6, ease: [0.34, 1.56, 0.64, 1] }}
       >
-        <p className="text-[9px] leading-snug mb-2.5" style={{ color: 'var(--brand-text2)' }}>
+        <p className="text-[9px] leading-snug mb-2.5" style={{ color: 'var(--text-dim)' }}>
           Time complexity of binary search?
         </p>
         <div className="flex flex-col gap-1">
@@ -473,7 +473,7 @@ function Step3Content({ active }: { active: boolean }) {
               className="rounded-lg px-2 py-1 text-[9px] font-medium"
               style={i === 1
                 ? { background: 'rgba(27,108,66,0.12)', color: 'var(--brand-forest)' }
-                : { background: 'rgba(0,0,0,0.04)', color: 'var(--brand-text2)' }
+                : { background: 'rgba(0,0,0,0.04)', color: 'var(--text-dim)' }
               }
             >
               {i === 1 && '✓ '}{opt}
@@ -625,11 +625,11 @@ export default function HowItWorks() {
                     Step {step.num}
                   </span>
                   <h3 className="font-playfair font-semibold tracking-tight leading-tight"
-                    style={{ color: 'var(--brand-text1)', fontSize: 'clamp(1.75rem, 3.5vw, 2.8125rem)', marginBottom: 'clamp(0.75rem, 1.5vh, 1.25rem)' }}>
+                    style={{ color: 'var(--text)', fontSize: 'clamp(1.75rem, 3.5vw, 2.8125rem)', marginBottom: 'clamp(0.75rem, 1.5vh, 1.25rem)' }}>
                     {step.title}
                   </h3>
                   <p className="font-inter leading-relaxed font-light"
-                    style={{ color: 'var(--brand-text2)', fontSize: 'clamp(0.9375rem, 1.4vw, 1.25rem)' }}>
+                    style={{ color: 'var(--text-dim)', fontSize: 'clamp(0.9375rem, 1.4vw, 1.25rem)' }}>
                     {step.desc}
                   </p>
                 </motion.div>

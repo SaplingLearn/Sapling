@@ -3,7 +3,7 @@ import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
-import { Pill } from "../Pill";
+import { Toggle } from "@/components/ui";
 import { CustomSelect } from "../CustomSelect";
 import { DocumentUploadModal } from "../DocumentUploadModal";
 import { CalendarMonthSkeleton } from "../Skeleton";
@@ -189,22 +189,17 @@ export function Calendar() {
 
   const topActions = (
     <>
-      <div style={{ display: "flex", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
-        {(["month", "week", "day", "table"] as View[]).map(v => (
-          <button
-            key={v}
-            onClick={() => setView(v)}
-            style={{
-              padding: "5px 10px", fontSize: 11,
-              background: view === v ? "var(--accent-soft)" : "transparent",
-              color: view === v ? "var(--accent)" : "var(--text-dim)",
-              textTransform: "capitalize",
-            }}
-          >
-            {v}
-          </button>
-        ))}
-      </div>
+      <Toggle
+        options={[
+          { value: "month", label: "Month" },
+          { value: "week", label: "Week" },
+          { value: "day", label: "Day" },
+          { value: "table", label: "Table" },
+        ]}
+        value={view}
+        onChange={setView}
+        size="sm"
+      />
       {view !== "table" && (
         <>
           <button className="btn btn--sm" onClick={() => shift(setCursor, view, -1)}>

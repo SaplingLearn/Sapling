@@ -2,6 +2,7 @@
 
 import React from "react";
 import type { Cosmetic } from "@/lib/types";
+import { Badge } from "@/components/ui";
 
 interface TitleFlairProps {
   cosmetic?: Cosmetic | null;
@@ -12,27 +13,16 @@ interface TitleFlairProps {
 export function TitleFlair({ cosmetic, className, style }: TitleFlairProps) {
   if (!cosmetic) return null;
   const rarity = cosmetic.rarity ?? "common";
-  // Rarity is never conveyed by colored text (fails 4.5:1 on several tiers);
-  // the border carries the color and the literal tier name carries the cue.
+  // The rarity hue is carried by the border + soft bg; the text stays neutral
+  // (Badge enforces this) — colored text fails 4.5:1 on several tiers.
   return (
-    <span
+    <Badge
       className={className}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "2px 8px",
-        fontSize: 10,
-        fontFamily: "var(--font-mono)",
-        letterSpacing: "0.1em",
-        textTransform: "uppercase",
-        borderRadius: "var(--r-full)",
-        border: `1px solid var(--rarity-${rarity})`,
-        color: "var(--text)",
-        background: `var(--rarity-${rarity}-bg)`,
-        ...style,
-      }}
+      color={`var(--rarity-${rarity})`}
+      bg={`var(--rarity-${rarity}-bg)`}
+      style={style}
     >
       {cosmetic.name} · {rarity}
-    </span>
+    </Badge>
   );
 }
