@@ -1,5 +1,5 @@
 {
-  "src/app/page.tsx": {
+  "src/app/(public)/page.tsx": {
     "@next/next/no-html-link-for-pages": {
       "count": 1
     },

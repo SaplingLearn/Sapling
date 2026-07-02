@@ -73,7 +73,7 @@ export default function AboutPage() {
                 fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
                 fontWeight: 700,
                 fontSize: 20,
-                color: "#1a5c2a",
+                color: "var(--brand-forest)",
                 letterSpacing: "-0.02em",
                 lineHeight: 1.1,
               }}

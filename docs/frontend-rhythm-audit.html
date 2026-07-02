@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sapling — Frontend Rhythm Audit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Playfair+Display:ital,wght@0,500;0,600;0,700;0,800;1,600;1,800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* app "source of truth" tokens (warm) */
+    --bg:#faf8f3; --bg-panel:#fdfcf9; --bg-soft:#ebe6dc; --bg-inset:#f7f3eb;
+    --border:rgba(42,39,31,.12); --border-strong:rgba(42,39,31,.20);
+    --text:#1a1814; --text-dim:#3f3b31; --text-muted:#6f6857;
+    --forest:#1B6C42; --forest-bright:#2D8F5C; --accent:#8a9a5b; --accent-soft:#f1f6ee;
+    --warn:#b4562c; --err:#a83a3a;
+    --r-sm:6px; --r-md:10px; --r-lg:16px; --r-full:999px;
+    --shadow-sm:0 1px 2px rgba(19,38,16,.05),0 1px 1px rgba(19,38,16,.04);
+    --shadow-md:0 4px 14px rgba(19,38,16,.07),0 1px 2px rgba(19,38,16,.04);
+    --shadow-lg:0 24px 60px rgba(19,38,16,.12),0 4px 10px rgba(19,38,16,.05);
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--text);
+    font-family:'DM Sans',system-ui,sans-serif;font-size:15px;line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(ellipse 80% 50% at 100% -5%,rgba(138,154,91,.06),transparent 55%);
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:64px 32px 120px}
+  .serif{font-family:'Playfair Display',Georgia,serif;letter-spacing:-.015em;font-weight:600;line-height:1.12}
+  .micro{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-muted)}
+  a{color:var(--forest)}
+  code{font-family:var(--mono);font-size:.85em;background:var(--bg-soft);padding:1px 6px;border-radius:4px;color:var(--text-dim)}
+
+  /* header */
+  header{margin-bottom:72px;border-bottom:1px solid var(--border);padding-bottom:40px}
+  header .micro{display:block;margin-bottom:18px}
+  h1.title{font-family:'Playfair Display',serif;font-weight:700;font-size:clamp(40px,6vw,68px);line-height:1.02;letter-spacing:-.02em;margin:0 0 20px;max-width:16ch}
+  h1.title em{font-style:italic;color:var(--forest)}
+  .lede{font-size:19px;color:var(--text-dim);max-width:62ch;margin:0}
+  .meta{margin-top:26px;display:flex;gap:28px;flex-wrap:wrap}
+  .meta div{font-size:13px;color:var(--text-muted)}
+  .meta b{color:var(--text);font-weight:600}
+
+  section{margin-top:84px}
+  h2{font-family:'Playfair Display',serif;font-weight:600;font-size:32px;letter-spacing:-.015em;margin:0 0 8px;display:flex;align-items:baseline;gap:14px}
+  h2 .n{font-family:var(--mono);font-size:14px;color:var(--accent);font-weight:600;letter-spacing:0}
+  .sub{color:var(--text-muted);max-width:64ch;margin:0 0 32px;font-size:15px}
+
+  /* three-zone diagram */
+  .zones{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;background:var(--bg-panel)}
+  .zone{padding:26px 24px;position:relative}
+  .zone+.zone{border-left:1px solid var(--border)}
+  .zone h3{font-family:'Playfair Display',serif;font-size:19px;font-weight:600;margin:10px 0 4px}
+  .zone .where{font-size:12px;color:var(--text-muted);margin-bottom:18px;min-height:32px}
+  .zone ul{margin:0;padding:0;list-style:none;font-size:13px;color:var(--text-dim)}
+  .zone li{padding:6px 0;border-top:1px dashed var(--border)}
+  .zone li:first-child{border-top:0}
+  .tag{display:inline-block;font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;border-radius:var(--r-full)}
+  .tag.hot{background:#fbe8df;color:var(--warn)}
+  .tag.mid{background:#f3efe0;color:#8a7320}
+  .tag.calm{background:var(--accent-soft);color:#3a6a2c}
+  .arrow{text-align:center;font-family:var(--mono);color:var(--text-muted);font-size:13px;margin:14px 0 0;letter-spacing:.1em}
+
+  /* crux table */
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden}
+  th,td{text-align:left;padding:12px 16px;border-bottom:1px solid var(--border);vertical-align:middle}
+  thead th{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);background:var(--bg-inset);font-weight:600}
+  tbody tr:last-child td{border-bottom:0}
+  td code{white-space:nowrap}
+  .sw{display:inline-flex;align-items:center;gap:9px}
+  .chip-c{width:15px;height:15px;border-radius:5px;border:1px solid rgba(0,0,0,.12);flex:none}
+  .warm{color:var(--forest)}
+  .cool{color:#4b6076}
+
+  /* greens specimen */
+  .greens{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
+  .green{background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r-md);padding:0;overflow:hidden}
+  .green .chip-big{height:74px}
+  .green .body{padding:12px 13px}
+  .green .hex{font-family:var(--mono);font-size:12px;font-weight:600}
+  .green .lbl{font-size:11.5px;color:var(--text-muted);margin-top:3px;line-height:1.35}
+
+  /* live specimens row */
+  .specimens{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  @media(max-width:760px){.specimens,.greens,.zones{grid-template-columns:1fr}.zone+.zone{border-left:0;border-top:1px solid var(--border)}}
+  .spec{border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;background:var(--bg-panel)}
+  .spec .cap{padding:11px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .spec .cap .micro{margin:0}
+  .verdict{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:3px 9px;border-radius:var(--r-full)}
+  .v-bad{background:#fbe2e0;color:var(--err)}
+  .v-good{background:var(--accent-soft);color:#3a6a2c}
+  .stage{padding:40px 24px;display:flex;align-items:center;justify-content:center;min-height:170px}
+  .stage.mesh{background:radial-gradient(ellipse at top,#e6f0e8,#f0f4f2 60%)}
+
+  /* specimen: beta pill (the "before") */
+  .beta-pill{
+    position:relative;overflow:hidden;border:none;cursor:pointer;
+    padding:16px 40px;border-radius:999px;color:#fff;font-family:'DM Sans',sans-serif;
+    font-size:16px;font-weight:500;letter-spacing:.01em;background:#2D8F5C;
+    box-shadow:0 4px 14px rgba(27,108,66,.18);
+    animation:betaGlow 2.2s ease-in-out infinite;
+  }
+  @keyframes betaGlow{
+    0%,100%{box-shadow:0 0 0 0 rgba(74,158,92,0),0 4px 20px rgba(74,158,92,.15)}
+    50%{box-shadow:0 0 0 5px rgba(74,158,92,.6),0 4px 28px rgba(74,158,92,.3)}
+  }
+  /* specimen: app button (the "after"/baseline) */
+  .app-btn{
+    display:inline-flex;align-items:center;gap:8px;cursor:pointer;border:1px solid transparent;
+    padding:8px 14px;border-radius:6px;font-size:13px;font-weight:500;
+    background:#1B6C42;color:#fff;font-family:'DM Sans',sans-serif;
+    transition:filter .14s cubic-bezier(.2,.7,.2,1);
+  }
+  .app-btn:hover{filter:brightness(1.06)}
+
+  /* specimen: surfaces */
+  .modal-card{
+    width:100%;max-width:340px;border-radius:24px;padding:26px 26px 22px;
+    background:linear-gradient(145deg,#d5e8d8 0%,#e8f0e3 45%,#f0ebe0 100%);
+    border:1px solid rgba(255,255,255,.7);
+    box-shadow:0 20px 60px rgba(15,23,42,.14),inset 0 0 0 1px rgba(255,255,255,.5);
+  }
+  .modal-card .k{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#6b7280}
+  .modal-card h4{font-family:'Playfair Display',serif;font-weight:700;font-size:28px;margin:8px 0 4px;color:#1a1a1a}
+  .modal-card h4 em{font-style:italic;color:#1B6C42}
+  .modal-card p{font-size:13px;color:#4b5563;margin:0}
+  .app-card{
+    width:100%;max-width:340px;background:var(--bg-panel);border:1px solid var(--border);
+    border-radius:16px;box-shadow:var(--shadow-sm);padding:22px;
+  }
+  .app-card .micro{margin:0 0 8px}
+  .app-card h4{font-family:'Playfair Display',serif;font-weight:600;font-size:22px;margin:0 0 4px}
+  .app-card p{font-size:13px;color:var(--text-dim);margin:0}
+
+  /* findings */
+  .finding{display:grid;grid-template-columns:64px 1fr;gap:20px;padding:22px 0;border-top:1px solid var(--border)}
+  .finding:first-of-type{border-top:0}
+  .sev{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.05em;padding:5px 0;text-align:center;border-radius:var(--r-sm);height:fit-content}
+  .p0{background:#fbe2e0;color:var(--err)}
+  .p1{background:#fbe8df;color:var(--warn)}
+  .p2{background:#f3efe0;color:#8a7320}
+  .p3{background:var(--bg-soft);color:var(--text-muted)}
+  .finding h3{font-family:'DM Sans',sans-serif;font-size:17px;font-weight:600;margin:2px 0 6px}
+  .finding p{margin:0 0 8px;font-size:14px;color:var(--text-dim)}
+  .finding .fix{font-size:13.5px;color:var(--text);background:var(--accent-soft);border:1px solid var(--accent-soft);border-radius:var(--r-md);padding:10px 14px}
+  .finding .fix b{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#3a6a2c;display:block;margin-bottom:2px}
+  .ref{font-family:var(--mono);font-size:11.5px;color:var(--text-muted)}
+
+  /* sequence */
+  .seq{counter-reset:s;display:grid;gap:12px}
+  .step{display:grid;grid-template-columns:40px 1fr;gap:18px;align-items:start;background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r-md);padding:16px 18px}
+  .step::before{counter-increment:s;content:counter(s);font-family:'Playfair Display',serif;font-weight:700;font-size:24px;color:var(--accent);line-height:1}
+  .step h3{margin:0 0 3px;font-size:15px;font-weight:600}
+  .step p{margin:0;font-size:13.5px;color:var(--text-dim)}
+  .step .band{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+  .divlbl{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-muted);margin:22px 0 10px}
+  footer{margin-top:90px;padding-top:28px;border-top:1px solid var(--border);font-size:12.5px;color:var(--text-muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="micro">Sapling · Frontend Audit · 2026-06-30</span>
+    <h1 class="title">The flow runs on <em>two</em> design systems, not one.</h1>
+    <p class="lede">A new user crosses three different visual rhythms before they reach the app. The seam isn't a vibe — it's baked into the token layer, and the code comments admit it.</p>
+    <div class="meta">
+      <div><b>Baseline / source of truth</b> — the dashboard &amp; inner app shell</div>
+      <div><b>Measured</b> — landing · beta signup · onboarding · pending</div>
+    </div>
+  </header>
+
+  <section>
+    <h2><span class="n">01</span> The journey breaks rhythm three times</h2>
+    <p class="sub">Each boundary is an aesthetic jump. The energy <em>peaks</em> in the marketing zone and drops to calm right as the user arrives — the reverse of a settling arc.</p>
+    <div class="zones">
+      <div class="zone">
+        <span class="tag hot">Zone 1 · pre-auth</span>
+        <h3>Marketing</h3>
+        <div class="where">landing · beta modal · sign-in modal</div>
+        <ul>
+          <li>cool "main" palette (<code>#2e7d52</code>)</li>
+          <li>Playfair 44–48px, italic accents</li>
+          <li>rounded-full pill + <b>infinite glow</b></li>
+          <li>mesh blobs · shimmer · float (∞)</li>
+          <li>24px-radius warm-gradient box</li>
+          <li>cool slate shadows</li>
+        </ul>
+      </div>
+      <div class="zone">
+        <span class="tag mid">Zone 2 · transition</span>
+        <h3>Onboarding &amp; pending</h3>
+        <div class="where">get-started modal · waitlist</div>
+        <ul>
+          <li>app palette (warm) ✓</li>
+          <li><code>.h-serif</code> 32/26px (bespoke)</li>
+          <li>plain <code>.btn</code> / <code>.btn--primary</code></li>
+          <li>calm transitions</li>
+          <li>centered card in a <b>void</b></li>
+          <li>hard-coded px spacing</li>
+        </ul>
+      </div>
+      <div class="zone">
+        <span class="tag calm">Zone 3 · the app</span>
+        <h3>Source of truth</h3>
+        <div class="where">dashboard · learn · library …</div>
+        <ul>
+          <li>warm forest/ink editorial</li>
+          <li><code>.h-serif</code> on a token scale</li>
+          <li><code>.btn--primary</code>, 6px radius</li>
+          <li>calm, event-driven only</li>
+          <li><code>.card</code> 16px, in shell layout</li>
+          <li>green-tinted shadows</li>
+        </ul>
+      </div>
+    </div>
+    <p class="arrow">zone 1 &nbsp;—→&nbsp; zone 2 &nbsp;—→&nbsp; zone 3 &nbsp;&nbsp;( two seams the user can feel )</p>
+  </section>
+
+  <section>
+    <h2><span class="n">02</span> The crux — same token name, different value</h2>
+    <p class="sub">The pre-auth surface re-declares semantic tokens inside the <code>.landing-page</code> scope. So identical class names render warm in-app and cool in pre-auth. <span class="ref">globals.css:60–64, 135–149, 762–789</span></p>
+    <table>
+      <thead><tr><th>Token</th><th>App shell (<code>:root</code>)</th><th>Pre-auth (<code>.landing-page</code>)</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>--border</code></td>
+          <td><span class="sw"><span class="chip-c" style="background:rgba(42,39,31,.18)"></span><span class="warm">warm 42,39,31</span></span></td>
+          <td><span class="sw"><span class="chip-c" style="background:rgba(107,114,128,.5)"></span><span class="cool">cool slate 107,114,128</span></span></td>
+          <td>borders change temperature</td></tr>
+        <tr><td><code>--text-muted</code></td>
+          <td><span class="sw"><span class="chip-c" style="background:#6f6857"></span><span class="warm">#6f6857 taupe</span></span></td>
+          <td><span class="sw"><span class="chip-c" style="background:#4b5563"></span><span class="cool">#4b5563 slate</span></span></td>
+          <td>secondary text shifts hue</td></tr>
+        <tr><td><code>--text</code></td>
+          <td><span class="sw"><span class="chip-c" style="background:#1a1814"></span><span class="warm">#1a1814 warm-black</span></span></td>
+          <td><span class="sw"><span class="chip-c" style="background:#111827"></span><span class="cool">#111827 cool-black</span></span></td>
+          <td>even the ink differs</td></tr>
+        <tr><td><code>--shadow-*</code></td>
+          <td><span class="warm">green-tinted 19,38,16</span></td>
+          <td><span class="cool">slate-tinted 15,23,42</span></td>
+          <td>shadows warm vs cool</td></tr>
+        <tr><td><code>--dur-fast / -slow</code></td>
+          <td><code>140 / 420ms</code></td>
+          <td><code>120 / 350ms</code></td>
+          <td>same name, different speed</td></tr>
+        <tr><td><code>--r-* vs --radius-*</code></td>
+          <td><code>--r-sm…--r-xl</code></td>
+          <td><code>--radius-sm…-full</code></td>
+          <td>duplicate names, same values</td></tr>
+      </tbody>
+    </table>
+    <p class="sub" style="margin-top:18px">A component literally cannot move between zones without being re-tokenized. <b>This is the structural fix that makes everything below stay fixed.</b></p>
+  </section>
+
+  <section>
+    <h2><span class="n">03</span> Five greens for one brand</h2>
+    <p class="sub">The most brand-defining color is inconsistent across the funnel. A user's <em>first</em> green (glowing beta pill) is not their <em>first in-app</em> green (flat forest rectangle).</p>
+    <div class="greens">
+      <div class="green"><div class="chip-big" style="background:#1B6C42"></div><div class="body"><div class="hex">#1B6C42</div><div class="lbl">--brand-forest · app primary</div></div></div>
+      <div class="green"><div class="chip-big" style="background:#2D8F5C"></div><div class="body"><div class="hex">#2D8F5C</div><div class="lbl">--brand-forest-bright · beta CTA</div></div></div>
+      <div class="green"><div class="chip-big" style="background:#4A9E5C"></div><div class="body"><div class="hex">≈#4A9E5C</div><div class="lbl">beta glow ring · matches neither</div></div></div>
+      <div class="green"><div class="chip-big" style="background:#2e7d52"></div><div class="body"><div class="hex">#2e7d52</div><div class="lbl">--brand-primary · pre-auth "main"</div></div></div>
+      <div class="green"><div class="chip-big" style="background:#22c55e"></div><div class="body"><div class="hex">#22c55e</div><div class="lbl">--brand-success · near-neon</div></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">04</span> The button is a different species before vs after sign-in</h2>
+    <p class="sub">Live specimens. The first button a user ever clicks sets the expectation for "what a button is here" — and it's contradicted two screens later. (Hover the app button; watch the beta pill pulse forever.)</p>
+    <div class="specimens">
+      <div class="spec">
+        <div class="cap"><span class="micro">Zone 1 · beta CTA</span><span class="verdict v-bad">off-system</span></div>
+        <div class="stage mesh"><button class="beta-pill">Sign up for Beta Testing</button></div>
+      </div>
+      <div class="spec">
+        <div class="cap"><span class="micro">Zone 3 · app primary</span><span class="verdict v-good">source of truth</span></div>
+        <div class="stage"><button class="app-btn">Start learning</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">05</span> "The box that holds content" has 3+ treatments</h2>
+    <p class="sub">The beta &amp; sign-in modals duplicate the same inline 24px warm-gradient box with cool shadows; the app uses one minimal <code>.card</code> primitive. Onboarding floats a card in a void; <code>pending</code> has no box at all.</p>
+    <div class="specimens">
+      <div class="spec">
+        <div class="cap"><span class="micro">Zone 1 · beta / sign-in modal</span><span class="verdict v-bad">inline one-off ×2</span></div>
+        <div class="stage mesh">
+          <div class="modal-card">
+            <div class="k">— The waitlist</div>
+            <h4>Watch your knowledge <em>grow</em></h4>
+            <p>24px radius · warm gradient · cool slate shadow · copied into two files</p>
+          </div>
+        </div>
+      </div>
+      <div class="spec">
+        <div class="cap"><span class="micro">Zone 3 · .card</span><span class="verdict v-good">source of truth</span></div>
+        <div class="stage">
+          <div class="app-card">
+            <div class="micro">Your knowledge graph</div>
+            <h4>Today's focus</h4>
+            <p>16px radius · subtle warm border · green-tinted shadow · one shared class</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">06</span> Documented inconsistencies</h2>
+    <p class="sub">Severity: <b>P0</b> breaks identity / first impression · <b>P1</b> visible rhythm break · <b>P2</b> systemic drift / rot · <b>P3</b> polish.</p>
+
+    <div class="finding"><div class="sev p0">P0</div><div>
+      <h3>A · Five greens for "primary"</h3>
+      <p>Forest, forest-bright, an un-matched glow green, plus the pre-auth "main" + "success" greens — and sage for accents. <span class="ref">globals.css:21–25, 738–739, 1002 · app/page.tsx:783</span></p>
+      <div class="fix"><b>Fix</b>One primary + one bright hover; delete/alias <code>--brand-primary</code>/<code>--brand-success</code>; derive the glow from the same token.</div>
+    </div></div>
+
+    <div class="finding"><div class="sev p0">P0</div><div>
+      <h3>B · Button is a different species pre/post sign-in</h3>
+      <p>Beta = rounded-full pill, 16px, infinite <code>beta-glow</code> + shimmer. App = rectangular, 6px, 13px, no motion. <span class="ref">app/page.tsx:779–787 · globals.css:205, 1005</span></p>
+      <div class="fix"><b>Fix</b>Re-skin the beta CTA to the app's button language; lose the infinite glow (a one-shot entrance is fine).</div>
+    </div></div>
+
+    <div class="finding"><div class="sev p1">P1</div><div>
+      <h3>C · Onboarding is color-correct but structurally orphaned</h3>
+      <p>Uses app tokens ✓, but renders as a centered card in a radial-gradient void with <b>no shell</b>, hard-coded px spacing, and a bespoke type scale. <span class="ref">screens/Onboarding.tsx:164, 171, 179, 268</span></p>
+      <div class="fix"><b>Fix</b>Adopt <code>--pad-*</code> spacing + the shell type scale; render inside the app's left-aligned frame, not a void.</div>
+    </div></div>
+
+    <div class="finding"><div class="sev p1">P1</div><div>
+      <h3>D · Pending/waitlist is a product-identity whiplash</h3>
+      <p>Beta = "join the movement" (pulsing glow). Two seconds later <code>pending</code> = bare centered flex, plain <code>.btn</code>, no card, no confirmation beat. <span class="ref">pending/page.tsx:15–40</span></p>
+      <div class="fix"><b>Fix</b>Give pending the app's surfaces + a brief "you're in ✓" moment so the glow resolves into something.</div>
+    </div></div>
+
+    <div class="finding"><div class="sev p1">P1</div><div>
+      <h3>E · The content box has 3+ treatments</h3>
+      <p>App <code>.card</code> (16px) vs inline 24px warm-gradient modal (duplicated in beta + sign-in) vs card-in-void vs no box. <span class="ref">globals.css:212 · app/page.tsx:975 · SignInModal.tsx:224</span></p>
+      <div class="fix"><b>Fix</b>One surface primitive; make the pre-auth "hero card" a named variant of <code>.card</code>, not an inline copy.</div>
+    </div></div>
+
+    <div class="finding"><div class="sev p1">P1</div><div>
+      <h3>F · Typography access pattern + scale diverges</h3>
+      <p>App uses semantic classes (<code>.h-serif</code>) at a controlled scale; pre-auth uses utility classes (<code>.font-playfair</code>) with inline px at 700–800 weight. <span class="ref">app/page.tsx:1022, 1070</span></p>
+      <div class="fix"><b>Fix</b>Define the display scale once; let pre-auth use the top of the same ramp, not a parallel one.</div>
+    </div></div>
+
+    <div class="finding"><div class="sev p2">P2</div><div>
+      <h3>G · Animation energy is inverted at the worst moment</h3>
+      <p>The only persistent motion in the product lives in pre-auth: glow (∞), mesh blobs (10s ∞), card-float (∞), shimmer. The app is deliberately still. <span class="ref">globals.css:831, 1005, 934–939</span></p>
+      <div class="fix"><b>Fix</b>Dial pre-auth motion to one or two finite moments so the app's calm feels earned.</div>
+    </div></div>
+
+    <div class="finding"><div class="sev p2">P2</div><div>
+      <h3>H · Two token namespaces guarantee drift</h3>
+      <p><code>--r-*</code> vs <code>--radius-*</code>, <code>--ease</code> vs <code>--ease-out</code>, <code>--dur</code> vs <code>--dur-base</code>, plus the value-shadowing above. <span class="ref">globals.css:128–149 vs 779–789</span></p>
+      <div class="fix"><b>Fix</b>One namespace. Map pre-auth onto the app tokens and delete the duplicates. The structural root fix.</div>
+    </div></div>
+
+    <div class="finding"><div class="sev p2">P2</div><div>
+      <h3>I · Dead / duplicated implementations (rot)</h3>
+      <p><code>OnboardingFlow.tsx</code> (36 KB, unused) carries the old landing DNA and isn't imported by the active route. Beta + sign-in modals duplicate one card. <span class="ref">components/OnboardingFlow.tsx</span></p>
+      <div class="fix"><b>Fix</b>Delete <code>OnboardingFlow.tsx</code>; extract the shared pre-auth card.</div>
+    </div></div>
+
+    <div class="finding"><div class="sev p3">P3</div><div>
+      <h3>J · Modal-first for high-intent moments</h3>
+      <p>Beta signup &amp; sign-in are both modals over the landing — worth questioning whether "join the beta" deserves a dedicated on-brand page.</p>
+      <div class="fix"><b>Fix</b>Consider a real page for beta signup instead of a glowing-pill-triggered overlay.</div>
+    </div></div>
+  </section>
+
+  <section>
+    <h2><span class="n">07</span> Remediation sequence</h2>
+    <p class="sub">Do the structural work first — it's what keeps the visible fixes from drifting back.</p>
+    <div class="divlbl">Structural — do first</div>
+    <div class="seq">
+      <div class="step"><div><span class="band">H + crux</span><h3>Unify the token layer</h3><p>One namespace, one set of semantic values. Stop re-declaring <code>--border</code>/<code>--text</code>/<code>--shadow</code>/<code>--dur</code> inside <code>.landing-page</code>. A cooler pre-auth palette should be a deliberate sub-theme, not an accidental shadow of the same names.</p></div></div>
+      <div class="step"><div><span class="band">A</span><h3>Collapse the greens</h3><p>One primary, one bright, one derived glow. Alias or delete the rest.</p></div></div>
+    </div>
+    <div class="divlbl">Visible wins</div>
+    <div class="seq">
+      <div class="step"><div><span class="band">B + E</span><h3>Re-skin beta CTA + signup to the app's language</h3><p>Lose the infinite glow; share one card primitive with sign-in.</p></div></div>
+      <div class="step"><div><span class="band">C + D</span><h3>Re-home onboarding + pending</h3><p>Into the app's layout, spacing, and type — and add the missing "you're in" confirmation beat.</p></div></div>
+    </div>
+    <div class="divlbl">Cleanup</div>
+    <div class="seq">
+      <div class="step"><div><span class="band">I</span><h3>Delete dead code; extract the shared card</h3><p>Remove <code>OnboardingFlow.tsx</code>; pull the duplicated pre-auth box into one component.</p></div></div>
+      <div class="step"><div><span class="band">G</span><h3>Normalize pre-auth motion</h3><p>Finite, purposeful moments only.</p></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">08</span> What's already right</h2>
+    <p class="sub" style="max-width:70ch">The active onboarding is <b>token-disciplined</b> (no hard-coded hex) — its problem is layout, not color. <code>pending</code> correctly uses app tokens — it just needs the app's surfaces. Glassmorphism was already removed (#102) with class names kept as solid. And the app shell itself is genuinely cohesive: a clear warm-editorial voice, one button family, a real spacing-token system. It's a strong source of truth to converge on.</p>
+  </section>
+
+  <footer>
+    Sapling frontend rhythm audit · generated against <code>frontend/src</code> · companion to <code>docs/frontend-rhythm-audit.md</code>
+  </footer>
+
+</div>
+</body>
+</html>

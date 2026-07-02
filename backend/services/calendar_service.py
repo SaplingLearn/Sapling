@@ -10,31 +10,30 @@ from agents.deps import SaplingDeps
 from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.tools.syllabus_adapter import syllabus_to_wire_dict
 from services.extraction_service import extract_text_from_file
-from services.gemini_service import call_gemini_json
 from services.assignment_dedupe import assignment_dedupe_key
 from services.encryption import encrypt_if_present
 from db.connection import table
 
 logger = logging.getLogger(__name__)
 
-PROMPT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", "syllabus_extraction.txt")
 
-
-def load_existing_assignment_keys(user_id: str) -> set[tuple[str, str]]:
-    """All (title, due_date) keys for a user, using the same normalization as assignment_dedupe_key."""
+def load_existing_assignment_keys(user_id: str) -> set:
+    from services.academics import user_enrollment_ids
+    enrollments = user_enrollment_ids(user_id)
+    if not enrollments:
+        return set()
+    ids = ",".join(e["id"] for e in enrollments)
     existing_rows = table("assignments").select(
-        "title,due_date",
-        filters={"user_id": f"eq.{user_id}"},
+        "title,due_date", filters={"enrollment_id": f"in.({ids})"},
     )
     return {assignment_dedupe_key(r.get("title"), r.get("due_date")) for r in (existing_rows or [])}
 
 
-def insert_new_assignments(user_id: str, assignments: list[dict]) -> int:
-    """
-    Insert assignments that are not already present for this user (#16).
-    Same trimmed title + same calendar day (see assignment_dedupe_key) → skip.
-    Returns number of rows inserted.
-    """
+def insert_new_assignments(user_id: str, assignments: list[dict], *, source: str = "manual") -> int:
+    """Insert assignments (deduped per the user's enrollment set, #16) on the
+    enrollment-keyed schema. Each assignment must carry a ``course_id`` — it is
+    resolved to the user's enrollment (created if missing). Returns rows inserted."""
+    from services.academics import enrollment_id_for
     existing_keys = load_existing_assignment_keys(user_id)
     rows = []
     for a in assignments:
@@ -45,38 +44,38 @@ def insert_new_assignments(user_id: str, assignments: list[dict]) -> int:
         key = assignment_dedupe_key(title, due_raw)
         if key in existing_keys:
             continue
+        course_id = a.get("course_id")
+        enrollment_id = enrollment_id_for(user_id, course_id, create=True) if course_id else None
+        if not enrollment_id:
+            continue  # decision: every assignment is course-tied
         existing_keys.add(key)
         rows.append({
             "id": str(uuid.uuid4()),
-            "user_id": user_id,
+            "enrollment_id": enrollment_id,
             "title": title,
-            "course_id": a.get("course_id") or None,
             "due_date": key[1],
             "assignment_type": a.get("assignment_type") or "other",
-            # #126: encrypt at the write boundary. assignments.notes is an
-            # encrypted column; every other writer (calendar.py, gradebook.py)
-            # encrypts. Syllabus-extracted notes were being persisted as
-            # plaintext, defeating column encryption and spamming decrypt
-            # fallback warnings on read.
-            "notes": encrypt_if_present(a.get("notes")),
+            "notes": encrypt_if_present(a.get("notes")),  # #126: encrypt at write
+            "source": source,
         })
     if rows:
         table("assignments").insert(rows)
     return len(rows)
 
 
-def parse_syllabus(extracted_text: str) -> dict:
-    """Use Gemini to parse assignments from extracted text.
-
-    Legacy fallback path retained per ADR-0001. The primary path now
-    runs through `_extract_via_agent` (syllabus_extraction_agent +
-    syllabus_to_wire_dict). This function stays so that the agent path
-    has a working degrade target when guardrails trip.
-    """
-    with open(PROMPT_PATH) as f:
-        prompt_template = f.read()
-    prompt = prompt_template + f"\n\nDOCUMENT TEXT:\n{extracted_text}"
-    return call_gemini_json(prompt)
+def _degraded_result(text: str) -> dict:
+    """Graceful degrade when the extraction agent fails. Returns the legacy
+    wire shape with no assignments and a user-facing warning — deliberately
+    NOT a second LLM call (the raw-Gemini fallback was retired in #144)."""
+    return {
+        "assignments": [],
+        "warnings": [
+            "Assignment extraction is temporarily unavailable. Please try again."
+        ],
+        "raw_text": text,
+        "course_title": None,
+        "grading_categories": [],
+    }
 
 
 async def _extract_via_agent(
@@ -88,7 +87,7 @@ async def _extract_via_agent(
     """Run syllabus_extraction_agent on `extracted_text` and convert
     its output to the legacy wire-format dict.
 
-    Returns the same shape as the legacy `parse_syllabus`:
+    Returns the legacy wire-format dict:
     {"assignments": [...], "warnings": [...], "raw_text": str,
      "course_title": str | None, "grading_categories": [...]}.
 
@@ -108,9 +107,9 @@ async def _extract_via_agent(
     return syllabus_to_wire_dict(result.output, raw_text=extracted_text)
 
 
-def save_assignments_to_db(user_id: str, assignments: list) -> int:
-    """Write extracted assignment dicts to the DB (deduped via insert_new_assignments)."""
-    return insert_new_assignments(user_id, assignments)
+def save_assignments_to_db(user_id: str, assignments: list, *, source: str = "syllabus") -> int:
+    """Write extracted assignment dicts (deduped via insert_new_assignments)."""
+    return insert_new_assignments(user_id, assignments, source=source)
 
 
 async def extract_assignments_from_file(
@@ -121,16 +120,14 @@ async def extract_assignments_from_file(
     user_id: str = "",
     request_id: str = "",
 ) -> dict:
-    """Extract text from file then parse assignments via the agent
-    (legacy fallback per ADR-0001).
+    """Extract text from a file, then parse assignments via
+    `syllabus_extraction_agent`.
 
-    Async because the syllabus-extraction agent is async; callers
-    must `await` this. Mirrors the orchestrator-vs-legacy fallback
-    pattern in `routes/quiz.py::_quiz_via_agent` and
-    `routes/learn.py::_chat_via_agent`: Pydantic-AI guardrail
-    exceptions and bare exceptions degrade to the legacy
-    `parse_syllabus` path so a single agent failure can't take the
-    syllabus-upload feature down.
+    Async because the agent is async; callers must `await` this. The
+    raw-Gemini legacy fallback was retired in #144: Pydantic-AI guardrail
+    exceptions and bare exceptions now degrade to `_degraded_result` (empty
+    assignments + a warning, no second LLM call) so a single agent failure
+    can't take the syllabus-upload feature down.
     """
     text = extract_text_from_file(file_bytes, filename, content_type)
     if not text.strip():
@@ -146,21 +143,15 @@ async def extract_assignments_from_file(
         )
     except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
         logger.warning(
-            "Syllabus agent guardrails tripped; falling back to legacy",
+            "Syllabus agent guardrails tripped; degrading to empty result",
             exc_info=e,
         )
-        result = parse_syllabus(text)
-        result.setdefault("raw_text", text)
-        result.setdefault("course_title", None)
-        result.setdefault("grading_categories", [])
+        result = _degraded_result(text)
     except Exception:
         logger.exception(
-            "Unexpected syllabus-agent failure; falling back to legacy"
+            "Unexpected syllabus-agent failure; degrading to empty result"
         )
-        result = parse_syllabus(text)
-        result.setdefault("raw_text", text)
-        result.setdefault("course_title", None)
-        result.setdefault("grading_categories", [])
+        result = _degraded_result(text)
 
     return result
 

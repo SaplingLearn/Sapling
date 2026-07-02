@@ -6,6 +6,10 @@ column-level encryption at rest.
 This is an encryption-boundary correctness test (not a cross-user-access test):
 it asserts the value handed to the DB insert is ciphertext, and that it
 round-trips back to the original plaintext via decrypt.
+
+Assignments are now enrollment-keyed (no user_id/course_id columns). Each
+assignment must carry a course_id so insert_new_assignments can resolve the
+enrollment; tests mock enrollment_id_for and user_enrollment_ids accordingly.
 """
 from unittest.mock import patch
 
@@ -23,14 +27,16 @@ class TestAssignmentNotesEncryptedAtRest:
             captured["rows"] = rows
             return rows
 
-        with patch("services.calendar_service.table") as t:
+        with patch("services.calendar_service.table") as t, \
+             patch("services.academics.user_enrollment_ids", return_value=[{"id": "e1", "offering_id": "o1"}]), \
+             patch("services.academics.enrollment_id_for", return_value="e1"):
             # No existing rows → nothing deduped; capture what gets inserted.
             t.return_value.select.return_value = []
             t.return_value.insert.side_effect = _insert
 
             n = insert_new_assignments(
                 "user_andres",
-                [{"title": "Midterm", "due_date": "2026-03-01", "notes": PLAINTEXT_NOTES}],
+                [{"title": "Midterm", "due_date": "2026-03-01", "notes": PLAINTEXT_NOTES, "course_id": "CS101"}],
             )
 
         assert n == 1
@@ -43,11 +49,13 @@ class TestAssignmentNotesEncryptedAtRest:
 
     def test_none_notes_stay_none(self):
         captured = {}
-        with patch("services.calendar_service.table") as t:
+        with patch("services.calendar_service.table") as t, \
+             patch("services.academics.user_enrollment_ids", return_value=[{"id": "e1", "offering_id": "o1"}]), \
+             patch("services.academics.enrollment_id_for", return_value="e1"):
             t.return_value.select.return_value = []
             t.return_value.insert.side_effect = lambda rows: captured.setdefault("rows", rows)
             insert_new_assignments(
                 "user_andres",
-                [{"title": "Reading", "due_date": "2026-03-02", "notes": None}],
+                [{"title": "Reading", "due_date": "2026-03-02", "notes": None, "course_id": "CS101"}],
             )
         assert captured["rows"][0]["notes"] is None

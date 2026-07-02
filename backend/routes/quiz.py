@@ -10,12 +10,13 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from agents.quiz import quiz_agent, Quiz, QuizQuestion
 from agents.deps import SaplingDeps
+from agents._run import run_agent_sync
+from agents.quiz_context import quiz_context_agent
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from services.auth_guard import require_self
 from services.profiles import get_display_name
-from services.gemini_service import MODEL_LITE, MODEL_SMART, call_gemini_json
-from services.graph_service import apply_graph_update, get_graph
+from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
 from services.request_context import current_request_id
@@ -199,102 +200,13 @@ async def _quiz_via_agent(
         if mapped is not None:
             wire_questions.append(mapped)
     if not wire_questions:
-        # All questions dropped — degrade to legacy rather than serve
-        # an empty quiz. Raise a sentinel that generate_quiz catches
-        # and routes to the legacy fallback.
+        # All questions dropped — raise so generate_quiz's bare-Exception
+        # catch degrades to HTTP 502 (the raw-Gemini legacy fallback was
+        # retired in #145) rather than serving an empty quiz.
         raise RuntimeError(
             "quiz_agent produced no valid questions after wire-format validation"
         )
     return wire_questions
-
-
-async def _legacy_generate_quiz(body: GenerateQuizBody, request: Request) -> list[dict]:
-    """The pre-agent quiz generation pipeline, kept as a fallback per ADR-0001.
-
-    Verbatim copy of the original generate_quiz body: prompt-template assembly,
-    course-context augmentation, and a single call_gemini_json.
-    Returns the raw `questions` list — the route handler is responsible for
-    persisting it and shaping the HTTP response.
-    """
-    node_rows = table("graph_nodes").select(
-        "*",
-        filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
-    )
-    if not node_rows:
-        raise HTTPException(status_code=404, detail="Concept node not found")
-    node = node_rows[0]
-
-    graph_data = get_graph(body.user_id)
-    quiz_ctx = get_quiz_context(body.user_id, body.concept_node_id)
-    quiz_ctx_str = json.dumps(quiz_ctx, indent=2) if quiz_ctx else "No previous quiz history."
-
-    prompt = (
-        _load_prompt("quiz_generation.txt")
-        .replace("{concept_name}", node["concept_name"])
-        .replace("{mastery_score}", str(int(node["mastery_score"] * 100)))
-        .replace("{difficulty}", body.difficulty)
-        .replace("{num_questions}", str(body.num_questions))
-        .replace("{graph_json_subset}", json.dumps(graph_data["nodes"][:10], indent=2))
-        .replace("{quiz_context_json}", quiz_ctx_str)
-    )
-
-    # Append shared course-level context (misconceptions + weak areas) if available
-    course_id = node.get("course_id", "")
-    if body.use_shared_context and course_id:
-        from services.course_context_service import get_course_context
-        course_ctx = get_course_context(course_id)
-        if course_ctx:
-            misconceptions: list[str] = []
-            weak_areas: list[str] = []
-            seen_m: set[str] = set()
-            seen_w: set[str] = set()
-            for row in course_ctx.get("concept_stats") or []:
-                if not isinstance(row, dict):
-                    continue
-                for m in row.get("common_misconceptions") or []:
-                    m = (m or "").strip()
-                    if m and m.lower() not in seen_m:
-                        seen_m.add(m.lower())
-                        misconceptions.append(m)
-                for w in row.get("prerequisite_gaps") or []:
-                    w = (w or "").strip()
-                    if w and w.lower() not in seen_w:
-                        seen_w.add(w.lower())
-                        weak_areas.append(w)
-            if misconceptions or weak_areas:
-                addendum_parts = []
-                if misconceptions:
-                    addendum_parts.append(
-                        "Common misconceptions seen across the class for this subject "
-                        "(address these proactively in distractors and explanations):\n"
-                        + "\n".join(f"- {m}" for m in misconceptions[:10])
-                    )
-                if weak_areas:
-                    addendum_parts.append(
-                        "Weak areas to target:\n"
-                        + "\n".join(f"- {w}" for w in weak_areas[:10])
-                    )
-                prompt += "\n\n" + "\n\n".join(addendum_parts)
-
-    # Honor the same fast/smart toggle the agent path uses. The mapping
-    # mirrors _PREF_MODEL_NAMES exactly, so a user choosing "fast" gets
-    # the same upgraded model whether the agent succeeded or fell back
-    # here. Without this, "fast" was silently a no-op on the legacy
-    # path (still MODEL_LITE) — the kind of inconsistency that surfaces
-    # six months later as "why does Fast sometimes feel slower?"
-    if body.model_pref == "smart":
-        legacy_model = MODEL_SMART  # gemini-2.5-pro
-    elif body.model_pref == "fast":
-        legacy_model = MODEL_LITE  # gemini-2.5-flash-lite, matches _PREF_MODEL_NAMES
-    else:
-        legacy_model = MODEL_LITE  # gemini-2.5-flash-lite, agent default per ADR 0008
-    try:
-        result = call_gemini_json(prompt, model=legacy_model)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
-
-    return result.get("questions", [])
-
 
 @router.post("/generate")
 async def generate_quiz(body: GenerateQuizBody, request: Request):
@@ -337,21 +249,24 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             request_id=request_id,
             model_pref=body.model_pref,
         )
-    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
-        logger.warning(
-            "Quiz agent guardrails tripped; falling back to legacy",
-            exc_info=e,
-        )
-        questions = await _legacy_generate_quiz(body, request)
     except HTTPException:
-        # Legacy path raises HTTPException for known states (404/502); never
-        # treat those as a reason to fall back. Re-raise.
+        # The 404 for an unknown concept node is raised before the agent call;
+        # never swallow a known HTTP state.
         raise
-    except Exception:
-        logger.exception(
-            "Unexpected quiz-agent failure; falling back to legacy"
-        )
-        questions = await _legacy_generate_quiz(body, request)
+    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+        # The raw-Gemini legacy fallback was retired in #145; degrade to 502
+        # rather than serving a quiz from a second LLM path.
+        logger.warning("Quiz agent guardrails tripped; returning 502", exc_info=e)
+        raise HTTPException(
+            status_code=502,
+            detail="Quiz generation is temporarily unavailable. Please try again.",
+        ) from e
+    except Exception as e:
+        logger.exception("Unexpected quiz-agent failure; returning 502")
+        raise HTTPException(
+            status_code=502,
+            detail="Quiz generation is temporarily unavailable. Please try again.",
+        ) from e
 
     quiz_id = str(uuid.uuid4())
     table("quiz_attempts").insert({
@@ -475,8 +390,8 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     def _update_context(prompt: str, uid: str, node_id: str):
         try:
-            new_ctx = call_gemini_json(prompt, model=MODEL_LITE)
-            save_quiz_context(uid, node_id, new_ctx)
+            result = run_agent_sync(quiz_context_agent.run(prompt))
+            save_quiz_context(uid, node_id, result.output.model_dump())
         except Exception:
             pass
 

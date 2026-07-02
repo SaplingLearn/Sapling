@@ -7,7 +7,8 @@ Covers:
   - GET  /api/study-guide/{user_id}/guide           → get_guide (cached + fresh)
   - POST /api/study-guide/regenerate                → regenerate_guide
 """
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -18,6 +19,16 @@ client = TestClient(app)
 USER_ID = "user_test"
 COURSE_ID = "course_1"
 EXAM_ID = "exam_1"
+
+
+def _agent_run_returning(content):
+    """AsyncMock standing in for study_guide_agent.run; its .output.model_dump()
+    yields the given legacy-dict content."""
+    return AsyncMock(
+        return_value=SimpleNamespace(
+            output=SimpleNamespace(model_dump=lambda: content)
+        )
+    )
 
 
 # ── GET /api/study-guide/{user_id}/exams ─────────────────────────────────────
@@ -92,15 +103,16 @@ class TestGetGuide:
             "generated_at": "2026-04-01T00:00:00Z",
             "content": {"exam": "Midterm", "topics": []},
         }
+        agent_run = _agent_run_returning({"exam": "Midterm", "topics": []})
         with patch("routes.study_guide.table") as t, \
-             patch("routes.study_guide.call_gemini_json") as gem:
+             patch("routes.study_guide.study_guide_agent.run", new=agent_run):
             t.return_value.select.return_value = [cached_row]
             r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
         assert r.status_code == 200
         body = r.json()
         assert body["cached"] is True
         assert body["guide"]["exam"] == "Midterm"
-        gem.assert_not_called()
+        agent_run.assert_not_called()
 
     def test_generates_and_inserts_when_not_cached(self):
         fresh_content = {"exam": "Final", "topics": [{"name": "Topic 1"}]}
@@ -122,15 +134,16 @@ class TestGetGuide:
                 m.select.return_value = []
             return m
 
+        agent_run = _agent_run_returning(fresh_content)
         with patch("routes.study_guide.table", side_effect=table_side_effect), \
              patch("routes.study_guide.resolve_offering", return_value="off1") as ro, \
-             patch("routes.study_guide.call_gemini_json", return_value=fresh_content) as gem:
+             patch("routes.study_guide.study_guide_agent.run", new=agent_run):
             r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
         assert r.status_code == 200
         body = r.json()
         assert body["cached"] is False
         assert body["guide"]["exam"] == "Final"
-        gem.assert_called_once()
+        agent_run.assert_called_once()
         # Abstract course id resolved to the offering, and the row keys on it.
         ro.assert_called_once_with(COURSE_ID)
         assert captured["row"]["offering_id"] == "off1"
@@ -177,7 +190,7 @@ class TestRegenerateGuide:
             return m
 
         with patch("routes.study_guide.table", side_effect=table_side_effect), \
-             patch("routes.study_guide.call_gemini_json", return_value=fresh_content):
+             patch("routes.study_guide.study_guide_agent.run", new=_agent_run_returning(fresh_content)):
             r = client.post(
                 "/api/study-guide/regenerate",
                 json={"user_id": USER_ID, "course_id": COURSE_ID, "exam_id": EXAM_ID},
@@ -191,3 +204,26 @@ class TestRegenerateGuide:
     def test_missing_fields_returns_400(self):
         r = client.post("/api/study-guide/regenerate", json={"user_id": USER_ID})
         assert r.status_code == 400
+
+
+# ── agent-failure handling ───────────────────────────────────────────────────
+
+class TestGenerationFailure:
+    def test_agent_failure_returns_502(self):
+        """When the study_guide agent raises, the route surfaces a 502, not 500."""
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "study_guides":
+                m.select.return_value = []  # nothing cached → generate
+            elif name == "assignments":
+                m.select.return_value = [{"title": "Final", "due_date": "2026-05-01"}]
+            else:
+                m.select.return_value = []
+            return m
+
+        boom = AsyncMock(side_effect=RuntimeError("gemini exploded"))
+        with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.resolve_offering", return_value="off1"), \
+             patch("routes.study_guide.study_guide_agent.run", new=boom):
+            r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
+        assert r.status_code == 502
