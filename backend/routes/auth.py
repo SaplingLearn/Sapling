@@ -9,6 +9,7 @@ import json
 import base64
 import hashlib
 import hmac as _hmac
+import os
 import re
 import secrets
 import time as _time
@@ -69,6 +70,15 @@ def _stamp_last_sign_in_for_test(user_id: str) -> None:
 OAUTH_STATE_COOKIE = "sapling_oauth_state"
 _OAUTH_COOKIE_MAX_AGE = 600
 _POPUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+# TTL of the one-shot HMAC token handed to the frontend on the OAuth-callback
+# redirect. This is NOT the session lifetime (#168): the frontend session BFF
+# (frontend/src/app/api/auth/session) verifies this token once and re-mints a
+# long-lived `sapling_session` cookie (SESSION_MAX_AGE = 30 days) in the same
+# backend-compatible HMAC format, which `auth_guard._decode_session` accepts.
+# So this token only needs to outlive the redirect round-trip. Configurable for
+# environments with slow OAuth hops. See docs/decisions/0018-session-token-lifecycle.md.
+_REDIRECT_TOKEN_TTL_SECONDS = int(os.getenv("SAPLING_AUTH_REDIRECT_TOKEN_TTL", "300"))
 
 # Fallback in-memory store for environments without SESSION_SECRET; entries
 # are keyed by nonce and expire after _OAUTH_COOKIE_MAX_AGE seconds.
@@ -437,11 +447,15 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         )
         return resp
 
-    # Build a short-lived HMAC token so the frontend can verify this redirect
-    # without a second round-trip to the backend.
+    # One-shot HMAC token so the frontend can verify this redirect without a
+    # second round-trip. The frontend exchanges it for the real, long-lived
+    # `sapling_session` cookie (see _REDIRECT_TOKEN_TTL_SECONDS above) — it is
+    # NOT the session itself, so it expires quickly.
     auth_token = ""
     if SESSION_SECRET:
-        payload = json.dumps({"user_id": user_id, "exp": int(_time.time()) + 300}).encode()
+        payload = json.dumps(
+            {"user_id": user_id, "exp": int(_time.time()) + _REDIRECT_TOKEN_TTL_SECONDS}
+        ).encode()
         payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         sig_bytes = _hmac.new(SESSION_SECRET.encode(), payload_b64.encode(), hashlib.sha256).digest()
         sig_b64 = base64.urlsafe_b64encode(sig_bytes).decode().rstrip("=")
