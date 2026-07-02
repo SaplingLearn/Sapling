@@ -200,9 +200,9 @@ async def _quiz_via_agent(
         if mapped is not None:
             wire_questions.append(mapped)
     if not wire_questions:
-        # All questions dropped — degrade to legacy rather than serve
-        # an empty quiz. Raise a sentinel that generate_quiz catches
-        # and routes to the legacy fallback.
+        # All questions dropped — raise so generate_quiz's bare-Exception
+        # catch degrades to HTTP 502 (the raw-Gemini legacy fallback was
+        # retired in #145) rather than serving an empty quiz.
         raise RuntimeError(
             "quiz_agent produced no valid questions after wire-format validation"
         )
