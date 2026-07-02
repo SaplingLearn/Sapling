@@ -25,6 +25,7 @@ export function Toggle<T extends string>({
         borderRadius: "var(--r-full)",
         padding: 3,
         gap: 2,
+        flexWrap: "wrap",
       }}
     >
       {options.map((o) => {

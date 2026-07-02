@@ -16,7 +16,9 @@ export function Pill({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
+      aria-pressed={active}
       style={{
         display: "inline-flex",
         alignItems: "center",
