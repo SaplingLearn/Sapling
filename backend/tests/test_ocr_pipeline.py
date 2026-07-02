@@ -381,3 +381,5 @@ if __name__ == "__main__":
         print("\n✓ All tests passed")
     except Exception as e:
         print(f"\n✗ Test failed: {e}")
+        import traceback; traceback.print_exc()
+        sys.exit(1)
