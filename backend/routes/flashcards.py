@@ -12,7 +12,6 @@ from pydantic import BaseModel
 
 from db.connection import table
 from services.academics import resolve_offering
-from services.gemini_service import generate_flashcards as _generate
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
 from services.encryption import decrypt_if_present, decrypt_json
@@ -27,6 +26,7 @@ from services.flashcard_import_service import (
     gemini_generate_cards,
     gemini_cleanup_cards,
     gemini_cloze,
+    generate_flashcards as _generate,
 )
 
 router = APIRouter()

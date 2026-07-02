@@ -30,6 +30,7 @@ AgentTask = Literal[
     "classifier", "summary", "concepts", "syllabus", "quiz", "chat_tutor",
     "note_summary", "note_concepts", "note_chat",
     "study_guide", "social_summary",
+    "flashcard",
 ]
 
 
@@ -57,6 +58,9 @@ _DEFAULTS: dict[AgentTask, str] = {
     "study_guide": "gemini-2.5-flash",
     # Social summary is short-form prose → the cheaper lite tier is enough.
     "social_summary": "gemini-2.5-flash-lite",
+    # Flashcard generation/cleanup/cloze — content quality matters → full Flash
+    # (matches the legacy gemini_service default the flashcard path used).
+    "flashcard": "gemini-2.5-flash",
 }
 
 
