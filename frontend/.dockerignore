@@ -1,0 +1,16 @@
+# Keep the build context small and avoid clobbering the image's installed
+# node_modules / build output with local copies (#173).
+node_modules
+.next
+.open-next
+.wrangler
+.turbo
+npm-debug.log*
+.env*
+.git
+.gitignore
+Dockerfile
+.dockerignore
+coverage
+*.local
+.DS_Store

@@ -26,15 +26,15 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements.lock
       # The OCR stack (torch / docling / transformers) is multi-GB and pulls
       # models at runtime; those integration tests are excluded from the fast
       # gate below and covered by the manual evals workflow. Everything else
       # (routes, services, agents, auth, encryption, graph, quiz, …) runs here.
-      - name: Install backend deps (excluding heavy OCR stack)
-        run: |
-          grep -vE '^(torch|docling|transformers)' requirements.txt > /tmp/req-ci.txt
-          pip install -r /tmp/req-ci.txt
+      # Install from the hash-pinned lockfile for reproducible, auditable builds
+      # (#163) — requirements.lock is the fast (non-OCR) resolved set.
+      - name: Install backend deps from lockfile (excluding heavy OCR stack)
+        run: pip install --require-hashes -r requirements.lock
       # #193: ruff lint, gated against the baseline in backend/ruff.toml. New
       # violations (new files, or new rule categories in existing files) fail.
       - name: Lint (ruff — baselined ratchet)
