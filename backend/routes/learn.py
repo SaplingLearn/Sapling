@@ -274,7 +274,12 @@ def _get_catalog_chunk(course_code: str) -> str:
             limit=5,
         )
         if rows:
-            return max(rows, key=lambda r: len(r.get("chunk_text", "")))["chunk_text"]
+            # Prefer a chunk that has an explicit Prerequisites line; fall back
+            # to the longest chunk. Handles courses scraped from two listing
+            # pages where one entry has prerequisites and one doesn't.
+            with_prereq = [r for r in rows if "Prerequisites:" in r.get("chunk_text", "")]
+            candidates = with_prereq if with_prereq else rows
+            return max(candidates, key=lambda r: len(r.get("chunk_text", "")))["chunk_text"]
     except Exception as e:
         print(f"[RAG] Failed to load catalog chunk for {course_code!r}: {e}")
     return ""

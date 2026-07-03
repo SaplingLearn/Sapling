@@ -237,7 +237,7 @@ CASES = [
         "course_code": "CAS CH 101",
         "question": "Does this course have a lab component?",
         "category": "description",
-        "required_keywords": ["lab", "laboratory"],
+        "required_keywords": ["lab"],
         "forbidden_patterns": ["no lab", "don't have"],
     },
 
@@ -278,7 +278,7 @@ CASES = [
         "course_code": "CDS DS 210",
         "question": "What course does DS 210 build on?",
         "category": "description",
-        "required_keywords": ["DS 110", "DS110"],
+        "required_keywords": ["DS 110"],
         "forbidden_patterns": [],
     },
 
