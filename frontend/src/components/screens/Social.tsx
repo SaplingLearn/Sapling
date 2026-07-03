@@ -495,7 +495,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                     }}
                   >
                     {m.image_url && (
-                      <img src={m.image_url} alt="attachment" style={{ maxWidth: 260, borderRadius: "var(--r-sm)", marginBottom: m.text ? 6 : 0 }} />
+                      <img src={m.image_url} alt="attachment" loading="lazy" style={{ maxWidth: 260, borderRadius: "var(--r-sm)", marginBottom: m.text ? 6 : 0 }} />
                     )}
                     {renderText(m.text)}
                     {m.edited_at && <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 6 }}>(edited)</span>}
