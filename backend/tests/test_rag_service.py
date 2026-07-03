@@ -60,3 +60,30 @@ def test_index_document_chunks_empty_returns_zero(mock_client):
     count = index_document_chunks("CAS CS 330", "doc-1", "user-1", [])
     assert count == 0
     mock_client.models.embed_content.assert_not_called()
+
+
+@patch("services.rag_service._embed_documents_batch")
+def test_index_document_chunks_handles_embedding_failure(mock_embed):
+    """Test that embedding failures are caught and records are still upserted with embedding=None."""
+    mock_embed.side_effect = Exception("API error")
+    with patch("services.rag_service.table") as mock_table:
+        mock_table.return_value.upsert.return_value = []
+        from services.rag_service import index_document_chunks
+
+        count = index_document_chunks(
+            course_code="CAS CS 330",
+            doc_id="doc-fail",
+            uploader_id="user-xyz",
+            chunks=["chunk one", "chunk two", "chunk three"],
+        )
+
+        # Function completes without raising an exception
+        assert count == 3
+
+        # Records were still upserted
+        mock_table.return_value.upsert.assert_called_once()
+        upsert_records = mock_table.return_value.upsert.call_args[0][0]
+
+        # All records have embedding=None since embedding failed
+        assert all(rec["embedding"] is None for rec in upsert_records)
+        assert len(upsert_records) == 3
