@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { useBodyScrollLock } from '@/lib/useBodyScrollLock';
 
 const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
 
@@ -44,6 +45,10 @@ export default function Dialog({
   const previousFocusRef = useRef<Element | null>(null);
   const autoTitleId = useId();
   const effectiveLabelledBy = labelledBy ?? (title ? autoTitleId : undefined);
+
+  // Lock body scroll while open so mobile background content doesn't
+  // scroll-bleed behind the modal (matches the other portal modals).
+  useBodyScrollLock(open);
 
   useEffect(() => { setMounted(true); }, []);
 
