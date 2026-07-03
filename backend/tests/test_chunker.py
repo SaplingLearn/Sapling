@@ -27,7 +27,7 @@ def test_short_chunks_merged_with_neighbor():
     text = f"{short}\n\n{short}\n\n{normal}"
     result = chunk_document(text)
     # Both short chunks should merge into one, leaving 2 total
-    assert len(result) <= 2
+    assert len(result) == 2
 
 
 def test_long_chunk_split_at_sentence_boundary():
