@@ -259,17 +259,22 @@ def _get_course_info(course_id: str) -> dict:
 
 
 def _get_catalog_chunk(course_code: str) -> str:
-    """Return the catalog chunk_text for a BU course code, or empty string."""
+    """Return the catalog chunk_text for a BU course code, or empty string.
+
+    Fetches up to 5 catalog chunks and returns the longest one — handles
+    courses that were scraped from multiple listing pages (duplicates with
+    slightly different content) by preferring the most complete entry.
+    """
     if not course_code:
         return ""
     try:
         rows = table("course_chunks").select(
             "chunk_text",
             filters={"course_id": f"eq.{course_code}", "category": "eq.catalog"},
-            limit=1,
+            limit=5,
         )
         if rows:
-            return rows[0].get("chunk_text", "")
+            return max(rows, key=lambda r: len(r.get("chunk_text", "")))["chunk_text"]
     except Exception as e:
         print(f"[RAG] Failed to load catalog chunk for {course_code!r}: {e}")
     return ""
