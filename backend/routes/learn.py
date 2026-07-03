@@ -526,12 +526,24 @@ async def _chat_via_agent(
     )
 
     bu_code = _get_course_info(course_id).get("course_code") if course_id else None
+    context_blocks: list[str] = []
     if bu_code:
+        # Always inject the course catalog (prerequisites, description, credits)
+        # so the agent can answer factual questions about the course without
+        # relying on semantic similarity crossing a threshold.
+        catalog_text = _get_catalog_chunk(bu_code)
+        if catalog_text:
+            context_blocks.append("COURSE CATALOG INFO (official BU course data):\n\n" + catalog_text)
+
+        # Semantic RAG: per-message retrieval for concept-level context
         from services.rag_service import retrieve_chunks, format_rag_context
         rag_chunks = retrieve_chunks(user_message, course_id=bu_code, k=5)
         rag_block = format_rag_context(rag_chunks)
         if rag_block:
-            user_message = rag_block + "\n\n[STUDENT QUESTION]\n" + user_message
+            context_blocks.append(rag_block)
+
+    if context_blocks:
+        user_message = "\n\n".join(context_blocks) + "\n\n[STUDENT QUESTION]\n" + user_message
 
     if not use_shared_context:
         user_message = (
