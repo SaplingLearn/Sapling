@@ -1151,7 +1151,7 @@ export default function LandingPage() {
                     transition: 'all 0.18s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                     fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
                   }}
-                  onMouseEnter={e => { if (!betaSubmitting) e.currentTarget.style.background = '#155A35'; }}
+                  onMouseEnter={e => { if (!betaSubmitting) e.currentTarget.style.background = 'var(--brand-forest-hover)'; }}
                   onMouseLeave={e => { if (!betaSubmitting) e.currentTarget.style.background = 'var(--brand-forest)'; }}
                 >
                   {betaSubmitting ? 'Planting your node…' : <>Sign Me Up <span style={{ opacity: 0.7 }}>→</span></>}
