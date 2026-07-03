@@ -138,8 +138,8 @@ export function TopNav() {
             aria-expanded={mobileOpen}
             onClick={() => setMobileOpen((o) => !o)}
             style={{
-              padding: 6, display: "flex", flexDirection: "column", gap: 4,
-              width: 28, alignItems: "center",
+              padding: 6, display: "flex", flexDirection: "column", justifyContent: "center", gap: 4,
+              minWidth: 44, minHeight: 44, alignItems: "center",
             }}
           >
             {[0, 1, 2].map((i) => (
@@ -215,7 +215,7 @@ export function TopNav() {
               title="Settings"
               style={{
                 display: "inline-flex", alignItems: "center", justifyContent: "center",
-                width: 32, height: 32, borderRadius: "var(--r-sm)",
+                width: 44, height: 44, borderRadius: "var(--r-sm)",
                 color: pathname.startsWith("/settings") ? "var(--text)" : "var(--text-muted)",
                 transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
               }}
@@ -231,7 +231,7 @@ export function TopNav() {
                 title="Admin"
                 style={{
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  width: 32, height: 32, borderRadius: "var(--r-sm)",
+                  width: 44, height: 44, borderRadius: "var(--r-sm)",
                   color: pathname.startsWith("/admin") ? "var(--text)" : "var(--text-muted)",
                   transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
                 }}
@@ -471,7 +471,7 @@ function MobilePanel({ pathname }: { pathname: string }) {
                 href={item.href}
                 style={{
                   display: "flex", alignItems: "center", gap: 10,
-                  padding: "10px 14px",
+                  padding: "10px 14px", minHeight: 44, boxSizing: "border-box",
                   fontSize: 14, fontWeight: itemActive ? 700 : 500,
                   color: itemActive ? "var(--text)" : "var(--text-dim)",
                   textDecoration: "none",
