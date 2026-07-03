@@ -143,14 +143,194 @@ CASES = [
         "forbidden_patterns": [],
     },
 
+    # ── CAS CS 111 ─────────────────────────────────────────────────────────────
+    {
+        "course_code": "CAS CS 111",
+        "question": "What are the prerequisites for CAS CS 111?",
+        "category": "prerequisites",
+        "required_keywords": [],
+        "forbidden_patterns": ["CS 112", "CS 330"],  # must not invent prereqs
+        "note": "No prerequisites listed — should say none or not mention any.",
+    },
+    {
+        "course_code": "CAS CS 111",
+        "question": "What programming language is used in this course?",
+        "category": "description",
+        "required_keywords": ["Python"],
+        "forbidden_patterns": [],
+    },
+
+    # ── CAS CS 132 ─────────────────────────────────────────────────────────────
+    {
+        "course_code": "CAS CS 132",
+        "question": "What are the prerequisites for CAS CS 132?",
+        "category": "prerequisites",
+        "required_keywords": ["CS 111", "MA 123"],
+        "forbidden_patterns": ["don't have", "no information"],
+    },
+    {
+        "course_code": "CAS CS 132",
+        "question": "How many credits is CAS CS 132?",
+        "category": "credits",
+        "required_keywords": ["4"],
+        "forbidden_patterns": [],
+    },
+
+    # ── CAS CS 460 ─────────────────────────────────────────────────────────────
+    {
+        "course_code": "CAS CS 460",
+        "question": "What is the prerequisite for the database systems course?",
+        "category": "prerequisites",
+        "required_keywords": ["CS 112", "112"],
+        "forbidden_patterns": ["don't have", "no information"],
+    },
+    {
+        "course_code": "CAS CS 460",
+        "question": "Does this course cover SQL?",
+        "category": "description",
+        "required_keywords": ["SQL"],
+        "forbidden_patterns": ["don't have", "no information"],
+    },
+
+    # ── CAS MA 123 ─────────────────────────────────────────────────────────────
+    {
+        "course_code": "CAS MA 123",
+        "question": "What are the prerequisites for Calculus I?",
+        "category": "prerequisites",
+        "required_keywords": [],
+        "forbidden_patterns": ["MA 124", "MA 225"],  # must not invent prereqs
+        "note": "No prerequisites listed — should not mention downstream courses.",
+    },
+    {
+        "course_code": "CAS MA 123",
+        "question": "What topics does Calculus I cover?",
+        "category": "description",
+        "required_keywords": ["derivative", "integral"],
+        "forbidden_patterns": [],
+    },
+
+    # ── CAS PY 211 ─────────────────────────────────────────────────────────────
+    {
+        "course_code": "CAS PY 211",
+        "question": "What are the prerequisites for General Physics 1?",
+        "category": "prerequisites",
+        "required_keywords": ["MA 123"],
+        "forbidden_patterns": ["don't have", "no information"],
+    },
+    {
+        "course_code": "CAS PY 211",
+        "question": "Is this physics course calculus-based?",
+        "category": "description",
+        "required_keywords": ["calculus"],
+        "forbidden_patterns": ["don't have", "no information"],
+    },
+
+    # ── CAS CH 101 ─────────────────────────────────────────────────────────────
+    {
+        "course_code": "CAS CH 101",
+        "question": "What background do I need for General Chemistry 1?",
+        "category": "prerequisites",
+        "required_keywords": ["algebra", "high school"],
+        "forbidden_patterns": ["don't have", "no information"],
+    },
+    {
+        "course_code": "CAS CH 101",
+        "question": "Does this course have a lab component?",
+        "category": "description",
+        "required_keywords": ["lab", "laboratory"],
+        "forbidden_patterns": ["no lab", "don't have"],
+    },
+
+    # ── CAS EC 101 ─────────────────────────────────────────────────────────────
+    {
+        "course_code": "CAS EC 101",
+        "question": "What topics does Introductory Microeconomics cover?",
+        "category": "description",
+        "required_keywords": ["supply", "demand"],
+        "forbidden_patterns": [],
+    },
+    {
+        "course_code": "CAS EC 101",
+        "question": "How many credits is CAS EC 101?",
+        "category": "credits",
+        "required_keywords": ["4"],
+        "forbidden_patterns": [],
+    },
+
+    # ── CAS WR 120 ─────────────────────────────────────────────────────────────
+    {
+        "course_code": "CAS WR 120",
+        "question": "What are the prerequisites for the First-Year Writing Seminar?",
+        "category": "prerequisites",
+        "required_keywords": ["WR 112"],
+        "forbidden_patterns": ["don't have", "no information"],
+    },
+
+    # ── CDS DS 210 ─────────────────────────────────────────────────────────────
+    {
+        "course_code": "CDS DS 210",
+        "question": "What programming language is introduced in CDS DS 210?",
+        "category": "description",
+        "required_keywords": ["Rust"],
+        "forbidden_patterns": [],
+    },
+    {
+        "course_code": "CDS DS 210",
+        "question": "What course does DS 210 build on?",
+        "category": "description",
+        "required_keywords": ["DS 110", "DS110"],
+        "forbidden_patterns": [],
+    },
+
+    # ── ENG EC 401 ─────────────────────────────────────────────────────────────
+    {
+        "course_code": "ENG EC 401",
+        "question": "What are the prerequisites for Signals and Systems?",
+        "category": "prerequisites",
+        "required_keywords": ["MA 226", "EK 307"],
+        "forbidden_patterns": ["don't have", "no information"],
+    },
+    {
+        "course_code": "ENG EC 401",
+        "question": "Does ENG EC 401 include a lab?",
+        "category": "description",
+        "required_keywords": ["lab"],
+        "forbidden_patterns": ["no lab", "don't have"],
+    },
+
+    # ── CAS BI 108 ─────────────────────────────────────────────────────────────
+    {
+        "course_code": "CAS BI 108",
+        "question": "What prior knowledge is assumed for Biology 2?",
+        "category": "prerequisites",
+        "required_keywords": ["high school biology"],
+        "forbidden_patterns": ["don't have", "no information"],
+    },
+
     # ── Negative: questions the catalog cannot answer ──────────────────────────
     {
         "course_code": "CAS CS 330",
         "question": "What is the homework policy for this course?",
         "category": "negative",
-        "required_keywords": [],          # catalog won't have this
-        "forbidden_patterns": ["homework policy is", "assignments are due"],  # should not hallucinate
+        "required_keywords": [],
+        "forbidden_patterns": ["homework policy is", "assignments are due"],
         "note": "Catalog has no homework policy — tutor should admit it doesn't know.",
+    },
+    {
+        "course_code": "CAS MA 123",
+        "question": "What is the grading breakdown for Calculus I?",
+        "category": "negative",
+        "required_keywords": [],
+        "forbidden_patterns": ["exam is worth", "quiz is worth", "grading breakdown is"],
+        "note": "Catalog has no grading info — should not hallucinate percentages.",
+    },
+    {
+        "course_code": "CAS CS 111",
+        "question": "What time does this course meet?",
+        "category": "negative",
+        "required_keywords": [],
+        "forbidden_patterns": ["meets at", "class is at", "monday", "tuesday", "wednesday"],
+        "note": "Catalog has no schedule times — should not hallucinate.",
     },
 ]
 
