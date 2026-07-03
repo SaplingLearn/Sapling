@@ -525,12 +525,13 @@ async def _chat_via_agent(
         session_id=session_id,
     )
 
-    from services.rag_service import retrieve_chunks, format_rag_context
     bu_code = _get_course_info(course_id).get("course_code") if course_id else None
-    rag_chunks = retrieve_chunks(user_message, course_id=bu_code or None, k=5)
-    rag_block = format_rag_context(rag_chunks)
-    if rag_block:
-        user_message = rag_block + "\n\n[STUDENT QUESTION]\n" + user_message
+    if bu_code:
+        from services.rag_service import retrieve_chunks, format_rag_context
+        rag_chunks = retrieve_chunks(user_message, course_id=bu_code, k=5)
+        rag_block = format_rag_context(rag_chunks)
+        if rag_block:
+            user_message = rag_block + "\n\n[STUDENT QUESTION]\n" + user_message
 
     if not use_shared_context:
         user_message = (
@@ -584,10 +585,12 @@ async def _legacy_chat(body: ChatBody, request: Request) -> dict:
     course_id = offering_course_id(offering_id) if offering_id else ""
     documents = _get_course_documents(body.user_id, offering_id)
 
-    from services.rag_service import retrieve_chunks, format_rag_context
     bu_code = _get_course_info(course_id).get("course_code") if course_id else None
-    rag_chunks = retrieve_chunks(body.message, course_id=bu_code or None, k=5)
-    rag_block = format_rag_context(rag_chunks)
+    rag_block = ""
+    if bu_code:
+        from services.rag_service import retrieve_chunks, format_rag_context
+        rag_chunks = retrieve_chunks(body.message, course_id=bu_code, k=5)
+        rag_block = format_rag_context(rag_chunks)
 
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
