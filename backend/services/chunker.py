@@ -41,7 +41,7 @@ def chunk_document(text: str) -> list[str]:
 
     Algorithm:
     1. Split on double newlines (Docling block boundaries)
-    2. Merge chunk into previous if previous is under _MIN_WORDS words
+    2. Coalesce adjacent tiny blocks (both < 10 words, combined < _MIN_WORDS)
     3. Split any chunk over _MAX_WORDS at a sentence boundary
     """
     if not text or not text.strip():
@@ -50,11 +50,13 @@ def chunk_document(text: str) -> list[str]:
     # Step 1: split on double newlines
     raw_blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
 
-    # Step 2: merge short adjacent blocks
-    # Merge chunk into previous if previous is under _MIN_WORDS words
+    # Step 2: merge tiny adjacent blocks (both < 10 words, combined < _MIN_WORDS)
+    # This coalesces single-line headers and short captions without eating normal paragraphs.
     merged: list[str] = []
     for block in raw_blocks:
-        if merged and min(_word_count(merged[-1]), _word_count(block)) < 10 and _word_count(merged[-1]) + _word_count(block) < _MIN_WORDS:
+        if (merged
+                and min(_word_count(merged[-1]), _word_count(block)) < 10
+                and _word_count(merged[-1]) + _word_count(block) < _MIN_WORDS):
             merged[-1] = merged[-1] + " " + block
         else:
             merged.append(block)
