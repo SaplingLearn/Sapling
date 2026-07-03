@@ -15,8 +15,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!<>-_\\/[]{}=+*^?#_";
 
-const CLUSTER_COLORS = ['#9CA3AF', '#D97706', '#3B82F6', '#8A63D2', '#14B8A6', '#EF4444'];
-const OB_STEP_COLORS  = ['#D97706', '#8A63D2', '#3B82F6', '#14B8A6', '#EF4444'];
+const CLUSTER_COLORS = ['#9CA3AF', '#D97706', '#3e6f8a', '#8A63D2', '#14B8A6', '#EF4444'];
+const OB_STEP_COLORS  = ['#D97706', '#8A63D2', '#3e6f8a', '#14B8A6', '#EF4444'];
 const CLUSTER_SEEDS_BG = [10.0, 11.3, 12.6, 13.9, 15.2, 16.5];
 const CLUSTER_INIT_POS = [
   { ox: -222, oy: -29, oz:  15 },
@@ -197,7 +197,7 @@ export default function LandingPage() {
     let animId: number;
 
     const palette = [
-      { c: '#8A63D2', w: 0.24 }, { c: '#3B82F6', w: 0.24 },
+      { c: '#8A63D2', w: 0.24 }, { c: '#3e6f8a', w: 0.24 },
       { c: '#D97706', w: 0.20 }, { c: '#14B8A6', w: 0.15 },
       { c: '#9CA3AF', w: 0.10 }, { c: '#D1D5DB', w: 0.07 },
     ];
