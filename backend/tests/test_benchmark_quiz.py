@@ -9,7 +9,7 @@ def test_recall_and_precision():
     concept = {"relevant_chunk_substrings": ["memoization table", "overlapping subproblems"]}
     chunks = [
         {"chunk_text": "A memoization table stores results.", "similarity": 0.8},
-        {"chunk_text": "Overlapping subproblems recur.", "similarity": 0.7},
+        {"chunk_text": "overlapping subproblems recur.", "similarity": 0.7},
         {"chunk_text": "Unrelated text about sorting.", "similarity": 0.6},
     ]
     r = score_retrieval(concept, chunks)

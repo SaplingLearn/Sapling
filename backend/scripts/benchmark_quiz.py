@@ -32,8 +32,8 @@ def score_retrieval(concept: dict, chunks: list[dict]) -> dict:
     precision = fraction of returned chunks that contain any expected substring."""
     expected = concept.get("relevant_chunk_substrings", [])
     texts = [c.get("chunk_text", "") for c in chunks]
-    hits = sum(1 for sub in expected if any(sub.lower() in t.lower() for t in texts))
-    relevant_returned = sum(1 for t in texts if any(sub.lower() in t.lower() for sub in expected))
+    hits = sum(1 for sub in expected if any(sub in t for t in texts))
+    relevant_returned = sum(1 for t in texts if any(sub in t for sub in expected))
     recall = hits / len(expected) if expected else 0.0
     precision = relevant_returned / len(texts) if texts else 0.0
     return {"recall": recall, "precision": precision,
