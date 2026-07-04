@@ -40,8 +40,10 @@ sys.path.insert(0, str(BASE))
 
 from db.connection import table  # noqa: E402
 from services.chunker import chunk_document  # noqa: E402
-from services.rag_service import index_document_chunks  # noqa: E402
+from services.rag_service import _embed_document, index_document_chunks  # noqa: E402
 from services.encryption import decrypt_if_present  # noqa: E402
+
+MIN_COURSE_RELEVANCE = 0.35
 
 
 def _get_course_code(course_id: str) -> str:
@@ -116,11 +118,30 @@ def main() -> None:
 
         try:
             chunks = chunk_document(extracted)
-            if chunks:
-                count = index_document_chunks(course_code, doc_id, user_id, chunks)
-                print(f"{count} chunks indexed")
-            else:
+            if not chunks:
                 print("0 chunks (empty text)")
+                ok += 1
+                continue
+
+            # Relevance gate: skip docs the live pipeline would have rejected
+            # (see routes/documents.py::_index_document_chunks for the source
+            # of truth this replicates).
+            catalog_rows = table("course_chunks").select(
+                "embedding",
+                filters={"course_id": f"eq.{course_code}", "category": "eq.catalog"},
+                limit=1,
+            )
+            if catalog_rows and catalog_rows[0].get("embedding"):
+                catalog_vec = catalog_rows[0]["embedding"]
+                doc_sample_vec = _embed_document(chunks[0])
+                dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
+                if dot < MIN_COURSE_RELEVANCE:
+                    print(f"SKIP (relevance {dot:.2f})")
+                    skip += 1
+                    continue
+
+            count = index_document_chunks(course_code, doc_id, user_id, chunks)
+            print(f"{count} chunks indexed")
             ok += 1
             time.sleep(1.0)  # stay under embedding quota
         except Exception as e:

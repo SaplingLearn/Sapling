@@ -1,5 +1,4 @@
-from unittest.mock import MagicMock, patch, call
-import pytest
+from unittest.mock import MagicMock, patch
 
 
 def _make_embedding_response(vecs: list[list[float]]):
@@ -24,7 +23,7 @@ def test_retrieve_chunks_uses_retrieval_query_task_type(mock_client):
 def test_index_document_chunks_uses_retrieval_document_task_type(mock_client):
     mock_client.models.embed_content.return_value = _make_embedding_response([[0.2] * 768])
     with patch("services.rag_service.rpc", return_value=[]), \
-         patch("db.connection.table") as mock_table:
+         patch("services.rag_service.table") as mock_table:
         mock_table.return_value.upsert.return_value = []
         from services.rag_service import index_document_chunks
         index_document_chunks(
@@ -42,7 +41,7 @@ def test_index_document_chunks_uses_retrieval_document_task_type(mock_client):
 @patch("services.rag_service._client")
 def test_index_document_chunks_returns_count(mock_client):
     mock_client.models.embed_content.return_value = _make_embedding_response([[0.2] * 768] * 3)
-    with patch("db.connection.table") as mock_table:
+    with patch("services.rag_service.table") as mock_table:
         mock_table.return_value.upsert.return_value = []
         from services.rag_service import index_document_chunks
         count = index_document_chunks(

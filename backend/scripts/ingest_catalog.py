@@ -72,7 +72,10 @@ def embed_batch(texts: list[str]) -> list[list[float]]:
     response = _gemini.models.embed_content(
         model=EMBED_MODEL,
         contents=texts,
-        config=genai_types.EmbedContentConfig(output_dimensionality=768),
+        config=genai_types.EmbedContentConfig(
+            output_dimensionality=768,
+            task_type="RETRIEVAL_DOCUMENT",
+        ),
     )
     return [list(e.values) for e in response.embeddings]
 
