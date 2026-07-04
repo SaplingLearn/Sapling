@@ -15,6 +15,7 @@ BASE = Path(__file__).parent.parent
 load_dotenv(BASE / ".env.staging")
 sys.path.insert(0, str(BASE))
 
+from db.connection import table                       # noqa: E402
 from services.chunker import chunk_document           # noqa: E402
 from services.rag_service import index_document_chunks  # noqa: E402
 
@@ -24,8 +25,30 @@ BU_CODE = MANIFEST["bu_course_code"]
 DOC_ID = "quizfix-doc-0001"
 UPLOADER = "quizfix-user-0001"
 
+# Fixed fixture id for the abstract `courses` catalog row. `id` is TEXT (no
+# UUID format required — see 0020_academics_split.sql), so a readable
+# constant is fine. benchmark_quiz.py's Layer 2 passes this as `course_id`
+# to `_quiz_via_agent` so `_resolve_bu_code` (routes/quiz.py) can map it to
+# `BU_CODE` and actually exercise the production grounding path instead of
+# generating an ungrounded quiz.
+FIXTURE_COURSE_ID = "quizfix-course-0001"
+
+
+def seed_fixture_course() -> None:
+    """Idempotently upsert the abstract `courses` row the fixture resolves
+    against. Only `course_code`/`course_name` are populated — `school_id` is
+    nullable and everything else the schema requires is NOT NULL-defaulted
+    or nullable (see 0020_academics_split.sql)."""
+    table("courses").upsert({
+        "id": FIXTURE_COURSE_ID,
+        "course_code": BU_CODE,
+        "course_name": "Quiz Grounding Fixture Course",
+    })
+    print(f"Upserted courses row id={FIXTURE_COURSE_ID} course_code={BU_CODE}.")
+
 
 def main() -> None:
+    seed_fixture_course()
     texts = []
     for p in sorted((FIX / "docs").glob("*")):
         texts.append(p.read_text(encoding="utf-8"))

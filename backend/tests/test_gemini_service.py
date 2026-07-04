@@ -253,3 +253,39 @@ class TestCallGeminiMultiturnThinking:
         """Non-pro models (Flash, Flash-Lite) get thinking_budget=0 —
         Pro is the only model that actually thinks on this path."""
         assert _capture_multiturn_thinking_budget(model) == 0
+
+
+# ── call_gemini (single-turn) — thinking_budget cap ─────────────────────────
+
+def _capture_single_turn_thinking_budget(model: str) -> int:
+    """Run call_gemini against a mocked client and return the
+    thinking_budget it configured on the GenerateContentConfig.
+    """
+    captured: dict = {}
+    mock_resp = MagicMock()
+    mock_resp.text = "ok"
+
+    def fake_generate_content(**kwargs):
+        captured["thinking_budget"] = kwargs["config"].thinking_config.thinking_budget
+        return mock_resp
+
+    with patch("services.gemini_service._client") as mock_client:
+        mock_client.models.generate_content.side_effect = fake_generate_content
+        call_gemini("prompt", model=model)
+
+    return captured["thinking_budget"]
+
+
+class TestCallGeminiThinking:
+    """gemini-2.5-pro 400s with thinking_budget=0 ("This model only works
+    in thinking mode"). call_gemini_multiturn already caps Pro's budget
+    (PR #74); this pins the same contract on the single-turn path used by
+    call_gemini_json — e.g. an LLM-judge model override passing
+    model="gemini-2.5-pro" must not always fail."""
+
+    def test_pro_uses_capped_thinking_budget(self):
+        assert _capture_single_turn_thinking_budget("gemini-2.5-pro") == 2048
+
+    @pytest.mark.parametrize("model", ["gemini-2.5-flash", "gemini-2.5-flash-lite"])
+    def test_non_pro_disables_thinking(self, model: str):
+        assert _capture_single_turn_thinking_budget(model) == 0

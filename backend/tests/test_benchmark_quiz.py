@@ -2,7 +2,24 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from benchmark_quiz import score_retrieval
+from benchmark_quiz import aggregate, majority_vote, score_retrieval
+
+
+def test_majority_vote_true():
+    votes = [{"grounded": True}, {"grounded": True}, {"grounded": False}]
+    assert majority_vote(votes, "grounded") is True
+
+
+def test_aggregate_metrics():
+    verdicts = [
+        {"grounded": True, "on_scope": True, "answer_correct": True},
+        {"grounded": True, "on_scope": True, "answer_correct": False},
+        {"grounded": False, "on_scope": False, "answer_correct": True},
+    ]
+    a = aggregate(verdicts)
+    assert abs(a["grounded_ratio"] - 2/3) < 1e-6
+    assert a["off_scope_count"] == 1
+    assert abs(a["correctness_rate"] - 2/3) < 1e-6
 
 
 def test_recall_and_precision():

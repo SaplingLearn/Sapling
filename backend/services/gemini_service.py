@@ -62,13 +62,22 @@ def _extract_json(text: str) -> str:
 
 
 def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False, model: str = MODEL_DEFAULT) -> str:
-    """Single-turn call to Gemini with a plain string prompt."""
+    """Single-turn call to Gemini with a plain string prompt.
+
+    gemini-2.5-pro rejects thinking_budget=0 ("This model only works in
+    thinking mode" — 400 INVALID_ARGUMENT); Flash/Flash-Lite are fine with
+    it disabled for latency. Mirrors the same cap already applied in
+    call_gemini_multiturn (PR #74) — that fix never propagated to this
+    single-turn path, so any caller passing model="gemini-2.5-pro" here
+    (e.g. an LLM-judge model override) always 400'd.
+    """
+    thinking_budget = 2048 if "pro" in model else 0
     for attempt in range(retries + 1):
         try:
             config = types.GenerateContentConfig(
                 temperature=0.7,
                 max_output_tokens=8192,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
                 **({"response_mime_type": "application/json"} if json_mode else {}),
             )
             response = _client.models.generate_content(
