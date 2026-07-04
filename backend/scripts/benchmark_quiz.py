@@ -95,17 +95,24 @@ _JUDGE_PROMPT = (
 
 def judge_question(question: dict, material: str, n_votes: int, model: str) -> dict:
     votes = []
+    # Real wire questions (routes/quiz.py::_agent_question_to_wire) carry no
+    # top-level correct_answer/answer key; correctness lives per-option as
+    # options[i]["correct"] with the option text in options[i]["text"]. Fall
+    # back to the legacy top-level keys for any non-wire-format callers.
+    correct = next(
+        (o.get("text", "") for o in question.get("options", [])
+         if isinstance(o, dict) and o.get("correct")),
+        question.get("correct_answer", question.get("answer", "")),
+    )
     prompt = _JUDGE_PROMPT.format(
         material=material[:8000],
         question=question["question"],
         options=question.get("options", question.get("choices", [])),
-        correct=question.get("correct_answer", question.get("answer", "")),
+        correct=correct,
     )
     for _ in range(n_votes):
         try:
             v = call_gemini_json(prompt, model=model)
-        except TypeError:
-            v = call_gemini_json(prompt)  # gemini_service without model kwarg
         except Exception:
             v = {"grounded": False, "on_scope": True, "answer_correct": False,
                  "evidence": "JUDGE ERROR"}
