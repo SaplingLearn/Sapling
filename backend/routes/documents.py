@@ -932,17 +932,6 @@ def _check_upload_achievements(user_id: str) -> None:
         pass
 
 
-def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[str]:
-    """Split text into overlapping character-window chunks."""
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end].strip())
-        start += chunk_size - overlap
-    return [c for c in chunks if len(c) > 50]  # drop near-empty tail chunks
-
-
 def _index_document_chunks(
     doc_id: str,
     course_id: str,      # Sapling UUID — resolved to BU code internally
@@ -956,14 +945,12 @@ def _index_document_chunks(
     Runs in a background thread via _spawn_post_roll after the document
     is persisted, so it never blocks the SSE stream.
     """
-    import hashlib
-    import math
-    from google import genai as _genai
-    from google.genai import types as genai_types
-    from db.connection import table
-    import os, time
+    import time
+    from services.chunker import chunk_document
+    from services.rag_service import index_document_chunks
+    from services.encryption import encrypt_if_present
 
-    MIN_COURSE_RELEVANCE = 0.35  # below this, document is likely off-topic for the course
+    MIN_COURSE_RELEVANCE = 0.35
 
     try:
         # Resolve BU course code from Sapling UUID
@@ -972,24 +959,25 @@ def _index_document_chunks(
         )
         bu_course_id = (rows[0].get("course_code") or course_id) if rows else course_id
 
-        chunks = _chunk_text(extracted_text)
+        chunks = chunk_document(extracted_text)
         if not chunks:
             return
 
+        # Store raw extracted text on the document row (best-effort)
+        try:
+            table("documents").update(
+                {"extracted_text": encrypt_if_present(extracted_text)},
+                filters={"id": f"eq.{doc_id}"},
+            )
+        except Exception:
+            logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
+
+        # Relevance gate: skip docs that are off-topic for the course
+        from google import genai as _genai
+        from google.genai import types as genai_types
+        import os
         _gclient = _genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
 
-        def _embed_texts(texts: list[str]) -> list[list[float]]:
-            resp = _gclient.models.embed_content(
-                model="gemini-embedding-001",
-                contents=texts,
-                config=genai_types.EmbedContentConfig(output_dimensionality=768),
-            )
-            return [list(e.values) for e in resp.embeddings]
-
-        # ── Relevance gate ────────────────────────────────────────────────────
-        # Fetch the catalog chunk embedding for this course and compare against
-        # the document's first chunk. Irrelevant documents are skipped to keep
-        # the index clean.
         catalog_rows = table("course_chunks").select(
             "embedding",
             filters={"course_id": f"eq.{bu_course_id}", "category": "eq.catalog"},
@@ -997,13 +985,17 @@ def _index_document_chunks(
         )
         if catalog_rows and catalog_rows[0].get("embedding"):
             catalog_vec = catalog_rows[0]["embedding"]
-            # Use the AI-generated summary as the document representative —
-            # it's more reliable than raw first-chunk text (avoids cover pages,
-            # tables of contents, and boilerplate skewing the score).
             sample_text = doc_summary or chunks[0]
-            doc_sample_vec = _embed_texts([sample_text])[0]
+            resp = _gclient.models.embed_content(
+                model="gemini-embedding-001",
+                contents=[sample_text],
+                config=genai_types.EmbedContentConfig(
+                    output_dimensionality=768,
+                    task_type="RETRIEVAL_DOCUMENT",
+                ),
+            )
+            doc_sample_vec = list(resp.embeddings[0].values)
             time.sleep(1.5)
-            # cosine similarity (vectors are unit-norm from the model)
             dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
             if dot < MIN_COURSE_RELEVANCE:
                 logger.warning(
@@ -1012,40 +1004,14 @@ def _index_document_chunks(
                 )
                 return
 
-        records = []
-        for i, chunk_text in enumerate(chunks):
-            raw = f"{doc_id}::{i}::{chunk_text}"
-            cid = hashlib.sha256(raw.encode()).hexdigest()
-            records.append({
-                "id":          cid,
-                "course_id":   bu_course_id,
-                "doc_id":      doc_id,
-                "uploader_id": user_id,
-                "chunk_index": i,
-                "chunk_text":  chunk_text,
-                "chunk_hash":  cid,
-                "embedding":   None,
-                "category":    category,
-                "semester":    "current",
-                "section_id":  None,
-                "school":      "",
-            })
+        count = index_document_chunks(
+            course_code=bu_course_id,
+            doc_id=doc_id,
+            uploader_id=user_id,
+            chunks=chunks,
+        )
+        logger.info("[RAG] indexed %d chunks for doc %s", count, doc_id)
 
-        # Embed in batches of 50
-        BATCH = 50
-        for i in range(0, len(records), BATCH):
-            batch = records[i : i + BATCH]
-            texts = [r["chunk_text"] for r in batch]
-            try:
-                vecs = _embed_texts(texts)
-                for rec, vec in zip(batch, vecs):
-                    rec["embedding"] = vec
-            except Exception as e:
-                logger.warning("[RAG] embed failed for doc %s batch %d: %s", doc_id, i, e)
-            time.sleep(1.5)  # stay under 3000 req/min quota
-
-        table("course_chunks").upsert(records, on_conflict="id")
-        logger.info("[RAG] indexed %d chunks for doc %s", len(records), doc_id)
     except Exception:
         logger.exception("[RAG] _index_document_chunks failed for doc %s", doc_id)
 
