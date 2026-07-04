@@ -433,6 +433,79 @@ class TestGenerateQuizDifficultyEnum:
         assert r.status_code == 200
 
 
+# ── POST /api/quiz/generate — num_questions bound (issue #XXX) ────────────────
+
+
+class TestGenerateQuizNumQuestionsBound:
+    """num_questions must be bounded to 1-10 inclusive. Requests outside
+    this range should return HTTP 422 (validation error) instead of
+    silently truncating to the schema max_length. This regression test
+    prevents the bug where num_questions > 10 silently returned ≤10
+    questions instead of erroring."""
+
+    def test_num_questions_over_cap_rejected(self):
+        """POST with num_questions=15 should return 422, not silently truncate."""
+        agent_run = AsyncMock()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 15,  # exceeds max_length=10
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 422
+        # The agent must not run for an over-cap num_questions.
+        agent_run.assert_not_called()
+
+    def test_num_questions_at_cap_accepted(self):
+        """POST with num_questions=10 (at the max) should succeed."""
+        from types import SimpleNamespace
+        fake_quiz = Quiz(questions=[
+            QuizQuestion(
+                question="Q?", type="multiple_choice", difficulty="medium",
+                options=["a", "b", "c", "d"], correct_answer="a",
+                explanation="x", concept="X",
+            )
+            for _ in range(10)
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+            ),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 10,
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 200
+
+    def test_num_questions_below_min_rejected(self):
+        """POST with num_questions=0 should return 422."""
+        agent_run = AsyncMock()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 0,  # below min=1
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 422
+        agent_run.assert_not_called()
+
+
 # ── POST /api/quiz/submit — mastery routes through apply_graph_update ────────
 
 
