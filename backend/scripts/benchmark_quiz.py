@@ -212,11 +212,40 @@ async def _run_layer2(args: argparse.Namespace) -> None:
               f"off_scope={a['off_scope_count']} correct={a['correctness_rate']:.2f}{note}")
 
 
+def calibration_agreement(judge: list[dict], gold: list[dict]) -> dict:
+    """Fraction of items where judge verdict matches the human label, per dimension."""
+    n = len(gold) or 1
+    dims = ["grounded", "on_scope", "answer_correct"]
+    return {d: sum(1 for j, g in zip(judge, gold) if j[d] == g[d]) / n for d in dims}
+
+
+def run_calibrate() -> None:
+    gold = json.loads((FIX / "gold_labels.json").read_text(encoding="utf-8"))["labels"]
+    if not gold:
+        print("gold_labels.json is empty — label ~20 questions first (see README).")
+        return
+    material = "\n\n".join(
+        p.read_text(encoding="utf-8") for p in sorted((FIX / "docs").glob("*"))
+    )
+    judge = [judge_question(item["question_obj"], material, n_votes=3, model=JUDGE_MODEL)
+             for item in gold]
+    human = [{k: item[k] for k in ("grounded", "on_scope", "answer_correct")} for item in gold]
+    agree = calibration_agreement(judge, human)
+    print(f"Judge agreement vs human ({len(gold)} labels): {agree}")
+    for d, v in agree.items():
+        flag = "OK" if v >= 0.8 else "LOW — judge unreliable on this dimension"
+        print(f"  {d}: {v:.2f}  [{flag}]")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--chunks-only", action="store_true")
     parser.add_argument("--runs-per-concept", type=int, default=1)  # used by Layer 2
+    parser.add_argument("--calibrate", action="store_true")
     args = parser.parse_args()
+    if args.calibrate:
+        run_calibrate()
+        return
     run_layer1()
     if args.chunks_only:
         print("\n(Layer 2 skipped — remove --chunks-only to run it)")

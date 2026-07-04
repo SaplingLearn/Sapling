@@ -33,8 +33,9 @@ labeling which phrases should be retrievable for which concepts.
     or flags ungrounded quiz generation rather than hallucinating.
 - `docs/*.md` — the fixture course material, one file per concept,
   seeded as a single document.
-- `gold_labels.json` — human-calibration labels for the Layer-2 judge
-  (starts empty; populated in Task 5).
+- `gold_labels.json` — human-calibration labels for the Layer-2 judge.
+  Starts `{"labels": []}`; a human populates it by hand (see "Labeling
+  rubric" below) — it is never auto-filled by an LLM.
 
 ## CRITICAL invariant: substrings must appear verbatim in the docs
 
@@ -77,9 +78,90 @@ Sanity-check retrieval afterward:
 
 Expected: a non-zero count.
 
-## Labeling rubric (reserved — Task 5)
+## Labeling rubric (Task 5)
 
-The gold-labeling rubric for `gold_labels.json` (what counts as
-"grounded" vs. "hallucinated" for the Layer-2 judge, inter-rater
-guidance, etc.) is authored in Task 5 alongside the human calibration
-pass. This section is intentionally left as a placeholder until then.
+`gold_labels.json` holds **human**-authored ground truth used to check
+whether the Layer-2 LLM judge (`judge_question` in `benchmark_quiz.py`)
+can be trusted. An LLM must never author these labels — that would just
+be checking the judge against itself. A person reads each question
+against the fixture course material in `docs/*.md` and records their
+own true/false verdict for each of the three dimensions the judge also
+scores:
+
+- **`grounded`** — `true` only if the question's content (the concept
+  being tested, any facts/claims in the stem, and the correct answer)
+  is actually supported by the material in `docs/*.md`. If the
+  question relies on outside knowledge not present in the fixture
+  docs, or misstates something the docs say, label `false`.
+- **`on_scope`** — `true` unless the question tests a topic the
+  fixture course clearly does not cover (off-syllabus). Foundational,
+  on-topic content still counts as `on_scope=true` even if it isn't
+  verbatim in the material — this dimension is about topical
+  relevance to the course, not verbatim grounding (see `grounded`
+  above for that).
+- **`answer_correct`** — `true` only if the option marked as the
+  correct answer is, in fact, the correct answer to the question as
+  written.
+
+### Entry shape
+
+Each entry in the `labels` array pairs a real wire-format question
+(exactly what `routes/quiz.py::_agent_question_to_wire` produces — i.e.
+what `_generate_quiz_for_async`/`_quiz_via_agent` actually returns, so
+labels line up with what `judge_question` is given) with the human's
+verdict on the three dimensions above:
+
+```json
+{
+  "labels": [
+    {
+      "question_obj": {
+        "question": "What technique avoids recomputing overlapping subproblems?",
+        "options": [
+          {"text": "Memoization", "correct": true},
+          {"text": "Bubble sort", "correct": false},
+          {"text": "Binary search", "correct": false},
+          {"text": "Depth-first search", "correct": false}
+        ]
+      },
+      "grounded": true,
+      "on_scope": true,
+      "answer_correct": true
+    }
+  ]
+}
+```
+
+`question_obj` must be a real question — either copied from an actual
+`scripts/benchmark_quiz.py` run's Layer 2 output, or from
+`unlabeled_candidates.json` (see below) if present — never invented
+from scratch, since the point is to grade the real generation +
+judging pipeline.
+
+### Populating the gold set
+
+Target ~20 labeled entries spanning the `rich`/`thin`/`adversarial`
+concepts in `manifest.json`, including at least a few expected to be
+`grounded=false` or `on_scope=false` so the judge is checked on
+negatives, not just positives. Labeling is a manual, human step — it
+is intentionally not automated here. `gold_labels.json` starts (and,
+absent a human labeling pass, remains) `{"labels": []}`; with an empty
+gold set, `scripts/benchmark_quiz.py --calibrate` prints a reminder to
+label questions first and exits without calling the judge.
+
+If `unlabeled_candidates.json` exists alongside this README, it holds
+real generated `question_obj` entries with no label fields yet — a
+human can copy entries from it into `gold_labels.json` and fill in the
+three booleans, rather than needing to run the benchmark themselves to
+get raw material to label.
+
+Once ~20 entries are labeled, run:
+
+```
+.\venv\Scripts\python.exe scripts/benchmark_quiz.py --calibrate
+```
+
+This prints per-dimension agreement between the judge and the human
+labels. Any dimension below 0.80 means the judge is not reliable on
+that dimension yet — revise `_JUDGE_PROMPT` in `benchmark_quiz.py` and
+re-run calibration before trusting Layer 2 results.

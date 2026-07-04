@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from benchmark_quiz import aggregate, majority_vote, score_retrieval
+from benchmark_quiz import aggregate, calibration_agreement, majority_vote, score_retrieval
 
 
 def test_majority_vote_true():
@@ -40,3 +40,14 @@ def test_zero_recall_when_missing():
     r = score_retrieval(concept, chunks)
     assert r["recall"] == 0.0
     assert r["precision"] == 0.0
+
+
+def test_calibration_agreement():
+    judge = [{"grounded": True, "on_scope": True, "answer_correct": True},
+             {"grounded": False, "on_scope": True, "answer_correct": True}]
+    gold = [{"grounded": True, "on_scope": True, "answer_correct": True},
+            {"grounded": True, "on_scope": True, "answer_correct": True}]
+    a = calibration_agreement(judge, gold)
+    assert a["grounded"] == 0.5      # 1 of 2 agree
+    assert a["on_scope"] == 1.0
+    assert a["answer_correct"] == 1.0
