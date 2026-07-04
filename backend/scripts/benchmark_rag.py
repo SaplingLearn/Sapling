@@ -13,6 +13,10 @@ import sys
 import textwrap
 from pathlib import Path
 
+# Windows consoles default to cp1252, which can't encode the report's bar chars
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # Allow imports from backend/
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -93,7 +97,8 @@ CASES = [
         "course_code": "ENG EK 103",
         "question": "What are the prerequisites for this course?",
         "category": "prerequisites",
-        "required_keywords": ["EK 122", "122"],
+        # LLM formats the code as either "EK 122" or "ENGEK122" — "122" matches both
+        "required_keywords": ["122"],
         "forbidden_patterns": ["don't have", "cannot provide"],
     },
     {
