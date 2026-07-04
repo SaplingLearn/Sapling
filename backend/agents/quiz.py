@@ -127,6 +127,18 @@ _SYSTEM_PROMPT = (
     "   AND the adaptive-difficulty rules above.\n\n"
     "Honor the requested num_questions. Don't invent concepts the "
     "student doesn't have."
+    "\n\nCOURSE MATERIAL grounding:\n"
+    "- If the user message contains a `COURSE MATERIAL` block, treat it as "
+    "  the PRIMARY source of truth for question content. The MAJORITY of "
+    "  questions must be grounded in and stay within the scope of that "
+    "  material, so the quiz reflects what this class is actually covering.\n"
+    "- You MAY supplement with foundational, on-topic aspects of the same "
+    "  concept where the material is thin — but NEVER test topics the course "
+    "  clearly does not cover (no off-syllabus drift).\n"
+    "- Difficulty, targeting, and distractors are still governed by the "
+    "  mastery / misconception / quiz-history tools.\n"
+    "- If there is no COURSE MATERIAL block, use general knowledge of the "
+    "  concept as before."
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

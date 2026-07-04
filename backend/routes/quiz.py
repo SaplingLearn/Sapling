@@ -14,11 +14,13 @@ from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
+from routes.learn import _get_catalog_chunk
 from services.auth_guard import require_self
 from services.profiles import get_display_name
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
+from services.rag_service import retrieve_chunks, format_rag_context
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
@@ -141,6 +143,43 @@ def _resolve_model_pref(model_pref: str | None):
     return google_model(name)
 
 
+def _resolve_bu_code(course_id: str | None) -> str | None:
+    """Resolve a Sapling course UUID to its BU course_code (course_chunks
+    partition key). None if unresolvable. Mirrors routes/documents.py."""
+    if not course_id:
+        return None
+    rows = table("courses").select(
+        "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+    )
+    return (rows[0].get("course_code") if rows else None) or None
+
+
+def _course_material_block(course_id: str | None, concept_name: str) -> str:
+    """Best-effort catalog + document-chunk context for a concept.
+
+    Returns "" if nothing is available (no course, no bu_code, no chunks) or
+    if retrieval raises — grounding must never break quiz generation.
+    """
+    bu_code = _resolve_bu_code(course_id)
+    if not bu_code:
+        return ""
+    blocks: list[str] = []
+    try:
+        catalog = _get_catalog_chunk(bu_code)
+    except Exception:
+        catalog = ""
+    if catalog:
+        blocks.append("COURSE CATALOG (official BU course data):\n\n" + catalog)
+    try:
+        chunks = retrieve_chunks(concept_name, course_id=bu_code, k=5)
+    except Exception:
+        chunks = []
+    rag_block = format_rag_context(chunks)
+    if rag_block:
+        blocks.append(rag_block)
+    return "\n\n".join(blocks)
+
+
 async def _quiz_via_agent(
     *,
     user_id: str,
@@ -172,7 +211,7 @@ async def _quiz_via_agent(
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
     # needs and trust the prompt to drive tool calls.
-    user_message = (
+    routing_msg = (
         f"Generate {num_questions} {difficulty} questions for the student. "
         f"The target concept is '{concept_name}' "
         f"(concept_node_id={concept_node_id}). Follow the workflow in your "
@@ -180,10 +219,19 @@ async def _quiz_via_agent(
         f"read_recent_quiz_attempts."
     )
     if use_shared_context:
-        user_message += (
+        routing_msg += (
             " Also call read_misconceptions_for_course and use those misconceptions "
             "as distractors and probes."
         )
+
+    material = _course_material_block(course_id, concept_name)
+    if material:
+        user_message = (
+            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material
+            + "\n\n[GENERATE QUIZ]\n" + routing_msg
+        )
+    else:
+        user_message = routing_msg
 
     model_override = _resolve_model_pref(model_pref)
     run_kwargs: dict = {"deps": deps}
