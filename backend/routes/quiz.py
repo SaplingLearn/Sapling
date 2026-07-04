@@ -145,12 +145,16 @@ def _resolve_model_pref(model_pref: str | None):
 
 def _resolve_bu_code(course_id: str | None) -> str | None:
     """Resolve a Sapling course UUID to its BU course_code (course_chunks
-    partition key). None if unresolvable. Mirrors routes/documents.py."""
+    partition key). None if unresolvable OR if the lookup fails — grounding
+    must never break quiz generation."""
     if not course_id:
         return None
-    rows = table("courses").select(
-        "course_code", filters={"id": f"eq.{course_id}"}, limit=1
-    )
+    try:
+        rows = table("courses").select(
+            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+        )
+    except Exception:
+        return None
     return (rows[0].get("course_code") if rows else None) or None
 
 

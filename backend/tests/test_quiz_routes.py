@@ -947,6 +947,34 @@ class TestQuizGrounding:
         assert r.status_code == 200  # grounding failure never 502s the quiz
         assert "COURSE MATERIAL" not in agent_run.call_args[0][0]
 
+    def test_bu_code_resolution_failure_is_swallowed(self):
+        """A transient/erroring `courses` lookup (timeout, 5xx, malformed-id
+        400 from PostgREST) must degrade grounding to '' rather than
+        propagating out of _resolve_bu_code and 502ing the whole quiz."""
+        def factory(name):
+            m = MagicMock()
+            if name == "graph_nodes":
+                m.select.return_value = [self.NODE]
+            elif name == "courses":
+                m.select.side_effect = RuntimeError("db down")
+            else:  # quiz_attempts insert, etc.
+                m.select.return_value = []
+                m.insert.return_value = []
+                m.update.return_value = []
+            return m
+
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        assert r.status_code == 200  # bu_code resolution failure never 502s the quiz
+        assert "COURSE MATERIAL" not in agent_run.call_args[0][0]
+
 
 # ── Per-request model_pref (Fast/Smart toggle, mirrors chat tutor) ──────────
 
