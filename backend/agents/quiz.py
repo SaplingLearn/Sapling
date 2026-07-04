@@ -44,27 +44,39 @@ class QuizQuestion(BaseModel):
     """A single multiple-choice quiz question. Kept small so the parent
     Quiz schema doesn't trip Gemini's structured-output complexity limit."""
 
-    question: str = Field(max_length=600)
+    # NOTE: no `max_length` on the string fields below. Gemini's
+    # constrained-decoding structured output builds a length-counting
+    # automaton per bounded string field; combined with the nested
+    # options list this pushed the schema past Gemini's "too many
+    # states for serving" limit on gemini-2.5-flash-lite / -flash
+    # (only gemini-2.5-pro served it). Length is governed by the system
+    # prompt instead (question/explanation: 1-3 sentences; concept must
+    # match a concept_name).
+    question: str
     type: QuizQuestionType
     difficulty: QuizDifficulty
-    # 3-6 options. The agent is required to populate this for every
-    # question and to make `correct_answer` match exactly one of them.
-    options: list[str] = Field(min_length=3, max_length=6)
+    # Exactly 4 options (matches the system prompt's "4 options, exactly
+    # one correct"). Also narrows the schema vs. the prior 3-6 range,
+    # which was part of the "too many states" issue above.
+    options: list[str] = Field(min_length=4, max_length=4)
     # The option text the agent considers correct. Must appear verbatim
     # in `options`; the route validates this and drops questions that
     # violate the contract rather than silently mis-marking them.
-    correct_answer: str = Field(max_length=400)
-    explanation: str = Field(max_length=600)
+    correct_answer: str
+    explanation: str
     # Concept the question is testing — must be one of the user's known
     # concept_names per the prompt. Used by the route to award mastery
     # on a correct answer.
-    concept: str = Field(max_length=120)
+    concept: str
 
 
 class Quiz(BaseModel):
     """The agent's structured output."""
 
-    questions: list[QuizQuestion] = Field(min_length=1, max_length=20)
+    # Capped at 10 (down from 20): fewer array-repetition states in the
+    # constrained-decoding schema, needed to clear "too many states for
+    # serving" on gemini-2.5-flash-lite. See QuizQuestion note above.
+    questions: list[QuizQuestion] = Field(min_length=1, max_length=10)
 
 
 _SYSTEM_PROMPT = (
