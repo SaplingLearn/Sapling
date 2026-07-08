@@ -2,29 +2,50 @@
 
 A redesigned Next.js frontend for Sapling based on the `Sapling Rebuild` design prototype.
 
-Visual system: warm paper neutrals, botanical green accent, serif display (Fraunces) + humanist sans (Inter), JetBrains Mono accents. Supports light/dark, accent themes (sage/forest/moss/ink/terracotta), density (compact/balanced/spacious), typography pairings, and three knowledge graph variants (orb/constellation/organism).
+Visual system: warm paper neutrals, botanical forest-green accent, serif (Spectral) + display serif (Playfair Display) + humanist sans (DM Sans), JetBrains Mono accents. Light theme only, with density tokens (compact/spacious) and three knowledge graph variants (orb/constellation/organism).
 
 ## Run
 
 ```bash
-cd new_frontend
-npm install
-npm run dev     # http://localhost:3001
+cd frontend
+npm install          # Node >= 20.9, npm >= 10.9
+npm run dev          # http://localhost:3000
 ```
 
-Backend rewrites go to `http://localhost:5000` by default (override via `BACKEND_URL`).
+Backend `/api/*` calls are rewritten to `http://localhost:5000` by default (override via `BACKEND_URL`). Set `NEXT_PUBLIC_LOCAL_MODE=true` to serve mock data from `src/lib/localData.ts` instead of hitting the backend.
+
+## Build & deploy
+
+```bash
+npm run build       # next build
+npm run test        # vitest
+npm run lint        # eslint
+npm run typecheck   # tsc --noEmit
+```
+
+Deployed to Cloudflare Workers via OpenNext:
+
+```bash
+npm run cf:preview          # build + local wrangler preview
+npm run cf:deploy           # build + deploy (production)
+npm run cf:deploy:staging   # build + deploy --env staging
+```
+
+`BACKEND_URL` must be set as a build-time variable for any deploy (prod: `https://api.saplinglearn.com`, staging: `https://api.staging.saplinglearn.com`) — the build fails loudly otherwise, and `wrangler.toml [vars]` (runtime-only) will not fix it. Signed-in sessions also need `SESSION_SECRET` (matching the backend) and `COOKIE_DOMAIN`.
 
 ## Layout
 
-- `src/app/` — App Router routes. The shell (sidebar + top bar) wraps every route except `onboarding`, which is full-bleed. Sign-in is a modal triggered from the landing page.
-- `src/components/` — shared UI primitives and per-screen components.
-- `src/lib/data.ts` — mock data mirroring the design bundle. Swap for real API calls when wiring up.
-- `src/lib/tweaks.tsx` — runtime design-token context (theme/accent/type/density/layout/graph).
+- `src/app/` — App Router with two route groups: `(shell)` (the signed-in app — `ShellFrame` sidebar + top bar) and `(public)` (the pre-auth marketing surface — landing, about, careers, privacy, terms). `onboarding` sits outside both, full-bleed. Sign-in is a modal triggered from the landing page.
+- `src/components/` — shared UI primitives (`ui/`) and per-screen components (`screens/`).
+- `src/context/UserContext.tsx` — signed-in user context provider (mounted in the root layout).
+- `src/lib/` — `api.ts` (typed same-origin `/api/*` client), `data.ts` / `localData.ts` (mock data; `localData.ts` backs `NEXT_PUBLIC_LOCAL_MODE`), plus shared hooks and helpers.
 
 ## Routes
 
-`/dashboard` `/learn` `/tree` `/study` `/library` `/calendar` `/social` `/achievements` `/settings` `/admin` — wrapped by the shell layout.
+`/dashboard` `/learn` `/tree` `/study` `/quiz` `/library` `/notetaker` `/gradebook` `/course-planner` `/calendar` `/social` `/achievements` `/profile` `/settings` `/admin` — wrapped by the `(shell)` layout.
+
+`/` (landing) `/about` `/careers` `/privacy` `/terms` — the `(public)` marketing group.
 
 `/onboarding` — full-bleed.
 
-A floating Tweaks panel (bottom-left) lets you switch themes live. A Report button (bottom-right) opens the feedback modal.
+A Report button (bottom-right, `FloatingActions` in the shell) opens the feedback modal.
