@@ -101,3 +101,11 @@ class SupabaseTable:
 
 def table(name: str) -> SupabaseTable:
     return SupabaseTable(name)
+
+
+def rpc(function_name: str, params: dict) -> list:
+    """Call a Supabase Postgres function via /rest/v1/rpc/{function_name}."""
+    url = f"{REST_URL}/rpc/{function_name}"
+    r = _client.post(url, json=params)
+    r.raise_for_status()
+    return r.json()

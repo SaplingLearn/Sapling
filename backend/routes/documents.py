@@ -814,6 +814,7 @@ async def upload_document(
                 ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 ("update_course_context", update_course_context, course_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
+                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
             )
 
             yield sapling_event_to_sse(SaplingEvent(
@@ -929,6 +930,90 @@ def _check_upload_achievements(user_id: str) -> None:
         check_achievements(user_id, "documents_uploaded", {})
     except Exception:
         pass
+
+
+def _index_document_chunks(
+    doc_id: str,
+    course_id: str,      # Sapling UUID — resolved to BU code internally
+    user_id: str,
+    extracted_text: str,
+    category: str,
+    doc_summary: str = "",
+) -> None:
+    """Chunk, embed, and upsert a document into course_chunks.
+
+    Runs in a background thread via _spawn_post_roll after the document
+    is persisted, so it never blocks the SSE stream.
+    """
+    import time
+    from services.chunker import chunk_document
+    from services.rag_service import index_document_chunks
+    from services.encryption import encrypt_if_present
+
+    MIN_COURSE_RELEVANCE = 0.35
+
+    try:
+        # Resolve BU course code from Sapling UUID
+        rows = table("courses").select(
+            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+        )
+        bu_course_id = (rows[0].get("course_code") or course_id) if rows else course_id
+
+        chunks = chunk_document(extracted_text)
+        if not chunks:
+            return
+
+        # Store raw extracted text on the document row (best-effort)
+        try:
+            table("documents").update(
+                {"extracted_text": encrypt_if_present(extracted_text)},
+                filters={"id": f"eq.{doc_id}"},
+            )
+        except Exception:
+            logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
+
+        # Relevance gate: skip docs that are off-topic for the course
+        from google import genai as _genai
+        from google.genai import types as genai_types
+        import os
+        _gclient = _genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+
+        catalog_rows = table("course_chunks").select(
+            "embedding",
+            filters={"course_id": f"eq.{bu_course_id}", "category": "eq.catalog"},
+            limit=1,
+        )
+        if catalog_rows and catalog_rows[0].get("embedding"):
+            catalog_vec = catalog_rows[0]["embedding"]
+            sample_text = doc_summary or chunks[0]
+            resp = _gclient.models.embed_content(
+                model="gemini-embedding-001",
+                contents=[sample_text],
+                config=genai_types.EmbedContentConfig(
+                    output_dimensionality=768,
+                    task_type="RETRIEVAL_DOCUMENT",
+                ),
+            )
+            doc_sample_vec = list(resp.embeddings[0].values)
+            time.sleep(1.5)
+            dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
+            if dot < MIN_COURSE_RELEVANCE:
+                logger.warning(
+                    "[RAG] doc %s skipped — relevance to %s is %.3f (< %.2f)",
+                    doc_id, bu_course_id, dot, MIN_COURSE_RELEVANCE,
+                )
+                return
+
+        count = index_document_chunks(
+            course_code=bu_course_id,
+            doc_id=doc_id,
+            uploader_id=user_id,
+            chunks=chunks,
+        )
+        logger.info("[RAG] indexed %d chunks for doc %s", count, doc_id)
+
+    except Exception:
+        logger.exception("[RAG] _index_document_chunks failed for doc %s", doc_id)
 
 
 def _spawn_post_roll(*tasks: tuple) -> None:

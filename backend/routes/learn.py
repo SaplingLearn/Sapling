@@ -258,6 +258,33 @@ def _get_course_info(course_id: str) -> dict:
     return {"course_code": "", "course_name": ""}
 
 
+def _get_catalog_chunk(course_code: str) -> str:
+    """Return the catalog chunk_text for a BU course code, or empty string.
+
+    Fetches up to 5 catalog chunks and returns the longest one — handles
+    courses that were scraped from multiple listing pages (duplicates with
+    slightly different content) by preferring the most complete entry.
+    """
+    if not course_code:
+        return ""
+    try:
+        rows = table("course_chunks").select(
+            "chunk_text",
+            filters={"course_id": f"eq.{course_code}", "category": "eq.catalog"},
+            limit=5,
+        )
+        if rows:
+            # Prefer a chunk that has an explicit Prerequisites line; fall back
+            # to the longest chunk. Handles courses scraped from two listing
+            # pages where one entry has prerequisites and one doesn't.
+            with_prereq = [r for r in rows if "Prerequisites:" in r.get("chunk_text", "")]
+            candidates = with_prereq if with_prereq else rows
+            return max(candidates, key=lambda r: len(r.get("chunk_text", "")))["chunk_text"]
+    except Exception as e:
+        print(f"[RAG] Failed to load catalog chunk for {course_code!r}: {e}")
+    return ""
+
+
 def build_system_prompt(
     mode: str,
     student_name: str,
@@ -302,20 +329,22 @@ def build_system_prompt(
                 + "\n\n---\n\n".join(doc_blocks)
             )
 
-    if use_shared_context and course_id:
-        # `course_id` is the abstract course id (resolved from the session's
-        # offering by the caller). course_context keys on the abstract course,
-        # so shared class-aggregate context resolves here.
-        ctx = get_course_context(course_id)
-        if ctx:
-            course_info = _get_course_info(course_id)
-            course_label = f"{course_info['course_code']} - {course_info['course_name']}" if course_info['course_code'] else course_info['course_name']
-            shared_block = (
-                SHARED_CONTEXT_TEMPLATE
-                .replace("{course_name}", course_label)
-                .replace("{shared_context_json}", json.dumps(ctx, indent=2))
-            )
-            parts.append(shared_block)
+    if course_id:
+        course_info = _get_course_info(course_id)
+        catalog_text = _get_catalog_chunk(course_info.get("course_code", ""))
+        if catalog_text:
+            parts.append("COURSE CATALOG INFO (BU official course data):\n\n" + catalog_text)
+
+        if use_shared_context:
+            ctx = get_course_context(course_id)
+            if ctx:
+                course_label = f"{course_info['course_code']} - {course_info['course_name']}" if course_info['course_code'] else course_info['course_name']
+                shared_block = (
+                    SHARED_CONTEXT_TEMPLATE
+                    .replace("{course_name}", course_label)
+                    .replace("{shared_context_json}", json.dumps(ctx, indent=2))
+                )
+                parts.append(shared_block)
 
     parts.append(MODE_PROMPTS.get(mode, MODE_PROMPTS["socratic"]))
     return "\n\n".join(parts)
@@ -506,6 +535,26 @@ async def _chat_via_agent(
         session_id=session_id,
     )
 
+    bu_code = _get_course_info(course_id).get("course_code") if course_id else None
+    context_blocks: list[str] = []
+    if bu_code:
+        # Always inject the course catalog (prerequisites, description, credits)
+        # so the agent can answer factual questions about the course without
+        # relying on semantic similarity crossing a threshold.
+        catalog_text = _get_catalog_chunk(bu_code)
+        if catalog_text:
+            context_blocks.append("COURSE CATALOG INFO (official BU course data):\n\n" + catalog_text)
+
+        # Semantic RAG: per-message retrieval for concept-level context
+        from services.rag_service import retrieve_chunks, format_rag_context
+        rag_chunks = retrieve_chunks(user_message, course_id=bu_code, k=5)
+        rag_block = format_rag_context(rag_chunks)
+        if rag_block:
+            context_blocks.append(rag_block)
+
+    if context_blocks:
+        user_message = "\n\n".join(context_blocks) + "\n\n[STUDENT QUESTION]\n" + user_message
+
     if not use_shared_context:
         user_message = (
             user_message
@@ -558,11 +607,20 @@ async def _legacy_chat(body: ChatBody, request: Request) -> dict:
     course_id = offering_course_id(offering_id) if offering_id else ""
     documents = _get_course_documents(body.user_id, offering_id)
 
+    bu_code = _get_course_info(course_id).get("course_code") if course_id else None
+    rag_block = ""
+    if bu_code:
+        from services.rag_service import retrieve_chunks, format_rag_context
+        rag_chunks = retrieve_chunks(body.message, course_id=bu_code, k=5)
+        rag_block = format_rag_context(rag_chunks)
+
     system_prompt = build_system_prompt(
         body.mode, student_name, json.dumps(graph_data, indent=2),
         course_id=course_id, use_shared_context=body.use_shared_context,
         documents=documents,
     )
+    if rag_block:
+        system_prompt = system_prompt + "\n\n" + rag_block
 
     try:
         raw = call_gemini_multiturn(
