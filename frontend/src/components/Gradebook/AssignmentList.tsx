@@ -354,6 +354,10 @@ function CategoryGroup({
         }}
       >
         <span
+          aria-hidden="true"
+          style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }}
+        />
+        <span
           className="mono"
           style={{
             fontSize: 11,
@@ -401,7 +405,7 @@ function CategoryGroup({
           listStyle: "none",
           margin: 0,
           padding: "0 0 0 20px",
-          borderLeft: `2px solid ${color}`,
+          borderLeft: "1px solid var(--border)",
           display: "flex",
           flexDirection: "column",
         }}
