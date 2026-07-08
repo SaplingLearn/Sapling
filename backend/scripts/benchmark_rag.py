@@ -8,7 +8,6 @@ Run from backend/:
 """
 
 import argparse
-import os
 import sys
 import textwrap
 from pathlib import Path
@@ -23,8 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env.staging")  # use staging DB
 
-from routes.learn import _get_catalog_chunk
-from services.gemini_service import call_gemini
+from routes.learn import _get_catalog_chunk  # noqa: E402
+from services.gemini_service import call_gemini  # noqa: E402
 
 
 # ── Ground-truth test cases ────────────────────────────────────────────────────
@@ -519,7 +518,7 @@ def main() -> None:
     if filter_course:
         print(f"Filtered to: {filter_course}")
 
-    chunk_results = run_chunk_tests(cases)
+    run_chunk_tests(cases)
 
     if not args.chunks_only:
         llm_results = run_llm_tests(cases, filter_course=filter_course)
