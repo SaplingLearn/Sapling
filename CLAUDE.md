@@ -13,10 +13,10 @@ A FastAPI + Supabase backend that ingests student documents, calls Gemini to cla
 
 ## Repo map
 
-- backend/main.py:87 — FastAPI app + CORS; every router mount lives in the block at :150–168.
+- backend/main.py:87 — FastAPI app + CORS; every router mount lives in the block at :150–169.
 - backend/routes/documents.py:182 — `_process_document` single-call classify/summarize/extract (refactor target #1).
 - backend/routes/documents.py:603 — `upload_document` POST `/api/documents/upload` pipeline.
-- backend/routes/learn.py:261 — `build_system_prompt` for the streaming tutor (SSE).
+- backend/routes/learn.py:288 — `build_system_prompt` for the streaming tutor (SSE).
 - backend/routes/quiz.py:1 — quiz session create/answer/score endpoints.
 - backend/routes/notes.py:32 — `/api/notes` notetaker CRUD, concept link/unlink, and agent actions (`summarize`/`extract-concepts`/`chat`/`send-to-tutor`/`generate-quiz`).
 - backend/routes/academics.py — `/api` terms/offerings/enrollments endpoints over the redesigned schema.
@@ -31,7 +31,7 @@ A FastAPI + Supabase backend that ingests student documents, calls Gemini to cla
 - backend/services/auth_guard.py:68 — `require_self` / `require_admin` FastAPI dependencies.
 - backend/agents/note_summary.py, note_concepts.py, note_chat.py — Pydantic AI agents backing the `/api/notes` agent actions (model slots in `agents/_providers.py`).
 - backend/db/connection.py:102 — `table()` factory; the only sanctioned Supabase entry point (PostgREST, no DDL).
-- backend/db/migrate.py — raw-DDL migration runner (psycopg over `SUPABASE_DB_URL`); migrations are append-only `db/migrations/*.sql` (now at 0028).
+- backend/db/migrate.py — raw-DDL migration runner (psycopg over `SUPABASE_DB_URL`); migrations are append-only `db/migrations/*.sql` (now at 0030).
 
 ## Commands
 
@@ -87,5 +87,5 @@ ruff format .                   # formatter — available, not yet CI-gated (see
 
 ## Gotchas
 
-- Column-level encryption is on for sensitive columns: `user_profiles.name`/`first_name`/`last_name`/`bio`/`location` (these moved off `users` to `user_profiles` in the 0024 identity split), Google OAuth tokens, `messages.content`, `room_messages.text`, `sessions.summary_json`, `documents.summary` + `concept_notes`, `notes.title`/`body`/`last_summary`, and `assignments.notes`/`points_possible`/`points_earned` (the enrollment-keyed gradebook table; points columns carry numeric semantics — use `decrypt_numeric` at read). Helpers live in `backend/services/encryption.py`; use `encrypt_if_present` at write boundaries and `decrypt_if_present` / `decrypt_numeric` at read boundaries (including before injecting into AI prompts). `ENCRYPTION_KEY` must be set (32 bytes as 64 hex chars; generate via `python -c "import secrets; print(secrets.token_hex(32))"`).
+- Column-level encryption is on for sensitive columns: `user_profiles.name`/`first_name`/`last_name`/`bio`/`location` (these moved off `users` to `user_profiles` in the 0024 identity split), Google OAuth tokens, `messages.content`, `room_messages.text`, `sessions.summary_json`, `documents.summary` + `concept_notes` + `extracted_text` (the RAG OCR text added in 0030), `notes.title`/`body`/`last_summary`, and `assignments.notes`/`points_possible`/`points_earned` (the enrollment-keyed gradebook table; points columns carry numeric semantics — use `decrypt_numeric` at read). Helpers live in `backend/services/encryption.py`; use `encrypt_if_present` at write boundaries and `decrypt_if_present` / `decrypt_numeric` at read boundaries (including before injecting into AI prompts). `ENCRYPTION_KEY` must be set (32 bytes as 64 hex chars; generate via `python -c "import secrets; print(secrets.token_hex(32))"`).
 - Knowledge-graph mastery is now an append-only `node_mastery_events` table (replaced the `graph_nodes.mastery_events` JSON column in 0023); node/edge dedup is enforced by UNIQUE constraints. Don't read/write a `mastery_events` column.
