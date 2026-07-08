@@ -15,6 +15,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!<>-_\\/[]{}=+*^?#_";
 
+// Hand-tuned atmospheric orb palettes, hardcoded because they feed canvas
+// fillStyle where CSS var() doesn't resolve. #3e6f8a mirrors --info in
+// globals.css — the muted blue chosen to de-neon the old #3B82F6 (#106).
 const CLUSTER_COLORS = ['#9CA3AF', '#D97706', '#3e6f8a', '#8A63D2', '#14B8A6', '#EF4444'];
 const OB_STEP_COLORS  = ['#D97706', '#8A63D2', '#3e6f8a', '#14B8A6', '#EF4444'];
 const CLUSTER_SEEDS_BG = [10.0, 11.3, 12.6, 13.9, 15.2, 16.5];
@@ -196,6 +199,7 @@ export default function LandingPage() {
     let rotAngle = 0;
     let animId: number;
 
+    // #3e6f8a mirrors --info (globals.css); literal because canvas can't resolve var().
     const palette = [
       { c: '#8A63D2', w: 0.24 }, { c: '#3e6f8a', w: 0.24 },
       { c: '#D97706', w: 0.20 }, { c: '#14B8A6', w: 0.15 },
