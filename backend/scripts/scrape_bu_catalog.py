@@ -13,7 +13,6 @@ Resume: re-running skips already-scraped URLs automatically.
 import asyncio
 import json
 import re
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -349,7 +348,7 @@ async def main() -> None:
         for school in SCHOOLS:
             print(f"\n>> {school}", flush=True)
             before = len(all_courses)
-            school_courses = await scrape_school(client, school, seen_urls, on_batch=save_checkpoint)
+            await scrape_school(client, school, seen_urls, on_batch=save_checkpoint)
             print(f"  [{school}] +{len(all_courses) - before} -> total {len(all_courses)}", flush=True)
 
     elapsed = (datetime.now(timezone.utc) - start).total_seconds()

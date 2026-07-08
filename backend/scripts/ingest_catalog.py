@@ -27,7 +27,7 @@ from google.genai import types as genai_types
 load_dotenv(Path(__file__).parent.parent / ".env")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from db.connection import table
+from db.connection import table  # noqa: E402
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -144,7 +144,7 @@ def main() -> None:
         rec["embedding"] = vec
 
     # Upsert to Supabase in batches of BATCH_SIZE
-    print(f"\nUpserting to course_chunks...")
+    print("\nUpserting to course_chunks...")
     db = table("course_chunks")
     inserted = 0
 
