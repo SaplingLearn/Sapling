@@ -49,6 +49,8 @@ from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
 from agents.tools.graph import apply_concepts_to_graph
+from agents._run import run_agent_sync
+from agents.concept_scan import concept_scan_agent, NewConcepts
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +154,116 @@ def _extend_course_concepts(
     if not isinstance(raw, dict):
         return []
     return _coerce_str_list(raw.get("concepts"))
+
+
+def _scan_user_message(
+    *,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_concept_notes: list[dict] | None = None,
+) -> str:
+    """Build the concept_scan agent's user message: course label + existing
+    concepts + (optional) document context. Mirrors the legacy prompt's data
+    section so agent and legacy paths see the same signal."""
+    existing_block = (
+        "\n".join(f"- {c}" for c in existing_concepts) if existing_concepts else "(none yet)"
+    )
+    lines = [
+        f'Course: "{course_label}"',
+        "Concepts already in the graph:",
+        existing_block,
+    ]
+    if doc_filename or doc_summary or doc_concept_notes:
+        notes_block = (
+            "\n".join(
+                f"  - {n.get('name', '?')}: {n.get('description', '')[:200]}"
+                for n in (doc_concept_notes or [])
+            )
+            or "  (none)"
+        )
+        lines += [
+            "",
+            "New document being scanned:",
+            f"  Title: {doc_filename or '(untitled)'}",
+            f"  Summary: {doc_summary or '(none)'}",
+            "  Concepts already extracted from this document:",
+            notes_block,
+        ]
+    return "\n".join(lines)
+
+
+async def _extend_via_agent(
+    *,
+    user_id: str,
+    course_id: str,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_concept_notes: list[dict] | None = None,
+) -> list[str]:
+    """Run concept_scan_agent and return new concept names. Raises on agent
+    failure so the sync dispatcher can fall back to legacy."""
+    deps = SaplingDeps(
+        user_id=user_id,
+        course_id=course_id,
+        supabase=None,
+        request_id=current_request_id() or str(uuid.uuid4()),
+    )
+    message = _scan_user_message(
+        course_label=course_label,
+        existing_concepts=existing_concepts,
+        doc_filename=doc_filename,
+        doc_summary=doc_summary,
+        doc_concept_notes=doc_concept_notes,
+    )
+    result = await concept_scan_agent.run(
+        message, deps=deps, usage_limits=WORKER_LIMITS,
+    )
+    return list(result.output.concepts)
+
+
+def _extend_concepts(
+    user_id: str,
+    course_id: str,
+    *,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_concept_notes: list[dict] | None = None,
+) -> list[str]:
+    """Agent-first concept extension with legacy fallback (ADR 0001).
+
+    Sync entry point for the sync /scan-concepts handlers: drives the async
+    agent via run_agent_sync, falling back to the legacy call_gemini_json
+    path on any agent failure.
+    """
+    try:
+        return run_agent_sync(
+            _extend_via_agent(
+                user_id=user_id,
+                course_id=course_id,
+                course_label=course_label,
+                existing_concepts=existing_concepts,
+                doc_filename=doc_filename,
+                doc_summary=doc_summary,
+                doc_concept_notes=doc_concept_notes,
+            )
+        )
+    except (UsageLimitExceeded, UnexpectedModelBehavior):
+        logger.warning("concept_scan agent guardrails tripped; using legacy")
+    except Exception:
+        logger.exception("concept_scan agent failed; using legacy")
+    return _extend_course_concepts(
+        course_label=course_label,
+        existing_concepts=existing_concepts,
+        doc_filename=doc_filename,
+        doc_summary=doc_summary,
+        doc_concept_notes=doc_concept_notes,
+    )
 
 
 def _coerce_concept_notes(value) -> list[dict]:
@@ -1160,7 +1272,9 @@ def _scan_concepts_for_course(
     ) or []
     existing_concepts = [r["concept_name"] for r in existing_rows if r.get("concept_name")]
 
-    concepts = _extend_course_concepts(
+    concepts = _extend_concepts(
+        user_id,
+        course_id,
         course_label=_course_label(course_id),
         existing_concepts=existing_concepts,
         doc_filename=doc_filename,
