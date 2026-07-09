@@ -248,6 +248,28 @@ class TestGraphUpdatesAccumulation:
             {"concept": "Real", "before": 0.2, "after": 0.3}
         ]
 
+    def test_update_mastery_tool_persists_despite_casing_drift(self):
+        """apply_graph_update matches concepts case/whitespace-insensitively and
+        returns the *stored* name. When the model's spelling drifts from the
+        stored node ("linear regression" vs "Linear Regression"), the persisted
+        gate must still recognize the concept as changed (normalized match) and
+        not drop it from graph_updates — otherwise concepts_covered under-reports."""
+        ctx = _make_ctx()
+        update = MasteryUpdateInput(
+            updates=[ConceptMasteryUpdate(concept_name="linear  regression", mastery_delta=0.1)]
+        )
+
+        async def fake_to_thread(fn, *args, **kwargs):
+            # apply_graph_update echoes the canonical stored name.
+            return [{"concept": "Linear Regression", "before": 0.2, "after": 0.3}]
+
+        with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
+            _run(update_mastery_tool(ctx, update))
+
+        assert len(ctx.deps.graph_updates) == 1
+        names = [n["concept_name"] for n in ctx.deps.graph_updates[0]["updated_nodes"]]
+        assert names == ["linear  regression"]
+
     def test_multiple_tool_calls_accumulate_independently(self):
         """Two consecutive tool calls (simulating a multi-turn agent run)
         must each append their own payload — not overwrite."""

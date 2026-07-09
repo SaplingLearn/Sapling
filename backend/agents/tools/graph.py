@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
-from services.graph_service import apply_graph_update
+from services.graph_service import _normalize_concept, apply_graph_update
 
 
 class GraphUpdateInput(BaseModel):
@@ -34,11 +34,13 @@ class ConceptMasteryUpdate(BaseModel):
         description="Exact name of the concept whose mastery score to change."
     )
     mastery_delta: float = Field(
+        ge=-1.0,
+        le=1.0,
         description=(
             "Fractional mastery change, −1.0 to +1.0. "
             "Use +0.1 to +0.3 when the student answers correctly; "
             "−0.05 to −0.1 when they reveal a gap or misconception."
-        )
+        ),
     )
     reason: str = Field(
         default="",
@@ -150,10 +152,17 @@ async def update_mastery_tool(
     # and is never written, so it must not leak into graph_update_json (it
     # would over-report concepts_covered in end_session). Rebuild the
     # appended updated_nodes from the concepts that genuinely changed.
+    #
+    # `changes` carries the *stored* concept_name while `updated_nodes` holds
+    # the *model-provided* spelling; match on the normalized form (the same
+    # case/whitespace-insensitive key apply_graph_update dedups on) so a
+    # casing/spacing drift doesn't drop a genuinely-changed concept.
     if changes:
-        changed_names = {c["concept"] for c in changes}
+        changed_names = {_normalize_concept(c["concept"]) for c in changes}
         persisted_nodes = [
-            n for n in updated_nodes if n["concept_name"] in changed_names
+            n
+            for n in updated_nodes
+            if _normalize_concept(n["concept_name"]) in changed_names
         ]
         if persisted_nodes:
             ctx.deps.graph_updates.append({"updated_nodes": persisted_nodes})
