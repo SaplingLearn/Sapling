@@ -144,7 +144,8 @@ class TestUpdateMasteryTool:
         with patch("agents.tools.graph.asyncio.to_thread", side_effect=fake_to_thread):
             result = _run(update_mastery_tool(ctx, update))
 
-        assert "UnknownTopic" not in result or "processed" in result.lower() or "not exist" in result.lower()
+        assert "no score change" in result.lower()
+        assert "mastery updated:" not in result.lower()
 
 
 # ── Bug #13: tools append to deps.graph_updates ──────────────────────────────
@@ -341,7 +342,6 @@ class TestOrchestratorLimitsWired:
 
         with (
             patch("routes.learn.agent_for_mode", return_value=mock_agent),
-            patch("routes.learn._get_session_course_id", return_value=None),
             patch("routes.learn._resolve_model_pref", return_value=None),
             patch("routes.learn._build_pro_model_settings", return_value={}),
         ):
@@ -438,7 +438,7 @@ class TestOrchestratorLimitsWired:
 
         with (
             patch("routes.learn.agent_for_mode", return_value=mock_agent),
-            patch("routes.learn._get_session_course_id", return_value="c1"),
+            patch("routes.learn._get_session_offering_id", return_value=None),
             patch("routes.learn._resolve_model_pref", return_value=None),
             patch("routes.learn._build_pro_model_settings", return_value={}),
             patch("routes.learn.save_message", side_effect=mock_save_message),

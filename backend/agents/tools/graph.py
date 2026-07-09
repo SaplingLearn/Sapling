@@ -12,6 +12,7 @@ to derive concepts_covered correctly for agent-path chats.
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from pydantic_ai import RunContext
@@ -46,9 +47,9 @@ class ConceptMasteryUpdate(BaseModel):
         default="",
         description="Short phrase shown in the mastery-event log (e.g. 'answered correctly').",
     )
-    event_type: str = Field(
+    event_type: Literal["interaction", "correction", "quiz"] = Field(
         default="interaction",
-        description="Event category label: 'interaction', 'correction', or 'quiz'.",
+        description="Event category for the mastery-event log.",
     )
 
 
@@ -101,7 +102,7 @@ async def apply_graph_update_tool(
     To raise or lower mastery on an existing concept, call update_mastery_tool.
     """
     new_nodes = [
-        {"concept_name": name, "initial_mastery": 0.0}
+        {"concept_name": name.strip(), "initial_mastery": 0.0}
         for name in update.concepts
         if name and name.strip()
     ]
@@ -129,7 +130,7 @@ async def update_mastery_tool(
     """
     updated_nodes = [
         {
-            "concept_name": u.concept_name,
+            "concept_name": u.concept_name.strip(),
             "mastery_delta": u.mastery_delta,
             "reason": u.reason,
             "event_type": u.event_type,
