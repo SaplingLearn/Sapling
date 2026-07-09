@@ -104,3 +104,33 @@ def test_extend_concepts_falls_back_to_legacy(monkeypatch, exc):
     assert out == ["Legacy Concept"]
     assert captured["course_label"] == "CS101"
     assert captured["existing_concepts"] == ["Recursion"]
+
+
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+
+from main import app
+
+client = TestClient(app)
+
+
+def test_course_scan_endpoint_uses_agent_and_keeps_response_shape():
+    fake = _FakeAgent(result=_Result(["Binary Search", "Hashing"]))
+    with patch("routes.documents._validate_user", return_value=None), \
+         patch("routes.documents._course_label", return_value="CS101"), \
+         patch("routes.documents.apply_graph_update", return_value=None), \
+         patch("routes.documents.concept_scan_agent", fake), \
+         patch("routes.documents.table") as t:
+        t.return_value.select.return_value = [
+            {"id": "n1", "concept_name": "Recursion"},
+        ]
+        r = client.post(
+            "/api/documents/course/c1/scan-concepts",
+            json={"user_id": "u1"},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["concepts"] == ["Binary Search", "Hashing"]
+    assert "added" in body and "existing" in body
+    assert fake.calls  # the agent path (not legacy) served the request
