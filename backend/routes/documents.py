@@ -50,7 +50,7 @@ from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
 from agents.tools.graph import apply_concepts_to_graph
 from agents._run import run_agent_sync
-from agents.concept_scan import concept_scan_agent, NewConcepts
+from agents.concept_scan import concept_scan_agent
 
 logger = logging.getLogger(__name__)
 
