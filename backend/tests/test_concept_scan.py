@@ -1,11 +1,17 @@
 """Tests for the concept_scan agent migration (/scan-concepts)."""
 import pytest
+from unittest.mock import patch
+
 from pydantic import ValidationError
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModel
+from fastapi.testclient import TestClient
 
 from agents._providers import model_for
 from agents.concept_scan import NewConcepts, concept_scan_agent
+import routes.documents as documents
+from main import app
 
 
 def test_model_for_concept_scan_defaults_to_flash_lite():
@@ -26,10 +32,6 @@ def test_new_concepts_rejects_more_than_15():
 def test_concept_scan_agent_is_configured():
     assert isinstance(concept_scan_agent, Agent)
     assert concept_scan_agent.output_type is NewConcepts
-
-
-import routes.documents as documents
-from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 
 class _Result:
@@ -105,12 +107,6 @@ def test_extend_concepts_falls_back_to_legacy(monkeypatch, exc):
     assert captured["course_label"] == "CS101"
     assert captured["existing_concepts"] == ["Recursion"]
 
-
-from unittest.mock import patch
-
-from fastapi.testclient import TestClient
-
-from main import app
 
 client = TestClient(app)
 
