@@ -26,3 +26,81 @@ def test_new_concepts_rejects_more_than_15():
 def test_concept_scan_agent_is_configured():
     assert isinstance(concept_scan_agent, Agent)
     assert concept_scan_agent.output_type is NewConcepts
+
+
+import routes.documents as documents
+from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
+
+
+class _Result:
+    def __init__(self, concepts):
+        self.output = NewConcepts(concepts=concepts)
+
+
+class _FakeAgent:
+    """Stand-in for concept_scan_agent with an async run()."""
+
+    def __init__(self, *, result=None, exc=None):
+        self._result = result
+        self._exc = exc
+        self.calls = []
+
+    async def run(self, message, **kwargs):
+        self.calls.append((message, kwargs))
+        if self._exc is not None:
+            raise self._exc
+        return self._result
+
+
+def test_scan_user_message_includes_existing_and_doc_context():
+    msg = documents._scan_user_message(
+        course_label="CS101",
+        existing_concepts=["Recursion"],
+        doc_filename="lecture1.pdf",
+        doc_summary="Intro to sorting algorithms.",
+        doc_concept_notes=[{"name": "Merge Sort", "description": "divide and conquer"}],
+    )
+    assert "CS101" in msg
+    assert "Recursion" in msg
+    assert "lecture1.pdf" in msg
+    assert "Merge Sort" in msg
+
+
+def test_extend_concepts_returns_agent_output(monkeypatch):
+    fake = _FakeAgent(result=_Result(["Binary Search", "Hashing"]))
+    monkeypatch.setattr(documents, "concept_scan_agent", fake)
+    out = documents._extend_concepts(
+        "u1", "c1", course_label="CS101", existing_concepts=["Recursion"],
+    )
+    assert out == ["Binary Search", "Hashing"]
+    assert fake.calls  # agent was actually invoked
+
+
+def test_extend_concepts_handles_empty(monkeypatch):
+    fake = _FakeAgent(result=_Result([]))
+    monkeypatch.setattr(documents, "concept_scan_agent", fake)
+    out = documents._extend_concepts(
+        "u1", "c1", course_label="CS101", existing_concepts=[],
+    )
+    assert out == []
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [UsageLimitExceeded("limit"), UnexpectedModelBehavior("weird"), RuntimeError("boom")],
+)
+def test_extend_concepts_falls_back_to_legacy(monkeypatch, exc):
+    monkeypatch.setattr(documents, "concept_scan_agent", _FakeAgent(exc=exc))
+    captured = {}
+
+    def _legacy(**kwargs):
+        captured.update(kwargs)
+        return ["Legacy Concept"]
+
+    monkeypatch.setattr(documents, "_extend_course_concepts", _legacy)
+    out = documents._extend_concepts(
+        "u1", "c1", course_label="CS101", existing_concepts=["Recursion"],
+    )
+    assert out == ["Legacy Concept"]
+    assert captured["course_label"] == "CS101"
+    assert captured["existing_concepts"] == ["Recursion"]
