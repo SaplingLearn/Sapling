@@ -52,6 +52,8 @@ const MODES: { id: Mode; name: string; tip: string }[] = [
 const VALID_MODES: Mode[] = ["socratic", "expository", "teachback"];
 const SESSION_END_COUNT_KEY = "sapling_session_end_count";
 const LAST_SESSION_CTX_KEY = "sapling_last_session_context";
+const RAIL_OPEN_KEY = "sapling_learn_rail_open";
+const RAIL_WIDTH = 400;
 
 function normalizeMode(input: string | null): Mode {
   if (!input) return "socratic";
@@ -103,6 +105,13 @@ function LearnInner() {
   // Tracks each session's last server-confirmed topic so back-to-back rename failures revert to the right value.
   const confirmedTopicsRef = useRef<Map<string, string>>(new Map());
 
+  // Collapsible knowledge-map rail (desktop only). `dragWidth` is non-null
+  // only mid-drag, when it drives the live width and the CSS transition is off.
+  const [railOpen, setRailOpen] = useState(true);
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const railDragRef = useRef<{ startX: number; startWidth: number; width: number; moved: boolean; pointerId: number } | null>(null);
+  const railHydrated = useRef(false);
+
   // Initial data load
   useEffect(() => {
     if (!userReady || !userId) return;
@@ -153,6 +162,23 @@ function LearnInner() {
     router.replace(`/learn?${params.toString()}`, { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
+
+  // Restore the rail's open/closed state on mount, then persist changes. The
+  // `railHydrated` guard keeps the mount-time persist from clobbering the
+  // stored value before the read effect has applied it.
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(RAIL_OPEN_KEY);
+      if (v != null) setRailOpen(v === "1");
+    } catch {}
+    railHydrated.current = true;
+  }, []);
+  useEffect(() => {
+    if (!railHydrated.current) return;
+    try {
+      localStorage.setItem(RAIL_OPEN_KEY, railOpen ? "1" : "0");
+    } catch {}
+  }, [railOpen]);
 
   const handleStart = async () => {
     const t = topicDraft.trim();
@@ -358,6 +384,36 @@ function LearnInner() {
     }
   }, [router, mode]);
 
+  // Edge-tab pointer handling: grab-drag moves the rail width live; a sub-4px
+  // press is treated as a click (toggle). On release we snap open/closed at the
+  // halfway point. The tab lives on the rail's left edge, so dragging right
+  // (toward the screen edge) collapses it.
+  const onRailTabPointerDown = (e: React.PointerEvent) => {
+    if (isMobile) return;
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    const startWidth = railOpen ? RAIL_WIDTH : 0;
+    railDragRef.current = { startX: e.clientX, startWidth, width: startWidth, moved: false, pointerId: e.pointerId };
+    setDragWidth(startWidth);
+  };
+  const onRailTabPointerMove = (e: React.PointerEvent) => {
+    const d = railDragRef.current;
+    if (!d || e.pointerId !== d.pointerId) return;
+    const dx = e.clientX - d.startX;
+    if (Math.abs(dx) > 4) d.moved = true;
+    const next = Math.max(0, Math.min(RAIL_WIDTH, d.startWidth - dx));
+    d.width = next;
+    setDragWidth(next);
+  };
+  const onRailTabPointerUp = (e: React.PointerEvent) => {
+    const d = railDragRef.current;
+    if (!d) return;
+    railDragRef.current = null;
+    try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch {}
+    setDragWidth(null);
+    if (!d.moved) { setRailOpen(o => !o); return; }
+    setRailOpen(d.width >= RAIL_WIDTH / 2);
+  };
+
   const topicNode = useMemo(
     () => graphNodes.find(n => n.id === highlightId),
     [graphNodes, highlightId],
@@ -499,6 +555,8 @@ function LearnInner() {
   }
 
   // ────────── Active session ──────────
+  const railDragging = dragWidth != null;
+  const railW = railDragging ? (dragWidth as number) : railOpen ? RAIL_WIDTH : 0;
   return (
     <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
       <DisclaimerModal />
@@ -525,7 +583,7 @@ function LearnInner() {
         </div>
       )}
 
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+      <div style={{ display: "flex", flex: 1, minHeight: 0, position: "relative" }}>
         {(!isMobile || mobileTab === "chat") && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
             <TopBar
@@ -579,55 +637,132 @@ function LearnInner() {
         {(!isMobile || mobileTab === "graph") && (
           <aside
             style={{
-              width: isMobile ? "100%" : 320,
-              borderLeft: isMobile ? "none" : "1px solid var(--border)",
-              background: "var(--bg-subtle)",
-              padding: 20,
-              overflowY: "auto",
-              display: "flex",
-              flexDirection: "column",
-              gap: 16,
+              width: isMobile ? "100%" : railW,
+              minWidth: isMobile ? undefined : railW,
+              flexShrink: 0,
+              overflow: "hidden",
+              transition: isMobile || railDragging
+                ? "none"
+                : "width var(--dur) var(--ease), min-width var(--dur) var(--ease)",
             }}
           >
-            <div>
-              <div className="label-micro">Session</div>
-              <div className="h-serif" style={{ fontSize: 18, marginTop: 4 }}>{topic}</div>
-            </div>
-            {graphNodes.length > 0 && (
-              <div
-                className="card"
-                style={{ padding: 8, display: "flex", flexDirection: "column", gap: 4 }}
-              >
-                <div className="label-micro" style={{ padding: "4px 6px" }}>Knowledge graph</div>
+            {/* Inner content keeps a fixed 400px width so it stays laid out
+                (and the graph's measured bounds stay stable) while the outer
+                <aside> clips it during the slide. */}
+            <div
+              className="learn-map-rail"
+              style={{
+                width: isMobile ? "100%" : RAIL_WIDTH,
+                height: "100%",
+                boxSizing: "border-box",
+                borderLeft: isMobile ? "none" : "1px solid var(--border)",
+                background: "var(--bg-subtle)",
+                padding: 20,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+                gap: 16,
+              }}
+            >
+              <div>
+                <div className="label-micro">Session</div>
+                <div className="h-serif" style={{ fontSize: 18, marginTop: 4 }}>{topic}</div>
+              </div>
+              {graphNodes.length > 0 && (
                 <SidebarKnowledgeGraph
                   nodes={graphNodes}
                   edges={graphEdges}
                   highlightId={highlightId}
                   onNodeClick={handleNodeClick}
                 />
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div className="card" style={{ padding: 12 }}>
+                  <div className="label-micro" style={{ marginBottom: 4 }}>Mode</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, textTransform: "capitalize" }}>{mode}</div>
+                </div>
+                <div className="card" style={{ padding: 12 }}>
+                  <div className="label-micro" style={{ marginBottom: 4 }}>Messages</div>
+                  <div className="mono" style={{ fontSize: 16 }}>{messages.length}</div>
+                </div>
               </div>
-            )}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <div className="card" style={{ padding: 12 }}>
-                <div className="label-micro" style={{ marginBottom: 4 }}>Mode</div>
-                <div style={{ fontSize: 13, fontWeight: 500, textTransform: "capitalize" }}>{mode}</div>
+                <div className="label-micro" style={{ marginBottom: 4 }}>Context</div>
+                <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
+                  {sharedCtx ? "Class intel: on" : "Class intel: off"}
+                </div>
               </div>
-              <div className="card" style={{ padding: 12 }}>
-                <div className="label-micro" style={{ marginBottom: 4 }}>Messages</div>
-                <div className="mono" style={{ fontSize: 16 }}>{messages.length}</div>
-              </div>
+              {progressItems.length > 0 && <ProgressCard items={progressItems} />}
+              {relatedItems.length > 0 && (
+                <RelatedConceptsCard items={relatedItems} onSelect={startSessionFromConcept} />
+              )}
             </div>
-            <div className="card" style={{ padding: 12 }}>
-              <div className="label-micro" style={{ marginBottom: 4 }}>Context</div>
-              <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
-                {sharedCtx ? "Class intel: on" : "Class intel: off"}
-              </div>
-            </div>
-            {progressItems.length > 0 && <ProgressCard items={progressItems} />}
-            {relatedItems.length > 0 && (
-              <RelatedConceptsCard items={relatedItems} onSelect={startSessionFromConcept} />
-            )}
           </aside>
+        )}
+
+        {!isMobile && (
+          <button
+            type="button"
+            aria-label="Toggle knowledge map"
+            aria-expanded={railOpen}
+            title={railOpen ? "Collapse knowledge map" : "Show knowledge map"}
+            onPointerDown={onRailTabPointerDown}
+            onPointerMove={onRailTabPointerMove}
+            onPointerUp={onRailTabPointerUp}
+            onPointerCancel={onRailTabPointerUp}
+            style={{
+              position: "absolute",
+              top: "50%",
+              right: railW,
+              transform: "translateY(-50%)",
+              width: 24,
+              height: 68,
+              padding: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 4,
+              cursor: railDragging ? "grabbing" : "pointer",
+              touchAction: "none",
+              background: "var(--bg-panel)",
+              border: "1px solid var(--border)",
+              borderRight: "none",
+              borderRadius: "10px 0 0 10px",
+              boxShadow: "-3px 0 8px rgba(19, 38, 16, 0.06)",
+              color: railOpen ? "var(--brand-forest)" : "var(--text-muted)",
+              zIndex: 20,
+              transition: railDragging
+                ? "none"
+                : "right var(--dur) var(--ease), color var(--dur) var(--ease)",
+            }}
+          >
+            {/* Knowledge-graph glyph: three nodes joined by two links. */}
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+              <line x1="4.5" y1="5" x2="11" y2="4" />
+              <line x1="4.5" y1="5" x2="9" y2="11.5" />
+              <circle cx="4.5" cy="5" r="2" />
+              <circle cx="11" cy="4" r="2" />
+              <circle cx="9" cy="11.5" r="2" />
+            </svg>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              style={{
+                transform: railOpen ? "rotate(0deg)" : "rotate(180deg)",
+                transition: railDragging ? "none" : "transform var(--dur) var(--ease)",
+              }}
+            >
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
         )}
       </div>
 
