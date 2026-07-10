@@ -421,6 +421,10 @@ body { font-size: 14px; line-height: 1.5; }
     scroll-behavior: auto !important;
   }
 }
+
+/* Hide the shared KnowledgeGraph's recenter/reset control on the Tutor
+   session knowledge-map rail only (keeps it intact on Dashboard/Tree). */
+.learn-map-rail button[title="Reset view"] { display: none; }
 /* ══════════════════════════════════════════════════════════════════
    LANDING PAGE STYLES (ported from main branch)
    ══════════════════════════════════════════════════════════════════ */

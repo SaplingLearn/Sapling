@@ -31,6 +31,7 @@ AgentTask = Literal[
     "note_summary", "note_concepts", "note_chat",
     "study_guide", "social_summary",
     "course_summary", "quiz_context",
+    "concept_scan",
 ]
 
 
@@ -62,6 +63,10 @@ _DEFAULTS: dict[AgentTask, str] = {
     "course_summary": "gemini-2.5-flash",
     # Quiz-context notes are short structured extraction → the lite tier.
     "quiz_context": "gemini-2.5-flash-lite",
+    # Scan-concepts extends an existing course concept set from a short
+    # context (existing concepts + optional doc summary) → the cheap lite
+    # tier, matching the MODEL_LITE the legacy path used.
+    "concept_scan": "gemini-2.5-flash-lite",
 }
 
 
