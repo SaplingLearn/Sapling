@@ -32,7 +32,7 @@ AgentTask = Literal[
     "study_guide", "social_summary",
     "flashcard",
     "course_summary", "quiz_context",
-    "concept_scan",
+    "concept_scan", "concept_describe",
 ]
 
 
@@ -74,6 +74,9 @@ _DEFAULTS: dict[AgentTask, str] = {
     # context (existing concepts + optional doc summary) → the cheap lite
     # tier, matching the MODEL_LITE the legacy path used.
     "concept_scan": "gemini-2.5-flash-lite",
+    # One-sentence concept blurb for the knowledge-map rail — a tiny,
+    # short-output generation → the cheap lite tier.
+    "concept_describe": "gemini-2.5-flash-lite",
 }
 
 
