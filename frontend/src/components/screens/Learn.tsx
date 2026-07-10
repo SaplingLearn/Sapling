@@ -110,7 +110,7 @@ function LearnInner() {
   const [railOpen, setRailOpen] = useState(true);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const railDragRef = useRef<{ startX: number; startWidth: number; width: number; moved: boolean; pointerId: number } | null>(null);
-  const railHydrated = useRef(false);
+  const [railHydrated, setRailHydrated] = useState(false);
 
   // Initial data load
   useEffect(() => {
@@ -164,21 +164,22 @@ function LearnInner() {
   }, [mode]);
 
   // Restore the rail's open/closed state on mount, then persist changes. The
-  // `railHydrated` guard keeps the mount-time persist from clobbering the
-  // stored value before the read effect has applied it.
+  // `railHydrated` state flips true only after the stored value is applied, and
+  // the persist effect is gated on it (and re-runs when it flips), so the
+  // initial value can't be written back before hydration completes.
   useEffect(() => {
     try {
       const v = localStorage.getItem(RAIL_OPEN_KEY);
       if (v != null) setRailOpen(v === "1");
     } catch {}
-    railHydrated.current = true;
+    setRailHydrated(true);
   }, []);
   useEffect(() => {
-    if (!railHydrated.current) return;
+    if (!railHydrated) return;
     try {
       localStorage.setItem(RAIL_OPEN_KEY, railOpen ? "1" : "0");
     } catch {}
-  }, [railOpen]);
+  }, [railOpen, railHydrated]);
 
   const handleStart = async () => {
     const t = topicDraft.trim();
@@ -404,14 +405,26 @@ function LearnInner() {
     d.width = next;
     setDragWidth(next);
   };
-  const onRailTabPointerUp = (e: React.PointerEvent) => {
+  // Shared drag terminator. A cancellation (or an event from a stray pointer
+  // that isn't the one that started the drag) clears state without toggling or
+  // snapping the rail.
+  const endRailDrag = (e: React.PointerEvent, cancelled: boolean) => {
     const d = railDragRef.current;
-    if (!d) return;
+    if (!d || e.pointerId !== d.pointerId) return;
     railDragRef.current = null;
     try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch {}
     setDragWidth(null);
+    if (cancelled) return;
     if (!d.moved) { setRailOpen(o => !o); return; }
     setRailOpen(d.width >= RAIL_WIDTH / 2);
+  };
+  const onRailTabPointerUp = (e: React.PointerEvent) => endRailDrag(e, false);
+  const onRailTabPointerCancel = (e: React.PointerEvent) => endRailDrag(e, true);
+  const onRailTabKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setRailOpen(o => !o);
+    }
   };
 
   const topicNode = useMemo(
@@ -709,7 +722,8 @@ function LearnInner() {
             onPointerDown={onRailTabPointerDown}
             onPointerMove={onRailTabPointerMove}
             onPointerUp={onRailTabPointerUp}
-            onPointerCancel={onRailTabPointerUp}
+            onPointerCancel={onRailTabPointerCancel}
+            onKeyDown={onRailTabKeyDown}
             style={{
               position: "absolute",
               top: "50%",
