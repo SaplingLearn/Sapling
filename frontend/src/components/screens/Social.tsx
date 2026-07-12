@@ -3,6 +3,7 @@ import React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Icon } from "../Icon";
+import { FullHeightScreen } from "../FullHeightScreen";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
 import { SocialRoomsSkeleton } from "../Skeleton";
@@ -1043,7 +1044,7 @@ export function Social() {
   const members = (overview?.members || []).map(m => ({ user_id: m.user_id, name: m.name }));
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
+    <FullHeightScreen direction="row">
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {tab === "directory" ? <SchoolDirectory /> : active ? (
           <>
@@ -1124,7 +1125,7 @@ export function Social() {
           ))}
         </div>
       </aside>
-    </div>
+    </FullHeightScreen>
   );
 }
 

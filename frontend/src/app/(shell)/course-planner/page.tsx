@@ -1,10 +1,11 @@
 "use client";
 import { TopBar } from "@/components/TopBar";
 import { Icon } from "@/components/Icon";
+import { FullHeightScreen } from "@/components/FullHeightScreen";
 
 export default function CoursePlannerPage() {
   return (
-    <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
+    <FullHeightScreen>
       <TopBar title="Course Planner" />
       <main
         style={{
@@ -44,6 +45,6 @@ export default function CoursePlannerPage() {
           building it — check back soon.
         </div>
       </main>
-    </div>
+    </FullHeightScreen>
   );
 }

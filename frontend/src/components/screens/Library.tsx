@@ -3,6 +3,7 @@ import React from "react";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { TopBar } from "../TopBar";
+import { FullHeightScreen } from "../FullHeightScreen";
 import { Icon } from "../Icon";
 import { Pill } from "../Pill";
 import { DocumentUploadModal } from "../DocumentUploadModal";
@@ -137,7 +138,7 @@ export function Library() {
   }, [documents]);
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
+    <FullHeightScreen direction="row">
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <TopBar
           title="Library"
@@ -423,7 +424,7 @@ export function Library() {
           }
         }}
       />
-    </div>
+    </FullHeightScreen>
   );
 }
 
