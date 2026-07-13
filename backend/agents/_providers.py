@@ -31,6 +31,8 @@ AgentTask = Literal[
     "note_summary", "note_concepts", "note_chat",
     "study_guide", "social_summary",
     "flashcard",
+    "course_summary", "quiz_context",
+    "concept_scan",
 ]
 
 
@@ -58,9 +60,20 @@ _DEFAULTS: dict[AgentTask, str] = {
     "study_guide": "gemini-2.5-flash",
     # Social summary is short-form prose → the cheaper lite tier is enough.
     "social_summary": "gemini-2.5-flash-lite",
-    # Flashcard generation/cleanup/cloze — content quality matters → full Flash
-    # (matches the legacy gemini_service default the flashcard path used).
+    # Flashcard generation/cleanup/cloze — content quality matters → full Flash.
+    # Only the model *name* matches the legacy call_gemini flashcard path; the
+    # legacy sampling params (temperature=0.7, max_output_tokens=8192,
+    # thinking disabled) are pinned separately as model_settings on the agent
+    # in agents/flashcard.py so full parity with the old path is preserved.
     "flashcard": "gemini-2.5-flash",
+    # Instructor class summary — a few paragraphs of analysis → full Flash.
+    "course_summary": "gemini-2.5-flash",
+    # Quiz-context notes are short structured extraction → the lite tier.
+    "quiz_context": "gemini-2.5-flash-lite",
+    # Scan-concepts extends an existing course concept set from a short
+    # context (existing concepts + optional doc summary) → the cheap lite
+    # tier, matching the MODEL_LITE the legacy path used.
+    "concept_scan": "gemini-2.5-flash-lite",
 }
 
 

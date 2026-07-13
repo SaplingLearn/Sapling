@@ -186,7 +186,7 @@ export function TopNav() {
               fontFamily: "'Spectral', Georgia, serif",
               fontWeight: 700,
               fontSize: isMobile ? "17px" : "20px",
-              color: "#1a5c2a",
+              color: "var(--brand-forest)",
               letterSpacing: "-0.02em",
               textShadow: "0 0 12px rgba(26, 92, 42, 0.2)",
               lineHeight: 1.1,

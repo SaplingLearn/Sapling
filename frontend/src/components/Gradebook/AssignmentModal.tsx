@@ -2,6 +2,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import type { GradedAssignment, GradeCategory } from "@/lib/types";
+import { Button } from "@/components/ui";
 
 export interface AssignmentDraft {
   title: string;
@@ -332,23 +333,18 @@ export function AssignmentModal({
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button type="button" onClick={onClose}>Cancel</button>
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="sm"
               disabled={!valid || saving}
               onClick={async () => {
                 setSaving(true);
                 try { await onSave(draft); onClose(); }
                 finally { setSaving(false); }
               }}
-              style={{
-                background: valid ? "var(--accent)" : "var(--bg-soft)",
-                color: valid ? "#fff" : "var(--text-dim)",
-                border: 0, borderRadius: 6, padding: "6px 14px",
-                cursor: valid ? "pointer" : "not-allowed",
-              }}
             >
               {saving ? "Saving…" : "Save"}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

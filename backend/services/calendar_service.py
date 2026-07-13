@@ -10,14 +10,11 @@ from agents.deps import SaplingDeps
 from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.tools.syllabus_adapter import syllabus_to_wire_dict
 from services.extraction_service import extract_text_from_file
-from services.gemini_service import call_gemini_json
 from services.assignment_dedupe import assignment_dedupe_key
 from services.encryption import encrypt_if_present
 from db.connection import table
 
 logger = logging.getLogger(__name__)
-
-PROMPT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", "syllabus_extraction.txt")
 
 
 def load_existing_assignment_keys(user_id: str) -> set:
@@ -66,18 +63,19 @@ def insert_new_assignments(user_id: str, assignments: list[dict], *, source: str
     return len(rows)
 
 
-def parse_syllabus(extracted_text: str) -> dict:
-    """Use Gemini to parse assignments from extracted text.
-
-    Legacy fallback path retained per ADR-0001. The primary path now
-    runs through `_extract_via_agent` (syllabus_extraction_agent +
-    syllabus_to_wire_dict). This function stays so that the agent path
-    has a working degrade target when guardrails trip.
-    """
-    with open(PROMPT_PATH) as f:
-        prompt_template = f.read()
-    prompt = prompt_template + f"\n\nDOCUMENT TEXT:\n{extracted_text}"
-    return call_gemini_json(prompt)
+def _degraded_result(text: str) -> dict:
+    """Graceful degrade when the extraction agent fails. Returns the legacy
+    wire shape with no assignments and a user-facing warning — deliberately
+    NOT a second LLM call (the raw-Gemini fallback was retired in #144)."""
+    return {
+        "assignments": [],
+        "warnings": [
+            "Assignment extraction is temporarily unavailable. Please try again."
+        ],
+        "raw_text": text,
+        "course_title": None,
+        "grading_categories": [],
+    }
 
 
 async def _extract_via_agent(
@@ -89,7 +87,7 @@ async def _extract_via_agent(
     """Run syllabus_extraction_agent on `extracted_text` and convert
     its output to the legacy wire-format dict.
 
-    Returns the same shape as the legacy `parse_syllabus`:
+    Returns the legacy wire-format dict:
     {"assignments": [...], "warnings": [...], "raw_text": str,
      "course_title": str | None, "grading_categories": [...]}.
 
@@ -122,16 +120,14 @@ async def extract_assignments_from_file(
     user_id: str = "",
     request_id: str = "",
 ) -> dict:
-    """Extract text from file then parse assignments via the agent
-    (legacy fallback per ADR-0001).
+    """Extract text from a file, then parse assignments via
+    `syllabus_extraction_agent`.
 
-    Async because the syllabus-extraction agent is async; callers
-    must `await` this. Mirrors the orchestrator-vs-legacy fallback
-    pattern in `routes/quiz.py::_quiz_via_agent` and
-    `routes/learn.py::_chat_via_agent`: Pydantic-AI guardrail
-    exceptions and bare exceptions degrade to the legacy
-    `parse_syllabus` path so a single agent failure can't take the
-    syllabus-upload feature down.
+    Async because the agent is async; callers must `await` this. The
+    raw-Gemini legacy fallback was retired in #144: Pydantic-AI guardrail
+    exceptions and bare exceptions now degrade to `_degraded_result` (empty
+    assignments + a warning, no second LLM call) so a single agent failure
+    can't take the syllabus-upload feature down.
     """
     text = extract_text_from_file(file_bytes, filename, content_type)
     if not text.strip():
@@ -147,21 +143,15 @@ async def extract_assignments_from_file(
         )
     except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
         logger.warning(
-            "Syllabus agent guardrails tripped; falling back to legacy",
+            "Syllabus agent guardrails tripped; degrading to empty result",
             exc_info=e,
         )
-        result = parse_syllabus(text)
-        result.setdefault("raw_text", text)
-        result.setdefault("course_title", None)
-        result.setdefault("grading_categories", [])
+        result = _degraded_result(text)
     except Exception:
         logger.exception(
-            "Unexpected syllabus-agent failure; falling back to legacy"
+            "Unexpected syllabus-agent failure; degrading to empty result"
         )
-        result = parse_syllabus(text)
-        result.setdefault("raw_text", text)
-        result.setdefault("course_title", None)
-        result.setdefault("grading_categories", [])
+        result = _degraded_result(text)
 
     return result
 

@@ -54,7 +54,7 @@ export default function CareersPage() {
               style={{ width: 26, height: 26, flexShrink: 0, position: 'relative', top: -2 }}
             />
             <span
-              style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 20, color: '#1a5c2a', letterSpacing: '-0.02em', lineHeight: 1.1 }}
+              style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 20, color: 'var(--brand-forest)', letterSpacing: '-0.02em', lineHeight: 1.1 }}
             >
               Sapling
             </span>

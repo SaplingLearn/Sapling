@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sapling — Primary Button Shape: Sharp vs Pill</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Playfair+Display:ital,wght@0,500;0,600;0,700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#faf8f3; --bg-panel:#fdfcf9; --bg-soft:#ebe6dc; --bg-inset:#f7f3eb; --bg-subtle:#f4f1ea;
+    --border:rgba(42,39,31,.12); --border-strong:rgba(42,39,31,.20);
+    --text:#1a1814; --text-dim:#3f3b31; --text-muted:#6f6857;
+    /* unified green family (sage retired → forest) */
+    --forest:#1B6C42; --forest-bright:#2D8F5C; --forest-soft:#f1f6ee; --forest-border:#c3d8b3;
+    --positive:#3a7d4e; /* single status green (merges grade-a + mastery) */
+    --amber:#c89b5e; --rust:#b4562c; --err:#a83a3a;
+    --r-sm:6px; --r-md:10px; --r-full:999px;
+    --shadow-sm:0 1px 2px rgba(19,38,16,.05),0 1px 1px rgba(19,38,16,.04);
+    --shadow-md:0 4px 14px rgba(19,38,16,.07);
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'DM Sans',system-ui,sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:48px 32px 100px}
+  .serif{font-family:'Playfair Display',Georgia,serif;letter-spacing:-.015em}
+  .micro{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-muted)}
+  code{font-family:var(--mono);font-size:.85em;background:var(--bg-soft);padding:1px 5px;border-radius:4px;color:var(--text-dim)}
+
+  header{margin-bottom:14px}
+  h1{font-family:'Playfair Display',serif;font-weight:700;font-size:clamp(30px,4vw,46px);letter-spacing:-.02em;margin:10px 0 10px}
+  h1 em{font-style:italic;color:var(--forest)}
+  .lede{font-size:17px;color:var(--text-dim);max-width:70ch;margin:0}
+  .note{margin:18px 0 34px;font-size:13.5px;color:var(--text-muted);background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--r-md);padding:12px 16px;max-width:80ch}
+
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+  @media(max-width:860px){.cols{grid-template-columns:1fr}}
+  .col-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .col-head h2{font-family:'Playfair Display',serif;font-weight:600;font-size:22px;margin:0}
+  .tag{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:4px 10px;border-radius:var(--r-full)}
+  .tag-a{background:var(--forest-soft);color:#2b5221;border:1px solid var(--forest-border)}
+  .tag-b{background:var(--bg-soft);color:var(--text-muted)}
+
+  /* the demo surface — a realistic app fragment */
+  .surface{background:var(--bg-panel);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow-sm);overflow:hidden}
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border);background:var(--bg-subtle)}
+  .topbar .title{font-family:'Playfair Display',serif;font-size:18px;font-weight:600}
+  .body{padding:18px}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+  .label{font-size:12px;color:var(--text-muted);width:100%;margin-bottom:-4px}
+
+  /* buttons — .pri radius is what differs per column */
+  button{font-family:inherit;cursor:pointer;border:1px solid transparent;font-weight:500;transition:filter .14s,background .14s,border-color .14s}
+  .btn{display:inline-flex;align-items:center;gap:7px;padding:8px 14px;font-size:13px;border:1px solid var(--border);background:var(--bg-panel);color:var(--text)}
+  .btn:hover{border-color:var(--border-strong);background:var(--bg-subtle)}
+  .pri{background:var(--forest);color:#fff;border-color:transparent}
+  .pri:hover{filter:brightness(1.07);background:var(--forest)}
+  .ghost{background:transparent;border-color:transparent;color:var(--text-dim)}
+  .ghost:hover{background:var(--bg-soft)}
+  .danger{color:var(--err);border-color:rgba(168,58,58,.3);background:transparent}
+  .big{padding:13px 28px;font-size:15px}
+
+  /* per-column radius */
+  .sharp .btn,.sharp .pri,.sharp .ghost,.sharp .danger{border-radius:var(--r-sm)}
+  .pill  .btn,.pill  .pri,.pill  .ghost,.pill  .danger{border-radius:var(--r-full)}
+
+  /* toggles stay pill in BOTH (true segmented control) */
+  .seg{display:inline-flex;background:var(--bg-soft);border-radius:var(--r-full);padding:3px;gap:2px}
+  .seg button{border-radius:var(--r-full);padding:6px 14px;font-size:12.5px;background:transparent;color:var(--text-dim);border:0}
+  .seg button.on{background:var(--forest);color:#fff}
+
+  /* chips/pills (the unified Chip) — same in both */
+  .chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:var(--r-full);font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;background:var(--bg-soft);color:var(--text-dim);border:1px solid var(--border)}
+  .chip-accent{background:var(--forest-soft);color:#2b5221;border-color:var(--forest-border)}
+  .chip-amber{background:#f7efe0;color:#8a6d2c;border-color:transparent}
+
+  /* a gradebook-style mini card */
+  .gcard{border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px}
+  .gcard .hd{padding:14px 16px 12px;background:linear-gradient(135deg,var(--positive),#2f6b41);color:#fff}
+  .gcard .hd .micro{color:rgba(255,255,255,.75)}
+  .gcard .hd .grade{font-family:'Playfair Display',serif;font-size:34px;font-weight:600;line-height:1}
+  .gcard .ft{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;font-size:13px}
+  .gcard .pct{font-family:var(--mono);font-weight:600;color:var(--positive)}
+
+  .divider{height:1px;background:var(--border);margin:16px 0}
+  .caption{font-size:12px;color:var(--text-muted);margin-top:10px}
+  .footer{margin-top:46px;padding-top:22px;border-top:1px solid var(--border);font-size:13px;color:var(--text-dim);max-width:80ch}
+  .footer b{color:var(--text)}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:8px}
+  .sw{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted)}
+  .dot{width:14px;height:14px;border-radius:4px;border:1px solid rgba(0,0,0,.1)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="micro">Sapling · Button-shape decision · 2026-06-30</span>
+    <h1>Same screen, <em>two</em> primary-button shapes</h1>
+    <p class="lede">Identical UI on both sides. The only difference is the <strong>primary action button</strong> radius: <code>6px</code> (sharp, the app's current identity) vs <code>999px</code> (pill, the landing's). Greens are already unified to forest (sage retired) so you're judging shape, not color.</p>
+  </header>
+  <div class="note">
+    <strong>What stays the same in both columns:</strong> segmented toggles are always pills (that's a true toggle, not a button) · chips/badges are always pills · the grade card, secondary &amp; ghost buttons, and layout are identical. Only the filled/outlined <em>action</em> buttons change radius.
+    <div class="legend">
+      <span class="sw"><span class="dot" style="background:#1B6C42"></span>--forest (brand/action)</span>
+      <span class="sw"><span class="dot" style="background:#3a7d4e"></span>--positive (status: grade/mastery)</span>
+      <span class="sw"><span class="dot" style="background:#c89b5e"></span>--amber (in-progress)</span>
+    </div>
+  </div>
+
+  <div class="cols">
+    <!-- ───────── SHARP ───────── -->
+    <div>
+      <div class="col-head"><h2>Sharp · 6px</h2><span class="tag tag-a">app identity · recommended</span></div>
+      <div class="surface sharp">
+        <div class="topbar"><span class="title">Grades</span><button class="btn pri">Upload syllabus</button></div>
+        <div class="body">
+          <div class="row"><span class="chip chip-accent">● Spring 2026</span><span class="chip">Fall 2025</span></div>
+          <div class="gcard">
+            <div class="hd"><div class="micro">Data Structures</div><div class="grade">A−</div></div>
+            <div class="ft"><span class="pct">92.1%</span><span class="chip chip-accent">on track</span></div>
+          </div>
+          <div class="label">Primary / secondary / ghost</div>
+          <div class="row"><button class="btn pri">Start learning</button><button class="btn">Edit weights</button><button class="btn ghost">Cancel</button><button class="btn danger">Delete</button></div>
+          <div class="divider"></div>
+          <div class="label">Hero CTA (landing)</div>
+          <div class="row"><button class="btn pri big">Sign up for Beta Testing</button></div>
+          <div class="divider"></div>
+          <div class="label">Segmented toggle — pill in BOTH columns</div>
+          <div class="row"><div class="seg"><button class="on">Chat</button><button>Graph</button><button>Quiz</button></div></div>
+        </div>
+      </div>
+      <p class="caption">Buttons echo the editorial app: crisp corners, calm. Pills are reserved for toggles &amp; chips, so a pill always means “segmented choice,” never “action.”</p>
+    </div>
+
+    <!-- ───────── PILL ───────── -->
+    <div>
+      <div class="col-head"><h2>Pill · fully rounded</h2><span class="tag tag-b">landing identity</span></div>
+      <div class="surface pill">
+        <div class="topbar"><span class="title">Grades</span><button class="btn pri">Upload syllabus</button></div>
+        <div class="body">
+          <div class="row"><span class="chip chip-accent">● Spring 2026</span><span class="chip">Fall 2025</span></div>
+          <div class="gcard">
+            <div class="hd"><div class="micro">Data Structures</div><div class="grade">A−</div></div>
+            <div class="ft"><span class="pct">92.1%</span><span class="chip chip-accent">on track</span></div>
+          </div>
+          <div class="label">Primary / secondary / ghost</div>
+          <div class="row"><button class="btn pri">Start learning</button><button class="btn">Edit weights</button><button class="btn ghost">Cancel</button><button class="btn danger">Delete</button></div>
+          <div class="divider"></div>
+          <div class="label">Hero CTA (landing)</div>
+          <div class="row"><button class="btn pri big">Sign up for Beta Testing</button></div>
+          <div class="divider"></div>
+          <div class="label">Segmented toggle — pill in BOTH columns</div>
+          <div class="row"><div class="seg"><button class="on">Chat</button><button>Graph</button><button>Quiz</button></div></div>
+        </div>
+      </div>
+      <p class="caption">Softer, more “consumer/marketing.” Risk: a pill button and a pill toggle look alike, so “action” vs “choice” gets ambiguous — and it changes the look of ~211 in-app buttons + the dashboard.</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    <b>My read:</b> go <b>sharp 6px</b>. The app is already 95% there (211 buttons), it keeps a clear “pill = toggle/chip, rectangle = action” rule, and it only requires changing the handful of landing CTAs + the 5 gradebook modal buttons + the Study ratings — not the whole app. The pill option is the bigger, riskier change for a softer feel. Either way, the fix is the same shared <code>&lt;Button&gt;</code> primitive; this only decides its default radius.
+  </div>
+</div>
+</body>
+</html>

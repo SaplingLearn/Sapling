@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sapling — What changed · guided tour</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Playfair+Display:ital,wght@0,500;0,600;0,700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#faf8f3; --bg-panel:#fdfcf9; --bg-soft:#ebe6dc; --bg-inset:#f7f3eb;
+    --border:rgba(42,39,31,.12); --border-strong:rgba(42,39,31,.20);
+    --text:#1a1814; --text-dim:#3f3b31; --text-muted:#6f6857;
+    --forest:#1B6C42; --forest-bright:#2D8F5C; --positive:#3a7d4e; --forest-soft:#f1f6ee; --forest-border:#c3d8b3;
+    --amber:#c89b5e;
+    --r-sm:6px; --r-md:10px; --r-lg:16px; --r-full:999px;
+    --shadow-sm:0 1px 2px rgba(19,38,16,.05),0 1px 1px rgba(19,38,16,.04);
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'DM Sans',system-ui,sans-serif;font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(ellipse 80% 50% at 100% -5%,rgba(45,143,92,.05),transparent 55%)}
+  .wrap{max-width:920px;margin:0 auto;padding:56px 32px 110px}
+  .micro{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-muted)}
+  code{font-family:var(--mono);font-size:.84em;background:var(--bg-soft);padding:1px 6px;border-radius:4px;color:var(--text-dim)}
+  h1{font-family:'Playfair Display',serif;font-weight:700;font-size:clamp(34px,5vw,54px);letter-spacing:-.02em;margin:12px 0 14px;line-height:1.04}
+  h1 em{font-style:italic;color:var(--forest)}
+  .lede{font-size:18px;color:var(--text-dim);max-width:66ch;margin:0}
+  .legend{display:flex;gap:20px;flex-wrap:wrap;margin:22px 0 6px}
+  .sw{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-muted)}
+  .dot{width:15px;height:15px;border-radius:5px;border:1px solid rgba(0,0,0,.1)}
+
+  h2{font-family:'Playfair Display',serif;font-weight:600;font-size:26px;letter-spacing:-.015em;margin:54px 0 6px;display:flex;align-items:baseline;gap:12px}
+  h2 .n{font-family:var(--mono);font-size:13px;color:var(--forest-bright);font-weight:600;letter-spacing:0}
+  .sub{color:var(--text-muted);max-width:64ch;margin:0 0 22px;font-size:14px}
+
+  .card{background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:20px 22px;margin-bottom:16px;display:grid;grid-template-columns:1fr auto;gap:8px 20px;align-items:start}
+  .card h3{font-family:'Playfair Display',serif;font-weight:600;font-size:20px;margin:0 0 2px}
+  .card .changed{font-size:14px;color:var(--text-dim);margin:6px 0 0;grid-column:1/2}
+  .card .look{font-size:13px;color:var(--text-muted);margin:8px 0 0;grid-column:1/2}
+  .card .look b{color:var(--text-dim);font-weight:600}
+  .open{grid-row:1/3;grid-column:2;align-self:center;white-space:nowrap;display:inline-flex;align-items:center;gap:7px;
+    padding:9px 16px;border-radius:var(--r-sm);font-size:13px;font-weight:600;text-decoration:none;
+    background:var(--forest);color:#fff;border:1px solid transparent;transition:filter .14s}
+  .open:hover{filter:brightness(1.08)}
+  .open.ghost{background:var(--bg-panel);color:var(--text);border-color:var(--border)}
+  .open.ghost:hover{background:var(--bg-subtle);filter:none;border-color:var(--border-strong)}
+  .note{grid-column:1/3;font-size:12px;color:var(--text-muted);background:var(--bg-inset);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 12px;margin-top:10px}
+  .tag{display:inline-block;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:var(--r-full);margin-bottom:4px}
+  .t-pre{background:#eef2f6;color:#4b6076}
+  .t-app{background:var(--forest-soft);color:#2b5221;border:1px solid var(--forest-border)}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);font-size:13px;color:var(--text-muted)}
+  footer a{color:var(--forest)}
+  @media(max-width:640px){.card{grid-template-columns:1fr}.open{grid-row:auto;grid-column:1;justify-self:start}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <span class="micro">Sapling · frontend changes · guided tour</span>
+  <h1>What changed, and <em>where</em> to look</h1>
+  <p class="lede">Two phases shipped: <b>tokens</b> (the colors/greens) and <b>components</b> (button shapes + shared primitives). Each card below links straight to the live screen with what changed and what to notice. The dev server is on <code>localhost:3000</code>.</p>
+  <div class="legend">
+    <span class="sw"><span class="dot" style="background:#1B6C42"></span>--brand-forest · primary action</span>
+    <span class="sw"><span class="dot" style="background:#2D8F5C"></span>--accent · highlight (was sage)</span>
+    <span class="sw"><span class="dot" style="background:#3a7d4e"></span>--positive · status (mastery/grade-A)</span>
+  </div>
+
+  <h2><span class="n">A</span> Pre-auth surface</h2>
+  <p class="sub">Phase 1 warmed the palette (was cool slate); Phase 2 sharpened the buttons.</p>
+
+  <div class="card">
+    <span class="tag t-pre">landing</span>
+    <h3>Landing</h3>
+    <a class="open" href="http://localhost:3000/" target="_blank">Open ↗</a>
+    <p class="changed">CTAs <b>de-pilled to sharp 6px</b> forest buttons ("Get Started", "Sign up for Beta Testing"). The infinite pulsing glow is gone; the beta CTA uses the new <code>lg</code> hero size so it stays substantial.</p>
+    <p class="look"><b>Look for:</b> the buttons are now crisp rectangles matching the app — not rounded pulsing pills. Borders/text are warm, not cool gray.</p>
+    <div class="note">Click <b>"Sign up for Beta Testing"</b> to see the beta modal, and <b>"Sign In"</b> for the sign-in modal — both warmed.</div>
+  </div>
+
+  <div class="card">
+    <span class="tag t-pre">/about · /careers · /privacy · /terms</span>
+    <h3>Marketing / legal pages</h3>
+    <a class="open" href="http://localhost:3000/about" target="_blank">Open ↗</a>
+    <p class="changed">Body text moved from cool slate (<code>#4b5563</code>) to warm <code>--text-dim</code>; the "Sapling" wordmark color is now tokenized. Moved under a new <code>(public)</code> route group (URLs unchanged).</p>
+    <p class="look"><b>Look for:</b> warm paper canvas + warm body text — feels like the same product as the app now. (Also <a href="http://localhost:3000/careers" target="_blank">/careers</a>, <a href="http://localhost:3000/privacy" target="_blank">/privacy</a>, <a href="http://localhost:3000/terms" target="_blank">/terms</a>.)</p>
+  </div>
+
+  <h2><span class="n">B</span> In-app surface</h2>
+  <p class="sub">Phase 2 collapsed the greens by role and introduced shared primitives.</p>
+
+  <div class="card">
+    <span class="tag t-app">/gradebook</span>
+    <h3>Grades</h3>
+    <a class="open" href="http://localhost:3000/gradebook" target="_blank">Open ↗</a>
+    <p class="changed">The greens collapsed: "Upload syllabus" went from muted <b>sage</b> → vivid <b>forest</b>; the A− card + percentage now use the single <code>--positive</code> status green. Was 3–4 mismatched greens, now 2 forest-family-by-role.</p>
+    <p class="look"><b>Look for:</b> the green button + the green grade card now clearly belong to the same family (no more sage-vs-forest clash).</p>
+  </div>
+
+  <div class="card">
+    <span class="tag t-app">/learn</span>
+    <h3>Tutor — Start a session</h3>
+    <a class="open" href="http://localhost:3000/learn" target="_blank">Open ↗</a>
+    <p class="changed">The <b>Mode</b> selector (Socratic / Expository / Teach-back) is now the shared <code>&lt;Toggle&gt;</code> — one connected segmented control instead of 3 separate pills.</p>
+    <p class="look"><b>Look for:</b> click between the three modes — the forest fill slides to the active one. (The Fast/Smart "ModelToggle" inside a live session was intentionally left as-is — it has its own animation + color semantics.)</p>
+  </div>
+
+  <div class="card">
+    <span class="tag t-app">/social</span>
+    <h3>Social — Study rooms</h3>
+    <a class="open" href="http://localhost:3000/social" target="_blank">Open ↗</a>
+    <p class="changed">Primary "Create" button is forest <code>&lt;Button&gt;</code> (sharp 6px); accent-green highlights (active states, mentions) are now forest-family rather than sage.</p>
+    <p class="look"><b>Look for:</b> the green "Create" matches the app's primary-button language exactly.</p>
+  </div>
+
+  <div class="card">
+    <span class="tag t-app">/achievements</span>
+    <h3>Achievements</h3>
+    <a class="open" href="http://localhost:3000/achievements" target="_blank">Open ↗</a>
+    <p class="changed">Rarity badges (Common/Uncommon/Rare) now route through the shared <code>&lt;Badge&gt;</code> (via <code>TitleFlair</code>) — hue on the border, neutral text (kept that way on purpose: colored text fails contrast on several tiers). "Uncommon" green is now the unified forest.</p>
+    <p class="look"><b>Look for:</b> the rarity badges read consistently; the "Uncommon" tier is forest, not the old cool green.</p>
+  </div>
+
+  <div class="card">
+    <span class="tag t-app">/dashboard</span>
+    <h3>Dashboard — the anchor</h3>
+    <a class="open ghost" href="http://localhost:3000/dashboard" target="_blank">Open ↗</a>
+    <p class="changed"><b>Deliberately unchanged</b> in structure — it's the source-of-truth the rest converges toward. Only delta: the "Mastered" legend dot + mastery indicators use the unified <code>--positive</code> green.</p>
+    <p class="look"><b>Look for:</b> nothing should feel different here — that's the point. Compare the other screens against it.</p>
+  </div>
+
+  <footer>
+    Full write-ups: <a href="http://127.0.0.1:8731/frontend-rhythm-audit.html" target="_blank">rhythm audit</a> ·
+    <a href="http://127.0.0.1:8731/button-shape-comparison.html" target="_blank">button shape comparison</a> ·
+    PRs <a href="https://github.com/SaplingLearn/Sapling/pull/286" target="_blank">#286 (tokens)</a> →
+    <a href="https://github.com/SaplingLearn/Sapling/pull/294" target="_blank">#294 (components)</a>.
+  </footer>
+</div>
+</body>
+</html>

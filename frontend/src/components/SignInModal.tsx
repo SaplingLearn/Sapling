@@ -251,7 +251,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
 
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 24 }}>
           <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 22, height: 22 }} />
-          <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 17, color: "#1a5c2a", letterSpacing: "-0.02em" }}>Sapling</span>
+          <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 17, color: "var(--brand-forest)", letterSpacing: "-0.02em" }}>Sapling</span>
         </div>
 
         <h2 style={{

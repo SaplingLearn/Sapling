@@ -28,6 +28,7 @@ import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { percentColor } from "@/components/Gradebook/CourseCard";
 import { projectGrade, droppedAssignmentIds } from "@/components/Gradebook/GradeProjector";
 import { GradePredictorPanel } from "@/components/Gradebook/GradePredictorPanel";
+import { Button } from "@/components/ui";
 import type {
   GradebookCourse,
   GradeCategory,
@@ -168,8 +169,9 @@ function CurveSettingsModal({
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20,
           paddingTop: 12, borderTop: "1px solid var(--border)" }}>
           <button type="button" onClick={onClose}>Cancel</button>
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            size="sm"
             disabled={saving}
             onClick={async () => {
               setSaving(true);
@@ -181,13 +183,9 @@ function CurveSettingsModal({
                 onClose();
               } finally { setSaving(false); }
             }}
-            style={{
-              background: "var(--accent)", color: "#fff",
-              border: 0, borderRadius: 6, padding: "6px 14px", cursor: "pointer",
-            }}
           >
             {saving ? "Saving…" : "Save"}
-          </button>
+          </Button>
         </div>
       </div>
     </div>,

@@ -16,7 +16,8 @@ import hashlib
 from datetime import datetime, timezone
 
 from db.connection import table
-from services.gemini_service import call_gemini
+from agents._run import run_agent_sync
+from agents.course_summary import course_summary_agent
 
 
 def _generate_data_hash(stats_rows: list) -> str:
@@ -33,31 +34,26 @@ def _generate_summary_with_gemini(
     top_mastered: list,
     student_count: int,
 ) -> str:
-    """Generate a natural language summary using Gemini."""
-    prompt = f"""You are an expert education analyst summarizing a course for instructors.
+    """Generate a natural-language class summary via the course_summary agent.
 
-Course: {course_code} - {course_name}
-Students enrolled: {student_count}
-Average class mastery: {avg_class_mastery:.1%}
-
-Top struggling concepts (needs attention):
-{chr(10).join(f"- {c}" for c in top_struggling) if top_struggling else "None identified"}
-
-Top mastered concepts (students doing well):
-{chr(10).join(f"- {c}" for c in top_mastered) if top_mastered else "None identified"}
-
-Write a concise 2-3 paragraph summary that:
-1. Describes the overall class performance
-2. Highlights specific areas where students are struggling and may need intervention
-3. Notes areas where students are excelling
-4. Provides actionable recommendations for the instructor
-
-Write in a professional but approachable tone. Be specific and data-driven."""
+    The agent owns the analyst persona; the aggregated metrics go in the user
+    message. On any agent failure we degrade to a deterministic template string
+    (no second LLM call), so a summary is always produced."""
+    user_message = (
+        f"Course: {course_code} - {course_name}\n"
+        f"Students enrolled: {student_count}\n"
+        f"Average class mastery: {avg_class_mastery:.1%}\n\n"
+        "Top struggling concepts (needs attention):\n"
+        f"{chr(10).join(f'- {c}' for c in top_struggling) if top_struggling else 'None identified'}\n\n"
+        "Top mastered concepts (students doing well):\n"
+        f"{chr(10).join(f'- {c}' for c in top_mastered) if top_mastered else 'None identified'}"
+    )
 
     try:
-        return call_gemini(prompt, retries=1)
+        result = run_agent_sync(course_summary_agent.run(user_message))
+        return result.output.summary
     except Exception:
-        # Fallback summary if Gemini fails
+        # Fallback summary if the agent fails
         return (
             f"Class average mastery: {avg_class_mastery:.1%}. "
             f"Students are struggling with: {', '.join(top_struggling[:3]) if top_struggling else 'No major areas identified'}. "

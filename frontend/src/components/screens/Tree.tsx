@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { Pill } from "../Pill";
+import { FilterPills } from "@/components/ui";
 import { KnowledgeGraph } from "../KnowledgeGraph";
 import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
@@ -266,14 +267,18 @@ export function Tree() {
             <Icon name="search" size={12} />
           </span>
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <Pill active={tier === "all"} onClick={() => setTier("all")}>All</Pill>
-          {(Object.keys(TIER_META) as Array<Exclude<Tier, "all">>).map(t => (
-            <Pill key={t} active={tier === t} onClick={() => setTier(t)} color={TIER_META[t].color}>
-              {TIER_META[t].label}
-            </Pill>
-          ))}
-        </div>
+        <FilterPills
+          options={[
+            { value: "all" as Tier, label: "All" },
+            ...(Object.keys(TIER_META) as Array<Exclude<Tier, "all">>).map((t) => ({
+              value: t as Tier,
+              label: TIER_META[t].label,
+              color: TIER_META[t].color,
+            })),
+          ]}
+          value={tier}
+          onChange={setTier}
+        />
         <div style={{ flex: 1 }} />
         <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
           {conceptCount} node{conceptCount === 1 ? "" : "s"}

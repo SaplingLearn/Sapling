@@ -1,0 +1,210 @@
+{
+  "total_courses": 8720,
+  "total_errors": 50,
+  "errors": [
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-gd-650a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-gd-512a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-pe-530a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-en-522a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-or-530a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-529a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-640a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-ph-512a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-os-520a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-641a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-525a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-pe-521a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-pd-640a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-ph-530a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-pd-530a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-pe-640a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-od-642a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-gd-520a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-os-530a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-gd-511a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-od-522a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-522a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-ph-541a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-os-532a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-gd-660a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-ph-521a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-od-531a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-523a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-en-521a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-od-644a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-gd-581a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-pa-530a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-534a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-md-531a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-os-521a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-546a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-542a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-en-640a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-gd-642a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-519a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-pe-520a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-527a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-521a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-642a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-os-640a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-ph-544a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-gd-540a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-524a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-ph-524a/",
+      "error": "empty response"
+    },
+    {
+      "url": "https://www.bu.edu/academics/sdm/courses/sdm-rs-532a/",
+      "error": "empty response"
+    }
+  ],
+  "elapsed_seconds": 1890,
+  "completed_at": "2026-06-27T01:39:55.726124+00:00",
+  "semester_tag": "fall_2026",
+  "output_file": "C:\\Users\\Jack\\Desktop\\VS Code\\sapling\\backend\\data\\bu_catalog_fall_2026.json"
+}

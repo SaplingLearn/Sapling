@@ -273,7 +273,6 @@ export default function OnboardingFlow({ visible, onClose, onFinish, activeStep,
     borderRadius: '14px',
     padding: '14px 18px',
     fontSize: '15px',
-    outline: 'none',
     width: '100%',
     fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
   };
