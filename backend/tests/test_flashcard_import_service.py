@@ -1,14 +1,13 @@
 """Unit tests for services.flashcard_import_service."""
 import io
-import json
 import os
 import sqlite3
-import time
 import zipfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 
 from services import flashcard_import_service as svc
 
@@ -280,10 +279,48 @@ class TestGenerateCards:
         assert "recall" in sent
         assert "2" in sent
 
-    def test_agent_failure_returns_empty(self):
-        run = AsyncMock(side_effect=RuntimeError("boom"))
+    def test_bad_model_output_degrades_to_empty(self):
+        # A model whose output can't satisfy the schema is "bad output" → [].
+        run = AsyncMock(side_effect=UnexpectedModelBehavior("unparseable"))
         with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             assert svc.gemini_generate_cards("x", count=5, difficulty="recall") == []
+
+    def test_transport_failure_propagates(self):
+        # Transport/runtime errors must NOT masquerade as "no cards" — they
+        # propagate so the route surfaces a retryable 502.
+        run = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            with pytest.raises(RuntimeError):
+                svc.gemini_generate_cards("x", count=5, difficulty="recall")
+
+    def test_non_transient_http_error_propagates(self):
+        run = AsyncMock(side_effect=ModelHTTPError(status_code=400, model_name="gemini-2.5-flash"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            with pytest.raises(ModelHTTPError):
+                svc.gemini_generate_cards("x", count=5, difficulty="recall")
+
+    def test_transient_http_error_retries_then_succeeds(self):
+        # 429/5xx is retried once (mirrors the old call_gemini retries=1).
+        from agents.flashcard import Flashcards, FlashCard
+        ok = SimpleNamespace(output=Flashcards(cards=[FlashCard(front="Q1", back="A1")]))
+        run = AsyncMock(side_effect=[
+            ModelHTTPError(status_code=429, model_name="gemini-2.5-flash"),
+            ok,
+        ])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run), \
+             patch("services.flashcard_import_service.time.sleep") as sleep:
+            cards = svc.gemini_generate_cards("x", count=1, difficulty="recall")
+        assert cards == [{"front": "Q1", "back": "A1"}]
+        assert run.call_count == 2
+        sleep.assert_called_once()
+
+    def test_transient_http_error_reraises_after_retries_exhausted(self):
+        run = AsyncMock(side_effect=ModelHTTPError(status_code=503, model_name="gemini-2.5-flash"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run), \
+             patch("services.flashcard_import_service.time.sleep"):
+            with pytest.raises(ModelHTTPError):
+                svc.gemini_generate_cards("x", count=1, difficulty="recall")
+        assert run.call_count == 2  # initial + 1 retry
 
     def test_filters_cards_missing_a_side(self):
         run = _agent_returning([
@@ -306,12 +343,22 @@ class TestCleanupCards:
             out = svc.gemini_cleanup_cards(cards)
         assert out == [{"front": "Mitosis", "back": "Cell division"}]
 
-    def test_falls_back_to_input_on_agent_failure(self):
+    def test_falls_back_to_input_on_bad_output(self):
+        # Cleanup is non-destructive polish: when the model returns nothing
+        # usable it keeps the user's original cards rather than erroring.
         cards = [{"front": "X", "back": "Y"}]
-        run = AsyncMock(side_effect=RuntimeError("boom"))
+        run = AsyncMock(side_effect=UnexpectedModelBehavior("unparseable"))
         with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             out = svc.gemini_cleanup_cards(cards)
         assert out == cards
+
+    def test_transport_failure_propagates(self):
+        # A real outage still propagates (→ route 502), not a silent no-op.
+        cards = [{"front": "X", "back": "Y"}]
+        run = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            with pytest.raises(RuntimeError):
+                svc.gemini_cleanup_cards(cards)
 
 
 # ── gemini_cloze ─────────────────────────────────────────────────────────────

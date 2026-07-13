@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -20,11 +21,14 @@ from typing import TypedDict
 import httpx
 from bs4 import BeautifulSoup
 from Levenshtein import distance as _levenshtein
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 
 from db.connection import table
 from agents._run import run_agent_sync
 from agents.flashcard import flashcard_agent
 from services import extraction_service
+
+logger = logging.getLogger(__name__)
 
 
 class Card(TypedDict):
@@ -201,25 +205,6 @@ def scrape_quizlet_url(url: str) -> list[Card]:
     return cards
 
 
-def _parse_card_json(text: str) -> list[Card]:
-    """Best-effort parse a Gemini JSON-array response into Card list."""
-    text = text.strip()
-    fence = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-    if fence:
-        text = fence.group(1)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return []
-    out: list[Card] = []
-    for item in data if isinstance(data, list) else []:
-        front = str(item.get("front") or item.get("term") or "").strip()
-        back = str(item.get("back") or item.get("definition") or "").strip()
-        if front and back:
-            out.append({"front": front, "back": back})
-    return out
-
-
 def _guess_content_type(filename: str) -> str:
     lower = filename.lower()
     if lower.endswith(".png"):
@@ -233,16 +218,47 @@ def _guess_content_type(filename: str) -> str:
     return "image/png"
 
 
+# Transient provider statuses the legacy call_gemini path retried on. 429 =
+# rate limit, 5xx = upstream/transport hiccups.
+_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
+# Mirror the old call_gemini(retries=1): one retry with a ~2s backoff.
+_AGENT_RETRIES = 1
+
+
 def _run_flashcard_agent(prompt: str) -> list[Card]:
     """Run the flashcard agent on a rendered prompt and return front/back dicts.
 
-    Filters out cards missing either side (preserving `_parse_card_json`'s
-    behavior) and degrades to an empty list on agent failure — matching the old
-    "bad LLM output → []" resilience (never raises)."""
-    try:
-        result = run_agent_sync(flashcard_agent.run(prompt))
-    except Exception:
-        return []
+    Filters out cards missing either side. Error contract mirrors the legacy
+    ``call_gemini`` flashcard path:
+
+    * A model whose output can't satisfy the ``Flashcards`` schema is treated as
+      "bad LLM output" and degrades to ``[]`` — logged, never silent (this is
+      the old JSON-parse ``[]`` resilience).
+    * Transient provider errors (HTTP 429/5xx) are retried once with a ~2s
+      backoff, then re-raised.
+    * Every other failure — transport, missing GEMINI_API_KEY,
+      ``run_agent_sync`` misuse from a running event loop, etc. — propagates so
+      the route surfaces a retryable 502 instead of a misleading 200 with zero
+      cards.
+    """
+    result = None
+    for attempt in range(_AGENT_RETRIES + 1):
+        try:
+            result = run_agent_sync(flashcard_agent.run(prompt))
+            break
+        except UnexpectedModelBehavior:
+            logger.exception("flashcard agent produced unusable output; degrading to []")
+            return []
+        except ModelHTTPError as e:
+            if attempt < _AGENT_RETRIES and e.status_code in _TRANSIENT_STATUSES:
+                time.sleep(2)
+                continue
+            logger.exception("flashcard agent HTTP error (status=%s)", e.status_code)
+            raise
+        except Exception:
+            logger.exception("flashcard agent call failed")
+            raise
+
     out: list[Card] = []
     for c in result.output.cards:
         front = (c.front or "").strip()
