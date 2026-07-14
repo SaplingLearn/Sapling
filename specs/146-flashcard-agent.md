@@ -27,9 +27,15 @@ remains in the flashcard path (`flashcard_import_service.py`, `routes/flashcards
 
 ### R2 — Shared runner + migrate the 4 import functions
 - Add `flashcard_import_service._run_flashcard_agent(prompt: str) -> list[Card]`: runs the agent via
-  `run_agent_sync`, returns `{front, back}` dicts with empty-front/back filtered out (preserving
-  `_parse_card_json`'s filtering), and **degrades to `[]` on agent failure** (preserving the old
-  "bad output → []" resilience — no raise).
+  `run_agent_sync`, returns `{front, back}` dicts with empty-front/back filtered out (preserving the old
+  JSON-parse filtering). Error contract mirrors the legacy `call_gemini` flashcard path:
+  - Invalid model output (`UnexpectedModelBehavior`) → `[]`, logged (preserves the old "bad output → []"
+    resilience).
+  - Transient provider errors (`ModelHTTPError` with status 429/5xx) → retried once with a ~2s backoff
+    (mirrors `call_gemini(retries=1)`), then re-raised.
+  - Every other failure — transport, missing `GEMINI_API_KEY`, `run_agent_sync` misuse from a running
+    event loop, non-transient HTTP (e.g. 400) — **propagates** so the route surfaces a retryable 502
+    instead of a misleading 200 with zero cards. No blanket failure swallowing.
 - Rewire each function onto it:
   - `extract_cards_from_image`: empty OCR markdown → `[]` (unchanged); else `_run_flashcard_agent(prompt)`.
   - `gemini_generate_cards`: `_run_flashcard_agent(prompt)`.
@@ -54,10 +60,13 @@ remains in the flashcard path (`flashcard_import_service.py`, `routes/flashcards
 ### R5 — Tests
 - `tests/test_flashcard_import_service.py`: rewrite the 7 `patch("...call_gemini")` sites to patch
   `flashcard_import_service.flashcard_agent.run` (AsyncMock returning a `Flashcards`), asserting the same
-  returned card lists. Repoint the two "invalid response" cases: `gemini_generate_cards` on agent failure → `[]`;
-  `gemini_cleanup_cards` on agent failure → the input cards. Keep the empty-OCR test (agent not called).
-- Add a test for `flashcard_import_service.generate_flashcards` (agent path → card dicts; the built prompt
-  carries topic/weak-concept context).
+  returned card lists. Repoint the two "invalid response" cases: `gemini_generate_cards` on invalid model
+  output (`UnexpectedModelBehavior`) → `[]`; `gemini_cleanup_cards` on invalid model output → the input cards.
+  Also cover the propagating paths (transport/non-transient HTTP raise) and the transient-retry path.
+  Keep the empty-OCR test (agent not called).
+- Add tests for `flashcard_import_service.generate_flashcards` (agent path → card dicts; the built prompt
+  carries topic/weak-concept context, and — with `documents`/`context` supplied — the document block with
+  upper-cased category, concept notes, and free-text context).
 - Agent runs mocked; no live Gemini.
 
 ## Acceptance criteria (verifiable)
@@ -66,7 +75,8 @@ remains in the flashcard path (`flashcard_import_service.py`, `routes/flashcards
 2. `agents/flashcard.py` exists (`flashcard_agent`, `Flashcards`/`FlashCard`, `metadata` with `prompt_version`+`agent`);
    `_providers` `AgentTask`+`_DEFAULTS` include `flashcard`.
 3. The 4 import functions + `generate_flashcards` return `list[{front, back}]` via the agent; `_run_flashcard_agent`
-   filters empties and returns `[]` on agent failure (tests).
+   filters empties, returns `[]` only on invalid model output (`UnexpectedModelBehavior`), retries transient
+   429/5xx once, and propagates transport/runtime/non-transient HTTP errors (tests).
 4. `gemini_cleanup_cards` falls back to input on failed cleanup; `extract_cards_from_image` returns `[]` on empty OCR
    without calling the agent (tests).
 5. `routes/flashcards.py` imports `generate_flashcards` from `flashcard_import_service`; `gemini_service.py` no longer

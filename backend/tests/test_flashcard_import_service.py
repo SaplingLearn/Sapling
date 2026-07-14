@@ -390,3 +390,43 @@ class TestGenerateFlashcards:
         sent = run.call_args.args[0]
         assert "Recursion" in sent
         assert "base case" in sent  # weak-concept focus threaded into the prompt
+
+    def test_prompt_grounds_on_documents_and_context(self):
+        # Exercises the doc_blocks/concept_notes loop and the extra_block branch:
+        # the rendered prompt must carry the document, its concepts, and the
+        # free-text context, and the category must be upper-cased.
+        run = _agent_returning([{"front": "Q", "back": "A"}])
+        documents = [
+            {
+                "file_name": "week3_lecture.pdf",
+                "category": "lecture",  # lowercase → proves category.upper()
+                "summary": "Overview of tree traversals.",
+                "concept_notes": [
+                    {"name": "DFS", "description": "Depth-first traversal."},
+                    {"name": "BFS"},  # no description → bare "- BFS" line
+                    "not-a-dict",  # non-dict entry is skipped, not fatal
+                    {"description": "orphan"},  # missing name → skipped
+                ],
+            }
+        ]
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            cards = svc.generate_flashcards(
+                "Data Structures",
+                count=3,
+                context="Focus on the midterm review session.",
+                documents=documents,
+                weak_concepts=["recursion depth"],
+            )
+        assert cards == [{"front": "Q", "back": "A"}]
+        sent = run.call_args.args[0]
+        # Topic + weak-concept coverage preserved.
+        assert "Data Structures" in sent
+        assert "recursion depth" in sent
+        # Document block: upper-cased category, file name, summary.
+        assert "[LECTURE] week3_lecture.pdf" in sent
+        assert "Overview of tree traversals." in sent
+        # Concept notes: with and without a description.
+        assert "- DFS: Depth-first traversal." in sent
+        assert "- BFS" in sent
+        # Free-text context branch.
+        assert "Focus on the midterm review session." in sent
