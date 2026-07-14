@@ -13,7 +13,14 @@ from google.genai import types as genai_types
 
 from db.connection import rpc, table
 
-_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+# Bound embedding requests so a stalled Gemini call can't hang quiz/tutor
+# grounding indefinitely — retrieve_chunks() runs inline on the request path.
+_HTTP_TIMEOUT_MS = 60_000
+
+_client = genai.Client(
+    api_key=os.getenv("GEMINI_API_KEY", ""),
+    http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS),
+)
 _EMBED_MODEL = "gemini-embedding-001"
 _OUTPUT_DIM = 768
 

@@ -65,9 +65,12 @@ from services.rag_service import retrieve_chunks, format_rag_context
 def _resolve_bu_code(course_id: str | None) -> str | None:
     if not course_id:
         return None
-    rows = table("courses").select(
-        "course_code", filters={"id": f"eq.{course_id}"}, limit=1
-    )
+    try:
+        rows = table("courses").select(
+            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+        )
+    except Exception:
+        return None
     return (rows[0].get("course_code") if rows else None) or None
 
 def _course_material_block(course_id: str | None, concept_name: str) -> str:
@@ -77,7 +80,10 @@ def _course_material_block(course_id: str | None, concept_name: str) -> str:
     if not bu_code:
         return ""
     blocks: list[str] = []
-    catalog = _get_catalog_chunk(bu_code)
+    try:
+        catalog = _get_catalog_chunk(bu_code)
+    except Exception:
+        catalog = ""
     if catalog:
         blocks.append("COURSE CATALOG (official BU course data):\n\n" + catalog)
     try:

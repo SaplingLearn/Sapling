@@ -18,7 +18,9 @@ if hasattr(sys.stdout, "reconfigure"):
 BASE = Path(__file__).parent.parent
 sys.path.insert(0, str(BASE))
 from dotenv import load_dotenv  # noqa: E402
-load_dotenv(BASE / ".env.staging")
+# override=True so .env.staging wins over any Supabase creds already exported
+# in the caller's shell — otherwise the benchmark can hit the wrong project.
+load_dotenv(BASE / ".env.staging", override=True)
 
 from services.rag_service import retrieve_chunks  # noqa: E402
 

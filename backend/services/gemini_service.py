@@ -23,6 +23,18 @@ MODEL_LITE = "gemini-2.5-flash-lite"
 MODEL_SMART = "gemini-2.5-pro"
 
 
+def _thinking_budget_for(model: str) -> int:
+    """Thinking-token budget for a model, shared by every call path here.
+
+    gemini-2.5-pro rejects thinking_budget=0 (400 INVALID_ARGUMENT — "This
+    model only works in thinking mode"); Flash/Flash-Lite are fine with it
+    disabled for latency. Cap Pro at 2048 (not -1/dynamic) to keep replies
+    snappy without losing multi-step reasoning. Centralizing the decision
+    stops call_gemini and call_gemini_multiturn from drifting apart.
+    """
+    return 2048 if "pro" in model else 0
+
+
 def _strip_backtick_fencing(text: str) -> str:
     """Extract JSON content, handling backtick fences anywhere in the text."""
     text = text.strip()
@@ -64,14 +76,12 @@ def _extract_json(text: str) -> str:
 def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False, model: str = MODEL_DEFAULT) -> str:
     """Single-turn call to Gemini with a plain string prompt.
 
-    gemini-2.5-pro rejects thinking_budget=0 ("This model only works in
-    thinking mode" — 400 INVALID_ARGUMENT); Flash/Flash-Lite are fine with
-    it disabled for latency. Mirrors the same cap already applied in
-    call_gemini_multiturn (PR #74) — that fix never propagated to this
-    single-turn path, so any caller passing model="gemini-2.5-pro" here
-    (e.g. an LLM-judge model override) always 400'd.
+    Pro's thinking cap (`_thinking_budget_for`) also applies here — that
+    fix originally lived only in call_gemini_multiturn (PR #74), so any
+    caller passing model="gemini-2.5-pro" here (e.g. an LLM-judge model
+    override) used to 400 on thinking_budget=0.
     """
-    thinking_budget = 2048 if "pro" in model else 0
+    thinking_budget = _thinking_budget_for(model)
     for attempt in range(retries + 1):
         try:
             config = types.GenerateContentConfig(
@@ -116,10 +126,9 @@ def call_gemini_multiturn(system_prompt: str, history: list[dict], user_message:
         for msg in history
     ]
 
-    # gemini-2.5-pro requires thinking (budget=0 is rejected); flash allows
-    # disabling it for latency. Cap pro at 2048 instead of -1 (dynamic) to keep
-    # tutor replies snappy without losing multi-step reasoning quality.
-    thinking_budget = 2048 if "pro" in model else 0
+    # Pro requires thinking (budget=0 is rejected); Flash allows disabling it
+    # for latency. Shared with the single-turn path via _thinking_budget_for.
+    thinking_budget = _thinking_budget_for(model)
     for attempt in range(retries + 1):
         try:
             config = types.GenerateContentConfig(

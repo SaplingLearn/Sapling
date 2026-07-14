@@ -12,11 +12,26 @@ from unittest.mock import MagicMock, patch
 from services.gemini_service import (
     _strip_backtick_fencing,
     _extract_json,
+    _thinking_budget_for,
     extract_graph_update,
     call_gemini,
     call_gemini_json,
     call_gemini_multiturn,
 )
+
+
+# ── _thinking_budget_for (shared helper) ──────────────────────────────────────
+
+class TestThinkingBudgetFor:
+    """The single source of truth both call paths use — pin it directly so a
+    regression shows up here, not only through the per-path capture tests."""
+
+    def test_pro_is_capped_at_2048(self):
+        assert _thinking_budget_for("gemini-2.5-pro") == 2048
+
+    @pytest.mark.parametrize("model", ["gemini-2.5-flash", "gemini-2.5-flash-lite"])
+    def test_non_pro_disables_thinking(self, model: str):
+        assert _thinking_budget_for(model) == 0
 
 
 # ── _strip_backtick_fencing ───────────────────────────────────────────────────

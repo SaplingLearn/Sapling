@@ -161,12 +161,16 @@ Add these two helpers above `_quiz_via_agent`:
 ```python
 def _resolve_bu_code(course_id: str | None) -> str | None:
     """Resolve a Sapling course UUID to its BU course_code (course_chunks
-    partition key). None if unresolvable. Mirrors routes/documents.py."""
+    partition key). None if unresolvable OR if the lookup fails — grounding
+    must never break quiz generation."""
     if not course_id:
         return None
-    rows = table("courses").select(
-        "course_code", filters={"id": f"eq.{course_id}"}, limit=1
-    )
+    try:
+        rows = table("courses").select(
+            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+        )
+    except Exception:
+        return None
     return (rows[0].get("course_code") if rows else None) or None
 
 
@@ -677,10 +681,12 @@ def aggregate(verdicts: list[dict]) -> dict:
 def generate_quiz_for(concept_name: str) -> list[dict]:
     """Drive the real quiz agent against staging for a fixture concept.
     Uses fixed fixture ids; the agent's history/mastery tools tolerate an
-    unseeded node (they return empty)."""
+    unseeded node (they return empty). `course_id=FIXTURE_COURSE_ID` is the
+    fixture `courses` row seeded by `seed_quiz_fixture.py`, so grounding
+    resolves the real `bu_code` and exercises the production path."""
     return asyncio.run(_quiz_via_agent(
         user_id="quizfix-user-0001",
-        course_id=None,  # bypass graph lookups; grounding resolves bu_code below
+        course_id=FIXTURE_COURSE_ID,  # seeded fixture course → resolves bu_code
         concept_node_id="quizfix-node-0001",
         concept_name=concept_name,
         num_questions=4,
@@ -690,7 +696,11 @@ def generate_quiz_for(concept_name: str) -> list[dict]:
     ))
 ```
 
-Note on `generate_quiz_for`: grounding needs a real `course_id` to resolve `bu_code`. Pass the fixture course UUID once you know it (from the seeding step) instead of `None`; if the fixture course isn't in `courses`, temporarily patch `_course_material_block` to use `BU_CODE` directly. Resolve this concretely against the seeded data — the fixture course_code is `TEST QG 101`.
+Note on `generate_quiz_for`: grounding needs a real `course_id` to resolve
+`bu_code`, so pass the seeded fixture course UUID (`FIXTURE_COURSE_ID`, exported
+by `seed_quiz_fixture.py`) — not `None`. The seed script upserts that `courses`
+row (course_code `TEST QG 101`) before the benchmark runs, so the lookup
+resolves the real `bu_code` rather than needing a patch.
 
 Extend `main()` to run Layer 2 after Layer 1 (when `--chunks-only` is absent):
 

@@ -58,7 +58,7 @@ When editing either the manifest or the docs:
 
 ## Regenerating / seeding staging
 
-```
+```powershell
 cd backend
 .\venv\Scripts\python.exe scripts/seed_quiz_fixture.py
 ```
@@ -72,7 +72,7 @@ chunks, and it never touches any real course's data.
 
 Sanity-check retrieval afterward:
 
-```
+```powershell
 .\venv\Scripts\python.exe -c "from dotenv import load_dotenv; load_dotenv('.env.staging'); import sys; sys.path.insert(0,'.'); from services.rag_service import retrieve_chunks; print(len(retrieve_chunks('dynamic programming', course_id='TEST QG 101', k=5)))"
 ```
 
@@ -157,7 +157,7 @@ get raw material to label.
 
 Once ~20 entries are labeled, run:
 
-```
+```powershell
 .\venv\Scripts\python.exe scripts/benchmark_quiz.py --calibrate
 ```
 

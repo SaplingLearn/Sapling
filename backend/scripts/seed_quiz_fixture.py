@@ -12,7 +12,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE = Path(__file__).parent.parent
-load_dotenv(BASE / ".env.staging")
+# override=True so .env.staging wins over any Supabase creds already exported
+# in the caller's shell — otherwise the seed can silently hit the wrong project.
+load_dotenv(BASE / ".env.staging", override=True)
 sys.path.insert(0, str(BASE))
 
 from db.connection import table                       # noqa: E402
@@ -49,11 +51,12 @@ def seed_fixture_course() -> None:
 
 def main() -> None:
     seed_fixture_course()
-    texts = []
+    # Chunk each doc independently and concatenate the chunk lists — joining
+    # the files first would let one chunk straddle a file boundary (tail of
+    # one concept + head of the next), blurring per-concept retrieval.
+    chunks: list[str] = []
     for p in sorted((FIX / "docs").glob("*")):
-        texts.append(p.read_text(encoding="utf-8"))
-    full_text = "\n\n".join(texts)
-    chunks = chunk_document(full_text)
+        chunks.extend(chunk_document(p.read_text(encoding="utf-8")))
     count = index_document_chunks(BU_CODE, DOC_ID, UPLOADER, chunks)
     print(f"Seeded {count} chunks for {BU_CODE} (doc {DOC_ID}).")
 
