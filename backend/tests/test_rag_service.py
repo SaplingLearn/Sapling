@@ -7,6 +7,26 @@ def _make_embedding_response(vecs: list[list[float]]):
     return resp
 
 
+def test_client_is_constructed_with_bounded_http_timeout():
+    """retrieve_chunks() runs inline on the quiz/tutor request path, so the
+    embedding client must carry an explicit HTTP timeout — otherwise a stalled
+    Gemini call hangs the request indefinitely."""
+    from services.rag_service import _HTTP_TIMEOUT_MS
+
+    assert isinstance(_HTTP_TIMEOUT_MS, int)
+    assert 0 < _HTTP_TIMEOUT_MS <= 180_000
+
+
+@patch("services.rag_service._client")
+def test_retrieve_chunks_returns_empty_on_embedding_failure(mock_client):
+    """Best-effort contract: a retrieval failure must degrade to [] rather
+    than propagating and breaking quiz generation."""
+    mock_client.models.embed_content.side_effect = Exception("embed timeout")
+    from services.rag_service import retrieve_chunks
+
+    assert retrieve_chunks("dynamic programming", course_id="CAS CS 330") == []
+
+
 @patch("services.rag_service._client")
 def test_retrieve_chunks_uses_retrieval_query_task_type(mock_client):
     mock_client.models.embed_content.return_value = _make_embedding_response([[0.1] * 768])

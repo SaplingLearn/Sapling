@@ -1,0 +1,99 @@
+{
+  "bu_course_code": "TEST QG 101",
+  "concepts": [
+    {
+      "concept_name": "dynamic programming",
+      "kind": "rich",
+      "relevant_chunk_substrings": [
+        "overlapping subproblems",
+        "optimal substructure",
+        "memoization table",
+        "tabulation"
+      ],
+      "on_scope_topics": [
+        "memoization",
+        "tabulation",
+        "optimal substructure",
+        "top-down dynamic programming",
+        "bottom-up dynamic programming"
+      ],
+      "off_scope_topics": [
+        "quantum annealing",
+        "genetic algorithms"
+      ]
+    },
+    {
+      "concept_name": "hash tables",
+      "kind": "rich",
+      "relevant_chunk_substrings": [
+        "hash function",
+        "separate chaining",
+        "open addressing",
+        "load factor"
+      ],
+      "on_scope_topics": [
+        "collision resolution",
+        "load factor",
+        "linear probing",
+        "double hashing"
+      ],
+      "off_scope_topics": [
+        "cryptographic hash functions for password storage",
+        "blockchain mining"
+      ]
+    },
+    {
+      "concept_name": "amortized analysis",
+      "kind": "thin",
+      "relevant_chunk_substrings": [
+        "aggregate method"
+      ],
+      "on_scope_topics": [
+        "potential method",
+        "accounting method",
+        "aggregate method"
+      ],
+      "off_scope_topics": [
+        "floating-point rounding error"
+      ]
+    },
+    {
+      "concept_name": "graph coloring",
+      "kind": "thin",
+      "relevant_chunk_substrings": [
+        "chromatic number"
+      ],
+      "on_scope_topics": [
+        "vertex coloring",
+        "chromatic number"
+      ],
+      "off_scope_topics": [
+        "color theory in visual art"
+      ]
+    },
+    {
+      "concept_name": "binary search trees",
+      "kind": "adversarial",
+      "relevant_chunk_substrings": [
+        "binary search tree",
+        "in-order traversal"
+      ],
+      "on_scope_topics": [
+        "BST insertion",
+        "tree traversal",
+        "AVL trees",
+        "red-black trees"
+      ],
+      "off_scope_topics": [
+        "phylogenetic trees",
+        "family trees in genealogy",
+        "decision trees as a machine-learning classification model"
+      ]
+    }
+  ],
+  "off_scope_probe_concepts": [
+    "quantum error correction",
+    "cellular respiration",
+    "the French Revolution"
+  ]
+}
