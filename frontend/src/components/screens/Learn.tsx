@@ -744,7 +744,7 @@ function LearnInner() {
             <TopBar
               breadcrumb={<BackToLearnLink onClick={handleBackToLearn} />}
               title={topic}
-              subtitle={`${mode} tutor · ${messages.length} msgs`}
+              subtitle={`${cardCourse?.course_code ? `${cardCourse.course_code} · ` : ""}${MODES.find(m => m.id === mode)?.name ?? mode} Tutor · ${messages.length} Messages`}
               actions={
                 <>
                   <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
