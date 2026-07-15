@@ -179,6 +179,13 @@ def _course_material_block(course_id: str | None, concept_name: str) -> str:
         chunks = retrieve_chunks(concept_name, course_id=bu_code, k=5)
     except Exception:
         chunks = []
+    # Drop any retrieved chunk that merely repeats the catalog block already
+    # injected above — catalog chunks share the course_chunks store and can
+    # rank into the semantic results, which would send the same
+    # course-description text to the model twice (wasted prompt tokens).
+    if catalog:
+        catalog_norm = catalog.strip()
+        chunks = [c for c in chunks if (c.get("chunk_text") or "").strip() != catalog_norm]
     rag_block = format_rag_context(chunks)
     if rag_block:
         blocks.append(rag_block)
