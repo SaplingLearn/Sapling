@@ -251,7 +251,7 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
     result = await _run_note_worker(
-        note_summary_agent, user_prompt, deps, action="summarize"
+        note_summary_agent, user_prompt, deps, action="summarization"
     )
     summary_text = result.output.summary
     await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
