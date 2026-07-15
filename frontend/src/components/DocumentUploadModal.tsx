@@ -4,6 +4,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 import { CustomSelect } from "./CustomSelect";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { useToast } from "./ToastProvider";
 import {
   uploadDocumentStream,
@@ -73,15 +74,14 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
 
   React.useEffect(() => setMounted(true), []);
 
+  useScrollLock(open);
+
   React.useEffect(() => {
     if (!open) {
       setItems([]);
       setCourseQuery("");
       setCourseResults([]);
-      return;
     }
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
   }, [open]);
 
   React.useEffect(() => {

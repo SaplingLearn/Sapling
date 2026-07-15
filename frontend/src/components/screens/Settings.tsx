@@ -4,6 +4,7 @@ import Link from "next/link";
 import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { Icon } from "../Icon";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
 import { ProfileView } from "../ProfileView";
@@ -915,13 +916,13 @@ function CosmeticPreview({
 }
 
 function PreviewModal({ profile, onClose }: { profile: UserProfile; onClose: () => void }) {
+  // This modal only exists while it's open, so the lock is unconditional.
+  useScrollLock(true);
+
   React.useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => {
-      document.body.style.overflow = prev;
       window.removeEventListener("keydown", onKey);
     };
   }, [onClose]);

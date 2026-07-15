@@ -4,6 +4,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 import { useToast } from "./ToastProvider";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { useConfirm } from "@/lib/useConfirm";
 import {
   addCourse,
@@ -38,14 +39,14 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
 
   React.useEffect(() => setMounted(true), []);
 
+  useScrollLock(open);
+
   React.useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", handler);
-    document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", handler);
-      document.body.style.overflow = "";
     };
   }, [open, onClose]);
 

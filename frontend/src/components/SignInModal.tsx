@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { IS_LOCAL_MODE } from "@/lib/api";
+import { useScrollLock } from "@/lib/useScrollLock";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
@@ -61,6 +62,8 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
     }, 200);
   }, [onClose, cleanupPopupListeners]);
 
+  useScrollLock(open);
+
   useEffect(() => {
     if (!open) {
       setWaiting(false);
@@ -68,8 +71,6 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       return;
     }
     setLocalError(null);
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
   }, [open, cleanupPopupListeners]);
 
   useEffect(() => () => cleanupPopupListeners(), [cleanupPopupListeners]);
