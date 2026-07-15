@@ -56,6 +56,7 @@ export type GraphNode = {
   mastery_tier: "mastered" | "learning" | "struggling" | "unexplored";
   mastery_score: number;
   course_id: string;
+  description?: string;
   last_studied_at?: string;
 };
 
@@ -88,6 +89,7 @@ export function apiToGraphNode(n: ApiNode, courses: EnrolledCourse[]): GraphNode
     mastery_tier: n.mastery_tier === "subject_root" ? "mastered" : n.mastery_tier,
     mastery_score: n.mastery_score,
     course_id: n.course_id || course?.course_id || "",
+    description: n.description || undefined,
     last_studied_at: n.last_studied_at || undefined,
   };
 }
