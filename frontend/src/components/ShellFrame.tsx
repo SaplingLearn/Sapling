@@ -43,7 +43,7 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
         <main
           id="main-content"
           tabIndex={-1}
-          // The shell's scrollport: the root above is height:100vh/overflow:hidden,
+          // The shell's scrollport: the root above is height:100dvh/overflow:hidden,
           // so this — not <body> — is what scrolls. `useScrollLock` targets it.
           data-scroll-container=""
           style={{
