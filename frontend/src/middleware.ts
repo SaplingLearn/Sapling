@@ -13,7 +13,18 @@ const PROTECTED = [
   '/gradebook', '/course-planner', '/notetaker', '/profile'
 ]
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL
+// This middleware runs on the SERVER, so it needs an origin reachable from the
+// server — which is not always the browser-facing one. Under docker compose the
+// backend is http://backend:5000 on the compose network but http://localhost:5000
+// from the host browser, so NEXT_PUBLIC_API_URL (inlined for the browser) is not
+// resolvable here. BACKEND_URL is the server-side origin and is preferred.
+// In prod/staging the two are identical (frontend/wrangler.toml) so this is a
+// no-op there; the NEXT_PUBLIC_API_URL fallback keeps any env that only sets
+// that one working. .trim() mirrors next.config.ts's defense against a stray
+// space in a deploy variable.
+const API_URL =
+  (process.env.BACKEND_URL ?? '').trim() ||
+  (process.env.NEXT_PUBLIC_API_URL ?? '').trim()
 
 function googleAuthRedirect() {
   if (!API_URL) return null
