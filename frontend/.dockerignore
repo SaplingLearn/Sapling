@@ -7,6 +7,10 @@ node_modules
 .turbo
 npm-debug.log*
 .env*
+# Cloudflare local secrets (wrangler `.dev.vars`). Not copied into the runner
+# stage today, but keep it out of the build context entirely — defense in depth.
+.dev.vars
+.dev.vars.*
 .git
 .gitignore
 Dockerfile
