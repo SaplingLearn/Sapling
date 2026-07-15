@@ -37,7 +37,6 @@ export function FullHeightScreen({
         display: "flex",
         flexDirection: direction,
         height: "100%",
-        minHeight: 0,
         ...style,
       }}
     >
