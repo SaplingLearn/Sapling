@@ -97,3 +97,12 @@ def test_redirect_token_ttl_default_is_short():
     import routes.auth as auth
     # The redirect handoff token must stay short — it is not the session.
     assert auth._REDIRECT_TOKEN_TTL_SECONDS <= 600
+
+
+def test_redirect_token_ttl_override_is_clamped():
+    import routes.auth as auth
+    # A misconfigured/hostile env override cannot lengthen the URL-borne
+    # handoff token beyond the 600s ceiling, and cannot drop below the 30s floor.
+    assert auth._clamp_redirect_ttl(86400) == 600
+    assert auth._clamp_redirect_ttl(5) == 30
+    assert auth._clamp_redirect_ttl(300) == 300

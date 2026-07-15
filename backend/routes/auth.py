@@ -78,7 +78,20 @@ _POPUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 # backend-compatible HMAC format, which `auth_guard._decode_session` accepts.
 # So this token only needs to outlive the redirect round-trip. Configurable for
 # environments with slow OAuth hops. See docs/decisions/0018-session-token-lifecycle.md.
-_REDIRECT_TOKEN_TTL_SECONDS = int(os.getenv("SAPLING_AUTH_REDIRECT_TOKEN_TTL", "300"))
+def _clamp_redirect_ttl(seconds: int) -> int:
+    """Clamp the redirect-handoff token TTL to [30, 600]s.
+
+    This one-shot token travels in the OAuth-callback URL, so a misconfigured
+    override must not be able to turn it into a long-lived credential — it is
+    NOT the session (see docs/decisions/0018-session-token-lifecycle.md). The
+    floor keeps slow OAuth hops working; the ceiling keeps the handoff short.
+    """
+    return max(30, min(seconds, 600))
+
+
+_REDIRECT_TOKEN_TTL_SECONDS = _clamp_redirect_ttl(
+    int(os.getenv("SAPLING_AUTH_REDIRECT_TOKEN_TTL", "300"))
+)
 
 # Fallback in-memory store for environments without SESSION_SECRET; entries
 # are keyed by nonce and expire after _OAUTH_COOKIE_MAX_AGE seconds.
