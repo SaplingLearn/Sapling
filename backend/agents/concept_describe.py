@@ -24,7 +24,12 @@ class ConceptDescription(BaseModel):
     """Typed output: a single short description sentence."""
 
     description: str = Field(
-        max_length=240,
+        # Generous guard, not a display target: the prompt governs length
+        # (~12-28 words). 240 was tight enough that a valid 28-word sentence
+        # with long technical terms could overflow it → schema-validation
+        # failure → retry → a user-facing 502. 400 keeps a hard ceiling on
+        # runaway output without rejecting legitimate one-sentence replies.
+        max_length=400,
         description=(
             "One concise, plain-language sentence explaining what the concept "
             "is. No preamble, no markdown, no trailing whitespace."
