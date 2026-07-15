@@ -172,6 +172,32 @@ class TestExtractAssignmentsViaAgent:
         assert first["assignment_type"] == "other"
         assert first["due_date"] == "2026-03-15"
 
+    def test_agent_run_receives_worker_limits(self):
+        """#329: the syllabus-extraction worker must run under WORKER_LIMITS —
+        single-shot, no tools, so the worker budget applies."""
+        from agents import WORKER_LIMITS
+        from services import calendar_service
+
+        agent_run = AsyncMock(
+            return_value=SimpleNamespace(output=self._agent_output())
+        )
+
+        with (
+            patch.object(
+                calendar_service, "extract_text_from_file",
+                return_value="syllabus body",
+            ),
+            patch.object(
+                calendar_service.syllabus_extraction_agent, "run", agent_run,
+            ),
+        ):
+            asyncio.run(calendar_service.extract_assignments_from_file(
+                b"raw", "syllabus.pdf", "application/pdf",
+            ))
+
+        assert agent_run.await_count == 1
+        assert agent_run.await_args.kwargs.get("usage_limits") is WORKER_LIMITS
+
     def test_degrades_gracefully_on_usage_limit(self):
         """UsageLimitExceeded from the agent degrades to an empty result
         with a warning — and does NOT make a second LLM call."""

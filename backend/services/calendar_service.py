@@ -6,6 +6,7 @@ import uuid
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
+from agents import WORKER_LIMITS
 from agents.deps import SaplingDeps
 from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.tools.syllabus_adapter import syllabus_to_wire_dict
@@ -103,7 +104,9 @@ async def _extract_via_agent(
         supabase=None,
         request_id=request_id or "",
     )
-    result = await syllabus_extraction_agent.run(extracted_text, deps=deps)
+    result = await syllabus_extraction_agent.run(
+        extracted_text, deps=deps, usage_limits=WORKER_LIMITS
+    )
     return syllabus_to_wire_dict(result.output, raw_text=extracted_text)
 
 

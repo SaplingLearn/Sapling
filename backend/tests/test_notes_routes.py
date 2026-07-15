@@ -225,6 +225,55 @@ class TestSummarizeRoute:
             )
         assert r.status_code == 404
 
+    def test_agent_run_receives_worker_limits(self, client):
+        """#329: the single-shot summary worker must run under WORKER_LIMITS."""
+        from agents import WORKER_LIMITS
+
+        captured = {}
+        class FakeResult:
+            output = type("S", (), {"summary": "Short summary."})()
+        async def fake_run(*args, **kwargs):
+            captured["usage_limits"] = kwargs.get("usage_limits")
+            return FakeResult()
+        async def fake_get_note(note_id, user_id):
+            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
+                    "title": "T", "body": "B", "tags": [],
+                    "last_summary": None, "last_summary_at": None,
+                    "created_at": "", "updated_at": ""}
+        async def fake_save_summary(note_id, user_id, summary):
+            return {}
+        with patch("routes.notes.note_summary_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
+             patch("routes.notes.get_note", side_effect=fake_get_note), \
+             patch("routes.notes.save_summary", side_effect=fake_save_summary):
+            r = client.post(
+                "/api/notes/n1/summarize",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 200
+        assert captured["usage_limits"] is WORKER_LIMITS
+
+    def test_503_when_guardrails_trip(self, client):
+        """#329: budget exhaustion surfaces as 503, not an uncaught 500."""
+        from pydantic_ai.exceptions import UsageLimitExceeded
+
+        async def fake_run(*args, **kwargs):
+            raise UsageLimitExceeded("token cap")
+        async def fake_get_note(note_id, user_id):
+            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
+                    "title": "T", "body": "B", "tags": [],
+                    "last_summary": None, "last_summary_at": None,
+                    "created_at": "", "updated_at": ""}
+        with patch("routes.notes.note_summary_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
+             patch("routes.notes.get_note", side_effect=fake_get_note):
+            r = client.post(
+                "/api/notes/n1/summarize",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 503
+        assert r.json()["detail"]
+
 
 class TestExtractConceptsRoute:
     def test_extracts_and_links(self, client):
@@ -266,6 +315,58 @@ class TestExtractConceptsRoute:
         assert merged == ["Photosynthesis", "Calvin Cycle"]
         assert {n[1] for n in linked} == {"g_Photosynthesis", "g_Calvin Cycle"}
 
+    def test_agent_run_receives_worker_limits(self, client):
+        """#329: the single-shot concepts worker must run under WORKER_LIMITS."""
+        from agents import WORKER_LIMITS
+
+        captured = {}
+        class FakeResult:
+            output = type("C", (), {"concepts": []})()
+        async def fake_run(*args, **kwargs):
+            captured["usage_limits"] = kwargs.get("usage_limits")
+            return FakeResult()
+        async def fake_get_note(note_id, user_id):
+            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
+                    "title": "T", "body": "B", "tags": [],
+                    "last_summary": None, "last_summary_at": None,
+                    "created_at": "", "updated_at": ""}
+        async def fake_apply(user_id, course_id, concept_names):
+            return 0
+        async def fake_lookup(user_id, course_id, names):
+            return []
+        with patch("routes.notes.note_concepts_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
+             patch("routes.notes.get_note", side_effect=fake_get_note), \
+             patch("routes.notes.apply_concepts_to_graph", side_effect=fake_apply), \
+             patch("routes.notes._lookup_concept_nodes_by_name", side_effect=fake_lookup):
+            r = client.post(
+                "/api/notes/n1/extract-concepts",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 200
+        assert captured["usage_limits"] is WORKER_LIMITS
+
+    def test_503_when_guardrails_trip(self, client):
+        """#329: budget exhaustion surfaces as 503, not an uncaught 500."""
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        async def fake_run(*args, **kwargs):
+            raise UnexpectedModelBehavior("bad output")
+        async def fake_get_note(note_id, user_id):
+            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
+                    "title": "T", "body": "B", "tags": [],
+                    "last_summary": None, "last_summary_at": None,
+                    "created_at": "", "updated_at": ""}
+        with patch("routes.notes.note_concepts_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
+             patch("routes.notes.get_note", side_effect=fake_get_note):
+            r = client.post(
+                "/api/notes/n1/extract-concepts",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 503
+        assert r.json()["detail"]
+
 
 class TestNoteChatRoute:
     def test_runs_note_chat_agent(self, client):
@@ -287,6 +388,56 @@ class TestNoteChatRoute:
             )
         assert r.status_code == 200
         assert r.json() == {"reply": "Here is a quick answer."}
+
+    @staticmethod
+    async def _fake_get_note(note_id, user_id):
+        return {"id": note_id, "user_id": user_id, "offering_id": "off1",
+                "title": "T", "body": "B", "tags": [],
+                "last_summary": None, "last_summary_at": None,
+                "created_at": "", "updated_at": ""}
+
+    def test_agent_run_receives_orchestrator_limits(self, client):
+        """#329: the tool-using note-chat orchestrator must run under
+        ORCHESTRATOR_LIMITS (it can call tools and iterate)."""
+        from agents import ORCHESTRATOR_LIMITS
+
+        captured = {}
+        class FakeResult:
+            output = "reply"
+        async def fake_run(*args, **kwargs):
+            captured["usage_limits"] = kwargs.get("usage_limits")
+            return FakeResult()
+        with patch("routes.notes.note_chat_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
+             patch("routes.notes.get_note", side_effect=self._fake_get_note):
+            r = client.post(
+                "/api/notes/n1/chat",
+                json={"user_id": "u1", "message": "hi"},
+            )
+        assert r.status_code == 200
+        assert captured["usage_limits"] is ORCHESTRATOR_LIMITS
+
+    @pytest.mark.parametrize("exc_name", ["UsageLimitExceeded", "UnexpectedModelBehavior"])
+    def test_degrades_in_band_when_guardrails_trip(self, client, exc_name):
+        """#329: budget exhaustion mid-chat returns a friendly in-band reply
+        (HTTP 200 + degraded flag) — never an uncaught 500. note_chat has no
+        legacy fallback (ADR 0017), so degrade is the contract."""
+        import pydantic_ai.exceptions as pae
+
+        exc_cls = getattr(pae, exc_name)
+        async def fake_run(*args, **kwargs):
+            raise exc_cls("guardrail tripped")
+        with patch("routes.notes.note_chat_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
+             patch("routes.notes.get_note", side_effect=self._fake_get_note):
+            r = client.post(
+                "/api/notes/n1/chat",
+                json={"user_id": "u1", "message": "hi"},
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["degraded"] is True
+        assert body["reply"]  # non-empty, user-facing
 
 
 class TestSendToTutorRoute:
