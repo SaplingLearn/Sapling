@@ -2,6 +2,7 @@
 import React from "react";
 import Link from "next/link";
 import { TopBar } from "../TopBar";
+import { FullHeightScreen } from "../FullHeightScreen";
 import { Icon } from "../Icon";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
@@ -216,7 +217,7 @@ export function Settings() {
   const tabs: Tab[] = ["profile", "preferences", "notifications", "data"];
 
   return (
-    <div>
+    <FullHeightScreen>
       <TopBar
         title="Settings"
         subtitle="Profile, preferences, and account"
@@ -229,7 +230,10 @@ export function Settings() {
           </>
         }
       />
-      <div style={{ display: "flex", height: "calc(100vh - 112px)" }}>
+      {/* Fills whatever `<main>` leaves below TopBar. `minHeight: 0` lets this
+          shrink past its content so the panes below scroll internally rather
+          than pushing the screen taller than `<main>`. */}
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div style={{ flex: 1, minWidth: 0, padding: "24px 32px", overflowY: "auto" }}>
           {!settings && tab !== "cosmetics" && <SettingsFormSkeleton />}
           {tab === "profile" && settings && (
@@ -635,7 +639,7 @@ export function Settings() {
       {previewOpen && preview && (
         <PreviewModal profile={preview} onClose={() => setPreviewOpen(false)} />
       )}
-    </div>
+    </FullHeightScreen>
   );
 }
 

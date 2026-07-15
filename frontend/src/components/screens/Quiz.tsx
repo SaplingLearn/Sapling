@@ -3,6 +3,7 @@
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
+import { FullHeightScreen } from "../FullHeightScreen";
 import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { QuizPanel } from "../QuizPanel";
@@ -72,7 +73,7 @@ function QuizInner() {
   }, [conceptParam, topicParam, concepts]);
 
   return (
-    <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
+    <FullHeightScreen>
       <DisclaimerModal />
       <TopBar
         title="Quiz"
@@ -100,6 +101,6 @@ function QuizInner() {
           />
         ) : null}
       </div>
-    </div>
+    </FullHeightScreen>
   );
 }

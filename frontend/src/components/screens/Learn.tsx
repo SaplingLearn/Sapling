@@ -7,6 +7,7 @@ import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { CustomSelect } from "../CustomSelect";
 import { ChatPanel, type ChatMsg } from "../ChatPanel";
+import { FullHeightScreen } from "../FullHeightScreen";
 import { SessionSummary } from "../SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../SharedContextToggle";
 import { ModelToggle, useModelPref } from "../ModelToggle";
@@ -642,7 +643,7 @@ function LearnInner() {
   // ────────── Entry screen (no active session) ──────────
   if (!sessionId && !starting) {
     return (
-      <div className="fade-in" style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
+      <FullHeightScreen className="fade-in">
         <DisclaimerModal />
         <TopBar
           title="Start a session"
@@ -705,7 +706,7 @@ function LearnInner() {
             ))}
           </div>
         </div>
-      </div>
+      </FullHeightScreen>
     );
   }
 
@@ -713,7 +714,7 @@ function LearnInner() {
   const railDragging = dragWidth != null;
   const railW = railDragging ? (dragWidth as number) : railOpen ? RAIL_WIDTH : 0;
   return (
-    <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
+    <FullHeightScreen>
       <DisclaimerModal />
 
       {isMobile && (
@@ -1150,7 +1151,7 @@ function LearnInner() {
           onStartNext={startNextFromSummary}
         />
       )}
-    </div>
+    </FullHeightScreen>
   );
 }
 
