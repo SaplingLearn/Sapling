@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -228,7 +229,12 @@ async def _quiz_via_agent(
             "as distractors and probes."
         )
 
-    material = _course_material_block(course_id, concept_name)
+    # Course-material grounding does blocking network I/O (a Gemini
+    # embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
+    # worker thread so a slow/stalled retrieval can't freeze this worker's
+    # event loop for every other in-flight request. Matches the
+    # asyncio.to_thread pattern used by the agent read tools.
+    material = await asyncio.to_thread(_course_material_block, course_id, concept_name)
     if material:
         user_message = (
             "COURSE MATERIAL for '" + concept_name + "':\n\n" + material
