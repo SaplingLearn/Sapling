@@ -5,7 +5,7 @@ import { Icon } from "./Icon";
 import { Pill } from "./Pill";
 import { useToast } from "./ToastProvider";
 import { useUser } from "@/context/UserContext";
-import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { submitIssueReport, IS_LOCAL_MODE, API_URL } from "@/lib/api";
 
 const TOPICS = ["Bug", "Feature", "Polish", "Content", "Other"] as const;
@@ -45,7 +45,7 @@ export function ReportIssueFlow({ open, onClose }: ReportIssueFlowProps) {
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  useBodyScrollLock(open);
+  useScrollLock(open);
 
   const reset = useCallback(() => {
     setTopic("Bug");

@@ -3,7 +3,7 @@
 import React, { useCallback, useState } from "react";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
-import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { useToast } from "./ToastProvider";
 
 export const SESSION_COOLDOWN_MS = 2 * 24 * 60 * 60 * 1000;
@@ -58,7 +58,7 @@ export function SessionFeedbackFlow({ open, context, onClose }: SessionFeedbackF
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useBodyScrollLock(open);
+  useScrollLock(open);
 
   const close = useCallback((recordCooldown: boolean) => {
     if (recordCooldown) localStorage.setItem(SESSION_COOLDOWN_KEY, String(Date.now()));

@@ -18,7 +18,7 @@ const MarkdownChat = dynamic(
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { useUser } from "@/context/UserContext";
 import {
   getDocuments,
@@ -57,7 +57,7 @@ export function Library() {
   const [view, setView] = React.useState<View>("grid");
   const [loading, setLoading] = React.useState(true);
 
-  useBodyScrollLock(Boolean(detail));
+  useScrollLock(Boolean(detail));
   const [modalMounted, setModalMounted] = React.useState(false);
   React.useEffect(() => setModalMounted(true), []);
 
