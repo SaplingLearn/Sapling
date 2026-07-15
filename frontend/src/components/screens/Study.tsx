@@ -116,7 +116,7 @@ export function Study() {
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
       <TopBar
         title="Study"
         subtitle={mode === "guide" ? undefined : "Spaced review with ratings and a 3D flip"}

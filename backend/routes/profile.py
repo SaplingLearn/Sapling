@@ -22,6 +22,7 @@ from models import (
     DeleteAccountBody,
 )
 from services.auth_guard import require_self, get_session_user_id
+from services.http_cache import cached_json, conditional, make_etag
 from services.storage_service import upload_avatar
 from services.achievement_service import get_user_stat
 
@@ -354,7 +355,13 @@ async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Req
 def get_settings(user_id: str, request: Request):
     require_self(user_id, request)
     settings = _get_or_create_settings(user_id)
-    return settings
+    # user_settings.updated_at is bumped on every patch → a clean single-source
+    # ETag. A matching If-None-Match returns 304 without re-serializing.
+    etag = make_etag("settings", user_id, settings.get("updated_at"))
+    not_modified = conditional(request, etag)
+    if not_modified is not None:
+        return not_modified
+    return cached_json(settings, etag)
 
 
 @router.patch("/{user_id}/settings")

@@ -433,6 +433,79 @@ class TestGenerateQuizDifficultyEnum:
         assert r.status_code == 200
 
 
+# ── POST /api/quiz/generate — num_questions bound (issue #XXX) ────────────────
+
+
+class TestGenerateQuizNumQuestionsBound:
+    """num_questions must be bounded to 1-10 inclusive. Requests outside
+    this range should return HTTP 422 (validation error) instead of
+    silently truncating to the schema max_length. This regression test
+    prevents the bug where num_questions > 10 silently returned ≤10
+    questions instead of erroring."""
+
+    def test_num_questions_over_cap_rejected(self):
+        """POST with num_questions=15 should return 422, not silently truncate."""
+        agent_run = AsyncMock()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 15,  # exceeds max_length=10
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 422
+        # The agent must not run for an over-cap num_questions.
+        agent_run.assert_not_called()
+
+    def test_num_questions_at_cap_accepted(self):
+        """POST with num_questions=10 (at the max) should succeed."""
+        from types import SimpleNamespace
+        fake_quiz = Quiz(questions=[
+            QuizQuestion(
+                question="Q?", type="multiple_choice", difficulty="medium",
+                options=["a", "b", "c", "d"], correct_answer="a",
+                explanation="x", concept="X",
+            )
+            for _ in range(10)
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+            ),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 10,
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 200
+
+    def test_num_questions_below_min_rejected(self):
+        """POST with num_questions=0 should return 422."""
+        agent_run = AsyncMock()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 0,  # below min=1
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 422
+        agent_run.assert_not_called()
+
+
 # ── POST /api/quiz/submit — mastery routes through apply_graph_update ────────
 
 
@@ -847,6 +920,133 @@ class TestQuizWireFormatContract:
         # The matched option preserves its original (whitespace-padded)
         # text — the trim is only used for comparison.
         assert correct[0]["text"].strip() == "4"
+
+
+class TestQuizGrounding:
+    """_quiz_via_agent prepends a COURSE MATERIAL block (best-effort) and
+    the quiz still generates when grounding is absent."""
+
+    NODE = {"id": "node_x", "user_id": "user_1", "course_id": "course-uuid-1",
+            "concept_name": "dynamic programming"}
+
+    def _valid_quiz_result(self):
+        # quiz_agent.run(...) returns an object whose .output is a Quiz whose
+        # single question passes wire validation (correct_answer ∈ options).
+        from agents.quiz import Quiz, QuizQuestion
+        q = QuizQuestion(
+            question="What does memoization avoid?",
+            type="multiple_choice", difficulty="easy",
+            options=["Recomputation", "Sorting", "Hashing", "Recursion"],
+            correct_answer="Recomputation",
+            explanation="Memoization caches subproblem results.",
+            concept="dynamic programming",
+        )
+        return MagicMock(output=Quiz(questions=[q]))
+
+    def _table_factory(self, *, course_code="CAS CS 330"):
+        def factory(name):
+            m = MagicMock()
+            if name == "graph_nodes":
+                m.select.return_value = [self.NODE]
+            elif name == "courses":
+                m.select.return_value = [{"course_code": course_code}] if course_code else []
+            else:  # quiz_attempts insert, etc.
+                m.select.return_value = []
+                m.insert.return_value = []
+                m.update.return_value = []
+            return m
+        return factory
+
+    def test_resolve_bu_code_returns_course_code(self):
+        from routes.quiz import _resolve_bu_code
+        with patch("routes.quiz.table", side_effect=self._table_factory()):
+            assert _resolve_bu_code("course-uuid-1") == "CAS CS 330"
+
+    def test_resolve_bu_code_none_for_missing(self):
+        from routes.quiz import _resolve_bu_code
+        assert _resolve_bu_code(None) is None
+        with patch("routes.quiz.table", side_effect=self._table_factory(course_code=None)):
+            assert _resolve_bu_code("course-uuid-1") is None
+
+    def test_material_injected_when_chunks_exist(self):
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value="Course: CAS CS 330 ..."),
+            patch("routes.quiz.retrieve_chunks",
+                  return_value=[{"course_id": "CAS CS 330",
+                                 "chunk_text": "Memoization caches subproblem results.",
+                                 "similarity": 0.81}]),
+        ):
+            client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        msg = agent_run.call_args[0][0]
+        assert "COURSE MATERIAL" in msg
+        assert "Memoization caches subproblem results." in msg
+        assert "[GENERATE QUIZ]" in msg
+        assert "dynamic programming" in msg  # routing message preserved
+
+    def test_no_block_when_retrieval_empty(self):
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value=""),
+            patch("routes.quiz.retrieve_chunks", return_value=[]),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        msg = agent_run.call_args[0][0]
+        assert "COURSE MATERIAL" not in msg
+        assert r.status_code == 200
+
+    def test_retrieval_exception_is_swallowed(self):
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value=""),
+            patch("routes.quiz.retrieve_chunks", side_effect=RuntimeError("embed down")),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        assert r.status_code == 200  # grounding failure never 502s the quiz
+        assert "COURSE MATERIAL" not in agent_run.call_args[0][0]
+
+    def test_bu_code_resolution_failure_is_swallowed(self):
+        """A transient/erroring `courses` lookup (timeout, 5xx, malformed-id
+        400 from PostgREST) must degrade grounding to '' rather than
+        propagating out of _resolve_bu_code and 502ing the whole quiz."""
+        def factory(name):
+            m = MagicMock()
+            if name == "graph_nodes":
+                m.select.return_value = [self.NODE]
+            elif name == "courses":
+                m.select.side_effect = RuntimeError("db down")
+            else:  # quiz_attempts insert, etc.
+                m.select.return_value = []
+                m.insert.return_value = []
+                m.update.return_value = []
+            return m
+
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        assert r.status_code == 200  # bu_code resolution failure never 502s the quiz
+        assert "COURSE MATERIAL" not in agent_run.call_args[0][0]
 
 
 # ── Per-request model_pref (Fast/Smart toggle, mirrors chat tutor) ──────────

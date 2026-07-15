@@ -20,6 +20,8 @@
 
   /* Canonical brand green ("forest"). Mirrored by BRAND_FOREST in lib/brand.ts. */
   --brand-forest: #1B6C42;
+  /* Hover-darken of the base forest, for primary-forest button :hover states. */
+  --brand-forest-hover: #155A35;
   /* Brighter forest used for the primary CTA fill + the hero "growth" leaf. */
   --brand-forest-bright: #2D8F5C;
   --brand-forest-bright-hover: #236F48;
@@ -419,6 +421,10 @@ body { font-size: 14px; line-height: 1.5; }
     scroll-behavior: auto !important;
   }
 }
+
+/* Hide the shared KnowledgeGraph's recenter/reset control on the Tutor
+   session knowledge-map rail only (keeps it intact on Dashboard/Tree). */
+.learn-map-rail button[title="Reset view"] { display: none; }
 /* ══════════════════════════════════════════════════════════════════
    LANDING PAGE STYLES (ported from main branch)
    ══════════════════════════════════════════════════════════════════ */
@@ -524,7 +530,7 @@ body { font-size: 14px; line-height: 1.5; }
 
 .landing-intro-orbit-node--green  { background: var(--brand-forest);  top: -3px;  left: 50%; transform: translateX(-50%); }
 .landing-intro-orbit-node--amber  { background: #D97706;  right: -3px; top: 45%; transform: translateY(-50%); }
-.landing-intro-orbit-node--blue   { background: #3B82F6;  bottom: -3px; left: 35%; transform: translateX(-50%); }
+.landing-intro-orbit-node--blue   { background: var(--info);  bottom: -3px; left: 35%; transform: translateX(-50%); }
 .landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
 
 /* ── Button shimmer ────────────────────────────────────────────── */
@@ -860,7 +866,7 @@ input[type="reset"]:disabled {
 .landing-page .landing-intro-orbit-node { position: absolute; width: 10px; height: 10px; border-radius: 999px; }
 .landing-page .landing-intro-orbit-node--green  { background: var(--brand-forest);  top: -3px;  left: 50%; transform: translateX(-50%); }
 .landing-page .landing-intro-orbit-node--amber  { background: #D97706;  right: -3px; top: 45%; transform: translateY(-50%); }
-.landing-page .landing-intro-orbit-node--blue   { background: #3B82F6;  bottom: -3px; left: 35%; transform: translateX(-50%); }
+.landing-page .landing-intro-orbit-node--blue   { background: var(--info);  bottom: -3px; left: 35%; transform: translateX(-50%); }
 .landing-page .landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
 
 /* Button shimmer. */

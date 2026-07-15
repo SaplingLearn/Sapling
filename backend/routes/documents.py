@@ -49,6 +49,8 @@ from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
 from agents.tools.graph import apply_concepts_to_graph
+from agents._run import run_agent_sync
+from agents.concept_scan import concept_scan_agent
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +154,116 @@ def _extend_course_concepts(
     if not isinstance(raw, dict):
         return []
     return _coerce_str_list(raw.get("concepts"))
+
+
+def _scan_user_message(
+    *,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_concept_notes: list[dict] | None = None,
+) -> str:
+    """Build the concept_scan agent's user message: course label + existing
+    concepts + (optional) document context. Mirrors the legacy prompt's data
+    section so agent and legacy paths see the same signal."""
+    existing_block = (
+        "\n".join(f"- {c}" for c in existing_concepts) if existing_concepts else "(none yet)"
+    )
+    lines = [
+        f'Course: "{course_label}"',
+        "Concepts already in the graph:",
+        existing_block,
+    ]
+    if doc_filename or doc_summary or doc_concept_notes:
+        notes_block = (
+            "\n".join(
+                f"  - {n.get('name', '?')}: {n.get('description', '')[:200]}"
+                for n in (doc_concept_notes or [])
+            )
+            or "  (none)"
+        )
+        lines += [
+            "",
+            "New document being scanned:",
+            f"  Title: {doc_filename or '(untitled)'}",
+            f"  Summary: {doc_summary or '(none)'}",
+            "  Concepts already extracted from this document:",
+            notes_block,
+        ]
+    return "\n".join(lines)
+
+
+async def _extend_via_agent(
+    *,
+    user_id: str,
+    course_id: str,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_concept_notes: list[dict] | None = None,
+) -> list[str]:
+    """Run concept_scan_agent and return new concept names. Raises on agent
+    failure so the sync dispatcher can fall back to legacy."""
+    deps = SaplingDeps(
+        user_id=user_id,
+        course_id=course_id,
+        supabase=None,
+        request_id=current_request_id() or str(uuid.uuid4()),
+    )
+    message = _scan_user_message(
+        course_label=course_label,
+        existing_concepts=existing_concepts,
+        doc_filename=doc_filename,
+        doc_summary=doc_summary,
+        doc_concept_notes=doc_concept_notes,
+    )
+    result = await concept_scan_agent.run(
+        message, deps=deps, usage_limits=WORKER_LIMITS,
+    )
+    return list(result.output.concepts)
+
+
+def _extend_concepts(
+    user_id: str,
+    course_id: str,
+    *,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_concept_notes: list[dict] | None = None,
+) -> list[str]:
+    """Agent-first concept extension with legacy fallback (ADR 0001).
+
+    Sync entry point for the sync /scan-concepts handlers: drives the async
+    agent via run_agent_sync, falling back to the legacy call_gemini_json
+    path on any agent failure.
+    """
+    try:
+        return run_agent_sync(
+            _extend_via_agent(
+                user_id=user_id,
+                course_id=course_id,
+                course_label=course_label,
+                existing_concepts=existing_concepts,
+                doc_filename=doc_filename,
+                doc_summary=doc_summary,
+                doc_concept_notes=doc_concept_notes,
+            )
+        )
+    except (UsageLimitExceeded, UnexpectedModelBehavior):
+        logger.warning("concept_scan agent guardrails tripped; using legacy")
+    except Exception:
+        logger.exception("concept_scan agent failed; using legacy")
+    return _extend_course_concepts(
+        course_label=course_label,
+        existing_concepts=existing_concepts,
+        doc_filename=doc_filename,
+        doc_summary=doc_summary,
+        doc_concept_notes=doc_concept_notes,
+    )
 
 
 def _coerce_concept_notes(value) -> list[dict]:
@@ -814,6 +926,7 @@ async def upload_document(
                 ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 ("update_course_context", update_course_context, course_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
+                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
             )
 
             yield sapling_event_to_sse(SaplingEvent(
@@ -929,6 +1042,90 @@ def _check_upload_achievements(user_id: str) -> None:
         check_achievements(user_id, "documents_uploaded", {})
     except Exception:
         pass
+
+
+def _index_document_chunks(
+    doc_id: str,
+    course_id: str,      # Sapling UUID — resolved to BU code internally
+    user_id: str,
+    extracted_text: str,
+    category: str,
+    doc_summary: str = "",
+) -> None:
+    """Chunk, embed, and upsert a document into course_chunks.
+
+    Runs in a background thread via _spawn_post_roll after the document
+    is persisted, so it never blocks the SSE stream.
+    """
+    import time
+    from services.chunker import chunk_document
+    from services.rag_service import index_document_chunks
+    from services.encryption import encrypt_if_present
+
+    MIN_COURSE_RELEVANCE = 0.35
+
+    try:
+        # Resolve BU course code from Sapling UUID
+        rows = table("courses").select(
+            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+        )
+        bu_course_id = (rows[0].get("course_code") or course_id) if rows else course_id
+
+        chunks = chunk_document(extracted_text)
+        if not chunks:
+            return
+
+        # Store raw extracted text on the document row (best-effort)
+        try:
+            table("documents").update(
+                {"extracted_text": encrypt_if_present(extracted_text)},
+                filters={"id": f"eq.{doc_id}"},
+            )
+        except Exception:
+            logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
+
+        # Relevance gate: skip docs that are off-topic for the course
+        from google import genai as _genai
+        from google.genai import types as genai_types
+        import os
+        _gclient = _genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+
+        catalog_rows = table("course_chunks").select(
+            "embedding",
+            filters={"course_id": f"eq.{bu_course_id}", "category": "eq.catalog"},
+            limit=1,
+        )
+        if catalog_rows and catalog_rows[0].get("embedding"):
+            catalog_vec = catalog_rows[0]["embedding"]
+            sample_text = doc_summary or chunks[0]
+            resp = _gclient.models.embed_content(
+                model="gemini-embedding-001",
+                contents=[sample_text],
+                config=genai_types.EmbedContentConfig(
+                    output_dimensionality=768,
+                    task_type="RETRIEVAL_DOCUMENT",
+                ),
+            )
+            doc_sample_vec = list(resp.embeddings[0].values)
+            time.sleep(1.5)
+            dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
+            if dot < MIN_COURSE_RELEVANCE:
+                logger.warning(
+                    "[RAG] doc %s skipped — relevance to %s is %.3f (< %.2f)",
+                    doc_id, bu_course_id, dot, MIN_COURSE_RELEVANCE,
+                )
+                return
+
+        count = index_document_chunks(
+            course_code=bu_course_id,
+            doc_id=doc_id,
+            uploader_id=user_id,
+            chunks=chunks,
+        )
+        logger.info("[RAG] indexed %d chunks for doc %s", count, doc_id)
+
+    except Exception:
+        logger.exception("[RAG] _index_document_chunks failed for doc %s", doc_id)
 
 
 def _spawn_post_roll(*tasks: tuple) -> None:
@@ -1075,7 +1272,9 @@ def _scan_concepts_for_course(
     ) or []
     existing_concepts = [r["concept_name"] for r in existing_rows if r.get("concept_name")]
 
-    concepts = _extend_course_concepts(
+    concepts = _extend_concepts(
+        user_id,
+        course_id,
         course_label=_course_label(course_id),
         existing_concepts=existing_concepts,
         doc_filename=doc_filename,

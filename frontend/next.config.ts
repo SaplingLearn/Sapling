@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 // The dev-mode OpenNext hook lets `next dev` continue to work locally
 // against Cloudflare bindings (R2/KV/env vars). Safe no-op in prod builds.
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
+import { checkFrontendDeployEnv } from "./src/lib/deployGuard";
 
 // .trim() defends against a stray leading/trailing space in the build
 // variable: an untrimmed " https://..." makes the /api rewrite destination
@@ -34,6 +35,21 @@ if (process.env.NODE_ENV === "production") {
         JSON.stringify(process.env.BACKEND_URL) +
         ". A stray leading/trailing space is the usual cause (Next then rejects the " +
         "/api rewrite as 'Invalid rewrite found') — check the Cloudflare Workers Builds variable.",
+    );
+  }
+
+  // Guard against the "staging config on the prod worker" footgun: the prod
+  // `frontend` Workers Build once deployed with `--env staging`, baking staging
+  // API URLs + a `.staging` cookie domain onto saplinglearn.com and breaking
+  // sign-in. Fail the build if the deploy variables mix environments, or (when
+  // DEPLOY_ENV is set) don't match the intended one.
+  const deployProblems = checkFrontendDeployEnv(process.env);
+  if (deployProblems.length) {
+    throw new Error(
+      "Frontend deploy-config guard failed:\n  - " +
+        deployProblems.join("\n  - ") +
+        "\nCheck the Cloudflare Workers Build variables and deploy command " +
+        "(prod: 'npx wrangler deploy'; staging: 'npx wrangler deploy --env staging').",
     );
   }
 }

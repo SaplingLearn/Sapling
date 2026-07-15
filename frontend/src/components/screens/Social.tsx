@@ -3,6 +3,7 @@ import React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Icon } from "../Icon";
+import { FullHeightScreen } from "../FullHeightScreen";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
 import { Toggle } from "@/components/ui";
@@ -495,7 +496,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                     }}
                   >
                     {m.image_url && (
-                      <img src={m.image_url} alt="attachment" style={{ maxWidth: 260, borderRadius: "var(--r-sm)", marginBottom: m.text ? 6 : 0 }} />
+                      <img src={m.image_url} alt="attachment" loading="lazy" style={{ maxWidth: 260, borderRadius: "var(--r-sm)", marginBottom: m.text ? 6 : 0 }} />
                     )}
                     {renderText(m.text)}
                     {m.edited_at && <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 6 }}>(edited)</span>}
@@ -1044,7 +1045,7 @@ export function Social() {
   const members = (overview?.members || []).map(m => ({ user_id: m.user_id, name: m.name }));
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
+    <FullHeightScreen direction="row">
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {tab === "directory" ? <SchoolDirectory /> : active ? (
           <>
@@ -1119,7 +1120,7 @@ export function Social() {
           ))}
         </div>
       </aside>
-    </div>
+    </FullHeightScreen>
   );
 }
 

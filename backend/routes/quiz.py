@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -8,17 +9,20 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
+from agents import ORCHESTRATOR_LIMITS
 from agents.quiz import quiz_agent, Quiz, QuizQuestion
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
+from routes.learn import _get_catalog_chunk
 from services.auth_guard import require_self
 from services.profiles import get_display_name
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
+from services.rag_service import retrieve_chunks, format_rag_context
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
@@ -141,6 +145,54 @@ def _resolve_model_pref(model_pref: str | None):
     return google_model(name)
 
 
+def _resolve_bu_code(course_id: str | None) -> str | None:
+    """Resolve a Sapling course UUID to its BU course_code (course_chunks
+    partition key). None if unresolvable OR if the lookup fails — grounding
+    must never break quiz generation."""
+    if not course_id:
+        return None
+    try:
+        rows = table("courses").select(
+            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+        )
+    except Exception:
+        return None
+    return (rows[0].get("course_code") if rows else None) or None
+
+
+def _course_material_block(course_id: str | None, concept_name: str) -> str:
+    """Best-effort catalog + document-chunk context for a concept.
+
+    Returns "" if nothing is available (no course, no bu_code, no chunks) or
+    if retrieval raises — grounding must never break quiz generation.
+    """
+    bu_code = _resolve_bu_code(course_id)
+    if not bu_code:
+        return ""
+    blocks: list[str] = []
+    try:
+        catalog = _get_catalog_chunk(bu_code)
+    except Exception:
+        catalog = ""
+    if catalog:
+        blocks.append("COURSE CATALOG (official BU course data):\n\n" + catalog)
+    try:
+        chunks = retrieve_chunks(concept_name, course_id=bu_code, k=5)
+    except Exception:
+        chunks = []
+    # Drop any retrieved chunk that merely repeats the catalog block already
+    # injected above — catalog chunks share the course_chunks store and can
+    # rank into the semantic results, which would send the same
+    # course-description text to the model twice (wasted prompt tokens).
+    if catalog:
+        catalog_norm = catalog.strip()
+        chunks = [c for c in chunks if (c.get("chunk_text") or "").strip() != catalog_norm]
+    rag_block = format_rag_context(chunks)
+    if rag_block:
+        blocks.append(rag_block)
+    return "\n\n".join(blocks)
+
+
 async def _quiz_via_agent(
     *,
     user_id: str,
@@ -172,7 +224,7 @@ async def _quiz_via_agent(
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
     # needs and trust the prompt to drive tool calls.
-    user_message = (
+    routing_msg = (
         f"Generate {num_questions} {difficulty} questions for the student. "
         f"The target concept is '{concept_name}' "
         f"(concept_node_id={concept_node_id}). Follow the workflow in your "
@@ -180,13 +232,27 @@ async def _quiz_via_agent(
         f"read_recent_quiz_attempts."
     )
     if use_shared_context:
-        user_message += (
+        routing_msg += (
             " Also call read_misconceptions_for_course and use those misconceptions "
             "as distractors and probes."
         )
 
+    # Course-material grounding does blocking network I/O (a Gemini
+    # embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
+    # worker thread so a slow/stalled retrieval can't freeze this worker's
+    # event loop for every other in-flight request. Matches the
+    # asyncio.to_thread pattern used by the agent read tools.
+    material = await asyncio.to_thread(_course_material_block, course_id, concept_name)
+    if material:
+        user_message = (
+            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material
+            + "\n\n[GENERATE QUIZ]\n" + routing_msg
+        )
+    else:
+        user_message = routing_msg
+
     model_override = _resolve_model_pref(model_pref)
-    run_kwargs: dict = {"deps": deps}
+    run_kwargs: dict = {"deps": deps, "usage_limits": ORCHESTRATOR_LIMITS}
     if model_override is not None:
         run_kwargs["model"] = model_override
     result = await quiz_agent.run(user_message, **run_kwargs)

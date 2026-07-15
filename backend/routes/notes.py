@@ -27,6 +27,7 @@ from services.notes_service import (
     unlink_concept,
     update_note,
 )
+from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
 
 router = APIRouter()
@@ -59,7 +60,17 @@ async def list_user_notes(
     # the (current-term) offering for the requested course before filtering.
     offering_id = resolve_offering(course_id) if course_id else None
     notes = await list_notes(user_id=user_id, offering_id=offering_id)
-    return {"notes": notes}
+    # ETag from each note's (id, updated_at) — any create/edit/delete changes the
+    # set or bumps updated_at. A matching If-None-Match returns 304 and skips
+    # re-serializing the (already-decrypted) note list.
+    etag = make_etag(
+        "notes", user_id, offering_id or "",
+        *sorted(f"{n.get('id')}:{n.get('updated_at')}" for n in notes),
+    )
+    not_modified = conditional(request, etag)
+    if not_modified is not None:
+        return not_modified
+    return cached_json({"notes": notes}, etag)
 
 
 @router.post("")

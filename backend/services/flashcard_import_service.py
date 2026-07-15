@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -20,10 +21,14 @@ from typing import TypedDict
 import httpx
 from bs4 import BeautifulSoup
 from Levenshtein import distance as _levenshtein
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 
 from db.connection import table
-from services.gemini_service import call_gemini
+from agents._run import run_agent_sync
+from agents.flashcard import flashcard_agent
 from services import extraction_service
+
+logger = logging.getLogger(__name__)
 
 
 class Card(TypedDict):
@@ -200,25 +205,6 @@ def scrape_quizlet_url(url: str) -> list[Card]:
     return cards
 
 
-def _parse_card_json(text: str) -> list[Card]:
-    """Best-effort parse a Gemini JSON-array response into Card list."""
-    text = text.strip()
-    fence = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-    if fence:
-        text = fence.group(1)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return []
-    out: list[Card] = []
-    for item in data if isinstance(data, list) else []:
-        front = str(item.get("front") or item.get("term") or "").strip()
-        back = str(item.get("back") or item.get("definition") or "").strip()
-        if front and back:
-            out.append({"front": front, "back": back})
-    return out
-
-
 def _guess_content_type(filename: str) -> str:
     lower = filename.lower()
     if lower.endswith(".png"):
@@ -232,16 +218,67 @@ def _guess_content_type(filename: str) -> str:
     return "image/png"
 
 
+# Transient provider statuses the legacy call_gemini path retried on. 429 =
+# rate limit, 5xx = upstream/transport hiccups.
+_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
+# Mirror the old call_gemini(retries=1): one retry with a ~2s backoff.
+_AGENT_RETRIES = 1
+
+
+def _run_flashcard_agent(prompt: str) -> list[Card]:
+    """Run the flashcard agent on a rendered prompt and return front/back dicts.
+
+    Filters out cards missing either side. Error contract (unified across the
+    generate + import seams):
+
+    * A model whose output can't satisfy the ``Flashcards`` schema is treated as
+      "bad LLM output" and degrades to ``[]`` — logged, never silent. This
+      matches the import seams' long-standing bad-JSON ``[]`` resilience; note
+      it is a deliberate contract change for ``/generate``, whose legacy path
+      *raised* (surfacing a 502) on malformed output.
+    * Transient provider errors (HTTP 429/5xx) are retried once with a ~2s
+      backoff, then re-raised.
+    * Every other failure — transport, missing GEMINI_API_KEY,
+      ``run_agent_sync`` misuse from a running event loop, etc. — propagates so
+      the route surfaces a retryable 502 instead of a misleading 200 with zero
+      cards.
+    """
+    result = None
+    for attempt in range(_AGENT_RETRIES + 1):
+        try:
+            result = run_agent_sync(flashcard_agent.run(prompt))
+            break
+        except UnexpectedModelBehavior:
+            logger.exception("flashcard agent produced unusable output; degrading to []")
+            return []
+        except ModelHTTPError as e:
+            if attempt < _AGENT_RETRIES and e.status_code in _TRANSIENT_STATUSES:
+                time.sleep(2)
+                continue
+            logger.exception("flashcard agent HTTP error (status=%s)", e.status_code)
+            raise
+        except Exception:
+            logger.exception("flashcard agent call failed")
+            raise
+
+    out: list[Card] = []
+    for c in result.output.cards:
+        front = (c.front or "").strip()
+        back = (c.back or "").strip()
+        if front and back:
+            out.append({"front": front, "back": back})
+    return out
+
+
 def extract_cards_from_image(file_bytes: bytes, filename: str = "image.png") -> list[Card]:
-    """OCR the image via the existing extraction pipeline, then ask Gemini
+    """OCR the image via the existing extraction pipeline, then ask the agent
     to split the markdown into Q/A pairs."""
     content_type = _guess_content_type(filename)
     markdown = extraction_service.extract_text_from_file(file_bytes, filename, content_type) or ""
     if not markdown.strip():
         return []
     prompt = _load_prompt("flashcard_ocr_split.txt").replace("{markdown}", markdown)
-    raw = call_gemini(prompt, json_mode=True)
-    return _parse_card_json(raw)
+    return _run_flashcard_agent(prompt)
 
 
 def gemini_generate_cards(source_text: str, count: int, difficulty: str) -> list[Card]:
@@ -251,20 +288,91 @@ def gemini_generate_cards(source_text: str, count: int, difficulty: str) -> list
         .replace("{difficulty}", difficulty)
         .replace("{source}", source_text)
     )
-    raw = call_gemini(prompt, json_mode=True)
-    return _parse_card_json(raw)
+    return _run_flashcard_agent(prompt)
 
 
 def gemini_cleanup_cards(cards: list[Card]) -> list[Card]:
     prompt = _load_prompt("flashcard_cleanup.txt").replace(
         "{cards_json}", json.dumps(cards, ensure_ascii=False)
     )
-    raw = call_gemini(prompt, json_mode=True)
-    out = _parse_card_json(raw)
+    out = _run_flashcard_agent(prompt)
     return out if out else cards
 
 
 def gemini_cloze(paragraph: str) -> list[Card]:
     prompt = _load_prompt("flashcard_cloze.txt").replace("{paragraph}", paragraph)
-    raw = call_gemini(prompt, json_mode=True)
-    return _parse_card_json(raw)
+    return _run_flashcard_agent(prompt)
+
+
+def generate_flashcards(
+    topic: str,
+    count: int = 5,
+    context: str = "",
+    documents: list[dict] | None = None,
+    weak_concepts: list[str] | None = None,
+) -> list[dict]:
+    """Generate flashcards grounded in the student's course material, via the
+    flashcard agent. Moved off gemini_service in #146.
+
+    Args:
+        topic:          The course or concept name.
+        count:          Number of cards to generate.
+        context:        Optional free-text context (e.g. session summary).
+        documents:      Document dicts (file_name, category, summary, concept_notes).
+        weak_concepts:  Concept names the student has low mastery on, weighted higher.
+    """
+    # ── Build document context block ──────────────────────────────────────────
+    doc_blocks = []
+    if documents:
+        for doc in documents:
+            parts = [f"[{doc.get('category', 'document').upper()}] {doc.get('file_name', '')}"]
+            if doc.get("summary"):
+                parts.append(f"Summary: {doc['summary']}")
+            notes = doc.get("concept_notes")
+            if notes and isinstance(notes, list):
+                concept_lines = []
+                for n in notes:
+                    if not isinstance(n, dict):
+                        continue
+                    name = n.get("name")
+                    desc = n.get("description")
+                    if not name:
+                        continue
+                    concept_lines.append(f"- {name}: {desc}" if desc else f"- {name}")
+                if concept_lines:
+                    parts.append("Key concepts:\n" + "\n".join(concept_lines))
+            doc_blocks.append("\n".join(parts))
+
+    doc_context = ""
+    if doc_blocks:
+        doc_context = (
+            "\n\nCOURSE MATERIAL (use this as the primary source for flashcard content):\n"
+            + "\n\n---\n\n".join(doc_blocks)
+        )
+
+    # ── Weak concept focus block ──────────────────────────────────────────────
+    weak_block = ""
+    if weak_concepts:
+        weak_block = (
+            "\n\nThe student has LOW MASTERY on these concepts — prioritize them: "
+            + ", ".join(weak_concepts)
+        )
+
+    # ── Free-text context (e.g. session summary) ──────────────────────────────
+    extra_block = f"\n\nAdditional context:\n{context}" if context else ""
+
+    prompt = f"""You are an expert tutor creating study flashcards for a student.
+
+Course/Topic: "{topic}"{doc_context}{weak_block}{extra_block}
+
+Generate exactly {count} flashcards.
+
+Rules:
+- Base card content on the course material provided above, not generic knowledge.
+- Each card must have a clear FRONT (question or term) and a BACK (answer or definition).
+- Vary difficulty: include recall, conceptual, and application questions.
+- Prioritize concepts the student has low mastery on if listed above.
+- Be specific — avoid vague or trivially obvious cards.
+- Do NOT repeat questions already listed in the existing Q&A pairs above."""
+
+    return _run_flashcard_agent(prompt)

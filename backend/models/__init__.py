@@ -46,7 +46,7 @@ class ActionBody(BaseModel):
 class GenerateQuizBody(BaseModel):
     user_id: str = "user_andres"
     concept_node_id: str
-    num_questions: int = 5
+    num_questions: int = Field(default=5, ge=1, le=10)
     difficulty: str = "medium"
     use_shared_context: bool = True
     # Mirrors the Learn-route fast/smart toggle so quiz generation has

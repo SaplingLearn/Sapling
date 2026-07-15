@@ -22,7 +22,6 @@ const INPUT_STYLE: React.CSSProperties = {
   fontSize: 14,
   color: 'var(--text)',
   fontFamily: 'var(--font-sans)',
-  outline: 'none',
   boxSizing: 'border-box',
   transition: 'border-color var(--dur-fast) var(--ease)',
 };

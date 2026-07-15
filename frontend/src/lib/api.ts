@@ -74,6 +74,12 @@ export const updateCourseColor = (userId: string, courseId: string, color: strin
     { method: 'PATCH', body: JSON.stringify({ color }) }
   );
 
+export const describeConcept = (userId: string, concept: string, courseLabel?: string) =>
+  fetchJSON<{ description: string }>(
+    `/api/graph/${userId}/concept-description`,
+    { method: 'POST', body: JSON.stringify({ concept, course_label: courseLabel ?? null }) }
+  );
+
 export const deleteGraphNode = (userId: string, nodeId: string) =>
   fetchJSON<{ deleted: boolean }>(
     `/api/graph/${userId}/nodes/${encodeURIComponent(nodeId)}`,

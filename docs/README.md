@@ -8,6 +8,9 @@
   Always include a "What I'd try next" section.
 - `architecture.md` — Short, current overview of the system. Updated when
   it gets wrong, not on a schedule.
+- `security/` — Security hardening and remediation plans (RLS lockdown,
+  storage hardening, realtime JWT bridge).
+- `staging/` — Staging environment setup notes.
 
 If you are Claude Code, run `/sync-context` to load the most recent
 decisions before working.
