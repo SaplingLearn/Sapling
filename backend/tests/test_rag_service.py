@@ -11,10 +11,10 @@ def test_client_is_constructed_with_bounded_http_timeout():
     """retrieve_chunks() runs inline on the quiz/tutor request path, so the
     embedding client must carry an explicit HTTP timeout — otherwise a stalled
     Gemini call hangs the request indefinitely."""
-    import services.rag_service as rag
+    from services.rag_service import _HTTP_TIMEOUT_MS
 
-    assert isinstance(rag._HTTP_TIMEOUT_MS, int)
-    assert 0 < rag._HTTP_TIMEOUT_MS <= 180_000
+    assert isinstance(_HTTP_TIMEOUT_MS, int)
+    assert 0 < _HTTP_TIMEOUT_MS <= 180_000
 
 
 @patch("services.rag_service._client")
