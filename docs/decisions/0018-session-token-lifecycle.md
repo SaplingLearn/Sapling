@@ -79,12 +79,15 @@ reaches the backend, and the contract would hold without it.
 > makes the request cross-origin, and the browser will not attach
 > `sapling_session` unless the call also sets `credentials: 'include'` *and* the
 > backend runs the matching CORS + cookie-domain setup. This is exactly the
-> 2026-06-30 onboarding-loop bug. It is **live right now** at
-> `frontend/src/app/page.tsx:619`, which posts to
+> 2026-06-30 onboarding-loop bug: onboarding POSTed to
 > `${NEXT_PUBLIC_API_URL}/api/onboarding/profile` cross-origin with no
-> `credentials` at all (tracked in #339). Authed calls go through `lib/api.ts`
-> `fetchJSON`; see `frontend/.env.example`, which documents leaving
-> `NEXT_PUBLIC_API_URL` empty in production.
+> `credentials`, so the cookie was dropped, `require_self` 401'd, and
+> `onboarding_completed` never flipped — trapping the user in "Get Started" on
+> every sign-in. It was fixed by routing through `submitOnboardingProfile()` →
+> `fetchJSON`; `frontend/src/app/(public)/page.tsx` still carries a comment
+> recording it. Authed calls go through `lib/api.ts` `fetchJSON`; see
+> `frontend/.env.example`, which documents leaving `NEXT_PUBLIC_API_URL` empty in
+> production.
 
 ## Decision
 
