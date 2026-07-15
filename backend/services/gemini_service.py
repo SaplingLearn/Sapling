@@ -32,7 +32,9 @@ def _thinking_budget_for(model: str) -> int:
     snappy without losing multi-step reasoning. Centralizing the decision
     stops call_gemini and call_gemini_multiturn from drifting apart.
     """
-    return 2048 if "pro" in model else 0
+    # `model and ...` guards against a None/empty model: `"pro" in None`
+    # raises TypeError, and an empty string is not a Pro model anyway.
+    return 2048 if model and "pro" in model else 0
 
 
 def _strip_backtick_fencing(text: str) -> str:
