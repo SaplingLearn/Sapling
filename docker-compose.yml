@@ -13,14 +13,24 @@ services:
     build:
       context: ./frontend
       args:
+        # Server-side origin: baked into next.config.ts's /api/* rewrite
+        # destination at BUILD time, and read by middleware.ts. Must resolve on
+        # the compose network, hence the service name.
         BACKEND_URL: http://backend:5000
+        # Browser-facing origin: inlined into the client bundle at BUILD time.
+        # The browser runs on the host, where the backend is the published
+        # 5000:5000 port — NOT the compose-internal "backend" hostname, which
+        # the host cannot resolve.
+        NEXT_PUBLIC_API_URL: http://localhost:5000
     env_file:
       - path: ./frontend/.env
         required: false
     environment:
-      # next.config.ts rewrites() proxies /api/* to BACKEND_URL at server
-      # runtime; supply it here so the rewrite path resolves to the backend
-      # service instead of the localhost:5000 config default.
+      # Runtime copy of the server-side origin. With output: "standalone" the
+      # next.config.ts rewrites() destination is evaluated at BUILD time and
+      # serialized into routes-manifest.json — the build arg above is what makes
+      # the /api/* proxy work. This runtime value is still read by middleware.ts
+      # (it runs per-request) and keeps the two in sync.
       BACKEND_URL: http://backend:5000
     ports:
       - "3000:3000"
