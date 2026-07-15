@@ -12,9 +12,13 @@ from typing import Optional
 
 from db.connection import table
 from services.encryption import decrypt_if_present
+from services.profiles import get_display_names
 
 _DEFAULT_PAGE_SIZE = 50
 _MAX_PAGE_SIZE = 200
+
+# After migration 0024 the display `name` lives on user_profiles, not users.
+_USERS_COLS = "id,email,is_approved,created_at,last_sign_in_at"
 
 
 def _attach_roles(users: list[dict]) -> None:
@@ -26,10 +30,11 @@ def _attach_roles(users: list[dict]) -> None:
         user["roles"] = [r["roles"] for r in (rows or []) if r.get("roles")]
 
 
-def _decrypt(user: dict) -> dict:
-    user["name"] = decrypt_if_present(user.get("name"))
-    user["email"] = decrypt_if_present(user.get("email"))
-    return user
+def _attach_names(users: list[dict]) -> None:
+    """Resolve each user's display name off user_profiles (🔒, decrypted)."""
+    names = get_display_names([u["id"] for u in users if u.get("id")])
+    for user in users:
+        user["name"] = names.get(user["id"], "")
 
 
 def paginate_users(
@@ -40,24 +45,27 @@ def paginate_users(
     page = max(1, int(page))
     page_size = max(1, min(_MAX_PAGE_SIZE, int(page_size)))
     offset = (page - 1) * page_size
-    columns = "id,name,email,is_approved,created_at,last_sign_in_at"
 
     if not q:
         rows, total = table("users").select_with_count(
-            columns=columns,
+            columns=_USERS_COLS,
             order="created_at.desc",
             limit=page_size,
             offset=offset,
         )
         for u in rows:
-            _decrypt(u)
+            u["email"] = decrypt_if_present(u.get("email"))
+        _attach_names(rows)
         _attach_roles(rows)
         return {"users": rows, "total": total, "page": page, "page_size": page_size}
 
-    # Search path: decrypt everything, then filter and paginate in Python.
-    all_rows = table("users").select(columns=columns, order="created_at.desc")
+    # Search path: name moved to user_profiles, so PostgREST can't filter it
+    # (AEAD nonces aren't searchable anyway). Decrypt emails + resolve every
+    # name, then filter and paginate in Python. Admin-scale, behind require_admin.
+    all_rows = table("users").select(columns=_USERS_COLS, order="created_at.desc")
     for u in all_rows:
-        _decrypt(u)
+        u["email"] = decrypt_if_present(u.get("email"))
+    _attach_names(all_rows)
     needle = q.lower()
     filtered = [
         u for u in all_rows

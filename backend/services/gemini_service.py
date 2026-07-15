@@ -23,6 +23,20 @@ MODEL_LITE = "gemini-2.5-flash-lite"
 MODEL_SMART = "gemini-2.5-pro"
 
 
+def _thinking_budget_for(model: str) -> int:
+    """Thinking-token budget for a model, shared by every call path here.
+
+    gemini-2.5-pro rejects thinking_budget=0 (400 INVALID_ARGUMENT — "This
+    model only works in thinking mode"); Flash/Flash-Lite are fine with it
+    disabled for latency. Cap Pro at 2048 (not -1/dynamic) to keep replies
+    snappy without losing multi-step reasoning. Centralizing the decision
+    stops call_gemini and call_gemini_multiturn from drifting apart.
+    """
+    # `model and ...` guards against a None/empty model: `"pro" in None`
+    # raises TypeError, and an empty string is not a Pro model anyway.
+    return 2048 if model and "pro" in model else 0
+
+
 def _strip_backtick_fencing(text: str) -> str:
     """Extract JSON content, handling backtick fences anywhere in the text."""
     text = text.strip()
@@ -62,13 +76,20 @@ def _extract_json(text: str) -> str:
 
 
 def call_gemini(prompt: str, retries: int = 1, json_mode: bool = False, model: str = MODEL_DEFAULT) -> str:
-    """Single-turn call to Gemini with a plain string prompt."""
+    """Single-turn call to Gemini with a plain string prompt.
+
+    Pro's thinking cap (`_thinking_budget_for`) also applies here — that
+    fix originally lived only in call_gemini_multiturn (PR #74), so any
+    caller passing model="gemini-2.5-pro" here (e.g. an LLM-judge model
+    override) used to 400 on thinking_budget=0.
+    """
+    thinking_budget = _thinking_budget_for(model)
     for attempt in range(retries + 1):
         try:
             config = types.GenerateContentConfig(
                 temperature=0.7,
                 max_output_tokens=8192,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
                 **({"response_mime_type": "application/json"} if json_mode else {}),
             )
             response = _client.models.generate_content(
@@ -107,10 +128,9 @@ def call_gemini_multiturn(system_prompt: str, history: list[dict], user_message:
         for msg in history
     ]
 
-    # gemini-2.5-pro requires thinking (budget=0 is rejected); flash allows
-    # disabling it for latency. Cap pro at 2048 instead of -1 (dynamic) to keep
-    # tutor replies snappy without losing multi-step reasoning quality.
-    thinking_budget = 2048 if "pro" in model else 0
+    # Pro requires thinking (budget=0 is rejected); Flash allows disabling it
+    # for latency. Shared with the single-turn path via _thinking_budget_for.
+    thinking_budget = _thinking_budget_for(model)
     for attempt in range(retries + 1):
         try:
             config = types.GenerateContentConfig(
@@ -170,91 +190,3 @@ def extract_graph_update(response_text: str) -> tuple:
         conversational = response_text
 
     return conversational.strip(), graph_update
-
-
-def generate_flashcards(
-    topic: str,
-    count: int = 5,
-    context: str = "",
-    documents: list[dict] | None = None,
-    weak_concepts: list[str] | None = None,
-) -> list[dict]:
-    """
-    Ask Gemini to generate flashcards grounded in the student's actual course material.
-
-    Args:
-        topic:          The course or concept name.
-        count:          Number of cards to generate.
-        context:        Optional free-text context (e.g. session summary).
-        documents:      List of document dicts from the DB, each with keys:
-                        file_name, category, summary, concept_notes.
-        weak_concepts:  List of concept names the student has low mastery on,
-                        so Gemini can weight those more heavily.
-    """
-    # ── Build document context block ──────────────────────────────────────────
-    doc_blocks = []
-    if documents:
-        for doc in documents:
-            parts = [f"[{doc.get('category', 'document').upper()}] {doc.get('file_name', '')}"]
-            if doc.get("summary"):
-                parts.append(f"Summary: {doc['summary']}")
-            notes = doc.get("concept_notes")
-            if notes and isinstance(notes, list):
-                concept_lines = []
-                for n in notes:
-                    if not isinstance(n, dict):
-                        continue
-                    name = n.get("name")
-                    desc = n.get("description")
-                    if not name:
-                        continue
-                    concept_lines.append(f"- {name}: {desc}" if desc else f"- {name}")
-                if concept_lines:
-                    parts.append("Key concepts:\n" + "\n".join(concept_lines))
-            doc_blocks.append("\n".join(parts))
-
-    doc_context = ""
-    if doc_blocks:
-        doc_context = (
-            "\n\nCOURSE MATERIAL (use this as the primary source for flashcard content):\n"
-            + "\n\n---\n\n".join(doc_blocks)
-        )
-
-    # ── Weak concept focus block ──────────────────────────────────────────────
-    weak_block = ""
-    if weak_concepts:
-        weak_block = (
-            f"\n\nThe student has LOW MASTERY on these concepts — prioritize them: "
-            + ", ".join(weak_concepts)
-        )
-
-    # ── Free-text context (e.g. session summary) ──────────────────────────────
-    extra_block = f"\n\nAdditional context:\n{context}" if context else ""
-
-    prompt = f"""You are an expert tutor creating study flashcards for a student.
-
-Course/Topic: "{topic}"{doc_context}{weak_block}{extra_block}
-
-Generate exactly {count} flashcards.
-
-Rules:
-- Base card content on the course material provided above, not generic knowledge.
-- Each card must have a clear FRONT (question or term) and a BACK (answer or definition).
-- Vary difficulty: include recall, conceptual, and application questions.
-- Prioritize concepts the student has low mastery on if listed above.
-- Be specific — avoid vague or trivially obvious cards.
-- Do NOT repeat questions already listed in the existing Q&A pairs above.
-
-Respond ONLY with a valid JSON array, no markdown fences, no extra text:
-[{{"front": "...", "back": "..."}}, ...]"""
-
-    raw = call_gemini(prompt, json_mode=True)
-    try:
-        cards = json.loads(raw)
-    except json.JSONDecodeError:
-        cleaned = _extract_json(raw)
-        cards = json.loads(cleaned)
-
-    if not isinstance(cards, list):
-        raise ValueError("Gemini did not return a JSON array for flashcards")
-    return [{"front": str(c.get("front", "")), "back": str(c.get("back", ""))} for c in cards]

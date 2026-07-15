@@ -100,33 +100,30 @@ class Misconception(BaseModel):
 
 
 async def read_misconceptions_for_course(
-    course_id: str | None,
+    offering_id: str | None,
 ) -> list[Misconception]:
-    """Return aggregated misconception strings for a course. Anonymized
-    (sourced from class-wide patterns, not from any single student).
-    Returns [] when course_id is None or the underlying table is empty.
+    """Return aggregated misconception strings for an offering (a class in a
+    term). Anonymized (sourced from class-wide patterns, not any single student).
+    Returns [] when offering_id is None or the underlying table is empty.
 
-    Source: `course_concept_stats` rows for the course. Each row
+    Source: `offering_concept_stats` rows for the offering. Each row
     represents one concept and carries a `common_misconceptions` array
     (populated by the hash-gated aggregation in
     `services/course_context_service.py`). We flatten each array entry
     into its own Misconception, tagging `related_concept` with the
     concept name so the agent can route distractors per-concept.
 
-    The spec referenced a hypothetical `misconceptions` table — that
-    table does not exist in this schema. `course_concept_stats` is the
-    real source of class-wide misconception strings, so we read that.
     The tool contract (returning Misconception[]) is unchanged.
     """
-    if not course_id:
+    if not offering_id:
         return []
 
     def _fetch() -> list[dict[str, Any]]:
         try:
             return (
-                table("course_concept_stats").select(
+                table("offering_concept_stats").select(
                     "concept_name,common_misconceptions",
-                    filters={"course_id": f"eq.{course_id}"},
+                    filters={"offering_id": f"eq.{offering_id}"},
                     order="updated_at.desc",
                     limit=20,
                 )
@@ -134,8 +131,8 @@ async def read_misconceptions_for_course(
             )
         except Exception:
             logger.exception(
-                "read_misconceptions_for_course failed for course=%s",
-                course_id,
+                "read_misconceptions_for_course failed for offering=%s",
+                offering_id,
             )
             return []
 

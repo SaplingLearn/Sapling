@@ -142,6 +142,6 @@ class TestReadMisconceptionsForCourse:
         assert result[1].related_concept == "pointers"
         assert result[2].related_concept == "recursion"
 
-        t.assert_called_with("course_concept_stats")
+        t.assert_called_with("offering_concept_stats")
         select_kwargs = t.return_value.select.call_args
         assert "course_cs101" in str(select_kwargs)

@@ -30,6 +30,7 @@ from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from db.connection import table
+from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
@@ -48,6 +49,8 @@ from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
 from agents.tools.graph import apply_concepts_to_graph
+from agents._run import run_agent_sync
+from agents.concept_scan import concept_scan_agent
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +154,116 @@ def _extend_course_concepts(
     if not isinstance(raw, dict):
         return []
     return _coerce_str_list(raw.get("concepts"))
+
+
+def _scan_user_message(
+    *,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_concept_notes: list[dict] | None = None,
+) -> str:
+    """Build the concept_scan agent's user message: course label + existing
+    concepts + (optional) document context. Mirrors the legacy prompt's data
+    section so agent and legacy paths see the same signal."""
+    existing_block = (
+        "\n".join(f"- {c}" for c in existing_concepts) if existing_concepts else "(none yet)"
+    )
+    lines = [
+        f'Course: "{course_label}"',
+        "Concepts already in the graph:",
+        existing_block,
+    ]
+    if doc_filename or doc_summary or doc_concept_notes:
+        notes_block = (
+            "\n".join(
+                f"  - {n.get('name', '?')}: {n.get('description', '')[:200]}"
+                for n in (doc_concept_notes or [])
+            )
+            or "  (none)"
+        )
+        lines += [
+            "",
+            "New document being scanned:",
+            f"  Title: {doc_filename or '(untitled)'}",
+            f"  Summary: {doc_summary or '(none)'}",
+            "  Concepts already extracted from this document:",
+            notes_block,
+        ]
+    return "\n".join(lines)
+
+
+async def _extend_via_agent(
+    *,
+    user_id: str,
+    course_id: str,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_concept_notes: list[dict] | None = None,
+) -> list[str]:
+    """Run concept_scan_agent and return new concept names. Raises on agent
+    failure so the sync dispatcher can fall back to legacy."""
+    deps = SaplingDeps(
+        user_id=user_id,
+        course_id=course_id,
+        supabase=None,
+        request_id=current_request_id() or str(uuid.uuid4()),
+    )
+    message = _scan_user_message(
+        course_label=course_label,
+        existing_concepts=existing_concepts,
+        doc_filename=doc_filename,
+        doc_summary=doc_summary,
+        doc_concept_notes=doc_concept_notes,
+    )
+    result = await concept_scan_agent.run(
+        message, deps=deps, usage_limits=WORKER_LIMITS,
+    )
+    return list(result.output.concepts)
+
+
+def _extend_concepts(
+    user_id: str,
+    course_id: str,
+    *,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_concept_notes: list[dict] | None = None,
+) -> list[str]:
+    """Agent-first concept extension with legacy fallback (ADR 0001).
+
+    Sync entry point for the sync /scan-concepts handlers: drives the async
+    agent via run_agent_sync, falling back to the legacy call_gemini_json
+    path on any agent failure.
+    """
+    try:
+        return run_agent_sync(
+            _extend_via_agent(
+                user_id=user_id,
+                course_id=course_id,
+                course_label=course_label,
+                existing_concepts=existing_concepts,
+                doc_filename=doc_filename,
+                doc_summary=doc_summary,
+                doc_concept_notes=doc_concept_notes,
+            )
+        )
+    except (UsageLimitExceeded, UnexpectedModelBehavior):
+        logger.warning("concept_scan agent guardrails tripped; using legacy")
+    except Exception:
+        logger.exception("concept_scan agent failed; using legacy")
+    return _extend_course_concepts(
+        course_label=course_label,
+        existing_concepts=existing_concepts,
+        doc_filename=doc_filename,
+        doc_summary=doc_summary,
+        doc_concept_notes=doc_concept_notes,
+    )
 
 
 def _coerce_concept_notes(value) -> list[dict]:
@@ -259,8 +372,8 @@ def list_documents(user_id: str, request: Request):
     require_self(user_id, request)
     _validate_user(user_id)
     docs = table("documents").select(
-        "id,user_id,course_id,file_name,category,summary,concept_notes,created_at,processed_at",
-        filters={"user_id": f"eq.{user_id}"},
+        "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
+        filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         order="created_at.desc",
     ) or []
     for d in docs:
@@ -278,11 +391,21 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
         _validate_user(user_id)
     else:
         user_id = get_session_user_id(request)
-    # Ensure the document belongs to the requesting user
-    docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
+    # Ensure the document belongs to the requesting user (and isn't already
+    # soft-deleted)
+    docs = table("documents").select(
+        "id",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
+        limit=1,
+    )
     if not docs:
         raise HTTPException(status_code=404, detail="Document not found.")
-    table("documents").delete(filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"})
+    # Soft delete (0025): stamp deleted_at; reads filter it out. The
+    # enrollments.syllabus_doc_id FK (ON DELETE SET NULL) stays intact.
+    table("documents").update(
+        {"deleted_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
+    )
     return {"deleted": True}
 
 
@@ -303,7 +426,11 @@ def update_document(document_id: str, request: Request, body: dict = Body(...)):
         _validate_user(user_id)
     else:
         user_id = get_session_user_id(request)
-    docs = table("documents").select("id", filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"}, limit=1)
+    docs = table("documents").select(
+        "id",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
+        limit=1,
+    )
     if not docs:
         raise HTTPException(status_code=404, detail="Document not found.")
     updated = table("documents").update(updates, filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"})
@@ -338,8 +465,12 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     """
     try:
         rows = table("documents").select(
-            "id,user_id,course_id,file_name,category,summary,concept_notes,created_at,processed_at",
-            filters={"user_id": f"eq.{user_id}", "request_id": f"eq.{request_id}"},
+            "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
+            filters={
+                "user_id": f"eq.{user_id}",
+                "request_id": f"eq.{request_id}",
+                "deleted_at": "is.null",
+            },
             limit=1,
         )
     except Exception:
@@ -363,7 +494,7 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
 def _persist_document(
     *,
     user_id: str,
-    course_id: str,
+    offering_id: str,
     filename: str,
     result: DocumentProcessingResult,
     request_id: str | None = None,
@@ -371,6 +502,7 @@ def _persist_document(
     """Insert a documents row from an orchestrator result.
 
     Shared by both upload_document_sync and the streaming upload_document.
+    The document keys on the OFFERING (0025), not the abstract course.
     summary + concept_notes are encrypted at the insert boundary; the
     returned row carries the plaintext shape so callers can pass it
     straight back to the client without an extra decrypt step.
@@ -386,7 +518,7 @@ def _persist_document(
     row = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
-        "course_id": course_id,
+        "offering_id": offering_id,
         "file_name": filename,
         "category": result.classification.category,
         "summary": encrypt_if_present(summary),
@@ -452,7 +584,7 @@ def _save_orchestrator_syllabus(*, user_id: str, course_id: str, filename: str,
         })
     if legacy:
         try:
-            save_assignments_to_db(user_id, legacy)
+            save_assignments_to_db(user_id, legacy, source="syllabus")
         except Exception:
             logger.exception("Assignment save failed for '%s' (best-effort)", filename)
 
@@ -507,6 +639,12 @@ async def upload_document_sync(
 
     extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
 
+    # The upload form sends the ABSTRACT course id; documents key on the
+    # OFFERING. Resolve to the current-term offering once (create=True so a
+    # fresh upload lands in the real semester). The abstract course_id stays
+    # the key for the graph + course-context + calendar side effects below.
+    offering_id = resolve_offering(course_id, create=True)
+
     # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
     # Unify with the middleware-stamped request ID so agent traces and
     # client-facing error payloads share the same correlation key.
@@ -540,7 +678,7 @@ async def upload_document_sync(
         )
         return await _legacy_upload_pipeline(
             filename=filename, extracted_text=extracted_text,
-            course_id=course_id, user_id=user_id,
+            course_id=course_id, offering_id=offering_id, user_id=user_id,
             background_tasks=background_tasks,
             request_id=request_id,
         )
@@ -551,7 +689,7 @@ async def upload_document_sync(
         )
         return await _legacy_upload_pipeline(
             filename=filename, extracted_text=extracted_text,
-            course_id=course_id, user_id=user_id,
+            course_id=course_id, offering_id=offering_id, user_id=user_id,
             background_tasks=background_tasks,
             request_id=request_id,
         )
@@ -560,11 +698,11 @@ async def upload_document_sync(
                                 filename=filename, result=result)
     _graph_backstop(user_id=user_id, course_id=course_id,
                     filename=filename, result=result)
-    _, full_row = _persist_document(user_id=user_id, course_id=course_id,
+    _, full_row = _persist_document(user_id=user_id, offering_id=offering_id,
                                     filename=filename, result=result,
                                     request_id=request_id)
 
-    background_tasks.add_task(_invalidate_study_guide_cache, user_id, course_id)
+    background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
     background_tasks.add_task(update_course_context, course_id)
     background_tasks.add_task(_check_upload_achievements, user_id)
 
@@ -613,6 +751,9 @@ async def upload_document(
         or current_request_id()
         or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
     )
+    # Documents key on the offering (0025); the graph + course-context key on
+    # the abstract course id (kept in SaplingDeps for the agent's graph tools).
+    offering_id = resolve_offering(course_id, create=True)
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id,
@@ -773,7 +914,7 @@ async def upload_document(
                                         filename=filename, result=final_output)
             _graph_backstop(user_id=user_id, course_id=course_id,
                             filename=filename, result=final_output)
-            doc_id, _ = _persist_document(user_id=user_id, course_id=course_id,
+            doc_id, _ = _persist_document(user_id=user_id, offering_id=offering_id,
                                           filename=filename, result=final_output,
                                           request_id=request_id)
 
@@ -782,9 +923,10 @@ async def upload_document(
             # but attaches a done-callback so exceptions land in the log
             # instead of disappearing.
             _spawn_post_roll(
-                ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, course_id),
+                ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 ("update_course_context", update_course_context, course_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
+                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
             )
 
             yield sapling_event_to_sse(SaplingEvent(
@@ -804,7 +946,7 @@ async def upload_document(
             ))
             async for sse_event in _stream_legacy_fallback(
                 filename=filename, extracted_text=extracted_text,
-                course_id=course_id, user_id=user_id,
+                course_id=course_id, offering_id=offering_id, user_id=user_id,
                 request_id=request_id,
             ):
                 yield sse_event
@@ -817,7 +959,7 @@ async def upload_document(
             ))
             async for sse_event in _stream_legacy_fallback(
                 filename=filename, extracted_text=extracted_text,
-                course_id=course_id, user_id=user_id,
+                course_id=course_id, offering_id=offering_id, user_id=user_id,
                 request_id=request_id,
             ):
                 yield sse_event
@@ -826,8 +968,8 @@ async def upload_document(
 
 
 async def _stream_legacy_fallback(
-    *, filename: str, extracted_text: str, course_id: str, user_id: str,
-    request_id: str | None = None,
+    *, filename: str, extracted_text: str, course_id: str, offering_id: str,
+    user_id: str, request_id: str | None = None,
 ):
     """Run _legacy_upload_pipeline and yield SSE progress/result/done events.
 
@@ -850,7 +992,7 @@ async def _stream_legacy_fallback(
     try:
         legacy_response = await _legacy_upload_pipeline(
             filename=filename, extracted_text=extracted_text,
-            course_id=course_id, user_id=user_id,
+            course_id=course_id, offering_id=offering_id, user_id=user_id,
             request_id=request_id,
         )
     except Exception:
@@ -877,16 +1019,20 @@ async def _stream_legacy_fallback(
     ))
 
 
-def _invalidate_study_guide_cache(user_id: str, course_id: str) -> None:
-    """Background task: delete cached study guides so they regenerate fresh."""
+def _invalidate_study_guide_cache(user_id: str, offering_id: str) -> None:
+    """Background task: delete cached study guides so they regenerate fresh.
+
+    Study guides key on the offering (0025), matching the documents that
+    feed them.
+    """
     try:
         table("study_guides").delete(
-            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
+            filters={"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"}
         )
     except Exception:
         logger.exception(
-            "Failed to invalidate study guides cache for user=%s course=%s",
-            user_id, course_id,
+            "Failed to invalidate study guides cache for user=%s offering=%s",
+            user_id, offering_id,
         )
 
 
@@ -896,6 +1042,90 @@ def _check_upload_achievements(user_id: str) -> None:
         check_achievements(user_id, "documents_uploaded", {})
     except Exception:
         pass
+
+
+def _index_document_chunks(
+    doc_id: str,
+    course_id: str,      # Sapling UUID — resolved to BU code internally
+    user_id: str,
+    extracted_text: str,
+    category: str,
+    doc_summary: str = "",
+) -> None:
+    """Chunk, embed, and upsert a document into course_chunks.
+
+    Runs in a background thread via _spawn_post_roll after the document
+    is persisted, so it never blocks the SSE stream.
+    """
+    import time
+    from services.chunker import chunk_document
+    from services.rag_service import index_document_chunks
+    from services.encryption import encrypt_if_present
+
+    MIN_COURSE_RELEVANCE = 0.35
+
+    try:
+        # Resolve BU course code from Sapling UUID
+        rows = table("courses").select(
+            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+        )
+        bu_course_id = (rows[0].get("course_code") or course_id) if rows else course_id
+
+        chunks = chunk_document(extracted_text)
+        if not chunks:
+            return
+
+        # Store raw extracted text on the document row (best-effort)
+        try:
+            table("documents").update(
+                {"extracted_text": encrypt_if_present(extracted_text)},
+                filters={"id": f"eq.{doc_id}"},
+            )
+        except Exception:
+            logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
+
+        # Relevance gate: skip docs that are off-topic for the course
+        from google import genai as _genai
+        from google.genai import types as genai_types
+        import os
+        _gclient = _genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+
+        catalog_rows = table("course_chunks").select(
+            "embedding",
+            filters={"course_id": f"eq.{bu_course_id}", "category": "eq.catalog"},
+            limit=1,
+        )
+        if catalog_rows and catalog_rows[0].get("embedding"):
+            catalog_vec = catalog_rows[0]["embedding"]
+            sample_text = doc_summary or chunks[0]
+            resp = _gclient.models.embed_content(
+                model="gemini-embedding-001",
+                contents=[sample_text],
+                config=genai_types.EmbedContentConfig(
+                    output_dimensionality=768,
+                    task_type="RETRIEVAL_DOCUMENT",
+                ),
+            )
+            doc_sample_vec = list(resp.embeddings[0].values)
+            time.sleep(1.5)
+            dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
+            if dot < MIN_COURSE_RELEVANCE:
+                logger.warning(
+                    "[RAG] doc %s skipped — relevance to %s is %.3f (< %.2f)",
+                    doc_id, bu_course_id, dot, MIN_COURSE_RELEVANCE,
+                )
+                return
+
+        count = index_document_chunks(
+            course_code=bu_course_id,
+            doc_id=doc_id,
+            uploader_id=user_id,
+            chunks=chunks,
+        )
+        logger.info("[RAG] indexed %d chunks for doc %s", count, doc_id)
+
+    except Exception:
+        logger.exception("[RAG] _index_document_chunks failed for doc %s", doc_id)
 
 
 def _spawn_post_roll(*tasks: tuple) -> None:
@@ -922,6 +1152,7 @@ async def _legacy_upload_pipeline(
     filename: str,
     extracted_text: str,
     course_id: str,
+    offering_id: str,
     user_id: str,
     background_tasks: BackgroundTasks | None = None,
     request_id: str | None = None,
@@ -931,6 +1162,10 @@ async def _legacy_upload_pipeline(
     Verbatim copy of the previous upload_document body from text-extraction
     onward. File validation already happened in the caller, so this function
     starts at the AI processing step.
+
+    The documents row keys on ``offering_id`` (0025); the graph,
+    assignment-calendar, and course-context side effects key on the abstract
+    ``course_id``.
 
     background_tasks is optional: in streaming-fallback contexts there is
     no FastAPI BackgroundTasks to attach to (the response IS the stream),
@@ -947,7 +1182,7 @@ async def _legacy_upload_pipeline(
         try:
             for a in ai["assignments"]:
                 a["course_id"] = course_id
-            save_assignments_to_db(user_id, ai["assignments"])
+            save_assignments_to_db(user_id, ai["assignments"], source="syllabus")
         except Exception:
             logger.exception("Assignment save failed for '%s' (best-effort)", filename)
 
@@ -966,7 +1201,7 @@ async def _legacy_upload_pipeline(
     row = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
-        "course_id": course_id,
+        "offering_id": offering_id,
         "file_name": filename,
         "category": ai["category"],
         "summary": encrypt_if_present(ai["summary"] or None),
@@ -988,12 +1223,12 @@ async def _legacy_upload_pipeline(
             raise
 
     if background_tasks is not None:
-        background_tasks.add_task(_invalidate_study_guide_cache, user_id, course_id)
+        background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
         background_tasks.add_task(update_course_context, course_id)
         background_tasks.add_task(_check_upload_achievements, user_id)
     else:
         _spawn_post_roll(
-            ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, course_id),
+            ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
             ("update_course_context", update_course_context, course_id),
             ("check_upload_achievements", _check_upload_achievements, user_id),
         )
@@ -1037,7 +1272,9 @@ def _scan_concepts_for_course(
     ) or []
     existing_concepts = [r["concept_name"] for r in existing_rows if r.get("concept_name")]
 
-    concepts = _extend_course_concepts(
+    concepts = _extend_concepts(
+        user_id,
+        course_id,
         course_label=_course_label(course_id),
         existing_concepts=existing_concepts,
         doc_filename=doc_filename,
@@ -1076,14 +1313,16 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     _validate_user(user_id)
 
     rows = table("documents").select(
-        "id,user_id,course_id,file_name,summary,concept_notes",
-        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
+        "id,user_id,offering_id,file_name,summary,concept_notes",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         limit=1,
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Document not found.")
     doc = rows[0]
-    course_id = doc.get("course_id")
+    # The document keys on the offering; the concept graph keys on the
+    # abstract course. Resolve offering → abstract course before scanning.
+    course_id = offering_course_id(doc.get("offering_id"))
     if not course_id:
         raise HTTPException(status_code=400, detail="Document is not associated with a course.")
 

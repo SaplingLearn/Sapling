@@ -1,8 +1,8 @@
 """
 Unit tests for the shared course context system.
 
-Tests: course_context_service, graph_service (apply_graph_update side-effects),
-       learn.py (build_system_prompt), quiz.py (generate_quiz prompt augmentation).
+Tests: course_context_service (incl. course_summary agent), graph_service
+       (apply_graph_update side-effects), learn.py (build_system_prompt).
 
 Run from backend/:
     python -m pytest tests/test_shared_course_context.py -v
@@ -11,7 +11,8 @@ import sys
 import os
 import json
 import unittest
-from unittest.mock import patch, MagicMock, call
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -48,8 +49,7 @@ class TestGetCourseContext(unittest.TestCase):
     @patch("services.course_context_service.table")
     def test_returns_context_json_when_found(self, mock_table):
         summary_row = {
-            "course_id": "CS101",
-            "semester": "Spring 2026",
+            "offering_id": "off-1",
             "student_count": 5,
             "avg_class_mastery": 0.6,
             "top_struggling_concepts": ["Pointers"],
@@ -58,9 +58,8 @@ class TestGetCourseContext(unittest.TestCase):
             "updated_at": "2026-04-01T00:00:00+00:00",
         }
         stat_row = {
-            "course_id": "CS101",
+            "offering_id": "off-1",
             "concept_name": "Pointers",
-            "semester": "Spring 2026",
             "avg_mastery_score": 0.2,
             "pct_struggling": 0.6,
             "pct_mastered": 0.1,
@@ -71,9 +70,9 @@ class TestGetCourseContext(unittest.TestCase):
 
         def _tbl(name):
             m = MagicMock()
-            if name == "course_summary":
+            if name == "offering_summary":
                 m.select.return_value = [summary_row]
-            elif name == "course_concept_stats":
+            elif name == "offering_concept_stats":
                 m.select.return_value = [stat_row]
             else:
                 m.select.return_value = []
@@ -81,10 +80,10 @@ class TestGetCourseContext(unittest.TestCase):
         mock_table.side_effect = _tbl
 
         from services.course_context_service import get_course_context
-        result = get_course_context("CS101")
+        result = get_course_context("off-1")
         self.assertIn("course_summary", result)
         self.assertIn("concept_stats", result)
-        self.assertEqual(result["course_summary"]["course_id"], "CS101")
+        self.assertEqual(result["course_summary"]["offering_id"], "off-1")
         self.assertEqual(result["concept_stats"][0]["concept_name"], "Pointers")
 
     @patch("services.course_context_service.table")
@@ -126,11 +125,14 @@ class TestUpdateCourseContext(unittest.TestCase):
         # upsert should never be called when there are no nodes
         mock_table.return_value.upsert.assert_not_called()
 
+    @patch("services.academics.table")
     @patch("services.course_context_service.table")
-    def test_aggregates_mastery_and_upserts(self, mock_table):
-        # Two students enrolled, same concept "Loops" — one struggling, one mastered
+    def test_aggregates_mastery_and_upserts(self, mock_table, mock_ac_table):
+        # Two students enrolled in offering "off-1", same concept "Loops".
         enrollment_rows = [{"user_id": "u1"}, {"user_id": "u2"}]
         course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
+        # offering_course_id("off-1") resolves to the abstract course.
+        offering_rows = [{"course_id": "abstract-cs101"}]
         node_rows = [
             {"id": "n1", "concept_name": "Loops", "mastery_score": 0.2,
              "mastery_tier": "struggling", "user_id": "u1"},
@@ -147,42 +149,47 @@ class TestUpdateCourseContext(unittest.TestCase):
 
         def _table(name):
             m = MagicMock()
-            if name == "user_courses":
+            if name == "enrollments":
                 m.select.return_value = enrollment_rows
+            elif name == "course_offerings":
+                m.select.return_value = offering_rows
             elif name == "courses":
                 m.select.return_value = course_rows
             elif name == "graph_nodes":
                 m.select.return_value = node_rows
             elif name == "quiz_context":
                 m.select.return_value = []
-            elif name == "course_concept_stats":
+            elif name == "offering_concept_stats":
                 return stats_tbl
-            elif name == "course_summary":
+            elif name == "offering_summary":
                 return summary_tbl
             else:
                 m.select.return_value = []
             return m
 
         mock_table.side_effect = _table
+        mock_ac_table.side_effect = _table
 
         with patch("services.course_context_service._generate_summary_with_gemini", return_value="summary"):
             from services.course_context_service import update_course_context
-            update_course_context("c-cs101")
+            update_course_context("off-1")
 
-        # course_concept_stats should be upserted for "Loops"
+        # offering_concept_stats should be upserted for "Loops"
         stats_tbl.upsert.assert_called_once()
         upsert_payload = stats_tbl.upsert.call_args[0][0]
-        self.assertEqual(upsert_payload["course_id"], "c-cs101")
+        self.assertEqual(upsert_payload["offering_id"], "off-1")
         self.assertEqual(upsert_payload["concept_name"], "Loops")
         self.assertEqual(upsert_payload["student_count"], 2)
         # avg mastery for Loops = (0.2 + 0.9) / 2 = 0.55
         self.assertAlmostEqual(upsert_payload["avg_mastery_score"], 0.55, places=2)
 
+    @patch("services.academics.table")
     @patch("services.course_context_service.table")
-    def test_struggling_concepts_threshold(self, mock_table):
+    def test_struggling_concepts_threshold(self, mock_table, mock_ac_table):
         """Concepts with pct_struggling > 0 should appear in top_struggling_concepts."""
         enrollment_rows = [{"user_id": "u1"}, {"user_id": "u2"}]
         course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
+        offering_rows = [{"course_id": "abstract-cs101"}]
         node_rows = [
             {"id": "n1", "concept_name": "Recursion", "mastery_score": 0.1,
              "mastery_tier": "struggling", "user_id": "u1"},
@@ -198,38 +205,43 @@ class TestUpdateCourseContext(unittest.TestCase):
 
         def _table(name):
             m = MagicMock()
-            if name == "user_courses":
+            if name == "enrollments":
                 m.select.return_value = enrollment_rows
+            elif name == "course_offerings":
+                m.select.return_value = offering_rows
             elif name == "courses":
                 m.select.return_value = course_rows
             elif name == "graph_nodes":
                 m.select.return_value = node_rows
             elif name == "quiz_context":
                 m.select.return_value = []
-            elif name == "course_concept_stats":
+            elif name == "offering_concept_stats":
                 return stats_tbl
-            elif name == "course_summary":
+            elif name == "offering_summary":
                 return summary_tbl
             else:
                 m.select.return_value = []
             return m
 
         mock_table.side_effect = _table
+        mock_ac_table.side_effect = _table
 
         with patch("services.course_context_service._generate_summary_with_gemini", return_value="summary"):
             from services.course_context_service import update_course_context
-            update_course_context("c-cs101")
+            update_course_context("off-1")
 
-        # course_summary upsert should have Recursion in top_struggling_concepts
+        # offering_summary upsert should have Recursion in top_struggling_concepts
         summary_tbl.upsert.assert_called_once()
         summary_payload = summary_tbl.upsert.call_args[0][0]
         self.assertIn("Recursion", summary_payload["top_struggling_concepts"])
         self.assertNotIn("Loops", summary_payload["top_struggling_concepts"])
 
+    @patch("services.academics.table")
     @patch("services.course_context_service.table")
-    def test_deduplicates_misconceptions_case_insensitive(self, mock_table):
+    def test_deduplicates_misconceptions_case_insensitive(self, mock_table, mock_ac_table):
         enrollment_rows = [{"user_id": "u1"}, {"user_id": "u2"}]
         course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
+        offering_rows = [{"course_id": "abstract-cs101"}]
         node_rows = [
             {"id": "n1", "concept_name": "Loops", "mastery_score": 0.3,
              "mastery_tier": "learning", "user_id": "u1"},
@@ -249,27 +261,30 @@ class TestUpdateCourseContext(unittest.TestCase):
 
         def _table(name):
             m = MagicMock()
-            if name == "user_courses":
+            if name == "enrollments":
                 m.select.return_value = enrollment_rows
+            elif name == "course_offerings":
+                m.select.return_value = offering_rows
             elif name == "courses":
                 m.select.return_value = course_rows
             elif name == "graph_nodes":
                 m.select.return_value = node_rows
             elif name == "quiz_context":
                 m.select.return_value = quiz_rows
-            elif name == "course_concept_stats":
+            elif name == "offering_concept_stats":
                 return stats_tbl
-            elif name == "course_summary":
+            elif name == "offering_summary":
                 return summary_tbl
             else:
                 m.select.return_value = []
             return m
 
         mock_table.side_effect = _table
+        mock_ac_table.side_effect = _table
 
         with patch("services.course_context_service._generate_summary_with_gemini", return_value="summary"):
             from services.course_context_service import update_course_context
-            update_course_context("c-cs101")
+            update_course_context("off-1")
 
         # All three "off-by-one" variants are the same after .lower() — only one kept
         stats_tbl.upsert.assert_called_once()
@@ -284,13 +299,14 @@ class TestUpdateCourseContext(unittest.TestCase):
 
 class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
 
+    @patch("services.academics.user_offering_ids_for_course", return_value=["off-1"])
     @patch("services.graph_service.table")
     @patch("services.course_context_service.update_course_context")
     def test_update_course_context_called_for_touched_subjects(
-        self, mock_update_ctx, mock_table
+        self, mock_update_ctx, mock_table, mock_uoff
     ):
-        # update_course_context is lazy-imported inside apply_graph_update;
-        # patch it at the source module so the import resolves to our mock.
+        # touched_courses holds the abstract course_id ("course-1"); the analytics
+        # refresh resolves it to the user's offering(s) and refreshes each one.
         node_tbl = MagicMock()
         node_tbl.select.return_value = [
             {"id": "n1", "concept_name": "Loops", "mastery_score": 0.4,
@@ -311,13 +327,15 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
              "new_edges": []}
         )
 
-        mock_update_ctx.assert_called_once_with("course-1")
+        mock_uoff.assert_called_once_with("user1", "course-1")
+        mock_update_ctx.assert_called_once_with("off-1")
 
+    @patch("services.academics.user_offering_ids_for_course", return_value=["off-1"])
     @patch("services.graph_service.table")
     @patch("services.course_context_service.update_course_context",
            side_effect=RuntimeError("DB down"))
     def test_update_course_context_exception_does_not_raise(
-        self, mock_update_ctx, mock_table
+        self, mock_update_ctx, mock_table, mock_uoff
     ):
         """A failure in update_course_context must never surface to the caller."""
         node_tbl = MagicMock()
@@ -375,15 +393,18 @@ class TestLearnHelpers(unittest.TestCase):
 
     @patch("routes.learn.table")
     def test_resolve_course_when_topic_matches_course_code(self, mock_table):
+        # enrollments → course_offerings → courses; returns the ABSTRACT course_id.
         enrolled_tbl = MagicMock()
         enrolled_tbl.select.return_value = [
-            {"course_id": "course-1", "courses": {"course_code": "CS101", "course_name": "Intro CS"}}
+            {"offering_id": "off-1",
+             "course_offerings": {"course_id": "course-1",
+                                  "courses": {"course_code": "CS101", "course_name": "Intro CS"}}}
         ]
         node_tbl = MagicMock()
         node_tbl.select.return_value = []
 
         def _factory(name):
-            if name == "user_courses": return enrolled_tbl
+            if name == "enrollments": return enrolled_tbl
             return node_tbl
 
         mock_table.side_effect = _factory
@@ -401,7 +422,7 @@ class TestLearnHelpers(unittest.TestCase):
         node_tbl.select.side_effect = [[{"course_id": "course-1"}], []]
 
         def _factory(name):
-            if name == "user_courses": return enrolled_tbl
+            if name == "enrollments": return enrolled_tbl
             return node_tbl
 
         mock_table.side_effect = _factory
@@ -424,19 +445,20 @@ class TestLearnHelpers(unittest.TestCase):
         self.assertEqual(result, "")
 
     @patch("routes.learn.table")
-    def test_get_session_course_id_found(self, mock_table):
-        mock_table.return_value.select.return_value = [{"course_id": "course-1"}]
+    def test_get_session_offering_id_found(self, mock_table):
+        # Sessions key on the offering (0025); the helper returns it.
+        mock_table.return_value.select.return_value = [{"offering_id": "off-1"}]
 
-        from routes.learn import _get_session_course_id
-        result = _get_session_course_id("session-abc")
-        self.assertEqual(result, "course-1")
+        from routes.learn import _get_session_offering_id
+        result = _get_session_offering_id("session-abc")
+        self.assertEqual(result, "off-1")
 
     @patch("routes.learn.table")
-    def test_get_session_course_id_not_found(self, mock_table):
+    def test_get_session_offering_id_not_found(self, mock_table):
         mock_table.return_value.select.return_value = []
 
-        from routes.learn import _get_session_course_id
-        result = _get_session_course_id("session-missing")
+        from routes.learn import _get_session_offering_id
+        result = _get_session_offering_id("session-missing")
         self.assertEqual(result, "")
 
     @patch("services.course_context_service.get_course_context", return_value={})
@@ -496,149 +518,35 @@ class TestLearnHelpers(unittest.TestCase):
 # 5. quiz.py — generate_quiz prompt augmentation
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestQuizPromptAugmentation(unittest.TestCase):
-    """Legacy prompt-augmentation tests.
 
-    Post-refactor (ADR 0005), generate_quiz routes through quiz_agent
-    first and only falls through to the legacy `_legacy_generate_quiz`
-    path on agent failure. Each test below patches `quiz_agent.run` to
-    raise so the legacy code path actually executes — that is the path
-    these assertions describe (manual prompt-string augmentation against
-    course_context_service output).
-    """
+class TestCourseSummaryAgent(unittest.TestCase):
+    """#145: _generate_summary_with_gemini runs the course_summary agent and
+    degrades to a deterministic template string on agent failure."""
 
-    def _make_generate_body(self):
-        return {
-            "user_id": "user1",
-            "concept_node_id": "node-abc",
-            "difficulty": "medium",
-            "num_questions": 3,
-        }
-
-    def _force_legacy(self):
-        """Patch quiz_agent.run to raise so the route falls back to legacy."""
-        from unittest.mock import AsyncMock
-        return patch(
-            "routes.quiz.quiz_agent.run",
-            new=AsyncMock(side_effect=RuntimeError("force legacy fallback for tests")),
+    def test_returns_agent_summary_on_success(self):
+        from services import course_context_service as ccs
+        run = AsyncMock(
+            return_value=SimpleNamespace(
+                output=SimpleNamespace(summary="Agent class summary.")
+            )
         )
+        with patch.object(ccs.course_summary_agent, "run", new=run):
+            out = ccs._generate_summary_with_gemini(
+                "CS101", "Intro", 0.6, ["Loops"], ["Vars"], 12,
+            )
+        self.assertEqual(out, "Agent class summary.")
+        run.assert_called_once()
 
-    def _post_generate(self):
-        """POST to /api/quiz/generate via TestClient."""
-        from fastapi.testclient import TestClient
-        from main import app
-        return TestClient(app).post("/api/quiz/generate", json=self._make_generate_body())
-
-    # get_course_context is lazily imported inside _legacy_generate_quiz;
-    # patch at the source module so the `from ... import` resolves to our mock.
-    @patch("services.course_context_service.get_course_context")
-    @patch("routes.quiz.call_gemini_json")
-    @patch("routes.quiz.get_quiz_context", return_value=None)
-    @patch("routes.quiz.get_graph")
-    @patch("routes.quiz.table")
-    def test_misconceptions_appended_to_prompt(
-        self, mock_table, mock_graph, mock_quiz_ctx, mock_gemini, mock_ctx
-    ):
-        mock_table.return_value.select.return_value = [{
-            "id": "node-abc", "concept_name": "Pointers",
-            "mastery_score": 0.3, "course_id": "c1",
-        }]
-        mock_table.return_value.insert.return_value = None
-        mock_graph.return_value = {"nodes": [], "edges": []}
-        mock_ctx.return_value = {
-            "course_summary": {"avg_class_mastery": 0.4},
-            "concept_stats": [
-                {
-                    "concept_name": "Pointers",
-                    "common_misconceptions": ["Dangling pointers", "Memory leaks"],
-                    "prerequisite_gaps": ["Pointer arithmetic"],
-                }
-            ],
-        }
-        mock_gemini.return_value = {"questions": []}
-
-        with self._force_legacy():
-            self._post_generate()
-
-        actual_prompt = mock_gemini.call_args[0][0]
-        self.assertIn("Dangling pointers", actual_prompt)
-        self.assertIn("Memory leaks", actual_prompt)
-        self.assertIn("Pointer arithmetic", actual_prompt)
-
-    @patch("services.course_context_service.get_course_context", return_value={})
-    @patch("routes.quiz.call_gemini_json")
-    @patch("routes.quiz.get_quiz_context", return_value=None)
-    @patch("routes.quiz.get_graph")
-    @patch("routes.quiz.table")
-    def test_no_augmentation_when_ctx_empty(
-        self, mock_table, mock_graph, mock_quiz_ctx, mock_gemini, mock_ctx
-    ):
-        mock_table.return_value.select.return_value = [{
-            "id": "node-abc", "concept_name": "Loops",
-            "mastery_score": 0.5, "course_id": "c1",
-        }]
-        mock_table.return_value.insert.return_value = None
-        mock_graph.return_value = {"nodes": [], "edges": []}
-        mock_gemini.return_value = {"questions": []}
-
-        with self._force_legacy():
-            self._post_generate()
-
-        actual_prompt = mock_gemini.call_args[0][0]
-        self.assertNotIn("Common misconceptions seen across the class", actual_prompt)
-
-    @patch("services.course_context_service.get_course_context")
-    @patch("routes.quiz.call_gemini_json")
-    @patch("routes.quiz.get_quiz_context", return_value=None)
-    @patch("routes.quiz.get_graph")
-    @patch("routes.quiz.table")
-    def test_augmentation_capped_at_10_items(
-        self, mock_table, mock_graph, mock_quiz_ctx, mock_gemini, mock_ctx
-    ):
-        mock_table.return_value.select.return_value = [{
-            "id": "node-abc", "concept_name": "Pointers",
-            "mastery_score": 0.3, "course_id": "c1",
-        }]
-        mock_table.return_value.insert.return_value = None
-        mock_graph.return_value = {"nodes": [], "edges": []}
-        mock_ctx.return_value = {
-            "course_summary": {"avg_class_mastery": 0.4},
-            "concept_stats": [
-                {
-                    "concept_name": "Pointers",
-                    "common_misconceptions": [f"mistake_{i}" for i in range(20)],
-                    "prerequisite_gaps": [],
-                }
-            ],
-        }
-        mock_gemini.return_value = {"questions": []}
-
-        with self._force_legacy():
-            self._post_generate()
-
-        actual_prompt = mock_gemini.call_args[0][0]
-        self.assertIn("mistake_9", actual_prompt)
-        self.assertNotIn("mistake_10", actual_prompt)
-
-    @patch("routes.quiz.call_gemini_json")
-    @patch("routes.quiz.get_quiz_context", return_value=None)
-    @patch("routes.quiz.get_graph")
-    @patch("routes.quiz.table")
-    def test_no_augmentation_when_node_has_no_course_id(
-        self, mock_table, mock_graph, mock_quiz_ctx, mock_gemini
-    ):
-        mock_table.return_value.select.return_value = [{
-            "id": "node-abc", "concept_name": "GenericConcept",
-            "mastery_score": 0.5, "course_id": "",
-        }]
-        mock_table.return_value.insert.return_value = None
-        mock_graph.return_value = {"nodes": [], "edges": []}
-        mock_gemini.return_value = {"questions": []}
-
-        with self._force_legacy():
-            with patch("services.course_context_service.get_course_context") as mock_ctx:
-                self._post_generate()
-                mock_ctx.assert_not_called()
+    def test_falls_back_to_template_on_agent_failure(self):
+        from services import course_context_service as ccs
+        run = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch.object(ccs.course_summary_agent, "run", new=run):
+            out = ccs._generate_summary_with_gemini(
+                "CS101", "Intro", 0.6, ["Loops"], ["Vars"], 12,
+            )
+        # Deterministic template fallback — no second LLM call.
+        self.assertIn("Class average mastery", out)
+        self.assertIn("Loops", out)
 
 
 if __name__ == "__main__":

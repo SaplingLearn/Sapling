@@ -23,7 +23,12 @@ ALLOWED_SCREENSHOT_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"
 
 @router.post("/feedback")
 def submit_feedback(body: SubmitFeedbackBody):
+    # 0026_ops: feedback.id is now a TEXT PK (was SERIAL). Follow the repo
+    # convention (services/academics.py, graph_service.py) and hand-build it
+    # rather than relying on the DB default. user_id/session_id now carry real
+    # FKs (users / sessions), which the request body / session already satisfy.
     table("feedback").insert({
+        "id": str(uuid.uuid4()),
         "user_id": body.user_id,
         "type": body.type,
         "rating": body.rating,
@@ -37,7 +42,10 @@ def submit_feedback(body: SubmitFeedbackBody):
 
 @router.post("/issue-reports")
 def submit_issue_report(body: SubmitIssueReportBody):
+    # 0026_ops: issue_reports.id is now a TEXT PK (was SERIAL); user_id now has
+    # a real FK to users(id). Hand-build the text PK per repo convention.
     table("issue_reports").insert({
+        "id": str(uuid.uuid4()),
         "user_id": body.user_id,
         "topic": body.topic,
         "description": body.description,

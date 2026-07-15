@@ -1,6 +1,10 @@
+import uuid
+
+import httpx
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from typing import Optional
+from pydantic_ai.exceptions import AgentRunError
 
 from services.auth_guard import require_self
 from services.graph_service import (
@@ -8,6 +12,11 @@ from services.graph_service import (
     get_courses, add_course, delete_course, update_course_color,
     delete_node, update_node_color,
 )
+from services.request_context import current_request_id
+from agents import WORKER_LIMITS
+from agents._run import run_agent_sync
+from agents.deps import SaplingDeps
+from agents.concept_describe import concept_describe_agent, build_message
 
 router = APIRouter()
 
@@ -38,6 +47,11 @@ class UpdateCourseColorBody(BaseModel):
 
 class UpdateNodeColorBody(BaseModel):
     color: Optional[str] = None
+
+
+class ConceptDescriptionBody(BaseModel):
+    concept: str
+    course_label: Optional[str] = None
 
 
 @router.get("/{user_id}/courses")
@@ -85,3 +99,47 @@ def set_node_color(user_id: str, node_id: str, body: UpdateNodeColorBody, reques
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result
+
+
+# ── Concept description (LLM) ─────────────────────────────────────────────────
+
+# Bound the free-text handed to the agent. Concept names/course labels are short
+# in practice; caps keep a pathological payload from bloating the prompt.
+_MAX_CONCEPT_LEN = 200
+_MAX_COURSE_LABEL_LEN = 120
+
+
+@router.post("/{user_id}/concept-description")
+def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Request):
+    """Generate a one-sentence, student-facing description for a concept.
+
+    Backs the knowledge-map rail's focus card for concepts without a stored
+    description. Tool-less LLM call — the concept name and course label are
+    handed straight to the agent.
+    """
+    require_self(user_id, request)
+    concept = body.concept.strip()[:_MAX_CONCEPT_LEN]
+    if not concept:
+        raise HTTPException(status_code=400, detail="concept is required")
+    course_label = (body.course_label or "").strip()[:_MAX_COURSE_LABEL_LEN] or None
+    deps = SaplingDeps(
+        user_id=user_id,
+        course_id=None,
+        supabase=None,
+        request_id=current_request_id() or str(uuid.uuid4()),
+    )
+    try:
+        result = run_agent_sync(
+            concept_describe_agent.run(
+                build_message(concept, course_label),
+                deps=deps,
+                usage_limits=WORKER_LIMITS,
+            )
+        )
+    except (AgentRunError, httpx.HTTPError, ValidationError) as e:
+        # Model / transport / output-validation failures are upstream problems —
+        # surface them as 502. Anything else propagates to the generic handler.
+        raise HTTPException(
+            status_code=502, detail=f"concept-description agent failed: {e}"
+        ) from e
+    return {"description": result.output.description}

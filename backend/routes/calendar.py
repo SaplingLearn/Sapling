@@ -18,6 +18,7 @@ from config import (
 )
 from db.connection import table
 from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
+from services import academics
 from services.auth_guard import require_self, get_session_user_id
 from services.calendar_service import extract_assignments_from_file, insert_new_assignments
 from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
@@ -87,6 +88,62 @@ def _require_google_creds(user_id: str) -> "Credentials":
     return _get_refreshed_credentials(token_rows[0])
 
 
+def _course_meta_cached(offering_id, cache):
+    if not offering_id:
+        return {}
+    if offering_id not in cache:
+        course_id = academics.offering_course_id(offering_id)
+        course = {}
+        if course_id:
+            rows = table("courses").select(
+                "id,course_code,course_name",
+                filters={"id": f"eq.{course_id}"}, limit=1,
+            )
+            course = rows[0] if rows else {}
+        cache[offering_id] = {
+            "course_id": course_id,
+            "course_code": course.get("course_code"),
+            "course_name": course.get("course_name"),
+        }
+    return cache[offering_id]
+
+
+def _owned_enrollment_ids(user_id) -> set:
+    return {e["id"] for e in academics.user_enrollment_ids(user_id)}
+
+
+def _read_assignments(user_id, *, due_gte=None, limit=None):
+    enrollments = academics.user_enrollment_ids(user_id)
+    if not enrollments:
+        return []
+    offering_by_enrollment = {e["id"]: e.get("offering_id") for e in enrollments}
+    ids = ",".join(offering_by_enrollment.keys())
+    filters = {"enrollment_id": f"in.({ids})"}
+    if due_gte:
+        filters["due_date"] = f"gte.{due_gte}"
+    rows = table("assignments").select(
+        "id,enrollment_id,title,due_date,assignment_type,notes,google_event_id,source",
+        filters=filters, order="due_date.asc", limit=limit,
+    )
+    cache = {}
+    out = []
+    for r in rows:
+        meta = _course_meta_cached(offering_by_enrollment.get(r.get("enrollment_id")), cache)
+        out.append({
+            "id": r["id"],
+            "user_id": user_id,
+            "title": r["title"],
+            "due_date": r["due_date"],
+            "assignment_type": r.get("assignment_type"),
+            "notes": decrypt_if_present(r.get("notes")),
+            "google_event_id": r.get("google_event_id"),
+            "course_id": meta.get("course_id"),
+            "course_code": meta.get("course_code") or "",
+            "course_name": meta.get("course_name") or "",
+        })
+    return out
+
+
 # ── Syllabus extraction ───────────────────────────────────────────────────────
 
 @router.post("/extract")
@@ -125,11 +182,11 @@ def save_assignments(body: SaveAssignmentsBody, request: FastAPIRequest):
             "course_id": a.course_id,
             "due_date": a.due_date,
             "assignment_type": a.assignment_type,
-            "notes": encrypt_if_present(a.notes),
+            "notes": a.notes,  # raw; insert_new_assignments encrypts
         }
         for a in body.assignments
     ]
-    saved = insert_new_assignments(body.user_id, payload)
+    saved = insert_new_assignments(body.user_id, payload, source="manual")
     return {"saved_count": saved}
 
 
@@ -137,55 +194,14 @@ def save_assignments(body: SaveAssignmentsBody, request: FastAPIRequest):
 def get_upcoming(user_id: str, request: FastAPIRequest):
     require_self(user_id, request)
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    rows = table("assignments").select(
-        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,courses!left(course_code,course_name)",
-        filters={"user_id": f"eq.{user_id}", "due_date": f"gte.{today}"},
-        order="due_date.asc",
-        limit=20,
-    )
-    assignments = []
-    for r in rows:
-        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
-        assignments.append({
-            "id": r["id"],
-            "user_id": r["user_id"],
-            "title": r["title"],
-            "due_date": r["due_date"],
-            "assignment_type": r.get("assignment_type"),
-            "notes": decrypt_if_present(r.get("notes")),
-            "google_event_id": r.get("google_event_id"),
-            "course_id": r.get("course_id"),
-            "course_code": course.get("course_code") or "",
-            "course_name": course.get("course_name") or "",
-        })
-    return {"assignments": assignments}
+    return {"assignments": _read_assignments(user_id, due_gte=today, limit=20)}
 
 
 @router.get("/all/{user_id}")
 def get_all_assignments(user_id: str, request: FastAPIRequest):
     """Return all assignments for a user (past and future) for the calendar view."""
     require_self(user_id, request)
-    rows = table("assignments").select(
-        "id,user_id,title,due_date,assignment_type,notes,google_event_id,course_id,courses!left(course_code,course_name)",
-        filters={"user_id": f"eq.{user_id}"},
-        order="due_date.asc",
-    )
-    assignments = []
-    for r in rows:
-        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
-        assignments.append({
-            "id": r["id"],
-            "user_id": r["user_id"],
-            "title": r["title"],
-            "due_date": r["due_date"],
-            "assignment_type": r.get("assignment_type"),
-            "notes": decrypt_if_present(r.get("notes")),
-            "google_event_id": r.get("google_event_id"),
-            "course_id": r.get("course_id"),
-            "course_code": course.get("course_code") or "",
-            "course_name": course.get("course_name") or "",
-        })
-    return {"assignments": assignments}
+    return {"assignments": _read_assignments(user_id)}
 
 
 @router.patch("/assignments/{assignment_id}")
@@ -195,25 +211,23 @@ def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
         raise HTTPException(status_code=400, detail="user_id is required")
     require_self(user_id, request)
 
+    owned = _owned_enrollment_ids(user_id)
+    if not owned:
+        raise HTTPException(status_code=404, detail="Assignment not found")
     existing = table("assignments").select(
-        "id", filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}, limit=1,
+        "id",
+        filters={"id": f"eq.{assignment_id}", "enrollment_id": f"in.({','.join(owned)})"},
+        limit=1,
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    # Whitelist non-sensitive fields. `notes` is excluded; edit notes via /save flow.
-    ALLOWED = {"title", "course_id", "due_date", "assignment_type"}
+    ALLOWED = {"title", "due_date", "assignment_type"}  # course_id no longer settable here
     patch = {k: v for k, v in body.items() if k in ALLOWED}
     if not patch:
         return {"updated": False}
-
-    if "course_id" in patch and patch["course_id"] == "":
-        patch["course_id"] = None
-
-    # Scope the write by user_id too (defense in depth): the scoped SELECT above
-    # already 404s a non-owned id, but don't rely on that guard alone (#123).
     table("assignments").update(
-        patch, filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}
+        patch, filters={"id": f"eq.{assignment_id}", "enrollment_id": f"in.({','.join(owned)})"}
     )
     return {"updated": True}
 
@@ -221,14 +235,18 @@ def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
 @router.delete("/assignments/{assignment_id}")
 def delete_assignment(assignment_id: str, request: FastAPIRequest, user_id: str = Query(...)):
     require_self(user_id, request)
+    owned = _owned_enrollment_ids(user_id)
+    if not owned:
+        raise HTTPException(status_code=404, detail="Assignment not found")
     existing = table("assignments").select(
-        "id", filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}, limit=1,
+        "id",
+        filters={"id": f"eq.{assignment_id}", "enrollment_id": f"in.({','.join(owned)})"},
+        limit=1,
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Assignment not found")
-    # Scope the delete by user_id too (defense in depth), not just the guard above.
     table("assignments").delete(
-        filters={"id": f"eq.{assignment_id}", "user_id": f"eq.{user_id}"}
+        filters={"id": f"eq.{assignment_id}", "enrollment_id": f"in.({','.join(owned)})"}
     )
     return {"deleted": True}
 
@@ -237,16 +255,11 @@ def delete_assignment(assignment_id: str, request: FastAPIRequest, user_id: str 
 def suggest_study_blocks(body: StudyBlockBody, request: FastAPIRequest):
     require_self(body.user_id, request)
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    assignments = table("assignments").select(
-        "id,title,due_date,courses!left(course_code,course_name)",
-        filters={"user_id": f"eq.{body.user_id}", "due_date": f"gte.{today}"},
-        order="due_date.asc",
-    )
+    assignments = _read_assignments(body.user_id, due_gte=today)
     blocks = []
     for a in assignments:
-        course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        cc = course.get("course_code") or ""
-        cn = course.get("course_name") or ""
+        cc = a.get("course_code") or ""
+        cn = a.get("course_name") or ""
         course_label = f"[{cc}] " if cc else (f"{cn}: " if cn else "")
         blocks.append({
             "topic": f"{course_label}{a['title']}" if course_label else a["title"],
@@ -330,32 +343,29 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
     creds = _require_google_creds(body.user_id)
     service = build("calendar", "v3", credentials=creds)
 
+    owned = _owned_enrollment_ids(body.user_id)
+    if not owned:
+        return {"synced_count": 0}
+    in_clause = f"in.({','.join(owned)})"
     unsynced = table("assignments").select(
-        "id,title,due_date,notes,google_event_id,courses!left(course_code,course_name)",
-        filters={
-            "user_id": f"eq.{body.user_id}",
-            "google_event_id": "is.null",
-        },
+        "id,enrollment_id,title,due_date,notes,google_event_id",
+        filters={"enrollment_id": in_clause, "google_event_id": "is.null"},
     )
-    # Also catch empty-string google_event_id
     unsynced += table("assignments").select(
-        "id,title,due_date,notes,google_event_id,courses!left(course_code,course_name)",
-        filters={
-            "user_id": f"eq.{body.user_id}",
-            "google_event_id": "eq.",
-        },
+        "id,enrollment_id,title,due_date,notes,google_event_id",
+        filters={"enrollment_id": in_clause, "google_event_id": "eq."},
     )
 
+    enr_to_offering = {e["id"]: e.get("offering_id") for e in academics.user_enrollment_ids(body.user_id)}
+    cache = {}
     synced = 0
     for a in unsynced:
         if not a.get("due_date"):
             continue
-
-        course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        course_code = course.get("course_code") or ""
-        course_name = course.get("course_name") or ""
-        course_label = f"[{course_code}] " if course_code else (f"{course_name}: " if course_name else "")
-
+        meta = _course_meta_cached(enr_to_offering.get(a.get("enrollment_id")), cache)
+        cc = meta.get("course_code") or ""
+        cn = meta.get("course_name") or ""
+        course_label = f"[{cc}] " if cc else (f"{cn}: " if cn else "")
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
             "description": decrypt_if_present(a.get("notes")) or "",
@@ -363,10 +373,9 @@ def sync_to_google(body: SyncBody, request: FastAPIRequest):
             "end": {"date": a["due_date"]},
         }
         created = service.events().insert(calendarId="primary", body=event).execute()
-        # Scope the write-back by user_id too (defense in depth), matching export.
         table("assignments").update(
             {"google_event_id": created["id"]},
-            filters={"id": f"eq.{a['id']}", "user_id": f"eq.{body.user_id}"},
+            filters={"id": f"eq.{a['id']}", "enrollment_id": in_clause},
         )
         synced += 1
 
@@ -381,18 +390,24 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
     creds = _require_google_creds(body.user_id)
     service = build("calendar", "v3", credentials=creds)
 
+    owned = _owned_enrollment_ids(body.user_id)
+    enr_to_offering = {e["id"]: e.get("offering_id") for e in academics.user_enrollment_ids(body.user_id)}
+    in_clause = f"in.({','.join(owned)})" if owned else "in.()"
+    cache = {}
+
     exported = 0
     skipped = 0
     for aid in body.assignment_ids:
-        # #123: scope by user_id, not just id. Without this an authenticated
-        # caller could pass another user's assignment UUIDs to read+decrypt
-        # their private notes, push them into the caller's calendar, and stamp
-        # google_event_id onto the victim's row. Every sibling endpoint
-        # (update/delete/sync) already scopes by user_id; a non-owned id now
-        # returns no row and is skipped.
+        # #123: scope by enrollment_id membership, not just id. Without this an
+        # authenticated caller could pass another user's assignment UUIDs to
+        # read+decrypt their private notes, push them into the caller's calendar,
+        # and stamp google_event_id onto the victim's row. Scoping to the caller's
+        # own enrollment ids means a non-owned id returns no row and is skipped.
+        if not owned:
+            continue
         rows = table("assignments").select(
-            "id,title,due_date,notes,google_event_id,courses!left(course_code,course_name)",
-            filters={"id": f"eq.{aid}", "user_id": f"eq.{body.user_id}"},
+            "id,enrollment_id,title,due_date,notes,google_event_id",
+            filters={"id": f"eq.{aid}", "enrollment_id": in_clause},
         )
         if not rows:
             continue
@@ -402,10 +417,10 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
             skipped += 1
             continue
 
-        course = a.get("courses", {}) if isinstance(a.get("courses"), dict) else {}
-        course_code = course.get("course_code") or ""
-        course_name = course.get("course_name") or ""
-        course_label = f"[{course_code}] " if course_code else (f"{course_name}: " if course_name else "")
+        meta = _course_meta_cached(enr_to_offering.get(a.get("enrollment_id")), cache)
+        cc = meta.get("course_code") or ""
+        cn = meta.get("course_name") or ""
+        course_label = f"[{cc}] " if cc else (f"{cn}: " if cn else "")
 
         event = {
             "summary": f"{course_label}{a['title']}" if course_label else a["title"],
@@ -414,11 +429,11 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
             "end": {"date": a["due_date"]},
         }
         created = service.events().insert(calendarId="primary", body=event).execute()
-        # Scope the write-back by user_id too (defense in depth): never stamp
-        # google_event_id onto a row the caller doesn't own.
+        # Scope the write-back by enrollment_id membership (defense in depth):
+        # never stamp google_event_id onto a row the caller doesn't own.
         table("assignments").update(
             {"google_event_id": created["id"]},
-            filters={"id": f"eq.{aid}", "user_id": f"eq.{body.user_id}"},
+            filters={"id": f"eq.{aid}", "enrollment_id": in_clause},
         )
         exported += 1
 

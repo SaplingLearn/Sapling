@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -8,17 +9,20 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
+from agents import ORCHESTRATOR_LIMITS
 from agents.quiz import quiz_agent, Quiz, QuizQuestion
 from agents.deps import SaplingDeps
-from config import get_mastery_tier
+from agents._run import run_agent_sync
+from agents.quiz_context import quiz_context_agent
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
+from routes.learn import _get_catalog_chunk
 from services.auth_guard import require_self
-from services.encryption import decrypt_if_present
-from services.gemini_service import MODEL_LITE, MODEL_SMART, call_gemini_json
-from services.graph_service import get_graph, update_streak
+from services.profiles import get_display_name
+from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
+from services.rag_service import retrieve_chunks, format_rag_context
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
@@ -26,6 +30,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
+
+# quiz_attempts.difficulty CHECK enum (0025).
+VALID_DIFFICULTIES = {"easy", "medium", "hard"}
 
 
 def _load_prompt(name: str) -> str:
@@ -138,6 +145,54 @@ def _resolve_model_pref(model_pref: str | None):
     return google_model(name)
 
 
+def _resolve_bu_code(course_id: str | None) -> str | None:
+    """Resolve a Sapling course UUID to its BU course_code (course_chunks
+    partition key). None if unresolvable OR if the lookup fails — grounding
+    must never break quiz generation."""
+    if not course_id:
+        return None
+    try:
+        rows = table("courses").select(
+            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+        )
+    except Exception:
+        return None
+    return (rows[0].get("course_code") if rows else None) or None
+
+
+def _course_material_block(course_id: str | None, concept_name: str) -> str:
+    """Best-effort catalog + document-chunk context for a concept.
+
+    Returns "" if nothing is available (no course, no bu_code, no chunks) or
+    if retrieval raises — grounding must never break quiz generation.
+    """
+    bu_code = _resolve_bu_code(course_id)
+    if not bu_code:
+        return ""
+    blocks: list[str] = []
+    try:
+        catalog = _get_catalog_chunk(bu_code)
+    except Exception:
+        catalog = ""
+    if catalog:
+        blocks.append("COURSE CATALOG (official BU course data):\n\n" + catalog)
+    try:
+        chunks = retrieve_chunks(concept_name, course_id=bu_code, k=5)
+    except Exception:
+        chunks = []
+    # Drop any retrieved chunk that merely repeats the catalog block already
+    # injected above — catalog chunks share the course_chunks store and can
+    # rank into the semantic results, which would send the same
+    # course-description text to the model twice (wasted prompt tokens).
+    if catalog:
+        catalog_norm = catalog.strip()
+        chunks = [c for c in chunks if (c.get("chunk_text") or "").strip() != catalog_norm]
+    rag_block = format_rag_context(chunks)
+    if rag_block:
+        blocks.append(rag_block)
+    return "\n\n".join(blocks)
+
+
 async def _quiz_via_agent(
     *,
     user_id: str,
@@ -169,7 +224,7 @@ async def _quiz_via_agent(
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
     # needs and trust the prompt to drive tool calls.
-    user_message = (
+    routing_msg = (
         f"Generate {num_questions} {difficulty} questions for the student. "
         f"The target concept is '{concept_name}' "
         f"(concept_node_id={concept_node_id}). Follow the workflow in your "
@@ -177,13 +232,27 @@ async def _quiz_via_agent(
         f"read_recent_quiz_attempts."
     )
     if use_shared_context:
-        user_message += (
+        routing_msg += (
             " Also call read_misconceptions_for_course and use those misconceptions "
             "as distractors and probes."
         )
 
+    # Course-material grounding does blocking network I/O (a Gemini
+    # embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
+    # worker thread so a slow/stalled retrieval can't freeze this worker's
+    # event loop for every other in-flight request. Matches the
+    # asyncio.to_thread pattern used by the agent read tools.
+    material = await asyncio.to_thread(_course_material_block, course_id, concept_name)
+    if material:
+        user_message = (
+            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material
+            + "\n\n[GENERATE QUIZ]\n" + routing_msg
+        )
+    else:
+        user_message = routing_msg
+
     model_override = _resolve_model_pref(model_pref)
-    run_kwargs: dict = {"deps": deps}
+    run_kwargs: dict = {"deps": deps, "usage_limits": ORCHESTRATOR_LIMITS}
     if model_override is not None:
         run_kwargs["model"] = model_override
     result = await quiz_agent.run(user_message, **run_kwargs)
@@ -197,106 +266,25 @@ async def _quiz_via_agent(
         if mapped is not None:
             wire_questions.append(mapped)
     if not wire_questions:
-        # All questions dropped — degrade to legacy rather than serve
-        # an empty quiz. Raise a sentinel that generate_quiz catches
-        # and routes to the legacy fallback.
+        # All questions dropped — raise so generate_quiz's bare-Exception
+        # catch degrades to HTTP 502 (the raw-Gemini legacy fallback was
+        # retired in #145) rather than serving an empty quiz.
         raise RuntimeError(
             "quiz_agent produced no valid questions after wire-format validation"
         )
     return wire_questions
 
-
-async def _legacy_generate_quiz(body: GenerateQuizBody, request: Request) -> list[dict]:
-    """The pre-agent quiz generation pipeline, kept as a fallback per ADR-0001.
-
-    Verbatim copy of the original generate_quiz body: prompt-template assembly,
-    course-context augmentation, and a single call_gemini_json.
-    Returns the raw `questions` list — the route handler is responsible for
-    persisting it and shaping the HTTP response.
-    """
-    node_rows = table("graph_nodes").select(
-        "*",
-        filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
-    )
-    if not node_rows:
-        raise HTTPException(status_code=404, detail="Concept node not found")
-    node = node_rows[0]
-
-    graph_data = get_graph(body.user_id)
-    quiz_ctx = get_quiz_context(body.user_id, body.concept_node_id)
-    quiz_ctx_str = json.dumps(quiz_ctx, indent=2) if quiz_ctx else "No previous quiz history."
-
-    prompt = (
-        _load_prompt("quiz_generation.txt")
-        .replace("{concept_name}", node["concept_name"])
-        .replace("{mastery_score}", str(int(node["mastery_score"] * 100)))
-        .replace("{difficulty}", body.difficulty)
-        .replace("{num_questions}", str(body.num_questions))
-        .replace("{graph_json_subset}", json.dumps(graph_data["nodes"][:10], indent=2))
-        .replace("{quiz_context_json}", quiz_ctx_str)
-    )
-
-    # Append shared course-level context (misconceptions + weak areas) if available
-    course_id = node.get("course_id", "")
-    if body.use_shared_context and course_id:
-        from services.course_context_service import get_course_context
-        course_ctx = get_course_context(course_id)
-        if course_ctx:
-            misconceptions: list[str] = []
-            weak_areas: list[str] = []
-            seen_m: set[str] = set()
-            seen_w: set[str] = set()
-            for row in course_ctx.get("concept_stats") or []:
-                if not isinstance(row, dict):
-                    continue
-                for m in row.get("common_misconceptions") or []:
-                    m = (m or "").strip()
-                    if m and m.lower() not in seen_m:
-                        seen_m.add(m.lower())
-                        misconceptions.append(m)
-                for w in row.get("prerequisite_gaps") or []:
-                    w = (w or "").strip()
-                    if w and w.lower() not in seen_w:
-                        seen_w.add(w.lower())
-                        weak_areas.append(w)
-            if misconceptions or weak_areas:
-                addendum_parts = []
-                if misconceptions:
-                    addendum_parts.append(
-                        "Common misconceptions seen across the class for this subject "
-                        "(address these proactively in distractors and explanations):\n"
-                        + "\n".join(f"- {m}" for m in misconceptions[:10])
-                    )
-                if weak_areas:
-                    addendum_parts.append(
-                        "Weak areas to target:\n"
-                        + "\n".join(f"- {w}" for w in weak_areas[:10])
-                    )
-                prompt += "\n\n" + "\n\n".join(addendum_parts)
-
-    # Honor the same fast/smart toggle the agent path uses. The mapping
-    # mirrors _PREF_MODEL_NAMES exactly, so a user choosing "fast" gets
-    # the same upgraded model whether the agent succeeded or fell back
-    # here. Without this, "fast" was silently a no-op on the legacy
-    # path (still MODEL_LITE) — the kind of inconsistency that surfaces
-    # six months later as "why does Fast sometimes feel slower?"
-    if body.model_pref == "smart":
-        legacy_model = MODEL_SMART  # gemini-2.5-pro
-    elif body.model_pref == "fast":
-        legacy_model = MODEL_LITE  # gemini-2.5-flash-lite, matches _PREF_MODEL_NAMES
-    else:
-        legacy_model = MODEL_LITE  # gemini-2.5-flash-lite, agent default per ADR 0008
-    try:
-        result = call_gemini_json(prompt, model=legacy_model)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
-
-    return result.get("questions", [])
-
-
 @router.post("/generate")
 async def generate_quiz(body: GenerateQuizBody, request: Request):
     require_self(body.user_id, request)
+    # quiz_attempts.difficulty is CHECK-constrained (0025); reject drift before
+    # we run the agent or write an attempt row.
+    if body.difficulty not in VALID_DIFFICULTIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid difficulty '{body.difficulty}'. "
+                   f"Must be one of {sorted(VALID_DIFFICULTIES)}.",
+        )
     node_rows = table("graph_nodes").select(
         "*",
         filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
@@ -327,21 +315,24 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             request_id=request_id,
             model_pref=body.model_pref,
         )
-    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
-        logger.warning(
-            "Quiz agent guardrails tripped; falling back to legacy",
-            exc_info=e,
-        )
-        questions = await _legacy_generate_quiz(body, request)
     except HTTPException:
-        # Legacy path raises HTTPException for known states (404/502); never
-        # treat those as a reason to fall back. Re-raise.
+        # The 404 for an unknown concept node is raised before the agent call;
+        # never swallow a known HTTP state.
         raise
-    except Exception:
-        logger.exception(
-            "Unexpected quiz-agent failure; falling back to legacy"
-        )
-        questions = await _legacy_generate_quiz(body, request)
+    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+        # The raw-Gemini legacy fallback was retired in #145; degrade to 502
+        # rather than serving a quiz from a second LLM path.
+        logger.warning("Quiz agent guardrails tripped; returning 502", exc_info=e)
+        raise HTTPException(
+            status_code=502,
+            detail="Quiz generation is temporarily unavailable. Please try again.",
+        ) from e
+    except Exception as e:
+        logger.exception("Unexpected quiz-agent failure; returning 502")
+        raise HTTPException(
+            status_code=502,
+            detail="Quiz generation is temporarily unavailable. Please try again.",
+        ) from e
 
     quiz_id = str(uuid.uuid4())
     table("quiz_attempts").insert({
@@ -389,20 +380,21 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     total = len(questions)
 
+    # Owner-scoped read: the attempt's concept node must belong to the
+    # attempt's owner. A missing/foreign node means we'd otherwise write
+    # mastery to someone else's row (IDOR) — refuse before any write.
+    # mastery_events was DROPPED in 0023 (events moved to node_mastery_events);
+    # we no longer read or write that column here.
     node_rows = table("graph_nodes").select(
-        "mastery_score,times_studied,mastery_events",
+        "concept_name,mastery_score,course_id",
         filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
     )
     if not node_rows:
-        # The attempt's concept node must belong to the attempt's owner.
-        # A missing/foreign node means we'd otherwise write mastery to
-        # someone else's row (IDOR) — refuse before any write.
         raise HTTPException(status_code=404, detail="Concept node not found")
     node = node_rows[0]
     mastery_before = node["mastery_score"]
     mastery_after = max(0.0, min(1.0, mastery_before + (score * 0.03) - ((total - score) * 0.02)))
-    new_tier = get_mastery_tier(mastery_after)
-    times_studied = node["times_studied"] + 1
+    mastery_delta = mastery_after - mastery_before
 
     score_ratio = score / total if total > 0 else 0.0
     if score_ratio >= 0.7:
@@ -412,25 +404,27 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     else:
         event_type = "confusion"
 
-    existing_events = node.get("mastery_events") or []
-    quiz_event = {
-        "ts": datetime.utcnow().isoformat(),
-        "delta": round(mastery_after - mastery_before, 4),
-        "reason": f"Quiz: {score}/{total} correct",
-        "event_type": event_type,
-    }
-    updated_events = (existing_events + [quiz_event])[-20:]
-
-    table("graph_nodes").update(
+    # Route the mastery write through the sanctioned graph path. The graph
+    # keys on the ABSTRACT course id; apply_graph_update looks the node up by
+    # (normalized) concept_name within (user_id, course_id), clamps mastery,
+    # bumps times_studied/last_studied_at, records the event (now in
+    # node_mastery_events), and updates the streak. We don't touch graph_nodes
+    # or node_mastery_events directly — that's the graph slice's territory.
+    apply_graph_update(
+        user_id,
         {
-            "mastery_score": mastery_after,
-            "mastery_tier": new_tier,
-            "times_studied": times_studied,
-            "last_studied_at": datetime.utcnow().isoformat(),
-            "mastery_events": updated_events,
+            "updated_nodes": [
+                {
+                    "concept_name": node["concept_name"],
+                    "mastery_delta": mastery_delta,
+                    "reason": f"Quiz: {score}/{total} correct",
+                    "event_type": event_type,
+                }
+            ]
         },
-        filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
+        course_id=node.get("course_id"),
     )
+
     table("quiz_attempts").update(
         {
             "score": score,
@@ -441,15 +435,13 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         filters={"id": f"eq.{body.quiz_id}"},
     )
 
-    update_streak(user_id)
-
     node2_rows = table("graph_nodes").select(
         "concept_name",
         filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
     )
-    user_rows = table("users").select("name", filters={"id": f"eq.{user_id}"})
     concept_name = node2_rows[0]["concept_name"] if node2_rows else "Unknown"
-    student_name = decrypt_if_present(user_rows[0]["name"]) if user_rows else "Student"
+    # Display name lives on user_profiles (0024); resolve + decrypt via helper.
+    student_name = get_display_name(user_id) or "Student"
 
     existing_ctx = get_quiz_context(user_id, concept_node_id)
     ctx_prompt = (
@@ -464,8 +456,8 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     def _update_context(prompt: str, uid: str, node_id: str):
         try:
-            new_ctx = call_gemini_json(prompt, model=MODEL_LITE)
-            save_quiz_context(uid, node_id, new_ctx)
+            result = run_agent_sync(quiz_context_agent.run(prompt))
+            save_quiz_context(uid, node_id, result.output.model_dump())
         except Exception:
             pass
 

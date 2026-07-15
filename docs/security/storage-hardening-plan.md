@@ -1,17 +1,22 @@
 # Storage hardening — PR-plan (#231)
 
-**Status: DRAFT plan for review. Nothing applied.**
+**Status (updated 2026-07-01): most of this plan has SHIPPED. The résumé-PII exposure is closed. Only the final SQL lockdown of `issues-media-files` remains — now in `backend/db/migrations/0029_storage_lockdown_231.sql` (pending review + apply; not yet run on prod).**
 
-## Live findings (Sapling prod, read-only)
+### Already shipped
+- `application_resumes` is **private** (`public=false`) — uploaded backend/service-key (`careers._upload_resume`, returns a path, not a public URL). Résumé PII is no longer publicly readable.
+- Issue-report screenshots upload via the **auth-gated backend endpoint** `POST /api/issue-reports/screenshot` (service role, content-type + 5 MB size validated; `routes/feedback.py`); `ReportIssueFlow.tsx` no longer uses the anon storage client.
+- The anon `"Allow uploads"` INSERT policy is **scoped to `issues-media-files`** (previously global / any-bucket).
+
+## Live findings (Sapling prod, re-verified 2026-07-01, read-only)
 Buckets that actually exist (3):
 
-| Bucket | `public` | Written by | Read by | Issue |
+| Bucket | `public` | Written by | Read by | Residual issue |
 |---|---|---|---|---|
-| `issues-media-files` (issue-report screenshots) | **true** | frontend **anon key** (`ReportIssueFlow.tsx`) | `getPublicUrl` (public) | anon upload + public read |
-| `application_resumes` (résumés) | **true** | backend service key (`careers.py`) | `getPublicUrl` (public) | **résumé PII publicly readable** |
+| `issues-media-files` (issue-report screenshots) | **true** | backend service key (`feedback.py`, `POST /api/issue-reports/screenshot`) | dashboard / signed URL (intended) | **still `public=true` + 2 anon policies** — the last surface (2 objects, ~7 MB) |
+| `application_resumes` (résumés) | **false** ✅ | backend service key (`careers.py`) | dashboard / signed URL | **fixed** (private) |
 | `avatars` | true | backend service key (`storage_service.py`) | public `<img>` | intended public read |
 
-`storage.objects` policies: `"Allow public read"` (SELECT, `{public}`, `issues-media-files`) and **`"Allow uploads"` (INSERT, `{public}`, no bucket/auth restriction)** → anyone can upload to **any** bucket, unauthenticated, unbounded (no size limit on `issues-media-files`/`application_resumes`).
+`storage.objects` policies (2, both scoped to `issues-media-files`): `"Allow public read"` (anon SELECT) and `"Allow uploads"` (anon INSERT). The app no longer uses either — both dropped by migration 0029.
 
 Note: `chat-images` and `cosmetic-assets` referenced in code **do not exist** — those upload paths are dead (separate cleanup; not a live exposure).
 
@@ -27,12 +32,13 @@ All storage writes go through the **backend (service_role)**; private buckets ar
 ## Changes
 
 ### SQL (review before applying)
+Canonical version now lives in `backend/db/migrations/0029_storage_lockdown_231.sql`
+(also adds a 5 MB size limit + mime allowlist on `issues-media-files`, matching the
+upload endpoint). Apply via `python -m db.migrate` (see the migration's privilege note).
 ```sql
-BEGIN;
-UPDATE storage.buckets SET public = false WHERE id IN ('issues-media-files','application_resumes');
-DROP POLICY IF EXISTS "Allow uploads"     ON storage.objects;  -- kills the global public INSERT
-DROP POLICY IF EXISTS "Allow public read" ON storage.objects;  -- issues-media-files public read
-COMMIT;
+UPDATE storage.buckets SET public = false WHERE id IN ('issues-media-files','application_resumes');  -- application_resumes already false → no-op
+DROP POLICY IF EXISTS "Allow uploads"     ON storage.objects;  -- anon INSERT (unused by app now)
+DROP POLICY IF EXISTS "Allow public read" ON storage.objects;  -- anon SELECT on issues-media-files
 ```
 No new storage.objects policies are needed: backend uploads/reads use `service_role` (bypasses storage RLS). `avatars` stays `public=true` so its objects remain readable without a policy.
 

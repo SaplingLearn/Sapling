@@ -4,12 +4,16 @@ from services.users_search import paginate_users
 
 class TestPaginateUsers:
     def test_no_query_uses_select_with_count(self):
+        # `name` now lives on user_profiles (0024); users carries only email + auth.
         users_rows = [
-            {"id": "u1", "name": "enc1", "email": "enc2", "is_approved": True,
+            {"id": "u1", "email": "enc2", "is_approved": True,
              "created_at": "2026-01-01T00:00:00Z", "last_sign_in_at": None},
         ]
         with patch("services.users_search.table") as t, \
-             patch("services.users_search.decrypt_if_present", side_effect=lambda v: f"d:{v}" if v else v):
+             patch("services.users_search.get_display_names",
+                   return_value={"u1": "Decrypted Name"}), \
+             patch("services.users_search.decrypt_if_present",
+                   side_effect=lambda v: f"d:{v}" if v else v):
             users_tbl = MagicMock()
             users_tbl.select_with_count.return_value = (users_rows, 137)
             roles_tbl = MagicMock()
@@ -25,20 +29,24 @@ class TestPaginateUsers:
         assert result["total"] == 137
         assert result["page"] == 1
         assert result["page_size"] == 50
-        assert result["users"][0]["name"] == "d:enc1"
+        # name resolved off user_profiles; email decrypted off the users row.
+        assert result["users"][0]["name"] == "Decrypted Name"
+        assert result["users"][0]["email"] == "d:enc2"
         users_tbl.select_with_count.assert_called_once()
 
     def test_query_filters_after_decrypt(self):
         rows = [
-            {"id": "u1", "name": "ALICE_ENC", "email": "AE", "is_approved": True,
+            {"id": "u1", "email": "AE", "is_approved": True,
              "created_at": "x", "last_sign_in_at": None},
-            {"id": "u2", "name": "BOB_ENC", "email": "BE", "is_approved": False,
+            {"id": "u2", "email": "BE", "is_approved": False,
              "created_at": "x", "last_sign_in_at": None},
         ]
-        decrypt_map = {"ALICE_ENC": "Alice Smith", "AE": "alice@bu.edu",
-                       "BOB_ENC": "Bob Jones", "BE": "bob@bu.edu"}
+        email_map = {"AE": "alice@bu.edu", "BE": "bob@bu.edu"}
+        name_map = {"u1": "Alice Smith", "u2": "Bob Jones"}
         with patch("services.users_search.table") as t, \
-             patch("services.users_search.decrypt_if_present", side_effect=lambda v: decrypt_map.get(v, v)):
+             patch("services.users_search.get_display_names", return_value=name_map), \
+             patch("services.users_search.decrypt_if_present",
+                   side_effect=lambda v: email_map.get(v, v)):
             users_tbl = MagicMock()
             users_tbl.select.return_value = rows
             roles_tbl = MagicMock()
@@ -51,12 +59,15 @@ class TestPaginateUsers:
 
             result = paginate_users(q="alice", page=1, page_size=10)
 
+        # Matches on the user_profiles-sourced name.
         assert result["total"] == 1
         assert len(result["users"]) == 1
+        assert result["users"][0]["name"] == "Alice Smith"
         assert result["users"][0]["email"] == "alice@bu.edu"
 
     def test_caps_page_size(self):
-        with patch("services.users_search.table") as t:
+        with patch("services.users_search.table") as t, \
+             patch("services.users_search.get_display_names", return_value={}):
             users_tbl = MagicMock()
             users_tbl.select_with_count.return_value = ([], 0)
             t.return_value = users_tbl
@@ -64,7 +75,7 @@ class TestPaginateUsers:
         assert result["page_size"] == 200  # hard cap
 
     def test_attaches_roles_and_drops_orphan_joins(self):
-        rows = [{"id": "u1", "name": "ENC", "email": "ENC", "is_approved": True,
+        rows = [{"id": "u1", "email": "ENC", "is_approved": True,
                  "created_at": "x", "last_sign_in_at": None}]
         # PostgREST returns an embedded `roles` value that is None when the join
         # target was deleted but the user_roles row remained.
@@ -77,6 +88,7 @@ class TestPaginateUsers:
         ]
 
         with patch("services.users_search.table") as t, \
+             patch("services.users_search.get_display_names", return_value={"u1": "Admin User"}), \
              patch("services.users_search.decrypt_if_present", side_effect=lambda v: v):
             users_tbl = MagicMock()
             users_tbl.select_with_count.return_value = (rows, 1)

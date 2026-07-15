@@ -34,13 +34,14 @@ def test_unknown_mode_falls_back_to_socratic():
     assert agent_for_mode(None) is socratic_agent
 
 
-def test_all_four_tools_registered():
-    """Chat tutor needs three context tools + the graph-update tool."""
+def test_all_tools_registered():
+    """Chat tutor needs three context tools + two graph tools (add and update mastery)."""
     expected = {
         "search_course_materials_tool",
         "read_session_history_tool",
         "read_user_progress_tool",
         "apply_graph_update_tool",
+        "update_mastery_tool",
     }
     # Pydantic AI 1.89's tool registry is at agent._function_toolset.tools
     # (dict keyed by tool name) — see commit a850d31 for the gotcha.

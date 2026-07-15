@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import { TopBar } from "../TopBar";
-import { Pill } from "../Pill";
+import { FilterPills } from "@/components/ui";
 import { Icon } from "../Icon";
 import { AchievementsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
@@ -207,10 +207,12 @@ export function Achievements() {
         title="Achievements"
         subtitle={`${earned.length} earned · ${available.length} in progress`}
       />
-      <div style={{ padding: "14px 32px", display: "flex", gap: 6, borderBottom: "1px solid var(--border)" }}>
-        {cats.map((c) => (
-          <Pill key={c} active={filter === c} onClick={() => setFilter(c)}>{c}</Pill>
-        ))}
+      <div style={{ padding: "14px 32px", borderBottom: "1px solid var(--border)" }}>
+        <FilterPills
+          options={cats.map((c) => ({ value: c, label: c }))}
+          value={filter}
+          onChange={setFilter}
+        />
       </div>
 
       {loading && <AchievementsSkeleton />}

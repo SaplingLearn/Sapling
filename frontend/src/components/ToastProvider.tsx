@@ -125,6 +125,7 @@ function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: nu
             border: "1px solid",
             boxShadow: "var(--shadow-md)",
             fontSize: 13,
+            fontWeight: 500,
             display: "flex",
             alignItems: "flex-start",
             gap: 10,

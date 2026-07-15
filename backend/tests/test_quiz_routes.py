@@ -6,7 +6,7 @@ Covers:
 - POST /api/quiz/submit — answer grading and result shape
 - POST /api/quiz/submit — 404 when quiz not found
 - POST /api/quiz/generate — agent success path (quiz_agent.run mocked)
-- POST /api/quiz/generate — agent failure falls back to legacy
+- POST /api/quiz/generate — agent failure degrades to 502
 """
 import pytest
 from contextlib import contextmanager
@@ -18,6 +18,15 @@ from main import app
 from agents.quiz import Quiz, QuizQuestion
 
 client = TestClient(app)
+
+
+def _noop_ctx_agent():
+    """AsyncMock for quiz_context_agent.run to neutralize the post-submit
+    background context update in tests. The real run_agent_sync drives it; the
+    fake output.model_dump() yields an empty context."""
+    return AsyncMock(
+        return_value=SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))
+    )
 
 
 # ── Scoring formula (pure logic, no HTTP) ────────────────────────────────────
@@ -107,9 +116,14 @@ def _make_table(questions=None):
 def _submit_quiz_mocks(questions=None):
     with (
         patch("routes.quiz.table", side_effect=_make_table(questions)),
-        patch("routes.quiz.update_streak"),
+        # Mastery writes now route through apply_graph_update (the sanctioned
+        # graph path) instead of a direct graph_nodes.update.
+        patch("routes.quiz.apply_graph_update"),
         patch("routes.quiz.get_quiz_context", return_value={}),
-        patch("routes.quiz.call_gemini_json", return_value={}),
+        patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
+        # Also neutralize the persistence side of the background update so these
+        # submit tests don't do a hidden (mocked-table) write or swallow errors.
+        patch("routes.quiz.save_quiz_context"),
     ):
         yield
 
@@ -225,9 +239,9 @@ class TestSubmitQuiz:
             return mock
 
         with patch("routes.quiz.table", side_effect=factory):
-            with patch("routes.quiz.update_streak"):
+            with patch("routes.quiz.apply_graph_update"):
                 with patch("routes.quiz.get_quiz_context", return_value={}):
-                    with patch("routes.quiz.call_gemini_json", return_value={}):
+                    with patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()):
                         r = client.post("/api/quiz/submit", json={
                             "quiz_id": "quiz1",
                             "answers": [
@@ -343,11 +357,12 @@ class TestQuizNodeOwnership:
                 mock.update.return_value = []
             return mock
 
+        apply_mock = MagicMock()
         with (
             patch("routes.quiz.table", side_effect=factory),
-            patch("routes.quiz.update_streak"),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
             patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.call_gemini_json", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
         ):
             r = client.post("/api/quiz/submit", json={
                 "quiz_id": "quiz_a",
@@ -358,11 +373,201 @@ class TestQuizNodeOwnership:
             })
 
         assert r.status_code == 404
-        # No mastery write to the victim's node (or any node) occurred.
+        # No mastery write to the victim's node (or any node) occurred — neither
+        # a direct graph_nodes.update nor the sanctioned apply_graph_update path.
         assert update_calls == [], (
             "submit_quiz wrote to graph_nodes for a foreign concept node — "
             "IDOR regression (issue #157)."
         )
+        apply_mock.assert_not_called()
+
+
+# ── POST /api/quiz/generate — difficulty enum (0025 CHECK) ──────────────────
+
+
+class TestGenerateQuizDifficultyEnum:
+    """quiz_attempts.difficulty is CHECK-constrained to easy|medium|hard
+    (0025). The route rejects drift with a 400 before running the agent or
+    writing an attempt row."""
+
+    def test_invalid_difficulty_returns_400(self):
+        agent_run = AsyncMock()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 1,
+                "difficulty": "impossible",  # not in the CHECK set
+                "use_shared_context": False,
+            })
+        assert r.status_code == 400
+        # The agent must not run for an invalid difficulty.
+        agent_run.assert_not_called()
+
+    def test_valid_difficulty_passes_validation(self):
+        from types import SimpleNamespace
+        fake_quiz = Quiz(questions=[
+            QuizQuestion(
+                question="Q?", type="multiple_choice", difficulty="hard",
+                options=["a", "b", "c", "d"], correct_answer="a",
+                explanation="x", concept="X",
+            ),
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+            ),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 1,
+                "difficulty": "hard",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 200
+
+
+# ── POST /api/quiz/generate — num_questions bound (issue #XXX) ────────────────
+
+
+class TestGenerateQuizNumQuestionsBound:
+    """num_questions must be bounded to 1-10 inclusive. Requests outside
+    this range should return HTTP 422 (validation error) instead of
+    silently truncating to the schema max_length. This regression test
+    prevents the bug where num_questions > 10 silently returned ≤10
+    questions instead of erroring."""
+
+    def test_num_questions_over_cap_rejected(self):
+        """POST with num_questions=15 should return 422, not silently truncate."""
+        agent_run = AsyncMock()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 15,  # exceeds max_length=10
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 422
+        # The agent must not run for an over-cap num_questions.
+        agent_run.assert_not_called()
+
+    def test_num_questions_at_cap_accepted(self):
+        """POST with num_questions=10 (at the max) should succeed."""
+        from types import SimpleNamespace
+        fake_quiz = Quiz(questions=[
+            QuizQuestion(
+                question="Q?", type="multiple_choice", difficulty="medium",
+                options=["a", "b", "c", "d"], correct_answer="a",
+                explanation="x", concept="X",
+            )
+            for _ in range(10)
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+            ),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 10,
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 200
+
+    def test_num_questions_below_min_rejected(self):
+        """POST with num_questions=0 should return 422."""
+        agent_run = AsyncMock()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 0,  # below min=1
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 422
+        agent_run.assert_not_called()
+
+
+# ── POST /api/quiz/submit — mastery routes through apply_graph_update ────────
+
+
+class TestSubmitQuizMasteryWrite:
+    """0023 dropped graph_nodes.mastery_events; submit_quiz must NOT touch
+    that column. Mastery writes route through apply_graph_update (the
+    sanctioned graph path), keyed by concept_name + the abstract course id."""
+
+    def test_mastery_write_routes_through_apply_graph_update(self):
+        apply_mock = MagicMock()
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz1",
+                    "user_id": "user_andres",
+                    "concept_node_id": "node1",
+                    "difficulty": "medium",
+                    "questions_json": SAMPLE_QUESTIONS,
+                }]
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "mastery_score": 0.5,
+                    "concept_name": "Loops",
+                    "course_id": "course1",
+                }]
+            elif name == "users":
+                mock.select.return_value = [{"name": "Andres"}]
+            else:
+                mock.select.return_value = []
+            mock.update.return_value = []
+            return mock
+
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+
+        assert r.status_code == 200
+        apply_mock.assert_called_once()
+        args, kwargs = apply_mock.call_args
+        # user_id first, abstract course id passed (graph keys on abstract).
+        assert args[0] == "user_andres"
+        assert kwargs["course_id"] == "course1"
+        updated = args[1]["updated_nodes"]
+        assert len(updated) == 1
+        assert updated[0]["concept_name"] == "Loops"
+        # Perfect score → positive mastery delta.
+        assert updated[0]["mastery_delta"] > 0
+        # The response still reports before/after.
+        data = r.json()
+        assert data["mastery_after"] > data["mastery_before"]
 
 
 # ── POST /api/quiz/generate ──────────────────────────────────────────────────
@@ -526,57 +731,58 @@ class TestQuizAgentSuccess:
         assert payload["questions_json"][0]["id"] == 1
 
 
-class TestQuizAgentFallback:
-    """When the agent trips, the route runs the legacy generation pipeline."""
+class TestQuizContextUpdate:
+    """#145: the post-submit background task runs quiz_context_agent and persists
+    its model_dump() dict via save_quiz_context — no raw Gemini call."""
 
-    def _legacy_response(self):
-        # The legacy-shape question that the original quiz_generation prompt
-        # produces: id, question, options[{label,text,correct}], etc.
-        return {
-            "questions": [
-                {
-                    "id": 1,
-                    "question": "Legacy fallback question?",
-                    "options": [
-                        {"label": "A", "text": "wrong", "correct": False},
-                        {"label": "B", "text": "right", "correct": True},
-                    ],
-                    "explanation": "Because.",
-                    "concept_tested": "Loops",
-                    "difficulty": "easy",
-                },
-            ]
-        }
+    def test_saves_agent_model_dump(self):
+        from agents.quiz_context import QuizContext
 
-    def _patch_legacy_dependencies(self):
-        """Patch every dep _legacy_generate_quiz reaches for besides table()."""
-        return (
-            patch(
-                "routes.quiz.get_graph",
-                return_value={"nodes": [], "edges": []},
-            ),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch(
-                "routes.quiz.call_gemini_json",
-                return_value=self._legacy_response(),
-            ),
+        ctx = QuizContext(
+            weak_areas=["recursion base case"],
+            common_mistakes=["off-by-one"],
+            questions_seen_summary="loops and recursion",
+            recommended_difficulty="hard",
+            notes="solid on iteration",
         )
+        run = AsyncMock(return_value=SimpleNamespace(output=ctx))
+        saved = {}
 
-    def test_falls_back_to_legacy_on_usage_limit_exceeded(self):
+        def _save(uid, node_id, context):
+            saved["ctx"] = context
+
+        with (
+            patch("routes.quiz.table", side_effect=_make_table(None)),
+            patch("routes.quiz.apply_graph_update"),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=run),
+            patch("routes.quiz.save_quiz_context", side_effect=_save),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [{"question_id": 1, "selected_label": "A"}],
+            })
+
+        assert r.status_code == 200
+        run.assert_called_once()
+        # The background task saved exactly the agent output's model_dump().
+        assert saved["ctx"] == ctx.model_dump()
+        assert saved["ctx"]["recommended_difficulty"] == "hard"
+
+
+class TestQuizAgentDegrade:
+    """When the agent trips, the route degrades to HTTP 502 (the raw-Gemini
+    legacy fallback was retired in #145 — no second LLM path)."""
+
+    def test_degrades_on_usage_limit_exceeded(self):
         from pydantic_ai.exceptions import UsageLimitExceeded
 
-        get_graph_p, get_ctx_p, gemini_p = self._patch_legacy_dependencies()
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
             patch(
                 "routes.quiz.quiz_agent.run",
-                new=AsyncMock(
-                    side_effect=UsageLimitExceeded("token cap"),
-                ),
+                new=AsyncMock(side_effect=UsageLimitExceeded("token cap")),
             ),
-            get_graph_p as _get_graph,
-            get_ctx_p as _get_ctx,
-            gemini_p as gemini_mock,
         ):
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_andres",
@@ -585,25 +791,15 @@ class TestQuizAgentFallback:
                 "difficulty": "easy",
                 "use_shared_context": False,
             })
+        assert r.status_code == 502
 
-        assert r.status_code == 200
-        gemini_mock.assert_called_once()  # legacy path actually ran
-        q = r.json()["questions"][0]
-        assert q["question"] == "Legacy fallback question?"
-        # Wire format from legacy is preserved verbatim (it already matches).
-        assert q["options"][1]["correct"] is True
-
-    def test_falls_back_to_legacy_on_unexpected_exception(self):
-        get_graph_p, get_ctx_p, gemini_p = self._patch_legacy_dependencies()
+    def test_degrades_on_unexpected_exception(self):
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
             patch(
                 "routes.quiz.quiz_agent.run",
                 new=AsyncMock(side_effect=RuntimeError("boom")),
             ),
-            get_graph_p,
-            get_ctx_p,
-            gemini_p as gemini_mock,
         ):
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_andres",
@@ -612,23 +808,11 @@ class TestQuizAgentFallback:
                 "difficulty": "easy",
                 "use_shared_context": False,
             })
+        assert r.status_code == 502
 
-        assert r.status_code == 200
-        gemini_mock.assert_called_once()
-        assert r.json()["questions"][0]["question"] == "Legacy fallback question?"
-
-    def test_falls_back_to_legacy_when_all_questions_drift(self):
-        """Cascade: agent succeeds but every question fails wire-format
-        validation → _quiz_via_agent raises RuntimeError →
-        bare-Exception catch in generate_quiz routes to legacy.
-
-        This pins the path the 3 contract tests don't directly exercise
-        (they test _agent_question_to_wire in isolation; this exercises
-        the full route under the all-drift condition).
-        """
-        # Build a Quiz where every question's correct_answer doesn't
-        # appear in its options — schema-valid, but the wire-format
-        # check drops every one.
+    def test_degrades_when_all_questions_drift(self):
+        """Agent succeeds but every question fails wire-format validation ->
+        _quiz_via_agent raises RuntimeError -> bare-Exception catch -> 502."""
         drift_quiz = Quiz(questions=[
             QuizQuestion(
                 question=f"Q{i}?",
@@ -641,15 +825,10 @@ class TestQuizAgentFallback:
             )
             for i in range(3)
         ])
-
-        get_graph_p, get_ctx_p, gemini_p = self._patch_legacy_dependencies()
         agent_run_mock = AsyncMock(return_value=SimpleNamespace(output=drift_quiz))
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
             patch("routes.quiz.quiz_agent.run", new=agent_run_mock),
-            get_graph_p,
-            get_ctx_p,
-            gemini_p as gemini_mock,
         ):
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_andres",
@@ -658,15 +837,8 @@ class TestQuizAgentFallback:
                 "difficulty": "easy",
                 "use_shared_context": False,
             })
-
-        assert r.status_code == 200
-        # Pin BOTH halves of the cascade contract:
-        #   1. The agent path was actually tried (not skipped).
-        agent_run_mock.assert_called_once()
-        #   2. The legacy path then fired (every question dropped →
-        #      RuntimeError → bare-Exception catch → _legacy_generate_quiz).
-        gemini_mock.assert_called_once()
-        assert r.json()["questions"][0]["question"] == "Legacy fallback question?"
+        assert r.status_code == 502
+        agent_run_mock.assert_called_once()  # the agent path was actually tried
 
 
 # ── Wire-format contract: pinned by tests so silent drift can't recur ───────
@@ -748,6 +920,133 @@ class TestQuizWireFormatContract:
         # The matched option preserves its original (whitespace-padded)
         # text — the trim is only used for comparison.
         assert correct[0]["text"].strip() == "4"
+
+
+class TestQuizGrounding:
+    """_quiz_via_agent prepends a COURSE MATERIAL block (best-effort) and
+    the quiz still generates when grounding is absent."""
+
+    NODE = {"id": "node_x", "user_id": "user_1", "course_id": "course-uuid-1",
+            "concept_name": "dynamic programming"}
+
+    def _valid_quiz_result(self):
+        # quiz_agent.run(...) returns an object whose .output is a Quiz whose
+        # single question passes wire validation (correct_answer ∈ options).
+        from agents.quiz import Quiz, QuizQuestion
+        q = QuizQuestion(
+            question="What does memoization avoid?",
+            type="multiple_choice", difficulty="easy",
+            options=["Recomputation", "Sorting", "Hashing", "Recursion"],
+            correct_answer="Recomputation",
+            explanation="Memoization caches subproblem results.",
+            concept="dynamic programming",
+        )
+        return MagicMock(output=Quiz(questions=[q]))
+
+    def _table_factory(self, *, course_code="CAS CS 330"):
+        def factory(name):
+            m = MagicMock()
+            if name == "graph_nodes":
+                m.select.return_value = [self.NODE]
+            elif name == "courses":
+                m.select.return_value = [{"course_code": course_code}] if course_code else []
+            else:  # quiz_attempts insert, etc.
+                m.select.return_value = []
+                m.insert.return_value = []
+                m.update.return_value = []
+            return m
+        return factory
+
+    def test_resolve_bu_code_returns_course_code(self):
+        from routes.quiz import _resolve_bu_code
+        with patch("routes.quiz.table", side_effect=self._table_factory()):
+            assert _resolve_bu_code("course-uuid-1") == "CAS CS 330"
+
+    def test_resolve_bu_code_none_for_missing(self):
+        from routes.quiz import _resolve_bu_code
+        assert _resolve_bu_code(None) is None
+        with patch("routes.quiz.table", side_effect=self._table_factory(course_code=None)):
+            assert _resolve_bu_code("course-uuid-1") is None
+
+    def test_material_injected_when_chunks_exist(self):
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value="Course: CAS CS 330 ..."),
+            patch("routes.quiz.retrieve_chunks",
+                  return_value=[{"course_id": "CAS CS 330",
+                                 "chunk_text": "Memoization caches subproblem results.",
+                                 "similarity": 0.81}]),
+        ):
+            client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        msg = agent_run.call_args[0][0]
+        assert "COURSE MATERIAL" in msg
+        assert "Memoization caches subproblem results." in msg
+        assert "[GENERATE QUIZ]" in msg
+        assert "dynamic programming" in msg  # routing message preserved
+
+    def test_no_block_when_retrieval_empty(self):
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value=""),
+            patch("routes.quiz.retrieve_chunks", return_value=[]),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        msg = agent_run.call_args[0][0]
+        assert "COURSE MATERIAL" not in msg
+        assert r.status_code == 200
+
+    def test_retrieval_exception_is_swallowed(self):
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value=""),
+            patch("routes.quiz.retrieve_chunks", side_effect=RuntimeError("embed down")),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        assert r.status_code == 200  # grounding failure never 502s the quiz
+        assert "COURSE MATERIAL" not in agent_run.call_args[0][0]
+
+    def test_bu_code_resolution_failure_is_swallowed(self):
+        """A transient/erroring `courses` lookup (timeout, 5xx, malformed-id
+        400 from PostgREST) must degrade grounding to '' rather than
+        propagating out of _resolve_bu_code and 502ing the whole quiz."""
+        def factory(name):
+            m = MagicMock()
+            if name == "graph_nodes":
+                m.select.return_value = [self.NODE]
+            elif name == "courses":
+                m.select.side_effect = RuntimeError("db down")
+            else:  # quiz_attempts insert, etc.
+                m.select.return_value = []
+                m.insert.return_value = []
+                m.update.return_value = []
+            return m
+
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        assert r.status_code == 200  # bu_code resolution failure never 502s the quiz
+        assert "COURSE MATERIAL" not in agent_run.call_args[0][0]
 
 
 # ── Per-request model_pref (Fast/Smart toggle, mirrors chat tutor) ──────────
@@ -832,77 +1131,3 @@ class TestQuizModelPref:
         assert _resolve_model_pref(None) is None
         assert _resolve_model_pref("") is None
         assert _resolve_model_pref("auto") is None  # not in the map
-
-    def test_legacy_fallback_uses_smart_when_pref_smart(self):
-        """If the agent path trips and we fall through to legacy,
-        the same preference must propagate — call_gemini_json gets
-        MODEL_SMART instead of MODEL_LITE."""
-        from services.gemini_service import MODEL_SMART
-        run_mock = AsyncMock(side_effect=RuntimeError("agent boom"))
-        gemini_mock = MagicMock(return_value={"questions": [{
-            "id": 1, "question": "Q?",
-            "options": [{"label": "A", "text": "x", "correct": True}],
-            "explanation": ".", "concept_tested": "X", "difficulty": "easy",
-        }]})
-        with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
-            patch("routes.quiz.quiz_agent.run", new=run_mock),
-            patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": []}),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.call_gemini_json", new=gemini_mock),
-        ):
-            r = self._post({"model_pref": "smart"})
-        assert r.status_code == 200
-        # call_gemini_json was called with model=MODEL_SMART, not MODEL_LITE.
-        gemini_mock.assert_called_once()
-        assert gemini_mock.call_args.kwargs.get("model") == MODEL_SMART
-
-    def test_legacy_fallback_uses_lite_when_pref_fast(self):
-        """Symmetry contract: legacy "fast" must resolve to MODEL_LITE
-        (gemini-2.5-flash-lite) — same as the agent path's _PREF_MODEL_NAMES["fast"].
-        Pinned so a future change can't silently desynchronize the two paths.
-        """
-        from services.gemini_service import MODEL_LITE
-        run_mock = AsyncMock(side_effect=RuntimeError("agent boom"))
-        gemini_mock = MagicMock(return_value={"questions": [{
-            "id": 1, "question": "Q?",
-            "options": [{"label": "A", "text": "x", "correct": True}],
-            "explanation": ".", "concept_tested": "X", "difficulty": "easy",
-        }]})
-        with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
-            patch("routes.quiz.quiz_agent.run", new=run_mock),
-            patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": []}),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.call_gemini_json", new=gemini_mock),
-        ):
-            r = self._post({"model_pref": "fast"})
-        assert r.status_code == 200
-        gemini_mock.assert_called_once()
-        chosen = gemini_mock.call_args.kwargs.get("model")
-        assert chosen == MODEL_LITE, (
-            f"Legacy fast→{chosen!r} expected MODEL_LITE (gemini-2.5-flash-lite); "
-            f"matches the agent path's _PREF_MODEL_NAMES['fast']."
-        )
-
-    def test_legacy_fallback_uses_lite_when_no_pref(self):
-        """Default path (no model_pref) keeps using MODEL_LITE — the
-        cheap baseline that's been in place since the route shipped."""
-        from services.gemini_service import MODEL_LITE
-        run_mock = AsyncMock(side_effect=RuntimeError("agent boom"))
-        gemini_mock = MagicMock(return_value={"questions": [{
-            "id": 1, "question": "Q?",
-            "options": [{"label": "A", "text": "x", "correct": True}],
-            "explanation": ".", "concept_tested": "X", "difficulty": "easy",
-        }]})
-        with (
-            patch("routes.quiz.table", side_effect=_generate_table_factory()),
-            patch("routes.quiz.quiz_agent.run", new=run_mock),
-            patch("routes.quiz.get_graph", return_value={"nodes": [], "edges": []}),
-            patch("routes.quiz.get_quiz_context", return_value={}),
-            patch("routes.quiz.call_gemini_json", new=gemini_mock),
-        ):
-            r = self._post({})  # no model_pref
-        assert r.status_code == 200
-        gemini_mock.assert_called_once()
-        assert gemini_mock.call_args.kwargs.get("model") == MODEL_LITE

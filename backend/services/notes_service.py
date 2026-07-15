@@ -4,10 +4,14 @@ The encryption boundary lives entirely in this module: every write
 encrypts `title` and `body` before reaching Supabase; every read
 decrypts before returning. Routes never touch ciphertext directly.
 
-Schema (see backend/db/migration_notes.sql):
-    notes(id, user_id, course_id, title*, body*, tags text[],
-          last_summary*, last_summary_at, created_at, updated_at)
+Schema (see backend/db/migrations/0025_study_integrity.sql):
+    notes(id, user_id, offering_id, title*, body*, tags text[],
+          last_summary*, last_summary_at, created_at, updated_at, deleted_at)
     * = AES-GCM encrypted at rest.
+
+Notes key on the OFFERING (a course taught in a specific term), not the
+abstract catalog course. Soft-delete via `deleted_at`: deletes stamp the
+column and every read filters `deleted_at IS NULL`.
 """
 from __future__ import annotations
 
@@ -24,7 +28,7 @@ from services.encryption import (
 
 
 _SELECT_COLS = (
-    "id,user_id,course_id,title,body,tags,"
+    "id,user_id,offering_id,title,body,tags,"
     "last_summary,last_summary_at,created_at,updated_at"
 )
 
@@ -44,7 +48,7 @@ def _decrypt_row(row: dict) -> dict:
 
 async def create_note(
     user_id: str,
-    course_id: str,
+    offering_id: str,
     title: str = "",
     body: str = "",
     tags: list[str] | None = None,
@@ -54,7 +58,7 @@ async def create_note(
     row = {
         "id": note_id,
         "user_id": user_id,
-        "course_id": course_id,
+        "offering_id": offering_id,
         "title": encrypt_if_present(title) if title else None,
         "body": encrypt_if_present(body) if body else None,
         "tags": list(tags or []),
@@ -73,7 +77,11 @@ async def get_note(note_id: str, user_id: str) -> dict | None:
     def _fetch() -> list[dict]:
         return table("notes").select(
             _SELECT_COLS,
-            filters={"id": f"eq.{note_id}", "user_id": f"eq.{user_id}"},
+            filters={
+                "id": f"eq.{note_id}",
+                "user_id": f"eq.{user_id}",
+                "deleted_at": "is.null",
+            },
             limit=1,
         ) or []
 
@@ -85,11 +93,11 @@ async def get_note(note_id: str, user_id: str) -> dict | None:
 
 async def list_notes(
     user_id: str,
-    course_id: str | None = None,
+    offering_id: str | None = None,
 ) -> list[dict]:
-    filters: dict[str, str] = {"user_id": f"eq.{user_id}"}
-    if course_id:
-        filters["course_id"] = f"eq.{course_id}"
+    filters: dict[str, str] = {"user_id": f"eq.{user_id}", "deleted_at": "is.null"}
+    if offering_id:
+        filters["offering_id"] = f"eq.{offering_id}"
 
     def _fetch() -> list[dict]:
         return table("notes").select(
@@ -114,8 +122,8 @@ async def update_note(
         update["body"] = encrypt_if_present(patch["body"]) if patch["body"] else None
     if "tags" in patch:
         update["tags"] = list(patch["tags"] or [])
-    if "course_id" in patch:
-        update["course_id"] = patch["course_id"]
+    if "offering_id" in patch:
+        update["offering_id"] = patch["offering_id"]
 
     def _do() -> list[dict]:
         return table("notes").update(
@@ -130,8 +138,12 @@ async def update_note(
 
 
 async def delete_note(note_id: str, user_id: str) -> None:
+    """Soft delete (0025): stamp ``deleted_at`` instead of removing the row,
+    so reads filter it out while the data stays recoverable. Stays scoped to
+    the owner."""
     def _do() -> None:
-        table("notes").delete(
+        table("notes").update(
+            {"deleted_at": _now_iso()},
             filters={"id": f"eq.{note_id}", "user_id": f"eq.{user_id}"},
         )
 
@@ -153,7 +165,11 @@ async def save_summary(
     def _do() -> list[dict]:
         return table("notes").update(
             update,
-            filters={"id": f"eq.{note_id}", "user_id": f"eq.{user_id}"},
+            filters={
+                "id": f"eq.{note_id}",
+                "user_id": f"eq.{user_id}",
+                "deleted_at": "is.null",
+            },
         ) or []
 
     rows = await asyncio.to_thread(_do)
@@ -166,7 +182,11 @@ async def _note_belongs_to_user(note_id: str, user_id: str) -> bool:
     def _fetch() -> list[dict]:
         return table("notes").select(
             "id",
-            filters={"id": f"eq.{note_id}", "user_id": f"eq.{user_id}"},
+            filters={
+                "id": f"eq.{note_id}",
+                "user_id": f"eq.{user_id}",
+                "deleted_at": "is.null",
+            },
             limit=1,
         ) or []
     rows = await asyncio.to_thread(_fetch)

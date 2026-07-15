@@ -2,6 +2,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui";
 import {
   uploadSyllabus, applySyllabus, getCourses,
 } from "@/lib/api";
@@ -113,7 +114,7 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
                 onChange={(e) => setCourseId(e.target.value)}
                 style={{ width: "100%", padding: 6, border: "1px solid var(--border)", borderRadius: 6 }}
               >
-                <option value="">— Pick a course —</option>
+                <option value="">Pick a course</option>
                 {courses.map((c) => (
                   <option key={c.course_id} value={c.course_id}>
                     {c.course_code} · {c.course_name}
@@ -210,18 +211,14 @@ export function SyllabusUploadFlow({ open, userId, onClose }: Props) {
 
             <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button type="button" onClick={onClose}>Cancel</button>
-              <button
-                type="button"
+              <Button
+                variant="primary"
+                size="sm"
                 disabled={!weightsValid}
                 onClick={handleSave}
-                style={{
-                  background: weightsValid ? "var(--accent)" : "var(--bg-soft)",
-                  color: weightsValid ? "#fff" : "var(--text-dim)",
-                  border: 0, borderRadius: 6, padding: "6px 14px",
-                }}
               >
                 Save to gradebook
-              </button>
+              </Button>
             </div>
           </>
         )}

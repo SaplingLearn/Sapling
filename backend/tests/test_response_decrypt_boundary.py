@@ -24,8 +24,7 @@ class TestGradebookCreateAssignmentResponse:
     def test_response_is_decrypted_not_ciphertext(self):
         stored = {
             "id": "a1",
-            "user_id": "user_andres",
-            "course_id": "c1",
+            "enrollment_id": "enr1",
             "category_id": None,
             "title": "HW1",
             "due_date": "2026-03-01",
@@ -35,7 +34,9 @@ class TestGradebookCreateAssignmentResponse:
             "notes": encrypt_if_present("Study chapters 1-3"),
             "source": "manual",
         }
-        with patch("routes.gradebook._user_owns_course", return_value=True), \
+        # Resolve to an enrollment (academics-split shape) and capture the insert.
+        enr = {"id": "enr1", "user_id": "user_andres", "offering_id": "off1"}
+        with patch("routes.gradebook._resolve_enrollment", return_value=enr), \
              patch("routes.gradebook.table") as t:
             t.return_value.insert.return_value = [dict(stored)]
             r = client.post(
@@ -60,21 +61,23 @@ class TestGradebookCreateAssignmentResponse:
 
 
 class TestProfileSettingsPatchResponse:
-    """#19: PATCH /settings returned a raw select of _SETTINGS_COLS with no
-    decrypt, unlike GET — so bio/location came back as ciphertext."""
+    """#19 + migration 0024: bio/location were dropped from user_settings and now
+    live on user_profiles (set via PATCH /profile, not /settings). The #19 leak —
+    PATCH /settings echoing ciphertext bio/location — is now structurally
+    impossible because the settings SELECT no longer carries those columns. This
+    test pins that: the settings response must NOT contain bio/location at all.
+    """
 
-    def test_response_is_decrypted_not_ciphertext(self):
+    def test_settings_response_omits_profile_fields(self):
+        # A stale user_settings row that still had ciphertext bio/location must
+        # never surface them — the SELECT column list excludes them post-0024.
         stored = {
             "user_id": "user_andres",
-            "bio": encrypt_if_present("my secret bio"),
-            "location": encrypt_if_present("Boston, MA"),
             "theme": "dark",
             "profile_visibility": "public",
         }
 
         with patch("routes.profile.table") as t:
-            # Fresh copy per call so _get_or_create_settings' in-place decrypt
-            # doesn't bleed across the two selects it performs.
             t.return_value.select.side_effect = lambda *a, **k: [dict(stored)]
             r = client.patch(
                 "/api/profile/user_andres/settings",
@@ -83,6 +86,7 @@ class TestProfileSettingsPatchResponse:
 
         assert r.status_code == 200
         body = r.json()
-        # Pre-fix bio/location came back as ciphertext.
-        assert body["bio"] == "my secret bio"
-        assert body["location"] == "Boston, MA"
+        # bio/location/username/website are owned by user_profiles now — not here.
+        assert "bio" not in body
+        assert "location" not in body
+        assert body["profile_visibility"] == "public"

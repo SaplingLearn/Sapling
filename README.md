@@ -23,6 +23,7 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 * **Adaptive Quizzes** — AI-generated quizzes targeting your weakest concepts, with difficulty scaling based on your performance and spaced-repetition scheduling that resurfaces concepts you've missed before.
 * **Flashcards** — Generate AI flashcards per course, or import them from paste, file (CSV/Markdown/Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (Easy / Hard / Forgot).
 * **Gradebook** — Track your real-world grade per course. Categories + weights, per-assignment scores, per-course letter-scale overrides, and current grade calculation. Upload a syllabus and Sapling extracts categories and assignments automatically.
+* **Gradescope Sync** — Link a Sapling course to a Gradescope course and pull assignment grades in automatically. Sign in with a Gradescope email/password or, for BU accounts, a live SSO + Duo 2FA flow; credentials are stored encrypted and re-authenticated fresh on each sync.
 * **Study Guide** — Generate a Gemini-powered exam study guide from your uploaded course materials. Guides are cached per exam and can be regenerated at any time.
 * **Class Intelligence** — Aggregates anonymized class-wide patterns to surface common misconceptions and weak areas, personalizing your sessions.
 * **Calendar & Syllabus Tracking** — Paste your syllabus and Sapling extracts assignments, deadlines, and topics automatically.
@@ -45,6 +46,7 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 * **Streaming** — `sse-starlette` Server-Sent Events on `POST /api/documents/upload` for live per-phase progress. The frontend SSE consumer (`frontend/src/lib/sse.ts`) parses the wire format from a fetch ReadableStream so it works with multipart POSTs (which `EventSource` can't do).
 * **Observability** — [Logfire](https://logfire.pydantic.dev) auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom span scrubber (`backend/services/logfire_scrubber.py`) truncates and SHA-256-fingerprints risky attribute paths (prompt text, model output, message content) before egress so user-uploaded document text never ships verbatim. `genai-prices` provides per-call cost telemetry. Per-request structured logging includes a correlation ID, status, and duration.
 * **OCR** — Docling (layout-aware PDF → Markdown) with GOT-OCR 2.0 fallback for math/handwriting; Tesseract retained as a legacy fallback.
+* **Gradescope sync** — Per-user grade import via the unofficial `gradescopeapi` client, plus a Playwright headless-Chromium flow for BU SSO + Duo 2FA sign-in (run `playwright install chromium` after `pip install`). Credentials are stored encrypted and the app re-authenticates fresh on each sync.
 * **Database** — Supabase (PostgreSQL) for all persistent data
 * **Encryption** — AES-256-GCM column-level encryption (via the `cryptography` library) for user PII, document summaries/concept notes, OAuth tokens, chat messages, and gradebook notes
 * **Deploy** — Frontend on Cloudflare Workers via `@opennextjs/cloudflare`
@@ -109,6 +111,17 @@ npm run dev                # → http://localhost:3000
 - `DELETE` `/api/gradebook/assignments/{assignment_id}` — Delete an assignment
 - `PATCH` `/api/gradebook/courses/{course_id}/scale` — Override the per-course letter-grade scale
 - `POST`  `/api/gradebook/syllabus/apply` — Apply a parsed syllabus (replaces categories, dedupes assignments)
+
+**Gradescope**
+- `POST`   `/api/gradescope/credentials` — Test a Gradescope login, then save encrypted email/password credentials
+- `POST`   `/api/gradescope/credentials/bu-sso` — Live BU SSO sign-in via headless Chromium (WebLogin + Duo), storing session cookies
+- `DELETE` `/api/gradescope/credentials` — Remove stored credentials
+- `GET`    `/api/gradescope/status` — Whether credentials are saved and when the user last synced
+- `GET`    `/api/gradescope/courses` — List the user's Gradescope student courses (live)
+- `GET`    `/api/gradescope/links` — List Sapling-course → Gradescope-course mappings
+- `POST`   `/api/gradescope/link` — Create or update a course mapping
+- `DELETE` `/api/gradescope/link/{sapling_course_id}` — Remove a course mapping
+- `POST`   `/api/gradescope/sync/{sapling_course_id}` — Pull assignments from the linked Gradescope course and upsert grades into the gradebook
 
 **Study Guide**
 - `GET`  `/api/study-guide/{user_id}/guide` — Get (or generate) a study guide for an exam
@@ -215,9 +228,12 @@ npm run dev                # → http://localhost:3000
 | `ENCRYPTION_KEY` | ✅ | AES-256-GCM key for column-level encryption (32 bytes as 64 hex chars; generate with `python -c "import secrets; print(secrets.token_hex(32))"`) |
 | `PORT` | — | Backend port (default `5000`) |
 | `FRONTEND_URL` | — | Allowed CORS origin (default `http://localhost:3000`) |
+| `APP_ENV` | — | Deployment environment (default `production`, fail-closed checks). Set `local` for local dev (relaxes `SESSION_SECRET`); set `staging` on the staging deploy (adds a noindex header, still fail-closed). |
 | `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (for sign-in and Calendar) |
 | `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
 | `SESSION_SECRET` | — | HMAC secret for session tokens (min 32 bytes) |
+| `ALLOWED_EMAIL_DOMAINS` | — | Comma-separated sign-in email-domain allowlist (default `bu.edu`). Empty value disables the check (any domain may sign in). |
+| `SUPABASE_DB_URL` | — | Supabase **direct** connection string (port 5432, not the pooler) — used only by the `db.migrate` migration runner, never at app runtime |
 | `LOGFIRE_TOKEN` | — | If set, traces ship to logfire.pydantic.dev. Without it, Logfire stays local-only. The Sapling scrubber redacts prompt/output content before egress regardless. |
 | `SAPLING_MODEL_CLASSIFIER` | — | Override classifier-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_SUMMARY` | — | Override summary-agent model (default `gemini-2.5-flash-lite`) |
@@ -299,19 +315,17 @@ The `.github/workflows/evals.yml` workflow runs replay-mode in CI; it's currentl
 
 ## Migrations
 
-The agentic refactor added one schema migration that must be applied to staging and prod before idempotency dedupe takes effect (the route code degrades gracefully if the column is missing, so deploying without running it is safe but the dedupe is a no-op):
+Schema lives as ordered SQL files in `backend/db/migrations/` (numeric prefix = apply order, `0001`–`0030`). A minimal runner (`backend/db/migrate.py`) applies pending files in order and records each in a tracking table, so it's idempotent — re-running only applies what's new. The runner connects directly with `psycopg` over the Supabase **direct** connection string (`SUPABASE_DB_URL`, not the pooler); this is the one sanctioned exception to the `db/connection.py::table()`-only convention, since runtime PostgREST can't execute DDL.
 
-```sql
--- backend/db/migration_documents_request_id.sql
-ALTER TABLE documents
-  ADD COLUMN IF NOT EXISTS request_id text;
-
-CREATE UNIQUE INDEX IF NOT EXISTS documents_request_id_user_unique
-  ON documents (user_id, request_id)
-  WHERE request_id IS NOT NULL;
+```bash
+cd backend
+SUPABASE_DB_URL=postgresql://... python -m db.migrate            # apply pending
+SUPABASE_DB_URL=postgresql://... python -m db.migrate --baseline # record all as applied without running (adopting an existing DB)
 ```
 
-Apply via the Supabase SQL editor or your migration tool of choice. Idempotent — safe to re-run.
+Migrations `0019`–`0028` are the **modular schema redesign**: courses split into an abstract `courses` table plus `course_offerings` and `terms`, `user_courses` became `enrollments`, identity split into `users` + `user_profiles`, the gradebook re-keyed onto `enrollment_id`, analytics re-keyed onto offerings, and the graph gained append-only `node_mastery_events`. The public API boundary still keys on the abstract `course_id`.
+
+For staging, after applying migrations you can lay down a self-contained fake demo dataset (graph + gradebook + courses-with-term) with `python -m db.seed_staging` — idempotent and **staging-only**, never run it against production. See `docs/staging/setup-checklist.md` for the full staging bring-up.
 
 ## License
 

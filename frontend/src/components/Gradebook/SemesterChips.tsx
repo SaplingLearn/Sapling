@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { Toggle } from "@/components/ui";
 
 interface Props {
   semesters: string[];
@@ -9,30 +10,13 @@ interface Props {
 
 export function SemesterChips({ semesters, selected, onSelect }: Props) {
   return (
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
-      {semesters.map((s) => {
-        const active = s === selected;
-        return (
-          <button
-            key={s}
-            type="button"
-            onClick={() => onSelect(s)}
-            style={{
-              padding: "4px 12px",
-              borderRadius: 999,
-              border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
-              background: active ? "var(--accent)" : "var(--bg)",
-              color: active ? "#fff" : "var(--text)",
-              fontSize: 12,
-              fontWeight: active ? 600 : 400,
-              cursor: "pointer",
-              transition: "all var(--dur-fast) var(--ease)",
-            }}
-          >
-            {s}
-          </button>
-        );
-      })}
+    <div style={{ marginBottom: 16 }}>
+      <Toggle
+        options={semesters.map((s) => ({ value: s, label: s }))}
+        value={selected}
+        onChange={onSelect}
+        size="sm"
+      />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import Link from "next/link";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { Avatar } from "../Avatar";
@@ -606,6 +607,28 @@ export function Settings() {
               {t}
             </button>
           ))}
+          {/* Connected accounts lives at its own route so we can list providers
+              independently of the in-page tab state. Styled like a tab button
+              for visual continuity with the rest of the sidebar. */}
+          <Link
+            href="/settings/connections"
+            style={{
+              display: "block",
+              width: "100%",
+              textAlign: "left",
+              padding: "8px 12px",
+              fontSize: 13,
+              color: "var(--text-dim)",
+              borderRadius: "var(--r-sm)",
+              marginTop: 6,
+              textDecoration: "none",
+              borderTop: "1px solid var(--border)",
+              paddingTop: 14,
+              transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+            }}
+          >
+            Connected accounts ↗
+          </Link>
         </div>
       </div>
 
@@ -855,6 +878,7 @@ function CosmeticPreview({
           <img
             src={cosmetic.asset_url}
             alt=""
+            loading="lazy"
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", objectFit: "contain" }}
           />
         )}
@@ -864,7 +888,7 @@ function CosmeticPreview({
   if (cosmetic.type === "banner" && cosmetic.asset_url) {
     return (
       <div style={{ width: "100%", height: 48, borderRadius: "var(--r-sm)", overflow: "hidden", border: "1px solid var(--border)" }}>
-        <img src={cosmetic.asset_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <img src={cosmetic.asset_url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       </div>
     );
   }

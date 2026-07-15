@@ -10,6 +10,7 @@ import { ChatPanel, type ChatMsg } from "../ChatPanel";
 import { SessionSummary } from "../SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../SharedContextToggle";
 import { ModelToggle, useModelPref } from "../ModelToggle";
+import { Toggle } from "@/components/ui";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { KnowledgeGraph } from "../KnowledgeGraph";
@@ -29,6 +30,9 @@ import {
   learnAction,
   getCourses,
   getGraph,
+  deleteGraphNode,
+  describeConcept,
+  IS_LOCAL_MODE,
   type Session,
   type SessionSummaryData,
   type EnrolledCourse,
@@ -51,6 +55,20 @@ const MODES: { id: Mode; name: string; tip: string }[] = [
 const VALID_MODES: Mode[] = ["socratic", "expository", "teachback"];
 const SESSION_END_COUNT_KEY = "sapling_session_end_count";
 const LAST_SESSION_CTX_KEY = "sapling_last_session_context";
+const RAIL_OPEN_KEY = "sapling_learn_rail_open";
+const RAIL_WIDTH = 400;
+
+// Mastery-tier vocabulary for the knowledge-map rail. Colors reuse the shared
+// --state-* tokens (same palette as Tree/Dashboard); labels follow the map's
+// student-facing wording. Note: the graph itself colors nodes by course, not
+// tier — these swatches document the branch list + focus badge.
+const TIER_META: Record<GraphNode["mastery_tier"], { label: string; color: string }> = {
+  mastered: { label: "Mastered", color: "var(--state-mastery)" },
+  learning: { label: "In progress", color: "var(--state-progress)" },
+  struggling: { label: "Needs work", color: "var(--state-struggle)" },
+  unexplored: { label: "Not started", color: "var(--state-neutral)" },
+};
+const TIER_ORDER: GraphNode["mastery_tier"][] = ["mastered", "learning", "struggling", "unexplored"];
 
 function normalizeMode(input: string | null): Mode {
   if (!input) return "socratic";
@@ -95,12 +113,34 @@ function LearnInner() {
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
 
+  // The rail's focused node — independent of the active session's topic, so
+  // clicking around the map explores without touching the chat. Null means the
+  // focus follows the current session topic. `lastNodeClickRef` powers the
+  // double-click-to-switch shortcut.
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const lastNodeClickRef = useRef<{ id: string; t: number } | null>(null);
+  // Inline "add concept" composer state for the knowledge-map rail.
+  const [addingConcept, setAddingConcept] = useState(false);
+  const [newConceptName, setNewConceptName] = useState("");
+  // AI-generated concept descriptions, fetched lazily for the focused concept
+  // when it has no stored description (keyed by node id). `descInflightRef`
+  // dedupes concurrent fetches for the same node.
+  const [descCache, setDescCache] = useState<Record<string, string>>({});
+  const descInflightRef = useRef<Set<string>>(new Set());
+
   const [summary, setSummary] = useState<SessionSummaryData | null>(null);
   const [mobileTab, setMobileTab] = useState<"chat" | "graph">("chat");
   const idCounter = useRef(0);
   const msgId = () => `m-${++idCounter.current}`;
   // Tracks each session's last server-confirmed topic so back-to-back rename failures revert to the right value.
   const confirmedTopicsRef = useRef<Map<string, string>>(new Map());
+
+  // Collapsible knowledge-map rail (desktop only). `dragWidth` is non-null
+  // only mid-drag, when it drives the live width and the CSS transition is off.
+  const [railOpen, setRailOpen] = useState(true);
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const railDragRef = useRef<{ startX: number; startWidth: number; width: number; moved: boolean; pointerId: number } | null>(null);
+  const [railHydrated, setRailHydrated] = useState(false);
 
   // Initial data load
   useEffect(() => {
@@ -153,14 +193,37 @@ function LearnInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  const handleStart = async () => {
-    const t = topicDraft.trim();
-    if (!t || !userId) return;
-    setTopic(t);
+  // Restore the rail's open/closed state on mount, then persist changes. The
+  // `railHydrated` state flips true only after the stored value is applied, and
+  // the persist effect is gated on it (and re-runs when it flips), so the
+  // initial value can't be written back before hydration completes.
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(RAIL_OPEN_KEY);
+      if (v != null) setRailOpen(v === "1");
+    } catch {}
+    setRailHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (!railHydrated) return;
+    try {
+      localStorage.setItem(RAIL_OPEN_KEY, railOpen ? "1" : "0");
+    } catch {}
+  }, [railOpen, railHydrated]);
+
+  // Begins a fresh tutor session on `t`. Shared by the entry-screen Start
+  // button and the knowledge-map switch flow. Clears any map focus so the rail
+  // snaps back to following the (new) active topic.
+  const beginSession = async (t: string) => {
+    const topicName = t.trim();
+    if (!topicName || !userId) return;
+    setFocusedNodeId(null);
+    setTopic(topicName);
+    setTopicDraft(topicName);
     setMessages([{ id: msgId(), role: "assistant", content: "", loading: true }]);
     setStarting(true);
     try {
-      const res = await startSession(userId, t, mode, selectedCourseId || undefined, sharedCtx, modelPref);
+      const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref);
       setSessionId(res.session_id);
       setMessages([{ id: msgId(), role: "assistant", content: res.initial_message || "Let's begin." }]);
     } catch (err) {
@@ -170,6 +233,8 @@ function LearnInner() {
       setStarting(false);
     }
   };
+
+  const handleStart = () => beginSession(topicDraft);
 
   const handleResume = async (s: Session) => {
     try {
@@ -351,15 +416,84 @@ function LearnInner() {
     return graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id;
   }, [suggestParam, graphNodes, topic]);
 
-  const handleNodeClick = useCallback((n: GraphNode) => {
-    if (!n.is_subject_root) {
-      router.replace(`/learn?topic=${encodeURIComponent(n.name)}&mode=${mode}`, { scroll: false });
+  // Jump the chat to `name`: resume an existing session on that concept if one
+  // exists, otherwise start a fresh one. Both paths clear the map focus so the
+  // rail follows the now-active session.
+  const switchToConcept = (name: string) => {
+    const existing = recentSessions.find(
+      s => s.topic.trim().toLowerCase() === name.trim().toLowerCase(),
+    );
+    if (existing) {
+      setFocusedNodeId(null);
+      handleResume(existing);
+    } else {
+      beginSession(name);
     }
-  }, [router, mode]);
+  };
 
+  // Single click focuses a concept in the rail (chat untouched); a second click
+  // on the same node within 350ms switches the session to it.
+  const handleNodeClick = (n: GraphNode) => {
+    if (n.is_subject_root) return;
+    const now = Date.now();
+    const last = lastNodeClickRef.current;
+    lastNodeClickRef.current = { id: n.id, t: now };
+    if (last && last.id === n.id && now - last.t < 350) {
+      switchToConcept(n.name);
+    } else {
+      setFocusedNodeId(n.id);
+    }
+  };
+
+  // Edge-tab pointer handling: grab-drag moves the rail width live; a sub-4px
+  // press is treated as a click (toggle). On release we snap open/closed at the
+  // halfway point. The tab lives on the rail's left edge, so dragging right
+  // (toward the screen edge) collapses it.
+  const onRailTabPointerDown = (e: React.PointerEvent) => {
+    if (isMobile) return;
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    const startWidth = railOpen ? RAIL_WIDTH : 0;
+    railDragRef.current = { startX: e.clientX, startWidth, width: startWidth, moved: false, pointerId: e.pointerId };
+    setDragWidth(startWidth);
+  };
+  const onRailTabPointerMove = (e: React.PointerEvent) => {
+    const d = railDragRef.current;
+    if (!d || e.pointerId !== d.pointerId) return;
+    const dx = e.clientX - d.startX;
+    if (Math.abs(dx) > 4) d.moved = true;
+    const next = Math.max(0, Math.min(RAIL_WIDTH, d.startWidth - dx));
+    d.width = next;
+    setDragWidth(next);
+  };
+  // Shared drag terminator. A cancellation (or an event from a stray pointer
+  // that isn't the one that started the drag) clears state without toggling or
+  // snapping the rail.
+  const endRailDrag = (e: React.PointerEvent, cancelled: boolean) => {
+    const d = railDragRef.current;
+    if (!d || e.pointerId !== d.pointerId) return;
+    railDragRef.current = null;
+    try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch {}
+    setDragWidth(null);
+    if (cancelled) return;
+    if (!d.moved) { setRailOpen(o => !o); return; }
+    setRailOpen(d.width >= RAIL_WIDTH / 2);
+  };
+  const onRailTabPointerUp = (e: React.PointerEvent) => endRailDrag(e, false);
+  const onRailTabPointerCancel = (e: React.PointerEvent) => endRailDrag(e, true);
+  const onRailTabKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setRailOpen(o => !o);
+    }
+  };
+
+  // The rail focus: an explicitly-clicked node when present, otherwise the
+  // node for the active session topic. Drives the graph highlight, focus card,
+  // "In this branch", and "Elsewhere".
+  const activeFocusId = focusedNodeId ?? highlightId;
   const topicNode = useMemo(
-    () => graphNodes.find(n => n.id === highlightId),
-    [graphNodes, highlightId],
+    () => graphNodes.find(n => n.id === activeFocusId),
+    [graphNodes, activeFocusId],
   );
 
   const neighborIds = useMemo(() => {
@@ -373,20 +507,24 @@ function LearnInner() {
   }, [topicNode, graphEdges]);
 
   const cardCourseId = topicNode?.course_id || selectedCourseId || null;
+  const cardCourse = useMemo(
+    () => courses.find(c => c.course_id === cardCourseId) ?? null,
+    [courses, cardCourseId],
+  );
 
   const progressItems = useMemo(() => {
     if (topicNode && neighborIds.size > 0) {
       return graphNodes
         .filter(n => neighborIds.has(n.id) && !n.is_subject_root)
         .slice(0, 6)
-        .map(n => ({ name: n.name, complete: n.mastery_tier === "mastered" }));
+        .map(n => ({ id: n.id, name: n.name, tier: n.mastery_tier }));
     }
     if (cardCourseId) {
       return graphNodes
         .filter(n => n.course_id === cardCourseId && !n.is_subject_root)
         .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
         .slice(0, 6)
-        .map(n => ({ name: n.name, complete: n.mastery_tier === "mastered" }));
+        .map(n => ({ id: n.id, name: n.name, tier: n.mastery_tier }));
     }
     return [];
   }, [graphNodes, neighborIds, topicNode, cardCourseId]);
@@ -402,7 +540,7 @@ function LearnInner() {
         )
         .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
         .slice(0, 4)
-        .map(n => n.name);
+        .map(n => ({ id: n.id, name: n.name }));
     }
     if (cardCourseId) {
       const topicLower = topic.trim().toLowerCase();
@@ -414,18 +552,92 @@ function LearnInner() {
         )
         .sort((a, b) => (b.mastery_score ?? 0) - (a.mastery_score ?? 0))
         .slice(0, 4)
-        .map(n => n.name);
+        .map(n => ({ id: n.id, name: n.name }));
     }
     return [];
   }, [graphNodes, neighborIds, topicNode, cardCourseId, topic]);
 
-  const startSessionFromConcept = useCallback((concept: string) => {
-    setSessionId(null);
-    setMessages([]);
-    setTopicDraft(concept);
-    setTopic(concept);
-    router.replace(`/learn?topic=${encodeURIComponent(concept)}&mode=${mode}`, { scroll: false });
-  }, [router, mode]);
+  // The rail graph shows only the focused course's tree (its subject root +
+  // its concepts), not the full multi-course graph. Falls back to the whole
+  // graph when no course is resolved (free-text topic with no enrollment).
+  const railGraph = useMemo(() => {
+    if (!cardCourseId) return { nodes: graphNodes, edges: graphEdges };
+    const nodes = graphNodes.filter(n => n.course_id === cardCourseId);
+    if (nodes.length === 0) return { nodes: graphNodes, edges: graphEdges };
+    const ids = new Set(nodes.map(n => n.id));
+    const edges = graphEdges.filter(e => ids.has(e.source as string) && ids.has(e.target as string));
+    return { nodes, edges };
+  }, [graphNodes, graphEdges, cardCourseId]);
+
+  // The focus card anchors on the specific concept when the session topic is
+  // one; otherwise (course-level session) it anchors on the course itself.
+  const focusConcept = topicNode && !topicNode.is_subject_root ? topicNode : null;
+  const courseConceptCount = railGraph.nodes.filter(n => !n.is_subject_root).length;
+
+  // Whether the focused concept is the one already being chatted about (no
+  // switch needed), and whether a prior session exists to resume vs. start.
+  const focusIsCurrent = !!focusConcept && focusConcept.name.trim().toLowerCase() === topic.trim().toLowerCase();
+  const focusHasSession = !!focusConcept && recentSessions.some(
+    s => s.topic.trim().toLowerCase() === focusConcept.name.trim().toLowerCase(),
+  );
+
+  // Lazily fetch an AI description for the focused concept when it lacks a
+  // stored one (e.g. a manually-added concept). Skipped in local mode, which
+  // has no real AI — those fall back to the connected-concepts sentence.
+  const focusId = focusConcept?.id;
+  const focusName = focusConcept?.name;
+  const focusDesc = focusConcept?.description;
+  const focusCourseName = cardCourse?.course_name;
+  useEffect(() => {
+    if (IS_LOCAL_MODE || !userId || !focusId || !focusName) return;
+    if (focusDesc || descCache[focusId] || descInflightRef.current.has(focusId)) return;
+    descInflightRef.current.add(focusId);
+    let cancelled = false;
+    describeConcept(userId, focusName, focusCourseName)
+      .then(r => {
+        if (!cancelled && r?.description) {
+          setDescCache(prev => ({ ...prev, [focusId]: r.description }));
+        }
+      })
+      .catch(() => {})
+      .finally(() => { descInflightRef.current.delete(focusId); });
+    return () => { cancelled = true; };
+  }, [userId, focusId, focusName, focusDesc, focusCourseName, descCache]);
+
+  // Manually add a concept to the current course. The new node links to the
+  // focused concept (or the course root) so it joins the tree, starts as
+  // "unexplored", and becomes the focus. State-first so it works in local mode;
+  // real-backend persistence for add would need a dedicated endpoint.
+  const addConcept = (name: string) => {
+    const label = name.trim();
+    if (!label || !cardCourseId) return;
+    const root = graphNodes.find(n => n.is_subject_root && n.course_id === cardCourseId);
+    const anchorId = focusConcept?.id ?? root?.id;
+    const id = `node-new-${Date.now()}`;
+    const newNode: GraphNode = {
+      id,
+      name: label,
+      subject: cardCourse?.course_name ?? root?.subject ?? "",
+      color: root?.color ?? "var(--c-sage)",
+      mastery_tier: "unexplored",
+      mastery_score: 0,
+      course_id: cardCourseId,
+    };
+    setGraphNodes(prev => [...prev, newNode]);
+    if (anchorId) setGraphEdges(prev => [...prev, { source: anchorId, target: id, strength: 0.4 }]);
+    setFocusedNodeId(id);
+    setNewConceptName("");
+    setAddingConcept(false);
+  };
+
+  // Remove a concept: drop the node + its edges and clear focus if it was
+  // focused. Best-effort persistence via the delete endpoint on real backends.
+  const removeConcept = (nodeId: string) => {
+    setGraphNodes(prev => prev.filter(n => n.id !== nodeId));
+    setGraphEdges(prev => prev.filter(e => e.source !== nodeId && e.target !== nodeId));
+    setFocusedNodeId(cur => (cur === nodeId ? null : cur));
+    if (!IS_LOCAL_MODE && userId) deleteGraphNode(userId, nodeId).catch(() => {});
+  };
 
   // ────────── Entry screen (no active session) ──────────
   if (!sessionId && !starting) {
@@ -468,25 +680,12 @@ function LearnInner() {
               selectedCourseId={selectedCourseId}
             />
             <div className="label-micro" style={{ marginBottom: 8 }}>Mode</div>
-            <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
-              {MODES.map(m => (
-                <button
-                  key={m.id}
-                  onClick={() => setMode(m.id)}
-                  title={m.tip}
-                  style={{
-                    padding: "8px 16px",
-                    borderRadius: "var(--r-full)",
-                    fontSize: 13,
-                    fontWeight: 500,
-                    background: mode === m.id ? "var(--accent)" : "var(--bg-subtle)",
-                    color: mode === m.id ? "var(--accent-fg)" : "var(--text-dim)",
-                    border: mode === m.id ? "1px solid var(--accent)" : "1px solid var(--border)",
-                  }}
-                >
-                  {m.name}
-                </button>
-              ))}
+            <div style={{ marginBottom: 20 }}>
+              <Toggle
+                options={MODES.map(m => ({ value: m.id, label: m.name, title: m.tip }))}
+                value={mode}
+                onChange={setMode}
+              />
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
@@ -511,6 +710,8 @@ function LearnInner() {
   }
 
   // ────────── Active session ──────────
+  const railDragging = dragWidth != null;
+  const railW = railDragging ? (dragWidth as number) : railOpen ? RAIL_WIDTH : 0;
   return (
     <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
       <DisclaimerModal />
@@ -537,7 +738,7 @@ function LearnInner() {
         </div>
       )}
 
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+      <div style={{ display: "flex", flex: 1, minHeight: 0, position: "relative" }}>
         {(!isMobile || mobileTab === "chat") && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
             <TopBar
@@ -591,55 +792,354 @@ function LearnInner() {
         {(!isMobile || mobileTab === "graph") && (
           <aside
             style={{
-              width: isMobile ? "100%" : 320,
-              borderLeft: isMobile ? "none" : "1px solid var(--border)",
-              background: "var(--bg-subtle)",
-              padding: 20,
-              overflowY: "auto",
-              display: "flex",
-              flexDirection: "column",
-              gap: 16,
+              width: isMobile ? "100%" : railW,
+              minWidth: isMobile ? undefined : railW,
+              flexShrink: 0,
+              overflow: "hidden",
+              transition: isMobile || railDragging
+                ? "none"
+                : "width var(--dur) var(--ease), min-width var(--dur) var(--ease)",
             }}
           >
-            <div>
-              <div className="label-micro">Session</div>
-              <div className="h-serif" style={{ fontSize: 18, marginTop: 4 }}>{topic}</div>
+            {/* Inner content keeps a fixed 400px width so it stays laid out
+                (and the graph's measured bounds stay stable) while the outer
+                <aside> clips it during the slide. */}
+            <div
+              className="learn-map-rail"
+              style={{
+                width: isMobile ? "100%" : RAIL_WIDTH,
+                height: "100%",
+                boxSizing: "border-box",
+                borderLeft: isMobile ? "none" : "1px solid var(--border)",
+                background: "var(--bg-subtle)",
+                overflowY: "auto",
+                overflowX: "hidden",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              {/* Header */}
+              <div style={{ padding: "20px 22px 16px", borderBottom: "1px solid var(--border)" }}>
+                <div className="label-micro">Knowledge map</div>
+                {cardCourse && (
+                  <div style={{ marginTop: 8, fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 500, color: "var(--brand-forest)" }}>
+                    {cardCourse.course_code}
+                  </div>
+                )}
+                <div style={{ fontFamily: "var(--font-serif)", fontSize: 15, color: "var(--text-dim)", marginTop: 2, lineHeight: 1.35 }}>
+                  {cardCourse?.course_name ?? topic}
+                </div>
+              </div>
+
+              {/* Graph + legend */}
+              {railGraph.nodes.length > 0 && (
+                <div
+                  style={{
+                    padding: "14px 14px 8px",
+                    background: "radial-gradient(ellipse 80% 70% at 55% 42%, color-mix(in srgb, var(--brand-forest-bright) 6%, transparent), transparent 70%)",
+                  }}
+                >
+                  <SidebarKnowledgeGraph
+                    nodes={railGraph.nodes}
+                    edges={railGraph.edges}
+                    highlightId={activeFocusId}
+                    onNodeClick={handleNodeClick}
+                  />
+                  <div style={{ display: "flex", gap: 14, justifyContent: "center", padding: "6px 0 4px", flexWrap: "wrap" }}>
+                    {TIER_ORDER.map(tier => (
+                      <span key={tier} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--text-muted)" }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: TIER_META[tier].color }} />
+                        {TIER_META[tier].label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Focused concept (or course anchor when no concept is focused) */}
+              {(focusConcept || cardCourse) && (
+                <div
+                  style={{
+                    margin: "6px 18px 0",
+                    padding: "15px 16px",
+                    background: "var(--bg-panel)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 14,
+                    boxShadow: "var(--shadow-sm)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <div className="label-micro">{focusConcept ? "Focused concept" : "Focused course"}</div>
+                    {focusConcept && (
+                      <span
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: 600,
+                          padding: "2px 9px",
+                          borderRadius: "var(--r-full)",
+                          color: "#fff",
+                          background: TIER_META[focusConcept.mastery_tier].color,
+                        }}
+                      >
+                        {TIER_META[focusConcept.mastery_tier].label}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontFamily: "var(--font-display)", fontSize: 19, fontWeight: 500, color: "var(--text)", marginTop: 7, lineHeight: 1.2 }}>
+                    {focusConcept ? focusConcept.name : (cardCourse?.course_name ?? topic)}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.5 }}>
+                    {focusConcept
+                      ? (focusConcept.description
+                          ?? descCache[focusConcept.id]
+                          ?? `${neighborIds.size} connected concepts · this is where your session is anchored on the course map.`)
+                      : `${courseConceptCount} concepts in this course · pick one to anchor your session.`}
+                  </div>
+                  {focusConcept && (
+                    <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                      {!focusIsCurrent && (
+                        <button
+                          onClick={() => switchToConcept(focusConcept.name)}
+                          style={{
+                            flex: 1,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 6,
+                            padding: "8px 12px",
+                            borderRadius: "var(--r-sm)",
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            border: "none",
+                            background: "var(--brand-forest)",
+                            color: "var(--accent-fg)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <Icon name="sparkle" size={12} />
+                          {focusHasSession ? "Resume session" : "Start session"}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => removeConcept(focusConcept.id)}
+                        title="Remove concept"
+                        style={{
+                          flex: focusIsCurrent ? 1 : undefined,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 6,
+                          padding: "8px 12px",
+                          borderRadius: "var(--r-sm)",
+                          fontSize: 12.5,
+                          fontWeight: 500,
+                          border: "1px solid var(--border)",
+                          background: "var(--bg-panel)",
+                          color: "var(--state-struggle)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* In this branch */}
+              {progressItems.length > 0 && (
+                <div style={{ padding: "18px 22px 6px" }}>
+                  <div className="label-micro" style={{ marginBottom: 10 }}>In this branch</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                    {progressItems.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => setFocusedNodeId(p.id)}
+                        title={`Focus ${p.name}`}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          textAlign: "left",
+                          width: "100%",
+                          margin: "0 -7px",
+                          padding: "5px 7px",
+                          borderRadius: 8,
+                          background: p.id === activeFocusId ? "var(--bg-soft)" : "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <span style={{ width: 11, height: 11, borderRadius: "50%", flexShrink: 0, background: TIER_META[p.tier].color }} />
+                        <span style={{ flex: 1, fontSize: 13, color: "var(--text)", fontWeight: p.id === activeFocusId ? 600 : 400, lineHeight: 1.3 }}>{p.name}</span>
+                        <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{TIER_META[p.tier].label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Elsewhere in course */}
+              {relatedItems.length > 0 && (
+                <div style={{ padding: "16px 22px 24px" }}>
+                  <div className="label-micro" style={{ marginBottom: 10 }}>Elsewhere in course</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                    {relatedItems.map(r => {
+                      const active = r.id === activeFocusId;
+                      return (
+                        <button
+                          key={r.id}
+                          onClick={() => setFocusedNodeId(r.id)}
+                          title={`Focus ${r.name}`}
+                          style={{
+                            padding: "6px 12px",
+                            borderRadius: "var(--r-full)",
+                            fontSize: 12.5,
+                            fontWeight: 500,
+                            border: `1px solid ${active ? "var(--brand-forest)" : "var(--border)"}`,
+                            background: active ? "var(--accent-soft)" : "var(--bg-panel)",
+                            color: active ? "var(--text)" : "var(--text-dim)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {r.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Add concept */}
+              {cardCourseId && (
+                <div style={{ padding: "4px 22px 24px" }}>
+                  {addingConcept ? (
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <input
+                        autoFocus
+                        value={newConceptName}
+                        onChange={e => setNewConceptName(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") addConcept(newConceptName);
+                          if (e.key === "Escape") { setAddingConcept(false); setNewConceptName(""); }
+                        }}
+                        placeholder="New concept name…"
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          padding: "7px 10px",
+                          fontSize: 12.5,
+                          border: "1px solid var(--border-strong)",
+                          borderRadius: "var(--r-sm)",
+                          background: "var(--bg-panel)",
+                          color: "var(--text)",
+                          outline: "none",
+                        }}
+                      />
+                      <button
+                        onClick={() => addConcept(newConceptName)}
+                        disabled={!newConceptName.trim()}
+                        style={{
+                          padding: "7px 12px",
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          borderRadius: "var(--r-sm)",
+                          border: "none",
+                          background: newConceptName.trim() ? "var(--brand-forest)" : "var(--bg-soft)",
+                          color: newConceptName.trim() ? "var(--accent-fg)" : "var(--text-muted)",
+                          cursor: newConceptName.trim() ? "pointer" : "not-allowed",
+                        }}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setAddingConcept(true)}
+                      style={{
+                        width: "100%",
+                        padding: "8px 12px",
+                        fontSize: 12.5,
+                        fontWeight: 500,
+                        borderRadius: "var(--r-sm)",
+                        border: "1px dashed var(--border-strong)",
+                        background: "transparent",
+                        color: "var(--text-muted)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      ＋ Add concept
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-            {graphNodes.length > 0 && (
-              <div
-                className="card"
-                style={{ padding: 8, display: "flex", flexDirection: "column", gap: 4 }}
-              >
-                <div className="label-micro" style={{ padding: "4px 6px" }}>Knowledge graph</div>
-                <SidebarKnowledgeGraph
-                  nodes={graphNodes}
-                  edges={graphEdges}
-                  highlightId={highlightId}
-                  onNodeClick={handleNodeClick}
-                />
-              </div>
-            )}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <div className="card" style={{ padding: 12 }}>
-                <div className="label-micro" style={{ marginBottom: 4 }}>Mode</div>
-                <div style={{ fontSize: 13, fontWeight: 500, textTransform: "capitalize" }}>{mode}</div>
-              </div>
-              <div className="card" style={{ padding: 12 }}>
-                <div className="label-micro" style={{ marginBottom: 4 }}>Messages</div>
-                <div className="mono" style={{ fontSize: 16 }}>{messages.length}</div>
-              </div>
-            </div>
-            <div className="card" style={{ padding: 12 }}>
-              <div className="label-micro" style={{ marginBottom: 4 }}>Context</div>
-              <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
-                {sharedCtx ? "Class intel: on" : "Class intel: off"}
-              </div>
-            </div>
-            {progressItems.length > 0 && <ProgressCard items={progressItems} />}
-            {relatedItems.length > 0 && (
-              <RelatedConceptsCard items={relatedItems} onSelect={startSessionFromConcept} />
-            )}
           </aside>
+        )}
+
+        {!isMobile && (
+          <button
+            type="button"
+            aria-label="Toggle knowledge map"
+            aria-expanded={railOpen}
+            title={railOpen ? "Collapse knowledge map" : "Show knowledge map"}
+            onPointerDown={onRailTabPointerDown}
+            onPointerMove={onRailTabPointerMove}
+            onPointerUp={onRailTabPointerUp}
+            onPointerCancel={onRailTabPointerCancel}
+            onKeyDown={onRailTabKeyDown}
+            style={{
+              position: "absolute",
+              top: "50%",
+              right: railW,
+              transform: "translateY(-50%)",
+              width: 24,
+              height: 68,
+              padding: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 4,
+              cursor: railDragging ? "grabbing" : "pointer",
+              touchAction: "none",
+              background: "var(--bg-panel)",
+              border: "1px solid var(--border)",
+              borderRight: "none",
+              borderRadius: "10px 0 0 10px",
+              boxShadow: "-3px 0 8px rgba(19, 38, 16, 0.06)",
+              color: railOpen ? "var(--brand-forest)" : "var(--text-muted)",
+              zIndex: 20,
+              transition: railDragging
+                ? "none"
+                : "right var(--dur) var(--ease), color var(--dur) var(--ease)",
+            }}
+          >
+            {/* Knowledge-graph glyph: three nodes joined in a triangle. */}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="6" cy="7" r="2" />
+              <circle cx="17.5" cy="6" r="2" />
+              <circle cx="13" cy="17.5" r="2.3" />
+              <path d="M7.7 8.6 12 15.4M15.7 7.8 13.7 15.2M8 7.2 15.6 6.2" />
+            </svg>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              style={{
+                transform: railOpen ? "rotate(0deg)" : "rotate(180deg)",
+                transition: railDragging ? "none" : "transform var(--dur) var(--ease)",
+              }}
+            >
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
         )}
       </div>
 
@@ -841,76 +1341,6 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
       >
         {del.armed ? "Confirm" : <Icon name="x" size={12} />}
       </button>
-    </div>
-  );
-}
-
-function ProgressCard({ items }: { items: { name: string; complete: boolean }[] }) {
-  return (
-    <div className="card" style={{ padding: 12 }}>
-      <div className="label-micro" style={{ marginBottom: 8 }}>Progress</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-        {items.map(item => (
-          <div key={item.name} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: "50%",
-                flexShrink: 0,
-                background: item.complete ? "var(--accent)" : "transparent",
-                border: item.complete ? "1px solid var(--accent)" : "1.5px solid var(--border-strong)",
-              }}
-            />
-            <span
-              style={{
-                fontSize: 12,
-                color: item.complete ? "var(--text)" : "var(--text-dim)",
-                lineHeight: 1.3,
-              }}
-            >
-              {item.name}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RelatedConceptsCard({
-  items,
-  onSelect,
-}: {
-  items: string[];
-  onSelect: (name: string) => void;
-}) {
-  return (
-    <div className="card" style={{ padding: 12 }}>
-      <div className="label-micro" style={{ marginBottom: 8 }}>Related</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {items.map(name => (
-          <button
-            key={name}
-            onClick={() => onSelect(name)}
-            style={{
-              padding: "5px 10px",
-              borderRadius: "var(--r-full)",
-              fontSize: 12,
-              fontWeight: 500,
-              border: "1px solid var(--border)",
-              background: "transparent",
-              color: "var(--text-dim)",
-              cursor: "pointer",
-              transition: "background 120ms",
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-subtle)"; }}
-            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
-          >
-            {name}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

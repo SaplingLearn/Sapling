@@ -41,13 +41,17 @@ def _mock_session_user():
 
 class TestGetPublicProfile:
     def test_returns_profile_for_existing_user(self):
-        user_row = {"id": USER_ID, "name": "Test", "username": "tester", "avatar_url": None, "created_at": "2025-01-01", "bio": "Hi", "location": "NYC", "website": None}
+        # Identity stays on `users`; profile fields live on `user_profiles` (migration 0024).
+        user_row = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
+        profile_row = {"user_id": USER_ID, "name": "Test", "username": "tester", "avatar_url": None, "bio": "Hi", "location": "NYC", "website": None}
         settings_row = {"user_id": USER_ID, "profile_visibility": "public"}
 
         def table_side_effect(name):
             m = MagicMock()
             if name == "users":
                 m.select.return_value = [user_row]
+            elif name == "user_profiles":
+                m.select.return_value = [profile_row]
             elif name == "user_settings":
                 m.select.return_value = [settings_row]
             elif name == "user_roles":
@@ -87,13 +91,16 @@ class TestGetPublicProfile:
         assert r.status_code == 404
 
     def test_private_profile_hides_bio_and_stats(self):
-        user_row = {"id": USER_ID, "name": "Test", "username": None, "avatar_url": None, "created_at": "2025-01-01", "bio": "Secret", "location": "Hidden", "website": None}
+        user_row = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
+        profile_row = {"user_id": USER_ID, "name": "Test", "username": None, "avatar_url": None, "bio": "Secret", "location": "Hidden", "website": None}
         settings_row = {"user_id": USER_ID, "profile_visibility": "private"}
 
         def table_side_effect(name):
             m = MagicMock()
             if name == "users":
                 m.select.return_value = [user_row]
+            elif name == "user_profiles":
+                m.select.return_value = [profile_row]
             elif name == "user_settings":
                 m.select.return_value = [settings_row]
             else:
@@ -113,16 +120,26 @@ class TestGetPublicProfile:
 # ── PATCH /api/profile/{user_id} ───────────────────────────────────────────
 
 class TestUpdateProfile:
-    def test_updates_user_fields(self):
-        user_row = {"id": USER_ID, "name": "Test"}
-        settings_row = {"user_id": USER_ID}
+    def test_updates_profile_fields_on_user_profiles(self):
+        # bio/location/website/username are written to user_profiles now (migration 0024).
+        user_row = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
+        profile_row = {"user_id": USER_ID, "name": "Test"}
+        captured = []
 
         def table_side_effect(name):
             m = MagicMock()
             if name == "users":
                 m.select.return_value = [user_row]
+            elif name == "user_profiles":
+                m.select.return_value = [profile_row]
+
+                def _capture(payload, filters):
+                    captured.append({"payload": payload, "filters": filters})
+                    return [{}]
+
+                m.update.side_effect = _capture
             elif name == "user_settings":
-                m.select.return_value = [settings_row]
+                m.select.return_value = [{"user_id": USER_ID}]
             else:
                 m.select.return_value = []
             m.update.return_value = [{}]
@@ -133,14 +150,24 @@ class TestUpdateProfile:
 
         assert r.status_code == 200
         assert r.json()["updated"] is True
+        # The profile write landed on user_profiles, keyed by user_id, with an
+        # encrypted bio (ciphertext, not the plaintext).
+        assert len(captured) == 1
+        assert captured[0]["filters"] == {"user_id": f"eq.{USER_ID}"}
+        assert "bio" in captured[0]["payload"]
+        assert captured[0]["payload"]["bio"] != "Updated bio"
 
     def test_username_conflict_returns_409(self):
-        user_row = {"id": USER_ID, "name": "Test"}
+        user_row = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
+        profile_row = {"user_id": USER_ID, "name": "Test"}
 
         def table_side_effect(name):
             m = MagicMock()
             if name == "users":
-                m.select.return_value = [{"id": "other_user"}]
+                m.select.return_value = [user_row]
+            elif name == "user_profiles":
+                # uniqueness check returns a DIFFERENT user holding the username
+                m.select.return_value = [{"user_id": "other_user"}]
             elif name == "user_settings":
                 m.select.return_value = [{"user_id": USER_ID}]
             else:
@@ -151,6 +178,41 @@ class TestUpdateProfile:
             r = client.patch(f"/api/profile/{USER_ID}", json={"username": "taken"})
 
         assert r.status_code == 409
+
+    def test_creates_user_profiles_row_when_missing(self):
+        # A user with no user_profiles row yet should get one created before the
+        # update lands (ensure-row semantics).
+        user_row = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
+        profile_selects = []
+        insert_calls = []
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [user_row]
+            elif name == "user_profiles":
+                # First select(s) return empty (no row) → insert; then return a row.
+                def _select(*args, **kwargs):
+                    profile_selects.append(True)
+                    # After an insert has happened, the row exists.
+                    return [{"user_id": USER_ID, "name": None}] if insert_calls else []
+
+                m.select.side_effect = _select
+                m.insert.side_effect = lambda payload: insert_calls.append(payload) or [{}]
+                m.update.return_value = [{}]
+            elif name == "user_settings":
+                m.select.return_value = [{"user_id": USER_ID}]
+            else:
+                m.select.return_value = []
+            return m
+
+        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+            r = client.patch(f"/api/profile/{USER_ID}", json={"website": "https://x.io"})
+
+        assert r.status_code == 200
+        # A user_profiles row was inserted because none existed.
+        assert insert_calls, "expected a user_profiles row to be created when missing"
+        assert insert_calls[0] == {"user_id": USER_ID}
 
 
 # ── GET /api/profile/{user_id}/settings ────────────────────────────────────
@@ -322,8 +384,9 @@ class TestCheckUsername:
         assert r.json() == {"available": True}
 
     def test_taken_when_different_user_holds_it(self):
+        # username lives on user_profiles now (keyed by user_id).
         with patch("routes.profile.table") as t:
-            t.return_value.select.return_value = [{"id": "other_user"}]
+            t.return_value.select.return_value = [{"user_id": "other_user"}]
             r = client.get("/api/profile/username/check?username=taken")
         assert r.status_code == 200
         body = r.json()
@@ -332,7 +395,7 @@ class TestCheckUsername:
 
     def test_available_when_held_by_self(self):
         with patch("routes.profile.table") as t:
-            t.return_value.select.return_value = [{"id": USER_ID}]
+            t.return_value.select.return_value = [{"user_id": USER_ID}]
             r = client.get(f"/api/profile/username/check?username=mine&user_id={USER_ID}")
         assert r.status_code == 200
         body = r.json()
@@ -486,13 +549,18 @@ class TestUploadAvatar:
     some browser configs with `TypeError: Failed to fetch` — JSON
     avoids the failure class. See routes/profile.py:_AvatarUploadBody."""
 
-    USER_ROW = {"id": USER_ID, "name": "Test", "username": None, "avatar_url": None, "created_at": "2025-01-01"}
+    USER_ROW = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
+    PROFILE_ROW = {"user_id": USER_ID, "name": "Test", "username": None, "avatar_url": None}
 
     def _table_factory(self, *, captured_update=None):
         def factory(name):
             m = MagicMock()
             if name == "users":
                 m.select.return_value = [self.USER_ROW]
+                m.update.return_value = [{}]
+            elif name == "user_profiles":
+                # avatar_url persists to user_profiles after migration 0024.
+                m.select.return_value = [self.PROFILE_ROW]
                 if captured_update is not None:
                     def _capture(payload, filters):
                         captured_update.append({"payload": payload, "filters": filters})
@@ -524,8 +592,8 @@ class TestUploadAvatar:
         assert r.json()["avatar_url"] == "https://cdn/avatar.png"
         # Ensure decoded bytes (not the base64 string) reach the storage layer.
         up.assert_called_once_with(USER_ID, b"PNG-bytes", "image/png")
-        # Ensure the avatar_url is persisted to users.
-        assert captured == [{"payload": {"avatar_url": "https://cdn/avatar.png"}, "filters": {"id": f"eq.{USER_ID}"}}]
+        # Ensure the avatar_url is persisted to user_profiles, keyed by user_id.
+        assert captured == [{"payload": {"avatar_url": "https://cdn/avatar.png"}, "filters": {"user_id": f"eq.{USER_ID}"}}]
 
     def test_accepts_data_url_prefix(self):
         """Frontend's readFileAsBase64 strips the prefix, but a future
@@ -593,67 +661,72 @@ class TestUploadAvatar:
         up.assert_not_called()
 
 
-# ── _get_user_or_404 column contract (issue #75) ────────────────────────────
+# ── _get_user_or_404 column contract (issue #75 + identity split 0024) ──────
 
 class TestGetUserOr404SelectColumns:
-    """Pin the column list used by `_get_user_or_404`'s SELECT against the
-    actual `users` schema. Issue #75 was caused by `school` and `major` being
-    SELECTed despite never being added by any migration; PostgREST returned
-    HTTP 400, the route 500'd, and three endpoints (PATCH, GET, avatar POST)
-    failed simultaneously. Existing MagicMock-based tests didn't catch it
-    because the mock returns success for any column.
+    """Pin the column lists used by `_get_user_or_404`'s SELECTs against the
+    actual table schemas. Issue #75 was caused by columns being SELECTed that
+    never existed; PostgREST returns HTTP 400 for unknown columns and the route
+    500s. MagicMock tests don't catch it (the mock succeeds for any column), so
+    this pins the strings.
+
+    After migration 0024 the read splits across two tables: identity columns on
+    `users` and the public-profile columns on `user_profiles`. Both SELECTs must
+    only name columns that exist on their respective table.
     """
 
-    # Columns that actually exist on `users` per
-    # `backend/db/supabase_schema.sql:7` + `migration_profile_settings.sql`
-    # + `migration_google_auth.sql` + `migration_add_is_approved.sql` +
-    # `migration_onboarding_fields.sql`. If a future migration adds a column
-    # to `users`, update this set in the same PR that introduces the
-    # migration so the test stays the source of truth.
+    # `users` after the identity split (migration 0024): identity + auth + activity.
     USERS_SCHEMA_COLUMNS = {
-        "id", "name", "email", "first_name", "last_name", "year",
-        "majors", "minors", "learning_style", "onboarding_completed",
-        "streak_count", "last_active_date", "room_id", "created_at",
-        "google_id", "avatar_url", "auth_provider", "is_approved",
-        "username", "bio", "location", "website", "deleted_at",
+        "id", "email", "onboarding_completed",
+        "streak_count", "last_active_date", "current_room_id", "created_at",
+        "updated_at", "google_id", "auth_provider", "is_approved",
+        "last_sign_in_at", "deleted_at",
     }
 
-    def test_select_columns_all_exist_on_users_schema(self):
-        """Every column in `_get_user_or_404`'s SELECT must exist on
-        `users`. The column string is the second positional arg to
-        `table('users').select(...)`; we capture it and compare against
-        the schema set above."""
+    # `user_profiles` per migration 0024.
+    PROFILES_SCHEMA_COLUMNS = {
+        "user_id", "name", "first_name", "last_name", "username", "avatar_url",
+        "bio", "location", "website", "year", "majors", "minors",
+        "learning_style", "created_at", "updated_at",
+    }
+
+    def test_select_columns_all_exist_on_their_table_schema(self):
+        """Capture both SELECT column strings and verify each only names columns
+        that exist on its table."""
         captured = {}
 
         def table_side_effect(name):
             m = MagicMock()
             if name == "users":
-                def _capture_select(columns, **kwargs):
+                def _capture_users(columns, **kwargs):
                     captured["users_columns"] = columns
-                    # Return a row with every encrypted column set to
-                    # None so `decrypt_if_present` returns early without
-                    # trying to base64-decode a plaintext fixture (which
-                    # logs a noisy "Nonce must be between..." warning).
-                    # The non-encrypted scalars stay populated since
-                    # the route accesses them by `.get(...)`.
                     return [{
                         "id": USER_ID,
-                        "name": None,
                         "email": None,
+                        "streak_count": 0,
+                        "created_at": "2026-01-01",
+                    }]
+                m.select.side_effect = _capture_users
+            elif name == "user_profiles":
+                def _capture_profiles(columns, **kwargs):
+                    captured["profiles_columns"] = columns
+                    # Encrypted columns None so decrypt_if_present returns early.
+                    return [{
+                        "user_id": USER_ID,
+                        "name": None,
                         "first_name": None,
                         "last_name": None,
                         "username": "tester",
                         "avatar_url": None,
-                        "year": None,
-                        "majors": [],
-                        "minors": [],
                         "bio": None,
                         "location": None,
                         "website": None,
-                        "streak_count": 0,
-                        "created_at": "2026-01-01",
+                        "year": None,
+                        "majors": [],
+                        "minors": [],
+                        "learning_style": None,
                     }]
-                m.select.side_effect = _capture_select
+                m.select.side_effect = _capture_profiles
             else:
                 m.select.return_value = []
             return m
@@ -663,12 +736,18 @@ class TestGetUserOr404SelectColumns:
             _get_user_or_404(USER_ID)
 
         assert "users_columns" in captured, "table('users').select(...) was not called"
-        selected = {c.strip() for c in captured["users_columns"].split(",")}
-        unknown = selected - self.USERS_SCHEMA_COLUMNS
-        assert not unknown, (
+        assert "profiles_columns" in captured, "table('user_profiles').select(...) was not called"
+
+        users_selected = {c.strip() for c in captured["users_columns"].split(",")}
+        unknown_users = users_selected - self.USERS_SCHEMA_COLUMNS
+        assert not unknown_users, (
             f"_get_user_or_404 SELECTs columns that don't exist on `users`: "
-            f"{sorted(unknown)}. This is the root cause of issue #75 — "
-            f"PostgREST returns HTTP 400 for unknown columns and the route "
-            f"500s. Fix: remove these columns from the SELECT in "
-            f"backend/routes/profile.py:_get_user_or_404."
+            f"{sorted(unknown_users)} (these moved to user_profiles in 0024)."
+        )
+
+        profiles_selected = {c.strip() for c in captured["profiles_columns"].split(",")}
+        unknown_profiles = profiles_selected - self.PROFILES_SCHEMA_COLUMNS
+        assert not unknown_profiles, (
+            f"_get_user_or_404 SELECTs columns that don't exist on `user_profiles`: "
+            f"{sorted(unknown_profiles)}."
         )

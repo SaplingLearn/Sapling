@@ -276,6 +276,31 @@ function KnowledgeGraph2DImpl({
     return result;
   }, [nodes]);
 
+  // Constrain the pan/zoom transform so the graph can't be dragged off into
+  // empty space: the content's bounding box stays inside the window, or — when
+  // it's larger than the window — always covers it. Applied on pan and zoom.
+  const clampView = (tx: number, ty: number, scale: number) => {
+    const ns = simNodesRef.current;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of ns) {
+      if (n.x == null || n.y == null) continue;
+      const r = nodeRadius(n) + 24; // node radius + label/glow allowance
+      if (n.x - r < minX) minX = n.x - r;
+      if (n.x + r > maxX) maxX = n.x + r;
+      if (n.y - r < minY) minY = n.y - r;
+      if (n.y + r > maxY) maxY = n.y + r;
+    }
+    if (!Number.isFinite(minX)) return { tx, ty };
+    const clamp = (v: number, a: number, b: number) => {
+      const lo = Math.min(a, b), hi = Math.max(a, b);
+      return Math.max(lo, Math.min(hi, v));
+    };
+    return {
+      tx: clamp(tx, -minX * scale, width - maxX * scale),
+      ty: clamp(ty, -minY * scale, height - maxY * scale),
+    };
+  };
+
   // ── Pointer interaction ─────────────────────────────────────────────────
   const clientToSvg = (clientX: number, clientY: number) => {
     const svg = svgRef.current;
@@ -322,12 +347,19 @@ function KnowledgeGraph2DImpl({
       const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
       if (!n) return;
       const { x, y } = clientToSvg(e.clientX, e.clientY);
-      n.fx = x;
-      n.fy = y;
+      // Keep the dragged node inside the window: map the visible bounds back
+      // into content coords through the current view transform.
+      const r = nodeRadius(n);
+      const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+      n.fx = clamp(x, (r - view.tx) / view.scale, (width - r - view.tx) / view.scale);
+      n.fy = clamp(y, (r - view.ty) / view.scale, (height - r - view.ty) / view.scale);
     } else if (drag.kind === "pan") {
       const dx = e.clientX - drag.startX;
       const dy = e.clientY - drag.startY;
-      setView((v) => ({ ...v, tx: drag.originTx + dx, ty: drag.originTy + dy }));
+      setView((v) => {
+        const c = clampView(drag.originTx + dx, drag.originTy + dy, v.scale);
+        return { ...v, tx: c.tx, ty: c.ty };
+      });
     }
   };
 
@@ -358,11 +390,8 @@ function KnowledgeGraph2DImpl({
     setView((v) => {
       const nextScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.scale * (1 + delta)));
       const factor = nextScale / v.scale;
-      return {
-        tx: mx - (mx - v.tx) * factor,
-        ty: my - (my - v.ty) * factor,
-        scale: nextScale,
-      };
+      const c = clampView(mx - (mx - v.tx) * factor, my - (my - v.ty) * factor, nextScale);
+      return { tx: c.tx, ty: c.ty, scale: nextScale };
     });
   };
 
@@ -515,7 +544,7 @@ function KnowledgeGraph2DImpl({
                       {n.name}
                     </text>
                   )}
-                  {!n.is_subject_root && r > 10 && (
+                  {!n.is_subject_root && (
                     <text
                       x={n.x}
                       y={n.y + r + 13}
@@ -554,7 +583,11 @@ function KnowledgeGraph2DImpl({
         <button
           className="btn btn--ghost btn--sm"
           style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
-          onClick={() => setView((v) => ({ ...v, scale: Math.min(MAX_ZOOM, v.scale * 1.2) }))}
+          onClick={() => setView((v) => {
+            const s = Math.min(MAX_ZOOM, v.scale * 1.2);
+            const c = clampView(v.tx, v.ty, s);
+            return { tx: c.tx, ty: c.ty, scale: s };
+          })}
           title="Zoom in"
         >
           +
@@ -562,7 +595,11 @@ function KnowledgeGraph2DImpl({
         <button
           className="btn btn--ghost btn--sm"
           style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
-          onClick={() => setView((v) => ({ ...v, scale: Math.max(MIN_ZOOM, v.scale / 1.2) }))}
+          onClick={() => setView((v) => {
+            const s = Math.max(MIN_ZOOM, v.scale / 1.2);
+            const c = clampView(v.tx, v.ty, s);
+            return { tx: c.tx, ty: c.ty, scale: s };
+          })}
           title="Zoom out"
         >
           −

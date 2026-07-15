@@ -1,5 +1,5 @@
 {
-  "src/app/page.tsx": {
+  "src/app/(public)/page.tsx": {
     "@next/next/no-html-link-for-pages": {
       "count": 1
     },
@@ -88,11 +88,6 @@
   },
   "src/components/screens/Dashboard.tsx": {
     "react/no-unescaped-entities": {
-      "count": 2
-    }
-  },
-  "src/components/screens/Gradebook/Course.tsx": {
-    "@typescript-eslint/no-explicit-any": {
       "count": 2
     }
   },

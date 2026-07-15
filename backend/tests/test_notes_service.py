@@ -53,7 +53,7 @@ def test_create_note_encrypts_title_and_body():
     with patch("services.notes_service.table", return_value=fake):
         out = _run(create_note(
             user_id="u1",
-            course_id="c1",
+            offering_id="off1",
             title="Photosynthesis",
             body="Light reactions happen in the thylakoid",
             tags=["lecture"],
@@ -64,12 +64,15 @@ def test_create_note_encrypts_title_and_body():
     # Title and body must NOT be plaintext in the row written to Supabase.
     assert row["title"] != "Photosynthesis"
     assert row["body"] != "Light reactions happen in the thylakoid"
+    # The note keys on the OFFERING, not the abstract course (0025).
+    assert row["offering_id"] == "off1"
+    assert "course_id" not in row
     # Return shape must hand back plaintext for the caller to render.
     assert out["title"] == "Photosynthesis"
     assert out["body"] == "Light reactions happen in the thylakoid"
     assert out["tags"] == ["lecture"]
     assert out["user_id"] == "u1"
-    assert out["course_id"] == "c1"
+    assert out["offering_id"] == "off1"
     assert isinstance(out["id"], str) and len(out["id"]) > 0
 
 
@@ -78,7 +81,7 @@ def test_get_note_decrypts_and_enforces_ownership():
     fake = FakeTable(rows=[{
         "id": "n1",
         "user_id": "u1",
-        "course_id": "c1",
+        "offering_id": "off1",
         "title": encrypt("My title"),
         "body": encrypt("My body"),
         "tags": ["a"],
@@ -97,6 +100,8 @@ def test_get_note_decrypts_and_enforces_ownership():
     filters = call_kwargs.get("filters", {})
     assert filters.get("id") == "eq.n1"
     assert filters.get("user_id") == "eq.u1"
+    # Soft-deleted notes are excluded from reads (0025 deleted_at).
+    assert filters.get("deleted_at") == "is.null"
 
 
 def test_get_note_returns_none_when_missing():
@@ -109,7 +114,7 @@ def test_get_note_returns_none_when_missing():
 def test_update_note_only_encrypts_present_fields():
     from services.encryption import encrypt
     fake = FakeTable(rows=[{
-        "id": "n1", "user_id": "u1", "course_id": "c1",
+        "id": "n1", "user_id": "u1", "offering_id": "off1",
         "title": encrypt("Old"), "body": encrypt("Old body"),
         "tags": [], "last_summary": None, "last_summary_at": None,
         "created_at": "2026-05-11T00:00:00Z",
@@ -132,21 +137,31 @@ def test_update_note_only_encrypts_present_fields():
     assert out["title"] == "New title"
 
 
-def test_list_notes_filters_by_user_and_optional_course():
+def test_list_notes_filters_by_user_and_optional_offering():
     fake = FakeTable(rows=[])
     with patch("services.notes_service.table", return_value=fake):
-        _run(list_notes(user_id="u1", course_id="c1"))
+        _run(list_notes(user_id="u1", offering_id="off1"))
     args, kwargs = fake.select_calls[0]
     filters = kwargs.get("filters", {})
     assert filters.get("user_id") == "eq.u1"
-    assert filters.get("course_id") == "eq.c1"
+    assert filters.get("offering_id") == "eq.off1"
+    # Soft-deleted notes are excluded from list reads.
+    assert filters.get("deleted_at") == "is.null"
 
 
-def test_delete_note_scopes_by_user():
-    fake = FakeTable()
+def test_delete_note_soft_deletes_and_scopes_by_user():
+    """0025: delete is a soft delete — sets deleted_at instead of removing
+    the row, and stays scoped to (id, user_id)."""
+    fake = FakeTable(rows=[{"id": "n1", "user_id": "u1"}])
     with patch("services.notes_service.table", return_value=fake):
         _run(delete_note(note_id="n1", user_id="u1"))
-    assert fake.deleted == [{"id": "eq.n1", "user_id": "eq.u1"}]
+    # No hard delete fired.
+    assert fake.deleted == []
+    # A soft-delete update stamped deleted_at, scoped to the owner.
+    assert fake.updated, "soft-delete update was not called"
+    data, filters = fake.updated[0]
+    assert data.get("deleted_at") is not None
+    assert filters == {"id": "eq.n1", "user_id": "eq.u1"}
 
 
 from services.notes_service import (

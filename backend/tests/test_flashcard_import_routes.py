@@ -29,6 +29,7 @@ class TestImportCommit:
             "dedup": False,
         }
         with _mock_self(), \
+             patch("routes.flashcards.resolve_offering", return_value="off1") as ro, \
              patch("routes.flashcards.table") as t, \
              patch("routes.flashcards.check_achievements"):
             t.return_value.insert.return_value = []
@@ -37,6 +38,11 @@ class TestImportCommit:
         assert r.status_code == 200, r.text
         assert r.json()["inserted"] == 2
         assert r.json()["skipped_duplicates"] == 0
+        # Abstract course id resolved to the offering; the row keys on it.
+        ro.assert_called_once_with("c1")
+        inserted_rows = t.return_value.insert.call_args[0][0]
+        assert all(row["offering_id"] == "off1" for row in inserted_rows)
+        assert all("course_id" not in row for row in inserted_rows)
 
     def test_skips_duplicates_when_dedup_true(self):
         body = {

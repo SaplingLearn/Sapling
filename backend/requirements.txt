@@ -37,6 +37,14 @@ gradescopeapi==1.8.0
 # outside the wheel. Skipped on CF Workers deploys (browser-less env).
 playwright>=1.45,<2
 
+# Gradescope sync (unofficial scraper-style client; logs in with user creds)
+gradescopeapi==1.8.0
+
+# Headless browser for BU SSO + Duo 2FA flow. Requires running
+# `playwright install chromium` after pip install — the binary lives
+# outside the wheel. Skipped on CF Workers deploys (browser-less env).
+playwright>=1.45,<2
+
 # Testing
 pytest==9.1.1
 pytest-anyio==0.0.0
@@ -53,3 +61,7 @@ sse-starlette>=2.0
 # Used by `python -m tests.evals.*` and the .github/workflows/evals.yml job.
 # Not imported at runtime by any production code path.
 pydantic-evals>=0.0.5
+
+# Optional cross-worker cache (#97). Only imported at runtime when REDIS_URL is
+# set; the app runs identically without it (services/cache.py degrades to no-op).
+redis>=5.0

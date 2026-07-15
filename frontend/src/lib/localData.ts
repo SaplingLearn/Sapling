@@ -5,6 +5,8 @@ import type {
   GraphNode, GraphEdge, GraphStats, Assignment,
   UserProfile, UserSettings, UserAchievement, Achievement, Document,
   Role, Cosmetic, CosmeticType, RarityTier, AchievementCategory,
+  GradebookCourse, GradedAssignment, KnowledgeGraph,
+  RoomOverviewData, RoomMember, RoomMessageRow,
 } from '@/lib/types';
 
 const localRoles: Role[] = [];
@@ -30,49 +32,64 @@ export const LOCAL_USER = {
 };
 
 const COURSES = [
-  { name: 'Calculus II', color: '#2563eb' },
-  { name: 'Intro to Psychology', color: '#9333ea' },
-  { name: 'Data Structures', color: '#059669' },
+  { name: 'Calculus II', course_code: 'MATH 242', color: '#2563eb' },
+  { name: 'Intro to Psychology', course_code: 'PSY 101', color: '#9333ea' },
+  { name: 'Data Structures', course_code: 'CS 210', color: '#059669' },
 ];
 
 function makeNodes(): GraphNode[] {
   const nodes: GraphNode[] = [];
-  const concepts: Record<string, { name: string; mastery: number; tier: GraphNode['mastery_tier']; studied: string | null }[]> = {
+  const concepts: Record<string, { name: string; mastery: number; tier: GraphNode['mastery_tier']; studied: string | null; desc: string }[]> = {
     'Calculus II': [
-      { name: 'Integration by Parts', mastery: 0.85, tier: 'mastered', studied: daysAgo(0) },
-      { name: 'Taylor Series', mastery: 0.62, tier: 'learning', studied: daysAgo(1) },
-      { name: 'Polar Coordinates', mastery: 0.35, tier: 'struggling', studied: daysAgo(3) },
-      { name: 'Sequences & Convergence', mastery: 0.0, tier: 'unexplored', studied: null },
-      { name: 'Partial Fractions', mastery: 0.91, tier: 'mastered', studied: daysAgo(2) },
+      { name: 'Integration by Parts', mastery: 0.85, tier: 'mastered', studied: daysAgo(0), desc: 'Reverses the product rule to integrate products like x·eˣ.' },
+      { name: 'Partial Fractions', mastery: 0.91, tier: 'mastered', studied: daysAgo(2), desc: 'Splits a rational function into simpler fractions you can integrate term by term.' },
+      { name: 'Improper Integrals', mastery: 0.74, tier: 'learning', studied: daysAgo(1), desc: 'Evaluates integrals with infinite limits or unbounded integrands using limits.' },
+      { name: 'Taylor Series', mastery: 0.62, tier: 'learning', studied: daysAgo(1), desc: 'Approximates a function as an infinite polynomial expanded around a point.' },
+      { name: 'Power Series', mastery: 0.5, tier: 'learning', studied: daysAgo(3), desc: 'Represents functions as sums of powers of x within a radius of convergence.' },
+      { name: 'Polar Coordinates', mastery: 0.35, tier: 'struggling', studied: daysAgo(3), desc: 'Describes points by radius and angle instead of x and y.' },
+      { name: 'Parametric Equations', mastery: 0.28, tier: 'struggling', studied: daysAgo(5), desc: 'Traces curves by expressing x and y as functions of a parameter t.' },
+      { name: 'Sequences & Convergence', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'Studies whether an infinite list of terms settles toward a limit.' },
+      { name: 'Arc Length & Surface Area', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'Uses integrals to measure curve length and surfaces of revolution.' },
     ],
     'Intro to Psychology': [
-      { name: 'Classical Conditioning', mastery: 0.78, tier: 'learning', studied: daysAgo(0) },
-      { name: 'Memory & Encoding', mastery: 0.45, tier: 'struggling', studied: daysAgo(2) },
-      { name: 'Cognitive Biases', mastery: 0.0, tier: 'unexplored', studied: null },
+      { name: 'Classical Conditioning', mastery: 0.78, tier: 'learning', studied: daysAgo(0), desc: 'Learning to associate a neutral stimulus with a reflexive response.' },
+      { name: 'Operant Conditioning', mastery: 0.82, tier: 'mastered', studied: daysAgo(1), desc: 'Shaping behavior through reinforcement and punishment.' },
+      { name: 'Neurons & Synapses', mastery: 0.88, tier: 'mastered', studied: daysAgo(4), desc: 'How nerve cells fire and pass signals across synaptic gaps.' },
+      { name: 'Memory & Encoding', mastery: 0.45, tier: 'struggling', studied: daysAgo(2), desc: 'How information is registered, stored, and later retrieved.' },
+      { name: 'Sensation & Perception', mastery: 0.54, tier: 'learning', studied: daysAgo(3), desc: 'How the senses gather stimuli and the brain interprets them.' },
+      { name: 'Cognitive Biases', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'Systematic errors in judgment that skew reasoning and decisions.' },
+      { name: 'Developmental Stages', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'How thinking and behavior change across the human lifespan.' },
     ],
     'Data Structures': [
-      { name: 'Binary Trees', mastery: 0.95, tier: 'mastered', studied: daysAgo(1) },
-      { name: 'Hash Maps', mastery: 0.7, tier: 'learning', studied: daysAgo(0) },
-      { name: 'Graph Algorithms', mastery: 0.2, tier: 'struggling', studied: daysAgo(4) },
-      { name: 'Dynamic Programming', mastery: 0.0, tier: 'unexplored', studied: null },
+      { name: 'Binary Trees', mastery: 0.95, tier: 'mastered', studied: daysAgo(1), desc: 'Hierarchical nodes with up to two children, enabling fast ordered lookups.' },
+      { name: 'Linked Lists', mastery: 0.9, tier: 'mastered', studied: daysAgo(3), desc: 'A chain of nodes each pointing to the next, allowing cheap insertions.' },
+      { name: 'Stacks & Queues', mastery: 0.87, tier: 'mastered', studied: daysAgo(5), desc: 'LIFO and FIFO collections for ordered, restricted access.' },
+      { name: 'Hash Maps', mastery: 0.7, tier: 'learning', studied: daysAgo(0), desc: 'Key-value storage with near-constant-time lookups via hashing.' },
+      { name: 'Heaps & Priority Queues', mastery: 0.48, tier: 'learning', studied: daysAgo(2), desc: 'Trees that keep the min or max at the root for fast priority access.' },
+      { name: 'Graph Algorithms', mastery: 0.2, tier: 'struggling', studied: daysAgo(4), desc: 'Traversals and shortest paths over networks of nodes and edges.' },
+      { name: 'Sorting Algorithms', mastery: 0.33, tier: 'struggling', studied: daysAgo(6), desc: 'Techniques to order data, trading off speed and memory.' },
+      { name: 'Dynamic Programming', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'Solves problems by caching overlapping subproblem results.' },
+      { name: 'Recursion & Backtracking', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'Functions that call themselves to explore and undo choices.' },
     ],
   };
 
-  for (const course of COURSES) {
+  COURSES.forEach((course, i) => {
+    const courseId = `c${i + 1}`;
     const rootId = `subject_root__${course.name}`;
     nodes.push({
       id: rootId, concept_name: course.name, mastery_score: 0, mastery_tier: 'subject_root',
       times_studied: 0, last_studied_at: null, subject: course.name, is_subject_root: true,
-      course_color: course.color,
+      course_id: courseId, course_color: course.color,
     });
     for (const c of concepts[course.name] ?? []) {
       nodes.push({
         id: `node-${slugify(c.name)}`, concept_name: c.name, mastery_score: c.mastery,
         mastery_tier: c.tier, times_studied: Math.floor(c.mastery * 10),
-        last_studied_at: c.studied, subject: course.name, course_color: course.color,
+        last_studied_at: c.studied, subject: course.name, description: c.desc,
+        course_id: courseId, course_color: course.color,
       });
     }
-  }
+  });
   return nodes;
 }
 
@@ -122,7 +139,7 @@ const LOCAL_ASSIGNMENTS: Assignment[] = [
 ];
 
 const LOCAL_COURSES = COURSES.map((c, i) => ({
-  enrollment_id: `enr-${i}`, course_id: `c${i + 1}`, course_code: '',
+  enrollment_id: `enr-${i}`, course_id: `c${i + 1}`, course_code: c.course_code,
   course_name: c.name, school: 'Local University', department: '',
   color: c.color, nickname: null,
   node_count: LOCAL_NODES.filter(n => n.subject === c.name && !n.is_subject_root).length,
@@ -180,6 +197,165 @@ const LOCAL_SESSIONS = [
 
 const LOCAL_ROOMS = [{ id: 'r1', name: 'CS Study Group', invite_code: 'ABC123', member_count: 3 }];
 
+// ── Gradebook: per-course detail, keyed on course_id and kept consistent with
+// the /summary card numbers (percent / letter / graded-vs-total). ─────────────
+function gA(
+  id: string, courseId: string, categoryId: string, title: string,
+  type: string, possible: number | null, earned: number | null, dueOffset: number,
+): GradedAssignment {
+  return {
+    id, title, course_id: courseId, category_id: categoryId,
+    points_possible: possible, points_earned: earned,
+    due_date: daysFromNow(dueOffset), assignment_type: type, notes: null,
+    source: 'manual',
+    curve_class_mean: null, curve_class_sd: null,
+    curve_avg_target: null, curve_sd_delta: null,
+  };
+}
+
+const LOCAL_GRADEBOOK_DETAIL: Record<string, GradebookCourse> = {
+  c1: {
+    course_id: 'c1', course_code: 'MATH 242', course_name: 'Calculus II',
+    semester: 'Spring 2026', percent: 88.5, letter: 'B+', letter_scale: null,
+    curve_mode: 'raw', curve_avg_target: null, curve_sd_delta: null,
+    categories: [
+      { id: 'c1-hw', name: 'Homework', weight: 30, sort_order: 0, drop_lowest: 1, category_grade: 0.865 },
+      { id: 'c1-quiz', name: 'Quizzes', weight: 20, sort_order: 1, drop_lowest: 0, category_grade: 0.92 },
+      { id: 'c1-mid', name: 'Midterm', weight: 20, sort_order: 2, drop_lowest: 0, category_grade: 0.91 },
+      { id: 'c1-final', name: 'Final', weight: 30, sort_order: 3, drop_lowest: 0, category_grade: null },
+    ],
+    assignments: [
+      gA('gb-c1-1', 'c1', 'c1-hw', 'Problem Set 5 — Series', 'homework', 100, 89, -18),
+      gA('gb-c1-2', 'c1', 'c1-hw', 'Problem Set 6 — Convergence', 'homework', 100, 84, -9),
+      gA('gb-c1-3', 'c1', 'c1-quiz', 'Integration Quiz', 'quiz', 50, 46, -12),
+      gA('gb-c1-4', 'c1', 'c1-mid', 'Midterm Exam', 'exam', 100, 91, -20),
+      gA('gb-c1-5', 'c1', 'c1-hw', 'Problem Set 7 — Power Series', 'homework', 100, null, 2),
+      gA('gb-c1-6', 'c1', 'c1-final', 'Final Exam', 'exam', 100, null, 21),
+    ],
+    dropped_assignment_ids: [],
+  },
+  c2: {
+    course_id: 'c2', course_code: 'PSY 101', course_name: 'Intro to Psychology',
+    semester: 'Spring 2026', percent: 76.2, letter: 'C', letter_scale: null,
+    curve_mode: 'raw', curve_avg_target: null, curve_sd_delta: null,
+    categories: [
+      { id: 'c2-hw', name: 'Homework', weight: 25, sort_order: 0, drop_lowest: 0, category_grade: 0.74 },
+      { id: 'c2-mid', name: 'Midterm', weight: 35, sort_order: 1, drop_lowest: 0, category_grade: 0.75 },
+      { id: 'c2-final', name: 'Final', weight: 40, sort_order: 2, drop_lowest: 0, category_grade: null },
+    ],
+    assignments: [
+      gA('gb-c2-1', 'c2', 'c2-hw', 'Reading Response 1', 'homework', 100, 78, -22),
+      gA('gb-c2-2', 'c2', 'c2-hw', 'Reading Response 2', 'homework', 100, 70, -11),
+      gA('gb-c2-3', 'c2', 'c2-mid', 'Midterm Exam', 'exam', 100, 75, -6),
+      gA('gb-c2-4', 'c2', 'c2-hw', 'Chapter 12 Reading Quiz', 'quiz', 50, null, 1),
+      gA('gb-c2-5', 'c2', 'c2-final', 'Final Exam', 'exam', 100, null, 18),
+    ],
+    dropped_assignment_ids: [],
+  },
+  c3: {
+    course_id: 'c3', course_code: 'CS 210', course_name: 'Data Structures',
+    semester: 'Spring 2026', percent: 92.1, letter: 'A-', letter_scale: null,
+    curve_mode: 'raw', curve_avg_target: null, curve_sd_delta: null,
+    categories: [
+      { id: 'c3-proj', name: 'Projects', weight: 40, sort_order: 0, drop_lowest: 0, category_grade: 0.925 },
+      { id: 'c3-hw', name: 'Homework', weight: 20, sort_order: 1, drop_lowest: 1, category_grade: 0.905 },
+      { id: 'c3-mid', name: 'Midterm', weight: 15, sort_order: 2, drop_lowest: 0, category_grade: 0.94 },
+      { id: 'c3-final', name: 'Final', weight: 25, sort_order: 3, drop_lowest: 0, category_grade: null },
+    ],
+    assignments: [
+      gA('gb-c3-1', 'c3', 'c3-proj', 'BST Implementation', 'project', 100, 95, -14),
+      gA('gb-c3-2', 'c3', 'c3-proj', 'Hash Map Lab', 'project', 100, 90, -7),
+      gA('gb-c3-3', 'c3', 'c3-hw', 'Homework 3 — Traversals', 'homework', 100, 93, -16),
+      gA('gb-c3-4', 'c3', 'c3-hw', 'Homework 4 — Graphs', 'homework', 100, 88, -4),
+      gA('gb-c3-5', 'c3', 'c3-mid', 'Midterm Exam', 'exam', 100, 94, -19),
+      gA('gb-c3-6', 'c3', 'c3-final', 'Final Exam', 'exam', 100, null, 20),
+    ],
+    dropped_assignment_ids: [],
+  },
+};
+
+// ── Chatroom overview: room r1 = Local Dev + two peers, each with a graph. ─────
+function memberGraph(
+  subject: string, color: string,
+  concepts: [string, number, GraphNode['mastery_tier']][],
+): KnowledgeGraph & { stats: GraphStats } {
+  const rootId = `subject_root__${subject}`;
+  const nodes: GraphNode[] = [{
+    id: rootId, concept_name: subject, mastery_score: 0, mastery_tier: 'subject_root',
+    times_studied: 0, last_studied_at: null, subject, is_subject_root: true, course_color: color,
+  }];
+  const edges: GraphEdge[] = [];
+  for (const [name, mastery, tier] of concepts) {
+    const id = `node-${slugify(subject)}-${slugify(name)}`;
+    nodes.push({
+      id, concept_name: name, mastery_score: mastery, mastery_tier: tier,
+      times_studied: Math.floor(mastery * 10), last_studied_at: null, subject, course_color: color,
+    });
+    edges.push({ id: `e-${rootId}-${id}`, source: rootId, target: id, strength: 0.5 });
+  }
+  const concept = nodes.filter(n => !n.is_subject_root);
+  return {
+    nodes, edges,
+    stats: {
+      total_nodes: concept.length,
+      mastered: concept.filter(n => n.mastery_tier === 'mastered').length,
+      learning: concept.filter(n => n.mastery_tier === 'learning').length,
+      struggling: concept.filter(n => n.mastery_tier === 'struggling').length,
+      unexplored: concept.filter(n => n.mastery_tier === 'unexplored').length,
+      streak: 0,
+    },
+  };
+}
+
+const LOCAL_ROOM_MEMBERS: RoomMember[] = [
+  { user_id: LOCAL_USER.id, name: LOCAL_USER.name, graph: { nodes: LOCAL_NODES, edges: LOCAL_EDGES, stats: LOCAL_STATS } },
+  {
+    user_id: 'peer-maya', name: 'Maya Chen',
+    graph: memberGraph('Calculus II', '#2563eb', [
+      ['Taylor Series', 0.93, 'mastered'],
+      ['Polar Coordinates', 0.81, 'mastered'],
+      ['Sequences & Convergence', 0.6, 'learning'],
+      ['Integration by Parts', 0.7, 'learning'],
+    ]),
+  },
+  {
+    user_id: 'peer-sam', name: 'Sam Rivera',
+    graph: memberGraph('Data Structures', '#059669', [
+      ['Graph Algorithms', 0.9, 'mastered'],
+      ['Hash Maps', 0.85, 'mastered'],
+      ['Dynamic Programming', 0.66, 'learning'],
+      ['Binary Trees', 0.5, 'struggling'],
+    ]),
+  },
+];
+
+const LOCAL_ROOM_OVERVIEW: RoomOverviewData = {
+  room: { id: 'r1', name: 'CS Study Group', invite_code: 'ABC123', created_by: LOCAL_USER.id },
+  members: LOCAL_ROOM_MEMBERS,
+  ai_summary:
+    'This group balances strengths across calculus and data structures. Maya has a strong command of Taylor series and polar coordinates — exactly where the group is weakest — while Sam brings depth in graph algorithms and dynamic programming. Local Dev anchors the group with solid fundamentals in integration and binary trees, so everyone has someone to lean on heading into finals.',
+};
+
+const LOCAL_ROOM_MESSAGES: RoomMessageRow[] = [
+  { id: 'm1', user_id: 'peer-maya', user_name: 'Maya Chen', text: 'Hey! Ready to grind through the problem set? 📚', image_url: null, created_at: minutesAgo(190), reply_to_id: null, is_deleted: false, edited_at: null, reply_to: null, reactions: [{ emoji: '👍', user_ids: [LOCAL_USER.id, 'peer-sam'] }] },
+  { id: 'm2', user_id: LOCAL_USER.id, user_name: LOCAL_USER.name, text: 'Yeah — still stuck on polar coordinates though 😅', image_url: null, created_at: minutesAgo(184), reply_to_id: null, is_deleted: false, edited_at: null, reply_to: null, reactions: [] },
+  { id: 'm3', user_id: 'peer-sam', user_name: 'Sam Rivera', text: 'I can help with the graph traversal one if we trade 🙂', image_url: null, created_at: minutesAgo(122), reply_to_id: null, is_deleted: false, edited_at: null, reply_to: null, reactions: [] },
+  { id: 'm4', user_id: 'peer-maya', user_name: 'Maya Chen', text: "Polar is my favorite — I'll walk you through it before the midterm.", image_url: null, created_at: minutesAgo(35), reply_to_id: 'm2', is_deleted: false, edited_at: null, reply_to: { id: 'm2', user_name: LOCAL_USER.name, text: 'Yeah — still stuck on polar coordinates though 😅' }, reactions: [{ emoji: '🙏', user_ids: [LOCAL_USER.id] }] },
+];
+
+const LOCAL_ROOM_ACTIVITY = [
+  { id: 'act1', user_name: 'Maya Chen', activity_type: 'mastered', concept_name: 'Taylor Series', created_at: minutesAgo(60) },
+  { id: 'act2', user_name: 'Sam Rivera', activity_type: 'leveled up', concept_name: 'Graph Algorithms', created_at: minutesAgo(210) },
+  { id: 'act3', user_name: LOCAL_USER.name, activity_type: 'studied', concept_name: 'Integration by Parts', created_at: minutesAgo(400) },
+];
+
+const LOCAL_STUDENTS = [
+  { user_id: 'peer-maya', name: 'Maya Chen', streak: 9, courses: ['Calculus II', 'Linear Algebra'], stats: { mastered: 6, learning: 3, struggling: 1, unexplored: 2, total: 12 }, top_concepts: ['Taylor Series', 'Polar Coordinates', 'Eigenvalues'] },
+  { user_id: 'peer-sam', name: 'Sam Rivera', streak: 5, courses: ['Data Structures', 'Algorithms'], stats: { mastered: 5, learning: 4, struggling: 2, unexplored: 1, total: 12 }, top_concepts: ['Graph Algorithms', 'Hash Maps', 'Sorting'] },
+  { user_id: 'peer-priya', name: 'Priya Patel', streak: 14, courses: ['Intro to Psychology', 'Statistics'], stats: { mastered: 8, learning: 2, struggling: 0, unexplored: 3, total: 13 }, top_concepts: ['Memory & Encoding', 'Hypothesis Testing'] },
+  { user_id: 'peer-jordan', name: 'Jordan Lee', streak: 2, courses: ['Data Structures'], stats: { mastered: 2, learning: 5, struggling: 3, unexplored: 4, total: 14 }, top_concepts: ['Binary Trees'] },
+];
+
 export function handleLocalRequest(path: string, options?: RequestInit): unknown {
   const route = path.split('?')[0];
 
@@ -189,6 +365,29 @@ export function handleLocalRequest(path: string, options?: RequestInit): unknown
   if (route.match(/^\/api\/graph\/[^/]+\/courses$/) && options?.method === 'POST') return { course_id: 'c-new', already_existed: false };
   if (route.match(/^\/api\/graph\/[^/]+\/courses\/[^/]+\/color$/)) return { updated: true };
   if (route.match(/^\/api\/graph\/[^/]+\/courses\/[^/]+$/) && options?.method === 'DELETE') return { deleted: true };
+
+  if (route.match(/^\/api\/gradebook\/summary/)) return {
+    courses: LOCAL_COURSES.map((c, i) => ({
+      course_id: c.course_id,
+      course_code: c.course_code || c.course_name,
+      course_name: c.course_name,
+      semester: 'Spring 2026',
+      percent: [88.5, 76.2, 92.1][i] ?? null,
+      letter: ['B+', 'C', 'A-'][i] ?? null,
+      graded_count: [4, 3, 5][i] ?? 0,
+      total_count: [6, 5, 6][i] ?? 0,
+    })),
+  };
+
+  if (route.match(/^\/api\/gradebook\/courses\/[^/]+$/)) {
+    const id = route.split('/').pop() ?? '';
+    return LOCAL_GRADEBOOK_DETAIL[id] ?? LOCAL_GRADEBOOK_DETAIL.c1;
+  }
+  if (route.match(/^\/api\/gradebook\/courses\/[^/]+\/(categories|scale|curve)$/)) return { ok: true };
+  if (route.match(/^\/api\/gradebook\/assignments/)) return { assignment: null };
+  if (route.match(/^\/api\/gradebook\/categories\//)) return { ok: true };
+
+  if (route.match(/^\/api\/gradescope\/status/)) return { has_credentials: false, auth_mode: null, last_synced_at: null };
 
   if (route.match(/^\/api\/calendar\/upcoming\//)) return { assignments: LOCAL_ASSIGNMENTS };
   if (route.match(/^\/api\/calendar\/all\//)) return { assignments: LOCAL_ASSIGNMENTS };
@@ -247,8 +446,28 @@ export function handleLocalRequest(path: string, options?: RequestInit): unknown
   if (route.match(/^\/api\/learn\/action$/) && options?.method === 'POST') return { reply: 'Local mode — action noted.', graph_update: { new_nodes: [], updated_nodes: [], new_edges: [], recommended_next: [] } };
   if (route.match(/^\/api\/learn\/mode-switch$/) && options?.method === 'POST') return { reply: 'Local mode — mode switched.' };
 
+  // Room sub-routes (match before the single-segment room-list route below).
+  if (route.match(/^\/api\/social\/rooms\/create$/) && options?.method === 'POST') return { room_id: randId('room'), invite_code: 'LOCAL1' };
+  if (route.match(/^\/api\/social\/rooms\/join$/) && options?.method === 'POST') return { room: { ...LOCAL_ROOMS[0], members: LOCAL_ROOM_MEMBERS } };
+  if (route.match(/^\/api\/social\/rooms\/[^/]+\/messages\/[^/]+\/reactions$/)) return { added: true };
+  if (route.match(/^\/api\/social\/rooms\/[^/]+\/messages\/[^/]+$/) && options?.method === 'PATCH') return { edited: true };
+  if (route.match(/^\/api\/social\/rooms\/[^/]+\/messages\/[^/]+$/) && options?.method === 'DELETE') return { deleted: true };
+  if (route.match(/^\/api\/social\/rooms\/[^/]+\/messages$/) && options?.method === 'POST') {
+    const b = parseBody<{ user_id?: string; user_name?: string; text?: string; image_url?: string; reply_to_id?: string }>(options);
+    return { message: {
+      id: randId('msg'), user_id: b.user_id ?? LOCAL_USER.id, user_name: b.user_name ?? LOCAL_USER.name,
+      text: b.text ?? null, image_url: b.image_url ?? null, created_at: new Date().toISOString(),
+      reply_to_id: b.reply_to_id ?? null, is_deleted: false, edited_at: null, reply_to: null, reactions: [],
+    } };
+  }
+  if (route.match(/^\/api\/social\/rooms\/[^/]+\/messages$/)) return { messages: LOCAL_ROOM_MESSAGES, has_more: false };
+  if (route.match(/^\/api\/social\/rooms\/[^/]+\/overview$/)) return LOCAL_ROOM_OVERVIEW;
+  if (route.match(/^\/api\/social\/rooms\/[^/]+\/activity$/)) return { activities: LOCAL_ROOM_ACTIVITY };
+  if (route.match(/^\/api\/social\/rooms\/[^/]+\/match$/) && options?.method === 'POST') return { matches: [] };
+  if (route.match(/^\/api\/social\/rooms\/[^/]+\/leave$/) && options?.method === 'POST') return { left: true };
+  if (route.match(/^\/api\/social\/rooms\/[^/]+\/members\/[^/]+$/) && options?.method === 'DELETE') return { kicked: true };
   if (route.match(/^\/api\/social\/rooms\/[^/]+$/)) return { rooms: LOCAL_ROOMS };
-  if (route.match(/^\/api\/social\/students$/)) return { students: [] };
+  if (route.match(/^\/api\/social\/students$/)) return { students: LOCAL_STUDENTS };
   if (route.match(/^\/api\/social\/school-match$/) && options?.method === 'POST') return { matches: [] };
 
   if (route.match(/^\/api\/profile\/username\/check/)) return { available: true };
@@ -382,4 +601,10 @@ function daysFromNow(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() + n);
   return d.toISOString().split('T')[0];
+}
+
+function minutesAgo(n: number): string {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - n);
+  return d.toISOString();
 }

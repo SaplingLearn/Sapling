@@ -7,16 +7,56 @@ from config import get_mastery_tier
 from db.connection import table
 
 
+def _reshape_enrollment(r: dict) -> dict:
+    """Flatten an enrollments→course_offerings→courses/terms join row into the
+    legacy flat shape consumers expect:
+
+    - ``course_id`` = the *abstract* course id (the knowledge-graph key),
+    - ``courses``   = {course_code, course_name, department, school},
+    - plus the new ``offering_id`` and ``term`` (label).
+    """
+    off = r.get("course_offerings") or {}
+    if not isinstance(off, dict):
+        off = {}
+    course = off.get("courses") or {}
+    if not isinstance(course, dict):
+        course = {}
+    term = off.get("terms") or {}
+    if not isinstance(term, dict):
+        term = {}
+    return {
+        "id": r.get("id"),
+        "offering_id": r.get("offering_id"),
+        "course_id": off.get("course_id"),  # ABSTRACT course id — graph keys on this
+        "color": r.get("color"),
+        "nickname": r.get("nickname"),
+        "enrolled_at": r.get("enrolled_at"),
+        "term": term.get("label", ""),
+        "courses": {
+            "course_code": course.get("course_code", ""),
+            "course_name": course.get("course_name", ""),
+            "department": course.get("department", ""),
+            # Free-text school retired in the academics split; school_id is unpopulated.
+            "school": "",
+        },
+    }
+
+
 def _user_enrolled_courses(user_id: str) -> list[dict]:
-    """Get all courses a user is enrolled in via user_courses join."""
+    """All courses a user is enrolled in, via enrollments → course_offerings →
+    courses/terms, reshaped to the legacy flat shape (abstract course_id + nested
+    courses dict + offering_id + term label)."""
     try:
-        rows = table("user_courses").select(
-            "id,course_id,color,nickname,enrolled_at,courses!inner(course_code,course_name,department,school)",
+        rows = table("enrollments").select(
+            "id,offering_id,color,nickname,enrolled_at,"
+            "course_offerings!inner(course_id,"
+            "courses!inner(course_code,course_name,department),terms!inner(label))",
             filters={"user_id": f"eq.{user_id}"},
+            order="enrolled_at.asc",
         )
     except Exception:
         return []
-    return rows or []
+    return [_reshape_enrollment(r) for r in (rows or [])]
 
 
 def _get_course_nodes(user_id: str, course_id: str) -> list:
@@ -28,12 +68,17 @@ def _get_course_nodes(user_id: str, course_id: str) -> list:
 
 
 def ensure_user_exists(user_id: str) -> None:
-    """Create a user row if one doesn't exist yet (prevents FK violations)."""
+    """Create a user row if one doesn't exist yet (prevents FK violations).
+
+    Insert only columns that still live on `users` after the 0024 identity split
+    — the public profile (incl. `name`) moved to `user_profiles`. A stub user has
+    no display name yet; onboarding/oauth populate `user_profiles` separately, so
+    we deliberately do NOT create a profile row here.
+    """
     existing = table("users").select("id", filters={"id": f"eq.{user_id}"})
     if not existing:
-        name = user_id.replace("user_", "").replace("_", " ").title()
         try:
-            table("users").insert({"id": user_id, "name": name, "streak_count": 0})
+            table("users").insert({"id": user_id, "streak_count": 0})
         except Exception:
             pass  # already exists (race condition) — safe to ignore
 
@@ -60,15 +105,25 @@ def update_streak(user_id: str) -> None:
     )
 
 
+def _event_ts(e: dict) -> str | None:
+    """Pull a timestamp off a mastery event row. node_mastery_events rows key on
+    ``created_at``; tolerate the legacy ``ts`` key too."""
+    return e.get("created_at") or e.get("ts")
+
+
 def _compute_velocity(events: list) -> float:
-    """Mastery gained per day over the last 14 days. Returns 0.0 if insufficient data."""
+    """Mastery gained per day over the last 14 days. Returns 0.0 if insufficient data.
+
+    Operates on ``node_mastery_events`` rows ({delta, created_at, ...}); the legacy
+    JSON-blob ``ts`` key is still accepted via ``_event_ts``.
+    """
     if not events:
         return 0.0
     cutoff = datetime.utcnow() - timedelta(days=14)
     recent = []
     for e in events:
         try:
-            ts = datetime.fromisoformat(e["ts"].replace("Z", "+00:00")).replace(tzinfo=None)
+            ts = datetime.fromisoformat(_event_ts(e).replace("Z", "+00:00")).replace(tzinfo=None)
             if ts > cutoff:
                 recent.append(e)
         except Exception:
@@ -79,7 +134,7 @@ def _compute_velocity(events: list) -> float:
     if positive_gain == 0:
         return 0.0
     try:
-        first_ts = datetime.fromisoformat(recent[0]["ts"].replace("Z", "+00:00")).replace(tzinfo=None)
+        first_ts = datetime.fromisoformat(_event_ts(recent[0]).replace("Z", "+00:00")).replace(tzinfo=None)
         days = max(1, (datetime.utcnow() - first_ts).days)
     except Exception:
         days = 1
@@ -110,9 +165,25 @@ def get_graph(user_id: str) -> dict:
         if e["source_node_id"] in node_ids and e["target_node_id"] in node_ids
     ]
 
+    # Mastery events live in the append-only node_mastery_events table (the
+    # graph_nodes.mastery_events JSONB column was dropped in 0023). Batch-read all
+    # of this user's node events in one query, then group by node id.
+    events_by_node: dict[str, list] = {}
+    if node_ids:
+        try:
+            event_rows = table("node_mastery_events").select(
+                "node_id,delta,reason,created_at",
+                filters={"node_id": f"in.({','.join(node_ids)})"},
+                order="created_at.asc",
+            ) or []
+        except Exception:
+            event_rows = []
+        for ev in event_rows:
+            events_by_node.setdefault(ev.get("node_id"), []).append(ev)
+
     # Enrich each node with learning velocity; trim event history for API response
     for n in nodes:
-        events = n.get("mastery_events") or []
+        events = events_by_node.get(n["id"], [])
         n["learning_velocity"] = _compute_velocity(events)
         n["mastery_events"] = events[-5:]  # keep last 5 for UI; full history lives in DB
 
@@ -208,30 +279,23 @@ def get_graph(user_id: str) -> dict:
 
 def get_courses(user_id: str) -> list:
     """
-    Return user's enrolled courses joined with canonical course data.
-    Returns list of dicts with: enrollment_id, course_id, course_code, course_name, 
-    school, department, color, nickname, node_count, enrolled_at
+    Return user's enrolled courses joined with abstract catalog data + term.
+    Returns list of dicts with: enrollment_id, course_id (abstract), course_code,
+    course_name, school, department, color, nickname, term, node_count, enrolled_at.
     """
-    try:
-        rows = table("user_courses").select(
-            "id,course_id,color,nickname,enrolled_at,courses!inner(course_code,course_name,school,department)",
-            filters={"user_id": f"eq.{user_id}"},
-            order="enrolled_at.asc",
-        )
-    except Exception:
-        return []
-    
+    rows = _user_enrolled_courses(user_id)
+
     result = []
     for r in rows:
         course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
-        course_id = r["course_id"]
-        
-        # Count nodes for this course
+        course_id = r.get("course_id")  # abstract
+
+        # Count nodes for this course (graph keys on the abstract course id)
         node_rows = table("graph_nodes").select(
             "id",
             filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-        )
-        
+        ) if course_id else []
+
         result.append({
             "enrollment_id": r["id"],
             "course_id": course_id,
@@ -241,59 +305,75 @@ def get_courses(user_id: str) -> list:
             "department": course.get("department", ""),
             "color": r.get("color"),
             "nickname": r.get("nickname"),
+            "term": r.get("term", ""),
             "node_count": len(node_rows),
-            "enrolled_at": r["enrolled_at"],
+            "enrolled_at": r.get("enrolled_at"),
         })
     return result
 
 
 def add_course(user_id: str, course_id: str, color: str | None = None, nickname: str | None = None) -> dict:
     """
-    Enroll a user in a course (insert into user_courses).
-    course_id refers to the canonical courses table.
+    Enroll a user in a course. ``course_id`` is the abstract catalog course id;
+    the enrollment is created against the **current term's offering** of that
+    course (created if the catalog lacks one), so new enrollments land in the
+    real current semester.
     """
-    # Check if already enrolled
-    existing = table("user_courses").select(
-        "id",
-        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-    )
-    if existing:
-        return {"course_id": course_id, "already_existed": True}
-    
-    # Verify the course exists in canonical courses
+    # Verify the abstract course exists in the catalog
     course_check = table("courses").select("id", filters={"id": f"eq.{course_id}"})
     if not course_check:
         return {"course_id": course_id, "error": "Course not found in catalog"}
-    
-    table("user_courses").insert({
+
+    from services.academics import resolve_offering
+    offering_id = resolve_offering(course_id, create=True)
+    if not offering_id:
+        return {"course_id": course_id, "error": "No term available to enroll into"}
+
+    # Check if already enrolled in this offering
+    existing = table("enrollments").select(
+        "id",
+        filters={"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"},
+    )
+    if existing:
+        return {"course_id": course_id, "already_existed": True}
+
+    table("enrollments").insert({
         "id": str(uuid.uuid4()),
         "user_id": user_id,
-        "course_id": course_id,
+        "offering_id": offering_id,
         "color": color,
         "nickname": nickname,
     })
     try:
         from services.course_context_service import update_course_context
-        update_course_context(course_id)
+        update_course_context(offering_id)
     except Exception:
         pass
     return {"course_id": course_id, "already_existed": False}
 
 
 def update_course_color(user_id: str, course_id: str, color: str) -> dict:
-    """Update the color for a user's course enrollment."""
-    table("user_courses").update(
+    """Update the color for a user's enrollment(s) of an abstract course."""
+    from services.academics import user_offering_ids_for_course
+    offering_ids = user_offering_ids_for_course(user_id, course_id)
+    if not offering_ids:
+        return {"updated": False}
+    table("enrollments").update(
         {"color": color},
-        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+        filters={"user_id": f"eq.{user_id}", "offering_id": f"in.({','.join(offering_ids)})"},
     )
     return {"updated": True}
 
 
 def update_course_nickname(user_id: str, course_id: str, nickname: str) -> dict:
-    """Update the nickname for a user's course enrollment."""
-    table("user_courses").update(
+    """Update the nickname for a user's enrollment(s) of an abstract course."""
+    from services.academics import user_offering_ids_for_course
+    offering_ids = user_offering_ids_for_course(user_id, course_id)
+    if not offering_ids:
+        return {"updated": False}
+    table("enrollments").update(
         {"nickname": nickname},
-        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+        filters={"user_id": f"eq.{user_id}", "offering_id": f"in.({','.join(offering_ids)})"},
     )
     return {"updated": True}
 
@@ -317,11 +397,15 @@ def delete_node(user_id: str, node_id: str) -> dict:
     table("graph_nodes").delete(filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"})
 
     if course_id:
-        try:
-            from services.course_context_service import update_course_context
-            update_course_context(course_id)
-        except Exception:
-            pass
+        # course_id from graph_nodes is the abstract course; refresh each of the
+        # user's offerings of that course (analytics is offering-scoped).
+        from services.course_context_service import update_course_context
+        from services.academics import user_offering_ids_for_course
+        for offering_id in user_offering_ids_for_course(user_id, course_id):
+            try:
+                update_course_context(offering_id)
+            except Exception:
+                pass
     return {"deleted": True}
 
 
@@ -343,18 +427,20 @@ def update_node_color(user_id: str, node_id: str, color: str | None) -> dict:
 
 def delete_course(user_id: str, course_id: str) -> dict:
     """
-    Unenroll a user from a course (delete from user_courses).
-    Note: We don't delete the graph nodes - they remain for potential re-enrollment.
+    Unenroll a user from a course (delete their enrollment(s) for the abstract
+    course's offerings). Graph nodes are kept for potential re-enrollment.
     """
-    # Just delete the enrollment, not the nodes
-    table("user_courses").delete(
-        {"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
-    )
-    try:
-        from services.course_context_service import update_course_context
-        update_course_context(course_id)
-    except Exception:
-        pass
+    from services.academics import user_offering_ids_for_course
+    offering_ids = user_offering_ids_for_course(user_id, course_id)
+    from services.course_context_service import update_course_context
+    for offering_id in offering_ids:
+        table("enrollments").delete(
+            {"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"}
+        )
+        try:
+            update_course_context(offering_id)
+        except Exception:
+            pass
     return {"deleted": True}
 
 
@@ -387,12 +473,13 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
     if course_id:
         fetch_filters["course_id"] = f"eq.{course_id}"
     existing_rows = table("graph_nodes").select(
-        "id,concept_name,mastery_score,times_studied,course_id,mastery_events",
+        "id,concept_name,mastery_score,times_studied,course_id",
         filters=fetch_filters,
     ) or []
 
-    # Normalized name → row, scoped to (user_id [, course_id]). Last write wins
-    # if duplicates pre-exist; the dedup script in db/dedup_nodes.py cleans those.
+    # Normalized name → row, scoped to (user_id [, course_id]). The UNIQUE
+    # (user_id, course_id, concept_name) constraint from 0023 prevents duplicates;
+    # this map resolves updated_nodes / new_edges against pre-existing rows.
     by_name: dict[str, dict] = {}
     for row in existing_rows:
         norm = _normalize_concept(row.get("concept_name") or "")
@@ -413,24 +500,32 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         init_m = _coerce_unit(new_node.get("initial_mastery"), 0.0)
 
         new_id = str(uuid.uuid4())
-        table("graph_nodes").insert({
-            "id": new_id,
-            "user_id": user_id,
-            "concept_name": name,
-            "mastery_score": init_m,
-            "mastery_tier": get_mastery_tier(init_m),
-            "course_id": node_course_id,
-            "mastery_events": [],
-        })
+        # UNIQUE-backed upsert (0023) replaces the old select-then-insert. On a
+        # pre-existing (user_id, course_id, concept_name) the row is merged rather
+        # than duplicated. Read the canonical id back from the representation so
+        # later edge/update writes target the surviving row.
+        returned = table("graph_nodes").upsert(
+            {
+                "id": new_id,
+                "user_id": user_id,
+                "concept_name": name,
+                "mastery_score": init_m,
+                "mastery_tier": get_mastery_tier(init_m),
+                "course_id": node_course_id,
+            },
+            on_conflict="user_id,course_id,concept_name",
+        )
+        canonical_id = new_id
+        if returned and isinstance(returned, list) and isinstance(returned[0], dict):
+            canonical_id = returned[0].get("id", new_id)
         # Track in-batch inserts so subsequent updated_nodes / new_edges in the
         # same call resolve against just-created nodes.
         inserted_in_batch[norm] = {
-            "id": new_id,
+            "id": canonical_id,
             "concept_name": name,
             "mastery_score": init_m,
             "times_studied": 0,
             "course_id": node_course_id,
-            "mastery_events": [],
         }
         if node_course_id:
             touched_courses.add(node_course_id)
@@ -454,25 +549,25 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         before = row["mastery_score"]
         after = max(0.0, min(1.0, before + delta))
 
-        existing_events = row.get("mastery_events") or []
-        new_event = {
-            "ts": datetime.utcnow().isoformat(),
-            "delta": delta,
-            "reason": upd.get("reason", ""),
-            "event_type": upd.get("event_type", "interaction"),
-        }
-        updated_events = (existing_events + [new_event])[-20:]
-
+        now = datetime.utcnow().isoformat()
+        # Update only the scalar columns — the mastery_events JSONB blob is gone (0023).
         table("graph_nodes").update(
             {
                 "mastery_score": after,
                 "mastery_tier": get_mastery_tier(after),
                 "times_studied": (row.get("times_studied") or 0) + 1,
-                "last_studied_at": datetime.utcnow().isoformat(),
-                "mastery_events": updated_events,
+                "last_studied_at": now,
             },
             filters={"id": f"eq.{row['id']}"},
         )
+        # Append-only mastery event (fixes the non-atomic read-modify-write, #247).
+        table("node_mastery_events").insert({
+            "id": str(uuid.uuid4()),
+            "node_id": row["id"],
+            "delta": delta,
+            "reason": upd.get("reason", ""),
+            "created_at": now,
+        })
         mastery_changes.append({"concept": row["concept_name"], "before": before, "after": after})
 
         cid = row.get("course_id")
@@ -501,31 +596,32 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         if src["id"] == tgt["id"]:
             continue
 
-        existing_edge = table("graph_edges").select(
-            "id",
-            filters={
-                "user_id": f"eq.{user_id}",
-                "source_node_id": f"eq.{src['id']}",
-                "target_node_id": f"eq.{tgt['id']}",
-            },
-        )
-        if not existing_edge:
-            table("graph_edges").insert({
+        # UNIQUE-backed upsert (0023) on (user_id, source, target, relationship_type)
+        # replaces the old select-then-insert; the DB dedups, so re-emitted edges
+        # are idempotent.
+        table("graph_edges").upsert(
+            {
                 "id": str(uuid.uuid4()),
                 "user_id": user_id,
                 "source_node_id": src["id"],
                 "target_node_id": tgt["id"],
                 "strength": strength,
                 "relationship_type": relationship_type,
-            })
+            },
+            on_conflict="user_id,source_node_id,target_node_id,relationship_type",
+        )
 
     if touched_courses:
+        # touched_courses holds abstract course ids (the graph key). Analytics is
+        # offering-scoped, so refresh each of this user's offerings of those courses.
         from services.course_context_service import update_course_context
+        from services.academics import user_offering_ids_for_course
         for cid in touched_courses:
-            try:
-                update_course_context(cid)
-            except Exception:
-                pass
+            for offering_id in user_offering_ids_for_course(user_id, cid):
+                try:
+                    update_course_context(offering_id)
+                except Exception:
+                    pass
 
     return mastery_changes
 

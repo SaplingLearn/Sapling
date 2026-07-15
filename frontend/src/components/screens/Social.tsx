@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Icon } from "../Icon";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
+import { Toggle } from "@/components/ui";
 import { SocialRoomsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
@@ -494,7 +495,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                     }}
                   >
                     {m.image_url && (
-                      <img src={m.image_url} alt="attachment" style={{ maxWidth: 260, borderRadius: "var(--r-sm)", marginBottom: m.text ? 6 : 0 }} />
+                      <img src={m.image_url} alt="attachment" loading="lazy" style={{ maxWidth: 260, borderRadius: "var(--r-sm)", marginBottom: m.text ? 6 : 0 }} />
                     )}
                     {renderText(m.text)}
                     {m.edited_at && <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 6 }}>(edited)</span>}
@@ -1055,23 +1056,17 @@ export function Social() {
                   <span>{active.member_count} members</span>
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {(["overview", "chat", "match", "activity"] as Tab[]).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setTab(t)}
-                    style={{
-                      padding: "6px 14px", fontSize: 12, fontWeight: 500,
-                      borderRadius: "var(--r-sm)",
-                      background: tab === t ? "var(--accent-soft)" : "transparent",
-                      color: tab === t ? "var(--accent)" : "var(--text-dim)",
-                      textTransform: "capitalize",
-                    }}
-                  >
-                    {t === "match" ? "Study match" : t}
-                  </button>
-                ))}
-              </div>
+              <Toggle
+                options={[
+                  { value: "overview", label: "Overview" },
+                  { value: "chat", label: "Chat" },
+                  { value: "match", label: "Study match" },
+                  { value: "activity", label: "Activity" },
+                ]}
+                value={tab}
+                onChange={setTab}
+                size="sm"
+              />
             </div>
             {tab === "chat" && <RoomChat roomId={active.id} members={members} />}
             {tab === "overview" && <RoomOverview roomId={active.id} onChange={load} />}

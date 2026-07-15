@@ -14,6 +14,7 @@ from agents.note_concepts import note_concepts_agent
 from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
 from db.connection import table
+from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
 from services.notes_service import (
     create_note,
@@ -26,6 +27,7 @@ from services.notes_service import (
     unlink_concept,
     update_note,
 )
+from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
 
 router = APIRouter()
@@ -54,16 +56,32 @@ async def list_user_notes(
     course_id: str | None = None,
 ):
     require_self(user_id, request)
-    notes = await list_notes(user_id=user_id, course_id=course_id)
-    return {"notes": notes}
+    # The API speaks abstract course ids; notes key on the offering. Resolve
+    # the (current-term) offering for the requested course before filtering.
+    offering_id = resolve_offering(course_id) if course_id else None
+    notes = await list_notes(user_id=user_id, offering_id=offering_id)
+    # ETag from each note's (id, updated_at) — any create/edit/delete changes the
+    # set or bumps updated_at. A matching If-None-Match returns 304 and skips
+    # re-serializing the (already-decrypted) note list.
+    etag = make_etag(
+        "notes", user_id, offering_id or "",
+        *sorted(f"{n.get('id')}:{n.get('updated_at')}" for n in notes),
+    )
+    not_modified = conditional(request, etag)
+    if not_modified is not None:
+        return not_modified
+    return cached_json({"notes": notes}, etag)
 
 
 @router.post("")
 async def create(body: CreateNoteBody, request: Request):
     require_self(body.user_id, request)
+    # Abstract course id from the client → the current-term offering the note
+    # is stored against (create=True so a fresh note lands in the real term).
+    offering_id = resolve_offering(body.course_id, create=True)
     note = await create_note(
         user_id=body.user_id,
-        course_id=body.course_id,
+        offering_id=offering_id,
         title=body.title,
         body=body.body,
         tags=body.tags,
@@ -91,7 +109,8 @@ async def patch(note_id: str, body: UpdateNoteBody, request: Request):
     if body.tags is not None:
         patch_dict["tags"] = body.tags
     if body.course_id is not None:
-        patch_dict["course_id"] = body.course_id
+        # Re-home the note onto the offering for the new abstract course.
+        patch_dict["offering_id"] = resolve_offering(body.course_id, create=True)
     if not patch_dict:
         raise HTTPException(status_code=400, detail="No fields to update.")
     updated = await update_note(
@@ -200,7 +219,9 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
         f"Title: {note.get('title') or '(untitled)'}\n\n"
         f"Body:\n{note.get('body') or '(empty)'}"
     )
-    deps = _deps_for(body.user_id, note.get("course_id"), note_id)
+    # The graph keys on the abstract course; the note carries the offering.
+    course_id = offering_course_id(note.get("offering_id"))
+    deps = _deps_for(body.user_id, course_id, note_id)
     result = await note_summary_agent.run(user_prompt, deps=deps)
     summary_text = result.output.summary
     await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
@@ -219,10 +240,11 @@ async def extract_concepts(
         f"Title: {note.get('title') or '(untitled)'}\n\n"
         f"Body:\n{note.get('body') or '(empty)'}"
     )
-    deps = _deps_for(body.user_id, note.get("course_id"), note_id)
+    # Concepts land in the abstract-course graph; resolve offering → course.
+    course_id = offering_course_id(note.get("offering_id"))
+    deps = _deps_for(body.user_id, course_id, note_id)
     result = await note_concepts_agent.run(user_prompt, deps=deps)
     names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
-    course_id = note.get("course_id")
     await apply_concepts_to_graph(
         user_id=body.user_id, course_id=course_id, concept_names=names
     )
@@ -248,7 +270,8 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    deps = _deps_for(body.user_id, note.get("course_id"), note_id)
+    course_id = offering_course_id(note.get("offering_id"))
+    deps = _deps_for(body.user_id, course_id, note_id)
     result = await note_chat_agent.run(body.message, deps=deps)
     return {"reply": result.output}
 
@@ -272,7 +295,8 @@ async def send_to_tutor(
     preface = "\n\n".join(preface_parts)
     return {
         "topic": topic,
-        "course_id": note.get("course_id"),
+        # The tutor session starts from the abstract course id (the graph key).
+        "course_id": offering_course_id(note.get("offering_id")),
         "preface": preface,
     }
 
