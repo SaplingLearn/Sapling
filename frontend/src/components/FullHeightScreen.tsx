@@ -6,7 +6,7 @@ import React from "react";
  * Full-height root for screens rendered inside `ShellFrame`'s `<main>`.
  *
  * ShellFrame's horizontal-nav layout stacks the 56px `TopNav` above `<main>`
- * in a `100vh` flex column, so `<main>` is only `100vh - 56px` tall. Screens
+ * in a `100dvh` flex column, so `<main>` is only `100dvh - 56px` tall. Screens
  * that hardcoded `height: 100vh` were therefore taller than their container,
  * which overflowed `<main>` and made the whole page scroll — dragging chat
  * headers/inputs out of view instead of scrolling just the body (issue #331).
