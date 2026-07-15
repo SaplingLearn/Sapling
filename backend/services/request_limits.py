@@ -23,7 +23,7 @@ def check_rate_limit(key: str, *, limit: int, window_sec: int) -> int | None:
     now = time.time()
     bucket = [t for t in _rate_state.get(key, []) if now - t < window_sec]
     if len(bucket) >= limit:
-        retry = int(window_sec - (now - bucket[0])) + 1
+        retry = min(window_sec, int(window_sec - (now - bucket[0])) + 1)
         _rate_state[key] = bucket
         return retry
     bucket.append(now)

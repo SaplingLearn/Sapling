@@ -91,7 +91,7 @@ def check_rate_limit(user_id: str) -> int | None:
     now = time.time()
     bucket = [t for t in _rate_state.get(user_id, []) if now - t < _RATE_WINDOW_SEC]
     if len(bucket) >= _RATE_LIMIT:
-        retry = int(_RATE_WINDOW_SEC - (now - bucket[0])) + 1
+        retry = min(_RATE_WINDOW_SEC, int(_RATE_WINDOW_SEC - (now - bucket[0])) + 1)
         _rate_state[user_id] = bucket
         return retry
     bucket.append(now)
