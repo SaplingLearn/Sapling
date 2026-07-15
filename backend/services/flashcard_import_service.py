@@ -228,12 +228,14 @@ _AGENT_RETRIES = 1
 def _run_flashcard_agent(prompt: str) -> list[Card]:
     """Run the flashcard agent on a rendered prompt and return front/back dicts.
 
-    Filters out cards missing either side. Error contract mirrors the legacy
-    ``call_gemini`` flashcard path:
+    Filters out cards missing either side. Error contract (unified across the
+    generate + import seams):
 
     * A model whose output can't satisfy the ``Flashcards`` schema is treated as
-      "bad LLM output" and degrades to ``[]`` — logged, never silent (this is
-      the old JSON-parse ``[]`` resilience).
+      "bad LLM output" and degrades to ``[]`` — logged, never silent. This
+      matches the import seams' long-standing bad-JSON ``[]`` resilience; note
+      it is a deliberate contract change for ``/generate``, whose legacy path
+      *raised* (surfacing a 502) on malformed output.
     * Transient provider errors (HTTP 429/5xx) are retried once with a ~2s
       backoff, then re-raised.
     * Every other failure — transport, missing GEMINI_API_KEY,
