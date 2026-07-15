@@ -33,6 +33,18 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def _clear_lru_caches():
+    """#98: reset the per-process lru_caches around every test so one test's
+    mocked DB state can't leak into another via a cached read."""
+    from services import academics, course_context_service
+    academics.clear_academics_caches()
+    course_context_service.clear_course_context_cache()
+    yield
+    academics.clear_academics_caches()
+    course_context_service.clear_course_context_cache()
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_supabase_client(request, monkeypatch):
     """Hermetic safety net (#210): no test may make a real Supabase call.
 

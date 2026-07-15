@@ -15,8 +15,10 @@ latest term by ``sort_key`` so resolution never dead-ends.
 """
 from __future__ import annotations
 
+import copy
 import uuid
 from datetime import date
+from functools import lru_cache
 
 from db.connection import table
 
@@ -93,8 +95,13 @@ def resolve_offering(
     return any_off[0]["id"] if any_off else None
 
 
+@lru_cache(maxsize=4096)
 def offering_course_id(offering_id: str) -> str | None:
-    """The abstract course id an offering belongs to (offering → graph bridge)."""
+    """The abstract course id an offering belongs to (offering → graph bridge).
+
+    Cached per-process (#98): an offering's ``course_id`` is set at creation and
+    never changes, so this is a deterministic immutable mapping — no invalidation
+    hook needed. Returns an immutable ``str``/``None`` (safe to share)."""
     if not offering_id:
         return None
     rows = table("course_offerings").select(
@@ -121,8 +128,8 @@ def user_offering_ids_for_course(user_id: str, course_id: str) -> list[str]:
     return [e["offering_id"] for e in enr if e.get("offering_id") in off_ids]
 
 
-def term_for_offering(offering_id: str) -> dict | None:
-    """The term row for an offering (for semester labels)."""
+@lru_cache(maxsize=4096)
+def _term_for_offering_cached(offering_id: str) -> dict | None:
     if not offering_id:
         return None
     rows = table("course_offerings").select(
@@ -135,6 +142,24 @@ def term_for_offering(offering_id: str) -> dict | None:
         return None
     terms = table("terms").select("*", filters={"id": f"eq.{term_id}"}, limit=1)
     return terms[0] if terms else None
+
+
+def term_for_offering(offering_id: str) -> dict | None:
+    """The term row for an offering (for semester labels).
+
+    Cached per-process (#98): the offering→term mapping is immutable and terms
+    are seeded reference data that don't change at runtime. Returns a deep copy
+    so callers can't mutate the shared cached row."""
+    cached = _term_for_offering_cached(offering_id)
+    return copy.deepcopy(cached) if cached is not None else None
+
+
+def clear_academics_caches() -> None:
+    """Clear the per-process academics caches. Called from test setup (so mocked
+    DB state doesn't leak across tests); rarely needed at runtime since the
+    cached mappings are immutable."""
+    offering_course_id.cache_clear()
+    _term_for_offering_cached.cache_clear()
 
 
 def user_enrollment_ids(user_id: str) -> list[dict]:
