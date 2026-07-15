@@ -3,6 +3,7 @@ import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { MiniStat } from "../MiniStat";
 import { KnowledgeGraph } from "../KnowledgeGraph";
 import { ManageCoursesModal } from "../ManageCoursesModal";
@@ -300,14 +301,14 @@ export function Dashboard() {
     if (userReady && userId) load();
   }, [userReady, userId, load]);
 
+  useScrollLock(fullscreen);
+
   React.useEffect(() => {
     if (!fullscreen) return;
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(false); };
     document.addEventListener("keydown", h);
-    document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", h);
-      document.body.style.overflow = "";
     };
   }, [fullscreen]);
 

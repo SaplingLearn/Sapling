@@ -3,6 +3,7 @@ import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { Pill } from "../Pill";
 import { FilterPills } from "@/components/ui";
 import { KnowledgeGraph } from "../KnowledgeGraph";
@@ -91,14 +92,14 @@ export function Tree() {
     if (target) setSelected(target);
   }, [suggest, nodes]);
 
+  useScrollLock(fullscreen);
+
   React.useEffect(() => {
     if (!fullscreen) return;
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(false); };
     document.addEventListener("keydown", h);
-    document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", h);
-      document.body.style.overflow = "";
     };
   }, [fullscreen]);
 

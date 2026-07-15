@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
+import { useScrollLock } from '@/lib/useScrollLock';
 import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } from 'lucide-react';
 import OnboardingFlow from '@/components/OnboardingFlow';
 import HowItWorks from '@/components/HowItWorks';
@@ -116,12 +117,9 @@ export default function LandingPage() {
       return () => clearTimeout(t);
     }
   }, [betaSubmitted, closeModal]);
-  useEffect(() => {
-    if (betaModalOpen) {
-      document.body.style.overflow = 'hidden';
-      return () => { document.body.style.overflow = ''; };
-    }
-  }, [betaModalOpen]);
+  // Pre-auth there is no app shell, so <body> is the real scroll container and
+  // useScrollLock resolves to it.
+  useScrollLock(betaModalOpen);
 
   // Cleanup timeouts on unmount
   useEffect(() => {
@@ -156,11 +154,11 @@ export default function LandingPage() {
     window.history.replaceState({}, '', next);
   }, []);
 
+  useScrollLock(onboardingPhase !== 'idle');
+
   // Sync refs from state
   useEffect(() => {
     onboardingPhaseRef.current = onboardingPhase;
-    document.body.style.overflow = onboardingPhase !== 'idle' ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
   }, [onboardingPhase]);
   useEffect(() => { clusterActiveStepRef.current = activeStep; }, [activeStep]);
   useEffect(() => { clusterCompletedRef.current = completed; }, [completed]);
