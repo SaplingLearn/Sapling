@@ -32,49 +32,64 @@ export const LOCAL_USER = {
 };
 
 const COURSES = [
-  { name: 'Calculus II', color: '#2563eb' },
-  { name: 'Intro to Psychology', color: '#9333ea' },
-  { name: 'Data Structures', color: '#059669' },
+  { name: 'Calculus II', course_code: 'MATH 242', color: '#2563eb' },
+  { name: 'Intro to Psychology', course_code: 'PSY 101', color: '#9333ea' },
+  { name: 'Data Structures', course_code: 'CS 210', color: '#059669' },
 ];
 
 function makeNodes(): GraphNode[] {
   const nodes: GraphNode[] = [];
-  const concepts: Record<string, { name: string; mastery: number; tier: GraphNode['mastery_tier']; studied: string | null }[]> = {
+  const concepts: Record<string, { name: string; mastery: number; tier: GraphNode['mastery_tier']; studied: string | null; desc: string }[]> = {
     'Calculus II': [
-      { name: 'Integration by Parts', mastery: 0.85, tier: 'mastered', studied: daysAgo(0) },
-      { name: 'Taylor Series', mastery: 0.62, tier: 'learning', studied: daysAgo(1) },
-      { name: 'Polar Coordinates', mastery: 0.35, tier: 'struggling', studied: daysAgo(3) },
-      { name: 'Sequences & Convergence', mastery: 0.0, tier: 'unexplored', studied: null },
-      { name: 'Partial Fractions', mastery: 0.91, tier: 'mastered', studied: daysAgo(2) },
+      { name: 'Integration by Parts', mastery: 0.85, tier: 'mastered', studied: daysAgo(0), desc: 'Reverses the product rule to integrate products like x·eˣ.' },
+      { name: 'Partial Fractions', mastery: 0.91, tier: 'mastered', studied: daysAgo(2), desc: 'Splits a rational function into simpler fractions you can integrate term by term.' },
+      { name: 'Improper Integrals', mastery: 0.74, tier: 'learning', studied: daysAgo(1), desc: 'Evaluates integrals with infinite limits or unbounded integrands using limits.' },
+      { name: 'Taylor Series', mastery: 0.62, tier: 'learning', studied: daysAgo(1), desc: 'Approximates a function as an infinite polynomial expanded around a point.' },
+      { name: 'Power Series', mastery: 0.5, tier: 'learning', studied: daysAgo(3), desc: 'Represents functions as sums of powers of x within a radius of convergence.' },
+      { name: 'Polar Coordinates', mastery: 0.35, tier: 'struggling', studied: daysAgo(3), desc: 'Describes points by radius and angle instead of x and y.' },
+      { name: 'Parametric Equations', mastery: 0.28, tier: 'struggling', studied: daysAgo(5), desc: 'Traces curves by expressing x and y as functions of a parameter t.' },
+      { name: 'Sequences & Convergence', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'Studies whether an infinite list of terms settles toward a limit.' },
+      { name: 'Arc Length & Surface Area', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'Uses integrals to measure curve length and surfaces of revolution.' },
     ],
     'Intro to Psychology': [
-      { name: 'Classical Conditioning', mastery: 0.78, tier: 'learning', studied: daysAgo(0) },
-      { name: 'Memory & Encoding', mastery: 0.45, tier: 'struggling', studied: daysAgo(2) },
-      { name: 'Cognitive Biases', mastery: 0.0, tier: 'unexplored', studied: null },
+      { name: 'Classical Conditioning', mastery: 0.78, tier: 'learning', studied: daysAgo(0), desc: 'Learning to associate a neutral stimulus with a reflexive response.' },
+      { name: 'Operant Conditioning', mastery: 0.82, tier: 'mastered', studied: daysAgo(1), desc: 'Shaping behavior through reinforcement and punishment.' },
+      { name: 'Neurons & Synapses', mastery: 0.88, tier: 'mastered', studied: daysAgo(4), desc: 'How nerve cells fire and pass signals across synaptic gaps.' },
+      { name: 'Memory & Encoding', mastery: 0.45, tier: 'struggling', studied: daysAgo(2), desc: 'How information is registered, stored, and later retrieved.' },
+      { name: 'Sensation & Perception', mastery: 0.54, tier: 'learning', studied: daysAgo(3), desc: 'How the senses gather stimuli and the brain interprets them.' },
+      { name: 'Cognitive Biases', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'Systematic errors in judgment that skew reasoning and decisions.' },
+      { name: 'Developmental Stages', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'How thinking and behavior change across the human lifespan.' },
     ],
     'Data Structures': [
-      { name: 'Binary Trees', mastery: 0.95, tier: 'mastered', studied: daysAgo(1) },
-      { name: 'Hash Maps', mastery: 0.7, tier: 'learning', studied: daysAgo(0) },
-      { name: 'Graph Algorithms', mastery: 0.2, tier: 'struggling', studied: daysAgo(4) },
-      { name: 'Dynamic Programming', mastery: 0.0, tier: 'unexplored', studied: null },
+      { name: 'Binary Trees', mastery: 0.95, tier: 'mastered', studied: daysAgo(1), desc: 'Hierarchical nodes with up to two children, enabling fast ordered lookups.' },
+      { name: 'Linked Lists', mastery: 0.9, tier: 'mastered', studied: daysAgo(3), desc: 'A chain of nodes each pointing to the next, allowing cheap insertions.' },
+      { name: 'Stacks & Queues', mastery: 0.87, tier: 'mastered', studied: daysAgo(5), desc: 'LIFO and FIFO collections for ordered, restricted access.' },
+      { name: 'Hash Maps', mastery: 0.7, tier: 'learning', studied: daysAgo(0), desc: 'Key-value storage with near-constant-time lookups via hashing.' },
+      { name: 'Heaps & Priority Queues', mastery: 0.48, tier: 'learning', studied: daysAgo(2), desc: 'Trees that keep the min or max at the root for fast priority access.' },
+      { name: 'Graph Algorithms', mastery: 0.2, tier: 'struggling', studied: daysAgo(4), desc: 'Traversals and shortest paths over networks of nodes and edges.' },
+      { name: 'Sorting Algorithms', mastery: 0.33, tier: 'struggling', studied: daysAgo(6), desc: 'Techniques to order data, trading off speed and memory.' },
+      { name: 'Dynamic Programming', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'Solves problems by caching overlapping subproblem results.' },
+      { name: 'Recursion & Backtracking', mastery: 0.0, tier: 'unexplored', studied: null, desc: 'Functions that call themselves to explore and undo choices.' },
     ],
   };
 
-  for (const course of COURSES) {
+  COURSES.forEach((course, i) => {
+    const courseId = `c${i + 1}`;
     const rootId = `subject_root__${course.name}`;
     nodes.push({
       id: rootId, concept_name: course.name, mastery_score: 0, mastery_tier: 'subject_root',
       times_studied: 0, last_studied_at: null, subject: course.name, is_subject_root: true,
-      course_color: course.color,
+      course_id: courseId, course_color: course.color,
     });
     for (const c of concepts[course.name] ?? []) {
       nodes.push({
         id: `node-${slugify(c.name)}`, concept_name: c.name, mastery_score: c.mastery,
         mastery_tier: c.tier, times_studied: Math.floor(c.mastery * 10),
-        last_studied_at: c.studied, subject: course.name, course_color: course.color,
+        last_studied_at: c.studied, subject: course.name, description: c.desc,
+        course_id: courseId, course_color: course.color,
       });
     }
-  }
+  });
   return nodes;
 }
 
@@ -124,7 +139,7 @@ const LOCAL_ASSIGNMENTS: Assignment[] = [
 ];
 
 const LOCAL_COURSES = COURSES.map((c, i) => ({
-  enrollment_id: `enr-${i}`, course_id: `c${i + 1}`, course_code: '',
+  enrollment_id: `enr-${i}`, course_id: `c${i + 1}`, course_code: c.course_code,
   course_name: c.name, school: 'Local University', department: '',
   color: c.color, nickname: null,
   node_count: LOCAL_NODES.filter(n => n.subject === c.name && !n.is_subject_root).length,
