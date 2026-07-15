@@ -64,4 +64,6 @@ pydantic-evals>=0.0.5
 
 # Optional cross-worker cache (#97). Only imported at runtime when REDIS_URL is
 # set; the app runs identically without it (services/cache.py degrades to no-op).
-redis>=5.0
+# Upper bound per #163: services/cache.py only uses the from_url/ping/get/set
+# surface, which is stable across majors, but a major bump shouldn't land silently.
+redis>=5.0,<9
