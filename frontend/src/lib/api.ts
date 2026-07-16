@@ -129,6 +129,135 @@ export const sendChat = (
     }),
   });
 
+export interface MasteryChange { concept: string; before: number; after: number }
+
+export interface GraphDelta {
+  nodes: Record<string, Array<Record<string, unknown>>>;
+  mastery_changes: MasteryChange[];
+}
+
+export interface ChatResult {
+  reply: string;
+  graph_update: any;
+  mastery_changes: MasteryChange[];
+  session_id?: string;
+  graph_state?: any;
+}
+
+interface StreamEvent {
+  type: string;
+  step: string;
+  message: string;
+  data?: Record<string, any> | null;
+}
+
+export interface StreamChatHandlers {
+  onToken?: (delta: string) => void;
+  onGraphUpdate?: (delta: GraphDelta) => void;
+  signal?: AbortSignal;
+}
+
+const STREAM_IDLE_MS = 45_000;
+
+async function consumeChatStream(
+  path: string,
+  payload: Record<string, unknown>,
+  { onToken, onGraphUpdate, signal }: StreamChatHandlers,
+): Promise<ChatResult> {
+  const { streamSSE } = await import('./sse');
+  let result: ChatResult | null = null;
+
+  for await (const e of streamSSE<StreamEvent>(
+    `${API_URL}${path}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'include',
+      signal,
+    },
+    { idleTimeoutMs: STREAM_IDLE_MS },
+  )) {
+    const ev = e.data;
+    if (ev.type === 'token') onToken?.(String(ev.data?.delta ?? ''));
+    else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
+    else if (ev.type === 'error') throw new Error(ev.message || 'The tutor was interrupted.');
+    else if (ev.type === 'done') result = ev.data as unknown as ChatResult;
+  }
+
+  if (!result) throw new Error('Chat stream ended without a done event.');
+  return result;
+}
+
+export const streamChat = (
+  sessionId: string,
+  userId: string,
+  message: string,
+  mode: string,
+  useSharedContext = true,
+  modelPref?: ModelPref,
+  handlers: StreamChatHandlers = {},
+): Promise<ChatResult> => {
+  // Mirrors the local mock reply in localData.ts for POST /api/learn/chat —
+  // local mode must never open a fetch stream (mock path preserved).
+  if (IS_LOCAL_MODE) {
+    const reply = 'Local mode is active — AI chat is unavailable. Connect to the backend to use this feature.';
+    handlers.onToken?.(reply);
+    return Promise.resolve({
+      reply,
+      graph_update: { new_nodes: [], updated_nodes: [], new_edges: [], recommended_next: [] },
+      mastery_changes: [],
+    });
+  }
+  return consumeChatStream(
+    '/api/learn/chat/stream',
+    {
+      session_id: sessionId,
+      user_id: userId,
+      message,
+      mode,
+      use_shared_context: useSharedContext,
+      ...(modelPref ? { model_pref: modelPref } : {}),
+    },
+    handlers,
+  );
+};
+
+export const startSessionStream = (
+  userId: string,
+  topic: string,
+  mode: string,
+  useSharedContext = true,
+  courseId?: string,
+  modelPref?: ModelPref,
+  handlers: StreamChatHandlers = {},
+): Promise<ChatResult> => {
+  // Mirrors the local mock reply in localData.ts for POST /api/learn/start-session.
+  if (IS_LOCAL_MODE) {
+    const reply = 'Welcome! Local mode is active — AI chat is stubbed.';
+    handlers.onToken?.(reply);
+    return Promise.resolve({
+      reply,
+      graph_update: {},
+      mastery_changes: [],
+      session_id: 'local-session',
+      graph_state: {},
+    });
+  }
+  return consumeChatStream(
+    '/api/learn/start-session/stream',
+    {
+      user_id: userId,
+      topic,
+      mode,
+      use_shared_context: useSharedContext,
+      course_id: courseId,
+      ...(modelPref ? { model_pref: modelPref } : {}),
+    },
+    handlers,
+  );
+};
+
 export interface SessionSummaryData {
   concepts_covered: string[];
   mastery_changes: { concept: string; before: number; after: number }[];

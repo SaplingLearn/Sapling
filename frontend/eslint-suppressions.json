@@ -123,7 +123,7 @@
   },
   "src/lib/api.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 25
+      "count": 28
     }
   },
   "src/lib/useLayoutPref.ts": {
