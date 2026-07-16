@@ -107,13 +107,22 @@ const normalizeConceptName = (s: string) => s.trim().toLowerCase().replace(/\s+/
 // `id`/`node_id` when present (future-proofing against a payload shape
 // change) and otherwise by normalized concept name — and any fields we
 // don't recognize are ignored rather than crashing.
-function mergeGraphDelta(prev: GraphNode[], delta: GraphDelta, fallbackCourseId: string): GraphNode[] {
+//
+// Returns the merged node list plus any brand-new subject-root edges the
+// placeholder path wants added to `graphEdges` (see `applyGraphDelta` below
+// for why those are threaded out rather than written here).
+function mergeGraphDelta(
+  prev: GraphNode[],
+  delta: GraphDelta,
+  fallbackCourseId: string,
+): { nodes: GraphNode[]; newEdges: GraphEdge[] } {
   const rawNodes = Object.values(delta.nodes ?? {}).flat() as Array<Record<string, unknown>>;
   const rawMasteryChanges = delta.mastery_changes ?? [];
-  if (!rawNodes.length && !rawMasteryChanges.length) return prev;
+  if (!rawNodes.length && !rawMasteryChanges.length) return { nodes: prev, newEdges: [] };
 
   const byId = new Map(prev.map(n => [n.id, n] as const));
   const byName = new Map(prev.map(n => [normalizeConceptName(n.name), n] as const));
+  const newEdges: GraphEdge[] = [];
 
   const upsert = (existing: GraphNode | undefined, name: string, patch: Partial<GraphNode>) => {
     if (existing) {
@@ -125,23 +134,30 @@ function mergeGraphDelta(prev: GraphNode[], delta: GraphDelta, fallbackCourseId:
     // Unknown concept: insert a placeholder so it's visible immediately; a
     // later full graph refetch (session end / next visit) reconciles the
     // real id. The raw payload carries no course_id, so anchor it to the
-    // session's active course when there is one.
+    // session's active course when there is one. Mirrors `addConcept`
+    // (~:759): resolve color + subject from the course's subject-root node
+    // instead of a hardcoded `var(--…)` (the 3D rail can't resolve CSS
+    // custom properties — lib/data.ts:78-79 — so that rendered black), and
+    // link the placeholder to the root so it doesn't float as an orphan.
     const id = `stream-${normalizeConceptName(name)}`;
     const already = byId.get(id);
+    const courseId = (typeof patch.course_id === "string" ? patch.course_id : undefined) ?? fallbackCourseId;
+    const root = prev.find(n => n.is_subject_root && n.course_id === courseId);
     const placeholder: GraphNode = already
       ? { ...already, ...patch }
       : {
           id,
           name,
-          subject: "",
-          color: "var(--c-sage)",
+          subject: root?.subject ?? "",
+          color: root?.color ?? "var(--c-sage)",
           mastery_tier: "unexplored",
           mastery_score: 0,
-          course_id: fallbackCourseId,
+          course_id: courseId,
           ...patch,
         };
     byId.set(id, placeholder);
     byName.set(normalizeConceptName(name), placeholder);
+    if (!already && root) newEdges.push({ source: root.id, target: id, strength: 0.4 });
   };
 
   for (const raw of rawNodes) {
@@ -168,7 +184,7 @@ function mergeGraphDelta(prev: GraphNode[], delta: GraphDelta, fallbackCourseId:
     upsert(existing, mc.concept, { mastery_score: mc.after, mastery_tier: tierForScore(mc.after) });
   }
 
-  return Array.from(byId.values());
+  return { nodes: Array.from(byId.values()), newEdges };
 }
 
 export function Learn() {
@@ -219,8 +235,25 @@ function LearnInner() {
   // tracks the active session's course through both the start and resume
   // flows, so it's a safe fallback for a brand-new streamed node with no
   // course_id in its raw payload.
+  //
+  // `setGraphNodes` stays on the functional-update form (`prev => …`) so
+  // rapid back-to-back graph_update events within one turn can't clobber
+  // each other with a stale `graphNodes` closure. `newEdges` is threaded out
+  // of that updater via an outer `let` — a plain, deterministic data read,
+  // not a side effect — precisely so the actual `setGraphEdges` call happens
+  // exactly once here, outside the updater; nesting it inside the updater
+  // would double it under React 18 Strict Mode, which invokes `setState`
+  // updater functions twice in development to catch impurities.
   const applyGraphDelta = useCallback(
-    (delta: GraphDelta) => setGraphNodes(prev => mergeGraphDelta(prev, delta, selectedCourseId)),
+    (delta: GraphDelta) => {
+      let newEdges: GraphEdge[] = [];
+      setGraphNodes(prev => {
+        const result = mergeGraphDelta(prev, delta, selectedCourseId);
+        newEdges = result.newEdges;
+        return result.nodes;
+      });
+      if (newEdges.length) setGraphEdges(prevEdges => [...prevEdges, ...newEdges]);
+    },
     [selectedCourseId],
   );
 
@@ -436,7 +469,18 @@ function LearnInner() {
       } catch (err) {
         if (controller.signal.aborted) return; // Stop pressed — intentional, not an error.
         if (sawToken) throw err; // Rung 2: interrupted after producing text — surface it, don't retry.
-        // Rung 3: the stream never produced text — retry transparently via the JSON route.
+        // Rung 3: the stream never produced text — retry transparently via the
+        // non-streaming JSON route. `sendChat`/`fetchJSON` (lib/api.ts) take
+        // no AbortSignal, and plumbing one through is out of scope for this
+        // fix — so the fallback request itself cannot actually be cancelled.
+        // Clear streamingText to null *before* issuing it so ChatPanel drops
+        // both the Stop button and the "Thinking…" bubble for this leg,
+        // rather than offering a Stop affordance that would abort an
+        // already-detached controller while the JSON call keeps running
+        // server-side regardless. `sending` stays true, so the input is
+        // still disabled — the turn just no longer looks interruptible,
+        // which is now the truth.
+        setStreamingText(null);
         res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref);
       }
       setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
@@ -445,7 +489,7 @@ function LearnInner() {
     } finally {
       setSending(false);
       setStreamingText(null);
-      streamAbort.current = null;
+      if (streamAbort.current === controller) streamAbort.current = null;
     }
   }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta]);
 
