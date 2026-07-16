@@ -171,4 +171,19 @@ describe('streamSSE', () => {
     expect(events[0]).toEqual({ event: 'a', data: { i: 1 } });
     expect(events[1]).toEqual({ event: 'b', data: { i: 2 } });
   });
+
+  it('rejects when no event arrives within idleTimeoutMs', async () => {
+    const stalledBody = new ReadableStream({
+      start() { /* never enqueues, never closes */ },
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(stalledBody, { status: 200 }) as never,
+    );
+
+    const iterate = async () => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _e of streamSSE('/x', {}, { idleTimeoutMs: 20 })) { /* drain */ }
+    };
+    await expect(iterate()).rejects.toThrow(/stalled/i);
+  });
 });

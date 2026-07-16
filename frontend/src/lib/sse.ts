@@ -25,10 +25,13 @@ export type SSEEvent<T = unknown> = {
  *
  * Throws on non-2xx responses or missing body. The generator completes
  * naturally when the server closes the connection.
+ *
+ * If opts.idleTimeoutMs is set, rejects if no data arrives within that time.
  */
 export async function* streamSSE<T = unknown>(
   url: string,
   init: RequestInit,
+  opts: { idleTimeoutMs?: number } = {},
 ): AsyncGenerator<SSEEvent<T>> {
   const res = await fetch(url, init);
   if (!res.ok) {
@@ -45,7 +48,19 @@ export async function* streamSSE<T = unknown>(
 
   try {
     while (true) {
-      const { value, done } = await reader.read();
+      // A stalled stream (proxy dropped it, backend wedged) otherwise hangs
+      // the composer forever with no error. Race each read against a timer.
+      const { value, done } = opts.idleTimeoutMs
+        ? await Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () => reject(new Error('Stream stalled — no data received.')),
+                opts.idleTimeoutMs,
+              ),
+            ),
+          ])
+        : await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
