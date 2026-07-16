@@ -65,6 +65,33 @@ describe('streamChat', () => {
     ).rejects.toThrow(/interrupted/i);
   });
 
+  it('preserves request_id from a mid-stream error event on the thrown Error', async () => {
+    // ADR 0009: the backend deliberately includes request_id on error events
+    // for Logfire correlation. Losing it on the frontend throw makes a
+    // user-reported error untraceable — assert it survives as a property
+    // AND stays visible in the (still-readable) message.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        sseBody([
+          ev('token', { type: 'token', step: 'reply', message: '', data: { delta: 'Half' } }),
+          ev('error', { type: 'error', step: 'reply', message: 'Interrupted.', data: { request_id: 'trace-abc12345' } }),
+        ]),
+        { status: 200 },
+      ) as never,
+    );
+    const { streamChat } = await import('./api');
+    let caught: unknown;
+    try {
+      await streamChat('s1', 'u1', 'hi', 'socratic', true, undefined, { onToken: () => {} });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as { requestId?: string }).requestId).toBe('trace-abc12345');
+    expect((caught as Error).message).toMatch(/interrupted/i);
+    expect((caught as Error).message).toContain('trace-abc');
+  });
+
   it('rejects when the stream never sends done', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(

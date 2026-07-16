@@ -150,6 +150,23 @@ interface StreamEvent {
   data?: Record<string, unknown> | null;
 }
 
+// Thrown from consumeChatStream on a mid-stream `error` event. Carries the
+// backend's `request_id` (ADR 0009, stamped for Logfire correlation) as a
+// property — not just baked into the message string — so a caller that
+// wants to display or copy it (see DocumentUploadModal's "Reference:"
+// pattern) doesn't have to re-parse the message text for it.
+export class ChatStreamError extends Error {
+  requestId?: string;
+  constructor(message: string, requestId?: string) {
+    // Keep the full id here (correlation needs an exact match); a caller
+    // that wants a short display form truncates it itself, same as
+    // DocumentUploadModal's "Reference: {id.slice(0, 8)}…" pattern.
+    super(requestId ? `${message} (ref: ${requestId})` : message);
+    this.name = 'ChatStreamError';
+    this.requestId = requestId;
+  }
+}
+
 export interface StreamChatHandlers {
   onToken?: (delta: string) => void;
   onGraphUpdate?: (delta: GraphDelta) => void;
@@ -180,7 +197,10 @@ async function consumeChatStream(
     const ev = e.data;
     if (ev.type === 'token') onToken?.(String(ev.data?.delta ?? ''));
     else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
-    else if (ev.type === 'error') throw new Error(ev.message || 'The tutor was interrupted.');
+    else if (ev.type === 'error') {
+      const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
+      throw new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId);
+    }
     else if (ev.type === 'done') result = ev.data as unknown as ChatResult;
   }
 
