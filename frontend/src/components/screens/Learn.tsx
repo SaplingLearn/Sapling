@@ -21,6 +21,7 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { useUser } from "@/context/UserContext";
 import {
   startSession,
+  startSessionStream,
   sendChat,
   streamChat,
   getSessions,
@@ -498,23 +499,76 @@ function LearnInner() {
   // Begins a fresh tutor session on `t`. Shared by the entry-screen Start
   // button and the knowledge-map switch flow. Clears any map focus so the rail
   // snaps back to following the (new) active topic.
+  //
+  // Streams the greeting over startSessionStream, mirroring `send`'s
+  // three-rung fallback ladder verbatim (see the big comment on `send`,
+  // above `send`'s definition, for the full rationale):
+  //   Rung 3 (stream never produced text) -> retry transparently via the
+  //     non-streaming JSON startSession; the user never sees an error.
+  //   Rung 2 (rejected AFTER tokens appeared) -> surface the error via the
+  //     same toast path this handler already used for JSON failures. Never
+  //     silently re-run.
+  //   Stop pressed -> distinguished via the AbortController's signal.aborted;
+  //     intentional, not an error, no fallback. No session exists yet on
+  //     this path (session_id is only set on success below), so aborting
+  //     just drops back to the entry screen once `starting` clears.
+  //
+  // Like `send`, no loading placeholder goes into `messages` up front — the
+  // greeting renders through ChatPanel's `streamingText` bubble instead, so
+  // it appears progressively rather than after a spinner (#70's premise,
+  // extended to session start).
+  //
+  // Field-name note: the JSON route returns `initial_message`; the stream's
+  // `done` event returns `reply` (ChatResult). Both are normalized into
+  // `replyText` below so the rest of this function doesn't care which path
+  // served the turn.
   const beginSession = async (t: string) => {
     const topicName = t.trim();
     if (!topicName || !userId) return;
     setFocusedNodeId(null);
     setTopic(topicName);
     setTopicDraft(topicName);
-    setMessages([{ id: msgId(), role: "assistant", content: "", loading: true }]);
+    setMessages([]);
     setStarting(true);
+    setStreamingText("");
+    const controller = new AbortController();
+    streamAbort.current = controller;
+    let sawToken = false;
     try {
-      const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref);
-      setSessionId(res.session_id);
-      setMessages([{ id: msgId(), role: "assistant", content: res.initial_message || "Let's begin." }]);
+      let newSessionId: string;
+      let replyText: string;
+      try {
+        const res = await startSessionStream(userId, topicName, mode, sharedCtx, selectedCourseId || undefined, modelPref, {
+          onToken: (delta) => {
+            sawToken = true;
+            setStreamingText(prev => (prev ?? "") + delta);
+          },
+          onGraphUpdate: applyGraphDelta,
+          signal: controller.signal,
+        });
+        if (!res.session_id) throw new Error("Session stream completed without a session_id.");
+        newSessionId = res.session_id;
+        replyText = res.reply || "Let's begin.";
+      } catch (err) {
+        if (controller.signal.aborted) { setMessages([]); return; } // Stop pressed — intentional, not an error.
+        if (sawToken) throw err; // Rung 2: interrupted after producing text — surface it, don't retry.
+        // Rung 3: the stream never produced text — retry transparently via
+        // the non-streaming JSON route. Clear streamingText first so
+        // ChatPanel drops the Stop affordance for this leg (mirrors `send`).
+        setStreamingText(null);
+        const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref);
+        newSessionId = res.session_id;
+        replyText = res.initial_message || "Let's begin.";
+      }
+      setSessionId(newSessionId);
+      setMessages([{ id: msgId(), role: "assistant", content: replyText }]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't start session.");
       setMessages([]);
     } finally {
       setStarting(false);
+      setStreamingText(null);
+      if (streamAbort.current === controller) streamAbort.current = null;
     }
   };
 
