@@ -445,17 +445,32 @@ def _ensure_session_ready(session_id: str, user_id: str) -> None:
     _consume_pending(session_id, user_id)
 
 
-@router.post("/start-session")
-def start_session(body: StartSessionBody, request: Request):
-    # TODO(refactor-3 follow-up): migrate `start_session` to chat_tutor_agent
-    # using the same try-agent-then-legacy pattern as `chat`. Current PR scopes
-    # the agent-path migration to the main `chat` route only.
-    require_self(body.user_id, request)
-    session_id = str(uuid.uuid4())
+def _start_session_legacy(body: StartSessionBody, session_id: str | None = None) -> dict:
+    """Core start-session pipeline: call_gemini_multiturn -> extract_graph_update
+    -> apply_graph_update -> stash PENDING_SESSIONS.
+
+    Extracted so the JSON route and the streaming route's Rung-1
+    `legacy_fallback` (agent failed before any token) share this verbatim —
+    the JSON route's external behavior stays byte-identical (ADR 0001/0015),
+    it just reshapes this dict into its historical response below.
+
+    `session_id`: the streaming route already minted one up front (it needs
+    it for SaplingDeps before it knows whether the agent or this fallback
+    will serve the turn); passing it through here means a turn only ever
+    has ONE session_id and PENDING_SESSIONS is stashed exactly once,
+    regardless of which path serves it. `None` (the JSON route's case)
+    mints a fresh one, matching the original inline behavior.
+
+    Returns {"session_id", "reply", "graph_update", "mastery_changes",
+    "graph_state"} — a superset of what the JSON route needs, and exactly
+    the shape the streaming `done` event / frontend `ChatResult` expects.
+    """
+    if session_id is None:
+        session_id = str(uuid.uuid4())
 
     student_name = get_user_name(body.user_id)
     graph_data = get_graph(body.user_id)
-    
+
     # Use abstract course_id from body, or resolve it from the topic. The graph
     # + shared context key on this abstract id; documents + the session row key
     # on the offering it resolves to (current term).
@@ -481,7 +496,7 @@ def start_session(body: StartSessionBody, request: Request):
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
     reply, graph_update = extract_graph_update(raw)
-    apply_graph_update(body.user_id, graph_update, course_id=course_id)
+    mastery_changes = apply_graph_update(body.user_id, graph_update, course_id=course_id)
 
     PENDING_SESSIONS[session_id] = {
         "user_id": body.user_id,
@@ -496,8 +511,26 @@ def start_session(body: StartSessionBody, request: Request):
 
     return {
         "session_id": session_id,
-        "initial_message": reply,
+        "reply": reply,
+        "graph_update": graph_update,
+        "mastery_changes": mastery_changes,
         "graph_state": get_graph(body.user_id),
+    }
+
+
+@router.post("/start-session")
+def start_session(body: StartSessionBody, request: Request):
+    # TODO(refactor-3 follow-up): migrate `start_session` to chat_tutor_agent
+    # using the same try-agent-then-legacy pattern as `chat`. Current PR scopes
+    # the agent-path migration to the main `chat` route only. (The streamed
+    # counterpart, /start-session/stream, already does this — see below;
+    # this JSON route stays the untouched rollback target per ADR 0001/0015.)
+    require_self(body.user_id, request)
+    result = _start_session_legacy(body)
+    return {
+        "session_id": result["session_id"],
+        "initial_message": result["reply"],
+        "graph_state": result["graph_state"],
     }
 
 
@@ -822,6 +855,14 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     The JSON /start-session route is unchanged and remains the fallback.
     PENDING_SESSIONS lazy materialization is preserved exactly: the row is
     still written on first chat, by _consume_pending.
+
+    Rung 1 (agent fails before any token) falls back to
+    `_start_session_legacy` — the JSON route's own pipeline, per the spec's
+    fallback ladder. `stream_agent_turn` guarantees exactly one of
+    `on_complete` (`_stash`, below) / `legacy_fallback` (`_legacy`, below)
+    runs per turn, so PENDING_SESSIONS is stashed exactly once either way:
+    `_stash` on the agent-success path, `_start_session_legacy` internally
+    on the Rung-1 fallback path — never both.
     """
     require_self(body.user_id, request)
     request_id = (
@@ -852,8 +893,10 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     )
 
     def _stash(reply: str, graph_update: dict, mastery_changes: list) -> dict:
-        # Same lazy contract as the JSON route: nothing hits `sessions` until
-        # the first chat turn calls _consume_pending.
+        # Agent path succeeded. Same lazy contract as the JSON route:
+        # nothing hits `sessions` until the first chat turn calls
+        # _consume_pending. Mutually exclusive with `_legacy` below — see
+        # the docstring above.
         PENDING_SESSIONS[session_id] = {
             "user_id": body.user_id,
             "mode": body.mode,
@@ -866,6 +909,16 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         }
         return {"session_id": session_id, "graph_state": get_graph(body.user_id)}
 
+    async def _legacy() -> dict:
+        # Rung 1 only (agent failed before any token). Reuses the SAME
+        # session_id already minted above — via `session_id=` — so this
+        # turn only ever has one session_id, whichever path serves it.
+        # `_start_session_legacy` stashes PENDING_SESSIONS itself; `_stash`
+        # above must NOT also run, and stream_agent_turn enforces that
+        # exclusivity (exactly one of on_complete/legacy_fallback executes
+        # per turn — see stream_agent_turn's docstring).
+        return _start_session_legacy(body, session_id)
+
     async def event_stream():
         async for ev in stream_agent_turn(
             agent=agent,
@@ -873,7 +926,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
             run_kwargs=run_kwargs,
             deps=deps,
             on_complete=_stash,
-            legacy_fallback=None,
+            legacy_fallback=_legacy,
             request_id=request_id,
         ):
             yield sapling_event_to_sse(ev)

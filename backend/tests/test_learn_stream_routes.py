@@ -137,3 +137,62 @@ class TestStartSessionStream:
         assert prep.call_args.kwargs["message_history"] == [], (
             "a new session must start with no prior message history"
         )
+
+    def test_legacy_fallback_wired_and_stashes_exactly_once(self):
+        """Finding 1 regression: start_session_stream used to pass
+        legacy_fallback=None, diverging from the spec's Rung 1 ("falls back
+        to the existing start_session body"). Mirrors TestChatStream's
+        wiring assertion, then goes further: simulates stream_agent_turn's
+        REAL mutual-exclusion contract (Rung 1 invokes ONLY
+        legacy_fallback, never on_complete) and proves the fallback stashes
+        PENDING_SESSIONS exactly once via the shared _start_session_legacy
+        helper — no double-stash, no double-persist.
+        """
+        stream_kwargs = {}
+
+        async def fake_stream(**kwargs):
+            stream_kwargs.update(kwargs)
+            from services.agent_events import SaplingEvent
+            # Rung 1: agent failed before any token. Real stream_agent_turn
+            # calls ONLY legacy_fallback here, never on_complete — that
+            # exclusivity is exactly what this test is pinning.
+            legacy_result = await kwargs["legacy_fallback"]()
+            yield SaplingEvent(type="token", step="reply", message="",
+                                data={"delta": legacy_result["reply"]})
+            yield SaplingEvent(type="done", step="reply", message="Complete.",
+                                data=legacy_result)
+
+        from routes.learn import PENDING_SESSIONS
+        PENDING_SESSIONS.clear()
+
+        with patch("routes.learn.stream_agent_turn", fake_stream), \
+             patch("routes.learn._prepare_chat_run",
+                   return_value=(MagicMock(), "msg", {}, MagicMock())), \
+             patch("routes.learn._get_course_id_for_topic", return_value="c1"), \
+             patch("routes.learn.resolve_offering", return_value="off-1"), \
+             patch("routes.learn.get_graph", return_value={"nodes": []}), \
+             patch("routes.learn.get_user_name", return_value="Student"), \
+             patch("routes.learn._get_course_documents", return_value=[]), \
+             patch("routes.learn.build_system_prompt", return_value="prompt"), \
+             patch("routes.learn.call_gemini_multiturn", return_value="raw"), \
+             patch("routes.learn.extract_graph_update",
+                   return_value=("Legacy greeting", {"new_nodes": []})), \
+             patch("routes.learn.apply_graph_update", return_value=[]):
+            r = client.post("/api/learn/start-session/stream", json={
+                "user_id": "u1", "topic": "Eigenvalues", "mode": "socratic",
+            })
+
+        assert r.status_code == 200
+        assert stream_kwargs.get("legacy_fallback") is not None, (
+            "legacy_fallback must be passed to stream_agent_turn (Rung-1 fallback)"
+        )
+        assert inspect.iscoroutinefunction(stream_kwargs["legacy_fallback"])
+
+        assert len(PENDING_SESSIONS) == 1, (
+            "legacy_fallback must stash PENDING_SESSIONS exactly once "
+            "(via _start_session_legacy) — never zero, never twice"
+        )
+        stashed = next(iter(PENDING_SESSIONS.values()))
+        assert stashed["assistant_reply"] == "Legacy greeting"
+        assert stashed["topic"] == "Eigenvalues"
+        assert "Legacy greeting" in r.text, "the legacy reply must reach the client as a token/done"
