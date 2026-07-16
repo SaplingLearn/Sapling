@@ -54,15 +54,34 @@ def _text_from(event: Any) -> str | None:
     time when PartEndEvent lands ("hello world" -> "hello worldhello
     world"). Reading only deltas would drop the opening chunk. Both are
     regression-tested.
+
+    Class-name dispatch alone is NOT enough, though: `PartStartEvent` and
+    `PartDeltaEvent` wrap ANY part kind, not just text — a `ThinkingPart` /
+    `ThinkingPartDelta` (pydantic-ai 1.89.1, `pydantic_ai.messages`) rides
+    the exact same event classes with the exact same attribute names
+    (`.part.content` / `.delta.content_delta`). Gate on the part's own
+    discriminator so reasoning content can never masquerade as reply text:
+    `TextPart.part_kind == "text"`, `TextPartDelta.part_delta_kind ==
+    "text"` (verified by inspecting the installed library — `ThinkingPart`/
+    `ThinkingPartDelta` carry `"thinking"` in the same fields). Today
+    `_build_pro_model_settings` never sets `include_thoughts`, so this is
+    latent — but the moment thought summaries are enabled, an ungated
+    reader would stream raw chain-of-thought into a student's chat bubble.
     """
     cls_name = type(event).__name__
 
     if cls_name == "PartDeltaEvent":
-        delta = getattr(getattr(event, "delta", None), "content_delta", None)
-        return delta if isinstance(delta, str) and delta else None
+        delta = getattr(event, "delta", None)
+        if getattr(delta, "part_delta_kind", None) != "text":
+            return None
+        content_delta = getattr(delta, "content_delta", None)
+        return content_delta if isinstance(content_delta, str) and content_delta else None
 
     if cls_name == "PartStartEvent":
-        content = getattr(getattr(event, "part", None), "content", None)
+        part = getattr(event, "part", None)
+        if getattr(part, "part_kind", None) != "text":
+            return None
+        content = getattr(part, "content", None)
         return content if isinstance(content, str) and content else None
 
     # PartEndEvent / FinalResultEvent / tool + result events carry no NEW text.

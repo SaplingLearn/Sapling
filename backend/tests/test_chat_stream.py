@@ -15,22 +15,46 @@ from services.chat_stream import merge_graph_updates, stream_agent_turn
 class TextPartDelta:
     def __init__(self, content_delta):
         self.content_delta = content_delta
+        self.part_delta_kind = "text"
+
+
+class ThinkingPartDelta:
+    """Mirrors pydantic_ai.messages.ThinkingPartDelta: same attribute name
+    (`content_delta`) as TextPartDelta, discriminated only by
+    `part_delta_kind`. Must never surface as a `token` event."""
+    def __init__(self, content_delta):
+        self.content_delta = content_delta
+        self.part_delta_kind = "thinking"
 
 
 class PartDeltaEvent:
-    def __init__(self, content_delta):
-        self.delta = TextPartDelta(content_delta)
+    def __init__(self, content_delta, part_delta_kind="text"):
+        self.delta = (
+            ThinkingPartDelta(content_delta)
+            if part_delta_kind == "thinking"
+            else TextPartDelta(content_delta)
+        )
 
 
 class _TextPart:
     def __init__(self, content):
         self.content = content
+        self.part_kind = "text"
+
+
+class _ThinkingPart:
+    """Mirrors pydantic_ai.messages.ThinkingPart: same attribute name
+    (`content`) as TextPart, discriminated only by `part_kind`. Must never
+    surface as a `token` event."""
+    def __init__(self, content):
+        self.content = content
+        self.part_kind = "thinking"
 
 
 class PartStartEvent:
     """First text chunk arrives here — NOT as a delta."""
-    def __init__(self, content):
-        self.part = _TextPart(content)
+    def __init__(self, content, part_kind="text"):
+        self.part = _ThinkingPart(content) if part_kind == "thinking" else _TextPart(content)
 
 
 class PartEndEvent:
@@ -145,6 +169,34 @@ def test_part_end_event_does_not_duplicate_the_reply():
         tokens = [e.data["delta"] for e in events if e.type == "token"]
         assert tokens == ["hello ", "world"], "PartEndEvent must not re-emit the reply"
         assert "".join(tokens) == "hello world"
+
+    asyncio.run(run())
+
+
+def test_thinking_part_never_produces_a_token():
+    """`_text_from` dispatches on event CLASS, but PartStartEvent/
+    PartDeltaEvent wrap ANY part kind — a ThinkingPart/ThinkingPartDelta
+    rides the identical `.part.content` / `.delta.content_delta`
+    attributes a TextPart/TextPartDelta uses. Without gating on
+    part_kind/part_delta_kind, reasoning content would stream into the
+    student's chat bubble the moment thought summaries are enabled
+    (latent today only because _build_pro_model_settings doesn't set
+    include_thoughts). Text-shaped parts in the same run must still
+    produce tokens normally."""
+    async def run():
+        agent = FakeAgent([
+            PartStartEvent("Let me reason about this privately...", part_kind="thinking"),
+            PartDeltaEvent(" and some more private reasoning.", part_delta_kind="thinking"),
+            PartStartEvent("The answer is "),
+            PartDeltaEvent("42."),
+            AgentRunResultEvent("The answer is 42."),
+        ])
+        events = await collect(agent, make_deps(), lambda r, g, m: {})
+        tokens = [e.data["delta"] for e in events if e.type == "token"]
+        assert tokens == ["The answer is ", "42."], (
+            "thinking-shaped parts must never be emitted as tokens, "
+            "and text-shaped parts in the same run must still stream"
+        )
 
     asyncio.run(run())
 
