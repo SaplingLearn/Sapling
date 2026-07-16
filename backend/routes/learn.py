@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from sse_starlette.sse import EventSourceResponse
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -17,7 +18,9 @@ from agents.deps import SaplingDeps
 from db.connection import table
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
+from services.agent_events import sapling_event_to_sse
 from services.auth_guard import require_self, get_session_user_id
+from services.chat_stream import merge_graph_updates, stream_agent_turn
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.profiles import get_display_name
 from services.gemini_service import (
@@ -498,7 +501,7 @@ def start_session(body: StartSessionBody, request: Request):
     }
 
 
-async def _chat_via_agent(
+def _prepare_chat_run(
     *,
     user_id: str,
     session_id: str,
@@ -509,23 +512,12 @@ async def _chat_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
-) -> dict:
-    """Run chat_tutor_agent and return the legacy response shape.
+) -> tuple:
+    """Build (agent, assembled_message, run_kwargs, deps) for a chat turn.
 
-    Returns ``{"reply": str, "graph_update": dict, "mastery_changes": list}``.
-    Graph changes are persisted in-band during the agent run by
-    `apply_graph_update_tool` / `update_mastery_tool` (registered on
-    chat_tutor); the tools also accumulate their payloads on `deps` so the
-    route can echo `graph_update` (for graph_update_json / concepts_covered)
-    and the real `mastery_changes` deltas back to the client, matching the
-    legacy path. Both are empty when nothing changed this turn.
-
-    `use_shared_context=False` flips the model into "no class-aggregate"
-    mode by appending a constraint instruction to the user message —
-    the chat tutor's class-aggregate tools (read_user_progress, etc.)
-    aggregate per-user data, but a future shared-context tool would
-    need this guard rail. Keeping the constraint in-band rather than
-    branching the agent surface keeps the agent definition stable.
+    Shared verbatim by the JSON path (`_chat_via_agent`) and the streaming
+    route so prompt assembly never forks. Extracted from `_chat_via_agent`;
+    behavior is unchanged.
     """
     agent = agent_for_mode(mode)
 
@@ -580,16 +572,57 @@ async def _chat_via_agent(
     if model_pref != "fast":
         run_kwargs["model_settings"] = _build_pro_model_settings()
 
+    return agent, user_message, run_kwargs, deps
+
+
+async def _chat_via_agent(
+    *,
+    user_id: str,
+    session_id: str,
+    course_id: str,
+    mode: str,
+    user_message: str,
+    message_history: list,
+    use_shared_context: bool,
+    request_id: str,
+    model_pref: str | None = None,
+) -> dict:
+    """Run chat_tutor_agent and return the legacy response shape.
+
+    Returns ``{"reply": str, "graph_update": dict, "mastery_changes": list}``.
+    Graph changes are persisted in-band during the agent run by
+    `apply_graph_update_tool` / `update_mastery_tool` (registered on
+    chat_tutor); the tools also accumulate their payloads on `deps` so the
+    route can echo `graph_update` (for graph_update_json / concepts_covered)
+    and the real `mastery_changes` deltas back to the client, matching the
+    legacy path. Both are empty when nothing changed this turn.
+
+    `use_shared_context=False` flips the model into "no class-aggregate"
+    mode by appending a constraint instruction to the user message —
+    the chat tutor's class-aggregate tools (read_user_progress, etc.)
+    aggregate per-user data, but a future shared-context tool would
+    need this guard rail. Keeping the constraint in-band rather than
+    branching the agent surface keeps the agent definition stable.
+    """
+    agent, user_message, run_kwargs, deps = _prepare_chat_run(
+        user_id=user_id,
+        session_id=session_id,
+        course_id=course_id,
+        mode=mode,
+        user_message=user_message,
+        message_history=message_history,
+        use_shared_context=use_shared_context,
+        request_id=request_id,
+        model_pref=model_pref,
+    )
+
     result = await agent.run(user_message, **run_kwargs)
     reply = result.output  # str — chat_tutor agents return plain Markdown.
 
     # Merge all graph update payloads accumulated by tools during this run
     # into a single dict so the route can persist graph_update_json and
     # end_session can derive concepts_covered correctly.
-    merged_graph_update: dict = {}
-    for gu in deps.graph_updates:
-        for key, items in gu.items():
-            merged_graph_update.setdefault(key, []).extend(items)
+    merged_graph_update = merge_graph_updates(deps.graph_updates)
 
     return {
         "reply": reply,
@@ -712,6 +745,142 @@ async def chat(body: ChatBody, request: Request):
     save_message(body.session_id, "assistant", response["reply"], graph_update)
 
     return response
+
+
+@router.post("/chat/stream")
+async def chat_stream(body: ChatBody, request: Request):
+    """SSE token-streaming chat turn (#70) with live graph deltas (#74).
+
+    The JSON /chat route stays the non-streaming fallback (ADR 0001). No DBOS
+    wrap here — stream routes are deliberately outside durable execution
+    (ADR 0011); retries are client-driven and idempotent via X-Request-ID.
+    """
+    require_self(body.user_id, request)
+    _consume_pending(body.session_id, body.user_id)
+
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or current_request_id()
+        or str(uuid.uuid4())
+    )
+
+    offering_id = _get_session_offering_id(body.session_id)
+    course_id = offering_course_id(offering_id) if offering_id else ""
+    # Load prior turns BEFORE the new user row is written, so history is
+    # conversation state up to (not including) this turn.
+    message_history = _load_message_history(body.session_id)
+
+    agent, assembled, run_kwargs, deps = _prepare_chat_run(
+        user_id=body.user_id,
+        session_id=body.session_id,
+        course_id=course_id,
+        mode=body.mode,
+        user_message=body.message,
+        message_history=message_history,
+        use_shared_context=body.use_shared_context,
+        request_id=request_id,
+        model_pref=body.model_pref,
+    )
+
+    def _persist(reply: str, graph_update: dict, mastery_changes: list) -> dict:
+        # Mirrors chat()'s ordering: user row, then assistant row. Runs only
+        # after the agent run completes, so a disconnect mid-generation
+        # persists nothing. Encryption happens inside save_message.
+        save_message(body.session_id, "user", body.message)
+        save_message(body.session_id, "assistant", reply, graph_update or None)
+        return {}
+
+    async def _legacy() -> dict:
+        # Rung 1 only (agent failed before any token). _legacy_chat persists
+        # its own user + assistant rows, so _persist must not also run —
+        # stream_agent_turn enforces that exclusivity.
+        return await _legacy_chat(body, request)
+
+    async def event_stream():
+        async for ev in stream_agent_turn(
+            agent=agent,
+            user_message=assembled,
+            run_kwargs=run_kwargs,
+            deps=deps,
+            on_complete=_persist,
+            legacy_fallback=_legacy,
+            request_id=request_id,
+        ):
+            yield sapling_event_to_sse(ev)
+
+    return EventSourceResponse(
+        event_stream(), headers={"X-Request-ID": request_id}
+    )
+
+
+@router.post("/start-session/stream")
+async def start_session_stream(body: StartSessionBody, request: Request):
+    """Streamed session opener — closes ADR-0015's start_session TODO by
+    running chat_tutor_agent instead of call_gemini_multiturn, and removes a
+    legacy call site on the primary path (#152/#151).
+
+    The JSON /start-session route is unchanged and remains the fallback.
+    PENDING_SESSIONS lazy materialization is preserved exactly: the row is
+    still written on first chat, by _consume_pending.
+    """
+    require_self(body.user_id, request)
+    request_id = (
+        getattr(request.state, "request_id", None)
+        or current_request_id()
+        or str(uuid.uuid4())
+    )
+    session_id = str(uuid.uuid4())
+
+    course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
+    offering_id = resolve_offering(course_id, create=True) if course_id else ""
+
+    user_message = (
+        f"Student wants to learn about: {body.topic}\n\n"
+        "Begin the session with a warm greeting and your first question or explanation."
+    )
+
+    agent, assembled, run_kwargs, deps = _prepare_chat_run(
+        user_id=body.user_id,
+        session_id=session_id,
+        course_id=course_id,
+        mode=body.mode,
+        user_message=user_message,
+        message_history=[],
+        use_shared_context=body.use_shared_context,
+        request_id=request_id,
+        model_pref=body.model_pref,
+    )
+
+    def _stash(reply: str, graph_update: dict, mastery_changes: list) -> dict:
+        # Same lazy contract as the JSON route: nothing hits `sessions` until
+        # the first chat turn calls _consume_pending.
+        PENDING_SESSIONS[session_id] = {
+            "user_id": body.user_id,
+            "mode": body.mode,
+            "topic": body.topic,
+            "course_id": course_id,
+            "offering_id": offering_id,
+            "use_shared_context": body.use_shared_context,
+            "assistant_reply": reply,
+            "graph_update": graph_update,
+        }
+        return {"session_id": session_id, "graph_state": get_graph(body.user_id)}
+
+    async def event_stream():
+        async for ev in stream_agent_turn(
+            agent=agent,
+            user_message=assembled,
+            run_kwargs=run_kwargs,
+            deps=deps,
+            on_complete=_stash,
+            legacy_fallback=None,
+            request_id=request_id,
+        ):
+            yield sapling_event_to_sse(ev)
+
+    return EventSourceResponse(
+        event_stream(), headers={"X-Request-ID": request_id}
+    )
 
 
 @router.post("/end-session")
