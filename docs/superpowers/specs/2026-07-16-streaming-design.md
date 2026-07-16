@@ -83,7 +83,7 @@ per-token envelope overhead (~40 bytes) is deliberate: uniformity beats tersenes
 |---|---|---|---|
 | `status` / `progress` / `result` / `error` | existing | unchanged | upload vocabulary, untouched; chat streams reuse `status:start`, `progress:<tool>`, and `error` |
 | **`token`** | new | `{"delta": "..."}`, `step="reply"` | one text delta; client appends to the live bubble |
-| **`graph_update`** | new | `{"nodes": [{id, name, course_id, mastery_score, mastery_tier}], "mastery_changes": [{concept, before, after}]}` | emitted after a graph tool result (#74); client upserts by id |
+| **`graph_update`** | new | `{"nodes": {"new_nodes": [{concept_name, initial_mastery}], "updated_nodes": [{concept_name, mastery_delta}]}, "mastery_changes": [{concept, before, after}]}` | emitted after a graph tool result (#74); client matches by **concept name** — see the correction below |
 | **`done`** | new | `{"reply", "graph_update", "mastery_changes", "session_id"?}` | terminal; canonical reply reconciles token drift. Same dict the JSON route returns today |
 
 ### Turn timeline
@@ -212,11 +212,33 @@ guarding the #131/#133 leaked-stream bug class at one seam.
 
 ### `Learn.tsx` — graph reducer (#74)
 
-`onGraphUpdate` upserts into `graphNodes` by node id: existing id merges `mastery_score` /
-`mastery_tier`; unknown id inserts a placeholder from `{id, name, course_id}`. The Progress card
-recomputes through its existing `useMemo` — zero extra HTTP round-trips per turn, which is #74's
-acceptance criterion. `mastery_changes` accumulate in session state for the end-of-session
-summary, matching what the JSON path returns today.
+`onGraphUpdate` upserts into `graphNodes`, and the Progress card recomputes through its existing
+`useMemo` — zero extra HTTP round-trips per turn, which is #74's acceptance criterion.
+`mastery_changes` accumulate in session state for the end-of-session summary, matching what the
+JSON path returns today.
+
+> **CORRECTION (2026-07-16, found during implementation — this design was wrong).**
+> This spec originally specified "upsert by node id" against a payload of
+> `{id, name, course_id, mastery_score, mastery_tier}`. **That payload does not exist.** The graph
+> tools (`backend/agents/tools/graph.py`) append `{"new_nodes": [{concept_name, initial_mastery}]}`
+> and `{"updated_nodes": [{concept_name, mastery_delta}]}` — there is **no node id** and **no
+> absolute mastery score** anywhere in them. Only the sibling `mastery_changes` array carries
+> authoritative absolute values, as `{concept, before, after}`.
+>
+> The shipped reducer therefore:
+> - **matches by concept name** (case/whitespace-normalized, mirroring the backend's
+>   `_normalize_concept`), keeping an id path only for forward compatibility;
+> - treats **`mastery_changes` as the authority** for score updates — `mastery_delta` has no safe
+>   client-side baseline to apply it against;
+> - inserts unknown concepts as a `stream-<slug>` placeholder, resolving color/subject/course and
+>   an edge to the subject root from the same `cardCourseId` the manual `addConcept` path uses
+>   (a placeholder without those renders black and orphaned in the 3D rail);
+> - ignores `new_edges` / `recommended_next` — the `GraphUpdate` type declares them, but only the
+>   legacy fallback path ever populates them.
+>
+> Consequence worth knowing: a turn that only *adds* concepts (`new_nodes`) moves no score, because
+> no `mastery_changes` are emitted. Only `update_mastery_tool` on an existing concept moves the
+> Progress card.
 
 ### Rollout
 
