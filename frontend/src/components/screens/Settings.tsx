@@ -215,7 +215,7 @@ export function Settings() {
     }
   };
 
-  const tabs: Tab[] = ["profile", "preferences", "notifications", "data"];
+  const tabs: Tab[] = ["profile", "cosmetics", "preferences", "notifications", "data"];
 
   return (
     <FullHeightScreen>
