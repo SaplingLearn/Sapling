@@ -268,6 +268,33 @@ export function resolveCardCourseId(
   return topicNode?.course_id || selectedCourseId || null;
 }
 
+// The actual call-site assembly `applyGraphDelta` (LearnInner, below) runs on
+// every streamed `graph_update`. Extracted to a standalone, exported function
+// — rather than left inline in the `useCallback` body — specifically so
+// Learn.applyGraphDelta.test.ts can invoke the REAL assembly with fake
+// `setGraphNodes`/`setGraphEdges` and prove the shape below is what actually
+// runs, instead of testing a hand-written mirror of it (fix pass 2's gap).
+//
+// `edges` MUST be computed before either setter is called: it is a plain,
+// eager read of `graphNodesSnapshot` (the caller's current `graphNodes`), not
+// a value threaded out of the `setGraphNodes` updater. That distinction is
+// the entire fix — see the big comment on `applyGraphDelta` for why reading
+// a value out of a functional updater immediately after calling it is
+// unsound (React never runs it synchronously at the call site).
+// `setGraphNodes`/`setGraphEdges` are typed to only the functional-updater
+// overload because that's the only form this call site ever uses.
+export function applyGraphDeltaAssembly(
+  delta: GraphDelta,
+  courseId: string,
+  graphNodesSnapshot: GraphNode[],
+  setGraphNodes: (updater: (prev: GraphNode[]) => GraphNode[]) => void,
+  setGraphEdges: (updater: (prev: GraphEdge[]) => GraphEdge[]) => void,
+): void {
+  const edges = deltaPlaceholderEdges(graphNodesSnapshot, delta, courseId);
+  setGraphNodes(prev => mergeGraphDelta(prev, delta, courseId));
+  setGraphEdges(prev => mergeGraphEdges(prev, edges));
+}
+
 export function Learn() {
   return (
     <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
@@ -355,24 +382,23 @@ function LearnInner() {
   // when nothing resolves at all it falls back to `selectedCourseId`, same
   // as before.
   //
-  // Nodes and edges are two independent, idempotent functional updates, NOT
-  // one updater's result threaded into the other. `setGraphNodes`'s updater
-  // runs against the true, always-current `prev`. `setGraphEdges`'s updater
-  // independently recomputes which root→placeholder edges this delta
-  // implies (`deltaPlaceholderEdges`, checked against the render-scope
-  // `graphNodes` snapshot — safe because subject-root nodes never change
-  // mid-stream, and any staleness in the "is this concept already known"
-  // check only produces a redundant candidate, which `mergeGraphEdges`
-  // dedupes by source+target rather than an incorrect edge) and dedupes
-  // against `prev` before appending. Both updaters are pure functions of
-  // their arguments, so calling either twice with the same input — React 18
-  // Strict Mode's dev double-invocation, or the same delta arriving twice —
-  // produces the same result. No timing assumption, nothing smuggled out.
+  // The actual assembly lives in `applyGraphDeltaAssembly` (top-level,
+  // exported, above) — nodes and edges are two independent, idempotent
+  // functional updates there, NOT one updater's result threaded into the
+  // other. `setGraphNodes`'s updater runs against the true, always-current
+  // `prev`. `setGraphEdges`'s updater applies edges computed eagerly against
+  // the render-scope `graphNodes` snapshot passed in here — safe because
+  // subject-root nodes never change mid-stream, and any staleness in the "is
+  // this concept already known" check only produces a redundant candidate,
+  // which `mergeGraphEdges` dedupes by source+target rather than an
+  // incorrect edge. Both updaters are pure functions of their arguments, so
+  // calling either twice with the same input — React 18 Strict Mode's dev
+  // double-invocation, or the same delta arriving twice — produces the same
+  // result. No timing assumption, nothing smuggled out.
   const applyGraphDelta = useCallback(
     (delta: GraphDelta) => {
       const courseId = cardCourseId ?? selectedCourseId;
-      setGraphNodes(prev => mergeGraphDelta(prev, delta, courseId));
-      setGraphEdges(prev => mergeGraphEdges(prev, deltaPlaceholderEdges(graphNodes, delta, courseId)));
+      applyGraphDeltaAssembly(delta, courseId, graphNodes, setGraphNodes, setGraphEdges);
     },
     [cardCourseId, selectedCourseId, graphNodes],
   );

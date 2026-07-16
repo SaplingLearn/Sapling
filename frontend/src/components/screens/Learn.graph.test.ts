@@ -24,6 +24,21 @@ import type { GraphEdge, GraphNode } from '@/lib/data';
  * resolution (mirrors `addConcept`'s `cardCourseId`); this file proves it
  * actually differs from the naive `selectedCourseId`-only fallback, and that
  * `mergeGraphDelta` actually uses whatever fallback it's given.
+ *
+ * NOTE (fix pass 3, task-9): this file used to also assert end-to-end
+ * "applies a delta and gets a placeholder + edge" behavior via a
+ * hand-written `applyDelta` helper that *mirrored* `applyGraphDelta`'s
+ * shape rather than calling it. A reviewer proved that mirror was a gap: you
+ * could revert the real `applyGraphDelta` to a broken value-threaded-out-of-
+ * an-updater shape and every test in this file would still pass, because
+ * none of them called the real assembly. Those two tests (and the mirror)
+ * were removed in favor of Learn.applyGraphDelta.test.ts, which exercises
+ * the real exported `applyGraphDeltaAssembly` and strictly covers the same
+ * ground (placeholder + edge creation, idempotency across two applications)
+ * plus the revert-proof property this file never had. The helper-level
+ * tests below (`mergeGraphEdges`, `deltaPlaceholderEdges`,
+ * `resolveCardCourseId`, `mergeGraphDelta` used directly) are untouched —
+ * they test real exported functions, not a mirror, and remain valid.
  */
 
 const root = (courseId: string): GraphNode => ({
@@ -42,47 +57,7 @@ const newNodeDelta = (concept: string): GraphDelta => ({
   mastery_changes: [],
 });
 
-// Mirrors the real `applyGraphDelta` in Learn.tsx: two independent updates,
-// with the edges update reading a `graphNodes` snapshot taken *before* this
-// delta's node merge (exactly what the render-scope `graphNodes` closure
-// would be) — not the nodes updater's own `prev`/result.
-function applyDelta(
-  state: { nodes: GraphNode[]; edges: GraphEdge[] },
-  delta: GraphDelta,
-  courseId: string,
-): { nodes: GraphNode[]; edges: GraphEdge[] } {
-  const graphNodesSnapshot = state.nodes;
-  const nodes = mergeGraphDelta(state.nodes, delta, courseId);
-  const edges = mergeGraphEdges(state.edges, deltaPlaceholderEdges(graphNodesSnapshot, delta, courseId));
-  return { nodes, edges };
-}
-
 describe('Finding A — streamed placeholder edges (task-9 fix pass 2)', () => {
-  it('links a brand-new streamed concept to its subject root', () => {
-    const start = { nodes: [root('math')], edges: [] as GraphEdge[] };
-    const result = applyDelta(start, newNodeDelta('Eigenvalues'), 'math');
-
-    const placeholder = result.nodes.find(n => n.id === 'stream-eigenvalues');
-    expect(placeholder).toBeDefined();
-    expect(placeholder?.course_id).toBe('math');
-
-    expect(result.edges).toContainEqual({ source: 'root-math', target: 'stream-eigenvalues', strength: 0.4 });
-    expect(result.edges).toHaveLength(1);
-  });
-
-  it('applying the same delta twice yields exactly one edge (idempotent / Strict-Mode-safe)', () => {
-    const start = { nodes: [root('math')], edges: [] as GraphEdge[] };
-    const delta = newNodeDelta('Eigenvalues');
-
-    const once = applyDelta(start, delta, 'math');
-    const twice = applyDelta(once, delta, 'math');
-
-    const edgesToPlaceholder = twice.edges.filter(e => e.target === 'stream-eigenvalues');
-    expect(edgesToPlaceholder).toHaveLength(1);
-    // Nodes stay deduped too (mergeGraphDelta's existing byId/byName upsert).
-    expect(twice.nodes.filter(n => n.id === 'stream-eigenvalues')).toHaveLength(1);
-  });
-
   it('mergeGraphEdges is pure: calling it twice with the identical (prev, additions) — exactly what React 18 Strict Mode does to a dev updater — returns the same result both times', () => {
     const additions: GraphEdge[] = [{ source: 'root-math', target: 'stream-eigenvalues', strength: 0.4 }];
     const firstInvocation = mergeGraphEdges([], additions);
