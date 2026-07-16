@@ -245,8 +245,6 @@ from __future__ import annotations
 import logging
 from typing import Any, AsyncIterator, Awaitable, Callable
 
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
-
 from services.agent_events import SaplingEvent
 
 logger = logging.getLogger(__name__)
@@ -364,7 +362,11 @@ async def stream_agent_turn(
                 if isinstance(output, str):
                     final_output = output
 
-    except (UsageLimitExceeded, UnexpectedModelBehavior, Exception) as exc:
+    # Catches UsageLimitExceeded / UnexpectedModelBehavior (both Exception
+    # subclasses) and anything else the model or a tool raises. Deliberately
+    # NOT BaseException: asyncio.CancelledError must propagate so a client
+    # disconnect stays a cancellation — never a "fallback to legacy".
+    except Exception as exc:
         if chunks:
             # Rung 2: text already shown. Never silently re-run — the user
             # would see the reply restart. Terminal error; persist nothing.
@@ -1013,17 +1015,26 @@ class TestChatStream:
         assert [a[1] for a in saved] == ["user", "assistant"], "user row persists before assistant"
 
     def test_requires_self(self):
+        """The guard must run BEFORE any streaming work starts.
+
+        Note the strict assertions: an earlier draft wrapped this in
+        try/except Exception: pass, which swallowed the AssertionError and
+        made the test pass even when auth was bypassed entirely.
+        """
+        from fastapi import HTTPException
+
         with patch("routes.learn.require_self",
-                   side_effect=Exception("forbidden")), \
-             patch("routes.learn._consume_pending"):
-            try:
-                r = client.post("/api/learn/chat/stream", json={
-                    "session_id": "s1", "user_id": "someone-else",
-                    "message": "hi", "mode": "socratic",
-                })
-                assert r.status_code >= 400
-            except Exception:
-                pass  # guard raised before the response — also acceptable
+                   side_effect=HTTPException(status_code=403, detail="forbidden")) as guard, \
+             patch("routes.learn._consume_pending"), \
+             patch("routes.learn._prepare_chat_run") as prep:
+            r = client.post("/api/learn/chat/stream", json={
+                "session_id": "s1", "user_id": "someone-else",
+                "message": "hi", "mode": "socratic",
+            })
+
+        assert r.status_code == 403
+        guard.assert_called_once()
+        prep.assert_not_called(), "auth must gate before any agent setup"
 
 
 class TestStartSessionStream:
