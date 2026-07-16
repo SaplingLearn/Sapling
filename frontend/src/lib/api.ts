@@ -6,6 +6,7 @@ import type {
   ExtractedSyllabusCategory,
   AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
   Note, LinkedConcept,
+  GraphUpdate, MasteryChange,
 } from '@/lib/types';
 
 import { handleLocalRequest } from '@/lib/localData';
@@ -129,8 +130,6 @@ export const sendChat = (
     }),
   });
 
-export interface MasteryChange { concept: string; before: number; after: number }
-
 export interface GraphDelta {
   nodes: Record<string, Array<Record<string, unknown>>>;
   mastery_changes: MasteryChange[];
@@ -138,7 +137,7 @@ export interface GraphDelta {
 
 export interface ChatResult {
   reply: string;
-  graph_update: any;
+  graph_update: GraphUpdate;
   mastery_changes: MasteryChange[];
   session_id?: string;
   graph_state?: any;
@@ -148,7 +147,7 @@ interface StreamEvent {
   type: string;
   step: string;
   message: string;
-  data?: Record<string, any> | null;
+  data?: Record<string, unknown> | null;
 }
 
 export interface StreamChatHandlers {
@@ -238,7 +237,7 @@ export const startSessionStream = (
     handlers.onToken?.(reply);
     return Promise.resolve({
       reply,
-      graph_update: {},
+      graph_update: { new_nodes: [], updated_nodes: [], new_edges: [], recommended_next: [] },
       mastery_changes: [],
       session_id: 'local-session',
       graph_state: {},
