@@ -22,6 +22,7 @@ import { useUser } from "@/context/UserContext";
 import {
   startSession,
   sendChat,
+  streamChat,
   getSessions,
   resumeSession,
   deleteSession,
@@ -37,6 +38,8 @@ import {
   type Session,
   type SessionSummaryData,
   type EnrolledCourse,
+  type ChatResult,
+  type GraphDelta,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
@@ -76,6 +79,98 @@ function normalizeMode(input: string | null): Mode {
   return (VALID_MODES as string[]).includes(input) ? (input as Mode) : "socratic";
 }
 
+// Mirrors backend/config.py::get_mastery_tier so a streamed delta classifies
+// mastery the same way a full graph refetch would.
+function tierForScore(score: number): GraphNode["mastery_tier"] {
+  if (score >= 0.75) return "mastered";
+  if (score >= 0.45) return "learning";
+  if (score >= 0.1) return "struggling";
+  return "unexplored";
+}
+
+const normalizeConceptName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+// Upsert a streamed `graph_update` event into `graphNodes` so the knowledge-map
+// rail's "In this branch" / "Elsewhere in course" panels recompute through
+// their existing useMemo — no refetch, no extra HTTP round-trip (#74).
+//
+// NOTE on the real payload shape: `delta.nodes` is NOT the flat
+// {id, name, course_id, mastery_score, mastery_tier}[] the streaming-design
+// spec sketches. It's a dict keyed by which graph tool wrote
+// (backend/agents/tools/graph.py via services/chat_stream.py
+// merge_graph_updates): `new_nodes` entries are {concept_name,
+// initial_mastery}; `updated_nodes` entries are {concept_name,
+// mastery_delta, reason, event_type}. Neither carries an `id` or an
+// absolute post-update score. `delta.mastery_changes` ({concept, before,
+// after}) IS authoritative for an existing node's new score, so it drives
+// merges for updates; `nodes` entries are read defensively — matched by
+// `id`/`node_id` when present (future-proofing against a payload shape
+// change) and otherwise by normalized concept name — and any fields we
+// don't recognize are ignored rather than crashing.
+function mergeGraphDelta(prev: GraphNode[], delta: GraphDelta, fallbackCourseId: string): GraphNode[] {
+  const rawNodes = Object.values(delta.nodes ?? {}).flat() as Array<Record<string, unknown>>;
+  const rawMasteryChanges = delta.mastery_changes ?? [];
+  if (!rawNodes.length && !rawMasteryChanges.length) return prev;
+
+  const byId = new Map(prev.map(n => [n.id, n] as const));
+  const byName = new Map(prev.map(n => [normalizeConceptName(n.name), n] as const));
+
+  const upsert = (existing: GraphNode | undefined, name: string, patch: Partial<GraphNode>) => {
+    if (existing) {
+      const merged: GraphNode = { ...existing, ...patch };
+      byId.set(existing.id, merged);
+      byName.set(normalizeConceptName(existing.name), merged);
+      return;
+    }
+    // Unknown concept: insert a placeholder so it's visible immediately; a
+    // later full graph refetch (session end / next visit) reconciles the
+    // real id. The raw payload carries no course_id, so anchor it to the
+    // session's active course when there is one.
+    const id = `stream-${normalizeConceptName(name)}`;
+    const already = byId.get(id);
+    const placeholder: GraphNode = already
+      ? { ...already, ...patch }
+      : {
+          id,
+          name,
+          subject: "",
+          color: "var(--c-sage)",
+          mastery_tier: "unexplored",
+          mastery_score: 0,
+          course_id: fallbackCourseId,
+          ...patch,
+        };
+    byId.set(id, placeholder);
+    byName.set(normalizeConceptName(name), placeholder);
+  };
+
+  for (const raw of rawNodes) {
+    const id = typeof raw.id === "string" ? raw.id : typeof raw.node_id === "string" ? raw.node_id : undefined;
+    const name = typeof raw.concept_name === "string" ? raw.concept_name : typeof raw.name === "string" ? raw.name : undefined;
+    if (!id && !name) continue;
+    const existing = id ? byId.get(id) : byName.get(normalizeConceptName(name as string));
+    const patch: Partial<GraphNode> = {};
+    const score = typeof raw.mastery_score === "number"
+      ? raw.mastery_score
+      : (!existing && typeof raw.initial_mastery === "number") ? raw.initial_mastery : undefined;
+    if (score !== undefined) {
+      patch.mastery_score = score;
+      patch.mastery_tier = tierForScore(score);
+    }
+    if (typeof raw.mastery_tier === "string") patch.mastery_tier = raw.mastery_tier as GraphNode["mastery_tier"];
+    if (typeof raw.course_id === "string") patch.course_id = raw.course_id;
+    upsert(existing, name ?? (id as string), patch);
+  }
+
+  for (const mc of rawMasteryChanges) {
+    const existing = byName.get(normalizeConceptName(mc.concept));
+    if (!existing) continue; // bare mastery_changes entries carry no id/course to synthesize a new node from
+    upsert(existing, mc.concept, { mastery_score: mc.after, mastery_tier: tierForScore(mc.after) });
+  }
+
+  return Array.from(byId.values());
+}
+
 export function Learn() {
   return (
     <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
@@ -107,12 +202,27 @@ function LearnInner() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [sending, setSending] = useState(false);
   const [starting, setStarting] = useState(false);
+  // Assistant text arriving token-by-token for the in-flight turn; null =
+  // not streaming, '' = stream open but no token yet, non-empty = live text.
+  // Passed straight through to ChatPanel's `streamingText` prop.
+  const [streamingText, setStreamingText] = useState<string | null>(null);
+  const streamAbort = useRef<AbortController | null>(null);
 
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
   const [concepts, setConcepts] = useState<{ id: string; name: string; course_id: string | null; course_code: string | null }[]>([]);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
+
+  // Streamed graph_update handler (#74) — see mergeGraphDelta above for why
+  // the match key falls back to concept name. selectedCourseId roughly
+  // tracks the active session's course through both the start and resume
+  // flows, so it's a safe fallback for a brand-new streamed node with no
+  // course_id in its raw payload.
+  const applyGraphDelta = useCallback(
+    (delta: GraphDelta) => setGraphNodes(prev => mergeGraphDelta(prev, delta, selectedCourseId)),
+    [selectedCourseId],
+  );
 
   // The rail's focused node — independent of the active session's topic, so
   // clicking around the map explores without touching the chat. Null means the
@@ -288,31 +398,65 @@ function LearnInner() {
     }
   }, [userId, toast]);
 
+  // Sends one turn over the SSE stream, with a three-rung fallback ladder:
+  //   Rung 3 (stream never produced text) -> retry transparently via the
+  //     non-streaming sendChat; the user never sees an error.
+  //   Rung 2 (rejected AFTER tokens appeared) -> surface the error through
+  //     the same error-message path the old non-streaming send() used. Never
+  //     silently re-run: the user already saw partial text, and nothing was
+  //     persisted server-side, so re-running would restart the reply.
+  //   Stop pressed -> distinguished via the AbortController's signal.aborted;
+  //     intentional, not an error, no fallback, no message appended (nothing
+  //     was persisted, so the partial bubble just disappears).
+  //
+  // Unlike the old handler, no loading placeholder is pushed into `messages`
+  // up front — ChatPanel renders the in-flight turn itself via streamingText
+  // (a placeholder there would double up with that live bubble). The real
+  // assistant message is appended once, after the turn resolves one way or
+  // another.
   const send = useCallback(async (userText: string) => {
     if (!userText.trim() || !sessionId || !userId) return;
-    setMessages(m => [
-      ...m,
-      { id: msgId(), role: "user", content: userText },
-      { id: msgId(), role: "assistant", content: "", loading: true },
-    ]);
+    setMessages(m => [...m, { id: msgId(), role: "user", content: userText }]);
     setSending(true);
+    setStreamingText("");
+    const controller = new AbortController();
+    streamAbort.current = controller;
+    let sawToken = false;
     try {
-      const res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref);
-      setMessages(m => {
-        const next = [...m];
-        next[next.length - 1] = { id: next[next.length - 1].id, role: "assistant", content: res.reply || "" };
-        return next;
-      });
+      let res: ChatResult;
+      try {
+        res = await streamChat(sessionId, userId, userText, mode, sharedCtx, modelPref, {
+          onToken: (delta) => {
+            sawToken = true;
+            setStreamingText(t => (t ?? "") + delta);
+          },
+          onGraphUpdate: applyGraphDelta,
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (controller.signal.aborted) return; // Stop pressed — intentional, not an error.
+        if (sawToken) throw err; // Rung 2: interrupted after producing text — surface it, don't retry.
+        // Rung 3: the stream never produced text — retry transparently via the JSON route.
+        res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref);
+      }
+      setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
     } catch (err) {
-      setMessages(m => {
-        const next = [...m];
-        next[next.length - 1] = { id: next[next.length - 1].id, role: "assistant", content: `Error: ${err instanceof Error ? err.message : "unknown"}` };
-        return next;
-      });
+      setMessages(m => [...m, { id: msgId(), role: "assistant", content: `Error: ${err instanceof Error ? err.message : "unknown"}` }]);
     } finally {
       setSending(false);
+      setStreamingText(null);
+      streamAbort.current = null;
     }
-  }, [sessionId, userId, mode, sharedCtx, modelPref]);
+  }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta]);
+
+  // Abort any in-flight stream when the active session changes (including to
+  // none) and on unmount — guards the #131/#133 leaked-stream bug class. A
+  // plain unmount-only effect would miss the "switched sessions mid-stream"
+  // case, so this keys on sessionId: its cleanup fires both when sessionId
+  // changes and when the component unmounts.
+  useEffect(() => {
+    return () => streamAbort.current?.abort();
+  }, [sessionId]);
 
   const handleAction = async (action: "hint" | "confused" | "skip") => {
     if (!sessionId || !userId) return;
@@ -786,6 +930,8 @@ function LearnInner() {
               onSend={send}
               onAction={handleAction}
               disabled={sending || starting}
+              streamingText={streamingText}
+              onStop={() => streamAbort.current?.abort()}
             />
           </div>
         )}
