@@ -235,10 +235,31 @@ staging exists for pre-prod verification, and a flag would leave a cleanup chore
 
 ## Risks
 
-- **The spike could fail** — if Gemini doesn't emit usable incremental deltas through our stack,
-  #70's premise breaks. Mitigation: run it first, before any production code. If it fails, the
-  design degrades to "stream at whatever granularity the provider gives us" and we reassess
-  scope with real data rather than assumptions.
+- ~~**The spike could fail**~~ — **RESOLVED 2026-07-16. ADR-0012's gate is closed.** Measured
+  against `gemini-2.5-pro` via `Agent.run_stream_events`, prompt "Explain what an eigenvalue is in
+  two sentences":
+
+  ```
+  EVENT COUNTS: {'PartStartEvent': 1, 'FinalResultEvent': 1, 'PartDeltaEvent': 2,
+                 'PartEndEvent': 1, 'AgentRunResultEvent': 1}
+  FIRST TEXT FROM: PartStartEvent -> 'An eigenvalue is the special number that tells you how much a'
+  ```
+
+  Text is genuinely incremental (multiple deltas, not one blob), so #70's premise holds. The spike
+  also caught two carrier traps that would have shipped as bugs, now encoded in the plan and
+  regression-tested:
+
+  1. The reply's **first** chunk arrives on `PartStartEvent`, not `PartDeltaEvent` — handling only
+     deltas drops the opening (here, the whole first sentence).
+  2. `PartEndEvent` carries the **full assembled reply** on the same `part.content` attribute —
+     emitting a token for it duplicates the entire reply (`"hello world"` → `"hello worldhello
+     world"`, reproduced live).
+
+  Hence `_text_from` dispatches on class name rather than duck-typing attributes.
+
+  Note the granularity is coarse (~4 chunks for two sentences), so the win is "text appears in
+  stages within ~1s" rather than a per-word typewriter. That is still a large improvement over a
+  multi-second spinner, but it is worth confirming against a long reply during the Task 9 smoke.
 - **Token-render cost** — a long reply re-rendering Markdown per token could jank. Mitigation:
   rAF batching, measured during the e2e smoke.
 - **`learn.py` churn overlaps other work** — the file is active. Mitigation: land the spike and

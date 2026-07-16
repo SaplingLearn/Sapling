@@ -208,15 +208,21 @@ The heart of the change. Everything it does is proven by Task 4's tests against 
 
 **Pydantic AI 1.89.1 event shapes** (verified by inspection — do not guess):
 
-| Event class | Fields | Carries |
-|---|---|---|
-| `PartStartEvent` | `index, part, previous_part_kind, event_kind` | **the first text chunk**, at `event.part.content` |
-| `PartDeltaEvent` | `index, delta, event_kind` | subsequent text at `event.delta.content_delta` |
-| `FunctionToolCallEvent` | `part, args_valid, event_kind` | tool name at `event.part.tool_name` |
-| `FunctionToolResultEvent` | `result, content, event_kind` | tool finished — **check deps here** |
-| `AgentRunResultEvent` | `result, event_kind` | final output at `event.result.output` |
+| Event class | Fields | Carries | Emit a `token`? |
+|---|---|---|---|
+| `PartStartEvent` | `index, part, previous_part_kind, event_kind` | **the first text chunk**, at `event.part.content` | **yes** |
+| `PartDeltaEvent` | `index, delta, event_kind` | subsequent text at `event.delta.content_delta` | **yes** |
+| `PartEndEvent` | `index, part, next_part_kind, event_kind` | **the FULL assembled text** at `event.part.content` | **NO — would duplicate the reply** |
+| `FinalResultEvent` | `tool_name, tool_call_id, event_kind` | no text | no |
+| `FunctionToolCallEvent` | `part, args_valid, event_kind` | tool name at `event.part.tool_name` | no (emit `progress`) |
+| `FunctionToolResultEvent` | `result, content, event_kind` | tool finished — **check deps here** | no (maybe `graph_update`) |
+| `AgentRunResultEvent` | `result, event_kind` | final output at `event.result.output` | no (feeds `done`) |
 
-> **Trap:** the first chunk of text arrives on `PartStartEvent`, *not* `PartDeltaEvent`. Handling only deltas silently drops the reply's opening. Task 4 Step 1 has a regression test for exactly this.
+> **Two traps, both observed live against `gemini-2.5-pro` on 2026-07-16 (Task 1's spike), both regression-tested in Task 4:**
+> 1. The reply's first chunk arrives on `PartStartEvent`, **not** `PartDeltaEvent`. Handling only deltas drops the opening — for a two-sentence answer the spike saw the entire first sentence arrive this way.
+> 2. `PartEndEvent` carries the **complete assembled reply** on the same `part.content` attribute `PartStartEvent` uses. Reading `part.content` without checking the class emits the whole reply a second time (`"hello world"` → `"hello worldhello world"`).
+>
+> This is why `_text_from` dispatches on class name instead of duck-typing attributes.
 
 - [ ] **Step 1: Write the module**
 
@@ -264,18 +270,31 @@ def merge_graph_updates(updates: list[dict]) -> dict:
 
 
 def _text_from(event: Any) -> str | None:
-    """Extract a text chunk from a stream event, or None.
+    """Extract a NEW text chunk from a stream event, or None.
 
-    Handles BOTH carriers: PartStartEvent puts the first chunk on
-    `part.content`; PartDeltaEvent puts the rest on `delta.content_delta`.
-    Missing either one truncates the reply.
+    Dispatches on class name, which matters more than it looks (all three
+    shapes below were observed live against gemini-2.5-pro on 2026-07-16):
+
+      PartStartEvent  -> part.content        the reply's FIRST chunk
+      PartDeltaEvent  -> delta.content_delta each subsequent chunk
+      PartEndEvent    -> part.content        the FULL assembled text — SKIP
+
+    Reading `part.content` generically would emit the whole reply a second
+    time when PartEndEvent lands ("hello world" -> "hello worldhello
+    world"). Reading only deltas would drop the opening chunk. Both are
+    regression-tested.
     """
-    delta = getattr(getattr(event, "delta", None), "content_delta", None)
-    if isinstance(delta, str) and delta:
-        return delta
-    part_content = getattr(getattr(event, "part", None), "content", None)
-    if isinstance(part_content, str) and part_content:
-        return part_content
+    cls_name = type(event).__name__
+
+    if cls_name == "PartDeltaEvent":
+        delta = getattr(getattr(event, "delta", None), "content_delta", None)
+        return delta if isinstance(delta, str) and delta else None
+
+    if cls_name == "PartStartEvent":
+        content = getattr(getattr(event, "part", None), "content", None)
+        return content if isinstance(content, str) and content else None
+
+    # PartEndEvent / FinalResultEvent / tool + result events carry no NEW text.
     return None
 
 
@@ -496,6 +515,13 @@ class PartStartEvent:
         self.part = _TextPart(content)
 
 
+class PartEndEvent:
+    """Carries the FULL assembled text on the same `.part.content`
+    attribute PartStartEvent uses. Must NOT produce a token."""
+    def __init__(self, content):
+        self.part = _TextPart(content)
+
+
 class _ToolPart:
     def __init__(self, tool_name):
         self.tool_name = tool_name
@@ -578,6 +604,27 @@ async def test_first_chunk_from_part_start_is_not_dropped():
     tokens = [e.data["delta"] for e in events if e.type == "token"]
     assert tokens == ["Hello ", "world"]
     assert saved["reply"] == "Hello world"
+
+
+@pytest.mark.asyncio
+async def test_part_end_event_does_not_duplicate_the_reply():
+    """PartEndEvent carries the FULL assembled text on .part.content — the
+    same attribute PartStartEvent uses for the FIRST chunk. Emitting a token
+    for it duplicates the whole reply in the user's bubble.
+
+    Regression: a duck-typed `getattr(event.part, 'content')` reader turns
+    "hello world" into "hello worldhello world". Observed live in Task 1's
+    spike."""
+    agent = FakeAgent([
+        PartStartEvent("hello "),
+        PartDeltaEvent("world"),
+        PartEndEvent("hello world"),      # full text — must be ignored
+        AgentRunResultEvent("hello world"),
+    ])
+    events = await collect(agent, make_deps(), lambda r, g, m: {})
+    tokens = [e.data["delta"] for e in events if e.type == "token"]
+    assert tokens == ["hello ", "world"], "PartEndEvent must not re-emit the reply"
+    assert "".join(tokens) == "hello world"
 
 
 @pytest.mark.asyncio
