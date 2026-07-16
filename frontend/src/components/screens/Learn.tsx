@@ -90,6 +90,17 @@ function tierForScore(score: number): GraphNode["mastery_tier"] {
 
 const normalizeConceptName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 
+// Shared, defensive identity extraction for a single raw graph_update node
+// entry: matched by `id`/`node_id` when present (future-proofing against a
+// payload shape change), otherwise by normalized concept name. Used by both
+// `mergeGraphDelta` and `deltaPlaceholderEdges` so their notions of "is this
+// concept already known" can't drift apart.
+function rawNodeIdentity(raw: Record<string, unknown>): { id?: string; name?: string } {
+  const id = typeof raw.id === "string" ? raw.id : typeof raw.node_id === "string" ? raw.node_id : undefined;
+  const name = typeof raw.concept_name === "string" ? raw.concept_name : typeof raw.name === "string" ? raw.name : undefined;
+  return { id, name };
+}
+
 // Upsert a streamed `graph_update` event into `graphNodes` so the knowledge-map
 // rail's "In this branch" / "Elsewhere in course" panels recompute through
 // their existing useMemo — no refetch, no extra HTTP round-trip (#74).
@@ -103,26 +114,25 @@ const normalizeConceptName = (s: string) => s.trim().toLowerCase().replace(/\s+/
 // mastery_delta, reason, event_type}. Neither carries an `id` or an
 // absolute post-update score. `delta.mastery_changes` ({concept, before,
 // after}) IS authoritative for an existing node's new score, so it drives
-// merges for updates; `nodes` entries are read defensively — matched by
-// `id`/`node_id` when present (future-proofing against a payload shape
-// change) and otherwise by normalized concept name — and any fields we
-// don't recognize are ignored rather than crashing.
+// merges for updates; `nodes` entries are read defensively via
+// `rawNodeIdentity` — and any fields we don't recognize are ignored rather
+// than crashing.
 //
-// Returns the merged node list plus any brand-new subject-root edges the
-// placeholder path wants added to `graphEdges` (see `applyGraphDelta` below
-// for why those are threaded out rather than written here).
-function mergeGraphDelta(
+// Pure function of its arguments only — no component state is read. It does
+// NOT compute placeholder edges; see `deltaPlaceholderEdges` below, which
+// `applyGraphDelta` runs as a second, independent, idempotent update instead
+// of threading a value out of this one. Exported for Learn.graph.test.ts.
+export function mergeGraphDelta(
   prev: GraphNode[],
   delta: GraphDelta,
   fallbackCourseId: string,
-): { nodes: GraphNode[]; newEdges: GraphEdge[] } {
+): GraphNode[] {
   const rawNodes = Object.values(delta.nodes ?? {}).flat() as Array<Record<string, unknown>>;
   const rawMasteryChanges = delta.mastery_changes ?? [];
-  if (!rawNodes.length && !rawMasteryChanges.length) return { nodes: prev, newEdges: [] };
+  if (!rawNodes.length && !rawMasteryChanges.length) return prev;
 
   const byId = new Map(prev.map(n => [n.id, n] as const));
   const byName = new Map(prev.map(n => [normalizeConceptName(n.name), n] as const));
-  const newEdges: GraphEdge[] = [];
 
   const upsert = (existing: GraphNode | undefined, name: string, patch: Partial<GraphNode>) => {
     if (existing) {
@@ -135,10 +145,11 @@ function mergeGraphDelta(
     // later full graph refetch (session end / next visit) reconciles the
     // real id. The raw payload carries no course_id, so anchor it to the
     // session's active course when there is one. Mirrors `addConcept`
-    // (~:759): resolve color + subject from the course's subject-root node
+    // (~:892): resolve color + subject from the course's subject-root node
     // instead of a hardcoded `var(--…)` (the 3D rail can't resolve CSS
-    // custom properties — lib/data.ts:78-79 — so that rendered black), and
-    // link the placeholder to the root so it doesn't float as an orphan.
+    // custom properties — lib/data.ts:78-79 — so that rendered black). The
+    // root-anchoring edge is added separately by `deltaPlaceholderEdges`,
+    // not here.
     const id = `stream-${normalizeConceptName(name)}`;
     const already = byId.get(id);
     const courseId = (typeof patch.course_id === "string" ? patch.course_id : undefined) ?? fallbackCourseId;
@@ -157,12 +168,10 @@ function mergeGraphDelta(
         };
     byId.set(id, placeholder);
     byName.set(normalizeConceptName(name), placeholder);
-    if (!already && root) newEdges.push({ source: root.id, target: id, strength: 0.4 });
   };
 
   for (const raw of rawNodes) {
-    const id = typeof raw.id === "string" ? raw.id : typeof raw.node_id === "string" ? raw.node_id : undefined;
-    const name = typeof raw.concept_name === "string" ? raw.concept_name : typeof raw.name === "string" ? raw.name : undefined;
+    const { id, name } = rawNodeIdentity(raw);
     if (!id && !name) continue;
     const existing = id ? byId.get(id) : byName.get(normalizeConceptName(name as string));
     const patch: Partial<GraphNode> = {};
@@ -184,7 +193,79 @@ function mergeGraphDelta(
     upsert(existing, mc.concept, { mastery_score: mc.after, mastery_tier: tierForScore(mc.after) });
   }
 
-  return { nodes: Array.from(byId.values()), newEdges };
+  return Array.from(byId.values());
+}
+
+function edgeKey(e: GraphEdge): string {
+  return `${e.source} ${e.target}`;
+}
+
+// The root→placeholder edges a streamed `graph_update` implies, computed
+// against `nodes` — the caller's current `graphNodes` snapshot — rather than
+// against `mergeGraphDelta`'s `prev`: the two run as independent updates
+// (see `applyGraphDelta`), so this can't reach into the other's in-flight
+// result, and doesn't need to. A concept only gets a synthetic edge when it
+// has no existing id/name match in `nodes`, mirroring `mergeGraphDelta`'s
+// "unknown concept" branch; an already-known concept is updated in place by
+// `mergeGraphDelta` and never gets a new edge here. Pure and side-effect
+// free. Exported for Learn.graph.test.ts.
+export function deltaPlaceholderEdges(
+  nodes: GraphNode[],
+  delta: GraphDelta,
+  fallbackCourseId: string,
+): GraphEdge[] {
+  const rawNodes = Object.values(delta.nodes ?? {}).flat() as Array<Record<string, unknown>>;
+  if (!rawNodes.length) return [];
+
+  const byId = new Map(nodes.map(n => [n.id, n] as const));
+  const byName = new Map(nodes.map(n => [normalizeConceptName(n.name), n] as const));
+  const edges: GraphEdge[] = [];
+
+  for (const raw of rawNodes) {
+    const { id, name } = rawNodeIdentity(raw);
+    if (!id && !name) continue;
+    const existing = id ? byId.get(id) : byName.get(normalizeConceptName(name as string));
+    if (existing) continue;
+
+    const courseId = (typeof raw.course_id === "string" ? raw.course_id : undefined) ?? fallbackCourseId;
+    const root = nodes.find(n => n.is_subject_root && n.course_id === courseId);
+    if (!root) continue;
+
+    const label = (name ?? id) as string;
+    edges.push({ source: root.id, target: `stream-${normalizeConceptName(label)}`, strength: 0.4 });
+  }
+  return edges;
+}
+
+// Idempotent edge append: dedupes `additions` against `prev` AND against
+// each other by source+target, so calling this twice with identical inputs —
+// React 18 Strict Mode's dev double-invocation of a setState updater, or the
+// same `graph_update` replayed — leaves `prev` unchanged the second time.
+// Never mutates `prev`. Exported for Learn.graph.test.ts.
+export function mergeGraphEdges(prev: GraphEdge[], additions: GraphEdge[]): GraphEdge[] {
+  if (!additions.length) return prev;
+  const seen = new Set(prev.map(edgeKey));
+  const next: GraphEdge[] = [];
+  for (const e of additions) {
+    const key = edgeKey(e);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    next.push(e);
+  }
+  return next.length ? [...prev, ...next] : prev;
+}
+
+// Course resolution for a rail-focused node: prefer the node's own course,
+// fall back to the course picker's selection, else null. Used both for the
+// rail's focus card (`cardCourseId` in LearnInner) and, via that same value,
+// for the streamed-placeholder course fallback in `applyGraphDelta` — so a
+// streamed node lands in the same course bucket a manually-added one would
+// (Finding B). Exported for Learn.graph.test.ts.
+export function resolveCardCourseId(
+  topicNode: GraphNode | undefined,
+  selectedCourseId: string,
+): string | null {
+  return topicNode?.course_id || selectedCourseId || null;
 }
 
 export function Learn() {
@@ -230,39 +311,72 @@ function LearnInner() {
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
 
-  // Streamed graph_update handler (#74) — see mergeGraphDelta above for why
-  // the match key falls back to concept name. selectedCourseId roughly
-  // tracks the active session's course through both the start and resume
-  // flows, so it's a safe fallback for a brand-new streamed node with no
-  // course_id in its raw payload.
-  //
-  // `setGraphNodes` stays on the functional-update form (`prev => …`) so
-  // rapid back-to-back graph_update events within one turn can't clobber
-  // each other with a stale `graphNodes` closure. `newEdges` is threaded out
-  // of that updater via an outer `let` — a plain, deterministic data read,
-  // not a side effect — precisely so the actual `setGraphEdges` call happens
-  // exactly once here, outside the updater; nesting it inside the updater
-  // would double it under React 18 Strict Mode, which invokes `setState`
-  // updater functions twice in development to catch impurities.
-  const applyGraphDelta = useCallback(
-    (delta: GraphDelta) => {
-      let newEdges: GraphEdge[] = [];
-      setGraphNodes(prev => {
-        const result = mergeGraphDelta(prev, delta, selectedCourseId);
-        newEdges = result.newEdges;
-        return result.nodes;
-      });
-      if (newEdges.length) setGraphEdges(prevEdges => [...prevEdges, ...newEdges]);
-    },
-    [selectedCourseId],
-  );
-
   // The rail's focused node — independent of the active session's topic, so
-  // clicking around the map explores without touching the chat. Null means the
-  // focus follows the current session topic. `lastNodeClickRef` powers the
-  // double-click-to-switch shortcut.
+  // clicking around the map explores without touching the chat. Null means
+  // the focus follows the current session topic. `lastNodeClickRef` powers
+  // the double-click-to-switch shortcut. Declared here — ahead of the rest
+  // of the rail state below — because `applyGraphDelta`'s course resolution
+  // needs `cardCourseId`, which is derived from it.
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const lastNodeClickRef = useRef<{ id: string; t: number } | null>(null);
+
+  const suggestParam = searchParams.get("suggest");
+  const highlightId = useMemo(() => {
+    // Pre-revamp Learn honored ?suggest=<concept> from the Dashboard
+    // "Learn next" suggestion; restore that here, falling back to the
+    // current topic if no suggestion is active.
+    const suggestMatch = suggestParam
+      ? graphNodes.find(n => n.name.toLowerCase() === suggestParam.trim().toLowerCase())
+      : null;
+    if (suggestMatch) return suggestMatch.id;
+    return graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id;
+  }, [suggestParam, graphNodes, topic]);
+
+  // The rail focus: an explicitly-clicked node when present, otherwise the
+  // node for the active session topic. Drives the graph highlight, focus
+  // card, "In this branch", and "Elsewhere".
+  const activeFocusId = focusedNodeId ?? highlightId;
+  const topicNode = useMemo(
+    () => graphNodes.find(n => n.id === activeFocusId),
+    [graphNodes, activeFocusId],
+  );
+
+  // Course resolution shared by the rail's focus card, `addConcept` (~:892
+  // below), and the streamed-placeholder fallback right below: prefer the
+  // focused concept's own course, fall back to the course picker. Extracted
+  // to a top-level function (rather than an inline expression) so it's
+  // directly testable — see Learn.graph.test.ts.
+  const cardCourseId = resolveCardCourseId(topicNode, selectedCourseId);
+
+  // Streamed graph_update handler (#74) — see mergeGraphDelta above for why
+  // the match key falls back to concept name. The course fallback is
+  // `cardCourseId`, the same resolution `addConcept` uses for a manually-
+  // added node, so a streamed placeholder lands in the same course bucket;
+  // when nothing resolves at all it falls back to `selectedCourseId`, same
+  // as before.
+  //
+  // Nodes and edges are two independent, idempotent functional updates, NOT
+  // one updater's result threaded into the other. `setGraphNodes`'s updater
+  // runs against the true, always-current `prev`. `setGraphEdges`'s updater
+  // independently recomputes which root→placeholder edges this delta
+  // implies (`deltaPlaceholderEdges`, checked against the render-scope
+  // `graphNodes` snapshot — safe because subject-root nodes never change
+  // mid-stream, and any staleness in the "is this concept already known"
+  // check only produces a redundant candidate, which `mergeGraphEdges`
+  // dedupes by source+target rather than an incorrect edge) and dedupes
+  // against `prev` before appending. Both updaters are pure functions of
+  // their arguments, so calling either twice with the same input — React 18
+  // Strict Mode's dev double-invocation, or the same delta arriving twice —
+  // produces the same result. No timing assumption, nothing smuggled out.
+  const applyGraphDelta = useCallback(
+    (delta: GraphDelta) => {
+      const courseId = cardCourseId ?? selectedCourseId;
+      setGraphNodes(prev => mergeGraphDelta(prev, delta, courseId));
+      setGraphEdges(prev => mergeGraphEdges(prev, deltaPlaceholderEdges(graphNodes, delta, courseId)));
+    },
+    [cardCourseId, selectedCourseId, graphNodes],
+  );
+
   // Inline "add concept" composer state for the knowledge-map rail.
   const [addingConcept, setAddingConcept] = useState(false);
   const [newConceptName, setNewConceptName] = useState("");
@@ -593,18 +707,6 @@ function LearnInner() {
 
   const modeOptions = useMemo(() => MODES.map(m => ({ value: m.id, label: m.name, description: m.tip })), []);
 
-  const suggestParam = searchParams.get("suggest");
-  const highlightId = useMemo(() => {
-    // Pre-revamp Learn honored ?suggest=<concept> from the Dashboard
-    // "Learn next" suggestion; restore that here, falling back to the
-    // current topic if no suggestion is active.
-    const suggestMatch = suggestParam
-      ? graphNodes.find(n => n.name.toLowerCase() === suggestParam.trim().toLowerCase())
-      : null;
-    if (suggestMatch) return suggestMatch.id;
-    return graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id;
-  }, [suggestParam, graphNodes, topic]);
-
   // Jump the chat to `name`: resume an existing session on that concept if one
   // exists, otherwise start a fresh one. Both paths clear the map focus so the
   // rail follows the now-active session.
@@ -676,15 +778,6 @@ function LearnInner() {
     }
   };
 
-  // The rail focus: an explicitly-clicked node when present, otherwise the
-  // node for the active session topic. Drives the graph highlight, focus card,
-  // "In this branch", and "Elsewhere".
-  const activeFocusId = focusedNodeId ?? highlightId;
-  const topicNode = useMemo(
-    () => graphNodes.find(n => n.id === activeFocusId),
-    [graphNodes, activeFocusId],
-  );
-
   const neighborIds = useMemo(() => {
     if (!topicNode) return new Set<string>();
     const ids = new Set<string>();
@@ -695,7 +788,6 @@ function LearnInner() {
     return ids;
   }, [topicNode, graphEdges]);
 
-  const cardCourseId = topicNode?.course_id || selectedCourseId || null;
   const cardCourse = useMemo(
     () => courses.find(c => c.course_id === cardCourseId) ?? null,
     [courses, cardCourseId],
