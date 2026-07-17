@@ -85,6 +85,18 @@ def retrieve_chunks(
         return []
 
 
+def chunk_id(course_code: str, chunk_text: str) -> str:
+    """Content-addressed chunk id, scoped per course.
+
+    Identical text in the same course maps to one row no matter which
+    document or uploader supplied it, so N students uploading the same
+    slides dedup to one embedding instead of N. doc_id/uploader_id/
+    chunk_index on the row are last-writer-wins metadata; retrieval only
+    reads course_id + chunk_text.
+    """
+    return hashlib.sha256(f"{course_code}::{chunk_text}".encode()).hexdigest()
+
+
 def index_document_chunks(
     course_code: str,
     doc_id: str,
@@ -93,18 +105,22 @@ def index_document_chunks(
 ) -> int:
     """Embed and upsert document chunks to course_chunks.
 
-    Returns the number of chunks upserted. Uses RETRIEVAL_DOCUMENT task
-    type for all embeddings. Upsert is idempotent — re-indexing the same
-    doc_id produces the same chunk IDs and merges cleanly.
+    Returns the number of unique chunks upserted. Uses RETRIEVAL_DOCUMENT
+    task type for all embeddings. Chunk ids are content-addressed per
+    course (see chunk_id), so re-uploads of the same content merge instead
+    of duplicating rows. Repeated text within one document is deduped
+    before upsert — Postgres rejects an upsert payload that hits the same
+    row twice.
     """
     if not chunks:
         return 0
 
-    records = []
+    records_by_id: dict[str, dict] = {}
     for i, chunk_text in enumerate(chunks):
-        raw = f"{doc_id}::{i}::{chunk_text}"
-        cid = hashlib.sha256(raw.encode()).hexdigest()
-        records.append({
+        cid = chunk_id(course_code, chunk_text)
+        if cid in records_by_id:
+            continue
+        records_by_id[cid] = {
             "id":          cid,
             "course_id":   course_code,
             "doc_id":      doc_id,
@@ -117,7 +133,9 @@ def index_document_chunks(
             "semester":    "current",
             "section_id":  None,
             "school":      "",
-        })
+        }
+
+    records = list(records_by_id.values())
 
     # Embed in batches of 50 (API limit)
     BATCH = 50
