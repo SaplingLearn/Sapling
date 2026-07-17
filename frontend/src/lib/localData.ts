@@ -349,11 +349,12 @@ const LOCAL_ROOM_ACTIVITY = [
   { id: 'act3', user_name: LOCAL_USER.name, activity_type: 'studied', concept_name: 'Integration by Parts', created_at: minutesAgo(400) },
 ];
 
+// Mastery (stats/top_concepts) dropped from the directory payload in #342.
 const LOCAL_STUDENTS = [
-  { user_id: 'peer-maya', name: 'Maya Chen', streak: 9, courses: ['Calculus II', 'Linear Algebra'], stats: { mastered: 6, learning: 3, struggling: 1, unexplored: 2, total: 12 }, top_concepts: ['Taylor Series', 'Polar Coordinates', 'Eigenvalues'] },
-  { user_id: 'peer-sam', name: 'Sam Rivera', streak: 5, courses: ['Data Structures', 'Algorithms'], stats: { mastered: 5, learning: 4, struggling: 2, unexplored: 1, total: 12 }, top_concepts: ['Graph Algorithms', 'Hash Maps', 'Sorting'] },
-  { user_id: 'peer-priya', name: 'Priya Patel', streak: 14, courses: ['Intro to Psychology', 'Statistics'], stats: { mastered: 8, learning: 2, struggling: 0, unexplored: 3, total: 13 }, top_concepts: ['Memory & Encoding', 'Hypothesis Testing'] },
-  { user_id: 'peer-jordan', name: 'Jordan Lee', streak: 2, courses: ['Data Structures'], stats: { mastered: 2, learning: 5, struggling: 3, unexplored: 4, total: 14 }, top_concepts: ['Binary Trees'] },
+  { user_id: 'peer-maya', name: 'Maya Chen', streak: 9, courses: ['Calculus II', 'Linear Algebra'] },
+  { user_id: 'peer-sam', name: 'Sam Rivera', streak: 5, courses: ['Data Structures', 'Algorithms'] },
+  { user_id: 'peer-priya', name: 'Priya Patel', streak: 14, courses: ['Intro to Psychology', 'Statistics'] },
+  { user_id: 'peer-jordan', name: 'Jordan Lee', streak: 2, courses: ['Data Structures'] },
 ];
 
 export function handleLocalRequest(path: string, options?: RequestInit): unknown {

@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit reviews ONLY the repository default branch (main) unless other base
+# branches are listed explicitly. Without this file, every PR targeting a
+# long-lived integration branch got "Review skipped: reviews are disabled for
+# this base branch" — and because the PR otherwise looks normal and CI goes
+# green, the absence of a review reads as "nothing to flag" rather than
+# "never looked" (#343).
+#
+# That matters most for `production`: main -> production promotion PRs (e.g.
+# #305, #314) are the last gate before prod, and they were never machine
+# reviewed. The promotion PR is a merge of already-reviewed-looking commits, so
+# it gets no fresh line-by-line review on the way in either.
+#
+# `staging` is listed defensively. The branch does not exist right now (it was
+# deleted 2026-07-15, after #334 merged and #337 closed), but it was a real
+# long-lived integration branch and this config should already cover it if it
+# is ever recreated.
+#
+# Patterns are regex and are anchored on purpose: an unanchored `staging` would
+# also match feature branches such as `docs/staging-environment-plan`.
+language: en-US
+reviews:
+  auto_review:
+    base_branches:
+      - ^production$
+      - ^staging$

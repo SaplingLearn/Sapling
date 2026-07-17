@@ -171,6 +171,97 @@ def user_enrollment_ids(user_id: str) -> list[dict]:
     ) or []
 
 
+def school_peer_user_ids(user_id: str) -> set[str]:
+    """The set of user_ids who share a school with ``user_id`` (includes them).
+
+    A user's school(s) are derived from the abstract courses behind their
+    enrollments (``enrollments`` → ``course_offerings.course_id`` →
+    ``courses.school_id``); peers are everyone enrolled in any offering of any
+    course at those schools. Backs the #342 school-scoped directory.
+
+    Multi-step reads (rather than PostgREST embedded filters) per this module's
+    house style. Deliberately **not** cached: enrollments mutate and this is a
+    visibility boundary, so a stale set would leak or hide users. Each step
+    short-circuits on an empty set — both to skip work and to avoid the
+    degenerate ``in.()`` filter that ``','.join(set())`` would produce.
+    """
+    if not user_id:
+        return set()
+
+    # 1. the viewer's own offerings
+    my_offerings = {
+        e["offering_id"] for e in user_enrollment_ids(user_id) if e.get("offering_id")
+    }
+    if not my_offerings:
+        return set()
+
+    # 2. offerings → abstract course ids
+    my_course_ids = {
+        r["course_id"]
+        for r in (
+            table("course_offerings").select(
+                "course_id", filters={"id": f"in.({','.join(my_offerings)})"}
+            )
+            or []
+        )
+        if r.get("course_id")
+    }
+    if not my_course_ids:
+        return set()
+
+    # 3. courses → the viewer's school ids
+    school_ids = {
+        r["school_id"]
+        for r in (
+            table("courses").select(
+                "school_id", filters={"id": f"in.({','.join(my_course_ids)})"}
+            )
+            or []
+        )
+        if r.get("school_id")
+    }
+    if not school_ids:
+        return set()
+
+    # 4. school ids → every course at those schools
+    school_course_ids = {
+        r["id"]
+        for r in (
+            table("courses").select(
+                "id", filters={"school_id": f"in.({','.join(school_ids)})"}
+            )
+            or []
+        )
+    }
+    if not school_course_ids:
+        return set()
+
+    # 5. those courses → every offering
+    school_offering_ids = {
+        r["id"]
+        for r in (
+            table("course_offerings").select(
+                "id", filters={"course_id": f"in.({','.join(school_course_ids)})"}
+            )
+            or []
+        )
+    }
+    if not school_offering_ids:
+        return set()
+
+    # 6. those offerings → every enrolled user
+    return {
+        r["user_id"]
+        for r in (
+            table("enrollments").select(
+                "user_id", filters={"offering_id": f"in.({','.join(school_offering_ids)})"}
+            )
+            or []
+        )
+        if r.get("user_id")
+    }
+
+
 def enrollment_id_for(user_id: str, course_id: str, *, create: bool = False) -> str | None:
     """Resolve (user, abstract course) → the user's current-term enrollment id.
 

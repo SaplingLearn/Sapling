@@ -14,6 +14,7 @@ from services.auth_guard import require_self, get_session_user_id
 from services.encryption import encrypt_if_present, decrypt_if_present
 from services.profiles import get_display_name, get_display_names
 from services.graph_service import get_graph
+from services import academics
 from services.matching_service import find_study_matches
 from services.request_context import current_request_id
 from services.social_cache_service import get_cached_summary, save_summary, invalidate as invalidate_summary
@@ -436,21 +437,61 @@ def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody, req
 
 @router.get("/students")
 def get_students(request: Request):
-    """Return a lightweight profile for every user in the DB."""
+    """A lightweight directory of students who share the viewer's school.
+
+    Scoped for #342. Before this, the endpoint returned a profile for *every*
+    user in the DB to any authenticated caller — the `user_id` was bound and
+    never used, so it authenticated without authorizing. Two boundaries now
+    apply:
+
+    - **School scope**: only users enrolled at the same school as the viewer
+      (via ``academics.school_peer_user_ids``). An empty scope (viewer not
+      enrolled / course carries no school) yields an empty directory — fail
+      closed, mirroring the enrollment-scoping pattern in ``calendar.py``.
+    - **profile_visibility**: users who set their profile to ``private`` opt out
+      of the directory entirely. ``public`` and ``school`` are both listed (the
+      endpoint is already school-scoped, so they're equivalent here).
+
+    The payload is deliberately lightweight — name, streak, course names — and
+    carries **no mastery data**: per-concept mastery is academic-performance
+    information that belongs on the profile page (which already gates detail on
+    profile_visibility), not in a browsable directory.
+    """
     user_id = get_session_user_id(request)
-    users = table("users").select("id,streak_count")
+
+    peer_ids = academics.school_peer_user_ids(user_id)
+    if not peer_ids:
+        return {"students": []}
+    peer_list = sorted(peer_ids)
+
+    # Honor profile_visibility: drop 'private' users from the listing. Users with
+    # no settings row default to 'public' (the column default), so they stay.
+    settings_rows = table("user_settings").select(
+        "user_id,profile_visibility",
+        filters={"user_id": f"in.({','.join(peer_list)})"},
+    ) or []
+    hidden = {
+        s["user_id"] for s in settings_rows if s.get("profile_visibility") == "private"
+    }
+    visible_ids = [uid for uid in peer_list if uid not in hidden]
+    if not visible_ids:
+        return {"students": []}
+
+    users = table("users").select(
+        "id,streak_count", filters={"id": f"in.({','.join(visible_ids)})"}
+    ) or []
     # Display names live on user_profiles (0024); resolve in bulk and decrypt.
     name_map = get_display_names([u["id"] for u in users])
-    # A user's courses now resolve through the enrollment chain
+
+    # A user's courses resolve through the enrollment chain
     # (enrollments → course_offerings → courses); the abstract `courses` catalog
     # no longer carries a per-user row. Read the offering's abstract course name
     # via the embedded join and dedup, since one abstract course may have several
     # offerings (per term/section) the user is enrolled in.
     enrollment_rows = table("enrollments").select(
-        "user_id,course_offerings(courses(course_name))"
-    )
-    nodes_rows = table("graph_nodes").select("user_id,mastery_tier,concept_name,mastery_score")
-
+        "user_id,course_offerings(courses(course_name))",
+        filters={"user_id": f"in.({','.join(visible_ids)})"},
+    ) or []
     courses_by_user: dict = defaultdict(set)
     for e in enrollment_rows:
         offering = e.get("course_offerings") or {}
@@ -459,33 +500,12 @@ def get_students(request: Request):
         if course_name:
             courses_by_user[e["user_id"]].add(course_name)
 
-    mastery_by_user: dict = defaultdict(
-        lambda: {"mastered": 0, "learning": 0, "struggling": 0, "unexplored": 0, "total": 0}
-    )
-    top_concepts_by_user: dict = defaultdict(list)
-    for n in nodes_rows:
-        uid = n["user_id"]
-        tier = n["mastery_tier"]
-        mastery_by_user[uid]["total"] += 1
-        if tier in mastery_by_user[uid]:
-            mastery_by_user[uid][tier] += 1
-        if tier == "mastered":
-            top_concepts_by_user[uid].append((n.get("mastery_score", 0), n["concept_name"]))
-
-    # Sort each user's mastered concepts by score desc, keep top 4
-    for uid in top_concepts_by_user:
-        top_concepts_by_user[uid] = [
-            name for _, name in sorted(top_concepts_by_user[uid], reverse=True)[:4]
-        ]
-
     students = [
         {
             "user_id": u["id"],
             "name": name_map.get(u["id"], ""),
             "streak": u.get("streak_count") or 0,
             "courses": sorted(courses_by_user[u["id"]]),
-            "stats": dict(mastery_by_user[u["id"]]),
-            "top_concepts": top_concepts_by_user[u["id"]],
         }
         for u in users
     ]

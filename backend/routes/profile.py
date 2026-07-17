@@ -380,6 +380,16 @@ def update_settings(user_id: str, body: UpdateSettingsBody, request: Request):
     incoming = body.model_dump(exclude_none=True)
     updates = {k: v for k, v in incoming.items() if k in ALLOWED}
 
+    # Validate profile_visibility against its DB CHECK enum (0031 widened it to
+    # include 'school'). Without this, an out-of-enum value reaches PostgREST as
+    # a raw CHECK violation → unhandled 500; a clean 400 is the honest response.
+    if "profile_visibility" in updates and updates["profile_visibility"] not in (
+        "public",
+        "school",
+        "private",
+    ):
+        raise HTTPException(status_code=400, detail="Invalid profile_visibility")
+
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})

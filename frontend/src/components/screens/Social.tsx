@@ -931,8 +931,7 @@ function SchoolDirectory() {
     if (!t) return students;
     return students.filter(s =>
       s.name.toLowerCase().includes(t) ||
-      s.courses.some(c => c.toLowerCase().includes(t)) ||
-      s.top_concepts.some(c => c.toLowerCase().includes(t))
+      s.courses.some(c => c.toLowerCase().includes(t))
     );
   }, [q, students]);
 
@@ -985,15 +984,8 @@ function SchoolDirectory() {
                       {s.courses.slice(0, 3).join(" · ")}
                     </div>
                   )}
-                  {s.top_concepts.length > 0 && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
-                      {s.top_concepts.slice(0, 3).map(c => (
-                        <span key={c} className="chip chip--accent">{c}</span>
-                      ))}
-                    </div>
-                  )}
                   <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6 }}>
-                    {s.stats.mastered}/{s.stats.total} concepts · {s.streak}d streak
+                    {s.streak}d streak
                   </div>
                 </div>
               </Link>

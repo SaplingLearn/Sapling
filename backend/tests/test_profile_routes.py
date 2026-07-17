@@ -236,6 +236,47 @@ class TestGetSettings:
         assert r.json()["theme"] == "light"
 
 
+# ── PATCH /api/profile/{user_id}/settings ──────────────────────────────────
+
+class TestUpdateSettingsVisibility:
+    """profile_visibility is validated in-route against its DB CHECK enum (0031),
+    so a bad value returns 400 rather than reaching PostgREST as a raw CHECK
+    violation → 500 (#342)."""
+
+    def _tables(self):
+        captured = {}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "user_settings":
+                m.select.return_value = [{"user_id": USER_ID, "profile_visibility": "public"}]
+                m.update.side_effect = lambda data, filters: captured.update({"data": data}) or [{}]
+            else:
+                m.select.return_value = []
+            return m
+
+        return table_side_effect, captured
+
+    def test_school_tier_is_accepted(self):
+        table_side_effect, captured = self._tables()
+        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+            r = client.patch(
+                f"/api/profile/{USER_ID}/settings", json={"profile_visibility": "school"}
+            )
+        assert r.status_code == 200
+        assert captured["data"]["profile_visibility"] == "school"
+
+    def test_invalid_visibility_is_rejected_400(self):
+        table_side_effect, captured = self._tables()
+        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+            r = client.patch(
+                f"/api/profile/{USER_ID}/settings", json={"profile_visibility": "friends"}
+            )
+        assert r.status_code == 400
+        # And nothing was written — the bad value never reached the DB.
+        assert "data" not in captured
+
+
 # ── POST /api/profile/{user_id}/equip ──────────────────────────────────────
 
 class TestEquipCosmetic:

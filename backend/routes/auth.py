@@ -451,14 +451,32 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         user_id = f"user_{google_id}"
         is_approved = False
         from datetime import datetime as _dt, timezone as _tz
-        table("users").insert({
+        # Upsert, not insert (#285). `user_id` is deterministic, so a *stub* row
+        # can already occupy this id: `graph_service.ensure_user_exists` inserts
+        # {id, streak_count} with a NULL google_id for any authenticated request,
+        # and the HMAC-signed `sapling_session` cookie outlives a row delete — so
+        # a stale tab can create one for an account that no longer exists. The
+        # lookup above is by google_id, which NULL never matches, so we land here
+        # and a blind INSERT collided on users_pkey -> 409 -> unhandled -> a
+        # permanent sign-in 500 loop.
+        #
+        # on_conflict MUST be the primary key: `google_id` is UNIQUE and would be
+        # valid PostgREST, but the stub's google_id is NULL and NULLs never
+        # conflict, so it would not resolve this. merge-duplicates fills the
+        # stub's NULL auth columns in, promoting it to a real user.
+        table("users").upsert({
             "id": user_id,
             "email": encrypt_if_present(email),
             "google_id": google_id,
             "auth_provider": "google",
             "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
-        })
-        table("user_profiles").insert({"user_id": user_id, **profile_fields})
+        }, on_conflict="id")
+        # Same hazard: user_profiles.user_id is the PK (0024), and a stub that
+        # reached onboarding already has a row here (onboarding.py upserts it).
+        table("user_profiles").upsert(
+            {"user_id": user_id, **profile_fields},
+            on_conflict="user_id",
+        )
 
     # Store OAuth tokens (calendar access included)
     # expires_at is TIMESTAMPTZ after migration 0024 — pass None (not "") when
