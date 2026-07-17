@@ -174,7 +174,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
         if (data.onboardingCompleted) {
           router.replace("/dashboard");
         } else {
-          sessionStorage.setItem("sapling_onboarding_pending", "1");
+          router.replace("/onboarding");
         }
         onClose();
       } else {
