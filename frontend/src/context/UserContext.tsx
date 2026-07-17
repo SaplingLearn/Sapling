@@ -177,9 +177,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setFeaturedRole(null);
       setIsAdmin(false);
       localStorage.removeItem('sapling_user');
-      if (typeof window !== 'undefined') {
-        sessionStorage.removeItem('sapling_onboarding_pending');
-      }
     }
   };
 

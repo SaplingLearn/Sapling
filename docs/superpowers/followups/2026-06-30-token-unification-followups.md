@@ -27,11 +27,14 @@ Each is its own plan / PR. Severity tags map to `docs/frontend-rhythm-audit.md`.
       brief "you're in ✓" confirmation beat so the beta→pending transition isn't glow→silence.
 - [ ] **[P2-G] Normalize pre-auth motion** to one or two finite, purposeful moments
       (mesh blobs `sapling-blob`, `landing-card-float`, shimmer are currently infinite loops).
-- [ ] **[P2-I] Delete dead code** `components/OnboardingFlow.tsx` (36 KB, old-DNA onboarding).
+- [x] **[P2-I] Delete dead code** `components/OnboardingFlow.tsx` (36 KB, old-DNA onboarding).
       ⚠️ **Correction (2026-07-07):** this component is **not** actually dead — it is still imported
       and rendered by the active public landing route (`app/(public)/page.tsx`: `import` at L7,
       rendered at L1247 under `onboardingPhase !== 'idle'`). It must be **unwired from the landing
       page first**, or deletion breaks the build. Re-scope #292 to "unwire, then delete." (#292)
+      ✅ **Done (2026-07-16):** signup cut over to the `/onboarding` route (`screens/Onboarding.tsx`);
+      landing phase machine stripped, `OnboardingFlow.tsx` deleted, `sapling_onboarding_pending`
+      flag removed. Spec: `docs/superpowers/specs/2026-07-16-onboarding-cutover-design.md`. (#292)
 
 ## Directory / structural hygiene
 
