@@ -380,8 +380,9 @@ export interface StudentRow {
   name: string;
   streak: number;
   courses: string[];
-  stats: { mastered: number; learning: number; struggling: number; unexplored: number; total: number };
-  top_concepts: string[];
+  // Per-concept mastery (stats/top_concepts) was removed from this endpoint in
+  // #342: it is academic-performance data that belongs on the profile page, not
+  // in a browsable directory. The directory is now name + courses + streak only.
 }
 
 export const getStudents = () =>
