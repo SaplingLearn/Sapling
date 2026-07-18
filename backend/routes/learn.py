@@ -97,6 +97,20 @@ def _resolve_model_pref(model_pref: str | None):
     return google_model(name)
 
 
+def _fresh_stream_model(model_pref: str | None):
+    """Fresh-provider GoogleModel for a *streaming* turn.
+
+    The streaming routes make two sequential streamed model requests per run
+    (reply → tool calls → continuation). On the shared provider this raised
+    `RuntimeError: Event loop is closed` in google-genai's connection teardown;
+    a per-request client avoids the cross-loop connection reuse. See
+    `agents._providers.fresh_google_model`.
+    """
+    from agents._providers import fresh_google_model, model_name_for
+    name = _PREF_MODEL_NAMES.get(model_pref) if model_pref else None
+    return fresh_google_model(name or model_name_for("chat_tutor"))
+
+
 def _build_pro_model_settings():
     """Return a GoogleModelSettings capping Pro's thinking budget.
 
@@ -814,6 +828,9 @@ async def chat_stream(body: ChatBody, request: Request):
         request_id=request_id,
         model_pref=body.model_pref,
     )
+    # Streaming makes two sequential streamed requests per run; use a fresh
+    # google.genai client so their connections never reuse a stale-loop pool.
+    run_kwargs["model"] = _fresh_stream_model(body.model_pref)
 
     def _persist(reply: str, graph_update: dict, mastery_changes: list) -> dict:
         # Mirrors chat()'s ordering: user row, then assistant row. Runs only
@@ -891,6 +908,9 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         request_id=request_id,
         model_pref=body.model_pref,
     )
+    # Streaming makes two sequential streamed requests per run; use a fresh
+    # google.genai client so their connections never reuse a stale-loop pool.
+    run_kwargs["model"] = _fresh_stream_model(body.model_pref)
 
     def _stash(reply: str, graph_update: dict, mastery_changes: list) -> dict:
         # Agent path succeeded. Same lazy contract as the JSON route:

@@ -101,3 +101,38 @@ def model_for(task: AgentTask) -> GoogleModel:
 def google_model(name: str) -> GoogleModel:
     """Return a configured GoogleModel sharing the project-wide provider."""
     return GoogleModel(name, provider=_provider)
+
+
+def model_name_for(task: AgentTask) -> str:
+    """Resolve the model name for a task (env override, else default).
+
+    Same resolution `model_for` uses, exposed as a bare name so callers that
+    need to rebuild the model on a different provider don't duplicate it.
+    """
+    return os.getenv(f"SAPLING_MODEL_{task.upper()}") or _DEFAULTS[task]
+
+
+def fresh_model_for(task: AgentTask) -> GoogleModel:
+    """`model_for(task)` but on a fresh provider — see `fresh_google_model`.
+
+    Use for agent runs driven on a throwaway/per-request event loop (anything
+    behind `run_agent_sync`'s ``asyncio.run``, or a stream's second request):
+    the shared client's pooled connection outlives the loop that opened it and
+    trips ``RuntimeError: Event loop is closed`` on the next reuse.
+    """
+    return fresh_google_model(model_name_for(task))
+
+
+def fresh_google_model(name: str) -> GoogleModel:
+    """Like `google_model`, but on a NEW GoogleProvider — a fresh google.genai
+    client with its own connection pool, instead of the shared `_provider`.
+
+    A streaming tutor turn makes TWO sequential streamed model requests in one
+    run (reply → tool calls → continuation). Reusing the shared client's pooled
+    HTTP connection across them surfaced `RuntimeError: Event loop is closed`
+    in google-genai's httpx teardown (the pooled connection carried a stale
+    event-loop reference). A per-request client, created and used only on the
+    live request loop, sidesteps the cross-loop connection reuse.
+    """
+    provider = GoogleProvider(api_key=GEMINI_API_KEY or "dummy-key-for-import")
+    return GoogleModel(name, provider=provider)
