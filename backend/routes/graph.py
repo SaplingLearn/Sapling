@@ -14,6 +14,7 @@ from services.graph_service import (
 )
 from services.request_context import current_request_id
 from agents import WORKER_LIMITS
+from agents._providers import fresh_model_for
 from agents._run import run_agent_sync
 from agents.deps import SaplingDeps
 from agents.concept_describe import concept_describe_agent, build_message
@@ -134,6 +135,11 @@ def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Reques
                 build_message(concept, course_label),
                 deps=deps,
                 usage_limits=WORKER_LIMITS,
+                # Fresh client: run_agent_sync drives this on a throwaway
+                # per-request loop, and the shared client's pooled connection
+                # outlives the loop that opened it -> "Event loop is closed" on
+                # the next call in a reused worker thread. See fresh_model_for.
+                model=fresh_model_for("concept_describe"),
             )
         )
     except (AgentRunError, httpx.HTTPError, ValidationError) as e:

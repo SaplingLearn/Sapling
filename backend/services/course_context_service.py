@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 
 from db.connection import table
+from agents._providers import fresh_model_for
 from agents._run import run_agent_sync
 from agents.course_summary import course_summary_agent
 
@@ -52,7 +53,12 @@ def _generate_summary_with_gemini(
     )
 
     try:
-        result = run_agent_sync(course_summary_agent.run(user_message))
+        # Fresh client: run_agent_sync drives this on a throwaway per-request
+        # loop; the shared client's pooled connection would outlive it and trip
+        # "Event loop is closed" on reuse. See fresh_model_for.
+        result = run_agent_sync(
+            course_summary_agent.run(user_message, model=fresh_model_for("course_summary"))
+        )
         return result.output.summary
     except Exception:
         # Fallback summary if the agent fails
