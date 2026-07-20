@@ -804,16 +804,19 @@ def test_get_graph_no_semester_returns_all():
     assert out["stats"]["total_nodes"] == 2
 
 
-def test_get_recommendations_semester_filters_by_course():
-    rows = [
-        {"concept_name": "Cells", "mastery_score": 0.2, "mastery_tier": "struggling", "course_id": "bio-101"},
-        {"concept_name": "Freud", "mastery_score": 0.3, "mastery_tier": "learning", "course_id": "psy-110"},
-    ]
+def test_get_recommendations_semester_builds_course_filter():
+    """When scoped, the DB query carries a course_id in.(...) filter and limit 5."""
+    captured = {}
 
     def fake_table(name):
         from unittest.mock import MagicMock
         m = MagicMock(name=f"table({name})")
-        m.select.return_value = rows if name == "graph_nodes" else []
+        def _select(cols, filters=None, order=None, limit=None):
+            captured["filters"] = filters
+            captured["limit"] = limit
+            return [{"concept_name": "Cells", "mastery_score": 0.2,
+                     "mastery_tier": "struggling", "course_id": "bio-101"}]
+        m.select.side_effect = _select
         return m
 
     with patch.object(gs, "table", side_effect=fake_table), \
@@ -821,4 +824,20 @@ def test_get_recommendations_semester_filters_by_course():
          patch("services.academics.user_course_ids_for_term", return_value={"bio-101"}):
         recs = gs.get_recommendations("user_andres", semester="Spring 2026")
 
+    assert captured["filters"]["course_id"] == "in.(bio-101)"
+    assert captured["limit"] == 5
     assert [r["concept_name"] for r in recs] == ["Cells"]
+
+
+def test_get_recommendations_semester_empty_allowed_returns_empty():
+    """Unresolved term / no enrollment → [] without querying graph_nodes."""
+    def fake_table(name):
+        from unittest.mock import MagicMock
+        m = MagicMock(name=f"table({name})")
+        m.select.side_effect = AssertionError("must not query when no courses in term")
+        return m
+
+    with patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.term_id_for_label", return_value=None), \
+         patch("services.academics.user_course_ids_for_term", return_value=set()):
+        assert gs.get_recommendations("user_andres", semester="Nope 1999") == []
