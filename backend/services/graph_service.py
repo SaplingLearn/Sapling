@@ -641,16 +641,26 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
     return mastery_changes
 
 
-def get_recommendations(user_id: str) -> list:
+def get_recommendations(user_id: str, semester: str | None = None) -> list:
+    allowed: set[str] | None = None
+    if semester:
+        from services.academics import term_id_for_label, user_course_ids_for_term
+        term_id = term_id_for_label(semester)
+        allowed = user_course_ids_for_term(user_id, term_id) if term_id else set()
+
     rows = table("graph_nodes").select(
-        "concept_name,mastery_score,mastery_tier",
+        "concept_name,mastery_score,mastery_tier,course_id",
         filters={
             "user_id": f"eq.{user_id}",
             "mastery_tier": "in.(struggling,learning,unexplored)",
         },
         order="mastery_score.asc",
-        limit=5,
+        # When scoping, over-fetch then trim after filtering so we still return up
+        # to 5 recommendations for the term.
+        limit=5 if allowed is None else 50,
     )
+    if allowed is not None:
+        rows = [r for r in rows if r.get("course_id") in allowed][:5]
     recs = []
     for r in rows:
         tier = r["mastery_tier"]
