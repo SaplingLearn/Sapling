@@ -126,6 +126,11 @@
       "count": 25
     }
   },
+  "src/lib/useActiveSemester.ts": {
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
   "src/lib/useLayoutPref.ts": {
     "react-hooks/set-state-in-effect": {
       "count": 1

@@ -1,0 +1,64 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+export const ACTIVE_SEMESTER_STORAGE_KEY = "sapling_active_semester";
+const CHANGE_EVENT = "sapling-active-semester-change";
+
+/** Distinct term labels in first-seen order, dropping blanks. */
+export function distinctTerms(courses: { term: string }[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const c of courses) {
+    if (c.term && !seen.has(c.term)) {
+      seen.add(c.term);
+      out.push(c.term);
+    }
+  }
+  return out;
+}
+
+/**
+ * The semester to actually scope by: the stored `active` value when it is one
+ * of the user's enrolled terms, else the most-recently-enrolled term. Courses
+ * arrive `enrolled_at` ascending, so the last distinct term is the most recent.
+ * (Heuristic default; can be upgraded to term `sort_key` ordering later.)
+ */
+export function resolveActiveSemester(active: string, courses: { term: string }[]): string {
+  const terms = distinctTerms(courses);
+  if (active && terms.includes(active)) return active;
+  return terms.length ? terms[terms.length - 1] : "";
+}
+
+function read(): string {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(ACTIVE_SEMESTER_STORAGE_KEY) ?? "";
+}
+
+/** [activeSemester, setActiveSemester] — persisted to localStorage, cross-tab + same-tab reactive. */
+export function useActiveSemester(): [string, (v: string) => void] {
+  const [sem, setSem] = useState<string>("");
+
+  useEffect(() => {
+    setSem(read());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === ACTIVE_SEMESTER_STORAGE_KEY) setSem(read());
+    };
+    const onCustom = () => setSem(read());
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(CHANGE_EVENT, onCustom);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(CHANGE_EVENT, onCustom);
+    };
+  }, []);
+
+  const update = (v: string) => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, v);
+    setSem(v);
+    window.dispatchEvent(new Event(CHANGE_EVENT));
+  };
+
+  return [sem, update];
+}
