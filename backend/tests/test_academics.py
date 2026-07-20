@@ -134,3 +134,46 @@ def test_term_for_offering():
     }
     with patch.object(ac, "table", side_effect=_factory(rows)):
         assert ac.term_for_offering("off-1")["label"] == "Fall 2026"
+
+
+# ── term_id_for_label ────────────────────────────────────────────────────────
+
+def test_term_id_for_label_resolves_by_label():
+    rows = {"terms": [{"id": "t-spring"}]}
+    with patch.object(ac, "table", side_effect=_factory(rows)):
+        assert ac.term_id_for_label("Spring 2026") == "t-spring"
+
+
+def test_term_id_for_label_falls_back_to_id():
+    # First select (by label) empty; second (by id) returns the row.
+    factory = _factory({}, select_seqs={"terms": [[], [{"id": "t-xyz"}]]})
+    with patch.object(ac, "table", side_effect=factory):
+        assert ac.term_id_for_label("t-xyz") == "t-xyz"
+
+
+def test_term_id_for_label_none_for_empty():
+    with patch.object(ac, "table", side_effect=_factory({})):
+        assert ac.term_id_for_label("") is None
+
+
+# ── user_course_ids_for_term ─────────────────────────────────────────────────
+
+def test_user_course_ids_for_term_intersects_enrollments_and_term():
+    rows = {
+        "enrollments": [{"offering_id": "off-1"}, {"offering_id": "off-2"}],
+        # course_offerings filtered by (id in off-1,off-2) AND term_id eq t-spring
+        "course_offerings": [{"course_id": "bio-101"}],
+    }
+    with patch.object(ac, "table", side_effect=_factory(rows)):
+        assert ac.user_course_ids_for_term("user_andres", "t-spring") == {"bio-101"}
+
+
+def test_user_course_ids_for_term_empty_when_no_enrollments():
+    with patch.object(ac, "table", side_effect=_factory({"enrollments": []})):
+        assert ac.user_course_ids_for_term("user_andres", "t-spring") == set()
+
+
+def test_user_course_ids_for_term_empty_args():
+    with patch.object(ac, "table", side_effect=_factory({})):
+        assert ac.user_course_ids_for_term("", "t") == set()
+        assert ac.user_course_ids_for_term("u", "") == set()
