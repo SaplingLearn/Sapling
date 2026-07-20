@@ -2,7 +2,21 @@ import type { NextConfig } from "next";
 // The dev-mode OpenNext hook lets `next dev` continue to work locally
 // against Cloudflare bindings (R2/KV/env vars). Safe no-op in prod builds.
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
-import { checkFrontendDeployEnv } from "./src/lib/deployGuard";
+import { checkFrontendDeployEnv, resolveFrontendEnv } from "./src/lib/deployGuard";
+
+// DEPLOY_ENV is the single knob: when a Workers Build sets DEPLOY_ENV=staging|
+// production, the build-time BACKEND_URL (the /api rewrite target) and the
+// inlined NEXT_PUBLIC_API_URL / COOKIE_DOMAIN are DERIVED from FRONTEND_ENVS so
+// they cannot be half-set or point at the wrong environment. Setting these on
+// process.env before Next reads them keeps NEXT_PUBLIC_* inlining consistent.
+// When DEPLOY_ENV is unset we leave the explicit vars alone (local/docker, or a
+// legacy build that sets BACKEND_URL directly).
+const RESOLVED = resolveFrontendEnv(process.env);
+if (RESOLVED.derived) {
+  process.env.BACKEND_URL = RESOLVED.apiUrl;
+  process.env.NEXT_PUBLIC_API_URL = RESOLVED.apiUrl;
+  if (RESOLVED.cookieDomain) process.env.COOKIE_DOMAIN = RESOLVED.cookieDomain;
+}
 
 // .trim() defends against a stray leading/trailing space in the build
 // variable: an untrimmed " https://..." makes the /api rewrite destination
