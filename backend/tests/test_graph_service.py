@@ -8,6 +8,7 @@ from datetime import datetime
 import pytest
 from unittest.mock import MagicMock, patch
 
+import services.graph_service as gs
 from services.graph_service import (
     get_graph,
     get_courses,
@@ -735,3 +736,69 @@ class TestGetRecommendations:
         with patch("services.graph_service.table", return_value=_simple_mock([])):
             result = get_recommendations("u1")
         assert result == []
+
+
+# ── get_graph semester scoping ─────────────────────────────────────────────────
+
+def test_get_graph_semester_filters_nodes_and_stats():
+    """With a semester, only that term's course nodes survive and stats recount."""
+    enrolled = [
+        {"id": "e1", "offering_id": "o1", "course_id": "bio-101",
+         "color": None, "nickname": None, "enrolled_at": "2026-01-01", "term": "Spring 2026",
+         "courses": {"course_code": "BIO-101", "course_name": "Biology", "department": "", "school": ""}},
+        {"id": "e2", "offering_id": "o2", "course_id": "psy-110",
+         "color": None, "nickname": None, "enrolled_at": "2025-09-01", "term": "Fall 2025",
+         "courses": {"course_code": "PSY-110", "course_name": "Psych", "department": "", "school": ""}},
+    ]
+    nodes = [
+        {"id": "n1", "course_id": "bio-101", "concept_name": "Cells",
+         "mastery_score": 0.4, "mastery_tier": "learning", "times_studied": 1},
+        {"id": "n2", "course_id": "psy-110", "concept_name": "Freud",
+         "mastery_score": 0.9, "mastery_tier": "mastered", "times_studied": 2},
+    ]
+
+    def fake_table(name):
+        from unittest.mock import MagicMock
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = {"graph_nodes": nodes, "graph_edges": [],
+                                 "node_mastery_events": [], "users": [{"streak_count": 3}]}.get(name, [])
+        return m
+
+    with patch.object(gs, "_user_enrolled_courses", return_value=enrolled), \
+         patch.object(gs, "ensure_user_exists", return_value=None), \
+         patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.term_id_for_label", return_value="t-spring"), \
+         patch("services.academics.user_course_ids_for_term", return_value={"bio-101"}):
+        out = gs.get_graph("user_andres", semester="Spring 2026")
+
+    concept_nodes = [n for n in out["nodes"] if not n.get("is_subject_root")]
+    assert {n["course_id"] for n in concept_nodes} == {"bio-101"}
+    assert out["stats"]["total_nodes"] == 1
+    assert out["stats"]["mastered"] == 0
+    # Only the Spring subject-root hub is built.
+    roots = [n for n in out["nodes"] if n.get("is_subject_root")]
+    assert {r["course_id"] for r in roots} == {"bio-101"}
+
+
+def test_get_graph_no_semester_returns_all():
+    enrolled = []
+    nodes = [
+        {"id": "n1", "course_id": "bio-101", "concept_name": "Cells",
+         "mastery_score": 0.4, "mastery_tier": "learning", "times_studied": 1},
+        {"id": "n2", "course_id": "psy-110", "concept_name": "Freud",
+         "mastery_score": 0.9, "mastery_tier": "mastered", "times_studied": 2},
+    ]
+
+    def fake_table(name):
+        from unittest.mock import MagicMock
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = {"graph_nodes": nodes, "graph_edges": [],
+                                 "node_mastery_events": [], "users": []}.get(name, [])
+        return m
+
+    with patch.object(gs, "_user_enrolled_courses", return_value=enrolled), \
+         patch.object(gs, "ensure_user_exists", return_value=None), \
+         patch.object(gs, "table", side_effect=fake_table):
+        out = gs.get_graph("user_andres")
+
+    assert out["stats"]["total_nodes"] == 2

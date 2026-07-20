@@ -141,15 +141,30 @@ def _compute_velocity(events: list) -> float:
     return round(positive_gain / days, 4)
 
 
-def get_graph(user_id: str) -> dict:
+def get_graph(user_id: str, semester: str | None = None) -> dict:
     ensure_user_exists(user_id)
-    
+
     # Get all enrolled courses for this user
     enrolled_courses = _user_enrolled_courses(user_id)
-    
+
+    # Optional semester scope (Path A): restrict to the courses the user is
+    # enrolled in for that term. `allowed_course_ids is None` means "all terms".
+    allowed_course_ids: set[str] | None = None
+    if semester:
+        from services.academics import term_id_for_label, user_course_ids_for_term
+        term_id = term_id_for_label(semester)
+        allowed_course_ids = (
+            user_course_ids_for_term(user_id, term_id) if term_id else set()
+        )
+        enrolled_courses = [
+            c for c in enrolled_courses if c.get("course_id") in allowed_course_ids
+        ]
+
     # Get all graph nodes for this user
     nodes_raw = table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"})
     nodes = nodes_raw or []
+    if allowed_course_ids is not None:
+        nodes = [n for n in nodes if n.get("course_id") in allowed_course_ids]
     node_ids = {n["id"] for n in nodes}
 
     edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
