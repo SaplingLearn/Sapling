@@ -30,6 +30,7 @@ function makeCourse(over: Partial<EnrolledCourse> = {}): EnrolledCourse {
     department: "MATH",
     color: null,
     nickname: null,
+    term: "",
     node_count: 8,
     enrolled_at: "2026-01-01",
     ...over,

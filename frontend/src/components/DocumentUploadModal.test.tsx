@@ -46,6 +46,7 @@ const COURSE: EnrolledCourse = {
   department: "CS",
   color: null,
   nickname: null,
+  term: "",
   node_count: 0,
   enrolled_at: "2026-01-01",
 };

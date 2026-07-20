@@ -34,11 +34,15 @@ export const getUsers = () =>
   fetchJSON<{ users: { id: string; name: string; room_id: string | null }[] }>('/api/users');
 
 // Graph
-export const getGraph = (userId: string) =>
-  fetchJSON<{ nodes: any[]; edges: any[]; stats: any }>(`/api/graph/${userId}`);
+export const getGraph = (userId: string, semester?: string) =>
+  fetchJSON<{ nodes: any[]; edges: any[]; stats: any }>(
+    `/api/graph/${userId}${semester ? `?semester=${encodeURIComponent(semester)}` : ""}`,
+  );
 
-export const getRecommendations = (userId: string) =>
-  fetchJSON<{ recommendations: any[] }>(`/api/graph/${userId}/recommendations`);
+export const getRecommendations = (userId: string, semester?: string) =>
+  fetchJSON<{ recommendations: any[] }>(
+    `/api/graph/${userId}/recommendations${semester ? `?semester=${encodeURIComponent(semester)}` : ""}`,
+  );
 
 export interface EnrolledCourse {
   enrollment_id: string;
@@ -49,6 +53,7 @@ export interface EnrolledCourse {
   department: string;
   color: string | null;
   nickname: string | null;
+  term: string;
   node_count: number;
   enrolled_at: string;
 }
