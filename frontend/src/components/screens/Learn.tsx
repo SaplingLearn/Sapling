@@ -18,6 +18,7 @@ import { KnowledgeGraph } from "../KnowledgeGraph";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
+import { useActiveSemester } from "@/lib/useActiveSemester";
 import { useUser } from "@/context/UserContext";
 import {
   startSession,
@@ -88,6 +89,7 @@ function LearnInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { userId, userReady } = useUser();
+  const [activeSemester, , semesterHydrated] = useActiveSemester();
   const toast = useToast();
   const isMobile = useIsMobile();
 
@@ -110,7 +112,7 @@ function LearnInner() {
 
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
-  const [concepts, setConcepts] = useState<{ id: string; name: string; course_id: string | null; course_code: string | null }[]>([]);
+  const [concepts, setConcepts] = useState<{ id: string; name: string; course_id: string | null; course_code: string | null; term: string | null }[]>([]);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
 
@@ -143,16 +145,18 @@ function LearnInner() {
   const railDragRef = useRef<{ startX: number; startWidth: number; width: number; moved: boolean; pointerId: number } | null>(null);
   const [railHydrated, setRailHydrated] = useState(false);
 
-  // Initial data load
+  // Initial data load. Waits for the active-semester read from localStorage
+  // before fetching, so returning users fetch scoped once instead of
+  // unscoped-then-scoped; re-runs when the active semester changes.
   useEffect(() => {
-    if (!userReady || !userId) return;
+    if (!userReady || !userId || !semesterHydrated) return;
     let cancelled = false;
     (async () => {
       try {
         const [sRes, cRes, gRes] = await Promise.all([
           getSessions(userId, 10).catch(() => ({ sessions: [] })),
           getCourses(userId).catch(() => ({ courses: [] })),
-          getGraph(userId).catch(() => ({ nodes: [] as any[], edges: [] as any[], stats: {} })),
+          getGraph(userId, activeSemester || undefined).catch(() => ({ nodes: [] as any[], edges: [] as any[], stats: {} })),
         ]);
         if (cancelled) return;
         const filteredSessions = (sRes.sessions ?? []).filter(s => s.message_count > 0);
@@ -171,6 +175,7 @@ function LearnInner() {
               name: n.concept_name || n.name || "Concept",
               course_id: n.course_id ?? null,
               course_code: n.course_id ? (courseById.get(n.course_id)?.course_code ?? null) : null,
+              term: n.course_id ? (courseById.get(n.course_id)?.term ?? null) : null,
             })),
         );
         const apiNodes = (gRes.nodes ?? []) as ApiNode[];
@@ -182,7 +187,7 @@ function LearnInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [userReady, userId]);
+  }, [userReady, userId, semesterHydrated, activeSemester]);
 
   // Sync URL params when mode changes (preserve other params)
   useEffect(() => {
@@ -404,6 +409,11 @@ function LearnInner() {
   };
 
   const modeOptions = useMemo(() => MODES.map(m => ({ value: m.id, label: m.name, description: m.tip })), []);
+
+  const scopedCourses = useMemo(
+    () => (activeSemester ? courses.filter(c => c.term === activeSemester) : courses),
+    [courses, activeSemester],
+  );
 
   const suggestParam = searchParams.get("suggest");
   const highlightId = useMemo(() => {
@@ -666,7 +676,7 @@ function LearnInner() {
               value={selectedCourseId}
               options={[
                 { value: "", label: "No course" },
-                ...courses.map(c => ({ value: c.course_id, label: `${c.course_code} — ${c.course_name}` })),
+                ...scopedCourses.map(c => ({ value: c.course_id, label: `${c.course_code} — ${c.course_name}` })),
               ]}
               onChange={setSelectedCourseId}
               style={{ width: "100%", marginBottom: 16 }}
@@ -679,6 +689,7 @@ function LearnInner() {
               concepts={concepts}
               courses={courses}
               selectedCourseId={selectedCourseId}
+              activeSemester={activeSemester}
             />
             <div className="label-micro" style={{ marginBottom: 8 }}>Mode</div>
             <div style={{ marginBottom: 20 }}>
@@ -1349,14 +1360,15 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
 const GENERAL_TOPIC = "Course overview — pick the next concept I should learn next.";
 
 function TopicPicker({
-  value, onChange, onSubmit, concepts, courses, selectedCourseId,
+  value, onChange, onSubmit, concepts, courses, selectedCourseId, activeSemester,
 }: {
   value: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
-  concepts: { id: string; name: string; course_id: string | null; course_code: string | null }[];
+  concepts: { id: string; name: string; course_id: string | null; course_code: string | null; term: string | null }[];
   courses: EnrolledCourse[];
   selectedCourseId: string;
+  activeSemester: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -1379,9 +1391,10 @@ function TopicPicker({
     const q = query.trim().toLowerCase();
     return concepts
       .filter(c => !selectedCourseId || c.course_id === selectedCourseId)
+      .filter(c => (activeSemester ? c.term === activeSemester : true))
       .filter(c => !q || c.name.toLowerCase().includes(q))
       .slice(0, 80);
-  }, [concepts, query, selectedCourseId]);
+  }, [concepts, query, selectedCourseId, activeSemester]);
 
   const isGeneral = value === GENERAL_TOPIC;
   const courseLabel = selectedCourse
