@@ -882,3 +882,23 @@ def test_add_course_enrolls_when_never_taken():
 
     assert result["already_existed"] is False
     assert any(name == "enrollments" for name, _ in inserted)
+
+
+def test_graph_route_passes_semester_through():
+    from fastapi.testclient import TestClient
+    import routes.graph as graph_route
+    from main import app
+
+    captured = {}
+
+    def fake_get_graph(user_id, semester=None):
+        captured["user_id"] = user_id
+        captured["semester"] = semester
+        return {"nodes": [], "edges": [], "stats": {}}
+
+    with patch.object(graph_route, "get_graph", side_effect=fake_get_graph):
+        client = TestClient(app)
+        resp = client.get("/api/graph/user_andres?semester=Spring%202026")
+
+    assert resp.status_code == 200
+    assert captured == {"user_id": "user_andres", "semester": "Spring 2026"}

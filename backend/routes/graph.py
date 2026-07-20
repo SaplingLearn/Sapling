@@ -1,7 +1,7 @@
 import uuid
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, ValidationError
 from typing import Optional
 from pydantic_ai.exceptions import AgentRunError
@@ -22,15 +22,15 @@ router = APIRouter()
 
 
 @router.get("/{user_id}")
-def get_user_graph(user_id: str, request: Request):
+def get_user_graph(user_id: str, request: Request, semester: str | None = Query(None)):
     require_self(user_id, request)
-    return get_graph(user_id)
+    return get_graph(user_id, semester)
 
 
 @router.get("/{user_id}/recommendations")
-def get_user_recommendations(user_id: str, request: Request):
+def get_user_recommendations(user_id: str, request: Request, semester: str | None = Query(None)):
     require_self(user_id, request)
-    return {"recommendations": get_recommendations(user_id)}
+    return {"recommendations": get_recommendations(user_id, semester)}
 
 
 # ── Course endpoints ──────────────────────────────────────────────────────────
