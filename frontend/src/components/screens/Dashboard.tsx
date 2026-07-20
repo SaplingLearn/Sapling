@@ -749,7 +749,7 @@ export function Dashboard() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">My courses</div>
           <button className="btn btn--ghost btn--sm" onClick={() => setCoursesOpen(true)}>
-            <Icon name="cog" size={12} /> Manage
+            <Icon name="cog" size={12} /> Courses & Semesters
           </button>
         </div>
         {courseProgress.length === 0 && (
@@ -1178,7 +1178,7 @@ function CoursesKey({
             <button
               className="btn btn--ghost btn--sm"
               onClick={onManage}
-              title="Manage courses"
+              title="Courses & Semesters"
               style={paddedIconBtn}
             >
               <Icon name="cog" size={13} />

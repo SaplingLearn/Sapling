@@ -14,6 +14,7 @@ import {
   type EnrolledCourse,
   type OnboardingCourse,
 } from "@/lib/api";
+import { useActiveSemester, distinctTerms, resolveActiveSemester } from "@/lib/useActiveSemester";
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -32,6 +33,9 @@ interface Props {
 
 export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }: Props) {
   const toast = useToast();
+  const [activeSemester, setActiveSemester] = useActiveSemester();
+  const terms = React.useMemo(() => distinctTerms(courses), [courses]);
+  const activeTerm = resolveActiveSemester(activeSemester, courses);
   const [query, setQuery] = React.useState("");
   const [results, setResults] = React.useState<OnboardingCourse[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -63,6 +67,11 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
   }, [query, open]);
 
   const enrolledIds = React.useMemo(() => new Set(courses.map(c => c.course_id)), [courses]);
+  const enrolledTermById = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of courses) m.set(c.course_id, c.term);
+    return m;
+  }, [courses]);
 
   const handleAdd = async (course: OnboardingCourse) => {
     try {
@@ -93,7 +102,7 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
           <div>
             <div className="label-micro">Manage</div>
-            <div className="h-serif" style={{ fontSize: 20 }}>My Courses</div>
+            <div className="h-serif" style={{ fontSize: 20 }}>Courses & Semesters</div>
           </div>
           <button className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">
             <Icon name="x" size={14} />
@@ -101,14 +110,44 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
         </div>
 
         <div style={{ padding: 20, overflowY: "auto" }}>
-          <div className="label-micro" style={{ marginBottom: 8 }}>Your courses</div>
-          {courses.length === 0 && (
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No courses enrolled yet.</div>
+          <div className="label-micro" style={{ marginBottom: 8 }}>Semester</div>
+          {terms.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
+              No semesters yet — add a course below.
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+              {terms.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setActiveSemester(t)}
+                  className="btn btn--sm"
+                  style={{
+                    background: t === activeTerm ? "var(--accent-soft)" : "var(--bg-panel)",
+                    color: t === activeTerm ? "var(--accent)" : "var(--text-dim)",
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
           )}
+
+          <div className="label-micro" style={{ marginBottom: 8 }}>
+            {activeTerm ? `Courses · ${activeTerm}` : "Your courses"}
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-            {courses.map(c => (
-              <EnrolledRow key={c.course_id} userId={userId} course={c} onChanged={onChanged} />
-            ))}
+            {courses.filter((c) => !activeTerm || c.term === activeTerm).length === 0 && (
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                No courses in this semester yet.
+              </div>
+            )}
+            {courses
+              .filter((c) => !activeTerm || c.term === activeTerm)
+              .map((c) => (
+                <EnrolledRow key={c.course_id} userId={userId} course={c} onChanged={onChanged} />
+              ))}
           </div>
 
           <div className="label-micro" style={{ marginBottom: 8 }}>Add a course</div>
@@ -153,12 +192,29 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
                       opacity: enrolled ? 0.55 : 1,
                       background: enrolled ? "var(--bg-subtle)" : undefined,
                     }}
+                    title={enrolled ? "A course can only be taken once across semesters" : undefined}
                   >
-                    {enrolled ? "Enrolled" : <><Icon name="plus" size={12} /> Add</>}
+                    {enrolled
+                      ? `Already taken${enrolledTermById.get(c.id) ? ` · ${enrolledTermById.get(c.id)}` : ""}`
+                      : <><Icon name="plus" size={12} /> Add</>}
                   </button>
                 </div>
               );
             })}
+          </div>
+
+          <div style={{ borderTop: "1px solid var(--border)", marginTop: 20, paddingTop: 16 }}>
+            <button
+              className="btn btn--sm"
+              disabled
+              aria-disabled="true"
+              style={{ opacity: 0.5, cursor: "not-allowed" }}
+            >
+              <Icon name="sparkle" size={12} /> Personal learning
+            </button>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+              Coming soon
+            </div>
           </div>
         </div>
       </div>
