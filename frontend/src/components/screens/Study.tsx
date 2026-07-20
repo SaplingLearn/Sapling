@@ -19,6 +19,7 @@ import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useUser } from "@/context/UserContext";
+import { useActiveSemester } from "@/lib/useActiveSemester";
 import {
   getCourses,
   getStudyGuideExams,
@@ -60,6 +61,7 @@ export function Study() {
     searchParams.get("mode") === "cards" ? "cards" : "guide",
   );
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
+  const [activeSemester] = useActiveSemester();
 
   React.useEffect(() => {
     if (!userReady || !userId) return;
@@ -67,6 +69,14 @@ export function Study() {
       .then(r => setCourses(r.courses || []))
       .catch(err => console.error("study courses load failed", err));
   }, [userReady, userId]);
+
+  // Scope the study surfaces to the active semester's courses (course pickers,
+  // guide/flashcard generation). Study has no graph fetch of its own, so this
+  // client-side filter is all the scoping it needs.
+  const scopedCourses = React.useMemo(
+    () => (activeSemester ? courses.filter(c => c.term === activeSemester) : courses),
+    [courses, activeSemester],
+  );
 
   const actions = (
     <>
@@ -132,9 +142,9 @@ export function Study() {
           style={{ display: "flex", flex: 1, minHeight: 0 }}
         >
           {mode === "guide" ? (
-            <GuideMode courses={courses} isMobile={isMobile} />
+            <GuideMode courses={scopedCourses} isMobile={isMobile} />
           ) : (
-            <FlashcardsMode courses={courses} isMobile={isMobile} />
+            <FlashcardsMode courses={scopedCourses} isMobile={isMobile} />
           )}
         </motion.div>
       </AnimatePresence>
