@@ -841,3 +841,44 @@ def test_get_recommendations_semester_empty_allowed_returns_empty():
          patch("services.academics.term_id_for_label", return_value=None), \
          patch("services.academics.user_course_ids_for_term", return_value=set()):
         assert gs.get_recommendations("user_andres", semester="Nope 1999") == []
+
+
+def test_add_course_rejects_course_taken_in_any_term():
+    """A course the user already has in a *different* term can't be re-added."""
+    def fake_table(name):
+        from unittest.mock import MagicMock
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = [{"id": "bio-101"}] if name == "courses" else []
+        m.insert.side_effect = AssertionError("must not insert a duplicate enrollment")
+        return m
+
+    with patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.user_offering_ids_for_course", return_value=["off-old"]), \
+         patch("services.academics.term_for_offering", return_value={"label": "Fall 2025"}):
+        result = gs.add_course("user_andres", "bio-101")
+
+    assert result["already_existed"] is True
+    assert result["term"] == "Fall 2025"
+
+
+def test_add_course_enrolls_when_never_taken():
+    inserted = []
+
+    def fake_table(name):
+        from unittest.mock import MagicMock
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = [{"id": "bio-101"}] if name == "courses" else []
+        def _insert(data):
+            inserted.append((name, data))
+            return [data]
+        m.insert.side_effect = _insert
+        return m
+
+    with patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.user_offering_ids_for_course", return_value=[]), \
+         patch("services.academics.resolve_offering", return_value="off-new"), \
+         patch("services.course_context_service.update_course_context", return_value=None):
+        result = gs.add_course("user_andres", "bio-101")
+
+    assert result["already_existed"] is False
+    assert any(name == "enrollments" for name, _ in inserted)

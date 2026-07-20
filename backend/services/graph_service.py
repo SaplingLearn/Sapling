@@ -339,7 +339,24 @@ def add_course(user_id: str, course_id: str, color: str | None = None, nickname:
     if not course_check:
         return {"course_id": course_id, "error": "Course not found in catalog"}
 
-    from services.academics import resolve_offering
+    from services.academics import (
+        resolve_offering,
+        user_offering_ids_for_course,
+        term_for_offering,
+    )
+
+    # No-retake rule: a course already enrolled in ANY term can't be added again.
+    # (Broadens the old current-term-only check so cross-semester duplicates are
+    # rejected instead of silently creating a second enrollment.)
+    existing_offerings = user_offering_ids_for_course(user_id, course_id)
+    if existing_offerings:
+        term = term_for_offering(existing_offerings[0]) or {}
+        return {
+            "course_id": course_id,
+            "already_existed": True,
+            "term": term.get("label", ""),
+        }
+
     offering_id = resolve_offering(course_id, create=True)
     if not offering_id:
         return {"course_id": course_id, "error": "No term available to enroll into"}
