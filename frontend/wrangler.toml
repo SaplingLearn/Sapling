@@ -13,7 +13,14 @@ compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 binding = "ASSETS"
 directory = ".open-next/assets"
 
+# DEPLOY_ENV is the single source of truth (see src/lib/deployGuard.ts): the
+# middleware derives the backend origin and the session route derives the cookie
+# domain from it at runtime. NEXT_PUBLIC_API_URL/BACKEND_URL/COOKIE_DOMAIN below
+# are kept as explicit fallbacks. IMPORTANT: these `[vars]` are RUNTIME-only —
+# the /api rewrite and NEXT_PUBLIC_* inlining are baked at BUILD time, so the
+# staging Workers Build must ALSO set DEPLOY_ENV=staging as a build variable.
 [vars]
+DEPLOY_ENV = "production"
 NEXT_PUBLIC_API_URL = "https://api.saplinglearn.com"
 BACKEND_URL = "https://api.saplinglearn.com"
 COOKIE_DOMAIN = ".saplinglearn.com"
@@ -28,6 +35,7 @@ enabled = true
 name = "frontend-staging"
 
 [env.staging.vars]
+DEPLOY_ENV = "staging"
 NEXT_PUBLIC_API_URL = "https://api.staging.saplinglearn.com"
 BACKEND_URL = "https://api.staging.saplinglearn.com"
 COOKIE_DOMAIN = ".staging.saplinglearn.com"
