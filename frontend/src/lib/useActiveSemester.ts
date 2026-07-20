@@ -35,7 +35,8 @@ function read(): string {
   return window.localStorage.getItem(ACTIVE_SEMESTER_STORAGE_KEY) ?? "";
 }
 
-/** [activeSemester, setActiveSemester] — persisted to localStorage, cross-tab + same-tab reactive. */
+/** [activeSemester, setActiveSemester, hydrated] — persisted to localStorage, cross-tab + same-tab
+ *  reactive. `hydrated` is false until the localStorage read completes after mount. */
 export function useActiveSemester(): [string, (v: string) => void, boolean] {
   const [sem, setSem] = useState<string>("");
   // `hydrated` flips true once we've read localStorage after mount. We start at
