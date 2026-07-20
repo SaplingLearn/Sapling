@@ -191,7 +191,7 @@ export function Dashboard() {
   const router = useRouter();
   const search = useSearchParams();
   const { userId, userName, userReady } = useUser();
-  const [activeSemester, setActiveSemester] = useActiveSemester();
+  const [activeSemester, setActiveSemester, semesterHydrated] = useActiveSemester();
   const isMobile = useIsMobile();
   const [layoutPref] = useLayoutPref();
   // Top-nav layout keeps the pre-revamp 3-column dashboard with the
@@ -305,8 +305,10 @@ export function Dashboard() {
   }, [userId, activeSemester, setActiveSemester]);
 
   React.useEffect(() => {
-    if (userReady && userId) load();
-  }, [userReady, userId, load]);
+    // Wait for the active-semester read from localStorage before the first load,
+    // so returning users fetch scoped once instead of unscoped-then-scoped.
+    if (userReady && userId && semesterHydrated) load();
+  }, [userReady, userId, semesterHydrated, load]);
 
   useScrollLock(fullscreen);
 

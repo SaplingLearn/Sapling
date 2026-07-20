@@ -36,11 +36,17 @@ function read(): string {
 }
 
 /** [activeSemester, setActiveSemester] — persisted to localStorage, cross-tab + same-tab reactive. */
-export function useActiveSemester(): [string, (v: string) => void] {
+export function useActiveSemester(): [string, (v: string) => void, boolean] {
   const [sem, setSem] = useState<string>("");
+  // `hydrated` flips true once we've read localStorage after mount. We start at
+  // "" (not the stored value) to avoid an SSR/CSR hydration mismatch, so callers
+  // that fetch based on the active semester should wait for `hydrated` to avoid
+  // an initial unscoped fetch followed by a scoped refetch.
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     setSem(read());
+    setHydrated(true);
     const onStorage = (e: StorageEvent) => {
       if (e.key === ACTIVE_SEMESTER_STORAGE_KEY) setSem(read());
     };
@@ -61,5 +67,5 @@ export function useActiveSemester(): [string, (v: string) => void] {
     window.dispatchEvent(new Event(CHANGE_EVENT));
   }, []);
 
-  return [sem, update];
+  return [sem, update, hydrated];
 }
