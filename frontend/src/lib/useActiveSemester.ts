@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export const ACTIVE_SEMESTER_STORAGE_KEY = "sapling_active_semester";
 const CHANGE_EVENT = "sapling-active-semester-change";
@@ -53,12 +53,13 @@ export function useActiveSemester(): [string, (v: string) => void] {
     };
   }, []);
 
-  const update = (v: string) => {
+  // Stable identity so consumers can safely list it in effect/callback deps.
+  const update = useCallback((v: string) => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, v);
     setSem(v);
     window.dispatchEvent(new Event(CHANGE_EVENT));
-  };
+  }, []);
 
   return [sem, update];
 }

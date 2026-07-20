@@ -11,6 +11,7 @@ import { DashboardSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useLayoutPref } from "@/lib/useLayoutPref";
+import { useActiveSemester, resolveActiveSemester } from "@/lib/useActiveSemester";
 import {
   getGraph,
   getCourses,
@@ -190,6 +191,7 @@ export function Dashboard() {
   const router = useRouter();
   const search = useSearchParams();
   const { userId, userName, userReady } = useUser();
+  const [activeSemester, setActiveSemester] = useActiveSemester();
   const isMobile = useIsMobile();
   const [layoutPref] = useLayoutPref();
   // Top-nav layout keeps the pre-revamp 3-column dashboard with the
@@ -259,14 +261,19 @@ export function Dashboard() {
     setLoadError(null);
     try {
       const [graphRes, coursesRes, assignsRes, sessionsRes, recsRes] = await Promise.all([
-        getGraph(userId),
+        getGraph(userId, activeSemester || undefined),
         getCourses(userId),
         getUpcomingAssignments(userId),
         getSessions(userId, 10),
-        getRecommendations(userId).catch(() => ({ recommendations: [] })),
+        getRecommendations(userId, activeSemester || undefined).catch(() => ({ recommendations: [] })),
       ]);
       const cs = coursesRes.courses || [];
       setCourses(cs);
+      // First run with no stored semester: default to the most-recent enrolled term.
+      if (!activeSemester) {
+        const def = resolveActiveSemester("", cs);
+        if (def) setActiveSemester(def);
+      }
       const gNodes: GraphNode[] = (graphRes.nodes || []).map((n: ApiNode) => apiToGraphNode(n, cs));
       setNodes(gNodes);
       setEdges((graphRes.edges || []).map(apiToGraphEdge));
@@ -295,7 +302,7 @@ export function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, activeSemester, setActiveSemester]);
 
   React.useEffect(() => {
     if (userReady && userId) load();
@@ -323,8 +330,13 @@ export function Dashboard() {
   // return JSX), not as TopBar title/subtitle. Leaving the TopBar lean
   // makes the Dashboard feel like an arrival page, not a tool page.
 
+  const scopedCourses = React.useMemo(
+    () => (activeSemester ? courses.filter((c) => c.term === activeSemester) : courses),
+    [courses, activeSemester],
+  );
+
   const courseProgress = React.useMemo(() => {
-    return courses.map(c => {
+    return scopedCourses.map(c => {
       const courseNodes = nodes.filter(n => n.course_id === c.course_id && !n.is_subject_root);
       const mastered = courseNodes.filter(n => n.mastery_tier === "mastered").length;
       const learning = courseNodes.filter(n => n.mastery_tier === "learning").length;
@@ -341,7 +353,7 @@ export function Dashboard() {
         progress: total ? mastered / total : 0,
       };
     });
-  }, [courses, nodes]);
+  }, [scopedCourses, nodes]);
 
   const suggestNode = React.useMemo(() => {
     if (!suggest) return null;
@@ -393,11 +405,11 @@ export function Dashboard() {
         <div>
           <div className="label-micro">Your knowledge graph</div>
           <div className="h-serif" style={{ fontSize: 20, marginTop: 2 }}>
-            {stats.total || nodes.filter((n) => !n.is_subject_root).length} concepts across {courses.length} courses
+            {stats.total || nodes.filter((n) => !n.is_subject_root).length} concepts across {scopedCourses.length} courses
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          {useLegacyPanels && courses.slice(0, 5).map((c) => (
+          {useLegacyPanels && scopedCourses.slice(0, 5).map((c) => (
             <div key={c.course_id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)" }}>
               <span style={{ width: 10, height: 10, borderRadius: "50%", background: c.color || "var(--accent)" }} />
               {c.course_code || c.course_name}
