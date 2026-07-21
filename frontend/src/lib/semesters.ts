@@ -114,3 +114,42 @@ export function groupCoursesByTerm(
     (a, b) => compareLabels(a.label, b.label, index),
   );
 }
+
+export type CoursePartition = {
+  current: EnrolledCourse[];
+  archive: TermGroup[];
+};
+
+/**
+ * Split enrolled courses into what to show by default and what to hide behind
+ * the archive: only a course that ranks strictly below the current term is
+ * archived, grouped by term, most recent first.
+ *
+ * Anything we can't date — no term, an unparseable label, or no semesters at
+ * all because `/api/semesters` failed — stays in `current`. Hiding a course is
+ * worse than showing it in the wrong bucket, so degradation is always toward
+ * the flat, ungrouped list.
+ */
+export function partitionCurrentAndArchive(
+  courses: EnrolledCourse[] | null | undefined,
+  semesters: Semester[] | null | undefined,
+  today: Date | string = new Date(),
+): CoursePartition {
+  const all = courses ?? [];
+  const term = currentTerm(semesters, today);
+  if (!term) return { current: all, archive: [] };
+
+  const index = rankIndex(semesters);
+  const currentRank = term.sort_key ?? termRankFromLabel(term.label);
+  if (currentRank === null) return { current: all, archive: [] };
+
+  const current: EnrolledCourse[] = [];
+  const archived: EnrolledCourse[] = [];
+  for (const course of all) {
+    const label = (course.term || "").trim();
+    const rank = label ? labelRank(label, index) : null;
+    if (rank !== null && rank < currentRank) archived.push(course);
+    else current.push(course);
+  }
+  return { current, archive: groupCoursesByTerm(archived, semesters) };
+}
