@@ -786,57 +786,9 @@ export function Dashboard() {
         {courseProgress.length === 0 && (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No enrolled courses yet.</div>
         )}
-        {courseProgress.map(({ course, mastered, learning, struggling, unexplored, total, progress }) => {
-          const pct = Math.round(progress * 100);
-          const baseColor = course.color || "var(--accent)";
-          const segments = [
-            { key: "mastered",   count: mastered,   color: baseColor, opacity: 1,    label: "Mastered" },
-            { key: "learning",   count: learning,   color: baseColor, opacity: 0.78, label: "Learning" },
-            { key: "struggling", count: struggling, color: baseColor, opacity: 0.55, label: "Struggling" },
-            { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: "Unexplored" },
-          ];
-          return (
-            <div key={course.course_id} style={{ marginBottom: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: baseColor, flexShrink: 0 }} />
-                  <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {course.course_code || course.course_name}
-                  </strong>
-                </span>
-                <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
-                  {pct}%
-                </span>
-              </div>
-              {total > 0 ? (
-                <div
-                  style={{
-                    display: "flex",
-                    height: 8,
-                    background: "var(--bg-soft)",
-                    borderRadius: "var(--r-full)",
-                    overflow: "hidden",
-                  }}
-                  title={segments.filter(s => s.count > 0).map(s => `${s.label}: ${s.count}`).join(" · ")}
-                >
-                  {segments.map((s) => s.count > 0 && (
-                    <div
-                      key={s.key}
-                      style={{
-                        width: `${(s.count / total) * 100}%`,
-                        background: s.color,
-                        opacity: s.opacity,
-                        transition: "width var(--dur) var(--ease)",
-                      }}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div style={{ height: 8, background: "var(--bg-soft)", borderRadius: "var(--r-full)" }} />
-              )}
-            </div>
-          );
-        })}
+        {courseProgress.map((entry) => (
+          <CourseProgressRow key={entry.course.course_id} entry={entry} />
+        ))}
       </div>
 
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
@@ -1126,6 +1078,100 @@ type CourseProgressEntry = {
   total: number;
   progress: number;
 };
+
+type ArchivedTermProgress = {
+  label: string;
+  entries: CourseProgressEntry[];
+};
+
+// One "My courses" line: colour dot, course code, mastery percentage and the
+// four-segment mastery bar. Rendered as a button when `onOpen` is supplied so
+// archived courses can route into their own semester's gradebook.
+function CourseProgressRow({
+  entry,
+  onOpen,
+  ariaLabel,
+}: {
+  entry: CourseProgressEntry;
+  onOpen?: () => void;
+  ariaLabel?: string;
+}) {
+  const { course, mastered, learning, struggling, unexplored, total, progress } = entry;
+  const pct = Math.round(progress * 100);
+  const baseColor = course.color || "var(--accent)";
+  const segments = [
+    { key: "mastered",   count: mastered,   color: baseColor, opacity: 1,    label: "Mastered" },
+    { key: "learning",   count: learning,   color: baseColor, opacity: 0.78, label: "Learning" },
+    { key: "struggling", count: struggling, color: baseColor, opacity: 0.55, label: "Struggling" },
+    { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: "Unexplored" },
+  ];
+
+  const body = (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ width: 10, height: 10, borderRadius: "50%", background: baseColor, flexShrink: 0 }} />
+          <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {course.course_code || course.course_name}
+          </strong>
+        </span>
+        <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
+          {pct}%
+        </span>
+      </div>
+      {total > 0 ? (
+        <div
+          style={{
+            display: "flex",
+            height: 8,
+            background: "var(--bg-soft)",
+            borderRadius: "var(--r-full)",
+            overflow: "hidden",
+          }}
+          title={segments.filter(s => s.count > 0).map(s => `${s.label}: ${s.count}`).join(" · ")}
+        >
+          {segments.map((s) => s.count > 0 && (
+            <div
+              key={s.key}
+              style={{
+                width: `${(s.count / total) * 100}%`,
+                background: s.color,
+                opacity: s.opacity,
+                transition: "width var(--dur) var(--ease)",
+              }}
+            />
+          ))}
+        </div>
+      ) : (
+        <div style={{ height: 8, background: "var(--bg-soft)", borderRadius: "var(--r-full)" }} />
+      )}
+    </>
+  );
+
+  if (!onOpen) return <div style={{ marginBottom: 12 }}>{body}</div>;
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={ariaLabel}
+      style={{
+        display: "block",
+        width: "100%",
+        marginBottom: 12,
+        padding: 0,
+        background: "transparent",
+        border: 0,
+        textAlign: "left",
+        color: "inherit",
+        font: "inherit",
+        cursor: "pointer",
+      }}
+    >
+      {body}
+    </button>
+  );
+}
 
 function CoursesKey({
   courseProgress,
