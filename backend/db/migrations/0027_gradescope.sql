@@ -26,10 +26,12 @@ CREATE TABLE IF NOT EXISTS gradescope_credentials (
 
 -- Per-enrollment link to a Gradescope course id (was per (user, courses.id)).
 -- Re-keyed from the baseline's (user_id, sapling_course_id) shape to enrollment_id.
--- Drop ONLY the old-shape table (identified by its user_id column) so a fresh replay
--- rebuilds it in the new shape; on an already-migrated DB the new shape has no user_id
--- column, so the drop is skipped and the IF NOT EXISTS create below is a no-op — no
--- CASCADE data loss on a ledger-less re-run.
+-- Rebuild ONLY the old-shape table (identified by its user_id column) into the new shape.
+-- On a fresh replay the baseline table is empty, so dropping it is lossless; on an
+-- already-migrated DB the new shape has no user_id column, so the drop is skipped and the
+-- IF NOT EXISTS create below is a no-op. If the old-shape table ever holds real rows, we
+-- RAISE loudly rather than silently CASCADE-dropping populated data (that case needs a
+-- manual data migration first).
 DO $$
 BEGIN
   IF EXISTS (
@@ -37,6 +39,9 @@ BEGIN
     WHERE table_name = 'gradescope_course_links'
       AND column_name = 'user_id'
   ) THEN
+    IF EXISTS (SELECT 1 FROM gradescope_course_links LIMIT 1) THEN
+      RAISE EXCEPTION 'gradescope_course_links still holds old-shape rows; refusing to drop (manual data migration required)';
+    END IF;
     DROP TABLE gradescope_course_links CASCADE;
   END IF;
 END $$;
@@ -48,7 +53,7 @@ CREATE TABLE IF NOT EXISTS gradescope_course_links (
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (enrollment_id, gradescope_course_id)
 );
-CREATE INDEX idx_gradescope_links_enrollment ON gradescope_course_links(enrollment_id);
+CREATE INDEX IF NOT EXISTS idx_gradescope_links_enrollment ON gradescope_course_links(enrollment_id);
 
 DROP TRIGGER IF EXISTS trg_gradescope_credentials_updated_at ON gradescope_credentials;
 CREATE TRIGGER trg_gradescope_credentials_updated_at BEFORE UPDATE ON gradescope_credentials

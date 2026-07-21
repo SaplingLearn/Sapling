@@ -15,7 +15,7 @@ ALTER TABLE enrollments
     ADD COLUMN IF NOT EXISTS curve_avg_target NUMERIC,
     ADD COLUMN IF NOT EXISTS curve_sd_delta   NUMERIC;
 
-CREATE TABLE gradebook_categories (
+CREATE TABLE IF NOT EXISTS gradebook_categories (
     id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     enrollment_id TEXT NOT NULL REFERENCES enrollments(id) ON DELETE CASCADE,
     name          TEXT NOT NULL,
@@ -25,7 +25,7 @@ CREATE TABLE gradebook_categories (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_gradebook_categories_enrollment ON gradebook_categories(enrollment_id);
+CREATE INDEX IF NOT EXISTS idx_gradebook_categories_enrollment ON gradebook_categories(enrollment_id);
 
 CREATE TABLE assignments (
     id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -48,11 +48,11 @@ CREATE TABLE assignments (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_assignments_enrollment ON assignments(enrollment_id);
-CREATE INDEX idx_assignments_due        ON assignments(due_date);
+CREATE INDEX IF NOT EXISTS idx_assignments_enrollment ON assignments(enrollment_id);
+CREATE INDEX IF NOT EXISTS idx_assignments_due        ON assignments(due_date);
 -- Gradescope idempotency key, re-targeted from course_id to enrollment_id (assignments are
 -- now enrollment-scoped). Only enforced when a gradescope id is present.
-CREATE UNIQUE INDEX idx_assignments_gradescope_id
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assignments_gradescope_id
     ON assignments(enrollment_id, gradescope_assignment_id)
     WHERE gradescope_assignment_id IS NOT NULL;
 

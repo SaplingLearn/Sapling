@@ -60,6 +60,15 @@ SQL
 # reload its schema cache, wait until the schema is exposed, then seed demo data.
 # This is the verbatim-shared sequence extracted from both local dev scripts.
 migrate_reload_seed() {
+  # Fail fast with a clear message if the backend venv is missing — every step
+  # below shells out to backend/venv/bin/python, so without it the migrate step
+  # dies with a confusing "venv/bin/python: No such file or directory" and leaves
+  # the stack half-up. $REPO_ROOT is set by both caller scripts before sourcing.
+  if [ ! -x "$REPO_ROOT/backend/venv/bin/python" ]; then
+    echo "✗ backend/venv not found. Create it first: python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt"
+    return 1
+  fi
+
   echo "▶ Applying pending migrations…"
   ( cd backend && SUPABASE_DB_URL="$LOCAL_DB_URL" venv/bin/python -m db.migrate ) \
     || { echo "✗ migrations failed"; exit 1; }

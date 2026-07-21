@@ -23,6 +23,15 @@ paru -S supabase-bin      # or: yay -S supabase-bin
 
 Verify: `supabase --version && podman ps`.
 
+The dev scripts (`scripts/local-up.sh`, `scripts/local-db-reset.sh`) run
+`db.migrate` / `db.seed_staging` through `backend/venv/bin/python`, so create the
+backend venv once (from the repo root) before the first run — otherwise the
+scripts fail fast with a "backend/venv not found" message:
+
+```bash
+python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt
+```
+
 ## Endpoints
 
 | Service        | URL                                             |
@@ -62,11 +71,15 @@ scripts/local-db-reset.sh      # db reset → migrate → reload PostgREST → s
 
 ## Sign-in: Google OAuth (local)
 
-Local sign-in uses the **real Google OAuth flow** — same as prod. `backend/.env`
-reuses the staging OAuth creds and points the redirect at
-`http://localhost:5000/api/auth/google/callback`. **One-time setup:** add that URI
-(and `http://localhost:5000/api/calendar/callback` for calendar) to the OAuth
-client's authorized redirect URIs in the Google Cloud console.
+Local sign-in uses the **real Google OAuth flow** — same as prod. Dev-login was
+removed, so Google OAuth is the **only** local sign-in path: filling
+`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `backend/.env` is **required** to
+sign in. They're optional only for bringing the stack *up* — if you leave the
+`.env.local.example` placeholders in place, the stack still starts but clicking
+"sign in with Google" fails silently. The staging OAuth creds work here; point the
+redirect at `http://localhost:5000/api/auth/google/callback`. **One-time setup:**
+add that URI (and `http://localhost:5000/api/calendar/callback` for calendar) to
+the OAuth client's authorized redirect URIs in the Google Cloud console.
 
 Two local-only conveniences make it "just work", both strictly `IS_LOCAL`-gated so
 staging/prod are unaffected:

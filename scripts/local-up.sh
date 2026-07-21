@@ -10,6 +10,7 @@
 # First-time setup on a new machine:
 #   cp backend/.env.local.example backend/.env       # then fill in GEMINI_API_KEY
 #   cp frontend/.env.local.example frontend/.env.local
+#   python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt
 #   set -Ux DOCKER_HOST "unix:///run/user/"(id -u)"/podman/podman.sock"   # fish
 set -uo pipefail
 
@@ -35,4 +36,9 @@ cat <<'NEXT'
      cd frontend && npm run dev         # :3000
    Then open http://localhost:3000 and sign in with Google
    (first local sign-in is auto-approved — no /pending wall).
+
+   Google OAuth is the ONLY local sign-in path. To actually sign in you must
+   fill GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in backend/.env and register the
+   localhost redirect URI — see the "Sign-in" section of docs/local-supabase.md.
+   (Not needed to bring the stack up, but sign-in silently fails without it.)
 NEXT
