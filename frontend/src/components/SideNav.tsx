@@ -304,6 +304,7 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         justifyContent: collapsed ? "center" : "flex-start",
         gap: 10,
         width: "100%",
+        minHeight: 44,
         padding: collapsed ? "8px 0" : "8px 12px",
         borderRadius: "var(--r-sm)",
         background: active ? "var(--bg-soft)" : "transparent",
