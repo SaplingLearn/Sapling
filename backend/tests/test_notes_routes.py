@@ -14,6 +14,21 @@ from fastapi.testclient import TestClient
 from main import app
 
 
+def fake_get_note(*, body="B"):
+    """Factory for the `get_note` side_effect shared by the agent-backed
+    route tests (summarize / extract-concepts / chat). Finding #6: one
+    source of truth for this note shape instead of an inline copy per test.
+    """
+    async def _get_note(note_id, user_id):
+        return {
+            "id": note_id, "user_id": user_id, "offering_id": "off1",
+            "title": "T", "body": body, "tags": [],
+            "last_summary": None, "last_summary_at": None,
+            "created_at": "", "updated_at": "",
+        }
+    return _get_note
+
+
 @pytest.fixture
 def client():
     return TestClient(app)
@@ -191,11 +206,6 @@ class TestSummarizeRoute:
         async def fake_run(*args, **kwargs):
             captured["called"] = True
             return FakeResult()
-        async def fake_get_note(note_id, user_id):
-            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
-                    "title": "T", "body": "Long body…", "tags": [],
-                    "last_summary": None, "last_summary_at": None,
-                    "created_at": "", "updated_at": ""}
         async def fake_save_summary(note_id, user_id, summary):
             captured["saved"] = summary
             return {"id": note_id, "last_summary": summary,
@@ -205,7 +215,7 @@ class TestSummarizeRoute:
                     "created_at": "", "updated_at": ""}
         with patch("routes.notes.note_summary_agent.run", side_effect=fake_run), \
              patch("routes.notes.offering_course_id", return_value="c1"), \
-             patch("routes.notes.get_note", side_effect=fake_get_note), \
+             patch("routes.notes.get_note", side_effect=fake_get_note(body="Long body…")), \
              patch("routes.notes.save_summary", side_effect=fake_save_summary):
             r = client.post(
                 "/api/notes/n1/summarize",
@@ -235,16 +245,11 @@ class TestSummarizeRoute:
         async def fake_run(*args, **kwargs):
             captured["usage_limits"] = kwargs.get("usage_limits")
             return FakeResult()
-        async def fake_get_note(note_id, user_id):
-            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
-                    "title": "T", "body": "B", "tags": [],
-                    "last_summary": None, "last_summary_at": None,
-                    "created_at": "", "updated_at": ""}
         async def fake_save_summary(note_id, user_id, summary):
             return {}
         with patch("routes.notes.note_summary_agent.run", side_effect=fake_run), \
              patch("routes.notes.offering_course_id", return_value="c1"), \
-             patch("routes.notes.get_note", side_effect=fake_get_note), \
+             patch("routes.notes.get_note", side_effect=fake_get_note()), \
              patch("routes.notes.save_summary", side_effect=fake_save_summary):
             r = client.post(
                 "/api/notes/n1/summarize",
@@ -253,26 +258,40 @@ class TestSummarizeRoute:
         assert r.status_code == 200
         assert captured["usage_limits"] is WORKER_LIMITS
 
-    def test_503_when_guardrails_trip(self, client):
-        """#329: budget exhaustion surfaces as 503, not an uncaught 500."""
+    def test_413_when_usage_limit_exceeded(self, client):
+        """#329: deterministic budget exhaustion surfaces as 413, not a
+        transient-looking 503. The detail must not imply a retry helps."""
         from pydantic_ai.exceptions import UsageLimitExceeded
 
         async def fake_run(*args, **kwargs):
             raise UsageLimitExceeded("token cap")
-        async def fake_get_note(note_id, user_id):
-            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
-                    "title": "T", "body": "B", "tags": [],
-                    "last_summary": None, "last_summary_at": None,
-                    "created_at": "", "updated_at": ""}
         with patch("routes.notes.note_summary_agent.run", side_effect=fake_run), \
              patch("routes.notes.offering_course_id", return_value="c1"), \
-             patch("routes.notes.get_note", side_effect=fake_get_note):
+             patch("routes.notes.get_note", side_effect=fake_get_note()):
             r = client.post(
                 "/api/notes/n1/summarize",
                 json={"user_id": "u1"},
             )
-        assert r.status_code == 503
-        assert r.json()["detail"]
+        assert r.status_code == 413
+        detail = r.json()["detail"].lower()
+        assert "try again" not in detail
+        assert "temporarily unavailable" not in detail
+
+    def test_500_when_unexpected_model_behavior(self, client):
+        """#329: malformed model output is a real bug, not a budget trip —
+        it must surface as a 5xx so alerting fires."""
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        async def fake_run(*args, **kwargs):
+            raise UnexpectedModelBehavior("bad output")
+        with patch("routes.notes.note_summary_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
+             patch("routes.notes.get_note", side_effect=fake_get_note()):
+            r = client.post(
+                "/api/notes/n1/summarize",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 500
 
 
 class TestExtractConceptsRoute:
@@ -281,11 +300,6 @@ class TestExtractConceptsRoute:
             output = type("C", (), {"concepts": ["Photosynthesis", "Calvin Cycle"]})()
         async def fake_run(*args, **kwargs):
             return FakeResult()
-        async def fake_get_note(note_id, user_id):
-            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
-                    "title": "T", "body": "B", "tags": [],
-                    "last_summary": None, "last_summary_at": None,
-                    "created_at": "", "updated_at": ""}
         merged: list[str] = []
         async def fake_apply(user_id, course_id, concept_names):
             # The graph keys on the abstract course id (offering → course).
@@ -301,7 +315,7 @@ class TestExtractConceptsRoute:
 
         with patch("routes.notes.note_concepts_agent.run", side_effect=fake_run), \
              patch("routes.notes.offering_course_id", return_value="c1"), \
-             patch("routes.notes.get_note", side_effect=fake_get_note), \
+             patch("routes.notes.get_note", side_effect=fake_get_note()), \
              patch("routes.notes.apply_concepts_to_graph", side_effect=fake_apply), \
              patch("routes.notes._lookup_concept_nodes_by_name", side_effect=fake_lookup), \
              patch("routes.notes.link_concept", side_effect=fake_link):
@@ -325,18 +339,13 @@ class TestExtractConceptsRoute:
         async def fake_run(*args, **kwargs):
             captured["usage_limits"] = kwargs.get("usage_limits")
             return FakeResult()
-        async def fake_get_note(note_id, user_id):
-            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
-                    "title": "T", "body": "B", "tags": [],
-                    "last_summary": None, "last_summary_at": None,
-                    "created_at": "", "updated_at": ""}
         async def fake_apply(user_id, course_id, concept_names):
             return 0
         async def fake_lookup(user_id, course_id, names):
             return []
         with patch("routes.notes.note_concepts_agent.run", side_effect=fake_run), \
              patch("routes.notes.offering_course_id", return_value="c1"), \
-             patch("routes.notes.get_note", side_effect=fake_get_note), \
+             patch("routes.notes.get_note", side_effect=fake_get_note()), \
              patch("routes.notes.apply_concepts_to_graph", side_effect=fake_apply), \
              patch("routes.notes._lookup_concept_nodes_by_name", side_effect=fake_lookup):
             r = client.post(
@@ -346,26 +355,40 @@ class TestExtractConceptsRoute:
         assert r.status_code == 200
         assert captured["usage_limits"] is WORKER_LIMITS
 
-    def test_503_when_guardrails_trip(self, client):
-        """#329: budget exhaustion surfaces as 503, not an uncaught 500."""
-        from pydantic_ai.exceptions import UnexpectedModelBehavior
+    def test_413_when_usage_limit_exceeded(self, client):
+        """#329: deterministic budget exhaustion surfaces as 413, not a
+        transient-looking 503. The detail must not imply a retry helps."""
+        from pydantic_ai.exceptions import UsageLimitExceeded
 
         async def fake_run(*args, **kwargs):
-            raise UnexpectedModelBehavior("bad output")
-        async def fake_get_note(note_id, user_id):
-            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
-                    "title": "T", "body": "B", "tags": [],
-                    "last_summary": None, "last_summary_at": None,
-                    "created_at": "", "updated_at": ""}
+            raise UsageLimitExceeded("token cap")
         with patch("routes.notes.note_concepts_agent.run", side_effect=fake_run), \
              patch("routes.notes.offering_course_id", return_value="c1"), \
-             patch("routes.notes.get_note", side_effect=fake_get_note):
+             patch("routes.notes.get_note", side_effect=fake_get_note()):
             r = client.post(
                 "/api/notes/n1/extract-concepts",
                 json={"user_id": "u1"},
             )
-        assert r.status_code == 503
-        assert r.json()["detail"]
+        assert r.status_code == 413
+        detail = r.json()["detail"].lower()
+        assert "try again" not in detail
+        assert "temporarily unavailable" not in detail
+
+    def test_500_when_unexpected_model_behavior(self, client):
+        """#329: malformed model output is a real bug, not a budget trip —
+        it must surface as a 5xx so alerting fires."""
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        async def fake_run(*args, **kwargs):
+            raise UnexpectedModelBehavior("bad output")
+        with patch("routes.notes.note_concepts_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
+             patch("routes.notes.get_note", side_effect=fake_get_note()):
+            r = client.post(
+                "/api/notes/n1/extract-concepts",
+                json={"user_id": "u1"},
+            )
+        assert r.status_code == 500
 
 
 class TestNoteChatRoute:
@@ -374,27 +397,15 @@ class TestNoteChatRoute:
             output = "Here is a quick answer."
         async def fake_run(*args, **kwargs):
             return FakeResult()
-        async def fake_get_note(note_id, user_id):
-            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
-                    "title": "T", "body": "B", "tags": [],
-                    "last_summary": None, "last_summary_at": None,
-                    "created_at": "", "updated_at": ""}
         with patch("routes.notes.note_chat_agent.run", side_effect=fake_run), \
              patch("routes.notes.offering_course_id", return_value="c1"), \
-             patch("routes.notes.get_note", side_effect=fake_get_note):
+             patch("routes.notes.get_note", side_effect=fake_get_note()):
             r = client.post(
                 "/api/notes/n1/chat",
                 json={"user_id": "u1", "message": "What's the gist?"},
             )
         assert r.status_code == 200
-        assert r.json() == {"reply": "Here is a quick answer."}
-
-    @staticmethod
-    async def _fake_get_note(note_id, user_id):
-        return {"id": note_id, "user_id": user_id, "offering_id": "off1",
-                "title": "T", "body": "B", "tags": [],
-                "last_summary": None, "last_summary_at": None,
-                "created_at": "", "updated_at": ""}
+        assert r.json() == {"reply": "Here is a quick answer.", "degraded": False}
 
     def test_agent_run_receives_orchestrator_limits(self, client):
         """#329: the tool-using note-chat orchestrator must run under
@@ -409,7 +420,7 @@ class TestNoteChatRoute:
             return FakeResult()
         with patch("routes.notes.note_chat_agent.run", side_effect=fake_run), \
              patch("routes.notes.offering_course_id", return_value="c1"), \
-             patch("routes.notes.get_note", side_effect=self._fake_get_note):
+             patch("routes.notes.get_note", side_effect=fake_get_note()):
             r = client.post(
                 "/api/notes/n1/chat",
                 json={"user_id": "u1", "message": "hi"},
@@ -417,19 +428,17 @@ class TestNoteChatRoute:
         assert r.status_code == 200
         assert captured["usage_limits"] is ORCHESTRATOR_LIMITS
 
-    @pytest.mark.parametrize("exc_name", ["UsageLimitExceeded", "UnexpectedModelBehavior"])
-    def test_degrades_in_band_when_guardrails_trip(self, client, exc_name):
-        """#329: budget exhaustion mid-chat returns a friendly in-band reply
+    def test_degrades_in_band_on_usage_limit(self, client):
+        """#329: a real budget trip mid-chat returns a friendly in-band reply
         (HTTP 200 + degraded flag) — never an uncaught 500. note_chat has no
         legacy fallback (ADR 0017), so degrade is the contract."""
-        import pydantic_ai.exceptions as pae
+        from pydantic_ai.exceptions import UsageLimitExceeded
 
-        exc_cls = getattr(pae, exc_name)
         async def fake_run(*args, **kwargs):
-            raise exc_cls("guardrail tripped")
+            raise UsageLimitExceeded("budget")
         with patch("routes.notes.note_chat_agent.run", side_effect=fake_run), \
              patch("routes.notes.offering_course_id", return_value="c1"), \
-             patch("routes.notes.get_note", side_effect=self._fake_get_note):
+             patch("routes.notes.get_note", side_effect=fake_get_note()):
             r = client.post(
                 "/api/notes/n1/chat",
                 json={"user_id": "u1", "message": "hi"},
@@ -438,6 +447,22 @@ class TestNoteChatRoute:
         body = r.json()
         assert body["degraded"] is True
         assert body["reply"]  # non-empty, user-facing
+
+    def test_500_on_unexpected_model_behavior(self, client):
+        """#329: malformed model output is a real bug, not a budget trip —
+        it must surface as a 5xx (never the budget reply) so alerting fires."""
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        async def fake_run(*args, **kwargs):
+            raise UnexpectedModelBehavior("bad output")
+        with patch("routes.notes.note_chat_agent.run", side_effect=fake_run), \
+             patch("routes.notes.offering_course_id", return_value="c1"), \
+             patch("routes.notes.get_note", side_effect=fake_get_note()):
+            r = client.post(
+                "/api/notes/n1/chat",
+                json={"user_id": "u1", "message": "hi"},
+            )
+        assert r.status_code == 500
 
 
 class TestSendToTutorRoute:
