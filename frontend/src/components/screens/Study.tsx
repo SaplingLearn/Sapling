@@ -18,7 +18,7 @@ const MarkdownChat = dynamic(
 import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { humanizeError } from "@/lib/errorMessage";
+import { humanizeError, isNotFound } from "@/lib/errorMessage";
 import { useUser } from "@/context/UserContext";
 import {
   getCourses,
@@ -39,6 +39,13 @@ import {
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
 
 type Mode = "guide" | "cards";
+
+// A guide load can fail two ways that deserve different UI: the exam is gone
+// (normal — a deleted assignment, or a stale "recent guides" entry), or the
+// generation itself broke. Only the second one is worth a red toast.
+type GuideProblem =
+  | { kind: "missing" }
+  | { kind: "failed"; message: string };
 
 type RawCard = {
   id: string;
@@ -158,6 +165,7 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
   const [loadingGuide, setLoadingGuide] = React.useState(false);
   const [regenerating, setRegenerating] = React.useState(false);
   const [recent, setRecent] = React.useState<StudyGuideCacheEntry[]>([]);
+  const [guideProblem, setGuideProblem] = React.useState<GuideProblem | null>(null);
 
   const loadRecent = React.useCallback(async () => {
     if (!userId) return;
@@ -175,6 +183,7 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
     setExamId("");
     setExams([]);
     setGuide(null);
+    setGuideProblem(null);
     if (!courseId || !userId) return;
     setLoadingExams(true);
     getStudyGuideExams(userId, courseId)
@@ -189,6 +198,7 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
   const loadGuide = React.useCallback(async (cid: string, eid: string) => {
     if (!userId) return;
     setLoadingGuide(true);
+    setGuideProblem(null);
     try {
       const r = await getStudyGuide(userId, cid, eid);
       setGuide(r.guide);
@@ -198,7 +208,13 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
     } catch (err) {
       console.error("study guide load failed", err);
       setGuide(null);
-      toast.error(humanizeError(err, "Couldn't build that study guide."));
+      if (isNotFound(err)) {
+        setGuideProblem({ kind: "missing" });
+      } else {
+        const message = humanizeError(err, "Couldn't build that study guide.");
+        setGuideProblem({ kind: "failed", message });
+        toast.error(message);
+      }
     } finally {
       setLoadingGuide(false);
     }
@@ -320,6 +336,12 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
         )}
         {courseId && !examId && exams.length > 0 && (
           <EmptyHint title="Choose an exam" body="The guide will be generated from your course material the first time." />
+        )}
+        {!loadingGuide && !regenerating && guideProblem?.kind === "missing" && (
+          <EmptyHint
+            title="That exam isn't around anymore"
+            body="It was probably deleted. Pick another exam above, or add one on the Calendar page to build a guide for it."
+          />
         )}
 
         {(loadingGuide || regenerating) && <StudyGuideSkeleton />}
