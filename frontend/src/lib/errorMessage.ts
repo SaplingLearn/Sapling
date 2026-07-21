@@ -10,6 +10,12 @@
 export interface ErrorDetail {
   /** A server-supplied `detail` string, when the body carried one. */
   detail?: string;
+  /**
+   * The HTTP status, when it survived the trip. `fetchJSON` only spells the
+   * status out (`HTTP 404`) for an empty response body, so a FastAPI failure —
+   * which always carries a JSON body — usually arrives without one.
+   */
+  status?: number;
 }
 
 type Body = Record<string, unknown>;
@@ -51,11 +57,38 @@ function detailOf(body: Body): string | undefined {
   return undefined;
 }
 
+const HTTP_STATUS_RE = /\bHTTP\s+(\d{3})\b/;
+
+function isStatus(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599;
+}
+
+function statusFrom(err: unknown, body: Body | null): number | undefined {
+  const attached = asRecord(err);
+  for (const candidate of [attached?.status, attached?.statusCode, body?.status, body?.status_code]) {
+    if (isStatus(candidate)) return candidate;
+  }
+  const matched = HTTP_STATUS_RE.exec(rawMessage(err));
+  if (matched) {
+    const parsed = Number(matched[1]);
+    if (isStatus(parsed)) return parsed;
+  }
+  return undefined;
+}
+
 /** Pulls what the server actually told us out of a thrown error. */
 export function extractErrorDetail(err: unknown): ErrorDetail {
   const body = (err instanceof Error ? null : asRecord(err))
     ?? asRecord(parseJson(rawMessage(err)));
-  if (!body) return {};
-  const detail = detailOf(body);
-  return detail ? { detail } : {};
+  const out: ErrorDetail = {};
+  const detail = body ? detailOf(body) : undefined;
+  if (detail) out.detail = detail;
+  const status = statusFrom(err, body);
+  if (status !== undefined) out.status = status;
+  return out;
+}
+
+/** The HTTP status behind an error, when one can be recovered. */
+export function statusOf(err: unknown): number | undefined {
+  return extractErrorDetail(err).status;
 }
