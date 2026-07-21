@@ -3,6 +3,7 @@ import {
   UNKNOWN_TERM_LABEL,
   currentTerm,
   groupCoursesByTerm,
+  partitionCurrentAndArchive,
   termRankFromLabel,
 } from "./semesters";
 import type { EnrolledCourse, Semester } from "./api";
@@ -174,5 +175,84 @@ describe("groupCoursesByTerm", () => {
   it("returns an empty list for no courses", () => {
     expect(groupCoursesByTerm([], SEMESTERS)).toEqual([]);
     expect(groupCoursesByTerm(null, SEMESTERS)).toEqual([]);
+  });
+});
+
+describe("partitionCurrentAndArchive", () => {
+  const enrolled = [
+    course("bio", "Spring 2026"),
+    course("psy", "Fall 2025"),
+    course("mat", "Spring 2026"),
+    course("cs", "Fall 2026"),
+  ];
+
+  it("keeps the current term up front and archives only earlier terms", () => {
+    const { current, archive } = partitionCurrentAndArchive(enrolled, SEMESTERS, "2026-03-01");
+    expect(ids(current)).toEqual(["bio", "mat", "cs"]);
+    expect(archive.map((g) => g.label)).toEqual(["Fall 2025"]);
+    expect(ids(archive[0].courses)).toEqual(["psy"]);
+  });
+
+  it("does not archive a future term", () => {
+    const { current } = partitionCurrentAndArchive(enrolled, SEMESTERS, "2026-03-01");
+    expect(ids(current)).toContain("cs");
+  });
+
+  it("orders archive groups most recent first", () => {
+    const older = [
+      course("a", "Fall 2025"),
+      course("b", "Spring 2026"),
+      course("c", "Summer 2026"),
+    ];
+    const { archive } = partitionCurrentAndArchive(older, SEMESTERS, "2026-10-01");
+    expect(archive.map((g) => g.label)).toEqual(["Summer 2026", "Spring 2026", "Fall 2025"]);
+  });
+
+  it("moves with the calendar — the same data partitions differently later", () => {
+    const spring = partitionCurrentAndArchive(enrolled, SEMESTERS, "2026-03-01");
+    const fall = partitionCurrentAndArchive(enrolled, SEMESTERS, "2026-09-15");
+    expect(ids(spring.current)).toEqual(["bio", "mat", "cs"]);
+    expect(ids(fall.current)).toEqual(["cs"]);
+    expect(fall.archive.map((g) => g.label)).toEqual(["Spring 2026", "Fall 2025"]);
+  });
+
+  it("keeps undatable courses in the current list rather than hiding them", () => {
+    const mixed = [course("bio", "Spring 2026"), course("solo", ""), course("odd", "Interterm")];
+    const { current, archive } = partitionCurrentAndArchive(mixed, SEMESTERS, "2026-03-01");
+    expect(ids(current)).toEqual(["bio", "solo", "odd"]);
+    expect(archive).toEqual([]);
+  });
+
+  it("archives a past term the semesters payload never mentioned", () => {
+    const { current, archive } = partitionCurrentAndArchive(
+      [course("bio", "Spring 2026"), course("old", "Fall 2019")],
+      SEMESTERS,
+      "2026-03-01",
+    );
+    expect(ids(current)).toEqual(["bio"]);
+    expect(archive.map((g) => g.label)).toEqual(["Fall 2019"]);
+  });
+
+  it("shows everything ungrouped when the semesters fetch yields nothing", () => {
+    for (const empty of [[], null, undefined]) {
+      const { current, archive } = partitionCurrentAndArchive(enrolled, empty, "2026-03-01");
+      expect(ids(current)).toEqual(["bio", "psy", "mat", "cs"]);
+      expect(archive).toEqual([]);
+    }
+  });
+
+  it("handles no courses at all", () => {
+    expect(partitionCurrentAndArchive([], SEMESTERS, "2026-03-01")).toEqual({
+      current: [],
+      archive: [],
+    });
+    expect(partitionCurrentAndArchive(null, SEMESTERS, "2026-03-01").current).toEqual([]);
+  });
+
+  it("defaults today to now when it is not injected", () => {
+    const result = partitionCurrentAndArchive(enrolled, SEMESTERS);
+    expect(result.current.length + result.archive.reduce((n, g) => n + g.courses.length, 0)).toBe(
+      enrolled.length,
+    );
   });
 });
