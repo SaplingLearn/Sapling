@@ -24,7 +24,7 @@ import {
   type Assignment,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { partitionCurrentAndArchive } from "@/lib/semesters";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 
@@ -475,13 +475,7 @@ export function Dashboard() {
           width={size.w}
           height={size.h}
           highlightId={suggestNode?.id}
-          onNodeClick={(n) => {
-            const p = new URLSearchParams();
-            p.set("topic", n.name);
-            p.set("mode", "socratic");
-            if (n.course_id) p.set("course_id", n.course_id);
-            router.push(`/learn?${p.toString()}`);
-          }}
+          onNodeClick={(n) => router.push(learnHrefForNode(n))}
         />
         {/* Courses key — sidebar layout only. Top-nav layout uses the
             full My Courses panel in the left column instead. */}
@@ -1051,7 +1045,7 @@ export function Dashboard() {
             highlightId={suggestNode?.id}
             onNodeClick={(n) => {
               setFullscreen(false);
-              router.push(`/learn?topic=${encodeURIComponent(n.name)}&mode=socratic${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`);
+              router.push(learnHrefForNode(n));
             }}
           />
         </div>

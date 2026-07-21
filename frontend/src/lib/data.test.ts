@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { apiToGraphNode, hashSeed, paletteFor } from "./data";
+import { apiToGraphNode, hashSeed, learnHrefForNode, paletteFor } from "./data";
 import type { GraphNode as ApiNode } from "./types";
 import type { EnrolledCourse } from "./api";
+import type { GraphNode } from "./data";
 
 function makeApiNode(over: Partial<ApiNode> = {}): ApiNode {
   return {
@@ -104,6 +105,61 @@ describe("apiToGraphNode color resolution", () => {
   it("remaps subject_root tier to mastered", () => {
     const n = makeApiNode({ mastery_tier: "subject_root", is_subject_root: true });
     expect(apiToGraphNode(n, []).mastery_tier).toBe("mastered");
+  });
+});
+
+function makeGraphNode(over: Partial<GraphNode> = {}): GraphNode {
+  return {
+    id: "n1",
+    name: "Eigenvalues",
+    subject: "Linear Algebra",
+    color: "#7a874f",
+    is_subject_root: false,
+    mastery_tier: "learning",
+    mastery_score: 0.5,
+    course_id: "c1",
+    ...over,
+  };
+}
+
+describe("learnHrefForNode", () => {
+  it("seeds the topic from a concept node's name", () => {
+    const href = learnHrefForNode(makeGraphNode({ name: "Eigenvalues" }));
+    const params = new URLSearchParams(href.split("?")[1]);
+    expect(params.get("topic")).toBe("Eigenvalues");
+    expect(params.get("mode")).toBe("socratic");
+    expect(params.get("course")).toBe("c1");
+  });
+
+  it("never sends a subject-root (course) node's name as the topic (#319)", () => {
+    const href = learnHrefForNode(
+      makeGraphNode({ name: "Linear Algebra", is_subject_root: true }),
+    );
+    const params = new URLSearchParams(href.split("?")[1]);
+    expect(params.has("topic")).toBe(false);
+    // Still scoped to the course so the tutor opens filtered to it.
+    expect(params.get("course")).toBe("c1");
+    expect(params.get("mode")).toBe("socratic");
+  });
+
+  it("scopes the course via the `course` param the Learn screen reads", () => {
+    // Regression guard: the old handlers passed `course_id`, which Learn
+    // (searchParams.get("course")) silently ignored, dropping course scope.
+    const href = learnHrefForNode(makeGraphNode({ course_id: "c42" }));
+    const params = new URLSearchParams(href.split("?")[1]);
+    expect(params.get("course")).toBe("c42");
+    expect(params.has("course_id")).toBe(false);
+  });
+
+  it("omits the course param when the node has no course_id", () => {
+    const href = learnHrefForNode(makeGraphNode({ course_id: "" }));
+    const params = new URLSearchParams(href.split("?")[1]);
+    expect(params.has("course")).toBe(false);
+  });
+
+  it("honors a non-default mode", () => {
+    const href = learnHrefForNode(makeGraphNode(), "flashcards");
+    expect(new URLSearchParams(href.split("?")[1]).get("mode")).toBe("flashcards");
   });
 });
 

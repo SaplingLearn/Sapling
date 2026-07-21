@@ -14,7 +14,7 @@ import { getGraph, getCourses, getSessions, deleteGraphNode, type EnrolledCourse
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -132,9 +132,7 @@ export function Tree() {
     return n?.id;
   }, [suggest, nodes]);
 
-  const onLearn = (n: GraphNode) => router.push(
-    `/learn?topic=${encodeURIComponent(n.name)}&mode=socratic${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`,
-  );
+  const onLearn = (n: GraphNode) => router.push(learnHrefForNode(n));
   const onQuiz = (n: GraphNode) => router.push(
     `/quiz?topic=${encodeURIComponent(n.name)}${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`,
   );
