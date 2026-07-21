@@ -243,7 +243,8 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
       await loadRecent();
       toast.success("Study guide regenerated.");
     } catch (err) {
-      toast.error(`Regenerate failed: ${String(err)}`);
+      console.error("study guide regenerate failed", err);
+      toast.error(humanizeError(err, "Couldn't regenerate that study guide."));
     } finally {
       setRegenerating(false);
     }
