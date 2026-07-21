@@ -18,6 +18,7 @@ const MarkdownChat = dynamic(
 import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
+import { humanizeError } from "@/lib/errorMessage";
 import { useUser } from "@/context/UserContext";
 import {
   getCourses,
@@ -178,7 +179,10 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
     setLoadingExams(true);
     getStudyGuideExams(userId, courseId)
       .then(r => setExams(r.exams || []))
-      .catch(err => toast.error(`Couldn't load exams: ${String(err)}`))
+      .catch(err => {
+        console.error("study exams load failed", err);
+        toast.error(humanizeError(err, "Couldn't load the exams for this course."));
+      })
       .finally(() => setLoadingExams(false));
   }, [courseId, userId, toast]);
 
