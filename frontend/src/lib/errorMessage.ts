@@ -111,10 +111,28 @@ function statusCopy(status: number | undefined): string | undefined {
   return undefined;
 }
 
+const MAX_DETAIL_LENGTH = 160;
+
+// Brackets, angle brackets and line breaks are the tells of a serialized
+// payload, markup, a stack trace or "[object Object]" — none of which belong
+// in front of a user.
+const UNFRIENDLY = /[{}[\]<>\n\r]|\bTraceback\b/;
+
+function looksHuman(text: string): boolean {
+  return (
+    text.length > 0
+    && text.length <= MAX_DETAIL_LENGTH
+    && /[a-z]/i.test(text)
+    && !UNFRIENDLY.test(text)
+  );
+}
+
 /**
  * A short sentence safe to put in a toast. Never returns `[object Object]`,
  * a raw JSON body, or a stack trace — worst case it returns `fallback`.
  */
 export function humanizeError(err: unknown, fallback: string): string {
-  return statusCopy(statusOf(err)) ?? fallback;
+  const { detail, status } = extractErrorDetail(err);
+  if (detail && looksHuman(detail)) return detail;
+  return statusCopy(status) ?? fallback;
 }
