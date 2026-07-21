@@ -116,3 +116,50 @@ describe('humanizeError — status mapping', () => {
     expect(humanizeError('HTTP 302', FALLBACK)).toBe(FALLBACK);
   });
 });
+
+describe('humanizeError — server detail', () => {
+  it('surfaces a sentence-like FastAPI detail verbatim', () => {
+    expect(humanizeError(new Error('{"detail":"Exam not found."}'), FALLBACK))
+      .toBe('Exam not found.');
+  });
+
+  it('prefers the detail over the status copy', () => {
+    const err = Object.assign(new Error('{"detail":"Exam not found."}'), { status: 404 });
+    expect(humanizeError(err, FALLBACK)).toBe('Exam not found.');
+  });
+
+  it('falls back to status copy when the detail is not presentable', () => {
+    expect(humanizeError({ detail: '[object Object]', status: 502 }, FALLBACK))
+      .toMatch(/temporarily unavailable/i);
+    expect(humanizeError({ detail: 'x'.repeat(400), status: 500 }, FALLBACK))
+      .toMatch(/our end/i);
+  });
+
+  it('never leaks a raw body, markup, a stack or [object Object]', () => {
+    const cases: unknown[] = [
+      new Error('{"error":{"code":"boom"}}'),
+      { detail: '{"nested":"payload"}' },
+      { detail: '<html><body>502 Bad Gateway</body></html>' },
+      { detail: 'Traceback (most recent call last)' },
+      { detail: 'Error: boom\n    at loadGuide (Study.tsx:190:7)' },
+      { detail: '[object Object]' },
+      { detail: '   ' },
+      { detail: '!!!' },
+    ];
+    for (const err of cases) {
+      const out = humanizeError(err, FALLBACK);
+      expect(out).toBe(FALLBACK);
+    }
+  });
+
+  it('returns the fallback for anything unrecognizable', () => {
+    expect(humanizeError(new Error('kaboom'), FALLBACK)).toBe(FALLBACK);
+    expect(humanizeError('kaboom', FALLBACK)).toBe(FALLBACK);
+    expect(humanizeError(null, FALLBACK)).toBe(FALLBACK);
+    expect(humanizeError(undefined, FALLBACK)).toBe(FALLBACK);
+    expect(humanizeError(0, FALLBACK)).toBe(FALLBACK);
+    expect(humanizeError(Symbol('nope'), FALLBACK)).toBe(FALLBACK);
+    expect(humanizeError({}, FALLBACK)).toBe(FALLBACK);
+    expect(humanizeError([1, 2, 3], FALLBACK)).toBe(FALLBACK);
+  });
+});
