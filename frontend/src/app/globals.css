@@ -372,6 +372,21 @@ body { font-size: 14px; line-height: 1.5; }
   }
 }
 
+/* Pre-hydration shell guard (#110).
+   `ShellFrame` picks TopNav vs SideNav from `useIsMobile`, which reports
+   desktop on the server and on the hydrating render — it has to, or server
+   and client markup disagree. So a phone is served the sidebar shell and
+   would paint a 232px desktop rail until hydration swaps it out. The rail is
+   desktop-only by definition, so hide it below the hook's own breakpoint,
+   where CSS reaches the very first frame and JS can't. After hydration React
+   has already unmounted it and this rule is moot. Keep the width in sync with
+   MOBILE_BREAKPOINT in lib/useIsMobile.ts. */
+@media (max-width: 767px) {
+  [data-app-sidenav] {
+    display: none;
+  }
+}
+
 /* Settings' "label on the left, control on the right" profile rows. */
 .settings-field-row {
   display: grid;

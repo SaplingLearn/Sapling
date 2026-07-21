@@ -76,6 +76,8 @@ export function SideNav() {
     <aside
       role="navigation"
       aria-label="Primary"
+      // Hook for the pre-hydration mobile guard in globals.css (#110).
+      data-app-sidenav=""
       style={{
         width,
         minWidth: width,
