@@ -99,10 +99,22 @@ def test_prose_is_deterministic():
     assert chunk_prose(text) == chunk_prose(text)
 
 
+def test_prose_splits_oversized_sentence_at_max_words():
+    # A single sentence far exceeding _MAX_WORDS (400) must be hard-split so
+    # no resulting chunk exceeds the cap. Exercises the _split_at_sentence
+    # branch in chunk_prose, which the uniform _prose() fixture never reaches.
+    giant = " ".join(f"token{i}" for i in range(500)) + "."
+    result = chunk_prose(giant)
+    assert len(result) > 1
+    for chunk in result:
+        assert len(chunk.split()) <= 400
+
+
 def test_prose_no_tiny_trailing_chunk():
-    # 21 sentences (~210 words): the leftover after the first ~200-word window
+    # 22 sentences (~220 words): the leftover after the first ~200-word window
     # is small and must be absorbed, never emitted as a sub-50-word chunk.
-    for chunk in chunk_prose(_prose(21)):
+    # Without absorption, this count would yield a sub-50-word trailing chunk.
+    for chunk in chunk_prose(_prose(22)):
         assert len(chunk.split()) >= _MIN_WORDS_FLOOR
 
 
