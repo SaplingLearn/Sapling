@@ -17,7 +17,9 @@ import {
   getUpcomingAssignments,
   getSessions,
   getRecommendations,
+  getSemesters,
   type EnrolledCourse,
+  type Semester,
   type Session,
   type Assignment,
 } from "@/lib/api";
@@ -204,6 +206,7 @@ export function Dashboard() {
     streak: 0, mastered: 0, total: 0, learning: 0, struggling: 0, unexplored: 0,
   });
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
+  const [semesters, setSemesters] = React.useState<Semester[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [recommendations, setRecommendations] = React.useState<{ concept_name: string; reason?: string }[]>([]);
@@ -258,15 +261,19 @@ export function Dashboard() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [graphRes, coursesRes, assignsRes, sessionsRes, recsRes] = await Promise.all([
+      const [graphRes, coursesRes, assignsRes, sessionsRes, recsRes, semestersRes] = await Promise.all([
         getGraph(userId),
         getCourses(userId),
         getUpcomingAssignments(userId),
         getSessions(userId, 10),
         getRecommendations(userId).catch(() => ({ recommendations: [] })),
+        // Term calendar is a nicety: without it the course lists stay flat
+        // rather than the dashboard failing to load.
+        getSemesters().catch(() => ({ semesters: [] })),
       ]);
       const cs = coursesRes.courses || [];
       setCourses(cs);
+      setSemesters(semestersRes.semesters || []);
       const gNodes: GraphNode[] = (graphRes.nodes || []).map((n: ApiNode) => apiToGraphNode(n, cs));
       setNodes(gNodes);
       setEdges((graphRes.edges || []).map(apiToGraphEdge));
