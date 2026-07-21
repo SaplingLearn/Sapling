@@ -40,12 +40,11 @@ import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
 
 type Mode = "guide" | "cards";
 
-// A guide load can fail two ways that deserve different UI: the exam is gone
+// A guide load fails two ways that deserve different UI: the exam is gone
 // (normal — a deleted assignment, or a stale "recent guides" entry), or the
-// generation itself broke. Only the second one is worth a red toast.
-// The failed variant carries the ids it was built from: opening a recent guide
-// clears the exam selection, so the current selects are not a reliable retry
-// target.
+// generation itself broke. Only the second is worth a red toast, and it carries
+// the ids it was built from because opening a recent guide clears the exam
+// selection — the selects are not a reliable retry target.
 type GuideProblem =
   | { kind: "missing" }
   | { kind: "failed"; message: string; courseId: string; examId: string };
@@ -352,7 +351,7 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
         )}
         {!loadingGuide && !regenerating && guideProblem?.kind === "failed" && (
           <EmptyHint
-            title="Couldn't build that study guide"
+            title="That guide didn't come through"
             body={guideProblem.message}
             action={
               <button
