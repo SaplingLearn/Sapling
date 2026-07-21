@@ -2,7 +2,15 @@
 #
 # Cloudflare Workers config for the Next.js frontend (OpenNext adapter).
 # Deploy locally: `cd frontend && npm run cf:deploy`.
-# CI on Workers Builds: set build command to `npm run cf:build`.
+#
+# Cloudflare Workers Builds has TWO separate fields — keep them distinct:
+#   * Build command  -> `npm run cf:build`  (opennextjs-cloudflare build;
+#                        compiles `.open-next/worker.js`, the `main` below).
+#   * Deploy command -> `npx wrangler versions upload` (staging adds `--env
+#                        staging` here / via its own config — never in Build).
+# NEVER put a `wrangler deploy`/`versions upload` command in the Build field:
+# it skips the OpenNext build, so nothing produces `.open-next/` and the deploy
+# fails with "Could not find compiled Open Next config" (see ADR 0020).
 
 name = "frontend"
 main = ".open-next/worker.js"

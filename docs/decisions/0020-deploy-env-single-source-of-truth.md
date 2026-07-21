@@ -64,15 +64,33 @@ with the explicit vars kept as backward-compatible fallbacks.
 ## Operational follow-up (required, not code)
 
 The code change does **not** fix the currently-broken deployment — only a
-redeploy does. On the Cloudflare **Workers Builds** for each environment:
+redeploy does. Each environment is a separate Cloudflare **Workers Build** with
+two *distinct* fields — a **Build command** and a **Deploy command** — that must
+never be conflated:
 
-- Set `DEPLOY_ENV` as a **build** variable (`staging` / `production`).
-  `wrangler.toml [vars]` are runtime-only; the `/api` rewrite and `NEXT_PUBLIC_*`
-  inlining bake at build time (see [0018](0018-session-token-lifecycle.md)).
-- Staging's deploy command must be `npx wrangler deploy --env staging`.
+- **Build command** — MUST stay `npm run cf:build` (`opennextjs-cloudflare
+  build`). This is the step that compiles the app into `.open-next/worker.js`,
+  the `main` entry `wrangler.toml` deploys. **Never overwrite the build command
+  with a `wrangler deploy` / `wrangler versions upload` line.** A deploy command
+  in the build field skips the OpenNext build entirely, `.open-next/` is never
+  produced, and every build fails with `ERROR Could not find compiled Open Next
+  config, did you run the build command?` — this is exactly what took the
+  `frontend-staging` build down for ~16 builds starting 2026-07-20, when the
+  build field was replaced with `npx wrangler deploy --env staging` while wiring
+  up `DEPLOY_ENV` below.
+- **Deploy command** — leave it as the already-green `npx wrangler versions
+  upload`; it was never the problem. The staging environment
+  (`[env.staging]` → the `frontend-staging` worker) is selected by the staging
+  Workers Build's own deploy config / `--env staging` on the *deploy* step — it
+  does **not** belong in the build command.
+- Set `DEPLOY_ENV` as a **build** variable (`staging` / `production`). This is a
+  *variable*, set in the Build variables panel — not a command. `wrangler.toml
+  [vars]` are runtime-only; the `/api` rewrite and `NEXT_PUBLIC_*` inlining bake
+  at build time (see [0018](0018-session-token-lifecycle.md)).
 - Confirm `staging.saplinglearn.com` routes to the `frontend-staging` worker,
   not `frontend`.
-- Verify: `curl -sSI https://staging.saplinglearn.com/dashboard` must show
+- Verify the build is green again, then:
+  `curl -sSI https://staging.saplinglearn.com/dashboard` must show
   `Location: https://api.staging.saplinglearn.com/api/auth/google`.
 
 ## Note
