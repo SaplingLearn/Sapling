@@ -1130,6 +1130,8 @@ function CoursesArchive({
         className="btn btn--ghost btn--sm"
         onClick={onToggle}
         aria-expanded={open}
+        aria-controls="dashboard-courses-archive"
+        title={open ? "Hide past semesters" : "Show past semesters"}
         style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "flex-start" }}
       >
         <span
@@ -1147,7 +1149,7 @@ function CoursesArchive({
       </button>
 
       {open && (
-        <div style={{ marginTop: 10 }}>
+        <div id="dashboard-courses-archive" style={{ marginTop: 10 }}>
           {groups.map((group) => (
             <div key={group.label} style={{ marginBottom: 8 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>{group.label}</div>
