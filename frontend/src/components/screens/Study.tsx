@@ -196,7 +196,9 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
       setCached(r.cached);
       if (!r.cached) loadRecent();
     } catch (err) {
-      toast.error(`Couldn't load guide: ${String(err)}`);
+      console.error("study guide load failed", err);
+      setGuide(null);
+      toast.error(humanizeError(err, "Couldn't build that study guide."));
     } finally {
       setLoadingGuide(false);
     }
