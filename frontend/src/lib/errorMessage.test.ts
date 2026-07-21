@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractErrorDetail } from './errorMessage';
+import { extractErrorDetail, statusOf } from './errorMessage';
 
 describe('extractErrorDetail', () => {
   it('reads the detail out of a FastAPI error body', () => {
@@ -44,5 +44,40 @@ describe('extractErrorDetail', () => {
     expect(extractErrorDetail(undefined)).toEqual({});
     expect(extractErrorDetail(0)).toEqual({});
     expect(extractErrorDetail(['a', 'b'])).toEqual({});
+  });
+});
+
+describe('statusOf', () => {
+  it('reads the bare "HTTP <code>" fetchJSON throws for an empty body', () => {
+    expect(statusOf(new Error('HTTP 404'))).toBe(404);
+    expect(statusOf('HTTP 502')).toBe(502);
+  });
+
+  it('reads a status attached to the thrown value', () => {
+    expect(statusOf({ status: 403 })).toBe(403);
+    expect(statusOf({ statusCode: 429 })).toBe(429);
+  });
+
+  it('reads a status carried inside the JSON body', () => {
+    expect(statusOf('{"detail":"Nope.","status":401}')).toBe(401);
+    expect(statusOf('{"detail":"Nope.","status_code":409}')).toBe(409);
+  });
+
+  it('prefers an attached status over one parsed from the message', () => {
+    const err = Object.assign(new Error('HTTP 500'), { status: 404 });
+    expect(statusOf(err)).toBe(404);
+  });
+
+  it('ignores values that are not plausible HTTP statuses', () => {
+    expect(statusOf({ status: 42 })).toBeUndefined();
+    expect(statusOf({ status: '404' })).toBeUndefined();
+    expect(statusOf('HTTP 4040')).toBeUndefined();
+    expect(statusOf('there are 404 items')).toBeUndefined();
+  });
+
+  it('returns undefined when no status is recoverable', () => {
+    expect(statusOf(new Error('{"detail":"Exam not found."}'))).toBeUndefined();
+    expect(statusOf(null)).toBeUndefined();
+    expect(statusOf(undefined)).toBeUndefined();
   });
 });
