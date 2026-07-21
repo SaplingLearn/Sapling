@@ -51,6 +51,7 @@ from agents.document import process_document, DocumentProcessingResult
 from agents.tools.graph import apply_concepts_to_graph
 from agents._run import run_agent_sync
 from agents.concept_scan import concept_scan_agent
+from agents.usage import record_agent_usage
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,7 @@ def _extend_course_concepts(
         "administrative items.\n"
         "- concepts must be a JSON array of strings."
     )
-    raw = call_gemini_json(prompt, model=MODEL_LITE)
+    raw = call_gemini_json(prompt, model=MODEL_LITE, feature="document")
     if not isinstance(raw, dict):
         return []
     return _coerce_str_list(raw.get("concepts"))
@@ -219,8 +220,11 @@ async def _extend_via_agent(
         doc_summary=doc_summary,
         doc_concept_notes=doc_concept_notes,
     )
-    result = await concept_scan_agent.run(
-        message, deps=deps, usage_limits=WORKER_LIMITS,
+    result = record_agent_usage(
+        await concept_scan_agent.run(
+            message, deps=deps, usage_limits=WORKER_LIMITS,
+        ),
+        feature="document", task="concept_scan",
     )
     return list(result.output.concepts)
 
@@ -335,7 +339,7 @@ def _process_document(filename: str, extracted_text: str) -> dict:
         "\n"
         '"concept_notes" must be a JSON array of {"name": str, "description": str} objects.'
     )
-    raw = call_gemini_json(prompt)
+    raw = call_gemini_json(prompt, feature="document")
     if not isinstance(raw, dict):
         raw = {}
 
@@ -836,8 +840,11 @@ async def upload_document(
                 type="progress", step="classify",
                 message="Classifying document...",
             ))
-            cls_run = await classifier_agent.run(
-                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+            cls_run = record_agent_usage(
+                await classifier_agent.run(
+                    extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+                ),
+                feature="document", task="classifier",
             )
             classification = cls_run.output
             yield sapling_event_to_sse(SaplingEvent(
@@ -869,6 +876,7 @@ async def upload_document(
                 summary_r, concepts_r, syllabus_r = await asyncio.gather(
                     summary_task, concepts_task, syllabus_task,
                 )
+                record_agent_usage(syllabus_r, feature="document", task="syllabus")
                 summary = summary_r.output
                 concepts = concepts_r.output
                 syllabus = syllabus_r.output
@@ -877,6 +885,8 @@ async def upload_document(
                 summary = summary_r.output
                 concepts = concepts_r.output
                 syllabus = None
+            record_agent_usage(summary_r, feature="document", task="summary")
+            record_agent_usage(concepts_r, feature="document", task="concepts")
             yield sapling_event_to_sse(SaplingEvent(
                 type="progress", step="extracted",
                 message=f"Extracted {len(concepts.concepts)} concept(s).",

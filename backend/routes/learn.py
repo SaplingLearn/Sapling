@@ -14,6 +14,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from agents import ORCHESTRATOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
+from agents.usage import record_agent_usage
 from db.connection import table
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
@@ -472,7 +473,8 @@ def start_session(body: StartSessionBody, request: Request):
 
     try:
         raw = call_gemini_multiturn(
-            system_prompt, [], user_message, model=_resolve_legacy_model(body.model_pref)
+            system_prompt, [], user_message, model=_resolve_legacy_model(body.model_pref),
+            feature="chat_tutor",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
@@ -580,7 +582,10 @@ async def _chat_via_agent(
     if model_pref != "fast":
         run_kwargs["model_settings"] = _build_pro_model_settings()
 
-    result = await agent.run(user_message, **run_kwargs)
+    result = record_agent_usage(
+        await agent.run(user_message, **run_kwargs),
+        feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
+    )
     reply = result.output  # str — chat_tutor agents return plain Markdown.
 
     # Merge all graph update payloads accumulated by tools during this run
@@ -642,7 +647,8 @@ async def _legacy_chat(body: ChatBody, request: Request) -> dict:
 
     try:
         raw = call_gemini_multiturn(
-            system_prompt, history, body.message, model=_resolve_legacy_model(body.model_pref)
+            system_prompt, history, body.message, model=_resolve_legacy_model(body.model_pref),
+            feature="chat_tutor",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
@@ -968,7 +974,8 @@ def action(body: ActionBody, request: Request):
 
     try:
         raw = call_gemini_multiturn(
-            system_prompt, history, action_message, model=_resolve_legacy_model(body.model_pref)
+            system_prompt, history, action_message, model=_resolve_legacy_model(body.model_pref),
+            feature="chat_tutor",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")

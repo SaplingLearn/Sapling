@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 from agents._run import run_agent_sync
 from agents.deps import SaplingDeps
 from agents.study_guide import study_guide_agent
+from agents.usage import record_agent_usage
 from db.connection import table
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import require_self
@@ -101,7 +102,10 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
         request_id=current_request_id() or "",
     )
     try:
-        result = run_agent_sync(study_guide_agent.run(user_message, deps=deps))
+        result = record_agent_usage(
+            run_agent_sync(study_guide_agent.run(user_message, deps=deps)),
+            feature="study_guide", task="study_guide", user_id=user_id,
+        )
     except Exception as e:  # generation/transport failure → 502, not a raw 500
         raise HTTPException(
             status_code=502, detail="Study guide generation failed."

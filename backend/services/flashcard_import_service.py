@@ -26,6 +26,7 @@ from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from db.connection import table
 from agents._run import run_agent_sync
 from agents.flashcard import flashcard_agent
+from agents.usage import record_agent_usage
 from services import extraction_service
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,10 @@ def _run_flashcard_agent(prompt: str) -> list[Card]:
     result = None
     for attempt in range(_AGENT_RETRIES + 1):
         try:
-            result = run_agent_sync(flashcard_agent.run(prompt))
+            result = record_agent_usage(
+                run_agent_sync(flashcard_agent.run(prompt)),
+                feature="flashcard", task="flashcard",
+            )
             break
         except UnexpectedModelBehavior:
             logger.exception("flashcard agent produced unusable output; degrading to []")

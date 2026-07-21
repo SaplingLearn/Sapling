@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from agents._run import run_agent_sync
 from agents.deps import SaplingDeps
 from agents.social_summary import social_summary_agent
+from agents.usage import record_agent_usage
 from db.connection import table
 from models import CreateRoomBody, JoinRoomBody, MatchBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
 from services.auth_guard import require_self, get_session_user_id
@@ -140,7 +141,10 @@ def room_overview(room_id: str, request: Request):
                 "Summarize this study group's collective knowledge:\n"
                 + "\n".join(member_summaries)
             )
-            result = run_agent_sync(social_summary_agent.run(user_message, deps=deps))
+            result = record_agent_usage(
+                run_agent_sync(social_summary_agent.run(user_message, deps=deps)),
+                feature="social", task="social_summary",
+            )
             ai_summary = result.output.summary
             save_summary(room_id, member_summaries, ai_summary)
         except Exception as e:

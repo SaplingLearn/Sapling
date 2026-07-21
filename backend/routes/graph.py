@@ -17,6 +17,7 @@ from agents import WORKER_LIMITS
 from agents._run import run_agent_sync
 from agents.deps import SaplingDeps
 from agents.concept_describe import concept_describe_agent, build_message
+from agents.usage import record_agent_usage
 
 router = APIRouter()
 
@@ -129,12 +130,15 @@ def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Reques
         request_id=current_request_id() or str(uuid.uuid4()),
     )
     try:
-        result = run_agent_sync(
-            concept_describe_agent.run(
-                build_message(concept, course_label),
-                deps=deps,
-                usage_limits=WORKER_LIMITS,
-            )
+        result = record_agent_usage(
+            run_agent_sync(
+                concept_describe_agent.run(
+                    build_message(concept, course_label),
+                    deps=deps,
+                    usage_limits=WORKER_LIMITS,
+                )
+            ),
+            feature="graph", task="concept_describe", user_id=user_id,
         )
     except (AgentRunError, httpx.HTTPError, ValidationError) as e:
         # Model / transport / output-validation failures are upstream problems —

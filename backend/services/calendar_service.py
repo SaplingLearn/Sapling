@@ -9,6 +9,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from agents.deps import SaplingDeps
 from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.tools.syllabus_adapter import syllabus_to_wire_dict
+from agents.usage import record_agent_usage
 from services.extraction_service import extract_text_from_file
 from services.assignment_dedupe import assignment_dedupe_key
 from services.encryption import encrypt_if_present
@@ -103,7 +104,10 @@ async def _extract_via_agent(
         supabase=None,
         request_id=request_id or "",
     )
-    result = await syllabus_extraction_agent.run(extracted_text, deps=deps)
+    result = record_agent_usage(
+        await syllabus_extraction_agent.run(extracted_text, deps=deps),
+        feature="document", task="syllabus", user_id=user_id,
+    )
     return syllabus_to_wire_dict(result.output, raw_text=extracted_text)
 
 

@@ -13,6 +13,7 @@ from agents.note_chat import note_chat_agent
 from agents.note_concepts import note_concepts_agent
 from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
+from agents.usage import record_agent_usage
 from db.connection import table
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
@@ -222,7 +223,10 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     # The graph keys on the abstract course; the note carries the offering.
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    result = await note_summary_agent.run(user_prompt, deps=deps)
+    result = record_agent_usage(
+        await note_summary_agent.run(user_prompt, deps=deps),
+        feature="notes", task="note_summary", user_id=body.user_id,
+    )
     summary_text = result.output.summary
     await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
     return {"summary": summary_text}
@@ -243,7 +247,10 @@ async def extract_concepts(
     # Concepts land in the abstract-course graph; resolve offering → course.
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    result = await note_concepts_agent.run(user_prompt, deps=deps)
+    result = record_agent_usage(
+        await note_concepts_agent.run(user_prompt, deps=deps),
+        feature="notes", task="note_concepts", user_id=body.user_id,
+    )
     names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
     await apply_concepts_to_graph(
         user_id=body.user_id, course_id=course_id, concept_names=names
@@ -272,7 +279,10 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
         raise HTTPException(status_code=404, detail="Note not found.")
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    result = await note_chat_agent.run(body.message, deps=deps)
+    result = record_agent_usage(
+        await note_chat_agent.run(body.message, deps=deps),
+        feature="notes", task="note_chat", user_id=body.user_id,
+    )
     return {"reply": result.output}
 
 

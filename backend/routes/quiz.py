@@ -14,6 +14,7 @@ from agents.quiz import quiz_agent, Quiz, QuizQuestion
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
+from agents.usage import record_agent_usage
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
@@ -255,7 +256,10 @@ async def _quiz_via_agent(
     run_kwargs: dict = {"deps": deps, "usage_limits": ORCHESTRATOR_LIMITS}
     if model_override is not None:
         run_kwargs["model"] = model_override
-    result = await quiz_agent.run(user_message, **run_kwargs)
+    result = record_agent_usage(
+        await quiz_agent.run(user_message, **run_kwargs),
+        feature="quiz", task="quiz", user_id=deps.user_id,
+    )
     quiz: Quiz = result.output
     # Filter out questions where the agent's correct_answer didn't match
     # any option verbatim — _agent_question_to_wire returns None for those.
@@ -456,7 +460,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     def _update_context(prompt: str, uid: str, node_id: str):
         try:
-            result = run_agent_sync(quiz_context_agent.run(prompt))
+            result = record_agent_usage(
+                run_agent_sync(quiz_context_agent.run(prompt)),
+                feature="quiz", task="quiz_context", user_id=uid,
+            )
             save_quiz_context(uid, node_id, result.output.model_dump())
         except Exception:
             pass

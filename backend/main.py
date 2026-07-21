@@ -80,8 +80,14 @@ async def _lifespan(_app: FastAPI):
         file_size_limit=MAX_AVATAR_SIZE,
         allowed_mime_types=sorted(ALLOWED_CONTENT_TYPES),
     )
+    # #116/#118: start the fire-and-forget observability drain thread so LLM
+    # usage + event rows flush off the request path.
+    from services import events_service
+    events_service.start_worker()
     yield
-    # No shutdown hooks today.
+    # Stop the drain thread and flush anything still queued so the last batch
+    # of usage rows isn't lost on shutdown.
+    events_service.shutdown()
 
 
 app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
@@ -218,9 +224,13 @@ def gemini_test(request: Request):
     require_admin(request)  # 403 unless the session belongs to an admin; 401 if unauthenticated
     from agents._run import run_agent_sync
     from agents.health import health_probe_agent
+    from agents.usage import record_agent_usage
     try:
-        result = run_agent_sync(
-            health_probe_agent.run('Reply with exactly the text: Gemini OK')
+        result = record_agent_usage(
+            run_agent_sync(
+                health_probe_agent.run('Reply with exactly the text: Gemini OK')
+            ),
+            feature="health",
         )
         return {"ok": True, "reply": result.output.strip()}
     except Exception as e:
