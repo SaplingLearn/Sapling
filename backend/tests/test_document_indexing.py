@@ -8,9 +8,9 @@ resolution, chunking, the relevance gate, and the call into
 `services.rag_service.index_document_chunks`) was never actually
 exercised. These tests call it directly.
 
-`chunk_document` and `index_document_chunks` are imported *inside* the
+`chunk_for_category` and `index_document_chunks` are imported *inside* the
 function body (local imports), so they must be patched at their
-definition sites (`services.chunker.chunk_document`,
+definition sites (`services.chunker.chunk_for_category`,
 `services.rag_service.index_document_chunks`) rather than on
 `routes.documents`.
 """
@@ -72,7 +72,7 @@ class TestIndexDocumentChunks:
         )
 
     def test_empty_chunks_short_circuits_before_indexing(self):
-        """chunk_document() returning [] (e.g. empty/garbage extracted text)
+        """chunk_for_category() returning [] (e.g. empty/garbage extracted text)
         must bail out before ever calling index_document_chunks."""
         with (
             patch(
