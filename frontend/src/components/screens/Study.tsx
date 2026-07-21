@@ -230,8 +230,11 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
   };
 
   const regenerate = async () => {
+    // Regeneration is meaningless without a target exam, and the endpoint
+    // 400s on a blank one — bail before the request.
     if (!userId || !courseId || !examId) return;
     setRegenerating(true);
+    setGuideProblem(null);
     try {
       const r = await regenerateStudyGuide(userId, courseId, examId);
       setGuide(r.guide);
@@ -315,7 +318,7 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
             <button
               className="btn btn--sm"
               onClick={regenerate}
-              disabled={regenerating || loadingGuide}
+              disabled={regenerating || loadingGuide || !examId}
             >
               <Icon name="sparkle" size={12} /> {regenerating ? "Regenerating…" : "Regenerate"}
             </button>
