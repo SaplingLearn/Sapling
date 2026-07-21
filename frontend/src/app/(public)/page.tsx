@@ -311,23 +311,51 @@ export default function LandingPage() {
 
   // Floating cards parallax
   useEffect(() => {
-    let animId: number;
-    function tick() {
+    // The cards are static markup, so resolve the NodeList and parse their
+    // dataset floats once instead of re-doing both 60 times a second.
+    const cards = Array.from(
+      floatingCardsRef.current?.querySelectorAll<HTMLElement>('.floating-card') ?? [],
+    ).map(el => ({
+      el,
+      baseRot: parseFloat(el.dataset.baseRot || '0'),
+      dur: parseFloat(el.dataset.floatDur || '5000'),
+      delay: parseFloat(el.dataset.floatDelay || '0'),
+    }));
+    if (cards.length === 0) return;
+
+    const reduceMotion = window.matchMedia(REDUCED_MOTION_QUERY);
+    let animId = 0;
+    let animating = !reduceMotion.matches;
+
+    function paint() {
       const t = Date.now();
       const mx = mouseRef.current.x, my = mouseRef.current.y;
-      floatingCardsRef.current?.querySelectorAll<HTMLElement>('.floating-card').forEach(card => {
-        const baseRot = parseFloat(card.dataset.baseRot || '0');
-        const dur = parseFloat(card.dataset.floatDur || '5000');
-        const delay = parseFloat(card.dataset.floatDelay || '0');
-        const floatY = Math.sin((t - delay) / dur * Math.PI * 2) * -8;
-        const rx = -my * 5, ry = mx * 5;
-        const par = window.scrollY * -0.3;
-        card.style.transform = `perspective(1000px) translateY(${floatY + par}px) rotateX(${rx}deg) rotateY(${ry}deg) rotateZ(${baseRot}deg)`;
-      });
-      animId = requestAnimationFrame(tick);
+      // Reduced motion keeps the cards' resting tilt but drops the drift,
+      // the mouse tilt and the scroll parallax.
+      const rx = animating ? -my * 5 : 0;
+      const ry = animating ? mx * 5 : 0;
+      const par = animating ? window.scrollY * -0.3 : 0;
+      for (const { el, baseRot, dur, delay } of cards) {
+        const floatY = animating ? Math.sin((t - delay) / dur * Math.PI * 2) * -8 : 0;
+        el.style.transform = `perspective(1000px) translateY(${floatY + par}px) rotateX(${rx}deg) rotateY(${ry}deg) rotateZ(${baseRot}deg)`;
+      }
+      if (animating) animId = requestAnimationFrame(paint);
     }
-    tick();
-    return () => cancelAnimationFrame(animId);
+
+    const onMotionPrefChange = () => {
+      const next = !reduceMotion.matches;
+      if (next === animating) return;
+      animating = next;
+      cancelAnimationFrame(animId);
+      paint();
+    };
+    reduceMotion.addEventListener('change', onMotionPrefChange);
+
+    paint();
+    return () => {
+      reduceMotion.removeEventListener('change', onMotionPrefChange);
+      cancelAnimationFrame(animId);
+    };
   }, []);
 
   // Intersection observer for fade-ups
