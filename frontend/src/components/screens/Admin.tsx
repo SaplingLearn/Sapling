@@ -901,7 +901,7 @@ function CosmeticsTab() {
   for (const c of items) grouped[c.type]?.push(c);
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 380px) 1fr", gap: 16 }}>
+    <div className="pane-split pane-split--wide">
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div className="label-micro" style={{ marginBottom: 10 }}>Create cosmetic</div>
         <LabeledField label="Type">
