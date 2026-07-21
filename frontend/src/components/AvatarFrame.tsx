@@ -14,6 +14,7 @@ interface AvatarFrameProps {
 
 export function AvatarFrame({ name, size = 48, img, color, frame }: AvatarFrameProps) {
   const overlay = size * 0.25;
+  const box = Math.round(size + overlay);
   return (
     <div style={{ position: "relative", width: size + overlay, height: size + overlay, display: "inline-block" }}>
       <div style={{ position: "absolute", top: overlay / 2, left: overlay / 2 }}>
@@ -24,6 +25,10 @@ export function AvatarFrame({ name, size = 48, img, color, frame }: AvatarFrameP
           src={frame.asset_url}
           alt=""
           aria-hidden
+          width={box}
+          height={box}
+          loading="lazy"
+          decoding="async"
           referrerPolicy="no-referrer"
           style={{
             position: "absolute",
