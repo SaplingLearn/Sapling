@@ -331,6 +331,64 @@ body { font-size: 14px; line-height: 1.5; }
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   RESPONSIVE LAYOUT PRIMITIVES (#109)
+
+   Inline styles can't express a media query, so the app's fixed
+   multi-column shells live here instead. Doing it in CSS rather than
+   branching on `useIsMobile` also means the *first* paint is already
+   correct — the hook can only flip after hydration (#110).
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Admin's master/detail panes: an editor rail beside a table.
+   `minmax(0, 1fr)` on the content track — a bare `1fr` floors at
+   min-content, which is what let the wide tables push the grid past the
+   viewport instead of scrolling inside their own column. */
+.pane-split {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.pane-split--wide {
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+}
+@media (max-width: 899px) {
+  .pane-split,
+  .pane-split--wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Admin overview's metric row. */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 899px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Settings' "label on the left, control on the right" profile rows. */
+.settings-field-row {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+@media (max-width: 599px) {
+  .settings-field-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    align-items: stretch;
+  }
+}
+
 /* Distribution-bar segment reveal — each solid fill scales up from 0 to
  * its target ratio via transform (not width, which is layout-bound).
  * --bar-fill (0..1) is the target scaleX; the stagger comes from
