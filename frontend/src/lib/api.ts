@@ -51,6 +51,10 @@ export interface EnrolledCourse {
   nickname: string | null;
   node_count: number;
   enrolled_at: string;
+  // Human term label of the offering the enrollment hangs off, e.g. "Fall 2025".
+  // The backend emits "" when the offering has no term joined — treat it as unknown,
+  // never as a past term.
+  term: string;
 }
 
 export const getCourses = (userId: string) =>
