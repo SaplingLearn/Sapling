@@ -484,8 +484,10 @@ export function Dashboard() {
             full My Courses panel in the left column instead. */}
         {!useLegacyPanels && (
           <CoursesKey
-            courseProgress={courseProgress}
+            courseProgress={currentProgress}
+            archived={archivedProgress}
             onManage={() => setCoursesOpen(true)}
+            onOpenTerm={openArchivedTerm}
           />
         )}
         <div style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
@@ -1256,14 +1258,18 @@ function CourseProgressRow({
 
 function CoursesKey({
   courseProgress,
+  archived,
   onManage,
+  onOpenTerm,
 }: {
   courseProgress: CourseProgressEntry[];
+  archived: ArchivedTermProgress[];
   onManage: () => void;
+  onOpenTerm: (label: string) => void;
 }) {
   const [collapsed, setCollapsed] = React.useState(true);
 
-  if (courseProgress.length === 0) return null;
+  if (courseProgress.length === 0 && archived.length === 0) return null;
 
   // A thick white outline painted BEHIND the glyphs, plus a soft halo.
   // `paint-order: stroke fill` pushes the stroke under the fill so
@@ -1405,6 +1411,45 @@ function CoursesKey({
               </div>
             );
           })}
+
+          {courseProgress.length === 0 && (
+            <div style={{ fontSize: 12, color: "var(--text-dim)", ...legibleText }}>
+              Nothing enrolled this semester.
+            </div>
+          )}
+
+          {archived.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div className="label-micro" style={{ fontSize: 10, ...legibleText }}>Archive</div>
+              {archived.map((group) => (
+                <button
+                  key={group.label}
+                  type="button"
+                  onClick={() => onOpenTerm(group.label)}
+                  aria-label={`Open the ${group.label} gradebook`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    width: "100%",
+                    padding: 0,
+                    background: "transparent",
+                    border: 0,
+                    cursor: "pointer",
+                    fontSize: 12,
+                    color: "var(--text-dim)",
+                    ...legibleText,
+                  }}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {group.label}
+                  </span>
+                  <span className="mono" style={{ fontSize: 11 }}>{group.entries.length}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
