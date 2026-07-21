@@ -93,6 +93,22 @@ export function statusOf(err: unknown): number | undefined {
   return extractErrorDetail(err).status;
 }
 
+const NOT_FOUND_TEXT = /\bnot found\b/i;
+
+/**
+ * Whether an error means "that thing doesn't exist" rather than "something
+ * broke" — the difference between friendly guidance and a red toast.
+ *
+ * Detection is looser than display on purpose: `fetchJSON` keeps the status
+ * only for an empty body, so a FastAPI 404 is recognizable by its wording
+ * alone. An explicit status always wins over the wording.
+ */
+export function isNotFound(err: unknown): boolean {
+  const { detail, status } = extractErrorDetail(err);
+  if (status !== undefined) return status === 404;
+  return NOT_FOUND_TEXT.test(detail ?? rawMessage(err));
+}
+
 const STATUS_COPY: Record<number, string> = {
   400: "That request wasn't valid. Check your selection and try again.",
   401: "Your session expired — sign in again.",
