@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractErrorDetail, humanizeError, statusOf } from './errorMessage';
+import { extractErrorDetail, humanizeError, isNotFound, statusOf } from './errorMessage';
 
 const FALLBACK = "Couldn't load that.";
 
@@ -161,5 +161,35 @@ describe('humanizeError — server detail', () => {
     expect(humanizeError(Symbol('nope'), FALLBACK)).toBe(FALLBACK);
     expect(humanizeError({}, FALLBACK)).toBe(FALLBACK);
     expect(humanizeError([1, 2, 3], FALLBACK)).toBe(FALLBACK);
+  });
+});
+
+describe('isNotFound', () => {
+  it('recognizes the study-guide 404, whose status fetchJSON discards', () => {
+    expect(isNotFound(new Error('{"detail":"Exam not found."}'))).toBe(true);
+    expect(isNotFound(new Error('{"detail":"Exam not found. It may have been deleted."}'))).toBe(true);
+  });
+
+  it('recognizes a bare HTTP 404', () => {
+    expect(isNotFound(new Error('HTTP 404'))).toBe(true);
+    expect(isNotFound({ status: 404 })).toBe(true);
+  });
+
+  it('recognizes not-found wording on a plain error', () => {
+    expect(isNotFound(new Error('Exam not found'))).toBe(true);
+    expect(isNotFound('Course Not Found')).toBe(true);
+  });
+
+  it('lets an explicit status override the wording', () => {
+    expect(isNotFound({ detail: 'Exam not found.', status: 500 })).toBe(false);
+  });
+
+  it('is false for every other failure', () => {
+    expect(isNotFound(new Error('{"detail":"Study guide generation failed."}'))).toBe(false);
+    expect(isNotFound(new Error('HTTP 502'))).toBe(false);
+    expect(isNotFound('Failed to fetch')).toBe(false);
+    expect(isNotFound(null)).toBe(false);
+    expect(isNotFound(undefined)).toBe(false);
+    expect(isNotFound({})).toBe(false);
   });
 });
