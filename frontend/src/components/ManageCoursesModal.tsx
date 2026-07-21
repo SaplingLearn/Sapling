@@ -14,6 +14,7 @@ import {
   type EnrolledCourse,
   type OnboardingCourse,
 } from "@/lib/api";
+import { groupCoursesByTerm } from "@/lib/semesters";
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -63,6 +64,9 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
   }, [query, open]);
 
   const enrolledIds = React.useMemo(() => new Set(courses.map(c => c.course_id)), [courses]);
+  // No /api/semesters call here — the modal only needs a stable, readable
+  // order, which the label-derived rank already gives it.
+  const termGroups = React.useMemo(() => groupCoursesByTerm(courses), [courses]);
 
   const handleAdd = async (course: OnboardingCourse) => {
     try {
@@ -106,8 +110,20 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
             <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No courses enrolled yet.</div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-            {courses.map(c => (
-              <EnrolledRow key={c.course_id} userId={userId} course={c} onChanged={onChanged} />
+            {termGroups.map(group => (
+              <React.Fragment key={group.label}>
+                {termGroups.length > 1 && (
+                  <div
+                    className="mono"
+                    style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}
+                  >
+                    {group.label}
+                  </div>
+                )}
+                {group.courses.map(c => (
+                  <EnrolledRow key={c.course_id} userId={userId} course={c} onChanged={onChanged} />
+                ))}
+              </React.Fragment>
             ))}
           </div>
 
