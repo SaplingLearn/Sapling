@@ -33,7 +33,6 @@ import {
   getGraph,
   deleteGraphNode,
   describeConcept,
-  IS_LOCAL_MODE,
   type Session,
   type SessionSummaryData,
   type EnrolledCourse,
@@ -583,14 +582,14 @@ function LearnInner() {
   );
 
   // Lazily fetch an AI description for the focused concept when it lacks a
-  // stored one (e.g. a manually-added concept). Skipped in local mode, which
-  // has no real AI — those fall back to the connected-concepts sentence.
+  // stored one (e.g. a manually-added concept). Concepts without a fetched
+  // description fall back to the connected-concepts sentence.
   const focusId = focusConcept?.id;
   const focusName = focusConcept?.name;
   const focusDesc = focusConcept?.description;
   const focusCourseName = cardCourse?.course_name;
   useEffect(() => {
-    if (IS_LOCAL_MODE || !userId || !focusId || !focusName) return;
+    if (!userId || !focusId || !focusName) return;
     if (focusDesc || descCache[focusId] || descInflightRef.current.has(focusId)) return;
     descInflightRef.current.add(focusId);
     let cancelled = false;
@@ -607,8 +606,8 @@ function LearnInner() {
 
   // Manually add a concept to the current course. The new node links to the
   // focused concept (or the course root) so it joins the tree, starts as
-  // "unexplored", and becomes the focus. State-first so it works in local mode;
-  // real-backend persistence for add would need a dedicated endpoint.
+  // "unexplored", and becomes the focus. State-first; real-backend
+  // persistence for add would need a dedicated endpoint.
   const addConcept = (name: string) => {
     const label = name.trim();
     if (!label || !cardCourseId) return;
@@ -637,7 +636,7 @@ function LearnInner() {
     setGraphNodes(prev => prev.filter(n => n.id !== nodeId));
     setGraphEdges(prev => prev.filter(e => e.source !== nodeId && e.target !== nodeId));
     setFocusedNodeId(cur => (cur === nodeId ? null : cur));
-    if (!IS_LOCAL_MODE && userId) deleteGraphNode(userId, nodeId).catch(() => {});
+    if (userId) deleteGraphNode(userId, nodeId).catch(() => {});
   };
 
   // ────────── Entry screen (no active session) ──────────

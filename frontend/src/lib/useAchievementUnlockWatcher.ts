@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
-import { fetchAchievements, IS_LOCAL_MODE } from "./api";
+import { fetchAchievements } from "./api";
 import type { UserAchievement } from "./types";
 import { useToast } from "@/components/ToastProvider";
 import { AchievementUnlockToast } from "@/components/AchievementUnlockToast";
@@ -14,7 +14,7 @@ export function useAchievementUnlockWatcher(userId: string) {
   const primed = useRef(false);
 
   useEffect(() => {
-    if (!userId || IS_LOCAL_MODE) return;
+    if (!userId) return;
     let cancelled = false;
 
     const check = async () => {

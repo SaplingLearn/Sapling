@@ -40,10 +40,6 @@ function redirectToSignin(request: NextRequest, errorCode?: string) {
 }
 
 export async function middleware(request: NextRequest) {
-  if (process.env.NEXT_PUBLIC_LOCAL_MODE === 'true') {
-    return NextResponse.next()
-  }
-
   const { pathname } = request.nextUrl
 
   const isProtected = PROTECTED.some(p => pathname.startsWith(p))
