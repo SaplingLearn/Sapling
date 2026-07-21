@@ -39,6 +39,9 @@ class AddCourseBody(BaseModel):
     course_id: str
     color: Optional[str] = None
     nickname: Optional[str] = None
+    # Semester label to enroll into (the active tab in the Courses & Semesters
+    # hub). Omitted → the backend falls back to the current term.
+    term: Optional[str] = None
 
 
 class UpdateCourseColorBody(BaseModel):
@@ -63,7 +66,7 @@ def list_courses(user_id: str, request: Request):
 @router.post("/{user_id}/courses")
 def create_course(user_id: str, body: AddCourseBody, request: Request):
     require_self(user_id, request)
-    result = add_course(user_id, body.course_id, body.color, body.nickname)
+    result = add_course(user_id, body.course_id, body.color, body.nickname, body.term)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result

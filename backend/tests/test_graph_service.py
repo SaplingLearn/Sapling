@@ -902,3 +902,86 @@ def test_graph_route_passes_semester_through():
 
     assert resp.status_code == 200
     assert captured == {"user_id": "user_andres", "semester": "Spring 2026"}
+
+
+def test_add_course_enrolls_into_requested_term():
+    """A term label picks THAT term's offering, not the date-derived current term.
+
+    Regression: the Courses & Semesters hub adds while a semester tab is active;
+    without threading the term through, every add landed in current_term and was
+    filtered out of the tab the user was viewing.
+    """
+    from unittest.mock import MagicMock
+
+    def fake_table(name):
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = [{"id": "bio-101"}] if name == "courses" else []
+        m.insert.side_effect = lambda data: [data]
+        return m
+
+    captured = {}
+
+    def fake_resolve(course_id, term_id=None, *, create=False):
+        captured["term_id"] = term_id
+        captured["create"] = create
+        return "off-fall"
+
+    with patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.user_offering_ids_for_course", return_value=[]), \
+         patch("services.academics.term_id_for_label", return_value="fall-2026"), \
+         patch("services.academics.resolve_offering", side_effect=fake_resolve), \
+         patch("services.course_context_service.update_course_context", return_value=None):
+        result = gs.add_course("user_andres", "bio-101", term="Fall 2026")
+
+    assert result["already_existed"] is False
+    assert captured["term_id"] == "fall-2026"
+    assert captured["create"] is True
+
+
+def test_add_course_no_term_falls_back_to_current_term():
+    """No term label → resolve_offering gets term_id=None (its current-term default)."""
+    from unittest.mock import MagicMock
+
+    def fake_table(name):
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = [{"id": "bio-101"}] if name == "courses" else []
+        m.insert.side_effect = lambda data: [data]
+        return m
+
+    captured = {}
+
+    def fake_resolve(course_id, term_id=None, *, create=False):
+        captured["term_id"] = term_id
+        return "off-current"
+
+    with patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.user_offering_ids_for_course", return_value=[]), \
+         patch("services.academics.resolve_offering", side_effect=fake_resolve), \
+         patch("services.course_context_service.update_course_context", return_value=None):
+        result = gs.add_course("user_andres", "bio-101")
+
+    assert result["already_existed"] is False
+    assert captured["term_id"] is None
+
+
+def test_create_course_route_passes_term_through():
+    from fastapi.testclient import TestClient
+    import routes.graph as graph_route
+    from main import app
+
+    captured = {}
+
+    def fake_add_course(user_id, course_id, color=None, nickname=None, term=None):
+        captured.update(user_id=user_id, course_id=course_id, term=term)
+        return {"course_id": course_id, "already_existed": False}
+
+    with patch.object(graph_route, "add_course", side_effect=fake_add_course), \
+         patch.object(graph_route, "require_self", return_value=None):
+        client = TestClient(app)
+        resp = client.post(
+            "/api/graph/user_andres/courses",
+            json={"course_id": "bio-101", "term": "Fall 2026"},
+        )
+
+    assert resp.status_code == 200
+    assert captured["term"] == "Fall 2026"

@@ -327,12 +327,24 @@ def get_courses(user_id: str) -> list:
     return result
 
 
-def add_course(user_id: str, course_id: str, color: str | None = None, nickname: str | None = None) -> dict:
+def add_course(
+    user_id: str,
+    course_id: str,
+    color: str | None = None,
+    nickname: str | None = None,
+    term: str | None = None,
+) -> dict:
     """
     Enroll a user in a course. ``course_id`` is the abstract catalog course id;
-    the enrollment is created against the **current term's offering** of that
-    course (created if the catalog lacks one), so new enrollments land in the
-    real current semester.
+    the enrollment is created against an offering of that course (created if the
+    catalog lacks one).
+
+    ``term`` is an optional semester **label** (e.g. "Fall 2026") — the semester
+    the caller is enrolling into (the active tab in the Courses & Semesters hub).
+    When given and resolvable it picks that term's offering, so the course shows
+    up under the tab the user was viewing instead of being silently dropped into
+    the date-derived current term. When omitted/unresolvable it falls back to the
+    current term.
     """
     # Verify the abstract course exists in the catalog
     course_check = table("courses").select("id", filters={"id": f"eq.{course_id}"})
@@ -343,6 +355,7 @@ def add_course(user_id: str, course_id: str, color: str | None = None, nickname:
         resolve_offering,
         user_offering_ids_for_course,
         term_for_offering,
+        term_id_for_label,
     )
 
     # No-retake rule: a course already enrolled in ANY term can't be added again.
@@ -350,14 +363,17 @@ def add_course(user_id: str, course_id: str, color: str | None = None, nickname:
     # rejected instead of silently creating a second enrollment.)
     existing_offerings = user_offering_ids_for_course(user_id, course_id)
     if existing_offerings:
-        term = term_for_offering(existing_offerings[0]) or {}
+        existing_term = term_for_offering(existing_offerings[0]) or {}
         return {
             "course_id": course_id,
             "already_existed": True,
-            "term": term.get("label", ""),
+            "term": existing_term.get("label", ""),
         }
 
-    offering_id = resolve_offering(course_id, create=True)
+    # Resolve the requested semester label → term id. An unknown label yields
+    # None, which resolve_offering treats as "current term".
+    term_id = term_id_for_label(term) if term else None
+    offering_id = resolve_offering(course_id, term_id=term_id, create=True)
     if not offering_id:
         return {"course_id": course_id, "error": "No term available to enroll into"}
 

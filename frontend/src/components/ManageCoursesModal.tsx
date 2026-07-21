@@ -76,7 +76,10 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
   const handleAdd = async (course: OnboardingCourse) => {
     try {
       const color = DEFAULT_COLORS[courses.length % DEFAULT_COLORS.length];
-      await addCourse(userId, course.id, color);
+      // Enroll into the semester tab the user is viewing so the course lands
+      // where they expect it. Empty activeTerm (no courses yet) → the backend
+      // falls back to the current term.
+      await addCourse(userId, course.id, color, undefined, activeTerm || undefined);
       toast.success(`Added ${course.course_code || course.course_name}`);
       await onChanged();
     } catch (err) {
