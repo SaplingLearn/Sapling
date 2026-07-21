@@ -378,15 +378,44 @@ export default function LandingPage() {
 
   // Spotlight card mouse-follow
   useEffect(() => {
-    const cards = document.querySelectorAll<HTMLElement>('.landing-spotlight-card');
-    const handler = (e: MouseEvent) => {
-      const card = (e.currentTarget as HTMLElement);
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('.landing-spotlight-card'));
+    if (cards.length === 0) return;
+
+    // `getBoundingClientRect` per mousemove forces a layout flush on every
+    // pointer sample. Measure on enter instead and hold the rect until
+    // something can actually have moved the card.
+    const rects = new WeakMap<HTMLElement, DOMRect>();
+
+    const measure = (card: HTMLElement) => {
       const r = card.getBoundingClientRect();
+      rects.set(card, r);
+      return r;
+    };
+    const onEnter = (e: Event) => { measure(e.currentTarget as HTMLElement); };
+    const onMove = (e: MouseEvent) => {
+      const card = e.currentTarget as HTMLElement;
+      const r = rects.get(card) ?? measure(card);
       card.style.setProperty('--mouse-x', `${e.clientX - r.left}px`);
       card.style.setProperty('--mouse-y', `${e.clientY - r.top}px`);
     };
-    cards.forEach(c => c.addEventListener('mousemove', handler));
-    return () => cards.forEach(c => c.removeEventListener('mousemove', handler));
+    // Rects are viewport-relative, so scrolling invalidates them even though
+    // the card hasn't moved in the document. Drop them and re-measure lazily.
+    const invalidate = () => { for (const c of cards) rects.delete(c); };
+
+    cards.forEach(c => {
+      c.addEventListener('mouseenter', onEnter);
+      c.addEventListener('mousemove', onMove);
+    });
+    window.addEventListener('scroll', invalidate, { passive: true });
+    window.addEventListener('resize', invalidate);
+    return () => {
+      cards.forEach(c => {
+        c.removeEventListener('mouseenter', onEnter);
+        c.removeEventListener('mousemove', onMove);
+      });
+      window.removeEventListener('scroll', invalidate);
+      window.removeEventListener('resize', invalidate);
+    };
   }, []);
 
   function startCounters(container: HTMLElement) {
