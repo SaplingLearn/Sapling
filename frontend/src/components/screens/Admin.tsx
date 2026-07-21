@@ -626,7 +626,7 @@ function AchievementsTab() {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) 1fr", gap: 16 }}>
+    <div className="pane-split">
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div className="label-micro" style={{ marginBottom: 10 }}>Create achievement</div>
         <LabeledField label="Name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={fieldStyle} /></LabeledField>
