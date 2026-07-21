@@ -343,6 +343,21 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
             body="It was probably deleted. Pick another exam above, or add one on the Calendar page to build a guide for it."
           />
         )}
+        {!loadingGuide && !regenerating && guideProblem?.kind === "failed" && (
+          <EmptyHint
+            title="Couldn't build that study guide"
+            body={guideProblem.message}
+            action={
+              <button
+                className="btn btn--sm btn--primary"
+                onClick={() => loadGuide(courseId, examId)}
+                disabled={!courseId || !examId}
+              >
+                Try again
+              </button>
+            }
+          />
+        )}
 
         {(loadingGuide || regenerating) && <StudyGuideSkeleton />}
 
@@ -771,11 +786,14 @@ function CourseFilterRow({
   );
 }
 
-function EmptyHint({ title, body }: { title: string; body: string }) {
+function EmptyHint({ title, body, action }: { title: string; body: string; action?: React.ReactNode }) {
   return (
     <div className="card" style={{ padding: "32px 28px", textAlign: "center", color: "var(--text-muted)" }}>
       <div className="h-serif" style={{ fontSize: 18, color: "var(--text)", marginBottom: 6 }}>{title}</div>
       <div style={{ fontSize: 13 }}>{body}</div>
+      {action && (
+        <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>{action}</div>
+      )}
     </div>
   );
 }
