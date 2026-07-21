@@ -216,6 +216,7 @@ export function Dashboard() {
   const [activeDays, setActiveDays] = React.useState<Set<string>>(new Set());
 
   const [coursesOpen, setCoursesOpen] = React.useState(false);
+  const [archiveOpen, setArchiveOpen] = React.useState(false);
   const [fullscreen, setFullscreen] = React.useState(false);
   const [mobileTab, setMobileTab] = React.useState<"courses" | "stats">("courses");
 
@@ -387,6 +388,13 @@ export function Dashboard() {
   );
 
   const archivedCount = archivedProgress.reduce((n, g) => n + g.entries.length, 0);
+
+  // An archived course opens the gradebook scoped to its own term, not the
+  // current one — the whole point of surfacing it separately.
+  const openArchivedTerm = React.useCallback(
+    (label: string) => router.push(`/gradebook?semester=${encodeURIComponent(label)}`),
+    [router],
+  );
 
   const suggestNode = React.useMemo(() => {
     if (!suggest) return null;
@@ -786,9 +794,23 @@ export function Dashboard() {
         {courseProgress.length === 0 && (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No enrolled courses yet.</div>
         )}
-        {courseProgress.map((entry) => (
+        {courseProgress.length > 0 && currentProgress.length === 0 && (
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Nothing enrolled this semester.
+          </div>
+        )}
+        {currentProgress.map((entry) => (
           <CourseProgressRow key={entry.course.course_id} entry={entry} />
         ))}
+        {archivedCount > 0 && (
+          <CoursesArchive
+            groups={archivedProgress}
+            count={archivedCount}
+            open={archiveOpen}
+            onToggle={() => setArchiveOpen(v => !v)}
+            onOpenTerm={openArchivedTerm}
+          />
+        )}
       </div>
 
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
@@ -1083,6 +1105,65 @@ type ArchivedTermProgress = {
   label: string;
   entries: CourseProgressEntry[];
 };
+
+// Past terms, collapsed by default. Expanding lists each prior semester with
+// its courses; picking one opens that semester's gradebook.
+function CoursesArchive({
+  groups,
+  count,
+  open,
+  onToggle,
+  onOpenTerm,
+}: {
+  groups: ArchivedTermProgress[];
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+  onOpenTerm: (label: string) => void;
+}) {
+  return (
+    <div style={{ borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 10 }}>
+      <button
+        type="button"
+        className="btn btn--ghost btn--sm"
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "flex-start" }}
+      >
+        <span
+          aria-hidden
+          style={{
+            display: "inline-flex",
+            transition: "transform var(--dur-fast) var(--ease)",
+            transform: open ? "rotate(90deg)" : "none",
+          }}
+        >
+          <Icon name="chev" size={11} />
+        </span>
+        Archive
+        <span className="mono" style={{ color: "var(--text-muted)", fontSize: 11 }}>{count}</span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {groups.map((group) => (
+            <div key={group.label} style={{ marginBottom: 8 }}>
+              <div className="label-micro" style={{ marginBottom: 6 }}>{group.label}</div>
+              {group.entries.map((entry) => (
+                <CourseProgressRow
+                  key={entry.course.course_id}
+                  entry={entry}
+                  onOpen={() => onOpenTerm(group.label)}
+                  ariaLabel={`${entry.course.course_code || entry.course.course_name} — open the ${group.label} gradebook`}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // One "My courses" line: colour dot, course code, mastery percentage and the
 // four-segment mastery bar. Rendered as a button when `onOpen` is supplied so
