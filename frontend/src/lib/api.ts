@@ -13,6 +13,24 @@ import { handleLocalRequest } from '@/lib/localData';
 export const API_URL = '';
 export const IS_LOCAL_MODE = process.env.NEXT_PUBLIC_LOCAL_MODE === 'true';
 
+/**
+ * A failed API response. Carries the HTTP status alongside the body text so
+ * callers can branch on the status instead of pattern-matching the message —
+ * `lib/errorMessage.ts` reads `status` off the thrown value.
+ *
+ * `message` stays the raw body for backward compatibility: callers that
+ * stringify the error, or read `.message`, behave exactly as they did before.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   if (IS_LOCAL_MODE) {
     return handleLocalRequest(path, options) as T;
@@ -24,7 +42,7 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(err || `HTTP ${res.status}`);
+    throw new ApiError(err || `HTTP ${res.status}`, res.status);
   }
   return res.json();
 }

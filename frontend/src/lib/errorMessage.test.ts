@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { extractErrorDetail, humanizeError, isNotFound, statusOf } from './errorMessage';
+import { ApiError } from './api';
 
 const FALLBACK = "Couldn't load that.";
 
@@ -191,5 +192,28 @@ describe('isNotFound', () => {
     expect(isNotFound(null)).toBe(false);
     expect(isNotFound(undefined)).toBe(false);
     expect(isNotFound({})).toBe(false);
+  });
+});
+
+describe('ApiError integration', () => {
+  it('branches on the status even when the wording gives nothing away', () => {
+    // The whole point of ApiError carrying `status`: a 404 whose copy never
+    // says "not found" must still route to guidance rather than a red toast.
+    const err = new ApiError('{"detail":"That exam is no longer available."}', 404);
+    expect(isNotFound(err)).toBe(true);
+    expect(statusOf(err)).toBe(404);
+  });
+
+  it('does not treat a non-404 as missing just because it says not found', () => {
+    const err = new ApiError('{"detail":"Course material not found for this exam."}', 502);
+    expect(isNotFound(err)).toBe(false);
+    expect(humanizeError(err, FALLBACK)).toBe('Course material not found for this exam.');
+  });
+
+  it('falls back to status copy when the body carries no readable detail', () => {
+    expect(humanizeError(new ApiError('', 503), FALLBACK))
+      .toBe("That's temporarily unavailable. Try again in a moment.");
+    expect(humanizeError(new ApiError('<html>502 Bad Gateway</html>', 502), FALLBACK))
+      .toBe("That's temporarily unavailable. Try again in a moment.");
   });
 });

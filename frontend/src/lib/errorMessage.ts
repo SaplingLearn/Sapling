@@ -1,19 +1,24 @@
 /**
  * Turns a thrown API error into copy a person can read.
  *
- * `lib/api.ts` rejects with `new Error(await res.text())`, so a FastAPI failure
- * arrives as an Error whose message is the raw response body — literally
- * `{"detail":"Exam not found."}`. Rendering that with `String(err)` dumps JSON
- * into the UI, which is what these helpers exist to prevent.
+ * `lib/api.ts` rejects with an `ApiError` whose message is the raw response
+ * body — literally `{"detail":"Exam not found."}`. Rendering that with
+ * `String(err)` dumps JSON into the UI, which is what these helpers exist to
+ * prevent.
+ *
+ * Everything here accepts `unknown` and degrades rather than throwing: not
+ * every rejection in this app is an `ApiError` (a few call sites still throw a
+ * bare `Error`, and network failures throw `TypeError`), so nothing may assume
+ * a shape.
  */
 
 export interface ErrorDetail {
   /** A server-supplied `detail` string, when the body carried one. */
   detail?: string;
   /**
-   * The HTTP status, when it survived the trip. `fetchJSON` only spells the
-   * status out (`HTTP 404`) for an empty response body, so a FastAPI failure —
-   * which always carries a JSON body — usually arrives without one.
+   * The HTTP status, when it survived the trip — off an `ApiError.status`, a
+   * body field, or an `HTTP 404` message. Absent for the call sites that still
+   * throw a bare `Error`, and for transport failures that never got a response.
    */
   status?: number;
 }
@@ -99,9 +104,10 @@ const NOT_FOUND_TEXT = /\bnot found\b/i;
  * Whether an error means "that thing doesn't exist" rather than "something
  * broke" — the difference between friendly guidance and a red toast.
  *
- * Detection is looser than display on purpose: `fetchJSON` keeps the status
- * only for an empty body, so a FastAPI 404 is recognizable by its wording
- * alone. An explicit status always wins over the wording.
+ * An explicit status decides it. The wording fallback only covers the call
+ * sites that still throw a bare `Error` without one; it is a safety net, not
+ * the primary path, so rewording a server message can't silently turn
+ * guidance back into an error toast.
  */
 export function isNotFound(err: unknown): boolean {
   const { detail, status } = extractErrorDetail(err);
