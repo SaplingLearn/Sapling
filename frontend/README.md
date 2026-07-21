@@ -12,7 +12,7 @@ npm install          # Node >= 20.9, npm >= 10.9
 npm run dev          # http://localhost:3000
 ```
 
-Backend `/api/*` calls are rewritten to `http://localhost:5000` by default (override via `BACKEND_URL`). Set `NEXT_PUBLIC_LOCAL_MODE=true` to serve mock data from `src/lib/localData.ts` instead of hitting the backend.
+Backend `/api/*` calls are rewritten to `http://localhost:5000` by default (override via `BACKEND_URL`). For the real local backend stack, see `docs/local-supabase.md`.
 
 ## Build & deploy
 
@@ -38,7 +38,7 @@ npm run cf:deploy:staging   # build + deploy --env staging
 - `src/app/` — App Router with two route groups: `(shell)` (the signed-in app — `ShellFrame` sidebar + top bar) and `(public)` (the pre-auth marketing surface — landing, about, careers, privacy, terms). `onboarding` sits outside both, full-bleed. Sign-in is a modal triggered from the landing page.
 - `src/components/` — shared UI primitives (`ui/`) and per-screen components (`screens/`).
 - `src/context/UserContext.tsx` — signed-in user context provider (mounted in the root layout).
-- `src/lib/` — `api.ts` (typed same-origin `/api/*` client), `data.ts` / `localData.ts` (mock data; `localData.ts` backs `NEXT_PUBLIC_LOCAL_MODE`), plus shared hooks and helpers.
+- `src/lib/` — `api.ts` (typed same-origin `/api/*` client), `data.ts`, plus shared hooks and helpers.
 
 ## Routes
 

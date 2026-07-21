@@ -124,10 +124,11 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
 
   const signInWithGoogle = () => {
     setLocalError(null);
-    if (!API_URL) {
-      setLocalError("google_not_configured");
-      return;
-    }
+
+    // An empty API_URL is the valid same-origin config (a cross-origin value
+    // drops the session cookie), so we don't guard against it here. The
+    // redirect below resolves to the same-origin path `/api/auth/google`,
+    // which Next.js proxies to the backend.
 
     // BroadcastChannel-based popup flow. We don't depend on window.opener:
     // COOP severs the opener handle the moment the popup hops to a

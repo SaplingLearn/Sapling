@@ -25,6 +25,10 @@ ALTER TABLE assignments
   ADD COLUMN IF NOT EXISTS curve_sd_delta   NUMERIC;
 
 -- Guard rail: curve_mode is a closed enum ('raw' = no curve, 'curved' = apply policy).
+-- NOTE: on a fresh replay the 0001 baseline already enforces this same check via an
+-- anonymous inline CHECK on curve_mode, so the named constraint below is redundant there.
+-- It is kept intentionally for staging/prod parity (those databases already have the named
+-- `user_courses_curve_mode_valid` constraint) — dropping it would introduce schema drift.
 DO $$
 BEGIN
   IF NOT EXISTS (

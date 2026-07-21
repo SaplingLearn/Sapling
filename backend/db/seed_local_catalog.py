@@ -24,6 +24,8 @@ from pathlib import Path
 import httpx
 from dotenv import dotenv_values
 
+from db.connection import table
+
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 LOCAL_ENV = BACKEND_DIR / ".env"
 SOURCE_ENV = BACKEND_DIR / os.getenv("SOURCE_ENV", ".env.staging")
@@ -47,63 +49,61 @@ def _headers(key: str) -> dict:
     return {"apikey": key, "Authorization": f"Bearer {key}"}
 
 
-def fetch_all(client: httpx.Client, base: str, key: str, table: str) -> list[dict]:
+def fetch_all(client: httpx.Client, base: str, key: str, name: str) -> list[dict]:
     rows: list[dict] = []
     offset = 0
     while True:
         r = client.get(
-            f"{base}/rest/v1/{table}",
+            f"{base}/rest/v1/{name}",
             params={"select": "*", "limit": PAGE, "offset": offset, "order": "id"},
             headers=_headers(key),
         )
         r.raise_for_status()
         page = r.json()
-        rows.extend(page)
-        if len(page) < PAGE:
+        # Terminate only on an empty page. Advancing by the ACTUAL rows returned (not
+        # by PAGE) keeps pagination correct even when the source PostgREST caps a page
+        # below PAGE (Supabase "Max rows" / db-max-rows) — otherwise a short first page
+        # would break the loop and silently drop the rest of the catalog.
+        if not page:
             break
-        offset += PAGE
+        rows.extend(page)
+        offset += len(page)
     return rows
 
 
-def upsert(client: httpx.Client, base: str, key: str, table: str, rows: list[dict]) -> int:
+def upsert_local(name: str, rows: list[dict]) -> int:
+    """Upsert into the LOCAL destination via the sanctioned db.connection.table() seam."""
     if not rows:
         return 0
-    headers = {
-        **_headers(key),
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates,return=minimal",
-    }
     done = 0
     for i in range(0, len(rows), BATCH):
         chunk = rows[i : i + BATCH]
-        r = client.post(
-            f"{base}/rest/v1/{table}",
-            params={"on_conflict": "id"},
-            headers=headers,
-            json=chunk,
-        )
-        if r.status_code >= 300:
-            sys.exit(f"ERROR upserting {table} batch @{i}: HTTP {r.status_code} {r.text[:300]}")
+        table(name).upsert(chunk, on_conflict="id")
         done += len(chunk)
-        print(f"    {table}: {done}/{len(rows)}", end="\r", flush=True)
+        print(f"    {name}: {done}/{len(rows)}", end="\r", flush=True)
     print()
     return done
 
 
 def main() -> int:
     src_url, src_key = _load(SOURCE_ENV)
-    dst_url, dst_key = _load(LOCAL_ENV)
+    # _load validates the local env is complete; the local WRITE client is db.connection
+    # (bound to this same local project at import), so we don't need the returned key here.
+    dst_url, _ = _load(LOCAL_ENV)
     if "127.0.0.1" not in dst_url and "localhost" not in dst_url:
         sys.exit(f"REFUSING: destination {dst_url!r} is not local — this script only writes to local.")
 
     print(f"source (read-only): {src_url}  [{SOURCE_ENV.name}]")
     print(f"dest   (local):     {dst_url}")
+    # Direct httpx client is used ONLY for the REMOTE source reads: the source is a
+    # different Supabase project, so it can't go through db.connection.table() (which is
+    # bound to the local project). Local-destination writes go through upsert_local() below.
     with httpx.Client(timeout=90.0) as client:
-        for table in TABLES:
-            print(f"  pulling {table}…")
-            rows = fetch_all(client, src_url, src_key, table)
-            upsert(client, dst_url, dst_key, table, rows)
-            print(f"  ✓ {table}: {len(rows)} rows")
+        for name in TABLES:
+            print(f"  pulling {name}…")
+            rows = fetch_all(client, src_url, src_key, name)
+            upsert_local(name, rows)
+            print(f"  ✓ {name}: {len(rows)} rows")
     print("done.")
     return 0
 

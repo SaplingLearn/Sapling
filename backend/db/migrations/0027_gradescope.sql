@@ -25,10 +25,22 @@ CREATE TABLE IF NOT EXISTS gradescope_credentials (
 );
 
 -- Per-enrollment link to a Gradescope course id (was per (user, courses.id)).
--- Re-keyed from the baseline's (user_id, sapling_course_id) shape to enrollment_id,
--- so drop the old-shape table first to let the chain replay cleanly from empty.
-DROP TABLE IF EXISTS gradescope_course_links CASCADE;
-CREATE TABLE gradescope_course_links (
+-- Re-keyed from the baseline's (user_id, sapling_course_id) shape to enrollment_id.
+-- Drop ONLY the old-shape table (identified by its user_id column) so a fresh replay
+-- rebuilds it in the new shape; on an already-migrated DB the new shape has no user_id
+-- column, so the drop is skipped and the IF NOT EXISTS create below is a no-op — no
+-- CASCADE data loss on a ledger-less re-run.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gradescope_course_links'
+      AND column_name = 'user_id'
+  ) THEN
+    DROP TABLE gradescope_course_links CASCADE;
+  END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS gradescope_course_links (
     id                   TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     enrollment_id        TEXT NOT NULL REFERENCES enrollments(id) ON DELETE CASCADE,
     gradescope_course_id TEXT NOT NULL,

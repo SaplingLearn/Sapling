@@ -449,7 +449,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         # with random nonces; equality lookups by plaintext email cannot match.
         # New sign-ins for users without a google_id always create a fresh row.
         user_id = f"user_{google_id}"
-        is_approved = False
+        is_approved = IS_LOCAL
         from datetime import datetime as _dt, timezone as _tz
         # Upsert, not insert (#285). `user_id` is deterministic, so a *stub* row
         # can already occupy this id: `graph_service.ensure_user_exists` inserts
@@ -469,6 +469,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
             "email": encrypt_if_present(email),
             "google_id": google_id,
             "auth_provider": "google",
+            "is_approved": is_approved,
             "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
         }, on_conflict="id")
         # Same hazard: user_profiles.user_id is the PK (0024), and a stub that
