@@ -11,6 +11,7 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
+import type { GradebookCourseSummary } from "@/lib/types";
 
 const mockUser = { userId: "u1" as string | null, userReady: true };
 
@@ -32,7 +33,9 @@ vi.mock("@/components/Gradebook/SyllabusUploadFlow", () => ({
   SyllabusUploadFlow: () => null,
 }));
 vi.mock("@/components/Gradebook/CourseCard", () => ({
-  CourseCard: ({ course }: any) => <a href="#">{course.course_name}</a>,
+  CourseCard: ({ course }: { course: GradebookCourseSummary }) => (
+    <a href="#">{course.course_name}</a>
+  ),
   COURSE_CARD_GRID_GAP: 24,
   COURSE_CARD_HEIGHT: 244,
 }));
