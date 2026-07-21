@@ -262,7 +262,7 @@ export function Settings() {
                   <Icon name="pencil" size={12} /> {uploadingAvatar ? "Uploading…" : "Change avatar"}
                 </button>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 16, padding: "12px 0", borderBottom: "1px solid var(--border)", alignItems: "center" }}>
+              <div className="settings-field-row">
                 <div className="label-micro">Username</div>
                 <div>
                   <div style={{ position: "relative" }}>
@@ -310,17 +310,7 @@ export function Settings() {
                   ["Website", "website"],
                 ] as const
               ).map(([label, key]) => (
-                <div
-                  key={key}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "180px 1fr",
-                    gap: 16,
-                    padding: "12px 0",
-                    borderBottom: "1px solid var(--border)",
-                    alignItems: "center",
-                  }}
-                >
+                <div key={key} className="settings-field-row">
                   <div className="label-micro">{label}</div>
                   <input
                     defaultValue={settings[key] ?? ""}
