@@ -133,8 +133,12 @@ export function Tree() {
   }, [suggest, nodes]);
 
   const onLearn = (n: GraphNode) => router.push(learnHrefForNode(n));
+  // Subject-root (course) nodes have no single quiz topic — open the picker
+  // rather than seeding the course name (mirrors the tutor fix, #319). The
+  // Quiz screen only reads `topic`/`concept`, so the old `course_id` param was
+  // dead and is dropped.
   const onQuiz = (n: GraphNode) => router.push(
-    `/quiz?topic=${encodeURIComponent(n.name)}${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`,
+    n.is_subject_root ? "/quiz" : `/quiz?topic=${encodeURIComponent(n.name)}`,
   );
 
   const del = useConfirm(async () => {
