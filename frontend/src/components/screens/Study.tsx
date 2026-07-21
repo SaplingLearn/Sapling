@@ -332,13 +332,13 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
             body="Your generated study guides live here — grouped by exam and built from the documents in your library."
           />
         )}
-        {courseId && !examId && !loadingExams && exams.length === 0 && (
+        {courseId && !examId && !guideProblem && !loadingExams && exams.length === 0 && (
           <EmptyHint
             title="No exams for this course yet"
             body="Study guides are built one exam at a time. Import a syllabus on the Calendar page, or add an assignment with type = Exam, and it'll show up here."
           />
         )}
-        {courseId && !examId && exams.length > 0 && (
+        {courseId && !examId && !guideProblem && exams.length > 0 && (
           <EmptyHint title="Choose an exam" body="The guide will be generated from your course material the first time." />
         )}
         {!loadingGuide && !regenerating && guideProblem?.kind === "missing" && (
