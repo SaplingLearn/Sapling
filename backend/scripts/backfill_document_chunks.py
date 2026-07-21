@@ -39,7 +39,7 @@ load_dotenv(BASE / ".env.staging")
 sys.path.insert(0, str(BASE))
 
 from db.connection import table  # noqa: E402
-from services.chunker import chunk_document  # noqa: E402
+from services.chunker import chunk_for_category  # noqa: E402
 from services.rag_service import _embed_document, index_document_chunks  # noqa: E402
 from services.encryption import decrypt_if_present  # noqa: E402
 
@@ -76,7 +76,7 @@ def main() -> None:
         filters={"extracted_text": "is.null", "deleted_at": "is.null"},
     )
     docs = table("documents").select(
-        "id,file_name,user_id,offering_id,extracted_text",
+        "id,file_name,user_id,offering_id,extracted_text,category",
         filters={"extracted_text": "not.is.null", "deleted_at": "is.null"},
     )
 
@@ -117,7 +117,7 @@ def main() -> None:
             continue
 
         try:
-            chunks = chunk_document(extracted)
+            chunks = chunk_for_category(extracted, doc.get("category") or "other")
             if not chunks:
                 print("0 chunks (empty text)")
                 ok += 1
