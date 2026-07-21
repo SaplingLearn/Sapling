@@ -43,9 +43,12 @@ type Mode = "guide" | "cards";
 // A guide load can fail two ways that deserve different UI: the exam is gone
 // (normal — a deleted assignment, or a stale "recent guides" entry), or the
 // generation itself broke. Only the second one is worth a red toast.
+// The failed variant carries the ids it was built from: opening a recent guide
+// clears the exam selection, so the current selects are not a reliable retry
+// target.
 type GuideProblem =
   | { kind: "missing" }
-  | { kind: "failed"; message: string };
+  | { kind: "failed"; message: string; courseId: string; examId: string };
 
 type RawCard = {
   id: string;
@@ -212,7 +215,7 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
         setGuideProblem({ kind: "missing" });
       } else {
         const message = humanizeError(err, "Couldn't build that study guide.");
-        setGuideProblem({ kind: "failed", message });
+        setGuideProblem({ kind: "failed", message, courseId: cid, examId: eid });
         toast.error(message);
       }
     } finally {
@@ -354,8 +357,8 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
             action={
               <button
                 className="btn btn--sm btn--primary"
-                onClick={() => loadGuide(courseId, examId)}
-                disabled={!courseId || !examId}
+                onClick={() => loadGuide(guideProblem.courseId, guideProblem.examId)}
+                disabled={loadingGuide}
               >
                 Try again
               </button>
