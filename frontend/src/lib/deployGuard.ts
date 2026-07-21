@@ -6,7 +6,7 @@
  * `[env.staging.vars]` — staging API URLs and a `.staging.saplinglearn.com`
  * cookie domain — to the PROD worker (wrangler even warned it overrode the
  * worker name from "frontend-staging" back to "frontend"). Sign-in then broke
- * on saplinglearn.com: the middleware routed auth to the staging backend and
+ * on saplinglearn.com: the proxy routed auth to the staging backend and
  * the `sapling_session` cookie was scoped to `.staging`, so it never stuck.
  *
  * NEXT_PUBLIC_API_URL is inlined and the `/api` rewrite bakes BACKEND_URL at
