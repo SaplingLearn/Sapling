@@ -22,6 +22,7 @@ vi.mock("@/context/UserContext", () => ({
 vi.mock("@/lib/api", () => ({
   getCourses: vi.fn(),
   getGradebookSummary: vi.fn(),
+  getSemesters: vi.fn(),
 }));
 
 // Presentational children — stubbed so the test only exercises the landing's
@@ -41,10 +42,17 @@ vi.mock("@/components/Gradebook/CourseCard", () => ({
 }));
 
 import { GradebookLanding } from "./Landing";
-import { getCourses, getGradebookSummary } from "@/lib/api";
+import { getCourses, getGradebookSummary, getSemesters } from "@/lib/api";
+import type { Semester } from "@/lib/api";
 
 const mockedGetCourses = vi.mocked(getCourses);
 const mockedGetSummary = vi.mocked(getGradebookSummary);
+const mockedGetSemesters = vi.mocked(getSemesters);
+
+const SEMESTERS: Semester[] = [
+  { id: "spring-2025", term: "Spring", year: 2025, label: "Spring 2025", start_date: "2025-01-05", end_date: "2025-05-17", sort_key: 20251 },
+  { id: "fall-2024", term: "Fall", year: 2024, label: "Fall 2024", start_date: "2024-08-25", end_date: "2025-01-04", sort_key: 20243 },
+];
 
 function course(course_id: string, term: string): EnrolledCourse {
   return {
@@ -62,9 +70,18 @@ function course(course_id: string, term: string): EnrolledCourse {
   };
 }
 
+// The chips are the only aria-pressed controls on the page, so this reads
+// the rendered semester list — and its order — without depending on styling.
+const chipLabels = () =>
+  screen
+    .getAllByRole("button")
+    .filter((b) => b.getAttribute("aria-pressed") !== null)
+    .map((b) => b.textContent);
+
 beforeEach(() => {
   mockUser.userId = "u1";
   mockedGetSummary.mockResolvedValue({ courses: [] });
+  mockedGetSemesters.mockResolvedValue({ semesters: SEMESTERS });
 });
 
 afterEach(() => {
@@ -80,8 +97,39 @@ describe("GradebookLanding semester chips", () => {
 
     render(<GradebookLanding />);
 
-    expect(await screen.findByText("Fall 2024")).toBeInTheDocument();
-    expect(screen.getByText("Spring 2025")).toBeInTheDocument();
+    await screen.findByRole("button", { name: "Fall 2024" });
+    expect(chipLabels()).toEqual(["Spring 2025", "Fall 2024"]);
+  });
+
+  it("preselects the term today falls in, not just the newest one", async () => {
+    // Inside Fall 2024's range, which is NOT the highest sort_key.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2024, 9, 1));
+    try {
+      mockedGetCourses.mockResolvedValue({
+        courses: [course("bio", "Fall 2024"), course("psy", "Spring 2025")],
+      });
+
+      render(<GradebookLanding />);
+
+      const chip = await screen.findByRole("button", { name: "Fall 2024" });
+      expect(chipLabels()).toEqual(["Spring 2025", "Fall 2024"]);
+      expect(chip.getAttribute("aria-pressed")).toBe("true");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still orders the chips when /api/semesters fails", async () => {
+    mockedGetSemesters.mockRejectedValue(new Error("500"));
+    mockedGetCourses.mockResolvedValue({
+      courses: [course("bio", "Fall 2024"), course("psy", "Spring 2025")],
+    });
+
+    render(<GradebookLanding />);
+
+    await screen.findByRole("button", { name: "Fall 2024" });
+    expect(chipLabels()).toEqual(["Spring 2025", "Fall 2024"]);
   });
 
   it("never falls back to the demo chips for a signed-in user", async () => {
@@ -89,11 +137,10 @@ describe("GradebookLanding semester chips", () => {
 
     render(<GradebookLanding />);
 
-    await screen.findByText("Fall 2024");
+    await screen.findByRole("button", { name: "Fall 2024" });
     // SAMPLE_SEMESTERS — the logged-out preview. Leaking these into a real
     // account is the bug this file exists for.
-    expect(screen.queryByText("Spring 2026")).toBeNull();
-    expect(screen.queryByText("Fall 2025")).toBeNull();
+    expect(chipLabels()).toEqual(["Fall 2024"]);
   });
 
   it("fetches the gradebook summary for the resolved term", async () => {
@@ -128,8 +175,8 @@ describe("GradebookLanding semester chips", () => {
 
     render(<GradebookLanding />);
 
-    expect(await screen.findByText("Spring 2026")).toBeInTheDocument();
-    expect(screen.getByText("Fall 2025")).toBeInTheDocument();
+    await screen.findByRole("button", { name: "Spring 2026" });
+    expect(chipLabels()).toEqual(["Spring 2026", "Fall 2025"]);
     expect(mockedGetCourses).not.toHaveBeenCalled();
   });
 });

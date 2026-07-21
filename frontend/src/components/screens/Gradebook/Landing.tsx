@@ -9,7 +9,8 @@ import {
 } from "@/components/Gradebook/CourseCard";
 import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { useUser } from "@/context/UserContext";
-import { getGradebookSummary, getCourses } from "@/lib/api";
+import { getGradebookSummary, getCourses, getSemesters } from "@/lib/api";
+import { courseTermLabels, currentTerm } from "@/lib/semesters";
 import type { GradebookCourseSummary } from "@/lib/types";
 import { SyllabusUploadFlow } from "@/components/Gradebook/SyllabusUploadFlow";
 import { Button } from "@/components/ui";
@@ -112,12 +113,19 @@ export function GradebookLanding() {
       setTermsReady(true);
       return;
     }
-    getCourses(userId)
-      .then((res) => {
-        const all = res.courses ?? [];
-        const distinct = Array.from(new Set(all.map((c) => c.term).filter(Boolean)));
-        setSemesters(distinct);
-        setSelected(distinct[0] ?? "");
+    Promise.all([
+      getCourses(userId),
+      // The chips still work off the course terms alone if this 404s or the
+      // project has no terms seeded — sort_key just stops informing the order.
+      getSemesters().catch(() => ({ semesters: [] })),
+    ])
+      .then(([coursesRes, semestersRes]) => {
+        const all = coursesRes.courses ?? [];
+        const terms = semestersRes.semesters ?? [];
+        const labels = courseTermLabels(all, terms);
+        setSemesters(labels);
+        const preferred = currentTerm(terms)?.label;
+        setSelected(preferred && labels.includes(preferred) ? preferred : labels[0] ?? "");
         const colors: Record<string, string> = {};
         for (const c of all) {
           if (c.color) colors[c.course_id] = c.color;
