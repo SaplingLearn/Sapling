@@ -10,7 +10,6 @@ import {
 import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { useUser } from "@/context/UserContext";
 import { getGradebookSummary, getCourses } from "@/lib/api";
-import type { EnrolledCourse } from "@/lib/api";
 import type { GradebookCourseSummary } from "@/lib/types";
 import { SyllabusUploadFlow } from "@/components/Gradebook/SyllabusUploadFlow";
 import { Button } from "@/components/ui";
@@ -101,23 +100,24 @@ export function GradebookLanding() {
   const [courses, setCourses] = React.useState<GradebookCourseSummary[]>([]);
   const [colorMap, setColorMap] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
+  const [termsReady, setTermsReady] = React.useState(false);
   const [uploadOpen, setUploadOpen] = React.useState(false);
 
   React.useEffect(() => {
+    // SAMPLE_SEMESTERS is the logged-out marketing preview only. A signed-in
+    // user with no terms must see their own empty state, never demo chips.
     if (!userId) {
       setSemesters(SAMPLE_SEMESTERS);
       setSelected(SAMPLE_SEMESTERS[0]);
+      setTermsReady(true);
       return;
     }
     getCourses(userId)
       .then((res) => {
-        const all = res.courses as (EnrolledCourse & { semester?: string })[];
-        const distinct = Array.from(
-          new Set(all.map((c) => (c as any).semester).filter(Boolean)),
-        ) as string[];
-        const list = distinct.length ? distinct : SAMPLE_SEMESTERS;
-        setSemesters(list);
-        setSelected(list[0]);
+        const all = res.courses ?? [];
+        const distinct = Array.from(new Set(all.map((c) => c.term).filter(Boolean)));
+        setSemesters(distinct);
+        setSelected(distinct[0] ?? "");
         const colors: Record<string, string> = {};
         for (const c of all) {
           if (c.color) colors[c.course_id] = c.color;
@@ -125,13 +125,19 @@ export function GradebookLanding() {
         setColorMap(colors);
       })
       .catch(() => {
-        setSemesters(SAMPLE_SEMESTERS);
-        setSelected(SAMPLE_SEMESTERS[0]);
-      });
+        setSemesters([]);
+        setSelected("");
+      })
+      .finally(() => setTermsReady(true));
   }, [userId]);
 
   React.useEffect(() => {
-    if (!selected) return;
+    if (!termsReady) return;
+    if (!selected) {
+      setCourses([]);
+      setLoading(false);
+      return;
+    }
     if (!userId) {
       setCourses(SAMPLE_COURSES[selected] ?? []);
       setLoading(false);
@@ -146,7 +152,7 @@ export function GradebookLanding() {
         setCourses([]);
       })
       .finally(() => setLoading(false));
-  }, [userId, selected]);
+  }, [userId, selected, termsReady]);
 
   const gridRef = React.useRef<HTMLDivElement>(null);
 
