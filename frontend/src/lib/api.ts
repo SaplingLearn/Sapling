@@ -993,6 +993,23 @@ export const uploadAvatar = async (userId: string, file: File): Promise<{ avatar
   });
 };
 
+// ── Semesters ────────────────────────────────────────────────────────────────
+
+export interface Semester {
+  id: string;
+  term: string;
+  year: number;
+  label: string;
+  start_date: string;
+  end_date: string;
+  // year * 10 + term ordinal (Spring=1, Summer=2, Fall=3, Winter=4) — the
+  // canonical ordering key; the backend serves terms sort_key-descending.
+  sort_key: number;
+}
+
+export const getSemesters = () =>
+  fetchJSON<{ semesters: Semester[] }>('/api/semesters');
+
 // ── Gradebook ────────────────────────────────────────────────────────────────
 
 export const getGradebookSummary = (userId: string, semester: string) =>
