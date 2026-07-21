@@ -104,6 +104,15 @@ export function GradebookLanding() {
   const [termsReady, setTermsReady] = React.useState(false);
   const [uploadOpen, setUploadOpen] = React.useState(false);
 
+  // /gradebook?semester=<label> is how the dashboard archive deep-links into a
+  // past term. Read straight off location because useSearchParams() would need
+  // a Suspense boundary in the route shell, which this component doesn't own.
+  const [requestedTerm] = React.useState(() =>
+    typeof window === "undefined"
+      ? ""
+      : new URLSearchParams(window.location.search).get("semester") ?? "",
+  );
+
   React.useEffect(() => {
     // SAMPLE_SEMESTERS is the logged-out marketing preview only. A signed-in
     // user with no terms must see their own empty state, never demo chips.
@@ -124,7 +133,9 @@ export function GradebookLanding() {
         const terms = semestersRes.semesters ?? [];
         const labels = courseTermLabels(all, terms);
         setSemesters(labels);
-        const preferred = currentTerm(terms)?.label;
+        const preferred = labels.includes(requestedTerm)
+          ? requestedTerm
+          : currentTerm(terms)?.label;
         setSelected(preferred && labels.includes(preferred) ? preferred : labels[0] ?? "");
         const colors: Record<string, string> = {};
         for (const c of all) {
@@ -137,7 +148,7 @@ export function GradebookLanding() {
         setSelected("");
       })
       .finally(() => setTermsReady(true));
-  }, [userId]);
+  }, [userId, requestedTerm]);
 
   React.useEffect(() => {
     if (!termsReady) return;

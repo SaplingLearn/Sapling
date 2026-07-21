@@ -87,6 +87,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  window.history.replaceState({}, "", "/gradebook");
 });
 
 describe("GradebookLanding semester chips", () => {
@@ -118,6 +119,29 @@ describe("GradebookLanding semester chips", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("opens the term named by ?semester= so archived courses deep-link", async () => {
+    window.history.replaceState({}, "", "/gradebook?semester=Fall+2024");
+    mockedGetCourses.mockResolvedValue({
+      courses: [course("bio", "Fall 2024"), course("psy", "Spring 2025")],
+    });
+
+    render(<GradebookLanding />);
+
+    const chip = await screen.findByRole("button", { name: "Fall 2024" });
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    await waitFor(() => expect(mockedGetSummary).toHaveBeenCalledWith("u1", "Fall 2024"));
+  });
+
+  it("ignores a ?semester= the user is not enrolled in", async () => {
+    window.history.replaceState({}, "", "/gradebook?semester=Fall+1999");
+    mockedGetCourses.mockResolvedValue({ courses: [course("psy", "Spring 2025")] });
+
+    render(<GradebookLanding />);
+
+    const chip = await screen.findByRole("button", { name: "Spring 2025" });
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("still orders the chips when /api/semesters fails", async () => {
