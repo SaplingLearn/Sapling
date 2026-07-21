@@ -525,7 +525,8 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
       toast.success("Card deleted");
       await load();
     } catch (err) {
-      toast.error(`Delete failed: ${String(err)}`);
+      console.error("flashcard delete failed", err);
+      toast.error(humanizeError(err, "Couldn't delete that card."));
     }
   }, [card, userId, toast, load]);
 
@@ -560,7 +561,8 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
       await load();
       toast.success(`Added ${r.flashcards.length} new card${r.flashcards.length === 1 ? "" : "s"}.`);
     } catch (err) {
-      toast.error(`Generate failed: ${String(err)}`);
+      console.error("flashcard generate failed", err);
+      toast.error(humanizeError(err, "Couldn't generate cards right now."));
     } finally {
       setGenerating(false);
     }
