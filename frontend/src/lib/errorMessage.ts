@@ -92,3 +92,29 @@ export function extractErrorDetail(err: unknown): ErrorDetail {
 export function statusOf(err: unknown): number | undefined {
   return extractErrorDetail(err).status;
 }
+
+const STATUS_COPY: Record<number, string> = {
+  400: "That request wasn't valid. Check your selection and try again.",
+  401: "Your session expired — sign in again.",
+  403: "You don't have access to that.",
+  404: "We couldn't find that — it may have been deleted.",
+  408: "That took too long. Try again.",
+  409: "That changed somewhere else. Reload and try again.",
+  429: "Too many requests right now. Wait a moment and try again.",
+  500: "Something went wrong on our end. Try again in a moment.",
+};
+
+function statusCopy(status: number | undefined): string | undefined {
+  if (status === undefined) return undefined;
+  if (status in STATUS_COPY) return STATUS_COPY[status];
+  if (status >= 500) return "That's temporarily unavailable. Try again in a moment.";
+  return undefined;
+}
+
+/**
+ * A short sentence safe to put in a toast. Never returns `[object Object]`,
+ * a raw JSON body, or a stack trace — worst case it returns `fallback`.
+ */
+export function humanizeError(err: unknown, fallback: string): string {
+  return statusCopy(statusOf(err)) ?? fallback;
+}
