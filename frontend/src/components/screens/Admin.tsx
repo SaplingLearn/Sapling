@@ -395,7 +395,7 @@ function RolesTab() {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) 1fr", gap: 16 }}>
+    <div className="pane-split">
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div className="label-micro" style={{ marginBottom: 10 }}>Preview</div>
         <RoleProfilePreview
