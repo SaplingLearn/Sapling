@@ -1058,7 +1058,7 @@ def _index_document_chunks(
     is persisted, so it never blocks the SSE stream.
     """
     import time
-    from services.chunker import chunk_document
+    from services.chunker import chunk_for_category
     from services.rag_service import index_document_chunks
     from services.encryption import encrypt_if_present
 
@@ -1071,7 +1071,7 @@ def _index_document_chunks(
         )
         bu_course_id = (rows[0].get("course_code") or course_id) if rows else course_id
 
-        chunks = chunk_document(extracted_text)
+        chunks = chunk_for_category(extracted_text, category)
         if not chunks:
             return
 

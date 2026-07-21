@@ -50,7 +50,7 @@ class TestIndexDocumentChunks:
                     course_chunks_rows=[],  # no catalog embedding -> gate skipped
                 ),
             ),
-            patch("services.chunker.chunk_document", return_value=chunks) as mock_chunk,
+            patch("services.chunker.chunk_for_category", return_value=chunks) as mock_chunk,
             patch(
                 "services.rag_service.index_document_chunks", return_value=2
             ) as mock_index,
@@ -63,7 +63,7 @@ class TestIndexDocumentChunks:
                 category="lecture_notes",
             )
 
-        mock_chunk.assert_called_once_with("some extracted text")
+        mock_chunk.assert_called_once_with("some extracted text", "lecture_notes")
         mock_index.assert_called_once_with(
             course_code="BIO-101",
             doc_id="doc-1",
@@ -82,7 +82,7 @@ class TestIndexDocumentChunks:
                     course_chunks_rows=[],
                 ),
             ),
-            patch("services.chunker.chunk_document", return_value=[]),
+            patch("services.chunker.chunk_for_category", return_value=[]),
             patch("services.rag_service.index_document_chunks") as mock_index,
         ):
             _index_document_chunks(
@@ -94,3 +94,30 @@ class TestIndexDocumentChunks:
             )
 
         mock_index.assert_not_called()
+
+    def test_category_is_passed_to_chunker(self):
+        """The document's category must reach the chunker so prose docs get
+        the prose strategy."""
+        with (
+            patch(
+                "routes.documents.table",
+                side_effect=_mock_table_for(
+                    courses_rows=[{"course_code": "ENG-201"}],
+                    course_chunks_rows=[],
+                ),
+            ),
+            patch(
+                "services.chunker.chunk_for_category",
+                return_value=["one chunk of prose"],
+            ) as mock_chunk,
+            patch("services.rag_service.index_document_chunks", return_value=1),
+        ):
+            _index_document_chunks(
+                doc_id="doc-3",
+                course_id="course-uuid-1",
+                user_id="user-1",
+                extracted_text="an essay body",
+                category="assignment",
+            )
+
+        mock_chunk.assert_called_once_with("an essay body", "assignment")
