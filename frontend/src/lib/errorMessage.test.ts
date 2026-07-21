@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { extractErrorDetail, statusOf } from './errorMessage';
+import { extractErrorDetail, humanizeError, statusOf } from './errorMessage';
+
+const FALLBACK = "Couldn't load that.";
 
 describe('extractErrorDetail', () => {
   it('reads the detail out of a FastAPI error body', () => {
@@ -79,5 +81,38 @@ describe('statusOf', () => {
     expect(statusOf(new Error('{"detail":"Exam not found."}'))).toBeUndefined();
     expect(statusOf(null)).toBeUndefined();
     expect(statusOf(undefined)).toBeUndefined();
+  });
+});
+
+describe('humanizeError — status mapping', () => {
+  it('maps auth failures to sign-in / permission copy', () => {
+    expect(humanizeError('HTTP 401', FALLBACK)).toMatch(/sign in again/i);
+    expect(humanizeError('HTTP 403', FALLBACK)).toMatch(/access/i);
+  });
+
+  it('maps 404 to not-found copy', () => {
+    expect(humanizeError('HTTP 404', FALLBACK)).toMatch(/couldn't find/i);
+  });
+
+  it('maps 429 to rate-limit copy', () => {
+    expect(humanizeError('HTTP 429', FALLBACK)).toMatch(/too many requests/i);
+  });
+
+  it('maps 5xx to try-again-later copy', () => {
+    expect(humanizeError('HTTP 500', FALLBACK)).toMatch(/our end/i);
+    expect(humanizeError('HTTP 502', FALLBACK)).toMatch(/temporarily unavailable/i);
+    expect(humanizeError('HTTP 503', FALLBACK)).toMatch(/temporarily unavailable/i);
+    expect(humanizeError('HTTP 504', FALLBACK)).toMatch(/temporarily unavailable/i);
+  });
+
+  it('maps the remaining actionable 4xx codes', () => {
+    expect(humanizeError('HTTP 400', FALLBACK)).toMatch(/wasn't valid/i);
+    expect(humanizeError('HTTP 408', FALLBACK)).toMatch(/too long/i);
+    expect(humanizeError('HTTP 409', FALLBACK)).toMatch(/reload/i);
+  });
+
+  it('falls back for statuses with no dedicated copy', () => {
+    expect(humanizeError('HTTP 418', FALLBACK)).toBe(FALLBACK);
+    expect(humanizeError('HTTP 302', FALLBACK)).toBe(FALLBACK);
   });
 });
