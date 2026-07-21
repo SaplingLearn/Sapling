@@ -10,11 +10,10 @@ type MediaStore = {
 };
 
 /**
- * One store per breakpoint, so every consumer of the same breakpoint shares a
- * single `MediaQueryList` and a single listener instead of one per component.
- * `subscribe` must also be referentially stable across renders — a fresh
- * closure would make React tear down and re-establish the subscription on
- * every render.
+ * One store per breakpoint, so every consumer of that breakpoint evaluates the
+ * same `MediaQueryList` rather than allocating its own. Caching also keeps
+ * `subscribe` referentially stable — React tears down and re-establishes the
+ * subscription whenever that function identity changes.
  */
 const stores = new Map<number, MediaStore>();
 
