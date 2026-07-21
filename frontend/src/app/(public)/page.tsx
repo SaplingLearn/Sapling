@@ -292,7 +292,7 @@ export default function LandingPage() {
       glow.style.opacity = eased.toString();
     };
 
-    const onScroll = () => {
+    const applyScroll = () => {
       const sy = window.scrollY;
       if (heroContentRef.current && sy < window.innerHeight) {
         heroContentRef.current.style.transform = `translateY(${sy * -0.3}px)`;
@@ -303,10 +303,22 @@ export default function LandingPage() {
       lastSy = sy;
     };
 
-    document.addEventListener('mousemove', onMouse);
-    window.addEventListener('scroll', onScroll);
-    onScroll();
-    return () => { document.removeEventListener('mousemove', onMouse); window.removeEventListener('scroll', onScroll); };
+    // Scroll fires far more often than the compositor paints, and each call
+    // writes inline styles on three elements. Coalesce to one write per frame.
+    let queued = 0;
+    const onScroll = () => {
+      if (queued) return;
+      queued = requestAnimationFrame(() => { queued = 0; applyScroll(); });
+    };
+
+    document.addEventListener('mousemove', onMouse, { passive: true });
+    window.addEventListener('scroll', onScroll, { passive: true });
+    applyScroll();
+    return () => {
+      document.removeEventListener('mousemove', onMouse);
+      window.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(queued);
+    };
   }, []);
 
   // Floating cards parallax
