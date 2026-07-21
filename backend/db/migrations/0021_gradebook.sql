@@ -11,9 +11,9 @@ DROP TABLE IF EXISTS course_categories CASCADE;
 
 -- Per-course curve policy lives on the enrollment row (was user_courses.curve_*).
 ALTER TABLE enrollments
-    ADD COLUMN curve_mode       TEXT NOT NULL DEFAULT 'raw' CHECK (curve_mode IN ('raw','curved')),
-    ADD COLUMN curve_avg_target NUMERIC,
-    ADD COLUMN curve_sd_delta   NUMERIC;
+    ADD COLUMN IF NOT EXISTS curve_mode       TEXT NOT NULL DEFAULT 'raw' CHECK (curve_mode IN ('raw','curved')),
+    ADD COLUMN IF NOT EXISTS curve_avg_target NUMERIC,
+    ADD COLUMN IF NOT EXISTS curve_sd_delta   NUMERIC;
 
 CREATE TABLE gradebook_categories (
     id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,

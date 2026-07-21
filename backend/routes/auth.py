@@ -491,6 +491,14 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         on_conflict="user_id",
     )
 
+    # Local dev bypass (#364): auto-approve so a real Google sign-in doesn't hit the
+    # /pending wall. Strictly IS_LOCAL-gated (APP_ENV) — staging/prod keep the real
+    # approval gate and this can never approve a user there. Persisted to the DB row
+    # so /api/auth/me and the frontend see the approved state, not just this request.
+    if IS_LOCAL and not is_approved:
+        is_approved = True
+        table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
+
     if not is_approved:
         if popup_id:
             return _fail_redirect("not_approved")

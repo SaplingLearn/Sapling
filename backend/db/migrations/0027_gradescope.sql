@@ -7,8 +7,9 @@
 -- enrollments(id), because gradescope sync writes into a specific enrolled class's gradebook
 -- (assignments are now enrollment-scoped). Confirm this matches the intended picker UX.
 
--- Encrypted Gradescope credentials, one row per user. Unchanged from the original.
-CREATE TABLE gradescope_credentials (
+-- Encrypted Gradescope credentials, one row per user. Unchanged from the original
+-- (identical to the 0001 baseline shape), so IF NOT EXISTS keeps replay clean.
+CREATE TABLE IF NOT EXISTS gradescope_credentials (
     user_id            TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     auth_mode          TEXT NOT NULL DEFAULT 'password' CHECK (auth_mode IN ('password','cookies')),
     email_encrypted    TEXT,   -- 🔒
@@ -24,6 +25,9 @@ CREATE TABLE gradescope_credentials (
 );
 
 -- Per-enrollment link to a Gradescope course id (was per (user, courses.id)).
+-- Re-keyed from the baseline's (user_id, sapling_course_id) shape to enrollment_id,
+-- so drop the old-shape table first to let the chain replay cleanly from empty.
+DROP TABLE IF EXISTS gradescope_course_links CASCADE;
 CREATE TABLE gradescope_course_links (
     id                   TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     enrollment_id        TEXT NOT NULL REFERENCES enrollments(id) ON DELETE CASCADE,
