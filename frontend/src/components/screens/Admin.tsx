@@ -1056,7 +1056,7 @@ function AnalyticsTab() {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14 }}>
+      <div className="metric-grid">
         <MetricCard label="Users" value={totals.users} />
         <MetricCard label="Approved" value={totals.approved} accent />
         <MetricCard label="Pending" value={totals.pending} warn={totals.pending > 0} />
