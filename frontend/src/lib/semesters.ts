@@ -66,3 +66,51 @@ export function currentTerm(
   );
   return containing ?? byRank[0];
 }
+
+function rankIndex(semesters: Semester[] | null | undefined): Map<string, number> {
+  const index = new Map<string, number>();
+  for (const s of semesters ?? []) {
+    if (s.label) index.set(s.label, s.sort_key ?? 0);
+  }
+  return index;
+}
+
+function labelRank(label: string, index: Map<string, number>): number | null {
+  const known = index.get(label);
+  return known !== undefined ? known : termRankFromLabel(label);
+}
+
+// Most recent first; labels we can't rank at all sort to the end.
+function compareLabels(a: string, b: string, index: Map<string, number>): number {
+  const ra = labelRank(a, index);
+  const rb = labelRank(b, index);
+  if (ra !== null && rb !== null) return rb - ra || a.localeCompare(b);
+  if (ra !== null) return -1;
+  if (rb !== null) return 1;
+  return a.localeCompare(b);
+}
+
+/**
+ * Group courses by their term label, most recent term first.
+ *
+ * Ordering keys on each semester's `sort_key` when `semesters` is supplied and
+ * degrades to a label-derived rank otherwise. Courses with no term land in the
+ * `UNKNOWN_TERM_LABEL` bucket — never dropped. Order within a group is the
+ * caller's input order.
+ */
+export function groupCoursesByTerm(
+  courses: EnrolledCourse[] | null | undefined,
+  semesters?: Semester[] | null,
+): TermGroup[] {
+  const index = rankIndex(semesters);
+  const buckets = new Map<string, EnrolledCourse[]>();
+  for (const course of courses ?? []) {
+    const label = (course.term || "").trim() || UNKNOWN_TERM_LABEL;
+    const bucket = buckets.get(label);
+    if (bucket) bucket.push(course);
+    else buckets.set(label, [course]);
+  }
+  return Array.from(buckets, ([label, grouped]) => ({ label, courses: grouped })).sort(
+    (a, b) => compareLabels(a.label, b.label, index),
+  );
+}
