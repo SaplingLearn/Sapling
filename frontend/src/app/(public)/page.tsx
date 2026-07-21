@@ -28,6 +28,12 @@ const CLUSTER_INIT_POS = [
   { ox: -229, oy:   8, oz: -30 },
 ];
 
+/* The globals.css `prefers-reduced-motion` block only neutralizes CSS
+   animations and transitions. The hero's canvas and card RAF loops are JS and
+   have to opt out themselves, or a reduced-motion visitor keeps paying for a
+   60fps render they asked not to see. */
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
 export default function LandingPage() {
   const router = useRouter();
   const { userReady, isAuthenticated } = useUser();
@@ -129,7 +135,10 @@ export default function LandingPage() {
 
     let width = 0, height = 0;
     let rotAngle = 0;
-    let animId: number;
+    let animId = 0;
+
+    const reduceMotion = window.matchMedia(REDUCED_MOTION_QUERY);
+    let animating = !reduceMotion.matches;
 
     // #3e6f8a mirrors --info (globals.css); literal because canvas can't resolve var().
     const palette = [
@@ -180,6 +189,9 @@ export default function LandingPage() {
       canvas!.width = width * devicePixelRatio;
       canvas!.height = height * devicePixelRatio;
       ctx!.scale(devicePixelRatio, devicePixelRatio);
+      // Resizing clears the backing store. With the loop parked there's no
+      // next frame to repaint it, so repaint the static one here.
+      if (!animating) draw();
     }
     window.addEventListener('resize', resize);
     resize();
@@ -230,10 +242,26 @@ export default function LandingPage() {
       });
       ctx.globalAlpha = 1;
 
-      animId = requestAnimationFrame(draw);
+      if (animating) animId = requestAnimationFrame(draw);
     }
+
+    // Toggling the OS preference mid-session either parks the loop on a
+    // static frame or restarts it; `draw` self-schedules only when animating.
+    const onMotionPrefChange = () => {
+      const next = !reduceMotion.matches;
+      if (next === animating) return;
+      animating = next;
+      cancelAnimationFrame(animId);
+      draw();
+    };
+    reduceMotion.addEventListener('change', onMotionPrefChange);
+
     draw();
-    return () => { window.removeEventListener('resize', resize); cancelAnimationFrame(animId); };
+    return () => {
+      window.removeEventListener('resize', resize);
+      reduceMotion.removeEventListener('change', onMotionPrefChange);
+      cancelAnimationFrame(animId);
+    };
   }, []);
 
   // Mouse + scroll
