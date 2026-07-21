@@ -334,8 +334,8 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
         )}
         {courseId && !examId && !loadingExams && exams.length === 0 && (
           <EmptyHint
-            title="No exams found for this course"
-            body="Import a syllabus on the Calendar page, or add an assignment with type = Exam."
+            title="No exams for this course yet"
+            body="Study guides are built one exam at a time. Import a syllabus on the Calendar page, or add an assignment with type = Exam, and it'll show up here."
           />
         )}
         {courseId && !examId && exams.length > 0 && (
