@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { currentTerm, termRankFromLabel } from "./semesters";
-import type { Semester } from "./api";
+import {
+  UNKNOWN_TERM_LABEL,
+  currentTerm,
+  groupCoursesByTerm,
+  termRankFromLabel,
+} from "./semesters";
+import type { EnrolledCourse, Semester } from "./api";
 
 /**
  * The four terms seeded by migration 0019, verbatim. Keeping the real rows
@@ -13,6 +18,24 @@ const SEMESTERS: Semester[] = [
   { id: "spring-2026", term: "Spring", year: 2026, label: "Spring 2026", start_date: "2026-01-05", end_date: "2026-05-17", sort_key: 20261 },
   { id: "fall-2025", term: "Fall", year: 2025, label: "Fall 2025", start_date: "2025-08-25", end_date: "2026-01-04", sort_key: 20253 },
 ];
+
+function course(course_id: string, term: string): EnrolledCourse {
+  return {
+    enrollment_id: `e-${course_id}`,
+    course_id,
+    course_code: course_id.toUpperCase(),
+    course_name: course_id,
+    school: "BU",
+    department: "CS",
+    color: null,
+    nickname: null,
+    node_count: 0,
+    enrolled_at: "2026-01-01",
+    term,
+  };
+}
+
+const ids = (courses: EnrolledCourse[]) => courses.map((c) => c.course_id);
 
 describe("termRankFromLabel", () => {
   it("mirrors the sort_key formula (year * 10 + term ordinal)", () => {
@@ -85,5 +108,71 @@ describe("currentTerm", () => {
       { id: "x", term: "Fall", year: 2025, label: "Fall 2025", start_date: "", end_date: "", sort_key: 20253 },
     ] as Semester[];
     expect(currentTerm(partial, "2025-09-10")?.label).toBe("Fall 2025");
+  });
+});
+
+describe("groupCoursesByTerm", () => {
+  it("groups by term label, most recent term first", () => {
+    const groups = groupCoursesByTerm(
+      [course("a", "Fall 2025"), course("b", "Spring 2026"), course("c", "Fall 2025")],
+      SEMESTERS,
+    );
+    expect(groups.map((g) => g.label)).toEqual(["Spring 2026", "Fall 2025"]);
+    expect(ids(groups[1].courses)).toEqual(["a", "c"]);
+  });
+
+  it("preserves input order inside a group", () => {
+    const groups = groupCoursesByTerm(
+      [course("z", "Fall 2025"), course("a", "Fall 2025"), course("m", "Fall 2025")],
+      SEMESTERS,
+    );
+    expect(ids(groups[0].courses)).toEqual(["z", "a", "m"]);
+  });
+
+  it("buckets courses with an empty or whitespace term instead of dropping them", () => {
+    const groups = groupCoursesByTerm(
+      [course("a", "Spring 2026"), course("b", ""), course("c", "   ")],
+      SEMESTERS,
+    );
+    const other = groups.find((g) => g.label === UNKNOWN_TERM_LABEL);
+    expect(ids(other!.courses)).toEqual(["b", "c"]);
+    // Unrankable bucket sorts last.
+    expect(groups[groups.length - 1].label).toBe(UNKNOWN_TERM_LABEL);
+  });
+
+  it("keeps a course whose term field is missing entirely", () => {
+    const missing = { ...course("a", "") } as Partial<EnrolledCourse>;
+    delete missing.term;
+    const groups = groupCoursesByTerm([missing as EnrolledCourse], SEMESTERS);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBe(UNKNOWN_TERM_LABEL);
+  });
+
+  it("orders by label rank when no semesters are supplied", () => {
+    const groups = groupCoursesByTerm([
+      course("a", "Fall 2025"),
+      course("b", "Fall 2026"),
+      course("c", "Spring 2026"),
+    ]);
+    expect(groups.map((g) => g.label)).toEqual(["Fall 2026", "Spring 2026", "Fall 2025"]);
+  });
+
+  it("prefers the server sort_key over the label rank when they disagree", () => {
+    // A school whose 'Winter 2026' term genuinely precedes Spring 2026.
+    // Label parsing alone would rank Winter after Spring.
+    const custom: Semester[] = [
+      { id: "w", term: "Winter", year: 2026, label: "Winter 2026", start_date: "2026-01-02", end_date: "2026-01-20", sort_key: 20260 },
+      { id: "s", term: "Spring", year: 2026, label: "Spring 2026", start_date: "2026-01-21", end_date: "2026-05-17", sort_key: 20261 },
+    ];
+    const groups = groupCoursesByTerm(
+      [course("a", "Winter 2026"), course("b", "Spring 2026")],
+      custom,
+    );
+    expect(groups.map((g) => g.label)).toEqual(["Spring 2026", "Winter 2026"]);
+  });
+
+  it("returns an empty list for no courses", () => {
+    expect(groupCoursesByTerm([], SEMESTERS)).toEqual([]);
+    expect(groupCoursesByTerm(null, SEMESTERS)).toEqual([]);
   });
 });
