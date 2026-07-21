@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   UNKNOWN_TERM_LABEL,
+  courseTermLabels,
   currentTerm,
   groupCoursesByTerm,
   partitionCurrentAndArchive,
@@ -254,5 +255,29 @@ describe("partitionCurrentAndArchive", () => {
     expect(result.current.length + result.archive.reduce((n, g) => n + g.courses.length, 0)).toBe(
       enrolled.length,
     );
+  });
+});
+
+describe("courseTermLabels", () => {
+  it("dedupes and orders most recent first", () => {
+    const labels = courseTermLabels(
+      [
+        course("a", "Fall 2025"),
+        course("b", "Spring 2026"),
+        course("c", "Fall 2025"),
+        course("d", "Fall 2026"),
+      ],
+      SEMESTERS,
+    );
+    expect(labels).toEqual(["Fall 2026", "Spring 2026", "Fall 2025"]);
+  });
+
+  it("skips courses with no term — a chip for them would filter to nothing", () => {
+    expect(courseTermLabels([course("a", ""), course("b", "  ")], SEMESTERS)).toEqual([]);
+  });
+
+  it("still orders sensibly with no semesters payload", () => {
+    const labels = courseTermLabels([course("a", "Fall 2025"), course("b", "Spring 2026")]);
+    expect(labels).toEqual(["Spring 2026", "Fall 2025"]);
   });
 });

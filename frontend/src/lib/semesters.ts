@@ -115,6 +115,24 @@ export function groupCoursesByTerm(
   );
 }
 
+/**
+ * Distinct term labels off a course list, most recent first — the semester
+ * chips on the gradebook landing. Courses with no term contribute nothing;
+ * a chip for them would filter to an empty gradebook.
+ */
+export function courseTermLabels(
+  courses: EnrolledCourse[] | null | undefined,
+  semesters?: Semester[] | null,
+): string[] {
+  const index = rankIndex(semesters);
+  const labels = new Set<string>();
+  for (const course of courses ?? []) {
+    const label = (course.term || "").trim();
+    if (label) labels.add(label);
+  }
+  return Array.from(labels).sort((a, b) => compareLabels(a, b, index));
+}
+
 export type CoursePartition = {
   current: EnrolledCourse[];
   archive: TermGroup[];
