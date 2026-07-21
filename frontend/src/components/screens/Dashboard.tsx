@@ -25,6 +25,7 @@ import {
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { partitionCurrentAndArchive } from "@/lib/semesters";
 
 const QUOTES = [
   "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
@@ -349,6 +350,43 @@ export function Dashboard() {
       };
     });
   }, [courses, nodes]);
+
+  // Semester split (#140). Only courses that provably belong to an earlier term
+  // move behind the Archive; everything else — including undatable courses and
+  // the whole list when /api/semesters gave us nothing — stays visible.
+  const partition = React.useMemo(
+    () => partitionCurrentAndArchive(courses, semesters, today),
+    [courses, semesters, today],
+  );
+
+  const progressByCourse = React.useMemo(() => {
+    const byId = new Map<string, CourseProgressEntry>();
+    for (const entry of courseProgress) byId.set(entry.course.course_id, entry);
+    return byId;
+  }, [courseProgress]);
+
+  const currentProgress = React.useMemo(
+    () =>
+      partition.current
+        .map((c) => progressByCourse.get(c.course_id))
+        .filter((e): e is CourseProgressEntry => Boolean(e)),
+    [partition, progressByCourse],
+  );
+
+  const archivedProgress = React.useMemo(
+    () =>
+      partition.archive
+        .map((group) => ({
+          label: group.label,
+          entries: group.courses
+            .map((c) => progressByCourse.get(c.course_id))
+            .filter((e): e is CourseProgressEntry => Boolean(e)),
+        }))
+        .filter((group) => group.entries.length > 0),
+    [partition, progressByCourse],
+  );
+
+  const archivedCount = archivedProgress.reduce((n, g) => n + g.entries.length, 0);
 
   const suggestNode = React.useMemo(() => {
     if (!suggest) return null;
