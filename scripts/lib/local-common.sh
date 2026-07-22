@@ -93,4 +93,11 @@ migrate_reload_seed() {
 
   echo "▶ Seeding demo data…"
   ( cd backend && venv/bin/python -m db.seed_staging ) || { echo "✗ seed failed"; exit 1; }
+
+  # Optional rich local dataset (#363): opt-in via SEED_RICH=1.
+  if [ "${SEED_RICH:-0}" = "1" ]; then
+    echo "▶ Seeding rich local dataset (SEED_RICH=1)…"
+    ( cd backend && SUPABASE_DB_URL="$LOCAL_DB_URL" venv/bin/python -m db.seed_local_rich ) \
+      || { echo "✗ rich seed failed"; return 1; }
+  fi
 }
