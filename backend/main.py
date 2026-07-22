@@ -84,7 +84,44 @@ async def _lifespan(_app: FastAPI):
     # No shutdown hooks today.
 
 
+def _drop_request_arguments(_request, _attributes):
+    """request_attributes_mapper for instrument_fastapi: never log endpoint args.
+
+    FastAPI instrumentation otherwise records the parsed endpoint arguments —
+    the request body and query/path params — on the request span under
+    ``fastapi.arguments.values``. In Sapling those carry student content: chat
+    messages, note bodies, quiz answers, uploaded document text. That path is
+    NOT covered by the ``scrub_value`` callback (Logfire routes only a subset of
+    attributes through scrubbing, and a body field named e.g. ``body`` matches
+    no risky pattern), so the only safe move is to drop the arguments entirely.
+    Returning ``None`` tells Logfire to record no argument attributes at all.
+
+    We keep the method, route template, status, and latency — which is what the
+    request trace is actually for. (The full URL and rendered span message do
+    still carry the raw query string; Sapling query params are ids/enums plus a
+    couple of low-sensitivity search terms, never prompts/completions/document
+    text — see docs/observability-logging-tracking.md.)
+    """
+    return None
+
+
 app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
+
+# Emit a span per HTTP request (method, route, status, latency) so request
+# traces and errors show up in Logfire alongside the Pydantic AI agent spans.
+# Like configure()/instrument_pydantic_ai() above, this is always on but inert
+# without LOGFIRE_TOKEN (send_to_logfire="if-token-present").
+#
+# Egress safety (layered): request bodies/params are dropped via
+# _drop_request_arguments; request/response headers are not captured
+# (capture_headers=False); and the separate arguments/endpoint spans are off
+# (extra_spans=False). No student content leaves the process on request spans.
+logfire.instrument_fastapi(
+    app,
+    capture_headers=False,
+    extra_spans=False,
+    request_attributes_mapper=_drop_request_arguments,
+)
 
 if recost_api_key and RecostMiddleware is not None:
     app.add_middleware(

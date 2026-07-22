@@ -12,6 +12,12 @@ GOOGLE_AUTH_REDIRECT_URI = os.getenv("GOOGLE_AUTH_REDIRECT_URI", "http://localho
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 
+# Logfire ops/error/LLM tracing. Optional: unset = dormant (main.py configures
+# send_to_logfire="if-token-present", so no spans egress without it). Logfire's
+# SDK reads this env var itself; surfaced here only so all env access stays
+# visible through config.py.
+LOGFIRE_TOKEN = os.getenv("LOGFIRE_TOKEN", "")
+
 PORT = int(os.getenv("PORT", "5000"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
