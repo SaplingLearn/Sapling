@@ -24,6 +24,7 @@ logging.basicConfig(
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
+from routes.admin_analytics import router as admin_analytics_router
 from routes.newsletter import router as newsletter_router
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services.request_context import RequestIDMiddleware, current_request_id
@@ -168,6 +169,7 @@ app.include_router(careers.router,     prefix="/api/careers")
 app.include_router(onboarding.router,  prefix="/api/onboarding")
 app.include_router(profile_router,     prefix="/api/profile")
 app.include_router(admin_router,       prefix="/api/admin")
+app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
 app.include_router(newsletter_router,  prefix="/api/newsletter")
 app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")
