@@ -30,6 +30,11 @@ def pytest_configure(config):
         "e2e_staging: opt-in HTTP E2E against the REAL staging DB (writes a throwaway "
         "fixture). Bypasses the hermetic DB + auth fixtures; skipped unless RUN_STAGING_E2E=1.",
     )
+    config.addinivalue_line(
+        "markers",
+        "integration: opt-in tests against the REAL local Supabase stack (needs the "
+        "stack up + RUN_INTEGRATION=1). Bypasses the hermetic DB + auth fixtures.",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +65,7 @@ def _hermetic_supabase_client(request, monkeypatch):
     The opt-in `e2e_staging` test is the one exception: it intentionally talks to
     the real staging DB, so we leave the live client in place for it.
     """
-    if request.node.get_closest_marker("e2e_staging"):
+    if request.node.get_closest_marker("e2e_staging") or request.node.get_closest_marker("integration"):
         return
     import db.connection as dbconn
 
@@ -91,7 +96,7 @@ def _bypass_session_auth(request, monkeypatch):
     The opt-in `e2e_staging` test exercises the REAL auth path (it mints valid
     HMAC sessions and asserts 401 without one), so we leave the guard intact for it.
     """
-    if request.node.get_closest_marker("e2e_staging"):
+    if request.node.get_closest_marker("e2e_staging") or request.node.get_closest_marker("integration"):
         return
     from services import auth_guard
 
