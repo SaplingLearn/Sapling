@@ -82,7 +82,7 @@ export default function LandingPage() {
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
 
-  // If we landed here from an auth callback error or proxy redirect,
+  // If we landed here from an auth callback error or middleware redirect,
   // surface the message in the sign-in modal and clean the param from the URL.
   useEffect(() => {
     if (typeof window === 'undefined') return;

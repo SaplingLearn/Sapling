@@ -39,7 +39,7 @@ function redirectToSignin(request: NextRequest, errorCode?: string) {
   return NextResponse.redirect(u)
 }
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   const isProtected = PROTECTED.some(p => pathname.startsWith(p))
