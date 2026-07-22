@@ -98,6 +98,6 @@ migrate_reload_seed() {
   if [ "${SEED_RICH:-0}" = "1" ]; then
     echo "▶ Seeding rich local dataset (SEED_RICH=1)…"
     ( cd backend && SUPABASE_DB_URL="$LOCAL_DB_URL" venv/bin/python -m db.seed_local_rich ) \
-      || { echo "✗ rich seed failed"; return 1; }
+      || { echo "✗ rich seed failed"; exit 1; }
   fi
 }
