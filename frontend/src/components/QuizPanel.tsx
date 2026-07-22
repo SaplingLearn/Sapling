@@ -5,6 +5,13 @@ import { useRouter } from "next/navigation";
 import { CustomSelect } from "./CustomSelect";
 import { useToast } from "./ToastProvider";
 import { generateQuiz, submitQuiz } from "@/lib/api";
+import {
+  conceptOptionsForCourse,
+  courseOptions,
+  resolveInitialSelection,
+  type QuizConcept,
+  type QuizCourseInput,
+} from "@/lib/quizSelection";
 
 type Phase = "select" | "active" | "review" | "results";
 
@@ -40,6 +47,7 @@ interface QuizResult {
 interface QuizPanelProps {
   userId: string;
   concepts: ConceptOption[];
+  courses: QuizCourseInput[];
   initialConceptId?: string | null;
   onExit: () => void;
 }
@@ -57,12 +65,33 @@ const DIFFICULTY_OPTIONS = [
   { value: "adaptive", label: "Adaptive" },
 ];
 
-export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPanelProps) {
+export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit }: QuizPanelProps) {
   const router = useRouter();
   const toast = useToast();
 
+  // Normalize the incoming concepts to the helper's shape once. The picker
+  // choice (course → concept) is derived from this via quizSelection.
+  const normConcepts = useMemo<QuizConcept[]>(
+    () => concepts.map(c => ({
+      id: c.id,
+      name: c.name,
+      course_id: c.course_id ?? null,
+      course_code: c.course_code ?? null,
+    })),
+    [concepts],
+  );
+
+  // A deep link (?concept=/?topic=) preselects the concept AND its course so
+  // the concept dropdown is populated on arrival; otherwise the student picks
+  // a course first.
+  const initial = useMemo(
+    () => resolveInitialSelection(normConcepts, initialConceptId),
+    [normConcepts, initialConceptId],
+  );
+
   const [phase, setPhase] = useState<Phase>("select");
-  const [conceptId, setConceptId] = useState<string | null>(initialConceptId ?? concepts[0]?.id ?? null);
+  const [courseId, setCourseId] = useState<string | null>(initial.courseId);
+  const [conceptId, setConceptId] = useState<string | null>(initial.conceptId);
   const [count, setCount] = useState("5");
   const [difficulty, setDifficulty] = useState("medium");
 
@@ -142,13 +171,21 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
     router.push(`/learn?topic=${encodeURIComponent(concept)}&mode=socratic`);
   };
 
-  const conceptOptions = useMemo(
-    () => concepts.map(c => ({
-      value: c.id,
-      label: c.course_code ? `${c.course_code} — ${c.name}` : c.name,
-    })),
-    [concepts],
+  const courseOpts = useMemo(() => courseOptions(courses), [courses]);
+  const conceptOpts = useMemo(
+    () => conceptOptionsForCourse(normConcepts, courseId),
+    [normConcepts, courseId],
   );
+
+  // Switching course clears any concept that doesn't belong to the new course.
+  const onCourseChange = (nextCourseId: string) => {
+    setCourseId(nextCourseId);
+    setConceptId(prev =>
+      prev && normConcepts.some(c => c.id === prev && c.course_id === nextCourseId)
+        ? prev
+        : null,
+    );
+  };
 
   return (
     <div
@@ -166,20 +203,38 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
             <div className="label-micro" style={{ marginBottom: 4 }}>Quiz</div>
             <div className="h-serif" style={{ fontSize: 24 }}>Test what you know</div>
           </div>
-          <div>
-            <div className="label-micro" style={{ marginBottom: 6 }}>Concept</div>
-            {concepts.length === 0 ? (
-              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No concepts yet — learn something first.</div>
-            ) : (
-              <CustomSelect<string>
-                value={conceptId ?? ""}
-                options={conceptOptions}
-                onChange={v => setConceptId(v)}
-                style={{ width: "100%" }}
-                placeholder="Pick a concept…"
-              />
-            )}
-          </div>
+          {courses.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No courses yet — add a course first.</div>
+          ) : (
+            <>
+              <div>
+                <div className="label-micro" style={{ marginBottom: 6 }}>Course</div>
+                <CustomSelect<string>
+                  value={courseId ?? ""}
+                  options={courseOpts}
+                  onChange={onCourseChange}
+                  style={{ width: "100%" }}
+                  placeholder="Pick a course…"
+                />
+              </div>
+              <div>
+                <div className="label-micro" style={{ marginBottom: 6 }}>Concept</div>
+                <CustomSelect<string>
+                  value={conceptId ?? ""}
+                  options={conceptOpts}
+                  onChange={v => setConceptId(v)}
+                  style={{ width: "100%" }}
+                  disabled={!courseId}
+                  placeholder={!courseId ? "Pick a course first…" : "Pick a concept…"}
+                />
+                {courseId && conceptOpts.length === 0 && (
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+                    No concepts yet for this course — learn something first.
+                  </div>
+                )}
+              </div>
+            </>
+          )}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>Count</div>

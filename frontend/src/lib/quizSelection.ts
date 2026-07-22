@@ -1,0 +1,75 @@
+// Pure selection logic for the quiz picker's two-step flow: choose a course
+// first, then a concept within that course.
+//
+// This lives apart from QuizPanel so the branching that decides which courses
+// and concepts are offered can be unit-tested without rendering React. The old
+// picker built a single flat dropdown straight from graph concept nodes, which
+// (a) never surfaced enrolled courses that had no concept nodes yet and
+// (b) listed concepts with the same name under different courses side by side,
+// reading as duplicates. Splitting the choice into course → concept fixes both.
+
+export interface QuizConcept {
+  id: string;
+  name: string;
+  course_id: string | null;
+  course_code: string | null;
+}
+
+export interface QuizCourseInput {
+  course_id: string;
+  course_code: string;
+  course_name: string;
+  nickname?: string | null;
+}
+
+export interface SelectOption {
+  value: string;
+  label: string;
+}
+
+/** Human label for a course option: code plus the student's nickname or the
+ * catalog name, e.g. "CAS CS 330 — Intro to Algorithms". Falls back to the
+ * code alone when no name is available. */
+function courseLabel(course: QuizCourseInput): string {
+  const name = (course.nickname || course.course_name || "").trim();
+  const code = (course.course_code || "").trim();
+  if (code && name) return `${code} — ${name}`;
+  return code || name || "Course";
+}
+
+/** All enrolled courses as dropdown options, sorted by course code so the list
+ * is stable regardless of enrollment order. Every enrolled course is offered —
+ * the concept step handles courses that have no concepts yet. */
+export function courseOptions(courses: QuizCourseInput[]): SelectOption[] {
+  return courses
+    .map(c => ({ value: c.course_id, label: courseLabel(c) }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** Concepts belonging to `courseId`, as dropdown options. The label is the
+ * concept name alone — the course is already chosen, so prefixing the code
+ * would be redundant. Returns [] when no course is selected. */
+export function conceptOptionsForCourse(
+  concepts: QuizConcept[],
+  courseId: string | null,
+): SelectOption[] {
+  if (!courseId) return [];
+  return concepts
+    .filter(c => c.course_id === courseId)
+    .map(c => ({ value: c.id, label: c.name }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** Resolve the initial (course, concept) pair from a deep-linked concept id
+ * (e.g. arriving from a "Quiz me on X" link). When the concept is known we
+ * preselect its course too, so the concept dropdown is immediately populated.
+ * Unknown/absent ids leave both unset so the student picks a course first. */
+export function resolveInitialSelection(
+  concepts: QuizConcept[],
+  initialConceptId: string | null | undefined,
+): { courseId: string | null; conceptId: string | null } {
+  if (!initialConceptId) return { courseId: null, conceptId: null };
+  const match = concepts.find(c => c.id === initialConceptId);
+  if (!match) return { courseId: null, conceptId: null };
+  return { courseId: match.course_id, conceptId: match.id };
+}
