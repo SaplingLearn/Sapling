@@ -28,6 +28,7 @@ from config import (
     SESSION_SECRET,
     SECURE_COOKIES,
     IS_LOCAL,
+    APP_ENV,
     ALLOWED_EMAIL_DOMAINS,
 )
 from db.connection import table
@@ -45,6 +46,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Local-dev auto-approve fires ONLY for real local dev, NOT APP_ENV=test (which must
+# keep the #285 approval gate). So gate on APP_ENV=="local", not the broader IS_LOCAL.
+_LOCAL_AUTO_APPROVE = APP_ENV == "local"
 
 
 def _email_domain_allowed(email: str) -> bool:
@@ -449,7 +454,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         # with random nonces; equality lookups by plaintext email cannot match.
         # New sign-ins for users without a google_id always create a fresh row.
         user_id = f"user_{google_id}"
-        is_approved = False
+        is_approved = _LOCAL_AUTO_APPROVE
         from datetime import datetime as _dt, timezone as _tz
         # Upsert, not insert (#285). `user_id` is deterministic, so a *stub* row
         # can already occupy this id: `graph_service.ensure_user_exists` inserts
@@ -469,6 +474,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
             "email": encrypt_if_present(email),
             "google_id": google_id,
             "auth_provider": "google",
+            "is_approved": is_approved,
             "last_sign_in_at": _dt.now(_tz.utc).isoformat(),
         }, on_conflict="id")
         # Same hazard: user_profiles.user_id is the PK (0024), and a stub that
@@ -490,6 +496,15 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         },
         on_conflict="user_id",
     )
+
+    # Local dev bypass (#364): auto-approve so a real Google sign-in doesn't hit the
+    # /pending wall. Strictly gated on APP_ENV=="local" — staging/prod AND the test
+    # suite (APP_ENV=test) keep the real #285 approval gate and this can never approve
+    # a user there. Persisted to the DB row so /api/auth/me and the frontend see the
+    # approved state, not just this request.
+    if _LOCAL_AUTO_APPROVE and not is_approved:
+        is_approved = True
+        table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
 
     if not is_approved:
         if popup_id:

@@ -19,7 +19,6 @@ import {
   adminListRoleCosmetics, adminLinkRoleCosmetic, adminUnlinkRoleCosmetic,
   adminListAllowlist, adminApproveAllowlist, adminRevokeAllowlist,
   adminAuditLog, adminAnalyticsOverview,
-  IS_LOCAL_MODE,
 } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Role, Achievement, Cosmetic, CosmeticType, RarityTier, AchievementCategory, AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
@@ -33,7 +32,6 @@ const COSMETIC_TYPES: CosmeticType[] = ["avatar_frame", "banner", "name_color", 
 const COSMETIC_BUCKET = "cosmetic-assets";
 
 async function uploadCosmeticAsset(file: File): Promise<string> {
-  if (IS_LOCAL_MODE) return URL.createObjectURL(file);
   const ext = file.name.split(".").pop() || "png";
   const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const { error } = await supabase.storage.from(COSMETIC_BUCKET).upload(path, file, { cacheControl: "3600", upsert: false });

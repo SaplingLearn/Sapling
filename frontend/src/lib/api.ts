@@ -8,15 +8,9 @@ import type {
   Note, LinkedConcept,
 } from '@/lib/types';
 
-import { handleLocalRequest } from '@/lib/localData';
-
 export const API_URL = '';
-export const IS_LOCAL_MODE = process.env.NEXT_PUBLIC_LOCAL_MODE === 'true';
 
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
-  if (IS_LOCAL_MODE) {
-    return handleLocalRequest(path, options) as T;
-  }
   const res = await fetch(`${API_URL}${path}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -235,7 +229,6 @@ export const getAllAssignments = (userId: string) =>
   fetchJSON<{ assignments: Assignment[] }>(`/api/calendar/all/${userId}`);
 
 export const extractSyllabus = (formData: FormData, userId?: string): Promise<any> => {
-  if (IS_LOCAL_MODE) return Promise.resolve({ assignments: [] });
   if (userId) formData.set('user_id', userId);
   return fetch(`${API_URL}/api/calendar/extract`, { method: 'POST', body: formData, credentials: 'include' })
     .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(String(data?.detail || `HTTP ${r.status}`)); return data; });
@@ -405,7 +398,6 @@ export const uploadDocument = (formData: FormData, signal?: AbortSignal): Promis
   // Non-streaming JSON upload. Hits /upload/sync (legacy contract) so callers
   // that don't care about progress events stay one-line. The streaming /upload
   // route is exposed separately via uploadDocumentStream below.
-  if (IS_LOCAL_MODE) return Promise.resolve({ id: 'local-doc', status: 'processed' });
   return fetch(`${API_URL}/api/documents/upload/sync`, { method: 'POST', body: formData, signal, credentials: 'include' })
     .then(async r => { if (!r.ok) { const e = await r.text(); throw new Error(e || `HTTP ${r.status}`); } return r.json(); });
 };
@@ -427,10 +419,6 @@ export async function uploadDocumentStream(
   signal?: AbortSignal,
   requestId?: string,
 ): Promise<any> {
-  if (IS_LOCAL_MODE) {
-    onEvent({ type: 'status', step: 'done', message: 'Saved.' });
-    return { id: 'local-doc', status: 'processed' };
-  }
   const { streamSSE } = await import('./sse');
   let finalDoc: any = null;
   const headers: Record<string, string> = {};
@@ -921,7 +909,6 @@ export const submitJobApplication = async (data: {
   portfolio_link?: string;
   resume?: File | null;
 }): Promise<{ ok: boolean; id: string | null }> => {
-  if (IS_LOCAL_MODE) return { ok: true, id: null };
   const formData = new FormData();
   formData.append('position', data.position);
   formData.append('full_name', data.full_name);
@@ -964,7 +951,6 @@ function readFileAsBase64(file: File): Promise<string> {
 export const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
 export const uploadAvatar = async (userId: string, file: File): Promise<{ avatar_url: string }> => {
-  if (IS_LOCAL_MODE) return { avatar_url: URL.createObjectURL(file) };
   // Size-check BEFORE the base64 encode. Reading a 50 MB file just to
   // throw it out is wasted CPU + memory. Settings.tsx already
   // pre-checks size for the toast UX, but a future caller (admin

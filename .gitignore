@@ -42,6 +42,7 @@ backend/data/*.json
 .env.*
 !.env.example
 !.env.staging.example
+!.env.local.example
 
 # ---- OS ----
 .DS_Store

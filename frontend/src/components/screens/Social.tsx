@@ -11,7 +11,6 @@ import { SocialRoomsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
-import { IS_LOCAL_MODE } from "@/lib/api";
 import {
   getUserRooms,
   createRoom,
@@ -43,10 +42,9 @@ const EMOJI_50 = [
 ];
 
 function supabaseClient() {
-  if (IS_LOCAL_MODE) return null;
   if (typeof window === "undefined") return null;
   try {
-    // Lazy so local mode doesn't blow up.
+    // Lazy require so Supabase isn't pulled into the SSR bundle.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { getSupabase } = require("@/lib/supabase");
     return getSupabase();

@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
-import { IS_LOCAL_MODE } from "@/lib/api";
 import { useScrollLock } from "@/lib/useScrollLock";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -125,16 +124,11 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
 
   const signInWithGoogle = () => {
     setLocalError(null);
-    if (IS_LOCAL_MODE) {
-      setActiveUser("local-user-001", "Local Dev", "");
-      confirmApproved();
-      router.replace("/dashboard");
-      return;
-    }
-    if (!API_URL) {
-      setLocalError("google_not_configured");
-      return;
-    }
+
+    // An empty API_URL is the valid same-origin config (a cross-origin value
+    // drops the session cookie), so we don't guard against it here. The
+    // redirect below resolves to the same-origin path `/api/auth/google`,
+    // which Next.js proxies to the backend.
 
     // BroadcastChannel-based popup flow. We don't depend on window.opener:
     // COOP severs the opener handle the moment the popup hops to a
