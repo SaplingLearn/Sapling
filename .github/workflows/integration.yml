@@ -1,0 +1,35 @@
+name: integration (local supabase)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start Supabase
+        run: supabase start
+        working-directory: .
+      - name: Install deps
+        run: pip install -r requirements.txt
+      # Ordering is intentional: db.migrate reads SUPABASE_DB_URL inline and
+      # imports no encryption, so it runs before `cp .env.local.example .env`
+      # (which is what seed_local_rich needs for SUPABASE_URL + ENCRYPTION_KEY).
+      - name: Migrate + seed
+        run: |
+          SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres python -m db.migrate
+          cp .env.local.example .env
+          python -m db.seed_local_rich
+      - name: Run integration tests
+        run: RUN_INTEGRATION=1 python -m pytest -m integration -q

@@ -134,6 +134,32 @@ undecryptable locally. Requires the staging REST API (reachable over HTTPS) + `.
 creds; the direct DB is IPv6-only and unreachable from most machines. Surfaces in the app's
 course search (`/api/onboarding/courses?q=`). Source `SOURCE_ENV=.env.production` to pull from prod instead.
 
+## Rich local dataset (optional, #363)
+
+The default seed is a single demo user. For a broad, realistic dataset — multiple
+users in distinct states (regular, brand-new, pending-approval, admin), 6 courses
+across 3 terms, knowledge graphs at varied mastery, a full gradebook, study rooms,
+notes, documents, flashcards, quiz history, and tutor sessions — run:
+
+    python -m db.seed_local_rich          # idempotent; re-runnable; local-only (guarded)
+
+Or fold it into a full reset:
+
+    SEED_RICH=1 scripts/local-db-reset.sh # reset → migrate → seed_staging → seed_local_rich
+
+All ids are namespaced `rich-*`; encrypted columns use the local `ENCRYPTION_KEY`.
+The script refuses to run against a non-local `SUPABASE_URL`.
+
+## Integration tests (opt-in, #362)
+
+With the local stack up and `backend/.env` active, from `backend/`:
+
+    RUN_INTEGRATION=1 python -m pytest -m integration -q
+
+These bypass the hermetic mocks and hit the real local Supabase (real Postgres,
+encryption round-trips, migrated schema). Skipped by default. The suite seeds the
+rich dataset (idempotent) on first run and never resets your DB.
+
 ## Troubleshooting
 
 - **`supabase start` hangs on health checks** — usually the analytics/vector
