@@ -23,6 +23,9 @@ def record(table_name: str, created: bool) -> None:
 
 def exists_by(table_name: str, eq_filters: dict) -> bool:
     filters = {col: f"eq.{val}" for col, val in eq_filters.items()}
+    # Select a column drawn from the filter keys rather than a hardcoded "id":
+    # some tables (user_profiles, user_roles, room_members) have no `id`
+    # column, and a hardcoded select=id would 400 against them.
     select_col = next(iter(eq_filters))
     rows = table(table_name).select(select_col, filters=filters, limit=1) or []
     return len(rows) > 0

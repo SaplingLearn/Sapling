@@ -21,12 +21,14 @@ _ACTIVE = "rich-user-active"
 def test_db_roundtrip_write_read_delete():
     """A real insert → select → delete through db.connection.table()."""
     rid = "rich-it-school-roundtrip"
-    table("schools").upsert(
-        {"id": rid, "name": "IT Roundtrip", "slug": rid}, on_conflict="id"
-    )
-    rows = table("schools").select("id,slug", filters={"id": f"eq.{rid}"})
-    assert rows and rows[0]["slug"] == rid
-    table("schools").delete({"id": f"eq.{rid}"})
+    try:
+        table("schools").upsert(
+            {"id": rid, "name": "IT Roundtrip", "slug": rid}, on_conflict="id"
+        )
+        rows = table("schools").select("id,slug", filters={"id": f"eq.{rid}"})
+        assert rows and rows[0]["slug"] == rid
+    finally:
+        table("schools").delete({"id": f"eq.{rid}"})
     assert table("schools").select("id", filters={"id": f"eq.{rid}"}) == []
 
 
@@ -34,24 +36,28 @@ def test_encryption_roundtrip_text_and_numeric():
     """Write encrypted → read raw → decrypt; both text and numeric paths."""
     nid = "rich-it-note-enc"
     secret = "integration-secret-body-✓"
-    table("notes").upsert(
-        {
-            "id": nid,
-            "user_id": _ACTIVE,
-            "offering_id": "rich-off-cs101-s26",
-            "title": encrypt_if_present("IT note"),
-            "body": encrypt_if_present(secret),
-            "tags": ["it"],
-        },
-        on_conflict="id",
-    )
-    raw = table("notes").select("body", filters={"id": f"eq.{nid}"})[0]["body"]
-    assert raw != secret                       # stored ciphertext, not plaintext
-    assert decrypt_if_present(raw) == secret   # round-trips back
-    # numeric path via decrypt_numeric
-    enc_points = encrypt_if_present("87.5")
-    assert decrypt_numeric(enc_points) == 87.5
-    table("notes").delete({"id": f"eq.{nid}"})
+    try:
+        table("notes").upsert(
+            {
+                "id": nid,
+                "user_id": _ACTIVE,
+                "offering_id": "rich-off-cs101-s26",
+                "title": encrypt_if_present("IT note"),
+                "body": encrypt_if_present(secret),
+                "tags": ["it"],
+            },
+            on_conflict="id",
+        )
+        raw = table("notes").select("body", filters={"id": f"eq.{nid}"})[0]["body"]
+        assert raw != secret                       # stored ciphertext, not plaintext
+        assert decrypt_if_present(raw) == secret   # round-trips back
+        # numeric path via decrypt_numeric — this is the unit-level check; the
+        # real DB numeric round-trip is covered end-to-end by
+        # test_route_e2e_gradebook_decrypt_numeric.
+        enc_points = encrypt_if_present("87.5")
+        assert decrypt_numeric(enc_points) == 87.5
+    finally:
+        table("notes").delete({"id": f"eq.{nid}"})
 
 
 def test_route_e2e_auth_me(client, anon_client):

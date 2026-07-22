@@ -374,6 +374,10 @@ _ASSIGNMENTS = [
      "Chapter 3 Reading Quiz", "2025-09-22", "reading", "manual", "20", "16"),
     ("rich-asg-eng-su26-essay", ENR_ACTIVE_ENG_SU26, "rich-cat-eng-su26-proj",
      "Essay Draft: Rhetorical Analysis", "2026-08-15", "other", "manual", "100", None),
+    # Graded + past-due so the only curved enrollment (ENG150, curve_mode="curved")
+    # has at least one gradable data point to exercise curve computation.
+    ("rich-asg-eng-su26-journal1", ENR_ACTIVE_ENG_SU26, "rich-cat-eng-su26-proj",
+     "Journal Entry 1: Reflection", "2026-06-20", "homework", "manual", "20", "18"),
 ]
 
 
