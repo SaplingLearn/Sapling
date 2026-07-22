@@ -134,6 +134,16 @@ undecryptable locally. Requires the staging REST API (reachable over HTTPS) + `.
 creds; the direct DB is IPv6-only and unreachable from most machines. Surfaces in the app's
 course search (`/api/onboarding/courses?q=`). Source `SOURCE_ENV=.env.production` to pull from prod instead.
 
+## Integration tests (opt-in, #362)
+
+With the local stack up and `backend/.env` active, from `backend/`:
+
+    RUN_INTEGRATION=1 python -m pytest -m integration -q
+
+These bypass the hermetic mocks and hit the real local Supabase (real Postgres,
+encryption round-trips, migrated schema). Skipped by default. The suite seeds the
+rich dataset (idempotent) on first run and never resets your DB.
+
 ## Troubleshooting
 
 - **`supabase start` hangs on health checks** — usually the analytics/vector
