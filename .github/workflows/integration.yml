@@ -1,0 +1,35 @@
+name: integration (local supabase)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/integration.yml'
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start Supabase
+        run: supabase start
+        working-directory: .
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Migrate + seed
+        run: |
+          SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres python -m db.migrate
+          cp .env.local.example .env
+          python -m db.seed_local_rich
+      - name: Run integration tests
+        run: RUN_INTEGRATION=1 python -m pytest -m integration -q
