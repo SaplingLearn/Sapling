@@ -27,7 +27,7 @@ function QuizInner() {
   const { userId, userReady } = useUser();
 
   const [concepts, setConcepts] = useState<Concept[]>([]);
-  const [, setCourses] = useState<EnrolledCourse[]>([]);
+  const [courses, setCourses] = useState<EnrolledCourse[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -96,6 +96,7 @@ function QuizInner() {
           <QuizPanel
             userId={userId}
             concepts={concepts}
+            courses={courses}
             initialConceptId={initialConceptId}
             onExit={() => router.push("/learn")}
           />
