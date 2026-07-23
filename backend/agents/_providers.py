@@ -27,6 +27,7 @@ from config import GEMINI_API_KEY
 
 if TYPE_CHECKING:  # keep pydantic-ai's function-model imports out of the prod path
     from pydantic_ai.messages import ModelMessage, ModelResponse
+    from pydantic_ai.models import Model
     from pydantic_ai.models.function import AgentInfo
 
 
@@ -112,7 +113,6 @@ _provider = GoogleProvider(api_key=GEMINI_API_KEY or "dummy-key-for-import")
 # `BaseApiClient` and needs no hermetic-guard exemption. If a change ever makes
 # function mode reach the transport, `test_function_mode_rides_above_transport_
 # guard` fails — that is the design invariant, not an accident.
-ModelMode = Literal["real", "function", "cassette"]
 
 # task -> handler(messages, info) -> ModelResponse. Consulted ONLY in function
 # mode (off by default), so it can never affect production or the default lane.
@@ -139,17 +139,13 @@ def register_function_handler(task: AgentTask, handler: FunctionModelHandler) ->
     _FUNCTION_HANDLERS[task] = handler
 
 
-def unregister_function_handler(task: AgentTask) -> None:
-    _FUNCTION_HANDLERS.pop(task, None)
-
-
 def clear_function_handlers() -> None:
     """Drop all registered handlers. Tests call this around each case so
     process-global registrations never leak between them."""
     _FUNCTION_HANDLERS.clear()
 
 
-def _function_model_for(task: AgentTask) -> GoogleModel:
+def _function_model_for(task: AgentTask) -> "Model":
     """Build a FunctionModel that dispatches to the task's registered handler at
     run time. The lookup is deferred to the call (not capture time) so a handler
     registered after the agent was imported still takes effect."""
@@ -165,12 +161,10 @@ def _function_model_for(task: AgentTask) -> GoogleModel:
             )
         return handler(messages, info)
 
-    # Typed as GoogleModel for the shared return signature; FunctionModel is a
-    # pydantic-ai Model like GoogleModel and agents accept either.
-    return FunctionModel(_dispatch, model_name=f"function:{task}")  # type: ignore[return-value]
+    return FunctionModel(_dispatch, model_name=f"function:{task}")
 
 
-def model_for(task: AgentTask) -> GoogleModel:
+def model_for(task: AgentTask) -> "Model":
     """Return the configured model for a given pipeline task.
 
     Dispatches on SAPLING_MODEL_MODE (default 'real'). In real mode, reads the
