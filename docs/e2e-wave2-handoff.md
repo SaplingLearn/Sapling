@@ -21,6 +21,40 @@ Work the next wave of epic #402 (E2E Regression Suite) in the Sapling repo: **#3
 
 **Parallelism:** #391 and #397 touch disjoint files — run them as two parallel subagents in worktrees branched from `origin/main`. #398 waits for #397.
 
+## Skills and tooling to use
+
+**Committed in this repo — these will resolve in any environment, including a cloud session:**
+
+- **`/sync-context`** — run it at session start. `CLAUDE.md` explicitly calls for this before agent-building work, and **#391 is agent-building work**, so this is not optional here.
+- **`context-curator` subagent** (`.claude/agents/context-curator.md`) — read-only; returns a focused digest of prior decisions and constraints from `docs/decisions/`, `docs/attempts/`, and `docs/architecture.md`. Its own description says to use it proactively before anything touching architecture, agents, or LLM integration. Dispatch it before designing the #391 seam.
+- **`/recall <query>`** — searches the dev-context vault. Faster than grepping when you are asking "have we tried this before".
+- **`/log-decision <title>`** — write an ADR when you make an architectural call. The `SAPLING_MODEL_MODE` seam in #391 is a genuine architectural decision and should get one.
+- **`/log-attempt`** — record approaches that did not work in `docs/attempts/`. #398 is expected to produce dead ends; capture them so the next person does not repeat them.
+
+**Plugin skills — use if they resolve in your environment, and do the equivalent by hand if they do not:**
+
+- **`superpowers:test-driven-development`** before writing implementation code. This lane is about tests that actually prove something, so the red-green discipline is the point, not ceremony.
+- **`superpowers:dispatching-parallel-agents`** for the #391 ∥ #397 fan-out.
+- **`superpowers:using-git-worktrees`** for isolation between those two.
+- **`superpowers:systematic-debugging`** when #398 starts surfacing real failures — resist pattern-matching a fix before you understand the cause.
+- **`superpowers:verification-before-completion`** before any "this is done" claim.
+- **`superpowers:requesting-code-review`** / **`/code-review`** at the end of the wave. If `/code-review` is unavailable, do it manually: fan out several independent review agents over the cumulative diff (CLAUDE.md compliance, bug scan, git history, prior PR feedback, comment adherence), then adversarially confidence-check each finding and discard anything that turns out to be pre-existing or unverifiable.
+
+If a skill turns out to be wrong for the situation, you are not obliged to follow it — but read it before deciding that.
+
+## Working autonomously
+
+Run this wave to completion without checking in for permission. The work is already scoped by the issues; you do not need sign-off to execute it.
+
+- **Do not ask "shall I proceed?" or "want me to…?"** For reversible work that follows from this brief — writing code, opening PRs, running tests, merging a green PR, filing follow-up issues — just do it and report afterward.
+- **Stop only for** genuinely destructive actions (force-pushing shared branches, dropping data, rewriting published history), or a real scope change the issues do not cover.
+- **Do not end a turn with a plan, a question, or a promise.** If your last paragraph is "next I'll…", do that thing now instead. Retry after errors and gather missing information yourself rather than handing the problem back.
+- **CI failures are yours to fix.** Diagnose and resolve them; do not report a red PR as finished work. If CI never triggers on a PR, close and reopen it to force a run. Wave 1 hit both of these.
+- **Do not stop because the session is long.** Context gets summarized automatically; keep going.
+- **When you finish a unit, move to the next one** — #391 and #397 in parallel, then #398 once #397 merges, then the wave-level code review.
+
+Report at the end: what merged, the test-count delta against the 1034 baseline, what you found, and anything a human genuinely needs to decide.
+
 ## How to build this right
 
 This epic exists because 1034 tests currently pass against `MagicMock` DB stubs that agree with whatever the caller asserts. The failure mode you are fighting is **a test that passes without proving anything**. Everything below follows from that.
