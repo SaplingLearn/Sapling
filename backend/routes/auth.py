@@ -17,8 +17,13 @@ import time as _time
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel, Field, ValidationError
 
+# The module (not just its constants) so request-time gates can read the LIVE
+# value of APP_ENV / SECURE_COOKIES / SESSION_SECRET instead of an import-time
+# snapshot. See _test_auth_enabled below.
+import config
 from config import (
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
@@ -34,6 +39,7 @@ from config import (
 from db.connection import table
 from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
 from services.auth_guard import get_session_user_id
+from services.session_tokens import SESSION_COOKIE_NAME, mint_session
 
 try:
     from google_auth_oauthlib.flow import Flow
@@ -50,6 +56,33 @@ router = APIRouter()
 # Local-dev auto-approve fires ONLY for real local dev, NOT APP_ENV=test (which must
 # keep the #285 approval gate). So gate on APP_ENV=="local", not the broader IS_LOCAL.
 _LOCAL_AUTO_APPROVE = APP_ENV == "local"
+
+# ── Test-only session minting (#381) ──────────────────────────────────────────
+# The APP_ENVs in which POST /api/auth/test-login exists at all.
+#
+# DELIBERATELY NARROWER than config.IS_LOCAL ({local, development, dev, test}).
+# This endpoint mints a valid session for an ARBITRARY user id with no credential
+# whatsoever, so its blast radius is "full account takeover of every account" if
+# it is ever reachable. `development`/`dev` are plausible values for a real
+# shared deploy's APP_ENV, and IS_LOCAL is used for unrelated, far less dangerous
+# relaxations (unsigned OAuth-state fallback, SESSION_SECRET strength check), so
+# widening later by reusing IS_LOCAL would silently arm this too. `local` is the
+# developer's own machine and `test` is the pytest/CI harness; nothing else.
+TEST_AUTH_ENVS = frozenset({"local", "test"})
+
+TEST_LOGIN_DEFAULT_TTL_SECONDS = 3600
+TEST_LOGIN_MAX_TTL_SECONDS = 86400
+
+
+def _test_auth_enabled() -> bool:
+    """Whether POST /api/auth/test-login is available in this environment.
+
+    Evaluated per REQUEST off the live `config` module attribute — never captured
+    at import time. That makes the gate monkeypatchable (so the 404-under-
+    production behaviour is actually testable) and means no import-ordering
+    accident can freeze it in the open position.
+    """
+    return (getattr(config, "APP_ENV", "") or "").strip().lower() in TEST_AUTH_ENVS
 
 
 def _email_domain_allowed(email: str) -> bool:
@@ -525,15 +558,18 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
     # second round-trip. The frontend exchanges it for the real, long-lived
     # `sapling_session` cookie (see _REDIRECT_TOKEN_TTL_SECONDS above) — it is
     # NOT the session itself, so it expires quickly.
+    #
+    # Uses the shared minter (#381). Byte-for-byte identical to the inline code
+    # it replaces — same payload key order, same json.dumps separators, same
+    # HMAC — so no behaviour changes here; only the TTL differs from a session,
+    # and that is passed explicitly. The `if SESSION_SECRET` guard is kept (and
+    # the secret passed explicitly) so this path still degrades to "no
+    # auth_token in the redirect" rather than raising, exactly as before.
     auth_token = ""
     if SESSION_SECRET:
-        payload = json.dumps(
-            {"user_id": user_id, "exp": int(_time.time()) + _REDIRECT_TOKEN_TTL_SECONDS}
-        ).encode()
-        payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
-        sig_bytes = _hmac.new(SESSION_SECRET.encode(), payload_b64.encode(), hashlib.sha256).digest()
-        sig_b64 = base64.urlsafe_b64encode(sig_bytes).decode().rstrip("=")
-        auth_token = f"{payload_b64}.{sig_b64}"
+        auth_token = mint_session(
+            user_id, ttl=_REDIRECT_TOKEN_TTL_SECONDS, secret=SESSION_SECRET
+        )
 
     params = urlencode({
         "user_id": user_id,
@@ -553,3 +589,111 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         path="/",
     )
     return resp
+
+
+# ── POST /api/auth/test-login ─────────────────────────────────────────────────
+
+
+class MintTestSessionBody(BaseModel):
+    """Body of POST /api/auth/test-login."""
+
+    user_id: str = Field(min_length=1, max_length=255)
+    ttl: int | None = Field(
+        default=None,
+        description="Session lifetime in seconds; clamped to [30, 86400].",
+    )
+
+
+@router.post("/test-login", include_in_schema=False)
+async def mint_test_session(request: Request):
+    """Mint a `sapling_session` cookie for a seeded user. LOCAL/TEST ONLY (#381).
+
+    `GET /api/auth/dev-login` was removed and real Google OAuth cannot be driven
+    headlessly, so the pytest integration suite and Playwright's global setup need
+    a sanctioned way to obtain a session. This is that seam — and nothing more:
+    it is NOT a sign-in flow, it is not browser-facing, and it must never be
+    linked from the frontend.
+
+    SECURITY
+    - Hard-gated on `APP_ENV in {"local", "test"}` (see TEST_AUTH_ENVS), read at
+      request time. Anywhere else this returns a plain 404 with the stock
+      "Not Found" body — deliberately not 403, so the endpoint does not even
+      advertise that it exists. `include_in_schema=False` keeps it out of
+      /openapi.json in every environment for the same reason.
+    - It performs NO credential check by design; the environment gate is the only
+      thing standing between a caller and an arbitrary account. That is why the
+      allowlist is two exact strings rather than the broader `config.IS_LOCAL`.
+    - It does not touch the database: it neither creates users nor grants
+      approval/roles, so a token minted for a non-seeded id authenticates as an
+      account that does not exist and gets nowhere.
+
+    Returns the token in the JSON body as well as in the cookie, so a Playwright
+    global-setup step can inject it with `context.addCookies()` instead of
+    replaying the response.
+    """
+    # The gate runs FIRST, before the body is even looked at. The body is parsed
+    # and validated by hand rather than declared as a `MintTestSessionBody`
+    # parameter precisely for this: FastAPI validates declared body params
+    # *before* entering the handler, so in production a malformed body would have
+    # answered 422 — and a 422 from a path that "does not exist" is exactly the
+    # disclosure the 404 is there to prevent. Now every request shape gets the
+    # same stock 404 outside local/test.
+    if not _test_auth_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    try:
+        raw = await request.json()
+    except Exception:
+        raw = None
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=422, detail="Body must be a JSON object.")
+    try:
+        body = MintTestSessionBody.model_validate(raw)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]}
+                for e in exc.errors()
+            ],
+        )
+
+    user_id = body.user_id.strip()
+    if not user_id:
+        raise HTTPException(status_code=422, detail="user_id must not be blank")
+
+    secret = (getattr(config, "SESSION_SECRET", "") or "").strip()
+    if not secret:
+        # config.validate_config() relaxes the SESSION_SECRET requirement for
+        # IS_LOCAL, so local dev can legitimately have none. Fail loudly instead
+        # of handing back a token _decode_session would reject anyway.
+        raise HTTPException(
+            status_code=500,
+            detail="SESSION_SECRET is not configured; cannot mint a test session.",
+        )
+
+    requested = TEST_LOGIN_DEFAULT_TTL_SECONDS if body.ttl is None else body.ttl
+    ttl = max(30, min(int(requested), TEST_LOGIN_MAX_TTL_SECONDS))
+    token = mint_session(user_id, ttl=ttl, secret=secret)
+
+    logger.warning("test-login: minted a session for %r (APP_ENV=%s)", user_id, config.APP_ENV)
+
+    response = JSONResponse({
+        "ok": True,
+        "user_id": user_id,
+        "cookie_name": SESSION_COOKIE_NAME,
+        "token": token,
+        "expires_in": ttl,
+    })
+    # Same attributes the real session cookie carries (frontend BFF
+    # /api/auth/session and the OAuth-state cookie above).
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=ttl,
+        httponly=True,
+        secure=bool(getattr(config, "SECURE_COOKIES", False)),
+        samesite="lax",
+        path="/",
+    )
+    return response

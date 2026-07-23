@@ -93,6 +93,30 @@ The backend `SESSION_SECRET` **must equal** `frontend/.env.local`'s. Signing in 
 Google creates *your* user (`user_<google-id>`) — a fresh account that goes through
 onboarding — not the seeded `seed-user-demo`; the seed is reference/sample data.
 
+### Automated tests: `POST /api/auth/test-login` (#381)
+
+Google OAuth cannot be driven headlessly, so test harnesses use a separate,
+**test-only** seam instead of a sign-in flow:
+
+```bash
+curl -si -X POST http://localhost:5000/api/auth/test-login \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id": "seed-user-demo"}'
+```
+
+It sets the `sapling_session` cookie (same flags as the real session) **and**
+returns the token in the JSON body, so a Playwright `globalSetup` can inject it
+with `context.addCookies([{ name: 'sapling_session', value: token, url: … }])`
+and pytest can just keep the `TestClient` cookie jar. Optional `ttl` (seconds,
+clamped to `[30, 86400]`) overrides the 1-hour default.
+
+It mints a session for whatever `user_id` you name and performs **no** credential
+check — the only thing protecting it is the environment gate. It exists **only**
+when `APP_ENV` is exactly `local` or `test` (narrower than `IS_LOCAL`, which also
+covers `development`/`dev`); everywhere else it returns a plain `404 Not Found`
+and it is absent from `/openapi.json` in all environments. It does not create
+users, so the `user_id` must already be seeded (`python -m db.seed_local_rich`).
+
 ## Env files
 
 - `backend/.env` — the default env, so `python main.py`, `db.migrate`, and

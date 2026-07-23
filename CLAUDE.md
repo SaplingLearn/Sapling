@@ -20,7 +20,8 @@ A FastAPI + Supabase backend that ingests student documents, calls Gemini to cla
 - backend/routes/quiz.py:1 — quiz session create/answer/score endpoints.
 - backend/routes/notes.py:32 — `/api/notes` notetaker CRUD, concept link/unlink, and agent actions (`summarize`/`extract-concepts`/`chat`/`send-to-tutor`/`generate-quiz`).
 - backend/routes/academics.py — `/api` terms/offerings/enrollments endpoints over the redesigned schema.
-- backend/routes/auth.py:1 — Google OAuth + HMAC session token issuance.
+- backend/routes/auth.py:1 — Google OAuth + HMAC session token issuance; also `POST /api/auth/test-login`, the local/test-only session minter for pytest + Playwright (404s unless `APP_ENV in {local, test}`).
+- backend/services/session_tokens.py — canonical `mint_session` / `SESSION_COOKIE_NAME`; the only place the `sapling_session` wire format is built.
 - backend/services/academics.py — term/offering/enrollment resolver (`current_term`/`list_terms`/`resolve_offering`/`offering_course_id`/`user_offering_ids_for_course`/`term_for_offering`); the API boundary keeps the abstract `course_id`.
 - backend/services/profiles.py — `get_display_name`/`get_display_names`, decrypting the name off `user_profiles`.
 - backend/services/gemini_service.py:64 — `call_gemini` plain-text call (LLM seam being deprecated).

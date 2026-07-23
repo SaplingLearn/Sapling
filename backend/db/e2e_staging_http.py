@@ -11,22 +11,17 @@ Run (from backend/, staging env):
 """
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import importlib
-import json
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi.testclient import TestClient
 
-from config import SESSION_SECRET
 from db.connection import table
 from services.encryption import encrypt_if_present
+from services.session_tokens import SESSION_COOKIE_NAME, mint_session
 from main import app
 
 # Deterministic default keeps the run idempotent + self-healing (a re-run reclaims a
@@ -51,16 +46,6 @@ def check(name: str, ok: bool, detail: str = "") -> None:
     """Record + print a PASS/FAIL line. Journeys call this for every assertion."""
     _results.append((name, bool(ok)))
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f"  -> {detail}" if detail else ""))
-
-
-def mint_session(user_id: str, ttl: int = 3600) -> str:
-    """Mint a session token exactly as services/auth_guard._decode_session verifies:
-    `<payload_b64>.<sig_b64>`, payload {user_id, exp}, HMAC-SHA256 over payload_b64."""
-    payload = {"user_id": user_id, "exp": int(time.time()) + ttl}
-    pb = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-    sig = hmac.new(SESSION_SECRET.encode(), pb.encode(), hashlib.sha256).digest()
-    sb = base64.urlsafe_b64encode(sig).decode().rstrip("=")
-    return f"{pb}.{sb}"
 
 
 def current_term_id() -> str | None:
@@ -91,7 +76,7 @@ def setup_fixture() -> None:
         {"user_id": USER_ID, "name": encrypt_if_present("E2E User"),
          "first_name": encrypt_if_present("E2E"), "last_name": encrypt_if_present("User")},
         on_conflict="user_id")
-    client.cookies.set("sapling_session", mint_session(USER_ID))
+    client.cookies.set(SESSION_COOKIE_NAME, mint_session(USER_ID))
 
 
 def teardown_fixture() -> None:

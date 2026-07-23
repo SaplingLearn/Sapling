@@ -4,12 +4,7 @@ Runs ONLY when RUN_INTEGRATION=1 and SUPABASE_URL is local. Loads backend/.env
 with override so the seed's ENCRYPTION_KEY / SESSION_SECRET / SUPABASE_* win over
 the root conftest's hermetic test defaults (else decryption silently mismatches).
 """
-import base64
-import hashlib
-import hmac
-import json
 import os
-import time
 from pathlib import Path
 
 import pytest
@@ -28,13 +23,14 @@ def _is_local() -> bool:
 
 
 def mint_session(user_id: str, ttl: int = 3600) -> str:
-    """Mint a sapling_session token exactly as auth_guard._decode_session verifies."""
-    from config import SESSION_SECRET
-    payload = {"user_id": user_id, "exp": int(time.time()) + ttl}
-    pb = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-    sig = hmac.new(SESSION_SECRET.encode(), pb.encode(), hashlib.sha256).digest()
-    sb = base64.urlsafe_b64encode(sig).decode().rstrip("=")
-    return f"{pb}.{sb}"
+    """Mint a sapling_session token via the canonical minter (#381).
+
+    Thin wrapper, not a re-implementation: the import stays function-local so
+    `config` is not imported at module scope, which would freeze SESSION_SECRET /
+    ENCRYPTION_KEY before the `load_dotenv(override=True)` above has run.
+    """
+    from services.session_tokens import mint_session as _mint_session
+    return _mint_session(user_id, ttl)
 
 
 @pytest.fixture(scope="session", autouse=True)
