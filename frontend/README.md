@@ -23,6 +23,12 @@ npm run lint        # eslint
 npm run typecheck   # tsc --noEmit
 ```
 
+Browser-test hooks: the six surfaces the Playwright suite drives (sign-in, the
+approval gate, the upload modal, the tutor composer, the quiz answer flow, the
+graph container) carry `data-testid` attributes. Naming rules, the current
+inventory, and the ESLint rule that keeps new controls from drifting are in
+`docs/frontend-testids.md`.
+
 Deployed to Cloudflare Workers via OpenNext:
 
 ```bash

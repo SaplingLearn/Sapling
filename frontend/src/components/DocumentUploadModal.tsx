@@ -286,6 +286,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       }}
     >
       <div
+        data-testid="upload-modal"
         onClick={e => e.stopPropagation()}
         className="card slide-up"
         style={{ width: "min(720px, 100%)", maxHeight: "88vh", overflow: "hidden", padding: 0, display: "flex", flexDirection: "column" }}
@@ -295,13 +296,14 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             <div className="label-micro">Upload</div>
             <div className="h-serif" style={{ fontSize: 20 }}>Add course materials</div>
           </div>
-          <button className="btn btn--ghost btn--sm" onClick={handleClose} aria-label="Close">
+          <button data-testid="upload-modal-close" className="btn btn--ghost btn--sm" onClick={handleClose} aria-label="Close">
             <Icon name="x" size={14} />
           </button>
         </div>
 
         <div style={{ padding: 20, overflowY: "auto" }}>
           <div
+            data-testid="upload-modal-dropzone"
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
             onDrop={e => {
@@ -322,9 +324,10 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
               PDF, DOCX, PPTX · max 100 MB each
             </div>
-            <label className="btn btn--primary btn--sm">
+            <label data-testid="upload-modal-browse" className="btn btn--primary btn--sm">
               <Icon name="up" size={12} /> Browse
               <input
+                data-testid="upload-modal-file-input"
                 type="file"
                 multiple
                 accept=".pdf,.docx,.pptx"
@@ -341,6 +344,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             <div style={{ marginTop: 16 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>+ Add a course</div>
               <input
+                data-testid="upload-modal-course-search"
                 value={courseQuery}
                 onChange={e => setCourseQuery(e.target.value)}
                 placeholder="Search a course to add"
@@ -355,6 +359,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                   {courseResults.map(c => (
                     <button
                       key={c.id}
+                      data-testid={`upload-modal-course-result-${c.id}`}
                       disabled={addingCourse}
                       onClick={() => addCourseInline(c)}
                       style={{
@@ -376,9 +381,10 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             {items.length === 0 && (
               <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Files you add will appear here.</div>
             )}
-            {items.map(item => (
+            {items.map((item, idx) => (
               <div
                 key={item.id}
+                data-testid={`upload-modal-file-row-${idx}`}
                 className="card"
                 style={{ padding: 14, marginBottom: 10, display: "flex", flexDirection: "column", gap: 10 }}
               >
@@ -400,6 +406,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                   </div>
                   <StatusBadge status={item.status} />
                   <button
+                    data-testid={`upload-modal-file-remove-${idx}`}
                     className="btn btn--ghost btn--sm"
                     disabled={item.status === "uploading"}
                     onClick={() => {
@@ -430,13 +437,13 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                         options={CATEGORY_OPTIONS}
                         ariaLabel="Category"
                       />
-                      <button className="btn btn--ghost btn--sm" onClick={() => reanalyze(item)}>
+                      <button data-testid={`upload-modal-file-reanalyze-${idx}`} className="btn btn--ghost btn--sm" onClick={() => reanalyze(item)}>
                         <Icon name="sparkle" size={12} /> Re-analyze
                       </button>
                     </>
                   )}
                   {(item.status === "error" || item.status === "aborted") && (
-                    <button className="btn btn--ghost btn--sm" onClick={() => retry(item)}>
+                    <button data-testid={`upload-modal-file-retry-${idx}`} className="btn btn--ghost btn--sm" onClick={() => retry(item)}>
                       <Icon name="sparkle" size={12} /> Retry
                     </button>
                   )}
@@ -472,6 +479,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                     <span>Reference: {item.requestId.slice(0, 8)}…</span>
                     <button
                       type="button"
+                      data-testid={`upload-modal-file-copy-request-id-${idx}`}
                       onClick={() => {
                         const rid = item.requestId || "";
                         if (navigator.clipboard) {
@@ -499,11 +507,12 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             {activeUploads > 0 && ` · ${activeUploads} uploading`}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn--ghost btn--sm" onClick={handleClose}>Cancel</button>
+            <button data-testid="upload-modal-cancel" className="btn btn--ghost btn--sm" onClick={handleClose}>Cancel</button>
             {allFinished ? (
-              <button className="btn btn--sm btn--primary" onClick={done}>Done</button>
+              <button data-testid="upload-modal-done" className="btn btn--sm btn--primary" onClick={done}>Done</button>
             ) : (
               <button
+                data-testid="upload-modal-submit"
                 className="btn btn--sm btn--primary"
                 disabled={items.length === 0 || items.every(i => i.status !== "pending")}
                 onClick={startAll}

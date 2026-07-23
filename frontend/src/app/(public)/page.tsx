@@ -413,7 +413,7 @@ export default function LandingPage() {
             <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: 'var(--brand-forest)', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Sapling</span>
           </button>
           <div className="flex items-center">
-            <button onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--text-dim)] hover:text-[var(--text)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
+            <button data-testid="signin-trigger" onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--text-dim)] hover:text-[var(--text)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
             <Button variant="primary" size="lg" style={{ padding: '6px 14px' }} onClick={startOnboarding}>
               Get Started
             </Button>

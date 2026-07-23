@@ -228,8 +228,10 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
         role="dialog"
         aria-modal="true"
         aria-label="Sign in to Sapling"
+        data-testid="signin-modal"
       >
         <button
+          data-testid="signin-close"
           onClick={close}
           aria-label="Close dialog"
           style={{
@@ -262,7 +264,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
         </p>
 
         {errorMessage && (
-          <div style={{
+          <div data-testid="signin-error" style={{
             marginTop: 20,
             background: "rgba(220,38,38,0.08)",
             color: "#b91c1c",
@@ -277,6 +279,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
 
         <button
           type="button"
+          data-testid="signin-google-button"
           onClick={signInWithGoogle}
           disabled={waiting}
           style={{
@@ -314,6 +317,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
         {waiting && (
           <button
             type="button"
+            data-testid="signin-cancel"
             onClick={cancelSignIn}
             style={{
               marginTop: 10,
