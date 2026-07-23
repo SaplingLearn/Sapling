@@ -8,6 +8,11 @@ Also installs an autouse fixture that bypasses session auth for tests so
 they can exercise route logic without minting real HMAC tokens. The bypass
 is test-only and lives entirely inside conftest.py — production code is
 unaffected.
+
+Two autouse hermetic guards keep the default lane offline: no test may reach
+real Supabase (`_hermetic_supabase_client`, #210) or a real model
+(`_hermetic_llm_transport`, #379). The `e2e_staging`, `integration` and
+`live_llm` markers are the documented opt-outs.
 """
 import sys
 import os
@@ -34,6 +39,11 @@ def pytest_configure(config):
         "markers",
         "integration: opt-in tests against the REAL local Supabase stack (needs the "
         "stack up + RUN_INTEGRATION=1). Bypasses the hermetic DB + auth fixtures.",
+    )
+    config.addinivalue_line(
+        "markers",
+        "live_llm: this test deliberately calls a REAL model (billable). Bypasses the "
+        "hermetic LLM fixture; pair it with a skipif so it only runs when a key is set.",
     )
 
 
@@ -80,6 +90,86 @@ def _hermetic_supabase_client(request, monkeypatch):
     for verb in ("get", "post", "patch", "delete"):
         getattr(fake_client, verb).side_effect = _empty_response
     monkeypatch.setattr(dbconn, "_client", fake_client)
+
+
+class UnstubbedLLMEgress(RuntimeError):
+    """Raised by `_hermetic_llm_transport` when a test reaches the LLM network."""
+
+
+# Every google-genai call — unary, streaming, sync, async, plus the File API's
+# upload/download side channels — bottoms out in one of these BaseApiClient
+# methods. We patch the CLASS, not an instance: several modules build a
+# module-level `genai.Client` at import time (services/rag_service.py,
+# services/gemini_service.py, and pydantic-ai's GoogleProvider in
+# agents/_providers.py), so instance-level patching would miss whichever client
+# was already constructed. Names are probed with hasattr so a google-genai bump
+# that drops a private helper degrades gracefully instead of erroring.
+_GENAI_EGRESS_METHODS = (
+    # Public transport entry points (stable across google-genai majors).
+    "request", "request_streamed", "async_request", "async_request_streamed",
+    # Lower-level chokepoints, in case a public wrapper is ever bypassed.
+    "_request", "_request_once", "_async_request", "_async_request_once",
+    # File API paths that skip the request pipeline and drive httpx directly.
+    "upload_file", "async_upload_file", "download_file", "async_download_file",
+    "_upload_fd", "_async_upload_fd",
+)
+# If these ever stop existing the guard has silently become a no-op, which is
+# worse than no guard at all — fail loudly instead.
+_GENAI_REQUIRED_METHODS = ("request", "async_request")
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_llm_transport(request, monkeypatch):
+    """Hermetic safety net (#379): no test may make a real LLM call.
+
+    The sibling `_hermetic_supabase_client` guarantees the default lane never
+    touches Supabase; this is the same guarantee for Gemini. Without it, a
+    forgotten `patch(...)` plus a `GEMINI_API_KEY` in the environment (CI sets a
+    dummy one, dev machines have a real one) turns a unit test into a real,
+    billable network call — silently, since a passing test looks identical
+    either way. Rather than stub agent logic, we cut the wire underneath it:
+    the google-genai transport class raises instead of dialling out, so an
+    unstubbed call path fails with a pointed error naming the escape hatch.
+
+    The opt-in lanes are the exceptions: `e2e_staging` and `integration` talk to
+    real infrastructure, and `live_llm` marks the handful of tests (see
+    test_ocr_pipeline.py) that deliberately exercise a live model.
+    """
+    if (
+        request.node.get_closest_marker("e2e_staging")
+        or request.node.get_closest_marker("integration")
+        or request.node.get_closest_marker("live_llm")
+    ):
+        return
+    from google.genai import _api_client as genai_api_client
+
+    def _blocked(*_args, **_kwargs):
+        raise UnstubbedLLMEgress(
+            "unstubbed LLM egress: this test reached the google-genai transport "
+            "(google.genai._api_client.BaseApiClient) and would have made a real, "
+            "billable model call. Patch the service/agent seam the code path uses "
+            "(e.g. services.gemini_service.call_gemini, <agent>.run, "
+            "services.rag_service._client), or mark the test @pytest.mark.live_llm "
+            "if the live call is intentional."
+        )
+
+    # Lets tests assert the guard is installed without invoking it.
+    _blocked._sapling_llm_guard = True
+
+    patched = []
+    for name in _GENAI_EGRESS_METHODS:
+        if hasattr(genai_api_client.BaseApiClient, name):
+            monkeypatch.setattr(genai_api_client.BaseApiClient, name, _blocked)
+            patched.append(name)
+
+    missing = [n for n in _GENAI_REQUIRED_METHODS if n not in patched]
+    if missing:  # pragma: no cover - only trips on a google-genai API change
+        raise RuntimeError(
+            f"hermetic LLM guard could not patch {missing} on "
+            "google.genai._api_client.BaseApiClient — the installed google-genai "
+            "moved its transport seam. Update _GENAI_EGRESS_METHODS in "
+            "tests/conftest.py; do not leave the suite unguarded."
+        )
 
 
 @pytest.fixture(autouse=True)

@@ -17,10 +17,16 @@ import pytest
 # The integration tests below hit live Gemini + Supabase. The agent-path
 # unit tests in TestExtractAssignmentsViaAgent are fully mocked, so they
 # run without GEMINI_API_KEY — gate per-test rather than at the module.
+#
+# `live_llm` (#379) is what exempts them from the autouse hermetic LLM guard in
+# conftest.py; the skipif alone is not enough, because a *skipif* is invisible
+# to `request.node.get_closest_marker`. Both are needed: the marker lets the
+# real call through, the skipif keeps it from being attempted without a key.
 _requires_gemini = pytest.mark.skipif(
     not os.getenv("GEMINI_API_KEY"),
     reason="OCR/Gemini integration tests require GEMINI_API_KEY",
 )
+_live_llm = pytest.mark.live_llm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -44,6 +50,7 @@ Quiz 4: OOP Basics                  Due: March 28, 2026
 TEST_USER = "user_andres"
 
 
+@_live_llm
 @_requires_gemini
 def test_agent_parse():
     print("\n[1] Testing agent parsing from raw text...")
@@ -63,6 +70,7 @@ def parsed_assignments():
     return result.get("assignments", [])
 
 
+@_live_llm
 @_requires_gemini
 def test_save_to_db(parsed_assignments):
     print("\n[2] Testing save_assignments_to_db()...")
@@ -89,6 +97,7 @@ def test_save_to_db(parsed_assignments):
         print(f"      • {r['title']} | {r['due_date']} | {r['assignment_type']}")
 
 
+@_live_llm
 @_requires_gemini
 def test_full_pipeline():
     print("\n[3] Testing process_and_save_syllabus() full pipeline with a text/plain file...")
