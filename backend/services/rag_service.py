@@ -17,8 +17,13 @@ from db.connection import rpc, table
 # grounding indefinitely — retrieve_chunks() runs inline on the request path.
 _HTTP_TIMEOUT_MS = 60_000
 
+# `genai.Client(api_key="")` raises ValueError at construction, so a missing
+# GEMINI_API_KEY would break `import main` (routes/quiz.py and routes/learn.py
+# both pull this module in). Fall back to a dummy key the same way
+# services/gemini_service.py and agents/_providers.py do: imports stay clean and
+# the failure surfaces at call time, where it's actionable.
 _client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY", ""),
+    api_key=os.getenv("GEMINI_API_KEY", "") or "dummy-key-for-import",
     http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS),
 )
 _EMBED_MODEL = "gemini-embedding-001"
