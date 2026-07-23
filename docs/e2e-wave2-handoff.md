@@ -46,7 +46,7 @@ If a skill turns out to be wrong for the situation, you are not obliged to follo
 
 Run this wave to completion without checking in for permission. The work is already scoped by the issues; you do not need sign-off to execute it.
 
-- **Do not ask "shall I proceed?" or "want me to…?"** For reversible work that follows from this brief — writing code, opening PRs, running tests, merging a green PR, filing follow-up issues — just do it and report afterward.
+- **Do not ask "shall I proceed?" or "want me to…?"** For reversible work that follows from this brief — writing code, opening PRs, running tests, merging a PR that is both green and reviewed, filing follow-up issues — just do it and report afterward.
 - **Stop only for** genuinely destructive actions (force-pushing shared branches, dropping data, rewriting published history), or a real scope change the issues do not cover.
 - **Do not end a turn with a plan, a question, or a promise.** If your last paragraph is "next I'll…", do that thing now instead. Retry after errors and gather missing information yourself rather than handing the problem back.
 - **CI failures are yours to fix.** Diagnose and resolve them; do not report a red PR as finished work. If CI never triggers on a PR, close and reopen it to force a run. Wave 1 hit both of these.
@@ -84,4 +84,11 @@ Read `CLAUDE.md` at the repo root. Load-bearing ones here: all Supabase access t
 
 ## Process
 
-Branch from `origin/main`, not from whatever HEAD happens to be. One PR per unit, conventional-commit messages, ending with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`. CI must be fully green before merging — including `Backend (pytest)`; do not merge on a partial check list, and if CI never triggers, close/reopen the PR to force it. At the end of the wave, pull and run `/code-review` over the cumulative range.
+Branch from `origin/main`, not from whatever HEAD happens to be. One PR per unit, conventional-commit messages, ending with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+
+**Two gates before any merge, in this order:**
+
+1. **CI fully green** — including `Backend (pytest)`. Do not merge on a partial check list. If CI never triggers, close and reopen the PR to force a run.
+2. **Code review invoked and clean** — run `/code-review` (or the manual fan-out described above) **on each PR before merging it**, not after. A review that runs once everything is already on `main` cannot stop a bad change; it can only document one. Address or explicitly dismiss every finding, with a stated reason for each dismissal, before the merge.
+
+Only then merge. At the end of the wave, run one more review over the cumulative range — that pass is for interactions *between* the merged PRs, and it is in addition to the per-PR reviews, not a substitute for them.
