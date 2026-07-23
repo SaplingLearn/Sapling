@@ -12,11 +12,12 @@ import time as _time
 from fastapi import HTTPException, Request
 from config import SESSION_SECRET
 from db.connection import table
+from services.session_tokens import SESSION_COOKIE_NAME
 
 
 def _decode_session(request: Request) -> dict:
     """Extract and verify the session token from query params or cookies."""
-    token = request.query_params.get("auth_token") or request.cookies.get("sapling_session")
+    token = request.query_params.get("auth_token") or request.cookies.get(SESSION_COOKIE_NAME)
     if not token or not SESSION_SECRET:
         raise HTTPException(status_code=401, detail="Not authenticated")
 

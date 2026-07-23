@@ -1,9 +1,11 @@
 """
 Cross-service session-token contract (#168).
 
-The backend never sets the `sapling_session` cookie itself — the frontend
-session BFF mints it (30-day `SESSION_MAX_AGE`) in a format that must stay
-compatible with what `auth_guard._decode_session` verifies. These tests assert
+In every deployed environment the backend never sets the `sapling_session`
+cookie itself — the frontend session BFF mints it (30-day `SESSION_MAX_AGE`) in
+a format that must stay compatible with what `auth_guard._decode_session`
+verifies. (The one exception is `POST /api/auth/test-login`, gated to
+`APP_ENV in {local, test}`; see test_auth_test_login.py.) These tests assert
 the backend accepts a long-lived token in that format (so sessions do NOT die at
 5 minutes) and rejects expired/tampered ones.
 
@@ -36,15 +38,21 @@ def _mint(user_id: str, ttl_seconds: int, secret: str) -> str:
     """Mint a token in the shape both services use:
     base64url(no pad) JSON {"user_id","exp"} . base64url(HMAC-SHA256(payload_b64)).
 
-    This mirrors the *backend* mint (routes/auth.py) byte-for-byte. It is close
-    to, but not byte-identical with, the frontend's signSession: Python's
-    json.dumps emits `{"user_id": "x", "exp": 1}` (with spaces) where JS
-    JSON.stringify emits `{"user_id":"x","exp":1}` (without). That difference is
-    immaterial to the contract under test — the verifier HMACs the received
-    `payload_b64` opaquely and never re-serializes the payload — but it does mean
-    this helper is a third Python re-implementation of the format, so these tests
-    prove a *Python-minted* token is accepted, not a real frontend-minted one.
-    See the ADR follow-ups for the shared-fixture idea that would close that gap.
+    This mirrors the *backend* mint (services/session_tokens.mint_session)
+    byte-for-byte. It is close to, but not byte-identical with, the frontend's
+    signSession: Python's json.dumps emits `{"user_id": "x", "exp": 1}` (with
+    spaces) where JS JSON.stringify emits `{"user_id":"x","exp":1}` (without).
+    That difference is immaterial to the contract under test — the verifier HMACs
+    the received `payload_b64` opaquely and never re-serializes the payload — but
+    it does mean this helper is a Python re-implementation of the format, so
+    these tests prove a *Python-minted* token is accepted, not a real
+    frontend-minted one. See the ADR follow-ups for the shared-fixture idea that
+    would close that gap.
+
+    Kept deliberately independent of session_tokens.mint_session even after #381
+    unified the production copies: its whole job is to pin the wire format from
+    the outside, which it could not do by calling the code under test.
+    (test_auth_test_login.py asserts the two agree byte-for-byte.)
     """
     payload = json.dumps({"user_id": user_id, "exp": int(time.time()) + ttl_seconds}).encode()
     payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
