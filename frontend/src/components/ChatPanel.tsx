@@ -62,6 +62,7 @@ export function ChatPanel({
         aria-relevant="additions"
         aria-atomic="false"
         aria-label="Conversation"
+        data-testid="tutor-messages"
         style={{
           flex: 1,
           overflowY: "auto",
@@ -132,13 +133,13 @@ const ChatInputBar = React.memo(function ChatInputBar({
     >
       {onAction && (
         <div style={{ display: "flex", gap: 6 }}>
-          <button className="btn btn--sm" onClick={() => onAction("hint")} disabled={disabled} title="Ask for a small nudge">
+          <button data-testid="tutor-action-hint" className="btn btn--sm" onClick={() => onAction("hint")} disabled={disabled} title="Ask for a small nudge">
             <Icon name="sparkle" size={12} /> Hint
           </button>
-          <button className="btn btn--sm" onClick={() => onAction("confused")} disabled={disabled} title="Say you're stuck">
+          <button data-testid="tutor-action-confused" className="btn btn--sm" onClick={() => onAction("confused")} disabled={disabled} title="Say you're stuck">
             <Icon name="bolt" size={12} /> I&apos;m confused
           </button>
-          <button className="btn btn--sm" onClick={() => onAction("skip")} disabled={disabled} title="Skip this concept">
+          <button data-testid="tutor-action-skip" className="btn btn--sm" onClick={() => onAction("skip")} disabled={disabled} title="Skip this concept">
             <Icon name="chev" size={12} /> Skip
           </button>
         </div>
@@ -155,6 +156,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
         }}
       >
         <textarea
+          data-testid="tutor-input"
           aria-label="Message"
           value={text}
           onChange={e => setText(e.target.value)}
@@ -181,6 +183,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
           rows={1}
         />
         <button
+          data-testid="tutor-send"
           className="btn btn--primary btn--sm"
           onClick={submit}
           disabled={disabled || !text.trim()}

@@ -1,4 +1,46 @@
+import os
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
+
+
+def test_import_succeeds_without_gemini_api_key():
+    """#378: rag_service builds a module-level `genai.Client` at import time and
+    `genai.Client(api_key="")` raises ValueError, so a missing GEMINI_API_KEY
+    broke `import main` (via routes/quiz.py -> services/rag_service.py) outright.
+
+    Its siblings already fall back to a dummy key — services/gemini_service.py
+    and agents/_providers.py — so imports stay clean and the failure surfaces at
+    call time instead. This pins that behaviour for the whole import graph.
+
+    Run in a subprocess: the modules are already imported in-process, so this is
+    the only way to observe import-time behaviour. `load_dotenv` is stubbed out
+    first so a developer's backend/.env can't silently re-supply the key and
+    make the assertion vacuous.
+    """
+    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {k: v for k, v in os.environ.items() if k != "GEMINI_API_KEY"}
+    env.update({
+        "ENCRYPTION_KEY": "0" * 64,
+        "APP_ENV": "test",
+        "SUPABASE_URL": "https://dummy.supabase.co",
+        "SUPABASE_SERVICE_KEY": "dummy-service-key",
+        "SESSION_SECRET": "dummy-session-secret",
+    })
+    program = (
+        "import dotenv; dotenv.load_dotenv = lambda *a, **k: False\n"
+        "import os; os.environ.pop('GEMINI_API_KEY', None)\n"
+        "import main\n"
+        "import services.rag_service as rag\n"
+        "assert rag._client is not None\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=backend_root, env=env, capture_output=True, text=True, timeout=180,
+    )
+    assert proc.returncode == 0, (
+        "importing main without GEMINI_API_KEY failed:\n" + proc.stderr
+    )
 
 
 def _make_embedding_response(vecs: list[list[float]]):

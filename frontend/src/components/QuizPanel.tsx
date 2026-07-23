@@ -189,6 +189,7 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
 
   return (
     <div
+      data-testid="quiz-panel"
       style={{
         display: "flex",
         flexDirection: "column",
@@ -246,8 +247,8 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <button className="btn" onClick={onExit}>Cancel</button>
-            <button className="btn btn--primary" onClick={start} disabled={loading || !conceptId}>
+            <button data-testid="quiz-cancel" className="btn" onClick={onExit}>Cancel</button>
+            <button data-testid="quiz-start" className="btn btn--primary" onClick={start} disabled={loading || !conceptId}>
               {loading ? "Generating…" : "Start quiz"}
             </button>
           </div>
@@ -261,12 +262,13 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
             <div className="chip" style={{ textTransform: "uppercase" }}>{currentQuestion.difficulty}</div>
           </div>
           <div style={{ fontSize: 16, lineHeight: 1.55 }}>{currentQuestion.question}</div>
-          <div role="radiogroup" aria-label="Answer choices" style={{ display: "grid", gap: 8 }}>
+          <div data-testid="quiz-answer-options" role="radiogroup" aria-label="Answer choices" style={{ display: "grid", gap: 8 }}>
             {currentQuestion.options.map(o => {
               const selected = currentSelection === o.label;
               return (
                 <button
                   key={o.label}
+                  data-testid={`quiz-answer-option-${o.label}`}
                   role="radio"
                   aria-checked={selected}
                   onClick={() => setCurrentSelection(o.label)}
@@ -287,8 +289,8 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
             })}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <button className="btn" onClick={onExit}>Exit</button>
-            <button className="btn btn--primary" onClick={submitCurrent} disabled={!currentSelection}>
+            <button data-testid="quiz-exit" className="btn" onClick={onExit}>Exit</button>
+            <button data-testid="quiz-submit-answer" className="btn btn--primary" onClick={submitCurrent} disabled={!currentSelection}>
               Submit answer
             </button>
           </div>
@@ -299,6 +301,7 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
         <>
           <div className="label-micro">Review</div>
           <div
+            data-testid="quiz-review-verdict"
             style={{
               padding: "10px 14px",
               borderRadius: "var(--r-md)",
@@ -352,10 +355,10 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
             {currentQuestion.explanation}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <button className="btn" onClick={() => explainConcept(currentQuestion.concept_tested)}>
+            <button data-testid="quiz-explain-concept" className="btn" onClick={() => explainConcept(currentQuestion.concept_tested)}>
               Explain this
             </button>
-            <button className="btn btn--primary" onClick={next}>
+            <button data-testid="quiz-next" className="btn btn--primary" onClick={next}>
               {qIndex + 1 >= questions.length ? "See results" : "Next question"}
             </button>
           </div>
@@ -365,7 +368,7 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
       {phase === "results" && results && (
         <>
           <div className="label-micro">Results</div>
-          <div className="h-serif" style={{ fontSize: 32 }}>
+          <div data-testid="quiz-results-score" className="h-serif" style={{ fontSize: 32 }}>
             {Math.round((results.score / Math.max(1, results.total)) * 100)}%
           </div>
           <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
@@ -375,8 +378,8 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
             </span>
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button className="btn" onClick={retake}>Retake</button>
-            <button className="btn btn--primary" onClick={onExit}>Done</button>
+            <button data-testid="quiz-retake" className="btn" onClick={retake}>Retake</button>
+            <button data-testid="quiz-done" className="btn btn--primary" onClick={onExit}>Done</button>
           </div>
         </>
       )}
