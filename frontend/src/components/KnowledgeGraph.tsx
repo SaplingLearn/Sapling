@@ -90,7 +90,7 @@ export function KnowledgeGraph(props: Props) {
   const { width = 800, height = 480 } = props;
 
   return (
-    <div style={{ position: "relative", width, height }}>
+    <div data-testid="graph-container" style={{ position: "relative", width, height }}>
       {mode === "2d" ? (
         <KnowledgeGraph2D {...props} />
       ) : (
@@ -98,6 +98,7 @@ export function KnowledgeGraph(props: Props) {
       )}
       <button
         type="button"
+        data-testid="graph-mode-toggle"
         className="btn btn--ghost btn--sm"
         onClick={() => setMode(next)}
         title={`Switch to ${next.toUpperCase()} graph`}

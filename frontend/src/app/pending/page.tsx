@@ -14,6 +14,7 @@ export default function PendingPage() {
 
   return (
     <div
+      data-testid="pending-gate"
       style={{
         minHeight: '100vh',
         display: 'flex',
@@ -35,7 +36,7 @@ export default function PendingPage() {
       <p style={{ fontSize: 15, color: 'var(--text-dim)', textAlign: 'center', maxWidth: 420, lineHeight: 1.6, marginBottom: 32 }}>
         We&apos;ll reach out when your access is approved.
       </p>
-      <button className="btn" onClick={handleSignOut}>Sign out</button>
+      <button data-testid="pending-signout" className="btn" onClick={handleSignOut}>Sign out</button>
     </div>
   );
 }

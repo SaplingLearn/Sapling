@@ -8,6 +8,8 @@
   Always include a "What I'd try next" section.
 - `architecture.md` — Short, current overview of the system. Updated when
   it gets wrong, not on a schedule.
+- `frontend-testids.md` — `data-testid` naming convention for the surfaces
+  the browser suite drives, plus the ESLint rule that enforces it.
 - `security/` — Security hardening and remediation plans (RLS lockdown,
   storage hardening, realtime JWT bridge).
 - `staging/` — Staging environment setup notes.
