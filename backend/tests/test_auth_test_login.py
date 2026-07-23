@@ -145,9 +145,16 @@ class TestProductionGate:
 
     def test_route_exists_but_is_gated(self, client, monkeypatch):
         """404 must come from the gate, not from an unmounted route — otherwise
-        this test would pass trivially even if the endpoint were deleted."""
-        paths = {getattr(r, "path", None) for r in client.app.routes}
-        assert "/api/auth/test-login" in paths
+        this test would pass trivially even if the endpoint were deleted.
+
+        Asserted against `router.routes` rather than `client.app.routes`: how an
+        included router flattens into the composed app's route list is not a
+        stable API (under fastapi 0.138 / starlette 1.3 the sub-router no longer
+        contributes `.path` entries there, so the introspection silently found
+        nothing). The APIRouter's own route objects are the stable seam.
+        """
+        paths = {getattr(r, "path", None) for r in auth_module.router.routes}
+        assert "/test-login" in paths
         monkeypatch.setattr(config, "APP_ENV", "production")
         assert client.post("/api/auth/test-login", json={"user_id": "u"}).status_code == 404
 
