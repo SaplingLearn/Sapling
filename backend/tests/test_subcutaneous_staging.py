@@ -1,10 +1,11 @@
-"""Opt-in HTTP end-to-end test against the REAL staging database.
+"""Opt-in subcutaneous HTTP test against the REAL staging database.
 
-This is NOT a normal unit test: it drives the live FastAPI routes against staging
-and writes a throwaway fixture (cleaned up afterward). It is skipped by default so
-the regular suite / CI never touches staging. To run it:
+This is a subcutaneous test, not a browser E2E (hence the rename off `e2e_` in
+#398): it drives the live FastAPI routes against staging over HTTP and writes a
+throwaway fixture (cleaned up afterward), below the UI. It is skipped by default
+so the regular suite / CI never touches staging. To run it:
 
-    RUN_STAGING_E2E=1 dotenv -f .env.staging run -- python -m pytest tests/test_e2e_staging.py -v
+    RUN_STAGING_E2E=1 dotenv -f .env.staging run -- python -m pytest tests/test_subcutaneous_staging.py -v
 
 The `e2e_staging` marker tells conftest to leave the live Supabase client + the real
 auth guard in place (the hermetic mock + auth bypass are skipped for this test only).
