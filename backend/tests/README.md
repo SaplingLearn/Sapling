@@ -56,7 +56,7 @@ mocked per-test, not globally.
 | `test_shared_course_context.py` | Course context service, system prompt building, quiz prompt augmentation |
 | `test_ocr_pipeline.py` | Mocked agent-path unit tests **plus** live-Gemini **integration** tests gated on `GEMINI_API_KEY` (the DB layer is stubbed by the hermetic fixture) |
 | `test_supabase.py` | **Connectivity script** — verifies env vars and table access. Run manually: `python tests/test_supabase.py` |
-| `test_e2e_staging.py` | **Opt-in staging E2E** — drives live routes against the REAL staging DB; skipped unless `RUN_STAGING_E2E=1` (see below) |
+| `test_subcutaneous_staging.py` | **Opt-in staging subcutaneous test** — drives live routes against the REAL staging DB; skipped unless `RUN_STAGING_E2E=1` (see below) |
 
 The table highlights the load-bearing suites; the directory holds ~70 `test_*.py`
 files covering routes, services, encryption, and auth scoping.
@@ -70,12 +70,13 @@ files covering routes, services, encryption, and auth scoping.
   of that module stays fully mocked. No `--ignore` needed. (Their DB layer is
   stubbed by the hermetic conftest fixture, so they no longer write to a real
   project.)
-- **Staging E2E** — `test_e2e_staging.py` (marker `e2e_staging`) drives the live
-  routes against the REAL staging DB and is skipped unless `RUN_STAGING_E2E=1`.
-  It intentionally bypasses the hermetic DB + auth-bypass fixtures:
+- **Staging subcutaneous** — `test_subcutaneous_staging.py` (marker `e2e_staging`)
+  drives the live routes against the REAL staging DB and is skipped unless
+  `RUN_STAGING_E2E=1`. It intentionally bypasses the hermetic DB + auth-bypass
+  fixtures:
 
   ```bash
-  RUN_STAGING_E2E=1 dotenv -f .env.staging run -- python -m pytest tests/test_e2e_staging.py -v
+  RUN_STAGING_E2E=1 dotenv -f .env.staging run -- python -m pytest tests/test_subcutaneous_staging.py -v
   ```
 
 ---
