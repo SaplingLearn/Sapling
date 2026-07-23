@@ -5,7 +5,7 @@ Everything below the line is the session prompt.
 
 ---
 
-Work the next wave of epic #402 (E2E Regression Suite) in the Sapling repo: **#391, #397, then #398**. Do the planning and speccing yourself, use subagents for implementation, open a PR per unit, run tests as you go, and merge each once CI is green.
+Work the next wave of epic #402 (E2E Regression Suite) in the Sapling repo: **#391, #397, then #398**. Do the planning and speccing yourself, use subagents for implementation, open a PR per unit, run tests as you go, and merge each once CI is green **and it has passed code review** (see Process — review gates the merge, it does not follow it).
 
 ## Where things stand
 
@@ -15,11 +15,47 @@ Work the next wave of epic #402 (E2E Regression Suite) in the Sapling repo: **#3
 
 **#391 — pydantic-ai test seam via `FunctionModel` (`SAPLING_MODEL_MODE`).** Backend, now unblocked. Read the comment on the issue first: #379 added an autouse `_hermetic_llm_transport` fixture in `backend/tests/conftest.py` that patches `google.genai._api_client.BaseApiClient` at the class level, and pydantic-ai's `GoogleModel` wraps a `google.genai.Client`, so the agents lane already rides that seam. `FunctionModel` must substitute **above** the transport. If your design needs the guard disabled to work, you are substituting at the wrong layer — rethink rather than weakening the guard.
 
-**#397 — integration fixtures (psycopg, truncate isolation, seeded users).** Backend, now unblocked, and **re-scoped 2026-07-23** — read the current issue body rather than any cached impression of it. The scope is entirely undone. The defining constraint of this lane: **writes go through the app; assertions read back with raw SQL via psycopg.** The four existing tests in `backend/tests/integration/test_local_stack.py` all assert through `db.connection.table()` — the same PostgREST layer that wrote — which tests the echo, not the database. That is precisely what you are fixing.
+**#397 — integration fixtures (psycopg, truncate isolation, seeded users).** Backend, now unblocked, and **re-scoped 2026-07-23** — read the current issue body rather than any cached impression of it. The scope is entirely undone. The defining constraint of this lane: **writes go through the app; assertions read back with raw SQL via psycopg.** None of the four existing tests in `backend/tests/integration/test_local_stack.py` verifies a write independently of the layer that made it: `test_db_roundtrip_write_read_delete` and `test_encryption_roundtrip_text_and_numeric` write and assert through `db.connection.table()` (the same PostgREST layer both ways — that tests the echo, not the database), while `test_route_e2e_auth_me` and `test_route_e2e_gradebook_decrypt_numeric` assert only on the HTTP JSON the app returns. Closing that gap is precisely what you are fixing.
+
+**Safety requirement, non-negotiable.** #397's autouse truncate runs over a **direct Postgres connection on `SUPABASE_DB_URL`**, which bypasses PostgREST entirely. The existing guard `_require_local_stack` in `backend/tests/integration/conftest.py` checks only that **`SUPABASE_URL`** is local — it never inspects `SUPABASE_DB_URL`, and those are independent variables, so the guard can pass while the psycopg connection points somewhere else. `backend/.env.staging` and `backend/.env.production` both contain live direct-Postgres connection strings for the real staging and production projects, sitting right next to `backend/.env`. **Before wiring any truncate, assert that `SUPABASE_DB_URL` itself resolves to `127.0.0.1`/`localhost` (mirroring `_is_local()`), and fail loudly — not `skip` — if it does not.** A silent skip here reads as "safe" while a misconfigured var would truncate real customer data on every test run.
 
 **#398 — subcutaneous write-path suite.** Sequential, after #397 merges (it needs the raw-SQL seam). Read the context-refresh comment on the issue for corrected facts.
 
 **Parallelism:** #391 and #397 touch disjoint files — run them as two parallel subagents in worktrees branched from `origin/main`. #398 waits for #397.
+
+## Skills and tooling to use
+
+**Committed in this repo — these will resolve in any environment, including a cloud session:**
+
+- **`/sync-context`** — run it at session start. `CLAUDE.md` explicitly calls for this before agent-building work, and **#391 is agent-building work**, so this is not optional here.
+- **`context-curator` subagent** (`.claude/agents/context-curator.md`) — read-only; returns a focused digest of prior decisions and constraints from `docs/decisions/`, `docs/attempts/`, and `docs/architecture.md`. Its own description says to use it proactively before anything touching architecture, agents, or LLM integration. Dispatch it before designing the #391 seam.
+- **`/recall <query>`** — searches the dev-context vault. Faster than grepping when you are asking "have we tried this before".
+- **`/log-decision <title>`** — write an ADR when you make an architectural call. The `SAPLING_MODEL_MODE` seam in #391 is a genuine architectural decision and should get one.
+- **`/log-attempt`** — record approaches that did not work in `docs/attempts/`. #398 is expected to produce dead ends; capture them so the next person does not repeat them.
+
+**Plugin skills — use if they resolve in your environment, and do the equivalent by hand if they do not:**
+
+- **`superpowers:test-driven-development`** before writing implementation code. This lane is about tests that actually prove something, so the red-green discipline is the point, not ceremony.
+- **`superpowers:dispatching-parallel-agents`** for the #391 ∥ #397 fan-out.
+- **`superpowers:using-git-worktrees`** for isolation between those two.
+- **`superpowers:systematic-debugging`** when #398 starts surfacing real failures — resist pattern-matching a fix before you understand the cause.
+- **`superpowers:verification-before-completion`** before any "this is done" claim.
+- **`superpowers:requesting-code-review`** / **`/code-review`** — **on every PR before you merge it**, and once more over the cumulative range at the end of the wave. If `/code-review` is unavailable, do it manually: fan out several independent review agents over the diff (CLAUDE.md compliance, bug scan, git history, prior PR feedback, comment adherence), then adversarially confidence-check each finding and discard anything that turns out to be pre-existing or unverifiable. Scale the fan-out to the diff — a docs-only change does not need git-blame archaeology, but it does need its factual claims verified.
+
+If a skill turns out to be wrong for the situation, you are not obliged to follow it — but read it before deciding that.
+
+## Working autonomously
+
+Run this wave to completion without checking in for permission. The work is already scoped by the issues; you do not need sign-off to execute it.
+
+- **Do not ask "shall I proceed?" or "want me to…?"** For reversible work that follows from this brief — writing code, opening PRs, running tests, merging a PR that is both green and reviewed, filing follow-up issues — just do it and report afterward.
+- **Stop only for** genuinely destructive actions (force-pushing shared branches, dropping data, rewriting published history), or a real scope change the issues do not cover.
+- **Do not end a turn with a plan, a question, or a promise.** If your last paragraph is "next I'll…", do that thing now instead. Retry after errors and gather missing information yourself rather than handing the problem back.
+- **CI failures are yours to fix.** Diagnose and resolve them; do not report a red PR as finished work. If CI never triggers on a PR, close and reopen it to force a run. Wave 1 hit both of these.
+- **Do not stop because the session is long.** Context gets summarized automatically; keep going.
+- **When you finish a unit, move to the next one** — #391 and #397 in parallel (each reviewed before its own merge), then #398 once #397 merges, then the wave-level cumulative review.
+
+Report at the end: what merged, the test-count delta against the 1034 baseline, what you found, and anything a human genuinely needs to decide.
 
 ## How to build this right
 
@@ -46,8 +82,15 @@ This epic exists because 1034 tests currently pass against `MagicMock` DB stubs 
 
 ## Conventions
 
-Read `CLAUDE.md` at the repo root. Load-bearing ones here: all Supabase access through `db/connection.py::table()`; migrations are append-only and never edited once applied; encryption goes through `services/encryption.py` — `encrypt_if_present` / `decrypt_if_present` for text, `decrypt_numeric` for `assignments.points_*`, and `encrypt_json` / `decrypt_json` for `sessions.summary_json`; tests live in `backend/tests/`.
+Read `CLAUDE.md` at the repo root. Load-bearing ones here: all Supabase access through `db/connection.py::table()` — note that #397's raw psycopg connection is a deliberate, **test-only** second exception to that rule alongside `db/migrate.py`, scoped to `backend/tests/integration/`; it is not licence to reach for `psycopg` or `httpx` in application code; migrations are append-only and never edited once applied; encryption goes through `services/encryption.py` — `encrypt_if_present` / `decrypt_if_present` for text, `decrypt_numeric` for `assignments.points_*`, and `encrypt_json` / `decrypt_json` for `sessions.summary_json`; tests live in `backend/tests/`.
 
 ## Process
 
-Branch from `origin/main`, not from whatever HEAD happens to be. One PR per unit, conventional-commit messages, ending with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`. CI must be fully green before merging — including `Backend (pytest)`; do not merge on a partial check list, and if CI never triggers, close/reopen the PR to force it. At the end of the wave, pull and run `/code-review` over the cumulative range.
+Branch from `origin/main`, not from whatever HEAD happens to be. One PR per unit, conventional-commit messages, ending with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+
+**Two gates before any merge, in this order:**
+
+1. **CI fully green** — including `Backend (pytest)`. Do not merge on a partial check list. If CI never triggers, close and reopen the PR to force a run.
+2. **Code review invoked and clean** — run `/code-review` (or the manual fan-out described above) **on each PR before merging it**, not after. A review that runs once everything is already on `main` cannot stop a bad change; it can only document one. Address or explicitly dismiss every finding, with a stated reason for each dismissal, before the merge.
+
+Only then merge. At the end of the wave, run one more review over the cumulative range — that pass is for interactions *between* the merged PRs, and it is in addition to the per-PR reviews, not a substitute for them.
