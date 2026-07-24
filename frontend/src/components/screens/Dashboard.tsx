@@ -17,12 +17,15 @@ import {
   getUpcomingAssignments,
   getSessions,
   getRecommendations,
+  getSemesters,
   type EnrolledCourse,
+  type Semester,
   type Session,
   type Assignment,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { partitionCurrentAndArchive } from "@/lib/semesters";
 
 const QUOTES = [
   "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
@@ -204,6 +207,7 @@ export function Dashboard() {
     streak: 0, mastered: 0, total: 0, learning: 0, struggling: 0, unexplored: 0,
   });
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
+  const [semesters, setSemesters] = React.useState<Semester[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [recommendations, setRecommendations] = React.useState<{ concept_name: string; reason?: string }[]>([]);
@@ -212,6 +216,7 @@ export function Dashboard() {
   const [activeDays, setActiveDays] = React.useState<Set<string>>(new Set());
 
   const [coursesOpen, setCoursesOpen] = React.useState(false);
+  const [archiveOpen, setArchiveOpen] = React.useState(false);
   const [fullscreen, setFullscreen] = React.useState(false);
   const [mobileTab, setMobileTab] = React.useState<"courses" | "stats">("courses");
 
@@ -258,15 +263,19 @@ export function Dashboard() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [graphRes, coursesRes, assignsRes, sessionsRes, recsRes] = await Promise.all([
+      const [graphRes, coursesRes, assignsRes, sessionsRes, recsRes, semestersRes] = await Promise.all([
         getGraph(userId),
         getCourses(userId),
         getUpcomingAssignments(userId),
         getSessions(userId, 10),
         getRecommendations(userId).catch(() => ({ recommendations: [] })),
+        // Term calendar is a nicety: without it the course lists stay flat
+        // rather than the dashboard failing to load.
+        getSemesters().catch(() => ({ semesters: [] })),
       ]);
       const cs = coursesRes.courses || [];
       setCourses(cs);
+      setSemesters(semestersRes.semesters || []);
       const gNodes: GraphNode[] = (graphRes.nodes || []).map((n: ApiNode) => apiToGraphNode(n, cs));
       setNodes(gNodes);
       setEdges((graphRes.edges || []).map(apiToGraphEdge));
@@ -343,6 +352,50 @@ export function Dashboard() {
     });
   }, [courses, nodes]);
 
+  // Semester split (#140). Only courses that provably belong to an earlier term
+  // move behind the Archive; everything else — including undatable courses and
+  // the whole list when /api/semesters gave us nothing — stays visible.
+  const partition = React.useMemo(
+    () => partitionCurrentAndArchive(courses, semesters, today),
+    [courses, semesters, today],
+  );
+
+  const progressByCourse = React.useMemo(() => {
+    const byId = new Map<string, CourseProgressEntry>();
+    for (const entry of courseProgress) byId.set(entry.course.course_id, entry);
+    return byId;
+  }, [courseProgress]);
+
+  const currentProgress = React.useMemo(
+    () =>
+      partition.current
+        .map((c) => progressByCourse.get(c.course_id))
+        .filter((e): e is CourseProgressEntry => Boolean(e)),
+    [partition, progressByCourse],
+  );
+
+  const archivedProgress = React.useMemo(
+    () =>
+      partition.archive
+        .map((group) => ({
+          label: group.label,
+          entries: group.courses
+            .map((c) => progressByCourse.get(c.course_id))
+            .filter((e): e is CourseProgressEntry => Boolean(e)),
+        }))
+        .filter((group) => group.entries.length > 0),
+    [partition, progressByCourse],
+  );
+
+  const archivedCount = archivedProgress.reduce((n, g) => n + g.entries.length, 0);
+
+  // An archived course opens the gradebook scoped to its own term, not the
+  // current one — the whole point of surfacing it separately.
+  const openArchivedTerm = React.useCallback(
+    (label: string) => router.push(`/gradebook?semester=${encodeURIComponent(label)}`),
+    [router],
+  );
+
   const suggestNode = React.useMemo(() => {
     if (!suggest) return null;
     return nodes.find(n => n.name.toLowerCase() === suggest.toLowerCase()) || null;
@@ -397,7 +450,7 @@ export function Dashboard() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          {useLegacyPanels && courses.slice(0, 5).map((c) => (
+          {useLegacyPanels && partition.current.slice(0, 5).map((c) => (
             <div key={c.course_id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)" }}>
               <span style={{ width: 10, height: 10, borderRadius: "50%", background: c.color || "var(--accent)" }} />
               {c.course_code || c.course_name}
@@ -431,8 +484,10 @@ export function Dashboard() {
             full My Courses panel in the left column instead. */}
         {!useLegacyPanels && (
           <CoursesKey
-            courseProgress={courseProgress}
+            courseProgress={currentProgress}
+            archived={archivedProgress}
             onManage={() => setCoursesOpen(true)}
+            onOpenTerm={openArchivedTerm}
           />
         )}
         <div style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
@@ -741,57 +796,23 @@ export function Dashboard() {
         {courseProgress.length === 0 && (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No enrolled courses yet.</div>
         )}
-        {courseProgress.map(({ course, mastered, learning, struggling, unexplored, total, progress }) => {
-          const pct = Math.round(progress * 100);
-          const baseColor = course.color || "var(--accent)";
-          const segments = [
-            { key: "mastered",   count: mastered,   color: baseColor, opacity: 1,    label: "Mastered" },
-            { key: "learning",   count: learning,   color: baseColor, opacity: 0.78, label: "Learning" },
-            { key: "struggling", count: struggling, color: baseColor, opacity: 0.55, label: "Struggling" },
-            { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: "Unexplored" },
-          ];
-          return (
-            <div key={course.course_id} style={{ marginBottom: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: baseColor, flexShrink: 0 }} />
-                  <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {course.course_code || course.course_name}
-                  </strong>
-                </span>
-                <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
-                  {pct}%
-                </span>
-              </div>
-              {total > 0 ? (
-                <div
-                  style={{
-                    display: "flex",
-                    height: 8,
-                    background: "var(--bg-soft)",
-                    borderRadius: "var(--r-full)",
-                    overflow: "hidden",
-                  }}
-                  title={segments.filter(s => s.count > 0).map(s => `${s.label}: ${s.count}`).join(" · ")}
-                >
-                  {segments.map((s) => s.count > 0 && (
-                    <div
-                      key={s.key}
-                      style={{
-                        width: `${(s.count / total) * 100}%`,
-                        background: s.color,
-                        opacity: s.opacity,
-                        transition: "width var(--dur) var(--ease)",
-                      }}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div style={{ height: 8, background: "var(--bg-soft)", borderRadius: "var(--r-full)" }} />
-              )}
-            </div>
-          );
-        })}
+        {courseProgress.length > 0 && currentProgress.length === 0 && (
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Nothing enrolled this semester.
+          </div>
+        )}
+        {currentProgress.map((entry) => (
+          <CourseProgressRow key={entry.course.course_id} entry={entry} />
+        ))}
+        {archivedCount > 0 && (
+          <CoursesArchive
+            groups={archivedProgress}
+            count={archivedCount}
+            open={archiveOpen}
+            onToggle={() => setArchiveOpen(v => !v)}
+            onOpenTerm={openArchivedTerm}
+          />
+        )}
       </div>
 
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
@@ -1082,16 +1103,175 @@ type CourseProgressEntry = {
   progress: number;
 };
 
+type ArchivedTermProgress = {
+  label: string;
+  entries: CourseProgressEntry[];
+};
+
+// Past terms, collapsed by default. Expanding lists each prior semester with
+// its courses; picking one opens that semester's gradebook.
+function CoursesArchive({
+  groups,
+  count,
+  open,
+  onToggle,
+  onOpenTerm,
+}: {
+  groups: ArchivedTermProgress[];
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+  onOpenTerm: (label: string) => void;
+}) {
+  return (
+    <div style={{ borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 10 }}>
+      <button
+        type="button"
+        className="btn btn--ghost btn--sm"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls="dashboard-courses-archive"
+        title={open ? "Hide past semesters" : "Show past semesters"}
+        style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "flex-start" }}
+      >
+        <span
+          aria-hidden
+          style={{
+            display: "inline-flex",
+            transition: "transform var(--dur-fast) var(--ease)",
+            transform: open ? "rotate(90deg)" : "none",
+          }}
+        >
+          <Icon name="chev" size={11} />
+        </span>
+        Archive
+        <span className="mono" style={{ color: "var(--text-muted)", fontSize: 11 }}>{count}</span>
+      </button>
+
+      {open && (
+        <div id="dashboard-courses-archive" style={{ marginTop: 10 }}>
+          {groups.map((group) => (
+            <div key={group.label} style={{ marginBottom: 8 }}>
+              <div className="label-micro" style={{ marginBottom: 6 }}>{group.label}</div>
+              {group.entries.map((entry) => (
+                <CourseProgressRow
+                  key={entry.course.course_id}
+                  entry={entry}
+                  onOpen={() => onOpenTerm(group.label)}
+                  ariaLabel={`${entry.course.course_code || entry.course.course_name} — open the ${group.label} gradebook`}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One "My courses" line: colour dot, course code, mastery percentage and the
+// four-segment mastery bar. Rendered as a button when `onOpen` is supplied so
+// archived courses can route into their own semester's gradebook.
+function CourseProgressRow({
+  entry,
+  onOpen,
+  ariaLabel,
+}: {
+  entry: CourseProgressEntry;
+  onOpen?: () => void;
+  ariaLabel?: string;
+}) {
+  const { course, mastered, learning, struggling, unexplored, total, progress } = entry;
+  const pct = Math.round(progress * 100);
+  const baseColor = course.color || "var(--accent)";
+  const segments = [
+    { key: "mastered",   count: mastered,   color: baseColor, opacity: 1,    label: "Mastered" },
+    { key: "learning",   count: learning,   color: baseColor, opacity: 0.78, label: "Learning" },
+    { key: "struggling", count: struggling, color: baseColor, opacity: 0.55, label: "Struggling" },
+    { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: "Unexplored" },
+  ];
+
+  const body = (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ width: 10, height: 10, borderRadius: "50%", background: baseColor, flexShrink: 0 }} />
+          <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {course.course_code || course.course_name}
+          </strong>
+        </span>
+        <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
+          {pct}%
+        </span>
+      </div>
+      {total > 0 ? (
+        <div
+          style={{
+            display: "flex",
+            height: 8,
+            background: "var(--bg-soft)",
+            borderRadius: "var(--r-full)",
+            overflow: "hidden",
+          }}
+          title={segments.filter(s => s.count > 0).map(s => `${s.label}: ${s.count}`).join(" · ")}
+        >
+          {segments.map((s) => s.count > 0 && (
+            <div
+              key={s.key}
+              style={{
+                width: `${(s.count / total) * 100}%`,
+                background: s.color,
+                opacity: s.opacity,
+                transition: "width var(--dur) var(--ease)",
+              }}
+            />
+          ))}
+        </div>
+      ) : (
+        <div style={{ height: 8, background: "var(--bg-soft)", borderRadius: "var(--r-full)" }} />
+      )}
+    </>
+  );
+
+  if (!onOpen) return <div style={{ marginBottom: 12 }}>{body}</div>;
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={ariaLabel}
+      style={{
+        display: "block",
+        width: "100%",
+        marginBottom: 12,
+        padding: 0,
+        background: "transparent",
+        border: 0,
+        textAlign: "left",
+        color: "inherit",
+        font: "inherit",
+        cursor: "pointer",
+      }}
+    >
+      {body}
+    </button>
+  );
+}
+
 function CoursesKey({
   courseProgress,
+  archived,
   onManage,
+  onOpenTerm,
 }: {
   courseProgress: CourseProgressEntry[];
+  archived: ArchivedTermProgress[];
   onManage: () => void;
+  onOpenTerm: (label: string) => void;
 }) {
   const [collapsed, setCollapsed] = React.useState(true);
 
-  if (courseProgress.length === 0) return null;
+  if (courseProgress.length === 0 && archived.length === 0) return null;
 
   // A thick white outline painted BEHIND the glyphs, plus a soft halo.
   // `paint-order: stroke fill` pushes the stroke under the fill so
@@ -1233,6 +1413,45 @@ function CoursesKey({
               </div>
             );
           })}
+
+          {courseProgress.length === 0 && (
+            <div style={{ fontSize: 12, color: "var(--text-dim)", ...legibleText }}>
+              Nothing enrolled this semester.
+            </div>
+          )}
+
+          {archived.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div className="label-micro" style={{ fontSize: 10, ...legibleText }}>Archive</div>
+              {archived.map((group) => (
+                <button
+                  key={group.label}
+                  type="button"
+                  onClick={() => onOpenTerm(group.label)}
+                  aria-label={`Open the ${group.label} gradebook`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    width: "100%",
+                    padding: 0,
+                    background: "transparent",
+                    border: 0,
+                    cursor: "pointer",
+                    fontSize: 12,
+                    color: "var(--text-dim)",
+                    ...legibleText,
+                  }}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {group.label}
+                  </span>
+                  <span className="mono" style={{ fontSize: 11 }}>{group.entries.length}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

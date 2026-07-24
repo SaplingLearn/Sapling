@@ -63,6 +63,10 @@ export interface EnrolledCourse {
   nickname: string | null;
   node_count: number;
   enrolled_at: string;
+  // Human term label of the offering the enrollment hangs off, e.g. "Fall 2025".
+  // The backend emits "" when the offering has no term joined — treat it as unknown,
+  // never as a past term.
+  term: string;
 }
 
 export const getCourses = (userId: string) =>
@@ -992,6 +996,23 @@ export const uploadAvatar = async (userId: string, file: File): Promise<{ avatar
     body: JSON.stringify({ file_b64, content_type: file.type || 'image/png' }),
   });
 };
+
+// ── Semesters ────────────────────────────────────────────────────────────────
+
+export interface Semester {
+  id: string;
+  term: string;
+  year: number;
+  label: string;
+  start_date: string;
+  end_date: string;
+  // year * 10 + term ordinal (Spring=1, Summer=2, Fall=3, Winter=4) — the
+  // canonical ordering key; the backend serves terms sort_key-descending.
+  sort_key: number;
+}
+
+export const getSemesters = () =>
+  fetchJSON<{ semesters: Semester[] }>('/api/semesters');
 
 // ── Gradebook ────────────────────────────────────────────────────────────────
 

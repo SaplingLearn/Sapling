@@ -48,6 +48,7 @@ const COURSE: EnrolledCourse = {
   nickname: null,
   node_count: 0,
   enrolled_at: "2026-01-01",
+  term: "Spring 2026",
 };
 
 function renderModal() {
