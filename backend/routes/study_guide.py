@@ -36,7 +36,12 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
         limit=1,
     )
     if not exams:
-        raise HTTPException(status_code=404, detail="Exam not found.")
+        # The frontend renders this detail verbatim, so it has to read like
+        # guidance rather than a status line.
+        raise HTTPException(
+            status_code=404,
+            detail="Exam not found. It may have been deleted — pick another exam.",
+        )
     exam = exams[0]
     exam_title = exam.get("title", "")
     due_date = exam.get("due_date", "")

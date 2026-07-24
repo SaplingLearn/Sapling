@@ -163,6 +163,13 @@ class TestGetGuide:
         with patch("routes.study_guide.table", side_effect=table_side_effect):
             r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id=nope")
         assert r.status_code == 404
+        # The frontend surfaces this detail verbatim (#361), so it must stay a
+        # plain, actionable sentence — no payload, markup or identifiers.
+        detail = r.json()["detail"]
+        assert detail.startswith("Exam not found.")
+        assert "pick another exam" in detail.lower()
+        assert len(detail) <= 160
+        assert not any(ch in detail for ch in "{}[]<>\n")
 
 
 # ── POST /api/study-guide/regenerate ─────────────────────────────────────────

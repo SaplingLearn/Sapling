@@ -18,6 +18,7 @@ const MarkdownChat = dynamic(
 import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
+import { humanizeError, isNotFound } from "@/lib/errorMessage";
 import { useUser } from "@/context/UserContext";
 import {
   getCourses,
@@ -38,6 +39,15 @@ import {
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
 
 type Mode = "guide" | "cards";
+
+// A guide load fails two ways that deserve different UI: the exam is gone
+// (normal — a deleted assignment, or a stale "recent guides" entry), or the
+// generation itself broke. Only the second is worth a red toast, and it carries
+// the ids it was built from because opening a recent guide clears the exam
+// selection — the selects are not a reliable retry target.
+type GuideProblem =
+  | { kind: "missing" }
+  | { kind: "failed"; message: string; courseId: string; examId: string };
 
 type RawCard = {
   id: string;
@@ -157,6 +167,7 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
   const [loadingGuide, setLoadingGuide] = React.useState(false);
   const [regenerating, setRegenerating] = React.useState(false);
   const [recent, setRecent] = React.useState<StudyGuideCacheEntry[]>([]);
+  const [guideProblem, setGuideProblem] = React.useState<GuideProblem | null>(null);
 
   const loadRecent = React.useCallback(async () => {
     if (!userId) return;
@@ -174,17 +185,22 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
     setExamId("");
     setExams([]);
     setGuide(null);
+    setGuideProblem(null);
     if (!courseId || !userId) return;
     setLoadingExams(true);
     getStudyGuideExams(userId, courseId)
       .then(r => setExams(r.exams || []))
-      .catch(err => toast.error(`Couldn't load exams: ${String(err)}`))
+      .catch(err => {
+        console.error("study exams load failed", err);
+        toast.error(humanizeError(err, "Couldn't load the exams for this course."));
+      })
       .finally(() => setLoadingExams(false));
   }, [courseId, userId, toast]);
 
   const loadGuide = React.useCallback(async (cid: string, eid: string) => {
     if (!userId) return;
     setLoadingGuide(true);
+    setGuideProblem(null);
     try {
       const r = await getStudyGuide(userId, cid, eid);
       setGuide(r.guide);
@@ -192,7 +208,15 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
       setCached(r.cached);
       if (!r.cached) loadRecent();
     } catch (err) {
-      toast.error(`Couldn't load guide: ${String(err)}`);
+      console.error("study guide load failed", err);
+      setGuide(null);
+      if (isNotFound(err)) {
+        setGuideProblem({ kind: "missing" });
+      } else {
+        const message = humanizeError(err, "Couldn't build that study guide.");
+        setGuideProblem({ kind: "failed", message, courseId: cid, examId: eid });
+        toast.error(message);
+      }
     } finally {
       setLoadingGuide(false);
     }
@@ -208,8 +232,11 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
   };
 
   const regenerate = async () => {
+    // Regeneration is meaningless without a target exam, and the endpoint
+    // 400s on a blank one — bail before the request.
     if (!userId || !courseId || !examId) return;
     setRegenerating(true);
+    setGuideProblem(null);
     try {
       const r = await regenerateStudyGuide(userId, courseId, examId);
       setGuide(r.guide);
@@ -218,7 +245,8 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
       await loadRecent();
       toast.success("Study guide regenerated.");
     } catch (err) {
-      toast.error(`Regenerate failed: ${String(err)}`);
+      console.error("study guide regenerate failed", err);
+      toast.error(humanizeError(err, "Couldn't regenerate that study guide."));
     } finally {
       setRegenerating(false);
     }
@@ -293,7 +321,7 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
             <button
               className="btn btn--sm"
               onClick={regenerate}
-              disabled={regenerating || loadingGuide}
+              disabled={regenerating || loadingGuide || !examId}
             >
               <Icon name="sparkle" size={12} /> {regenerating ? "Regenerating…" : "Regenerate"}
             </button>
@@ -306,14 +334,35 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
             body="Your generated study guides live here — grouped by exam and built from the documents in your library."
           />
         )}
-        {courseId && !examId && !loadingExams && exams.length === 0 && (
+        {courseId && !examId && !guideProblem && !loadingExams && exams.length === 0 && (
           <EmptyHint
-            title="No exams found for this course"
-            body="Import a syllabus on the Calendar page, or add an assignment with type = Exam."
+            title="No exams for this course yet"
+            body="Study guides are built one exam at a time. Import a syllabus on the Calendar page, or add an assignment with type = Exam, and it'll show up here."
           />
         )}
-        {courseId && !examId && exams.length > 0 && (
+        {courseId && !examId && !guideProblem && exams.length > 0 && (
           <EmptyHint title="Choose an exam" body="The guide will be generated from your course material the first time." />
+        )}
+        {!loadingGuide && !regenerating && guideProblem?.kind === "missing" && (
+          <EmptyHint
+            title="That exam isn't around anymore"
+            body="It was probably deleted. Pick another exam above, or add one on the Calendar page to build a guide for it."
+          />
+        )}
+        {!loadingGuide && !regenerating && guideProblem?.kind === "failed" && (
+          <EmptyHint
+            title="That guide didn't come through"
+            body={guideProblem.message}
+            action={
+              <button
+                className="btn btn--sm btn--primary"
+                onClick={() => loadGuide(guideProblem.courseId, guideProblem.examId)}
+                disabled={loadingGuide}
+              >
+                Try again
+              </button>
+            }
+          />
         )}
 
         {(loadingGuide || regenerating) && <StudyGuideSkeleton />}
@@ -478,7 +527,8 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
       toast.success("Card deleted");
       await load();
     } catch (err) {
-      toast.error(`Delete failed: ${String(err)}`);
+      console.error("flashcard delete failed", err);
+      toast.error(humanizeError(err, "Couldn't delete that card."));
     }
   }, [card, userId, toast, load]);
 
@@ -513,7 +563,8 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
       await load();
       toast.success(`Added ${r.flashcards.length} new card${r.flashcards.length === 1 ? "" : "s"}.`);
     } catch (err) {
-      toast.error(`Generate failed: ${String(err)}`);
+      console.error("flashcard generate failed", err);
+      toast.error(humanizeError(err, "Couldn't generate cards right now."));
     } finally {
       setGenerating(false);
     }
@@ -743,11 +794,14 @@ function CourseFilterRow({
   );
 }
 
-function EmptyHint({ title, body }: { title: string; body: string }) {
+function EmptyHint({ title, body, action }: { title: string; body: string; action?: React.ReactNode }) {
   return (
     <div className="card" style={{ padding: "32px 28px", textAlign: "center", color: "var(--text-muted)" }}>
       <div className="h-serif" style={{ fontSize: 18, color: "var(--text)", marginBottom: 6 }}>{title}</div>
       <div style={{ fontSize: 13 }}>{body}</div>
+      {action && (
+        <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>{action}</div>
+      )}
     </div>
   );
 }

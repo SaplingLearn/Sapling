@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ApiError,
   extractSyllabus,
+  getCourses,
   uploadAvatar,
   uploadDocument,
   uploadDocumentStream,
@@ -179,5 +181,30 @@ describe('credentials: include on auth-protected multipart uploads', () => {
     } finally {
       (globalThis as any).FileReader = originalFR;
     }
+  });
+});
+
+describe('fetchJSON error shape', () => {
+  it('throws an ApiError carrying the HTTP status, body text preserved', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      new Response('{"detail":"Exam not found."}', { status: 404 }),
+    );
+
+    // The status is what lets lib/errorMessage branch without pattern-matching
+    // the copy; the message stays the raw body so existing callers are unaffected.
+    const err = await getCourses('u1').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(404);
+    expect((err as ApiError).message).toBe('{"detail":"Exam not found."}');
+  });
+
+  it('still reports a status when the body is empty', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(new Response('', { status: 502 }));
+
+    const err = await getCourses('u1').catch((e: unknown) => e);
+    expect((err as ApiError).status).toBe(502);
+    expect((err as ApiError).message).toBe('HTTP 502');
   });
 });
