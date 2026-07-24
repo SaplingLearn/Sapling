@@ -393,7 +393,7 @@ function RolesTab() {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) 1fr", gap: 16 }}>
+    <div className="pane-split">
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div className="label-micro" style={{ marginBottom: 10 }}>Preview</div>
         <RoleProfilePreview
@@ -624,7 +624,7 @@ function AchievementsTab() {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) 1fr", gap: 16 }}>
+    <div className="pane-split">
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div className="label-micro" style={{ marginBottom: 10 }}>Create achievement</div>
         <LabeledField label="Name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={fieldStyle} /></LabeledField>
@@ -899,7 +899,7 @@ function CosmeticsTab() {
   for (const c of items) grouped[c.type]?.push(c);
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 380px) 1fr", gap: 16 }}>
+    <div className="pane-split pane-split--wide">
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div className="label-micro" style={{ marginBottom: 10 }}>Create cosmetic</div>
         <LabeledField label="Type">
@@ -1054,7 +1054,7 @@ function AnalyticsTab() {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14 }}>
+      <div className="metric-grid">
         <MetricCard label="Users" value={totals.users} />
         <MetricCard label="Approved" value={totals.approved} accent />
         <MetricCard label="Pending" value={totals.pending} warn={totals.pending > 0} />

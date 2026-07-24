@@ -28,6 +28,12 @@ const CLUSTER_INIT_POS = [
   { ox: -229, oy:   8, oz: -30 },
 ];
 
+/* The globals.css `prefers-reduced-motion` block only neutralizes CSS
+   animations and transitions. The hero's canvas and card RAF loops are JS and
+   have to opt out themselves, or a reduced-motion visitor keeps paying for a
+   60fps render they asked not to see. */
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
 export default function LandingPage() {
   const router = useRouter();
   const { userReady, isAuthenticated } = useUser();
@@ -129,7 +135,10 @@ export default function LandingPage() {
 
     let width = 0, height = 0;
     let rotAngle = 0;
-    let animId: number;
+    let animId = 0;
+
+    const reduceMotion = window.matchMedia(REDUCED_MOTION_QUERY);
+    let animating = !reduceMotion.matches;
 
     // #3e6f8a mirrors --info (globals.css); literal because canvas can't resolve var().
     const palette = [
@@ -180,6 +189,9 @@ export default function LandingPage() {
       canvas!.width = width * devicePixelRatio;
       canvas!.height = height * devicePixelRatio;
       ctx!.scale(devicePixelRatio, devicePixelRatio);
+      // Resizing clears the backing store. With the loop parked there's no
+      // next frame to repaint it, so repaint the static one here.
+      if (!animating) draw();
     }
     window.addEventListener('resize', resize);
     resize();
@@ -230,10 +242,26 @@ export default function LandingPage() {
       });
       ctx.globalAlpha = 1;
 
-      animId = requestAnimationFrame(draw);
+      if (animating) animId = requestAnimationFrame(draw);
     }
+
+    // Toggling the OS preference mid-session either parks the loop on a
+    // static frame or restarts it; `draw` self-schedules only when animating.
+    const onMotionPrefChange = () => {
+      const next = !reduceMotion.matches;
+      if (next === animating) return;
+      animating = next;
+      cancelAnimationFrame(animId);
+      draw();
+    };
+    reduceMotion.addEventListener('change', onMotionPrefChange);
+
     draw();
-    return () => { window.removeEventListener('resize', resize); cancelAnimationFrame(animId); };
+    return () => {
+      window.removeEventListener('resize', resize);
+      reduceMotion.removeEventListener('change', onMotionPrefChange);
+      cancelAnimationFrame(animId);
+    };
   }, []);
 
   // Mouse + scroll
@@ -264,7 +292,7 @@ export default function LandingPage() {
       glow.style.opacity = eased.toString();
     };
 
-    const onScroll = () => {
+    const applyScroll = () => {
       const sy = window.scrollY;
       if (heroContentRef.current && sy < window.innerHeight) {
         heroContentRef.current.style.transform = `translateY(${sy * -0.3}px)`;
@@ -275,31 +303,71 @@ export default function LandingPage() {
       lastSy = sy;
     };
 
-    document.addEventListener('mousemove', onMouse);
-    window.addEventListener('scroll', onScroll);
-    onScroll();
-    return () => { document.removeEventListener('mousemove', onMouse); window.removeEventListener('scroll', onScroll); };
+    // Scroll fires far more often than the compositor paints, and each call
+    // writes inline styles on three elements. Coalesce to one write per frame.
+    let queued = 0;
+    const onScroll = () => {
+      if (queued) return;
+      queued = requestAnimationFrame(() => { queued = 0; applyScroll(); });
+    };
+
+    document.addEventListener('mousemove', onMouse, { passive: true });
+    window.addEventListener('scroll', onScroll, { passive: true });
+    applyScroll();
+    return () => {
+      document.removeEventListener('mousemove', onMouse);
+      window.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(queued);
+    };
   }, []);
 
   // Floating cards parallax
   useEffect(() => {
-    let animId: number;
-    function tick() {
+    // The cards are static markup, so resolve the NodeList and parse their
+    // dataset floats once instead of re-doing both 60 times a second.
+    const cards = Array.from(
+      floatingCardsRef.current?.querySelectorAll<HTMLElement>('.floating-card') ?? [],
+    ).map(el => ({
+      el,
+      baseRot: parseFloat(el.dataset.baseRot || '0'),
+      dur: parseFloat(el.dataset.floatDur || '5000'),
+      delay: parseFloat(el.dataset.floatDelay || '0'),
+    }));
+    if (cards.length === 0) return;
+
+    const reduceMotion = window.matchMedia(REDUCED_MOTION_QUERY);
+    let animId = 0;
+    let animating = !reduceMotion.matches;
+
+    function paint() {
       const t = Date.now();
       const mx = mouseRef.current.x, my = mouseRef.current.y;
-      floatingCardsRef.current?.querySelectorAll<HTMLElement>('.floating-card').forEach(card => {
-        const baseRot = parseFloat(card.dataset.baseRot || '0');
-        const dur = parseFloat(card.dataset.floatDur || '5000');
-        const delay = parseFloat(card.dataset.floatDelay || '0');
-        const floatY = Math.sin((t - delay) / dur * Math.PI * 2) * -8;
-        const rx = -my * 5, ry = mx * 5;
-        const par = window.scrollY * -0.3;
-        card.style.transform = `perspective(1000px) translateY(${floatY + par}px) rotateX(${rx}deg) rotateY(${ry}deg) rotateZ(${baseRot}deg)`;
-      });
-      animId = requestAnimationFrame(tick);
+      // Reduced motion keeps the cards' resting tilt but drops the drift,
+      // the mouse tilt and the scroll parallax.
+      const rx = animating ? -my * 5 : 0;
+      const ry = animating ? mx * 5 : 0;
+      const par = animating ? window.scrollY * -0.3 : 0;
+      for (const { el, baseRot, dur, delay } of cards) {
+        const floatY = animating ? Math.sin((t - delay) / dur * Math.PI * 2) * -8 : 0;
+        el.style.transform = `perspective(1000px) translateY(${floatY + par}px) rotateX(${rx}deg) rotateY(${ry}deg) rotateZ(${baseRot}deg)`;
+      }
+      if (animating) animId = requestAnimationFrame(paint);
     }
-    tick();
-    return () => cancelAnimationFrame(animId);
+
+    const onMotionPrefChange = () => {
+      const next = !reduceMotion.matches;
+      if (next === animating) return;
+      animating = next;
+      cancelAnimationFrame(animId);
+      paint();
+    };
+    reduceMotion.addEventListener('change', onMotionPrefChange);
+
+    paint();
+    return () => {
+      reduceMotion.removeEventListener('change', onMotionPrefChange);
+      cancelAnimationFrame(animId);
+    };
   }, []);
 
   // Intersection observer for fade-ups
@@ -322,15 +390,44 @@ export default function LandingPage() {
 
   // Spotlight card mouse-follow
   useEffect(() => {
-    const cards = document.querySelectorAll<HTMLElement>('.landing-spotlight-card');
-    const handler = (e: MouseEvent) => {
-      const card = (e.currentTarget as HTMLElement);
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('.landing-spotlight-card'));
+    if (cards.length === 0) return;
+
+    // `getBoundingClientRect` per mousemove forces a layout flush on every
+    // pointer sample. Measure on enter instead and hold the rect until
+    // something can actually have moved the card.
+    const rects = new WeakMap<HTMLElement, DOMRect>();
+
+    const measure = (card: HTMLElement) => {
       const r = card.getBoundingClientRect();
+      rects.set(card, r);
+      return r;
+    };
+    const onEnter = (e: Event) => { measure(e.currentTarget as HTMLElement); };
+    const onMove = (e: MouseEvent) => {
+      const card = e.currentTarget as HTMLElement;
+      const r = rects.get(card) ?? measure(card);
       card.style.setProperty('--mouse-x', `${e.clientX - r.left}px`);
       card.style.setProperty('--mouse-y', `${e.clientY - r.top}px`);
     };
-    cards.forEach(c => c.addEventListener('mousemove', handler));
-    return () => cards.forEach(c => c.removeEventListener('mousemove', handler));
+    // Rects are viewport-relative, so scrolling invalidates them even though
+    // the card hasn't moved in the document. Drop them and re-measure lazily.
+    const invalidate = () => { for (const c of cards) rects.delete(c); };
+
+    cards.forEach(c => {
+      c.addEventListener('mouseenter', onEnter);
+      c.addEventListener('mousemove', onMove);
+    });
+    window.addEventListener('scroll', invalidate, { passive: true });
+    window.addEventListener('resize', invalidate);
+    return () => {
+      cards.forEach(c => {
+        c.removeEventListener('mouseenter', onEnter);
+        c.removeEventListener('mousemove', onMove);
+      });
+      window.removeEventListener('scroll', invalidate);
+      window.removeEventListener('resize', invalidate);
+    };
   }, []);
 
   function startCounters(container: HTMLElement) {
