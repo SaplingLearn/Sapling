@@ -71,6 +71,32 @@ VALID_CATEGORIES = {
     "assignment", "study_guide", "other",
 }
 
+# Minimum usable extracted text, in stripped characters. Below this a document
+# carries nothing to classify or summarize, and sending it to the model
+# produces a *fabrication* rather than an error: the classify prompt's JSON
+# schema requires a summary and a concept list with no "insufficient content"
+# escape hatch, so an empty `Content:` block makes the model invent a plausible
+# document. Those invented concepts then flow into the course's shared
+# knowledge graph, where they mislead every enrolled student.
+#
+# Matches the 50-char floor that
+# `extraction_service._extract_text_from_file_uncached` already applies when
+# deciding whether native PDF text is worth keeping.
+MIN_EXTRACTED_CHARS = 50
+
+# Shown for both the sync 422 and the SSE error event. Names the likely cause
+# (a scanned/image-only file) and the concrete fix.
+UNREADABLE_DOCUMENT_DETAIL = (
+    "No text could be read from this document. It looks like a scanned or "
+    "image-only file, so there is nothing to analyze. Try uploading a version "
+    "with selectable text."
+)
+
+
+def _has_usable_text(text: str | None) -> bool:
+    """True when extraction produced enough text to be worth analyzing."""
+    return len((text or "").strip()) >= MIN_EXTRACTED_CHARS
+
 
 def _validate_user(user_id: str) -> None:
     """Verify that the user_id corresponds to an existing user."""
@@ -467,13 +493,23 @@ def _extract_text_or_422(file_bytes: bytes, filename: str, content_type: str) ->
     path on /upload/sync and on /upload when the flag is off.
     """
     try:
-        return extract_text_from_file(file_bytes, filename, content_type)
+        text = extract_text_from_file(file_bytes, filename, content_type)
     except Exception:
         logger.exception("Text extraction failed for '%s'", filename)
         raise HTTPException(
             status_code=422,
             detail="Could not read this document. Please try a different file.",
         )
+    # Extraction can "succeed" and return nothing -- a rasterized PDF has no
+    # text layer, so there is no exception to catch. Reject here rather than
+    # letting an empty document reach the model (see MIN_EXTRACTED_CHARS).
+    if not _has_usable_text(text):
+        logger.warning(
+            "Extraction yielded %d usable chars for '%s' - rejecting as unreadable",
+            len((text or "").strip()), filename,
+        )
+        raise HTTPException(status_code=422, detail=UNREADABLE_DOCUMENT_DETAIL)
+    return text
 
 
 def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
@@ -851,6 +887,28 @@ async def upload_document(
                     type="progress", step="extracted_text",
                     message=f"Extracted {len(extracted_text):,} chars.",
                 ))
+                # Extraction can succeed and still yield nothing usable -- a
+                # rasterized PDF has no text layer, so the except branch above
+                # never fires. Stop here rather than asking the model to
+                # summarize an empty document, which it answers by inventing
+                # one (see MIN_EXTRACTED_CHARS). Same terminal error+done pair
+                # as the extraction-failure path, so clients need no new case.
+                if not _has_usable_text(extracted_text):
+                    logger.warning(
+                        "Async extraction yielded %d usable chars for '%s' - "
+                        "rejecting as unreadable",
+                        len((extracted_text or "").strip()), filename,
+                    )
+                    yield sapling_event_to_sse(SaplingEvent(
+                        type="error", step="failed",
+                        message=UNREADABLE_DOCUMENT_DETAIL,
+                        data={"request_id": request_id},
+                    ))
+                    yield sapling_event_to_sse(SaplingEvent(
+                        type="status", step="done",
+                        message="Failed.",
+                    ))
+                    return
 
             # ── Phase 1: classifier (serial gate) ─────────────────────────────
             yield sapling_event_to_sse(SaplingEvent(
