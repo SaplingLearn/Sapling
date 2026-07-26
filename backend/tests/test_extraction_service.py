@@ -353,3 +353,159 @@ class TestRouterDispatch:
         mock_tess.assert_called_once()
         mock_docling.assert_not_called()
         assert result == "legacy-img"
+
+
+class TestGeminiVisionFallback:
+    """Gemini-vision OCR for pages Docling flagged as having no usable text.
+
+    Regression context: a rasterized practice exam of handwritten linear
+    algebra extracted to "" on every page. Docling *did* flag all 13 pages in
+    `fallback_pages`, but the only consumer of that signal was gated behind
+    `OCR_ENGINE=auto` + GOT-OCR, so under the default `docling` engine the
+    signal was computed and discarded. The empty text then reached the classify
+    prompt and the model invented a document.
+    """
+
+    @staticmethod
+    def _fake_pdf(pages=2):
+        from PIL import Image
+        fake_pdf = MagicMock()
+        fake_pdf.__len__ = MagicMock(return_value=pages)
+        fake_page = MagicMock()
+        fake_pdf.__getitem__ = MagicMock(return_value=fake_page)
+        rendered = MagicMock()
+        rendered.to_pil = MagicMock(return_value=Image.new("RGB", (2, 2), color="white"))
+        fake_page.render = MagicMock(return_value=rendered)
+        fake_page.close = MagicMock()
+        return fake_pdf
+
+    def test_replaces_flagged_pages_under_the_default_engine(self, monkeypatch):
+        """Must fire with OCR_ENGINE at its default. The old gate required
+        `auto`, which is why real uploads never benefited."""
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setenv("GOT_OCR_ENABLED", "false")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        metadata = {"per_page_markdown": ["", "good page 1"], "fallback_pages": [0]}
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("good page 1", 2, metadata),
+            ),
+            patch("pypdfium2.PdfDocument", return_value=self._fake_pdf()),
+            patch(
+                "services.extraction_service.extract_page_with_gemini_vision",
+                return_value="Problem 2  $\\lambda = -1, 8$",
+            ) as mock_vision,
+        ):
+            text, _ = extract_text_from_pdf_ocr(b"pdf")
+
+        mock_vision.assert_called_once()
+        assert "\\lambda" in text
+        assert "good page 1" in text
+
+    def test_not_called_when_disabled(self, monkeypatch):
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setenv("GOT_OCR_ENABLED", "false")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "false")
+        metadata = {"per_page_markdown": [""], "fallback_pages": [0]}
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("", 1, metadata),
+            ),
+            patch(
+                "services.extraction_service.extract_page_with_gemini_vision"
+            ) as mock_vision,
+        ):
+            extract_text_from_pdf_ocr(b"pdf")
+
+        mock_vision.assert_not_called()
+
+    def test_not_called_when_no_pages_are_flagged(self, monkeypatch):
+        """A normal text PDF must cost zero vision calls."""
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        metadata = {"per_page_markdown": ["full page of text"], "fallback_pages": []}
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("full page of text", 1, metadata),
+            ),
+            patch(
+                "services.extraction_service.extract_page_with_gemini_vision"
+            ) as mock_vision,
+        ):
+            text, _ = extract_text_from_pdf_ocr(b"pdf")
+
+        mock_vision.assert_not_called()
+        assert text == "full page of text"
+
+    def test_one_page_failing_does_not_lose_the_document(self, monkeypatch):
+        """A quota error on page 0 must leave the rest of the document intact."""
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        metadata = {
+            "per_page_markdown": ["original 0", "original 1"],
+            "fallback_pages": [0, 1],
+        }
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("original 0\n\noriginal 1", 2, metadata),
+            ),
+            patch("pypdfium2.PdfDocument", return_value=self._fake_pdf()),
+            patch(
+                "services.extraction_service.extract_page_with_gemini_vision",
+                side_effect=[RuntimeError("429 quota"), "transcribed 1"],
+            ),
+        ):
+            text, _ = extract_text_from_pdf_ocr(b"pdf")
+
+        assert "original 0" in text      # failed page keeps what Docling had
+        assert "transcribed 1" in text   # later page still transcribed
+
+    def test_unavailable_stops_trying_further_pages(self, monkeypatch):
+        """Misconfiguration is not per-page — stop rather than burning a failed
+        call for every page in a 200-page scan."""
+        from services.extraction_backends.gemini_vision_backend import (
+            GeminiVisionUnavailableError,
+        )
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        metadata = {
+            "per_page_markdown": ["p0", "p1", "p2"],
+            "fallback_pages": [0, 1, 2],
+        }
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("p0\n\np1\n\np2", 3, metadata),
+            ),
+            patch("pypdfium2.PdfDocument", return_value=self._fake_pdf(pages=3)),
+            patch(
+                "services.extraction_service.extract_page_with_gemini_vision",
+                side_effect=GeminiVisionUnavailableError("no key"),
+            ) as mock_vision,
+        ):
+            extract_text_from_pdf_ocr(b"pdf")
+
+        assert mock_vision.call_count == 1
+
+
+class TestOcrCacheKey:
+    def test_cache_key_includes_the_vision_flag(self, monkeypatch):
+        """Turning vision OCR on must not return the empty text cached from a
+        run made before it was enabled."""
+        from services.extraction_service import _ocr_cache_key
+
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "false")
+        off = _ocr_cache_key(b"same-bytes")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        on = _ocr_cache_key(b"same-bytes")
+
+        assert off != on
