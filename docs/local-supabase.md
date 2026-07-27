@@ -184,6 +184,55 @@ These bypass the hermetic mocks and hit the real local Supabase (real Postgres,
 encryption round-trips, migrated schema). Skipped by default. The suite seeds the
 rich dataset (idempotent) on first run and never resets your DB.
 
+## Test-profile production build (`build:test` / `start:test`, #380)
+
+`npm run dev` is fine for hand-testing, but browser E2E (Playwright) should run
+against a real production build. The test profile builds one that targets the
+**local** stack with **all API traffic same-origin** through the Next proxy:
+
+```bash
+# 1. Local backend up (from backend/, APP_ENV=local so /api/auth/test-login exists)
+python main.py                                # uvicorn on :5000
+
+# 2. Build + serve the test-profile frontend (from frontend/)
+npm run build:test && npm run start:test      # Next production server on :3000
+```
+
+What the profile bakes in (build-time, inlined by `next build`):
+
+- `NEXT_PUBLIC_API_URL=` **empty** — every client fetch is same-origin `/api/...`,
+  so the `sapling_session` cookie always rides along (a cross-origin value drops
+  it → 401). Explicitly empty matters: some callers fall back to
+  `http://localhost:5000` when the var is *unset*.
+- `BACKEND_URL=http://localhost:5000` — the `/api/:path*` rewrite proxies to the
+  local FastAPI (port 5000 = `backend/config.py` default). This also satisfies
+  `next.config.ts`'s production-build guard, which requires an explicit
+  `BACKEND_URL`.
+- Local Supabase URL + demo anon key — the lazy `lib/supabase.ts` client (used by
+  `/social` realtime) initializes instead of throwing.
+
+`start:test` supplies the runtime side: `BACKEND_URL` for the middleware session
+check and the fixed local `SESSION_SECRET` (must equal the backend's, which it
+does by default — both come from the `.env.local.example` values).
+
+Notes:
+
+- All values are the committed-safe local defaults from `.env.local.example`.
+  They're inlined in the npm scripts, and real process env beats `.env*` files in
+  Next — so the profile builds the same output even if your `frontend/.env.local`
+  points elsewhere. No env file is required.
+- Zero cross-origin API requests by construction: the browser only ever talks to
+  `http://localhost:3000`; the Next server proxies `/api/*` to `:5000`.
+- The build runs with `NODE_ENV=production`, so the session cookie is set with
+  `Secure`. Browsers (and Playwright's bundled browsers) accept Secure cookies on
+  `http://localhost`, so sign-in works unchanged.
+- `npm run build` (the deploy build) is untouched — the profile is additive npm
+  scripts only.
+- `start:test` prints `⚠ "next start" does not work with "output: standalone"` —
+  ignore it. The warning is about the *standalone deploy packaging*; `next start`
+  still serves the full build from `.next/` (pages, `/api/*` rewrites, the
+  session route, and middleware all verified working).
+
 ## Troubleshooting
 
 - **`supabase start` hangs on health checks** — usually the analytics/vector
