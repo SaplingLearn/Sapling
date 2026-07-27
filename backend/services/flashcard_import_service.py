@@ -10,6 +10,7 @@ import base64
 import io
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -91,7 +92,11 @@ def check_rate_limit(user_id: str) -> int | None:
     now = time.time()
     bucket = [t for t in _rate_state.get(user_id, []) if now - t < _RATE_WINDOW_SEC]
     if len(bucket) >= _RATE_LIMIT:
-        retry = int(_RATE_WINDOW_SEC - (now - bucket[0])) + 1
+        # Seconds until the oldest call in the window ages out (freeing a slot),
+        # rounded up. ceil keeps a sub-second remainder from reporting 0, and —
+        # unlike the old `int(...) + 1` — never overshoots to 61 when the calls
+        # land in the same clock tick (elapsed == 0). Always in [1, _RATE_WINDOW_SEC].
+        retry = math.ceil(_RATE_WINDOW_SEC - (now - bucket[0]))
         _rate_state[user_id] = bucket
         return retry
     bucket.append(now)

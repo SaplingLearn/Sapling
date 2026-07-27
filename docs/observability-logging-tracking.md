@@ -100,6 +100,65 @@ No raw content is ever stored — only fingerprints.
 - Admins can query usage, per-user activity, LLM cost rollups, and errors via
   `/api/admin/analytics`, and view them in an admin dashboard.
 
+## Logfire (activated in #119)
+
+Logfire is our external ops/error/LLM tracing tool. It is **complementary** to
+the owned Supabase `events`/`llm_usage` tables — it is not a replacement and
+does not write to them, so enabling it cannot double-count anything (the two
+capture paths share no code).
+
+### What Logfire captures
+
+- FastAPI **request traces**: method, route template (`/api/notes/{note_id}`),
+  status code, and latency — one span per request (`instrument_fastapi`).
+- Pydantic AI **agent spans**: the agent run, tool calls, and **live per-call
+  LLM token usage** (`instrument_pydantic_ai`).
+
+### How to enable
+
+1. Create a **write token** in the Logfire UI: https://logfire.pydantic.dev →
+   your project → Settings → Write tokens.
+2. Set `LOGFIRE_TOKEN=<token>` in the environment (see `backend/.env.example`).
+3. Restart the backend. Request and agent spans now stream to Logfire.
+
+With **no token**, Logfire is dormant: `logfire.configure(...)` uses
+`send_to_logfire="if-token-present"`, so nothing egresses and the app behaves
+exactly as before. `service_name="sapling-backend"` identifies the service in
+the Logfire UI. Both settings live in `backend/main.py`.
+
+### What is scrubbed / kept out of egress
+
+**No student content (prompts, completions, uploaded document text) leaves the
+process.** Three layers, all in `backend/main.py` + `services/logfire_scrubber.py`:
+
+- **Agent prompt/output** (`gen_ai.prompt`, `all_messages_events`,
+  `input/output.value`, …): the `scrub_value` callback truncates each string to
+  an 80-char preview and appends a `sha256` fingerprint, so a body is
+  debuggable/correlatable but never shipped in full. Logfire's built-in patterns
+  (`password`, `secret`, `api_key`, …) are still fully redacted.
+- **Request bodies + params** (`fastapi.arguments.values` — chat messages, note
+  bodies, quiz answers, uploaded text): dropped entirely via a
+  `request_attributes_mapper` that returns `None`. Logfire does **not** route
+  this attribute through the scrubber, so dropping it at the source is the only
+  safe option.
+- **Headers**: not captured (`capture_headers=False`).
+
+**Known, in-scope limitation — query strings.** The full request URL and the
+rendered span message (`http.url`, `logfire.msg`) still contain the raw query
+string, and Logfire deliberately keeps these standard attributes unscrubbed.
+Sapling query params are ids / enums / pagination plus a couple of
+low-sensitivity free-text terms (course search `q`, `check_username`) — **never
+prompts, completions, or document text**. Convention: do not put sensitive
+free-text in query params; send it in the request body (which is dropped).
+
+### Verifying the scrubbing
+
+`backend/tests/test_logfire_scrubber.py` covers it: unit tests for the
+prompt/output redaction, AST guards that fail if `instrument_fastapi` ever loses
+the argument-dropping mapper (or turns header/extra-span capture on), and an
+end-to-end test that fires a request with a body and asserts the body never
+appears in any exported span.
+
 ## Conventions honored
 
 - Supabase access only via `db/connection.py::table()`.

@@ -122,3 +122,125 @@ def test_scrub_value_redacts_when_inner_path_segment_is_risky():
     result = scrub_value(match)
     assert isinstance(result, str)
     assert "redacted" in result
+
+
+# ── instrument_fastapi wiring: no request bodies/headers may egress ──────────
+#
+# The scrubber only sees the attributes Logfire routes through it — and it does
+# NOT route the FastAPI endpoint-argument attribute (`fastapi.arguments.values`)
+# nor `http.url`/`logfire.msg`. That argument attribute otherwise carries the
+# request body and params: chat messages, note bodies, quiz answers, uploaded
+# document text. A body field named e.g. `body` matches no risky pattern, so
+# scrubbing can't be relied on here. main.py therefore drops the arguments at
+# the source via a `request_attributes_mapper` that returns None, keeps headers
+# off (`capture_headers=False`), and keeps the extra argument/endpoint spans off
+# (`extra_spans=False`). These guards fail loudly if any of that regresses.
+
+def _instrument_fastapi_kwargs():
+    """Parse main.py (no import/side effects) and return the keyword
+    arguments passed to logfire.instrument_fastapi(...), as an AST map."""
+    import ast
+    from pathlib import Path
+
+    main_src = Path(__file__).resolve().parents[1] / "main.py"
+    tree = ast.parse(main_src.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "instrument_fastapi"
+        ):
+            return {kw.arg: kw.value for kw in node.keywords}
+    return None
+
+
+def test_instrument_fastapi_is_wired():
+    """FastAPI request traces (success criterion #1) require this call."""
+    assert _instrument_fastapi_kwargs() is not None, (
+        "logfire.instrument_fastapi(app) must be called in main.py so FastAPI "
+        "request traces reach Logfire."
+    )
+
+
+def test_instrument_fastapi_drops_arguments_and_headers():
+    """Egress guard: request bodies/params/headers must never leave the process.
+
+    - `request_attributes_mapper` must be provided (it drops `fastapi.arguments`).
+    - `capture_headers` / `extra_spans`, if present, must be explicitly False.
+    Flipping any of these would ship un-scrubbed student content.
+    """
+    import ast
+
+    kwargs = _instrument_fastapi_kwargs()
+    assert kwargs is not None
+    assert "request_attributes_mapper" in kwargs, (
+        "instrument_fastapi must pass request_attributes_mapper to drop request "
+        "bodies/params (fastapi.arguments.values), which the scrubber can't reach."
+    )
+    for flag in ("extra_spans", "capture_headers"):
+        val = kwargs.get(flag)
+        if val is not None:
+            assert isinstance(val, ast.Constant) and val.value is False, (
+                f"instrument_fastapi({flag}=...) must be False so request "
+                f"bodies/headers are not sent to Logfire."
+            )
+
+
+def test_request_body_does_not_appear_in_exported_spans():
+    """End-to-end: fire a real request with a body + query and assert the body
+    never lands in any exported span attribute.
+
+    This is the concrete proof of "no student content leaves un-fingerprinted"
+    for the request-trace egress path introduced by instrument_fastapi. It
+    mirrors main.py's wiring (mapper drops args) against an in-memory exporter.
+    """
+    import json
+
+    import logfire
+    from fastapi import FastAPI, Query
+    from fastapi.testclient import TestClient
+    from logfire.testing import SimpleSpanProcessor, TestExporter
+    from pydantic import BaseModel
+
+    from main import _drop_request_arguments  # noqa: PLC2701 — the exact mapper we ship
+
+    exporter = TestExporter()
+    logfire.configure(
+        send_to_logfire=False,
+        additional_span_processors=[SimpleSpanProcessor(exporter)],
+    )
+
+    app = FastAPI()
+
+    class NoteIn(BaseModel):
+        title: str
+        body: str
+
+    @app.post("/notes/{note_id}")
+    def create_note(note_id: str, note: NoteIn, q: str = Query("")):
+        return {"ok": True}
+
+    logfire.instrument_fastapi(
+        app,
+        capture_headers=False,
+        extra_spans=False,
+        request_attributes_mapper=_drop_request_arguments,
+    )
+
+    secret = "MITOCHONDRIA_POWERHOUSE_ESSAY_BODY"
+    TestClient(app).post(
+        "/notes/note-123", json={"title": "Bio Notes", "body": secret + " " * 0}
+    )
+
+    spans = exporter.exported_spans_as_dict()
+    assert spans, "instrument_fastapi should emit a request span"
+    blob = json.dumps(spans)
+    assert secret not in blob, (
+        "request body leaked into a span attribute — the request_attributes_mapper "
+        "is not dropping fastapi.arguments.values"
+    )
+    # Sanity: the span still carries the useful ops fields.
+    attrs = spans[-1]["attributes"]
+    assert attrs.get("http.route") == "/notes/{note_id}"
+    assert attrs.get("http.method") == "POST"
+    assert "fastapi.arguments.values" not in attrs
