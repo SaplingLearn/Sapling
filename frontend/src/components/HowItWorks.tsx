@@ -7,8 +7,15 @@ import {
   useTransform,
   useMotionValueEvent,
   MotionValue,
+  MotionGlobalConfig,
 } from 'framer-motion';
 import { BRAND_FOREST } from '@/lib/brand';
+import { IS_TEST_MODE } from '@/lib/testMode';
+
+// Deterministic DOM for browser tests (#383): framer-motion's own test
+// seam jumps every animation straight to its final keyframe. No-op in
+// production builds (flag inlined to false at build time).
+if (IS_TEST_MODE) MotionGlobalConfig.skipAnimations = true;
 
 // ─── Graph data (shared by step 2 & 3) ───────────────────────────────────────
 
