@@ -5,9 +5,13 @@ generate quiz, send to tutor) come in Phase 4 below.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
+from agents import ORCHESTRATOR_LIMITS, WORKER_LIMITS
 from agents.deps import SaplingDeps
 from agents.note_chat import note_chat_agent
 from agents.note_concepts import note_concepts_agent
@@ -30,7 +34,48 @@ from services.notes_service import (
 from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# note_chat has no legacy fallback (ADR 0017), so guardrail trips degrade to
+# an in-band reply rather than falling back or surfacing a 5xx (#329).
+_CHAT_DEGRADED_REPLY = (
+    "I couldn't finish answering that — the request hit its processing "
+    "budget. Try again with a shorter or more specific message."
+)
+
+
+async def _run_note_worker(agent, user_prompt: str, deps: SaplingDeps, *, action: str):
+    """Run a single-shot note worker under WORKER_LIMITS (#329).
+
+    The two guardrail failure modes are distinct and must not be conflated:
+    a budget trip is deterministic (retrying the same note fails identically),
+    while unexpected model behavior is a genuine bug that must page us.
+    """
+    try:
+        return await agent.run(user_prompt, deps=deps, usage_limits=WORKER_LIMITS)
+    except UsageLimitExceeded as e:
+        # Deterministic budget exhaustion — a 413 with no "try again" wording,
+        # since retrying the same (too-long) note trips the same limit.
+        logger.warning(
+            "note %s agent hit its usage budget; returning 413", action, exc_info=e
+        )
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"This note is too long to complete {action} automatically. "
+                "Shortening the note may help."
+            ),
+        ) from e
+    except UnexpectedModelBehavior as e:
+        # Malformed model output / validation-retry exhaustion — a real bug,
+        # surfaced as a 5xx (so alerting fires) with a traceback in the log.
+        logger.exception("note %s agent returned unexpected model behavior", action)
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong generating this note's AI output.",
+        ) from e
 
 
 class CreateNoteBody(BaseModel):
@@ -222,7 +267,9 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     # The graph keys on the abstract course; the note carries the offering.
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    result = await note_summary_agent.run(user_prompt, deps=deps)
+    result = await _run_note_worker(
+        note_summary_agent, user_prompt, deps, action="summarization"
+    )
     summary_text = result.output.summary
     await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
     return {"summary": summary_text}
@@ -243,7 +290,9 @@ async def extract_concepts(
     # Concepts land in the abstract-course graph; resolve offering → course.
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    result = await note_concepts_agent.run(user_prompt, deps=deps)
+    result = await _run_note_worker(
+        note_concepts_agent, user_prompt, deps, action="concept extraction"
+    )
     names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
     await apply_concepts_to_graph(
         user_id=body.user_id, course_id=course_id, concept_names=names
@@ -272,8 +321,29 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
         raise HTTPException(status_code=404, detail="Note not found.")
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    result = await note_chat_agent.run(body.message, deps=deps)
-    return {"reply": result.output}
+    try:
+        result = await note_chat_agent.run(
+            body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS
+        )
+    except UsageLimitExceeded as e:
+        # Only a real budget trip reaches the in-band degrade, so the budget
+        # wording in _CHAT_DEGRADED_REPLY is accurate. Retrying is safe with no
+        # partial-write rollback: any graph write apply_graph_update_tool made
+        # before the trip is idempotent (apply_graph_update upserts nodes
+        # on_conflict, and note_chat writes no mastery events or edges).
+        logger.warning(
+            "note_chat agent hit its usage budget; degrading in-band", exc_info=e
+        )
+        return {"reply": _CHAT_DEGRADED_REPLY, "degraded": True}
+    except UnexpectedModelBehavior as e:
+        # Not a budget signal — a genuine bug. Surface it as a 5xx (never the
+        # budget reply) so alerting fires; the log carries a traceback.
+        logger.exception("note_chat agent returned unexpected model behavior")
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong answering that.",
+        ) from e
+    return {"reply": result.output, "degraded": False}
 
 
 @router.post("/{note_id}/send-to-tutor")

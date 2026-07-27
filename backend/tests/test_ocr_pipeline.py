@@ -181,9 +181,40 @@ class TestExtractAssignmentsViaAgent:
         assert first["assignment_type"] == "other"
         assert first["due_date"] == "2026-03-15"
 
+    def test_agent_run_receives_worker_limits(self):
+        """#329: the syllabus-extraction worker must run under WORKER_LIMITS —
+        single-shot, no tools, so the worker budget applies."""
+        from agents import WORKER_LIMITS
+        from services import calendar_service
+
+        agent_run = AsyncMock(
+            return_value=SimpleNamespace(output=self._agent_output())
+        )
+
+        with (
+            patch.object(
+                calendar_service, "extract_text_from_file",
+                return_value="syllabus body",
+            ),
+            patch.object(
+                calendar_service.syllabus_extraction_agent, "run", agent_run,
+            ),
+        ):
+            asyncio.run(calendar_service.extract_assignments_from_file(
+                b"raw", "syllabus.pdf", "application/pdf",
+            ))
+
+        assert agent_run.await_count == 1
+        assert agent_run.await_args.kwargs.get("usage_limits") is WORKER_LIMITS
+
     def test_degrades_gracefully_on_usage_limit(self):
-        """UsageLimitExceeded from the agent degrades to an empty result
-        with a warning — and does NOT make a second LLM call."""
+        """UsageLimitExceeded is a DETERMINISTIC failure for that document —
+        the syllabus is too long for the worker token budget, so re-uploading
+        the same file fails identically. The degrade warning must tell the
+        user the document is too long (and to shorten/split it) and must NOT
+        use the generic "temporarily unavailable / try again" wording, which
+        would wrongly invite an identical re-upload. Still no second LLM call.
+        """
         from services import calendar_service
         from pydantic_ai.exceptions import UsageLimitExceeded
 
@@ -205,10 +236,17 @@ class TestExtractAssignmentsViaAgent:
         assert agent_run.await_count == 1
         assert result["assignments"] == []
         assert result["warnings"]  # non-empty, user-facing
+        warning = " ".join(result["warnings"]).lower()
+        assert "too long" in warning
+        assert "shorter" in warning
+        # Deterministic failure — must NOT invite an identical re-upload.
+        assert "try again" not in warning
         assert result["raw_text"] == "text body"
 
     def test_degrades_gracefully_on_unexpected_exception(self):
-        """A bare Exception from the agent also degrades gracefully."""
+        """A bare Exception from the agent degrades to the GENERIC
+        "temporarily unavailable / try again" message — a transient failure
+        where a retry is legitimate (unlike the too-long UsageLimit case)."""
         from services import calendar_service
 
         agent_run = AsyncMock(side_effect=RuntimeError("boom"))
@@ -228,7 +266,41 @@ class TestExtractAssignmentsViaAgent:
 
         assert agent_run.await_count == 1
         assert result["assignments"] == []
-        assert result["warnings"]
+        assert result["warnings"] == [
+            "Assignment extraction is temporarily unavailable. Please try again."
+        ]
+        assert result["raw_text"] == "text body"
+
+    def test_degrades_generically_on_unexpected_model_behavior(self):
+        """UnexpectedModelBehavior is a model hiccup (not a doc-size problem),
+        so it keeps the generic degrade message — a retry stays reasonable.
+        #144 keeps this as a degrade rather than a 5xx to keep syllabus upload
+        available on a single model hiccup."""
+        from services import calendar_service
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        agent_run = AsyncMock(
+            side_effect=UnexpectedModelBehavior("bad tool call")
+        )
+
+        with (
+            patch.object(
+                calendar_service, "extract_text_from_file",
+                return_value="text body",
+            ),
+            patch.object(
+                calendar_service.syllabus_extraction_agent, "run", agent_run,
+            ),
+        ):
+            result = asyncio.run(calendar_service.extract_assignments_from_file(
+                b"raw", "syllabus.pdf", "application/pdf",
+            ))
+
+        assert agent_run.await_count == 1
+        assert result["assignments"] == []
+        assert result["warnings"] == [
+            "Assignment extraction is temporarily unavailable. Please try again."
+        ]
         assert result["raw_text"] == "text body"
 
     def test_empty_text_shortcut(self):

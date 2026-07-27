@@ -6,6 +6,7 @@ import uuid
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
+from agents import WORKER_LIMITS
 from agents.deps import SaplingDeps
 from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.tools.syllabus_adapter import syllabus_to_wire_dict
@@ -63,14 +64,22 @@ def insert_new_assignments(user_id: str, assignments: list[dict], *, source: str
     return len(rows)
 
 
-def _degraded_result(text: str) -> dict:
+def _degraded_result(text: str, *, warning: str | None = None) -> dict:
     """Graceful degrade when the extraction agent fails. Returns the legacy
     wire shape with no assignments and a user-facing warning — deliberately
-    NOT a second LLM call (the raw-Gemini fallback was retired in #144)."""
+    NOT a second LLM call (the raw-Gemini fallback was retired in #144).
+
+    `warning` overrides the default message so callers can distinguish a
+    deterministic failure (e.g. the syllabus is too long for the worker
+    token budget, where retrying the same document fails identically) from a
+    transient one. When None, the generic "temporarily unavailable / try
+    again" message is used.
+    """
     return {
         "assignments": [],
         "warnings": [
-            "Assignment extraction is temporarily unavailable. Please try again."
+            warning
+            or "Assignment extraction is temporarily unavailable. Please try again."
         ],
         "raw_text": text,
         "course_title": None,
@@ -103,7 +112,9 @@ async def _extract_via_agent(
         supabase=None,
         request_id=request_id or "",
     )
-    result = await syllabus_extraction_agent.run(extracted_text, deps=deps)
+    result = await syllabus_extraction_agent.run(
+        extracted_text, deps=deps, usage_limits=WORKER_LIMITS
+    )
     return syllabus_to_wire_dict(result.output, raw_text=extracted_text)
 
 
@@ -141,9 +152,29 @@ async def extract_assignments_from_file(
         result = await _extract_via_agent(
             text, user_id=user_id, request_id=request_id
         )
-    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+    except UsageLimitExceeded as e:
+        # Deterministic for this document — the syllabus exceeds the worker
+        # token budget, so re-uploading the same file fails identically. Tell
+        # the user to shorten/split it rather than "try again" (#329).
         logger.warning(
-            "Syllabus agent guardrails tripped; degrading to empty result",
+            "Syllabus exceeded the worker token budget; degrading to empty result",
+            exc_info=e,
+        )
+        result = _degraded_result(
+            text,
+            warning=(
+                "This syllabus is too long to process automatically. "
+                "Try uploading a shorter document, or split it into "
+                "multiple files."
+            ),
+        )
+    except UnexpectedModelBehavior as e:
+        # A model hiccup, not a doc-size problem — degrade generically (a retry
+        # is reasonable). #144: degrade rather than 5xx to keep syllabus upload
+        # available on a single model failure.
+        logger.warning(
+            "Syllabus agent returned unexpected model behavior; degrading to "
+            "empty result",
             exc_info=e,
         )
         result = _degraded_result(text)
