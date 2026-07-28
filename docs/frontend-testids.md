@@ -74,6 +74,7 @@ renders the element.
 | Knowledge graph | `graph` | `frontend/src/components/KnowledgeGraph.tsx` (wrapper only — not the 2D/3D internals) |
 | App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
 | Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
+| Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -203,6 +204,13 @@ route:
 | `social-member-kick-{userId}` | "Kick" on that member row (leader only) |
 | `social-match-run` | "Find matches" on the study-match tab |
 
+### `dashboard`
+
+| testid | element |
+| --- | --- |
+| `dashboard-courses-key-toggle` | expand/collapse toggle of the "My courses" key overlay on the graph panel (default sidebar layout; the key starts collapsed) |
+| `dashboard-course-code` | a course row's code/name label inside the expanded key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
+
 ## Enforcement
 
 `frontend/eslint.config.mjs` has a per-file `no-restricted-syntax` block scoped
@@ -238,6 +246,13 @@ It is intentionally narrow:
 There is no lint coverage on `signin-trigger` in `src/app/(public)/page.tsx` —
 the landing page has dozens of buttons that are not part of any browser test, so
 that file stays out of the `files` list. The trigger is documented here instead.
+
+`screens/Dashboard.tsx` joined the `files` list with the `dashboard` surface
+(#386) carrying 25 pre-existing untagged intrinsic elements; those are
+baselined in `eslint-suppressions.json` (the repo's legacy-debt mechanism —
+see the header of `eslint.config.mjs`), so only **new** interactive elements
+in the file must carry a testid. Tag baselined elements as they get browser
+coverage and regenerate with `npm run lint:baseline`.
 
 ### Adding a surface
 

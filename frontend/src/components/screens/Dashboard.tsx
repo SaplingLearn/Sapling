@@ -1358,6 +1358,7 @@ function CoursesKey({
             onClick={() => setCollapsed(c => !c)}
             aria-label={collapsed ? "Expand courses key" : "Collapse courses key"}
             style={paddedIconBtn}
+            data-testid="dashboard-courses-key-toggle"
           >
             <Icon name={collapsed ? "plus" : "x"} size={13} />
           </button>
@@ -1380,7 +1381,10 @@ function CoursesKey({
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5, gap: 8 }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                     <span style={{ width: 11, height: 11, borderRadius: "50%", background: baseColor, flexShrink: 0, ...legibleDot }} />
-                    <strong style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...legibleText }}>
+                    <strong
+                      data-testid="dashboard-course-code"
+                      style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...legibleText }}
+                    >
                       {course.course_code || course.course_name}
                     </strong>
                   </span>
