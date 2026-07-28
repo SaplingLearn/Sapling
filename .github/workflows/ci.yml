@@ -53,13 +53,21 @@ jobs:
         # manual evals workflow). The earlier #210 quarantine of
         # test_documents_routes + the graph self-edges test is gone — they're
         # hermetic now (shared db-client mock in conftest) and gate normally.
+        #
+        # test_extraction_service.py is NOT excluded, despite sitting next to
+        # the OCR tests that are: it stubs every backend it exercises and needs
+        # none of the heavy stack. It was swept into this list with its heavy
+        # neighbours, which meant the engine-gating, cache-key and cost-ceiling
+        # tests never gated a PR. Verified green on the locked (non-OCR) set.
+        # The other three genuinely need what the lockfile excludes:
+        # transformers (test_extraction_backends), docling
+        # (test_docling_integration), live network (test_ocr_pipeline).
         run: |
           python -m pytest tests/ -q \
             --ignore=tests/evals \
             --ignore=tests/test_docling_integration.py \
             --ignore=tests/test_ocr_pipeline.py \
-            --ignore=tests/test_extraction_backends.py \
-            --ignore=tests/test_extraction_service.py
+            --ignore=tests/test_extraction_backends.py
 
   frontend:
     name: Frontend (lint + tsc + vitest)
