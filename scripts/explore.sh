@@ -34,8 +34,12 @@
 #   findings.md               running human-readable findings log
 #   oracle-final.{txt,json}   final #400 oracle pass, appended at teardown
 #   traces/                   playwright MCP session artifacts (see write_mcp_config)
-#   lock.pid / lock.ok        internal lock-holder bookkeeping (start_lock_holder /
-#                             stop_lock_holder) — deliberately excluded from the wipe
+#   lock.ok                   internal lock-holder bookkeeping (start_lock_holder /
+#                             stop_lock_holder) — deliberately excluded from the wipe.
+#                             Content is the holder process's PID, written ONLY by
+#                             that process itself after it actually acquires the
+#                             flock (never by the parent, and never speculatively) —
+#                             see start_lock_holder for why.
 #
 # Lock: /tmp/claude-$(id -u)/sapling-e2e-stack.lock — the machine-singleton
 # E2E stack lock, held by a DETACHED setsid process (start_lock_holder below),
@@ -90,37 +94,59 @@ USAGE
 # own detached servers can't inherit it either.
 #
 # do_up calls this BEFORE touching .explore/ at all (see do_up): a busy lock
-# means another session owns the stack, and .explore/'s current contents are
-# that session's live artifacts — nothing here may wipe or delete them. On
-# failure this function cleans up its OWN attempt (kills the holder it just
-# spawned, removes the lock.pid/lock.ok it just wrote) before calling die(),
-# so a lock-busy exit leaves no trace and no leaked process.
+# means another session owns the stack, and .explore/'s current contents
+# (including that session's own lock.ok) are that session's live state —
+# nothing here may wipe, delete, or overwrite them.
+#
+# Bookkeeping ownership is the subtle part (fixed after a real bug was found
+# in review): a FAILED acquisition attempt must never touch lock.ok, because
+# lock.ok may belong to another, currently-live session. The old design had
+# the PARENT unconditionally `rm -f` lock.ok and write lock.pid before even
+# knowing whether the flock would succeed — session B's failed attempt could
+# delete session A's lock.ok and overwrite session A's lock.pid with B's own
+# (about-to-die) PID, leaving A's later `down` unable to find A's holder at
+# all (a permanent leaked process + leaked machine-singleton lock). Fixed by
+# making the HOLDER subprocess itself the only writer of lock.ok, and only
+# ever AFTER its own `flock -n 9` has actually succeeded — the parent here
+# just polls for that write to appear, and does nothing to disk at all on
+# the failure path. The write is atomic (temp file + mv) and self-identifying
+# (content = the holder's own $$, which — because `setsid CMD &` execs CMD
+# directly without an intervening fork — equals $! as seen by the parent) so
+# the poll can't be fooled by a stale lock.ok left behind by a crashed prior
+# session: it only accepts a lock.ok whose content is THIS attempt's pid.
 start_lock_holder() {
   mkdir -p "$(dirname "$LOCK_FILE")" "$EXPLORE_DIR"
-  rm -f "$EXPLORE_DIR/lock.ok"
   setsid bash -c "
     exec 9>\"$LOCK_FILE\"
     flock -n 9 || exit 42
-    touch \"$EXPLORE_DIR/lock.ok\"
+    tmp=\"$EXPLORE_DIR/lock.ok.\$\$.tmp\"
+    echo \"\$\$\" > \"\$tmp\"
+    mv -f \"\$tmp\" \"$EXPLORE_DIR/lock.ok\"
     exec sleep infinity
   " &
   local holder_pid=$!
-  echo "$holder_pid" > "$EXPLORE_DIR/lock.pid"
+  local acquired=1
   for _ in $(seq 1 20); do
-    [ -f "$EXPLORE_DIR/lock.ok" ] && return 0
+    if [ "$(cat "$EXPLORE_DIR/lock.ok" 2>/dev/null)" = "$holder_pid" ]; then
+      acquired=0
+      break
+    fi
     kill -0 "$holder_pid" 2>/dev/null || break
     sleep 0.1
   done
-  # Acquisition failed (busy, or the holder died before confirming) — undo
-  # our own attempt. .explore/ itself is never touched here.
+  [ "$acquired" -eq 0 ] && return 0
+  # Acquisition failed (busy, or the holder died before confirming) — reap
+  # our OWN doomed holder only. lock.ok is never touched here: it may belong
+  # to another session's live, already-successful holder.
   kill "$holder_pid" 2>/dev/null || true
-  rm -f "$EXPLORE_DIR/lock.pid" "$EXPLORE_DIR/lock.ok"
   die "e2e stack lock busy ($LOCK_FILE) — another session is using the stack"
 }
 
 stop_lock_holder() {
-  [ -f "$EXPLORE_DIR/lock.pid" ] && kill "$(cat "$EXPLORE_DIR/lock.pid")" 2>/dev/null || true
-  rm -f "$EXPLORE_DIR/lock.pid" "$EXPLORE_DIR/lock.ok"
+  local pid
+  pid="$(cat "$EXPLORE_DIR/lock.ok" 2>/dev/null)" || true
+  [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null || true
+  rm -f "$EXPLORE_DIR/lock.ok"
 }
 
 # ── Storage-state mint ────────────────────────────────────────────────────────
@@ -249,10 +275,10 @@ do_up() {
   trap do_down EXIT
 
   echo "▶ Preparing .explore/ (previous run's artifacts, if any, are wiped — triage them first if you need them)…"
-  # Preserve lock.pid/lock.ok — start_lock_holder just wrote them, and a
-  # later, separate `scripts/explore.sh down` invocation (the interactive
-  # flow) needs lock.pid on disk to know which holder process to stop.
-  find "$EXPLORE_DIR" -mindepth 1 -maxdepth 1 ! -name lock.pid ! -name lock.ok -exec rm -rf {} +
+  # Preserve lock.ok — start_lock_holder just wrote it (containing our
+  # holder's pid), and a later, separate `scripts/explore.sh down` invocation
+  # (the interactive flow) needs it on disk to know which holder to stop.
+  find "$EXPLORE_DIR" -mindepth 1 -maxdepth 1 ! -name lock.ok -exec rm -rf {} +
   mkdir -p "$EXPLORE_DIR/traces"
 
   echo "▶ Booting the E2E stack (scripts/e2e-up.sh)…"
