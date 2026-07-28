@@ -73,6 +73,7 @@ renders the element.
 | Quiz | `quiz` | `frontend/src/components/QuizPanel.tsx` (rendered by `screens/Quiz.tsx`) |
 | Knowledge graph | `graph` | `frontend/src/components/KnowledgeGraph.tsx` (wrapper only — not the 2D/3D internals) |
 | App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
+| Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -165,6 +166,42 @@ route:
 | testid | element |
 | --- | --- |
 | `app-shell` | authed shell root — the scrolling `<main id="main-content">` in `ShellFrame.tsx`, present in both (top-nav and sidebar) layout variants; the Playwright harness smoke spec (#385) anchors on it as the "authed shell mounted" signal |
+
+### `social`
+
+| testid | element |
+| --- | --- |
+| `social-create-room` | sidebar "Create" (opens the room-name input) |
+| `social-join-room` | sidebar "Join" (opens the invite-code input) |
+| `social-create-join-input` | shared create/join text input |
+| `social-create-join-submit` | "Go" |
+| `social-room-item-{roomId}` | a room in the sidebar list (stable seeded/domain id) |
+| `social-room-name` | active room title in the header |
+| `social-invite-copy` | invite-code copy chip in the header |
+| `social-directory-open` | sidebar "Browse directory" |
+| `social-directory-search` | directory search input |
+| `social-chat-messages` | chat scroll log (the "messages render here" container) |
+| `social-chat-message-{messageId}` | one message row (server UUID suffix) |
+| `social-chat-load-earlier` | "Load earlier messages" |
+| `social-chat-input` | message composer `<textarea>` |
+| `social-chat-send` | send button |
+| `social-chat-attach` | attach-image button |
+| `social-chat-image-input` | hidden `<input type="file">` (use `setInputFiles`) |
+| `social-chat-reply-cancel` | × on the "Replying to…" bar |
+| `social-chat-mention-{userId}` | an @mention autocomplete option |
+| `social-chat-message-react` | per-message menu: open emoji picker (one menu open at a time) |
+| `social-chat-message-reply` | per-message menu: reply |
+| `social-chat-message-edit` | per-message menu: edit (own messages) |
+| `social-chat-message-delete` | per-message menu: delete (own messages) |
+| `social-chat-emoji-{emoji}` | an option in the emoji picker grid |
+| `social-chat-reaction-{emoji}` | an existing reaction chip on a message (scope by the message row) |
+| `social-chat-edit-input` | inline edit input |
+| `social-chat-edit-save` | inline edit "Save" |
+| `social-chat-edit-cancel` | inline edit cancel |
+| `social-room-leave` | overview "Leave room" |
+| `social-member-{userId}` | a member row on the overview |
+| `social-member-kick-{userId}` | "Kick" on that member row (leader only) |
+| `social-match-run` | "Find matches" on the study-match tab |
 
 ## Enforcement
 

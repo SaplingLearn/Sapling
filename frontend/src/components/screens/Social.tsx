@@ -115,10 +115,10 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
   if (mode === "idle") {
     return (
       <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-        <button className="btn btn--sm btn--primary" style={{ flex: 1 }} onClick={() => setMode("create")}>
+        <button data-testid="social-create-room" className="btn btn--sm btn--primary" style={{ flex: 1 }} onClick={() => setMode("create")}>
           <Icon name="plus" size={12} /> Create
         </button>
-        <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => setMode("join")}>Join</button>
+        <button data-testid="social-join-room" className="btn btn--sm" style={{ flex: 1 }} onClick={() => setMode("join")}>Join</button>
       </div>
     );
   }
@@ -126,6 +126,7 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
   return (
     <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
       <input
+        data-testid="social-create-join-input"
         autoFocus
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -137,7 +138,7 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
           fontSize: 12, background: "var(--bg-panel)",
         }}
       />
-      <button className="btn btn--sm btn--primary" onClick={submit}>Go</button>
+      <button data-testid="social-create-join-submit" className="btn btn--sm btn--primary" onClick={submit}>Go</button>
     </div>
   );
 }
@@ -432,11 +433,12 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
       </div>
       <div
         ref={scrollRef}
+        data-testid="social-chat-messages"
         style={{ flex: 1, overflowY: "auto", padding: "12px 24px", display: "flex", flexDirection: "column", gap: 14 }}
       >
         {hasMore && (
           <div style={{ textAlign: "center" }}>
-            <button className="btn btn--ghost btn--sm" onClick={loadEarlier} disabled={loadingEarlier}>
+            <button data-testid="social-chat-load-earlier" className="btn btn--ghost btn--sm" onClick={loadEarlier} disabled={loadingEarlier}>
               {loadingEarlier ? "Loading…" : "Load earlier messages"}
             </button>
           </div>
@@ -449,7 +451,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
           const isMenuOpen = menu === m.id;
           const isEditing = editing === m.id;
           return (
-            <div key={m.id} style={{ display: "flex", gap: 10, alignSelf: self ? "flex-end" : "flex-start", maxWidth: "72%", position: "relative" }} className="fade-in">
+            <div key={m.id} data-testid={`social-chat-message-${m.id}`} style={{ display: "flex", gap: 10, alignSelf: self ? "flex-end" : "flex-start", maxWidth: "72%", position: "relative" }} className="fade-in">
               {!self && <Avatar name={m.user_name} size={32} />}
               <div style={{ position: "relative" }}>
                 {!self && <div style={{ fontSize: 11, color: "var(--text-dim)", fontWeight: 600, marginBottom: 2 }}>{m.user_name}</div>}
@@ -465,6 +467,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                 ) : isEditing ? (
                   <div style={{ display: "flex", gap: 6 }}>
                     <input
+                      data-testid="social-chat-edit-input"
                       autoFocus
                       value={editValue}
                       onChange={e => setEditValue(e.target.value)}
@@ -477,8 +480,8 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                         borderRadius: "var(--r-sm)", fontSize: 13, background: "var(--bg-panel)",
                       }}
                     />
-                    <button className="btn btn--sm btn--primary" onClick={() => handleEditSave(m.id)}>Save</button>
-                    <button className="btn btn--sm btn--ghost" onClick={() => { setEditing(null); setEditValue(""); }}>
+                    <button data-testid="social-chat-edit-save" className="btn btn--sm btn--primary" onClick={() => handleEditSave(m.id)}>Save</button>
+                    <button data-testid="social-chat-edit-cancel" className="btn btn--sm btn--ghost" onClick={() => { setEditing(null); setEditValue(""); }}>
                       <Icon name="x" size={11} />
                     </button>
                   </div>
@@ -505,6 +508,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                     {m.reactions.map((r) => (
                       <button
                         key={r.emoji}
+                        data-testid={`social-chat-reaction-${r.emoji}`}
                         onClick={() => handleReaction(m.id, r.emoji)}
                         style={{
                           fontSize: 11, padding: "2px 8px",
@@ -520,18 +524,18 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                 )}
                 {isMenuOpen && !m.is_deleted && (
                   <div style={{ position: "absolute", top: -32, right: 0, display: "flex", gap: 4, background: "var(--bg-panel)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-full)", padding: 4, boxShadow: "var(--shadow-md)" }}>
-                    <button className="btn btn--ghost btn--sm" title="React" onClick={(e) => { e.stopPropagation(); setPicker(m.id); }}>
+                    <button data-testid="social-chat-message-react" className="btn btn--ghost btn--sm" title="React" onClick={(e) => { e.stopPropagation(); setPicker(m.id); }}>
                       😊
                     </button>
-                    <button className="btn btn--ghost btn--sm" title="Reply" onClick={(e) => { e.stopPropagation(); setReplyTo(m); setMenu(null); inputRef.current?.focus(); }}>
+                    <button data-testid="social-chat-message-reply" className="btn btn--ghost btn--sm" title="Reply" onClick={(e) => { e.stopPropagation(); setReplyTo(m); setMenu(null); inputRef.current?.focus(); }}>
                       ↪
                     </button>
                     {self && (
                       <>
-                        <button className="btn btn--ghost btn--sm" title="Edit" onClick={(e) => { e.stopPropagation(); setEditing(m.id); setEditValue(m.text || ""); setMenu(null); }}>
+                        <button data-testid="social-chat-message-edit" className="btn btn--ghost btn--sm" title="Edit" onClick={(e) => { e.stopPropagation(); setEditing(m.id); setEditValue(m.text || ""); setMenu(null); }}>
                           <Icon name="pencil" size={11} />
                         </button>
-                        <button className="btn btn--ghost btn--sm" title="Delete" onClick={(e) => { e.stopPropagation(); handleDelete(m); setMenu(null); }}>
+                        <button data-testid="social-chat-message-delete" className="btn btn--ghost btn--sm" title="Delete" onClick={(e) => { e.stopPropagation(); handleDelete(m); setMenu(null); }}>
                           <Icon name="x" size={11} />
                         </button>
                       </>
@@ -541,7 +545,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                 {picker === m.id && (
                   <div style={{ position: "absolute", top: 20, right: 0, zIndex: 20, background: "var(--bg-panel)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-md)", padding: 10, boxShadow: "var(--shadow-lg)", display: "grid", gridTemplateColumns: "repeat(10, 1fr)", gap: 4, width: 340 }}>
                     {EMOJI_50.map((e) => (
-                      <button key={e} onClick={() => handleReaction(m.id, e)} style={{ fontSize: 16, padding: 4, borderRadius: 4 }}>{e}</button>
+                      <button key={e} data-testid={`social-chat-emoji-${e}`} onClick={() => handleReaction(m.id, e)} style={{ fontSize: 16, padding: 4, borderRadius: 4 }}>{e}</button>
                     ))}
                   </div>
                 )}
@@ -556,7 +560,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
           <div style={{ color: "var(--text-dim)" }}>
             Replying to <strong>{replyTo.user_name}</strong>: {replyTo.text?.slice(0, 80) || "(attachment)"}
           </div>
-          <button className="btn btn--ghost btn--sm" onClick={() => setReplyTo(null)}>
+          <button data-testid="social-chat-reply-cancel" className="btn btn--ghost btn--sm" onClick={() => setReplyTo(null)}>
             <Icon name="x" size={11} />
           </button>
         </div>
@@ -568,6 +572,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
             {filteredMentions.map((m, i) => (
               <button
                 key={m.user_id}
+                data-testid={`social-chat-mention-${m.user_id}`}
                 onClick={() => applyMention(m.name)}
                 style={{
                   display: "block", width: "100%", textAlign: "left",
@@ -583,6 +588,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
         <div style={{ display: "flex", gap: 8, alignItems: "center", background: "var(--bg-subtle)", borderRadius: "var(--r-full)", padding: "6px 14px", border: "1px solid var(--border)" }}>
           <textarea
             ref={inputRef}
+            data-testid="social-chat-input"
             value={input}
             rows={1}
             onChange={(e) => onInputChange(e.target.value)}
@@ -607,6 +613,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
           />
           <input
             ref={fileRef}
+            data-testid="social-chat-image-input"
             type="file"
             accept="image/*"
             hidden
@@ -616,10 +623,10 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
               e.target.value = "";
             }}
           />
-          <button className="btn btn--ghost btn--sm" onClick={() => fileRef.current?.click()} title="Attach image">
+          <button data-testid="social-chat-attach" className="btn btn--ghost btn--sm" onClick={() => fileRef.current?.click()} title="Attach image">
             <Icon name="doc" size={13} />
           </button>
-          <button className="btn btn--primary btn--sm" onClick={send} disabled={!input.trim()}>
+          <button data-testid="social-chat-send" className="btn btn--primary btn--sm" onClick={send} disabled={!input.trim()}>
             <Icon name="send" size={13} />
           </button>
         </div>
@@ -719,6 +726,7 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <div className="label-micro">Members</div>
           <button
+            data-testid="social-room-leave"
             className={`btn btn--sm ${leave.armed ? "btn--danger" : ""}`}
             onClick={leave.trigger}
             style={leave.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
@@ -778,7 +786,7 @@ function MemberRow({
 }) {
   const kick = useConfirm(onKick);
   return (
-    <div style={{
+    <div data-testid={`social-member-${member.user_id}`} style={{
       display: "flex", alignItems: "center", gap: 10,
       padding: "10px 0", borderBottom: last ? "none" : "1px solid var(--border)",
     }}>
@@ -797,6 +805,7 @@ function MemberRow({
       </Link>
       {canKick && (
         <button
+          data-testid={`social-member-kick-${member.user_id}`}
           className={`btn btn--sm ${kick.armed ? "btn--danger" : "btn--ghost"}`}
           onClick={kick.trigger}
           style={kick.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
@@ -841,7 +850,7 @@ function StudyMatch({ roomId }: { roomId: string }) {
           <div style={{ color: "var(--text-dim)", marginBottom: 20 }}>
             We&apos;ll pair you with members whose knowledge complements yours.
           </div>
-          <button className="btn btn--primary" onClick={run} disabled={loading}>
+          <button data-testid="social-match-run" className="btn btn--primary" onClick={run} disabled={loading}>
             {loading ? "Finding…" : "Find matches"}
           </button>
         </div>
@@ -942,6 +951,7 @@ function SchoolDirectory() {
             <div className="h-serif" style={{ fontSize: 22 }}>Students at your school</div>
           </div>
           <input
+            data-testid="social-directory-search"
             value={q}
             onChange={e => setQ(e.target.value)}
             placeholder="Search by name, course, concept"
@@ -1041,7 +1051,7 @@ export function Social() {
           <>
             <div style={{ padding: "18px 24px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
-                <div className="h-serif" style={{ fontSize: 22, fontWeight: 500 }}>{active.name}</div>
+                <div data-testid="social-room-name" className="h-serif" style={{ fontSize: 22, fontWeight: 500 }}>{active.name}</div>
                 <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
                   <CopyChip code={active.invite_code} />
                   <span>{active.member_count} members</span>
@@ -1078,6 +1088,7 @@ export function Social() {
           <div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>Study Rooms</div>
           <CreateJoinBar onDone={load} />
           <button
+            data-testid="social-directory-open"
             className="btn btn--sm"
             style={{ marginTop: 8, width: "100%" }}
             onClick={() => setTab("directory")}
@@ -1095,6 +1106,7 @@ export function Social() {
           {!loading && rooms.map((r) => (
             <button
               key={r.id}
+              data-testid={`social-room-item-${r.id}`}
               onClick={() => { setActiveId(r.id); setTab("chat"); }}
               style={{
                 width: "100%", padding: "10px 12px",
@@ -1128,7 +1140,7 @@ function CopyChip({ code }: { code: string }) {
     }
   };
   return (
-    <button className="chip" onClick={copy} title="Copy invite code">
+    <button data-testid="social-invite-copy" className="chip" onClick={copy} title="Copy invite code">
       {copied ? "Copied!" : code}
     </button>
   );

@@ -65,7 +65,28 @@ export default async function globalSetup(): Promise<void> {
         sameSite: "Lax" as const,
       },
     ],
-    origins: [],
+    // The cookie alone is not a signed-in browser: the client identity lives
+    // in localStorage (`UserContext` reads `sapling_user`; only the sign-in
+    // flows write it via setActiveUser). Without it every authed screen
+    // renders its shell but never fetches user data — the #386 journey found
+    // /dashboard stuck on its skeleton forever. Mirror exactly what
+    // setActiveUser persists for the primary seeded user (name per
+    // db/seed_local_rich.py).
+    origins: [
+      {
+        origin: FRONTEND_URL,
+        localStorage: [
+          {
+            name: "sapling_user",
+            value: JSON.stringify({
+              id: USER_ACTIVE,
+              name: "Rich Active",
+              avatar: "",
+            }),
+          },
+        ],
+      },
+    ],
   };
 
   fs.mkdirSync(path.dirname(STORAGE_STATE), { recursive: true });
