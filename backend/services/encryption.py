@@ -20,10 +20,15 @@ ROLLOUT NOTES
        assignments.points_earned   NUMERIC -> TEXT
        documents.concept_notes     JSONB   -> TEXT
    These migrations are tracked separately and are NOT part of this rollout.
-3. The following fields are referenced in the spec but were NOT marked in the
-   prior pass and are therefore not encrypted yet: messages.content (text),
-   room_messages.text, sessions.summary_json. Add markers + wire encryption in
-   a follow-up before any compliance review.
+3. messages.content, room_messages.text, and sessions.summary_json ARE
+   encrypted — this note previously claimed otherwise, which was stale
+   documentation rather than a real gap. All three are wired at write time
+   (see the "🔒" markers in db/seed_local_rich.py, which calls
+   encrypt_if_present for messages.content/room_messages.text and
+   encrypt_json for sessions.summary_json) and are listed as encrypted in
+   the root CLAUDE.md Gotchas section. frontend/e2e/tutor.spec.ts and
+   frontend/e2e/study-room.spec.ts additionally assert ciphertext-at-rest
+   for messages.content and room_messages.text against the live stack.
 """
 from __future__ import annotations
 
