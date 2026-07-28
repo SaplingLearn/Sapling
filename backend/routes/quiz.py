@@ -138,10 +138,19 @@ def _resolve_model_pref(model_pref: str | None):
     """
     if not model_pref:
         return None
+    from agents._providers import _model_mode, google_model
+    if _model_mode() != "real":
+        # #391 seam: the per-request fast/smart override must not bypass
+        # SAPLING_MODEL_MODE by constructing a live GoogleModel. Same fix as
+        # routes/learn.py (#392) — there the browser always sends a pref;
+        # the quiz UI does not send one today, but any client that did would
+        # silently put live Gemini back in the function-mode path. Fall
+        # through to the agent's default model, which model_for("quiz")
+        # already built for the active mode.
+        return None
     name = _PREF_MODEL_NAMES.get(model_pref)
     if not name:
         return None
-    from agents._providers import google_model
     return google_model(name)
 
 
