@@ -153,6 +153,7 @@ route:
 | `quiz-explain-concept` | "Explain this" |
 | `quiz-next` | "Next question" / "See results" |
 | `quiz-results-score` | the score percentage |
+| `quiz-results-mastery` | the "X / Y correct · mastery B% → A%" line |
 | `quiz-retake` | "Retake" |
 | `quiz-done` | "Done" |
 

@@ -371,7 +371,7 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
           <div data-testid="quiz-results-score" className="h-serif" style={{ fontSize: 32 }}>
             {Math.round((results.score / Math.max(1, results.total)) * 100)}%
           </div>
-          <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
+          <div data-testid="quiz-results-mastery" style={{ fontSize: 13, color: "var(--text-dim)" }}>
             {results.score} / {results.total} correct · mastery{" "}
             <span style={{ color: results.mastery_after >= results.mastery_before ? "var(--accent)" : "var(--err)", fontWeight: 600 }}>
               {Math.round(results.mastery_before * 100)}% → {Math.round(results.mastery_after * 100)}%
