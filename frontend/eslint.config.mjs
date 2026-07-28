@@ -61,6 +61,7 @@ const eslintConfig = [
       "src/components/ShellFrame.tsx",
       "src/components/screens/Social.tsx",
       "src/components/screens/Dashboard.tsx",
+      "src/components/screens/Learn.tsx",
     ],
     rules: {
       "no-restricted-syntax": [
