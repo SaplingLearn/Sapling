@@ -185,9 +185,9 @@ genuinely unregistered in `backend/agents/function_handlers_e2e.py`),
 independently corroborated by the `logscan` oracle picking up the same `500`
 and traceback. Neither of those is on the known-bugs list — they're exactly
 the kind of thing this chapter is for. By contrast, #355 (the graph's
-duplicated CS subject-root hub) shows up
-in the graph oracle on essentially every run against the rich seed data —
-that's the known-not-new case category 3 above exists for.
+duplicated CS subject-root hub) shows up in the graph oracle on essentially
+every run against the rich seed data — that's the known-not-new case
+category 3 above exists for.
 
 ## 8. Promotion pipeline
 
