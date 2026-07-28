@@ -225,16 +225,21 @@ export function KnowledgeGraph3D({
         enableNodeDrag={false}
         onNodeClick={handleNodeClick}
       />
-      <ul style={SR_ONLY} aria-label="Knowledge graph nodes">
+      {/* Same testid seam as the 2D variant (docs/frontend-testids.md, #395):
+          only one of the two graph implementations mounts at a time, so the
+          shared testids never collide in the DOM. */}
+      <ul style={SR_ONLY} aria-label="Knowledge graph nodes" data-testid="graph-node-items">
         {nodes.map((n) =>
           onNodeClick ? (
-            <li key={n.id}>
-              <button type="button" onClick={() => onNodeClick(n)}>
+            <li key={n.id} data-testid="graph-node-item" data-node-id={n.id}>
+              <button type="button" data-testid="graph-node-activate" onClick={() => onNodeClick(n)}>
                 {n.name}
               </button>
             </li>
           ) : (
-            <li key={n.id}>{n.name}</li>
+            <li key={n.id} data-testid="graph-node-item" data-node-id={n.id}>
+              {n.name}
+            </li>
           ),
         )}
       </ul>

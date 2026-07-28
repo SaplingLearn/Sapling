@@ -447,6 +447,7 @@ function KnowledgeGraph2DImpl({
               return (
                 <line
                   key={i}
+                  data-testid="graph-edge"
                   x1={s.x}
                   y1={s.y}
                   x2={t.x}
@@ -473,6 +474,8 @@ function KnowledgeGraph2DImpl({
               return (
                 <g
                   key={n.id}
+                  data-testid="graph-node"
+                  data-node-id={n.id}
                   style={{ cursor: "grab" }}
                   onPointerDown={(ev) => onNodePointerDown(ev, n)}
                   onPointerEnter={() => setHovered(n)}
@@ -520,11 +523,12 @@ function KnowledgeGraph2DImpl({
                   })()}
                   {variant === "constellation" ? (
                     <>
-                      <circle cx={n.x} cy={n.y} r={r * 0.7} fill={color} opacity={op} />
+                      <circle data-testid="graph-node-circle" cx={n.x} cy={n.y} r={r * 0.7} fill={color} opacity={op} />
                       <circle cx={n.x} cy={n.y} r={r * 1.6} fill="none" stroke={color} strokeWidth={0.5} opacity={op * 0.4} />
                     </>
                   ) : (
                     <circle
+                      data-testid="graph-node-circle"
                       cx={n.x}
                       cy={n.y}
                       r={r}
@@ -586,6 +590,7 @@ function KnowledgeGraph2DImpl({
         }}
       >
         <button
+          data-testid="graph-zoom-in"
           className="btn btn--ghost btn--sm"
           style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
           onClick={() => setView((v) => {
@@ -598,6 +603,7 @@ function KnowledgeGraph2DImpl({
           +
         </button>
         <button
+          data-testid="graph-zoom-out"
           className="btn btn--ghost btn--sm"
           style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
           onClick={() => setView((v) => {
@@ -610,6 +616,7 @@ function KnowledgeGraph2DImpl({
           −
         </button>
         <button
+          data-testid="graph-zoom-reset"
           className="btn btn--ghost btn--sm"
           style={{ padding: "2px 8px", fontSize: 10 }}
           onClick={resetView}
@@ -684,16 +691,23 @@ function KnowledgeGraph2DImpl({
           )}
         </div>
       )}
-      <ul style={SR_ONLY} aria-label="Knowledge graph nodes">
+      {/* The a11y node list doubles as the browser suite's data seam (#395):
+          `graph-node-item` mirrors the `nodes` prop 1:1 and carries the node
+          id as `data-node-id` so tests assert by identity, never by label
+          (concept names are only unique per course). Registered in
+          docs/frontend-testids.md. */}
+      <ul style={SR_ONLY} aria-label="Knowledge graph nodes" data-testid="graph-node-items">
         {nodes.map((n) =>
           onNodeClick ? (
-            <li key={n.id}>
-              <button type="button" onClick={() => onNodeClick(n)}>
+            <li key={n.id} data-testid="graph-node-item" data-node-id={n.id}>
+              <button type="button" data-testid="graph-node-activate" onClick={() => onNodeClick(n)}>
                 {n.name}
               </button>
             </li>
           ) : (
-            <li key={n.id}>{n.name}</li>
+            <li key={n.id} data-testid="graph-node-item" data-node-id={n.id}>
+              {n.name}
+            </li>
           ),
         )}
       </ul>

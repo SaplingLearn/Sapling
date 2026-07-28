@@ -58,6 +58,8 @@ const eslintConfig = [
       "src/components/ChatPanel.tsx",
       "src/components/QuizPanel.tsx",
       "src/components/KnowledgeGraph.tsx",
+      "src/components/KnowledgeGraph2D.tsx",
+      "src/components/KnowledgeGraph3D.tsx",
       "src/components/ShellFrame.tsx",
       "src/components/screens/Social.tsx",
       "src/components/screens/Dashboard.tsx",
