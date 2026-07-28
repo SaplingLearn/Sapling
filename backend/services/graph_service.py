@@ -227,12 +227,21 @@ def get_graph(user_id: str) -> dict:
         if cid and cid in course_color_map:
             n["course_color"] = course_color_map[cid]
 
-    # Build subject root hubs from enrolled courses
+    # Build subject root hubs from enrolled courses — one root per DISTINCT
+    # abstract course, not per enrollment. A user can hold two offerings of the
+    # same abstract course (e.g. re-taking it, or two sections); the graph stays
+    # keyed on the abstract course_id, so without this dedup the synthesized
+    # subject_root node (and its hub-spoke edges) would be duplicated once per
+    # extra enrollment (#355).
     subject_nodes = []
     subject_edges = []
+    seen_course_ids: set[str] = set()
 
     for enrollment in enrolled_courses:
         course_id = enrollment["course_id"]
+        if course_id in seen_course_ids:
+            continue
+        seen_course_ids.add(course_id)
         course = enrollment.get("courses", {}) if isinstance(enrollment.get("courses"), dict) else {}
         course_code = course.get("course_code", "")
         course_name = course.get("course_name", "")

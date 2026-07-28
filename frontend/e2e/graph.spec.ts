@@ -29,18 +29,18 @@
  * collisions structurally irrelevant. Label TEXT is still asserted per node
  * (it is part of the rendered data), just keyed by id.
  *
- * KNOWN BUG #355: /api/graph duplicates the subject-root hub when a user is
- * enrolled in two offerings of the SAME abstract course (subject-root
- * synthesis iterates enrollments, not distinct courses). The rich seed
- * intentionally has rich-user-active in both the F25 and S26 offerings of
- * rich-course-cs101, so the exact-count test below trips on the duplicated
- * `subject_root__rich-course-cs101` hub (+1 node, +5 spokes) — verified live:
- * PROBE355 nodes_total=18 nodes_unique=17
+ * FIXED BUG #355: /api/graph used to duplicate the subject-root hub when a
+ * user was enrolled in two offerings of the SAME abstract course
+ * (subject-root synthesis iterated enrollments, not distinct courses). The
+ * rich seed intentionally has rich-user-active in both the F25 and S26
+ * offerings of rich-course-cs101, so the exact-count test below is the
+ * regression coverage for it — it used to trip on the duplicated
+ * `subject_root__rich-course-cs101` hub (+1 node, +5 spokes) — verified live
+ * before the fix: PROBE355 nodes_total=18 nodes_unique=17
  * dup_node_ids=["subject_root__rich-course-cs101"] edges_total=25
- * edges_unique=20 dup_edges=5. That is this journey catching precisely the
- * defect class it exists for — the correct assertion is kept and the test is
- * marked fixme(#355) rather than relaxed. The companion tests assert
- * everything #355 does not corrupt.
+ * edges_unique=20 dup_edges=5. `graph_service.get_graph` now dedupes subject
+ * roots by distinct abstract `course_id` (backend/services/graph_service.py),
+ * so this journey runs as a normal (non-fixme) exact-count test.
  */
 import type { Locator, Page } from "@playwright/test";
 
@@ -174,11 +174,12 @@ function byNodeId(loc: Locator, id: string) {
   return loc.and(loc.page().locator(`[data-node-id=${JSON.stringify(id)}]`));
 }
 
-// Marked fixme, NOT relaxed: red today solely because of open bug #355 (see
-// header). The duplicated CS subject root makes the UI render one node and
-// five hub spokes more than a correct payload would. Un-fixme when #355
-// lands — the assertions below are the acceptance test for it.
-test.fixme("renders exactly one node per DB graph node plus one subject root per enrolled course, and one edge per DB edge plus one hub spoke per course node", async ({ page }) => {
+// Acceptance test for #355 (now fixed): before the fix, the duplicated CS
+// subject root made the UI render one node and five hub spokes more than a
+// correct payload would, so this ran as test.fixme. Promoted to a normal
+// test now that graph_service.get_graph dedupes subject roots by distinct
+// abstract course_id.
+test("renders exactly one node per DB graph node plus one subject root per enrolled course, and one edge per DB edge plus one hub spoke per course node", async ({ page }) => {
   const g = await graphExpectations();
   expect(g.nodes.length).toBeGreaterThan(0); // journey guard: seeded graph present
 
@@ -195,7 +196,8 @@ test.fixme("renders exactly one node per DB graph node plus one subject root per
   await expect(svgEdges).toHaveCount(g.expectedEdgeCount);
 
   // Each subject-root hub renders exactly once per distinct enrolled course
-  // (the precise duplication #355 causes: these read 2 for CS101 today).
+  // (this is the precise regression coverage for #355: before the fix, this
+  // read 2 for CS101 for a user enrolled in two offerings of it).
   for (const c of g.courses) {
     await expect(byNodeId(items, rootId(c.course_id))).toHaveCount(1);
     await expect(byNodeId(svgNodes, rootId(c.course_id))).toHaveCount(1);
@@ -211,9 +213,10 @@ test("renders every DB concept node exactly once, classified by its DB mastery s
 
   // Every DB concept node renders exactly once — in the SVG and in the a11y
   // list — and shows its own concept name. Keyed by node id, so this holds
-  // even if two courses share a concept name. (Concept rows are what #355
-  // does NOT duplicate, so exact counts hold here; hub multiplicity lives in
-  // the fixme test above.)
+  // even if two courses share a concept name. (Concept rows were never
+  // affected by #355 — only the synthesized subject-root hub was — so exact
+  // counts hold here; the hub's own exact multiplicity is covered by the
+  // dedicated test above.)
   for (const n of g.nodes) {
     const item = byNodeId(items, n.id);
     await expect(item).toHaveCount(1);
@@ -222,7 +225,9 @@ test("renders every DB concept node exactly once, classified by its DB mastery s
   }
 
   // Every enrolled course's subject-root hub is present with its course
-  // label (≥1 — exact multiplicity is the #355-blocked assertion above).
+  // label (≥1 here; the dedicated test above asserts the exact multiplicity
+  // — this test stays a presence check so it doesn't duplicate that
+  // coverage).
   for (const c of g.courses) {
     const hub = byNodeId(items, rootId(c.course_id)).first();
     await expect(hub).toBeVisible();
@@ -230,8 +235,8 @@ test("renders every DB concept node exactly once, classified by its DB mastery s
   }
 
   // Edge floor: at least every DB edge + hub spoke is drawn (exact equality
-  // is #355-blocked — the duplicate hub adds surplus spokes, but a MISSING
-  // edge must still fail here).
+  // is asserted by the dedicated test above; this stays a floor check so a
+  // MISSING edge still fails here even independent of hub-count coverage).
   expect(await svgEdges.count()).toBeGreaterThanOrEqual(g.expectedEdgeCount);
 
   // Mastery classification at the render layer: the 2D graph encodes the
