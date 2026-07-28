@@ -69,6 +69,9 @@ Thumbs.db
 # ---- Worktrees ----
 .worktrees/
 
+# ---- Local E2E stack run dir (PIDs + logs, scripts/e2e-up.sh, #384) ----
+.e2e/
+
 # ---- Superpowers brainstorm sessions ----
 .superpowers/
 
