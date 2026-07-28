@@ -24,14 +24,18 @@
 #   EXPLORE_HEADED      1 = headed browser, 0 = headless (default 0)
 #   EXPLORE_USER        seeded rich-* user to mint a session for (default rich-user-active)
 #
-# Outputs land in .explore/ (wiped and recreated by `up` — a previous run's
-# artifacts are the operator's to triage before re-running):
+# Outputs land in .explore/ (wiped and recreated by `up`, but only AFTER the
+# lock is acquired — see do_up/start_lock_holder — so a lock-busy `up` never
+# touches another session's live artifacts; previous-run artifacts are
+# otherwise the operator's to triage before re-running):
 #   storageState.json        Playwright storage state (cookie + sapling_user localStorage)
 #   mcp.json                 --mcp-config fed to `claude -p` (the playwright MCP server)
 #   session.log               `claude -p` transcript (tee'd)
 #   findings.md               running human-readable findings log
 #   oracle-final.{txt,json}   final #400 oracle pass, appended at teardown
 #   traces/                   playwright MCP session artifacts (see write_mcp_config)
+#   lock.pid / lock.ok        internal lock-holder bookkeeping (start_lock_holder /
+#                             stop_lock_holder) — deliberately excluded from the wipe
 #
 # Lock: /tmp/claude-$(id -u)/sapling-e2e-stack.lock — the machine-singleton
 # E2E stack lock, held by a DETACHED setsid process (start_lock_holder below),
@@ -84,6 +88,13 @@ USAGE
 # forever; stop_lock_holder kills it. Neither this script nor scripts/e2e-up.sh
 # (invoked below, not by the holder) ever has the lock fd open, so the stack's
 # own detached servers can't inherit it either.
+#
+# do_up calls this BEFORE touching .explore/ at all (see do_up): a busy lock
+# means another session owns the stack, and .explore/'s current contents are
+# that session's live artifacts — nothing here may wipe or delete them. On
+# failure this function cleans up its OWN attempt (kills the holder it just
+# spawned, removes the lock.pid/lock.ok it just wrote) before calling die(),
+# so a lock-busy exit leaves no trace and no leaked process.
 start_lock_holder() {
   mkdir -p "$(dirname "$LOCK_FILE")" "$EXPLORE_DIR"
   rm -f "$EXPLORE_DIR/lock.ok"
@@ -93,12 +104,17 @@ start_lock_holder() {
     touch \"$EXPLORE_DIR/lock.ok\"
     exec sleep infinity
   " &
-  echo $! > "$EXPLORE_DIR/lock.pid"
+  local holder_pid=$!
+  echo "$holder_pid" > "$EXPLORE_DIR/lock.pid"
   for _ in $(seq 1 20); do
     [ -f "$EXPLORE_DIR/lock.ok" ] && return 0
-    kill -0 "$(cat "$EXPLORE_DIR/lock.pid")" 2>/dev/null || break
+    kill -0 "$holder_pid" 2>/dev/null || break
     sleep 0.1
   done
+  # Acquisition failed (busy, or the holder died before confirming) — undo
+  # our own attempt. .explore/ itself is never touched here.
+  kill "$holder_pid" 2>/dev/null || true
+  rm -f "$EXPLORE_DIR/lock.pid" "$EXPLORE_DIR/lock.ok"
   die "e2e stack lock busy ($LOCK_FILE) — another session is using the stack"
 }
 
@@ -216,22 +232,34 @@ do_up() {
   [ -f "$REPO_ROOT/scripts/explore/explorer-prompt.md" ] \
     || die "scripts/explore/explorer-prompt.md not found (lands in a later #399 task) — nothing to run yet"
 
-  # Arm a cleanup-on-failure trap for the rest of `up`: do_down is
-  # idempotent-safe (a `down` with nothing running exits cleanly), so it's
-  # also the right thing to run if boot fails partway through. Disarmed just
-  # before a successful return so a bare `up` leaves the stack running.
+  # Acquire the lock FIRST, before touching .explore/ at all and before
+  # arming any trap that can call do_down (which runs scripts/e2e-down.sh —
+  # destructive). A busy lock means another session owns the stack; failing
+  # here must exit with the "stack busy" message having wiped nothing, torn
+  # nothing down, and leaked no process (start_lock_holder cleans up its own
+  # failed attempt — see above). Only once the lock is truly ours do we arm
+  # the boot-failure safety net and wipe .explore/ for this run.
+  start_lock_holder
+
+  # Lock is ours: NOW it's safe to arm do_down as a cleanup-on-failure trap
+  # (idempotent-safe even with nothing up) so a boot failure partway through
+  # still releases the lock and tears down whatever partially came up.
+  # Disarmed just before a successful return so a bare `up` leaves the stack
+  # running for the interactive flow.
   trap do_down EXIT
 
   echo "▶ Preparing .explore/ (previous run's artifacts, if any, are wiped — triage them first if you need them)…"
-  rm -rf "$EXPLORE_DIR"
+  # Preserve lock.pid/lock.ok — start_lock_holder just wrote them, and a
+  # later, separate `scripts/explore.sh down` invocation (the interactive
+  # flow) needs lock.pid on disk to know which holder process to stop.
+  find "$EXPLORE_DIR" -mindepth 1 -maxdepth 1 ! -name lock.pid ! -name lock.ok -exec rm -rf {} +
   mkdir -p "$EXPLORE_DIR/traces"
-
-  start_lock_holder
 
   echo "▶ Booting the E2E stack (scripts/e2e-up.sh)…"
   export SAPLING_MODEL_MODE=function
   export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
-  export GEMINI_API_KEY=e2e-dummy-key-no-billing
+  # Default only if unset — never clobber an operator's real key.
+  export GEMINI_API_KEY="${GEMINI_API_KEY:-e2e-dummy-key-no-billing}"
   "$REPO_ROOT/scripts/e2e-up.sh" || die "scripts/e2e-up.sh failed — see .e2e/*.log"
 
   echo "▶ Minting a session for $EXPLORE_USER…"
