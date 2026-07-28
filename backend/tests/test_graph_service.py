@@ -261,6 +261,40 @@ class TestGetGraph:
         assert len(node["mastery_events"]) == 2
         assert result["stats"]["avg_learning_velocity"] > 0
 
+    def test_dedupes_subject_root_for_two_offerings_of_same_course(self):
+        """#355: a user enrolled in TWO offerings of the same abstract course
+        (e.g. re-taking it, or two sections) must get exactly ONE subject-root
+        node — synthesis dedupes by abstract course_id, not per-enrollment."""
+        nodes = [
+            {"id": "n1", "concept_name": "Loops", "mastery_tier": "learning",
+             "mastery_score": 0.5, "subject": "CS101", "course_id": "c1",
+             "times_studied": 2, "user_id": "u1"},
+        ]
+        enrollments = [
+            _enrollment_row("c1", "CS101", "Intro CS", offering_id="off-1"),
+            _enrollment_row("c1", "CS101", "Intro CS", offering_id="off-2"),
+        ]
+        factory = _mock_table({
+            "users": [{"streak_count": 0}],
+            "enrollments": enrollments,
+            "graph_nodes": nodes,
+            "graph_edges": [],
+        })
+        with patch("services.graph_service.table", side_effect=factory):
+            result = get_graph("u1")
+
+        node_ids = [n["id"] for n in result["nodes"]]
+        assert len(node_ids) == len(set(node_ids)), f"duplicate node ids: {node_ids}"
+
+        roots = [n for n in result["nodes"] if n.get("is_subject_root")]
+        assert len(roots) == 1
+        assert roots[0]["id"] == "subject_root__c1"
+
+        # No surplus hub-spoke edges either: exactly one subject_edge per
+        # concept node under the course, not one per enrollment.
+        subject_edges = [e for e in result["edges"] if e["id"].startswith("subject_edge__")]
+        assert len(subject_edges) == len(nodes)
+
     def test_velocity_zero_when_no_events(self):
         nodes = [
             {"id": "n1", "concept_name": "Loops", "mastery_tier": "learning",
