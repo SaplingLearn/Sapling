@@ -138,6 +138,7 @@ route:
 | `tutor-action-confused` | "I'm confused" |
 | `tutor-action-skip` | "Skip" |
 | `tutor-session-resume-{sessionId}` | a "Recent sessions" row's resume button (`screens/Learn.tsx`), suffixed with the session's own id per the stable-domain-id rule |
+| `tutor-focus-concept-description` | the knowledge-map rail's "Focused concept" card description text (`screens/Learn.tsx`) — stored `description` if the node has one, else the AI-fetched blurb (`POST /api/graph/{user}/concept-description`, #446), else the connected-concepts fallback sentence |
 
 ### `quiz`
 
