@@ -14,6 +14,7 @@ from services.graph_service import (
 )
 from services.request_context import current_request_id
 from agents import WORKER_LIMITS
+from agents._providers import UnregisteredHandlerError
 from agents._run import run_agent_sync
 from agents.deps import SaplingDeps
 from agents.concept_describe import concept_describe_agent, build_message
@@ -136,13 +137,18 @@ def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Reques
                 usage_limits=WORKER_LIMITS,
             )
         )
-    except (AgentRunError, httpx.HTTPError, ValidationError, LookupError) as e:
+    except (AgentRunError, httpx.HTTPError, ValidationError, UnregisteredHandlerError) as e:
         # Model / transport / output-validation failures are upstream problems —
-        # surface them as 502. LookupError covers the SAPLING_MODEL_MODE=function
-        # seam (agents/_providers.py::_dispatch) raising when no handler is
-        # registered for 'concept_describe' (#446): a misconfigured seam
-        # shouldn't 500 the route, it should degrade the same way an upstream
-        # model failure does. Anything else propagates to the generic handler.
+        # surface them as 502. UnregisteredHandlerError covers the
+        # SAPLING_MODEL_MODE=function seam (agents/_providers.py::_dispatch)
+        # raising when no handler is registered for 'concept_describe' (#446):
+        # a misconfigured seam shouldn't 500 the route, it should degrade the
+        # same way an upstream model failure does. Deliberately NOT the bare
+        # `LookupError` builtin here (#446 PR review): that base class also
+        # covers KeyError/IndexError, and a bare `LookupError` catch would
+        # silently downgrade an unrelated KeyError/IndexError bug elsewhere in
+        # the agent-run path to this 502 instead of the generic 500. Anything
+        # else propagates to the generic handler.
         raise HTTPException(
             status_code=502, detail=f"concept-description agent failed: {e}"
         ) from e
