@@ -174,14 +174,25 @@ stop_lock_holder() {
 # below), not this flag, but a state file that doesn't match what the app
 # would actually set is still wrong on its own — fix it regardless.
 mint_storage_state() {
-  local body
+  local body display_name
   body="$(curl -fsS -X POST "http://localhost:3000/api/auth/test-login" \
     -H 'Content-Type: application/json' \
     -d "{\"user_id\": \"$EXPLORE_USER\"}")" \
     || die "POST /api/auth/test-login failed — is the frontend (:3000) up and running with APP_ENV=local|test?"
-  python3 - "$body" "$EXPLORE_USER" > "$EXPLORE_DIR/storageState.json" <<'PY'
+  # Display name for the seeded rich-* users (backend/db/seed_local_rich.py's
+  # _USERS/_PROFILES) — EXPLORE_USER is the id, but sapling_user localStorage
+  # wants the human name. Falls back to the raw id for anything else.
+  case "$EXPLORE_USER" in
+    rich-user-active)  display_name="Rich Active" ;;
+    rich-user-second)  display_name="Sam Second" ;;
+    rich-user-new)     display_name="Newt Newman" ;;
+    rich-user-pending) display_name="Penny Pending" ;;
+    rich-user-admin)   display_name="Ada Admin" ;;
+    *)                 display_name="$EXPLORE_USER" ;;
+  esac
+  python3 - "$body" "$EXPLORE_USER" "$display_name" > "$EXPLORE_DIR/storageState.json" <<'PY'
 import json, sys, time
-body = json.loads(sys.argv[1]); user = sys.argv[2]
+body = json.loads(sys.argv[1]); user = sys.argv[2]; name = sys.argv[3]
 state = {
     "cookies": [{
         "name": "sapling_session", "value": body["token"],
@@ -193,7 +204,7 @@ state = {
         "origin": "http://localhost:3000",
         "localStorage": [{
             "name": "sapling_user",
-            "value": json.dumps({"id": user, "name": "Rich Active", "avatar": ""}),
+            "value": json.dumps({"id": user, "name": name, "avatar": ""}),
         }],
     }],
 }
@@ -281,6 +292,15 @@ EOF
 # current preferred form is "Bash(prefix *)", but both are functional). The
 # explorer must not gain broader Bash than the oracle invocation below.
 #
+# Edit(.explore/**) — not bare "Edit" — scopes writes to match the prompt's
+# hard rule that the explorer's only writes are .explore/findings.md.
+# Verified empirically: Edit path-pattern rules are matched by the file
+# permission check ("Edit(path)" rules), but a "Write(...)" pattern is NOT —
+# so a bare "Write" grant would be unscoped no matter what pattern follows
+# it. Dropped Write entirely; do_up now pre-creates .explore/findings.md so
+# the explorer always has an existing file to Edit rather than needing Write
+# to create one.
+#
 # --output-format stream-json (which the CLI requires pairing with --verbose —
 # confirmed via `claude -p ... --output-format stream-json` alone erroring
 # "requires --verbose") is load-bearing, not cosmetic: plain "text" (the
@@ -308,7 +328,7 @@ run_explorer() {
     --max-turns "$EXPLORE_MAX_TURNS" \
     --output-format stream-json \
     --verbose \
-    --allowedTools "mcp__playwright__*,Read,Write,Edit,Bash(cd backend && venv/bin/python -m e2e_oracles:*)" \
+    --allowedTools "mcp__playwright__*,Read,Edit(.explore/**),Bash(cd backend && venv/bin/python -m e2e_oracles:*)" \
     2>"$EXPLORE_DIR/session.stderr.log" | jq -R -r '
       def trunc: if (. // "" | length) > 500 then (.[0:500] + " …[truncated]") else . end;
       (fromjson?) as $d
@@ -343,6 +363,7 @@ do_up() {
   command -v npx     >/dev/null 2>&1 || die "npx not found on PATH — install Node.js first"
   command -v curl    >/dev/null 2>&1 || die "curl not found on PATH"
   command -v python3 >/dev/null 2>&1 || die "python3 not found on PATH"
+  command -v jq      >/dev/null 2>&1 || die "jq not found on PATH — required for the session transcript"
   [ -f "$REPO_ROOT/scripts/explore/explorer-prompt.md" ] \
     || die "scripts/explore/explorer-prompt.md not found (lands in a later #399 task) — nothing to run yet"
 
@@ -368,12 +389,25 @@ do_up() {
   # (the interactive flow) needs it on disk to know which holder to stop.
   find "$EXPLORE_DIR" -mindepth 1 -maxdepth 1 ! -name lock.ok -exec rm -rf {} +
   mkdir -p "$EXPLORE_DIR/traces"
+  # Pre-create findings.md with a header so the explorer (allowedTools grants
+  # Edit(.explore/**), not Write — see run_explorer) always has an existing
+  # file to append to.
+  printf '# Exploration findings — %s\n' "$(date -Iseconds)" > "$EXPLORE_DIR/findings.md"
 
   echo "▶ Booting the E2E stack (scripts/e2e-up.sh)…"
   export SAPLING_MODEL_MODE=function
   export SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
-  # Default only if unset — never clobber an operator's real key.
-  export GEMINI_API_KEY="${GEMINI_API_KEY:-e2e-dummy-key-no-billing}"
+  # Unconditional (matches CI's unconditional dummy, #439): the below-seam RAG
+  # path can still bill a real key even in function mode, and an ambient real
+  # key routinely stays exported in dev shells. This only exports into this
+  # process tree (the stack we're about to boot) — it never mutates the
+  # operator's actual shell — so there is nothing of the operator's to
+  # preserve by deferring to `${GEMINI_API_KEY:-...}` here.
+  export GEMINI_API_KEY=e2e-dummy-key-no-billing
+  # SEED_RICH defaults to 1 in e2e-up.sh, but an ambient SEED_RICH=0 in the
+  # operator's shell would silently defeat it — this harness requires the
+  # rich dataset (mint_storage_state below dies late otherwise).
+  export SEED_RICH=1
   "$REPO_ROOT/scripts/e2e-up.sh" || die "scripts/e2e-up.sh failed — see .e2e/*.log"
 
   echo "▶ Minting a session for $EXPLORE_USER…"
@@ -399,21 +433,30 @@ DONE
 
 # ── down ───────────────────────────────────────────────────────────────────
 # Oracle final pass -> append to findings -> tear down -> release the lock.
-# Idempotent-safe: runs cleanly even with no stack up (mkdir + `|| true`
-# guards throughout — verified, see task-5-report.md).
+# Idempotent-safe: runs cleanly even with no stack up.
+#
+# This runs as both a plain function AND an EXIT trap (see do_up/run_full)
+# under `set -euo pipefail`, so every fallible statement below is `|| true`
+# guarded — a failed write (disk full, read-only fs, whatever) must never
+# abort this function before scripts/e2e-down.sh and stop_lock_holder run,
+# or it leaks the running stack AND the machine-singleton lock. The oracle
+# calls, the findings.md bootstrap, and the findings append block are each
+# independently guarded rather than reordering teardown first: the oracle
+# final pass needs the stack (backend on :5000) still up to hit anything, so
+# teardown must stay last — it just must be UNCONDITIONALLY reached.
 do_down() {
-  mkdir -p "$EXPLORE_DIR"
+  mkdir -p "$EXPLORE_DIR" || true
   (
     cd "$REPO_ROOT/backend"
-    venv/bin/python -m e2e_oracles --json > "$EXPLORE_DIR/oracle-final.json" || true
-    venv/bin/python -m e2e_oracles > "$EXPLORE_DIR/oracle-final.txt" 2>&1 || true
+    venv/bin/python -m e2e_oracles --json --user "$EXPLORE_USER" > "$EXPLORE_DIR/oracle-final.json" || true
+    venv/bin/python -m e2e_oracles --user "$EXPLORE_USER" > "$EXPLORE_DIR/oracle-final.txt" 2>&1 || true
   ) || true
-  [ -f "$EXPLORE_DIR/findings.md" ] || printf '# Exploration findings\n' > "$EXPLORE_DIR/findings.md"
+  [ -f "$EXPLORE_DIR/findings.md" ] || printf '# Exploration findings\n' > "$EXPLORE_DIR/findings.md" || true
   {
     printf '\n## Oracle final pass (%s)\n\n```\n' "$(date -Iseconds)"
     cat "$EXPLORE_DIR/oracle-final.txt" 2>/dev/null || true
     printf '```\n'
-  } >> "$EXPLORE_DIR/findings.md"
+  } >> "$EXPLORE_DIR/findings.md" || true
   "$REPO_ROOT/scripts/e2e-down.sh" || true
   stop_lock_holder
 }
