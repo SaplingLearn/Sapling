@@ -3,15 +3,20 @@ import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 def test_import_succeeds_without_gemini_api_key():
-    """#378: rag_service builds a module-level `genai.Client` at import time and
-    `genai.Client(api_key="")` raises ValueError, so a missing GEMINI_API_KEY
-    broke `import main` (via routes/quiz.py -> services/rag_service.py) outright.
+    """#378: rag_service originally built a module-level `genai.Client` at
+    import time, and `genai.Client(api_key="")` raises ValueError, so a
+    missing GEMINI_API_KEY broke `import main` (via routes/quiz.py ->
+    services/rag_service.py) outright.
 
-    Its siblings already fall back to a dummy key — services/gemini_service.py
-    and agents/_providers.py — so imports stay clean and the failure surfaces at
-    call time instead. This pins that behaviour for the whole import graph.
+    #439 went further: client construction is now fully lazy (`_get_client()`,
+    reached only from inside a `model_mode() == 'real'` `_embed_*` call), so
+    import no longer touches `google.genai.Client` at all regardless of the
+    key — `rag._client` starts (and, absent a real-mode embed call, stays) as
+    `None`. This pins that behaviour for the whole import graph.
 
     Run in a subprocess: the modules are already imported in-process, so this is
     the only way to observe import-time behaviour. `load_dotenv` is stubbed out
@@ -32,7 +37,7 @@ def test_import_succeeds_without_gemini_api_key():
         "import os; os.environ.pop('GEMINI_API_KEY', None)\n"
         "import main\n"
         "import services.rag_service as rag\n"
-        "assert rag._client is not None\n"
+        "assert rag._client is None\n"
     )
     proc = subprocess.run(
         [sys.executable, "-c", program],
@@ -148,3 +153,99 @@ def test_index_document_chunks_handles_embedding_failure(mock_embed):
         # All records have embedding=None since embedding failed
         assert all(rec["embedding"] is None for rec in upsert_records)
         assert len(upsert_records) == 3
+
+
+# ── #439: below-seam RAG embed calls must gate on SAPLING_MODEL_MODE ───────
+#
+# These call sites (`_embed_query`, `_embed_document`, `_embed_documents_batch`)
+# predate the #391 seam and construct a raw `google.genai.Client` directly, so
+# they need their own mode check rather than going through `model_for`. In
+# non-real mode no client may be constructed and no network call attempted;
+# the existing callers' broad try/except (exercised above) then produces the
+# exact same deterministic empty/no-op result as an unlucky real-mode
+# failure — by design now, not by accident.
+
+
+def test_embed_query_does_not_construct_client_outside_real_mode(monkeypatch):
+    """Force a clean slate (module-level `_client` back to `None`) so this
+    exercises the lazy-construction path fresh, rather than reusing whatever
+    an earlier real-mode test already cached in the module singleton."""
+    import services.rag_service as rag
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setattr(rag, "_client", None)
+    ctor = MagicMock(side_effect=AssertionError(
+        "genai.Client must not be constructed outside real mode"
+    ))
+    monkeypatch.setattr(rag.genai, "Client", ctor)
+
+    with pytest.raises(RuntimeError, match="SAPLING_MODEL_MODE"):
+        rag._embed_query("dynamic programming")
+
+    ctor.assert_not_called()
+    assert rag._client is None
+
+
+def test_embed_documents_batch_does_not_construct_client_outside_real_mode(monkeypatch):
+    import services.rag_service as rag
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setattr(rag, "_client", None)
+    ctor = MagicMock(side_effect=AssertionError(
+        "genai.Client must not be constructed outside real mode"
+    ))
+    monkeypatch.setattr(rag.genai, "Client", ctor)
+
+    with pytest.raises(RuntimeError, match="SAPLING_MODEL_MODE"):
+        rag._embed_documents_batch(["chunk one", "chunk two"])
+
+    ctor.assert_not_called()
+    assert rag._client is None
+
+
+def test_retrieve_chunks_never_reaches_transport_in_function_mode(monkeypatch, capsys):
+    """Pre-#439, retrieve_chunks ignored SAPLING_MODEL_MODE entirely and always
+    called through to the real cached client — only the suite's autouse
+    `_hermetic_llm_transport` guard (#379) accidentally caught the resulting
+    network attempt, producing an 'unstubbed LLM egress' failure message that
+    retrieve_chunks' own except then swallowed into `[]`. Post-fix the mode
+    gate raises before ever reaching google-genai's transport, so that
+    message must never appear — the swallowed message names
+    SAPLING_MODEL_MODE instead.
+    """
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    from services.rag_service import retrieve_chunks
+
+    with patch("services.rag_service.rpc") as mock_rpc:
+        result = retrieve_chunks("dynamic programming", course_id="CAS CS 330")
+
+    assert result == []
+    mock_rpc.assert_not_called()
+    captured = capsys.readouterr()
+    assert "unstubbed LLM egress" not in captured.out
+    assert "SAPLING_MODEL_MODE" in captured.out
+
+
+def test_index_document_chunks_never_reaches_transport_in_function_mode(monkeypatch, capsys):
+    """Same proof as above for the batch/document embed path used by document
+    upload indexing — the deterministic no-op is count-with-embedding=None,
+    same shape as test_index_document_chunks_handles_embedding_failure, but
+    now reached by the mode gate rather than a real API error."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    from services.rag_service import index_document_chunks
+
+    with patch("services.rag_service.table") as mock_table:
+        mock_table.return_value.upsert.return_value = []
+        count = index_document_chunks(
+            course_code="CAS CS 330",
+            doc_id="doc-func-mode",
+            uploader_id="user-1",
+            chunks=["chunk one", "chunk two"],
+        )
+
+    assert count == 2
+    upsert_records = mock_table.return_value.upsert.call_args[0][0]
+    assert all(rec["embedding"] is None for rec in upsert_records)
+    captured = capsys.readouterr()
+    assert "unstubbed LLM egress" not in captured.out
+    assert "SAPLING_MODEL_MODE" in captured.out
