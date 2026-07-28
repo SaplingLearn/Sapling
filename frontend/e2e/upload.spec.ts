@@ -34,6 +34,13 @@
  *
  * Waiting is event-based only (no waitForTimeout): every wait is an
  * auto-retrying expect() on UI state that a pipeline event flips.
+ *
+ * Also carries the #435 library-course-filter regression coverage: once the
+ * uploaded document appears, the journey resolves its seeded course from
+ * Postgres and asserts filtering the library by that course still surfaces
+ * the document (and "Uncategorized" does not) — the regression being that
+ * GET /api/documents/user/{id} never returned course_id, so every upload
+ * silently miscategorized as "Uncategorized" regardless of its real course.
  */
 import path from "node:path";
 

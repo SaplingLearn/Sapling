@@ -227,7 +227,7 @@ export function Library() {
               }}>
                 {filtered.map(d => {
                   const isSelected = detail?.id === d.id;
-                  const courseLabel = courseLookup[d.course_id];
+                  const courseLabel = courseLookup[d.course_id ?? ""];
                   return (
                     <button
                       key={d.id}

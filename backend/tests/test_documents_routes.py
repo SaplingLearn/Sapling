@@ -105,9 +105,12 @@ class TestListDocuments:
         mock_ocid.assert_called_once_with("off-1")
 
     def test_missing_offering_id_yields_null_course_id(self):
-        """A document with no offering_id (or one that fails to resolve)
-        surfaces course_id: null — Library.tsx treats that as
-        "Uncategorized" rather than crashing on a missing key."""
+        """Defensive-code coverage: documents.offering_id is NOT NULL (0025),
+        so a real persisted row can never surface offering_id=None here — but
+        the route's `if off_id and ...` guard must not raise on a None/falsy
+        offering_id (e.g. a partially-mocked row in another test, or future
+        schema drift). Confirms it degrades to course_id: null instead of
+        KeyError/TypeError."""
         docs = [
             {"id": "d1", "user_id": "u1", "offering_id": None, "file_name": "a.pdf", "category": "other"},
         ]
@@ -117,6 +120,59 @@ class TestListDocuments:
 
         assert r.status_code == 200
         assert r.json()["documents"][0]["course_id"] is None
+
+    def test_unresolvable_offering_id_yields_null_course_id(self):
+        """The actually-reachable null case: offering_id IS present (schema
+        requires it) but offering_course_id fails to resolve it to a course
+        — e.g. the course_offerings row backing it was deleted/data drift.
+        Must surface course_id: null, not raise, so the rest of the list
+        still renders (Library.tsx buckets this doc as "Uncategorized")."""
+        docs = [
+            {"id": "d1", "user_id": "u1", "offering_id": "off-orphaned", "file_name": "a.pdf", "category": "other"},
+        ]
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.offering_course_id", return_value=None),
+        ):
+            t.return_value.select.return_value = docs
+            r = client.get("/api/documents/user/u1")
+
+        assert r.status_code == 200
+        assert r.json()["documents"][0]["course_id"] is None
+
+    def test_corrupted_concept_notes_degrades_row_others_still_return(self):
+        """PR review follow-up: decrypt_json re-raises when both the decrypt
+        AND the plaintext-JSON fallback fail (a genuinely corrupted row).
+        The loop this fix touches must degrade THAT row's concept_notes to
+        [] instead of letting the exception 500 the whole list — sibling
+        rows must still come back intact. Mirrors the established
+        try/except pattern at _existing_doc_by_request_id and
+        scan_document_concepts."""
+        docs = [
+            {"id": "d-good", "user_id": "u1", "offering_id": "off-1", "file_name": "a.pdf",
+             "category": "other", "concept_notes": "GOOD_CIPHERTEXT"},
+            {"id": "d-bad", "user_id": "u1", "offering_id": "off-1", "file_name": "b.pdf",
+             "category": "other", "concept_notes": "CORRUPTED_CIPHERTEXT"},
+        ]
+
+        def fake_decrypt_json(value):
+            if value == "CORRUPTED_CIPHERTEXT":
+                raise ValueError("decrypt and plaintext parse both failed")
+            return [{"name": "Concept A", "description": "d"}]
+
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.decrypt_json", side_effect=fake_decrypt_json),
+        ):
+            t.return_value.select.return_value = docs
+            r = client.get("/api/documents/user/u1")
+
+        assert r.status_code == 200
+        body = {d["id"]: d for d in r.json()["documents"]}
+        assert body["d-good"]["concept_notes"] == [{"name": "Concept A", "description": "d"}]
+        assert body["d-bad"]["concept_notes"] == []
 
 # ── DELETE /api/documents/doc/{document_id} ──────────────────────────────────
 

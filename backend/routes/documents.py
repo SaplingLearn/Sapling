@@ -385,7 +385,18 @@ def list_documents(user_id: str, request: Request):
         d["summary"] = decrypt_if_present(d.get("summary"))
         notes_raw = d.get("concept_notes")
         if isinstance(notes_raw, str):
-            d["concept_notes"] = decrypt_json(notes_raw)
+            try:
+                d["concept_notes"] = decrypt_json(notes_raw)
+            except Exception:
+                # decrypt_json re-raises when both decrypt AND plaintext
+                # parse fail (a genuinely corrupted row) — degrade that one
+                # row instead of 500ing the whole list (matches
+                # _existing_doc_by_request_id and scan_document_concepts).
+                logger.warning(
+                    "concept_notes decrypt failed for document %s; degrading to []",
+                    d.get("id"),
+                )
+                d["concept_notes"] = []
         off_id = d.get("offering_id")
         if off_id and off_id not in offering_to_course:
             offering_to_course[off_id] = offering_course_id(off_id)
