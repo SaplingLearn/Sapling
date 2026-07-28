@@ -17,6 +17,12 @@ signed in (storage state). Today's in-app date is frozen at 2026-03-11.
   persist, count correctly), not the prose.
 - You have a hard turn budget. Spend it wide, not deep: many surfaces beat one
   perfect investigation. Write findings AS YOU GO — the budget may cut you off.
+- **Stub it before you dig.** The instant something looks off (a console
+  error, an unexpected 500, a stuck skeleton) — write a one-line stub finding
+  to `.explore/findings.md` immediately, before root-causing it further. A
+  written stub beats a perfectly root-caused bug that never made it to disk
+  because the turn budget ran out mid-investigation. Expand the stub with
+  detail afterward if turns remain.
 
 ## What to do
 
