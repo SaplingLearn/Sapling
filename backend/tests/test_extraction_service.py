@@ -497,6 +497,245 @@ class TestGeminiVisionFallback:
         assert mock_vision.call_count == 1
 
 
+def _fake_pdf(pages=2):
+    """A pypdfium2-shaped stub whose every page renders to a 2x2 white image."""
+    from PIL import Image
+    fake_pdf = MagicMock()
+    fake_pdf.__len__ = MagicMock(return_value=pages)
+    fake_page = MagicMock()
+    fake_pdf.__getitem__ = MagicMock(return_value=fake_page)
+    rendered = MagicMock()
+    rendered.to_pil = MagicMock(return_value=Image.new("RGB", (2, 2), color="white"))
+    fake_page.render = MagicMock(return_value=rendered)
+    fake_page.close = MagicMock()
+    return fake_pdf
+
+
+class TestRescuersRunInSequence:
+    """GOT-OCR and Gemini vision are complementary, not alternatives.
+
+    They used to be an if/elif, so enabling both meant vision never ran — not
+    even on the pages GOT-OCR had failed to fill. That is the same "signal
+    computed then dropped" bug the vision rescuer exists to fix, one layer down.
+    """
+
+    def test_vision_picks_up_pages_got_ocr_left_empty(self, monkeypatch):
+        monkeypatch.setenv("OCR_ENGINE", "auto")
+        monkeypatch.setenv("GOT_OCR_ENABLED", "true")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        monkeypatch.delenv("GEMINI_VISION_OCR_MAX_PAGES", raising=False)
+        metadata = {"per_page_markdown": ["", ""], "fallback_pages": [0, 1]}
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("", 2, metadata),
+            ),
+            patch("pypdfium2.PdfDocument", return_value=_fake_pdf()),
+            patch(
+                "services.extraction_service.extract_page_with_got_ocr",
+                # page 0 rescued locally, page 1 comes back blank
+                side_effect=["got page 0", ""],
+            ) as mock_got,
+            patch(
+                "services.extraction_service.extract_page_with_gemini_vision",
+                return_value="vision page 1",
+            ) as mock_vision,
+        ):
+            text, _ = extract_text_from_pdf_ocr(b"pdf")
+
+        assert mock_got.call_count == 2
+        assert "got page 0" in text
+        assert "vision page 1" in text
+        # Vision must not pay to re-transcribe what GOT-OCR already rescued.
+        assert mock_vision.call_count == 1
+
+    def test_vision_rescues_every_page_when_got_ocr_is_unavailable(self, monkeypatch):
+        """GOT-OCR enabled but not installed used to mean nothing ran at all."""
+        from services.extraction_backends.got_ocr_backend import GotOcrUnavailableError
+
+        monkeypatch.setenv("OCR_ENGINE", "auto")
+        monkeypatch.setenv("GOT_OCR_ENABLED", "true")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        monkeypatch.delenv("GEMINI_VISION_OCR_MAX_PAGES", raising=False)
+        metadata = {"per_page_markdown": ["", ""], "fallback_pages": [0, 1]}
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("", 2, metadata),
+            ),
+            patch("pypdfium2.PdfDocument", return_value=_fake_pdf()),
+            patch(
+                "services.extraction_service.extract_page_with_got_ocr",
+                side_effect=GotOcrUnavailableError("no weights"),
+            ),
+            patch(
+                "services.extraction_service.extract_page_with_gemini_vision",
+                side_effect=["vision 0", "vision 1"],
+            ) as mock_vision,
+        ):
+            text, _ = extract_text_from_pdf_ocr(b"pdf")
+
+        assert mock_vision.call_count == 2
+        assert "vision 0" in text
+        assert "vision 1" in text
+
+
+class TestGotOcrGate:
+    """The GOT-OCR gate is unchanged: OCR_ENGINE=auto AND GOT_OCR_ENABLED."""
+
+    @staticmethod
+    def _run(monkeypatch, engine, got_enabled):
+        monkeypatch.setenv("OCR_ENGINE", engine)
+        monkeypatch.setenv("GOT_OCR_ENABLED", got_enabled)
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "false")
+        metadata = {"per_page_markdown": ["weak"], "fallback_pages": [0]}
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("weak", 1, metadata),
+            ),
+            patch(
+                "services.extraction_backends.tesseract_backend.extract_text_from_pdf_ocr_impl",
+                return_value=("legacy", 1),
+            ),
+            patch("pypdfium2.PdfDocument", return_value=_fake_pdf(pages=1)),
+            patch(
+                "services.extraction_service.extract_page_with_got_ocr",
+                return_value="got text",
+            ) as mock_got,
+        ):
+            extract_text_from_pdf_ocr(b"pdf")
+        return mock_got
+
+    def test_fires_on_auto_and_enabled(self, monkeypatch):
+        assert self._run(monkeypatch, "auto", "true").called
+
+    def test_silent_when_disabled_on_auto(self, monkeypatch):
+        assert not self._run(monkeypatch, "auto", "false").called
+
+    def test_silent_on_the_default_engine(self, monkeypatch):
+        """`docling` is the default; GOT-OCR has never run there and must not
+        start now that the two rescuers are sequenced."""
+        assert not self._run(monkeypatch, "docling", "true").called
+
+    def test_silent_on_tesseract(self, monkeypatch):
+        assert not self._run(monkeypatch, "tesseract", "true").called
+
+
+class TestVisionPageCap:
+    """One flagged page is one metered LLM call, and nothing upstream bounds how
+    many pages a document can flag: /api/extract allows up to 50 and the upload
+    path is not rate-limited at all."""
+
+    @staticmethod
+    def _flagged(n):
+        return {"per_page_markdown": [f"orig {i}" for i in range(n)],
+                "fallback_pages": list(range(n))}
+
+    def test_transcribes_up_to_the_cap_and_leaves_the_rest(self, monkeypatch):
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setenv("GOT_OCR_ENABLED", "false")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        monkeypatch.setenv("GEMINI_VISION_OCR_MAX_PAGES", "3")
+        metadata = self._flagged(5)
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("orig", 5, metadata),
+            ),
+            patch("pypdfium2.PdfDocument", return_value=_fake_pdf(pages=5)),
+            patch(
+                "services.extraction_service.extract_page_with_gemini_vision",
+                side_effect=[f"vision {i}" for i in range(5)],
+            ) as mock_vision,
+        ):
+            text, _ = extract_text_from_pdf_ocr(b"pdf")
+
+        assert mock_vision.call_count == 3
+        assert "vision 0" in text and "vision 2" in text
+        # Pages past the cap keep whatever Docling extracted.
+        assert "orig 3" in text and "orig 4" in text
+        assert "vision 3" not in text
+
+    def test_warns_naming_the_skipped_pages(self, monkeypatch, caplog):
+        """A silent cap reads downstream as 'we OCR'd the whole document'."""
+        import logging
+
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        monkeypatch.setenv("GEMINI_VISION_OCR_MAX_PAGES", "2")
+        metadata = self._flagged(6)
+
+        with caplog.at_level(logging.WARNING, logger="services.extraction_service"):
+            with (
+                patch(
+                    "services.extraction_service.extract_pdf_with_docling",
+                    return_value=("orig", 6, metadata),
+                ),
+                patch("pypdfium2.PdfDocument", return_value=_fake_pdf(pages=6)),
+                patch(
+                    "services.extraction_service.extract_page_with_gemini_vision",
+                    return_value="vision",
+                ),
+            ):
+                extract_text_from_pdf_ocr(b"pdf")
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("capped at 2 of 6" in m and "4 page(s) left" in m for m in warnings)
+
+    def test_default_cap_is_ten(self, monkeypatch):
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        monkeypatch.delenv("GEMINI_VISION_OCR_MAX_PAGES", raising=False)
+        metadata = self._flagged(13)
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("orig", 13, metadata),
+            ),
+            patch("pypdfium2.PdfDocument", return_value=_fake_pdf(pages=13)),
+            patch(
+                "services.extraction_service.extract_page_with_gemini_vision",
+                return_value="vision",
+            ) as mock_vision,
+        ):
+            extract_text_from_pdf_ocr(b"pdf")
+
+        assert mock_vision.call_count == 10
+
+    def test_zero_disables_transcription_without_losing_the_document(self, monkeypatch):
+        monkeypatch.setenv("OCR_ENGINE", "docling")
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        monkeypatch.setenv("GEMINI_VISION_OCR_MAX_PAGES", "0")
+        metadata = self._flagged(2)
+
+        with (
+            patch(
+                "services.extraction_service.extract_pdf_with_docling",
+                return_value=("orig 0\n\norig 1", 2, metadata),
+            ),
+            patch("pypdfium2.PdfDocument", return_value=_fake_pdf()),
+            patch(
+                "services.extraction_service.extract_page_with_gemini_vision",
+            ) as mock_vision,
+        ):
+            text, _ = extract_text_from_pdf_ocr(b"pdf")
+
+        mock_vision.assert_not_called()
+        assert text == "orig 0\n\norig 1"
+
+    def test_unparseable_cap_falls_back_to_the_default(self, monkeypatch):
+        from services.extraction_service import _gemini_vision_max_pages
+
+        monkeypatch.setenv("GEMINI_VISION_OCR_MAX_PAGES", "lots")
+        assert _gemini_vision_max_pages() == 10
+
+
 class TestOcrCacheKey:
     def test_cache_key_includes_the_vision_flag(self, monkeypatch):
         """Turning vision OCR on must not return the empty text cached from a
@@ -509,3 +748,41 @@ class TestOcrCacheKey:
         on = _ocr_cache_key(b"same-bytes")
 
         assert off != on
+
+    def test_cache_key_includes_the_vision_model(self, monkeypatch):
+        """Swapping the transcription model must not keep serving the old
+        model's transcription for the rest of the 30-day TTL."""
+        from services.extraction_service import _ocr_cache_key
+
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        with patch("services.extraction_service.vision_model_name", return_value="model-a"):
+            a = _ocr_cache_key(b"same-bytes")
+        with patch("services.extraction_service.vision_model_name", return_value="model-b"):
+            b = _ocr_cache_key(b"same-bytes")
+
+        assert a != b
+
+    def test_vision_model_is_ignored_while_vision_is_off(self, monkeypatch):
+        """Vision-off is the overwhelmingly common configuration; its entries
+        must not be invalidated by a knob that cannot affect them."""
+        from services.extraction_service import _ocr_cache_key
+
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "false")
+        with patch("services.extraction_service.vision_model_name", return_value="model-a"):
+            a = _ocr_cache_key(b"same-bytes")
+        with patch("services.extraction_service.vision_model_name", return_value="model-b"):
+            b = _ocr_cache_key(b"same-bytes")
+
+        assert a == b
+
+    def test_cache_key_includes_the_page_cap(self, monkeypatch):
+        """Raising the cap transcribes more pages, so it changes the output."""
+        from services.extraction_service import _ocr_cache_key
+
+        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
+        monkeypatch.setenv("GEMINI_VISION_OCR_MAX_PAGES", "5")
+        low = _ocr_cache_key(b"same-bytes")
+        monkeypatch.setenv("GEMINI_VISION_OCR_MAX_PAGES", "40")
+        high = _ocr_cache_key(b"same-bytes")
+
+        assert low != high
