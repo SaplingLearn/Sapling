@@ -9,6 +9,7 @@ import HowItWorks from '@/components/HowItWorks';
 import SignInModal from '@/components/SignInModal';
 import { BRAND_FOREST } from '@/lib/brand';
 import { Button } from "@/components/ui";
+import { IS_TEST_MODE, random, now } from '@/lib/testMode';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
@@ -138,7 +139,9 @@ export default function LandingPage() {
     let animId = 0;
 
     const reduceMotion = window.matchMedia(REDUCED_MOTION_QUERY);
-    let animating = !reduceMotion.matches;
+    // Test mode parks the loop on its single deterministic frame, same
+    // as prefers-reduced-motion.
+    let animating = !IS_TEST_MODE && !reduceMotion.matches;
 
     // #3e6f8a mirrors --info (globals.css); literal because canvas can't resolve var().
     const palette = [
@@ -147,7 +150,7 @@ export default function LandingPage() {
       { c: '#9CA3AF', w: 0.10 }, { c: '#D1D5DB', w: 0.07 },
     ];
     function randColor() {
-      let r = Math.random(), s = 0;
+      let r = random(), s = 0;
       for (const p of palette) { s += p.w; if (r <= s) return p.c; }
       return palette[0].c;
     }
@@ -163,21 +166,21 @@ export default function LandingPage() {
     ];
     const spread = 280;
     const bgNodes = Array.from({ length: 220 }, () => {
-      const cl = clusters[Math.floor(Math.random() * clusters.length)];
+      const cl = clusters[Math.floor(random() * clusters.length)];
       return {
-        ox: cl.x + (Math.random() - 0.5) * spread,
-        oy: cl.y + (Math.random() - 0.5) * spread,
-        oz: cl.z + (Math.random() - 0.5) * spread,
+        ox: cl.x + (random() - 0.5) * spread,
+        oy: cl.y + (random() - 0.5) * spread,
+        oz: cl.z + (random() - 0.5) * spread,
         color: randColor(),
-        radius: 1 + Math.random() * 4,
-        seed: Math.random() * 100,
+        radius: 1 + random() * 4,
+        seed: random() * 100,
         clusterIndex: undefined as number | undefined,
       };
     });
     const clusterNodes = CLUSTER_INIT_POS.map((pos, i) => ({
       ox: pos.ox, oy: pos.oy, oz: pos.oz,
       color: CLUSTER_COLORS[i],
-      radius: 2.5 + Math.random() * 1.5,
+      radius: 2.5 + random() * 1.5,
       seed: CLUSTER_SEEDS_BG[i],
       clusterIndex: i as number | undefined,
     }));
@@ -200,7 +203,7 @@ export default function LandingPage() {
       if (!ctx) return;
       ctx.clearRect(0, 0, width, height);
       rotAngle += 0.0008;
-      const fl = 1000, cx = width / 2, cy = height / 2, t = Date.now() * 0.001;
+      const fl = 1000, cx = width / 2, cy = height / 2, t = now() * 0.001;
       const mx = mouseRef.current.x, my = mouseRef.current.y;
 
       const proj = nodes.map(n => {
@@ -248,7 +251,7 @@ export default function LandingPage() {
     // Toggling the OS preference mid-session either parks the loop on a
     // static frame or restarts it; `draw` self-schedules only when animating.
     const onMotionPrefChange = () => {
-      const next = !reduceMotion.matches;
+      const next = !IS_TEST_MODE && !reduceMotion.matches;
       if (next === animating) return;
       animating = next;
       cancelAnimationFrame(animId);
@@ -337,7 +340,7 @@ export default function LandingPage() {
 
     const reduceMotion = window.matchMedia(REDUCED_MOTION_QUERY);
     let animId = 0;
-    let animating = !reduceMotion.matches;
+    let animating = !IS_TEST_MODE && !reduceMotion.matches;
 
     function paint() {
       const t = Date.now();
@@ -355,7 +358,7 @@ export default function LandingPage() {
     }
 
     const onMotionPrefChange = () => {
-      const next = !reduceMotion.matches;
+      const next = !IS_TEST_MODE && !reduceMotion.matches;
       if (next === animating) return;
       animating = next;
       cancelAnimationFrame(animId);

@@ -19,6 +19,7 @@
  */
 
 import React from "react";
+import { IS_TEST_MODE, random } from "@/lib/testMode";
 
 type Orb = {
   x: number; y: number; z: number;
@@ -44,14 +45,14 @@ function makeOrbs(width: number, height: number): Orb[] {
   const orbs: Orb[] = [];
   for (let i = 0; i < count; i++) {
     orbs.push({
-      x: Math.random() * width,
-      y: Math.random() * height,
-      z: 0.35 + Math.random() * 0.65,    // pseudo-depth 0.35..1
-      vx: (Math.random() - 0.5) * 0.12,  // very slow horizontal drift
-      vy: (Math.random() - 0.5) * 0.08,  // even slower vertical
-      r: 180 + Math.random() * 260,      // big, soft radial glows
+      x: random() * width,
+      y: random() * height,
+      z: 0.35 + random() * 0.65,    // pseudo-depth 0.35..1
+      vx: (random() - 0.5) * 0.12,  // very slow horizontal drift
+      vy: (random() - 0.5) * 0.08,  // even slower vertical
+      r: 180 + random() * 260,      // big, soft radial glows
       color: PALETTE[i % PALETTE.length],
-      phase: Math.random() * Math.PI * 2,
+      phase: random() * Math.PI * 2,
     });
   }
   return orbs;
@@ -71,8 +72,10 @@ export function AtmosphericBackdrop() {
     if (!ctx) return;
 
     const mql = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    reducedMotionRef.current = !!mql?.matches;
-    const onReducedChange = () => { reducedMotionRef.current = !!mql?.matches; };
+    // Test mode paints one still frame with seeded orbs — same path as
+    // prefers-reduced-motion.
+    reducedMotionRef.current = IS_TEST_MODE || !!mql?.matches;
+    const onReducedChange = () => { reducedMotionRef.current = IS_TEST_MODE || !!mql?.matches; };
     mql?.addEventListener?.("change", onReducedChange);
 
     const resize = () => {

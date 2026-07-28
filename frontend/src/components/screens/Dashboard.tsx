@@ -26,6 +26,7 @@ import {
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { partitionCurrentAndArchive } from "@/lib/semesters";
+import { IS_TEST_MODE, now } from "@/lib/testMode";
 
 const QUOTES = [
   "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
@@ -252,8 +253,10 @@ export function Dashboard() {
     const d = new Date(0); d.setHours(0, 0, 0, 0); return d;
   });
   React.useEffect(() => {
-    setQuote(QUOTES[Math.floor(Math.random() * QUOTES.length)]);
-    const t = new Date(); t.setHours(0, 0, 0, 0); setToday(t);
+    // Test mode freezes the quote to index 0 and the clock to the fixed
+    // test instant so the hero copy is byte-stable across loads.
+    setQuote(IS_TEST_MODE ? QUOTES[0] : QUOTES[Math.floor(Math.random() * QUOTES.length)]);
+    const t = new Date(now()); t.setHours(0, 0, 0, 0); setToday(t);
   }, []);
   const weekDays = React.useMemo(() => getWeekDays(today), [today]);
 
@@ -324,7 +327,7 @@ export function Dashboard() {
   const firstName = userName ? userName.split(" ")[0] : "";
   const [greetingPrefix, setGreetingPrefix] = React.useState<string>("Welcome back");
   React.useEffect(() => {
-    setGreetingPrefix(getGreetingPrefix(new Date()));
+    setGreetingPrefix(getGreetingPrefix(new Date(now())));
   }, []);
   const greetingText = firstName ? `${greetingPrefix}, ${firstName}` : "Welcome back";
   const [greetingDone, setGreetingDone] = React.useState(false);
@@ -516,7 +519,7 @@ export function Dashboard() {
 
   const relTime = (iso: string | null | undefined) => {
     if (!iso) return "—";
-    const diff = Date.now() - new Date(iso).getTime();
+    const diff = now() - new Date(iso).getTime();
     const mins = Math.round(diff / 60000);
     if (mins < 1) return "just now";
     if (mins < 60) return `${mins}m ago`;
@@ -648,7 +651,7 @@ export function Dashboard() {
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
         )}
         {assignments.slice(0, 4).map((a) => {
-          const diffMs = new Date(a.due_date).getTime() - Date.now();
+          const diffMs = new Date(a.due_date).getTime() - now();
           const hours = diffMs / (1000 * 60 * 60);
           const days = Math.ceil(diffMs / 86400000);
           let chipClass = "chip--info";
@@ -824,7 +827,7 @@ export function Dashboard() {
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
         )}
         {assignments.slice(0, 4).map((a) => {
-          const diffMs = new Date(a.due_date).getTime() - Date.now();
+          const diffMs = new Date(a.due_date).getTime() - now();
           const hours = diffMs / (1000 * 60 * 60);
           const days = Math.ceil(diffMs / 86400000);
           let chipClass = "chip--info";

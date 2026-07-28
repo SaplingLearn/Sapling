@@ -25,6 +25,7 @@ import type {
   LinkedConcept as ApiLinkedConcept,
   GraphNode,
 } from "@/lib/types";
+import { now } from "@/lib/testMode";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -66,7 +67,7 @@ function normalizeMastery(tier: string): Mastery {
 }
 
 function relTime(d: Date) {
-  const diff = Date.now() - d.getTime();
+  const diff = now() - d.getTime();
   const mins = Math.round(diff / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
@@ -93,7 +94,7 @@ function apiNoteToNote(n: ApiNote): Note {
     title: n.title || "",
     body: n.body || "",
     courseId: n.course_id,
-    updatedAt: new Date(n.updated_at || Date.now()),
+    updatedAt: new Date(n.updated_at || now()),
     tags: n.tags || [],
     linkedConcepts: [],
     lastSummary: n.last_summary || null,

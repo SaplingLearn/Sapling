@@ -16,6 +16,7 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { hashSeed, type GraphEdge, type GraphNode } from "@/lib/data";
+import { IS_TEST_MODE } from "@/lib/testMode";
 
 // `react-force-graph-3d`'s default export touches `document` at
 // module evaluation, so it can't be SSR'd. ssr: false ensures the
@@ -220,7 +221,7 @@ export function KnowledgeGraph3D({
         }}
         backgroundColor="rgba(0,0,0,0)"
         showNavInfo={false}
-        cooldownTicks={reducedMotion ? 0 : 120}
+        cooldownTicks={reducedMotion || IS_TEST_MODE ? 0 : 120}
         enableNodeDrag={false}
         onNodeClick={handleNodeClick}
       />

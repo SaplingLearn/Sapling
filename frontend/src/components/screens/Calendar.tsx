@@ -26,6 +26,7 @@ import {
   type EnrolledCourse,
   type GoogleEvent,
 } from "@/lib/api";
+import { now } from "@/lib/testMode";
 
 type View = "month" | "week" | "day" | "table";
 
@@ -52,9 +53,9 @@ function dateKey(d: Date) {
 }
 
 function dueLabel(date: string) {
-  const now = Date.now();
+  const nowMs = now();
   const due = new Date(date).getTime();
-  const diffMs = due - now;
+  const diffMs = due - nowMs;
   const diffHours = diffMs / (1000 * 60 * 60);
   if (diffHours <= 0) return { label: "overdue", cls: "chip--err" };
   if (diffHours <= 24) return { label: "due soon", cls: "chip--err" };
@@ -72,7 +73,7 @@ export function Calendar() {
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [view, setView] = React.useState<View>("month");
-  const [cursor, setCursor] = React.useState(new Date());
+  const [cursor, setCursor] = React.useState(() => new Date(now()));
   const [googleConnected, setGoogleConnected] = React.useState(false);
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -116,7 +117,7 @@ export function Calendar() {
   }, [search, router, toast, load]);
 
   const today = React.useMemo(() => {
-    const d = new Date(); d.setHours(0, 0, 0, 0); return d;
+    const d = new Date(now()); d.setHours(0, 0, 0, 0); return d;
   }, []);
 
   const byDate = React.useMemo(() => {
@@ -206,7 +207,7 @@ export function Calendar() {
           <button className="btn btn--sm" onClick={() => shift(setCursor, view, -1)}>
             <Icon name="chev" size={12} /> Prev
           </button>
-          <button className="btn btn--sm" onClick={() => setCursor(new Date())}>Today</button>
+          <button className="btn btn--sm" onClick={() => setCursor(new Date(now()))}>Today</button>
           <button className="btn btn--sm" onClick={() => shift(setCursor, view, 1)}>
             Next <Icon name="chev" size={12} />
           </button>

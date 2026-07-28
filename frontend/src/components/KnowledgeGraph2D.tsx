@@ -13,6 +13,7 @@ import {
   type SimulationLinkDatum,
 } from "d3-force";
 import { hashSeed, type GraphEdge, type GraphNode } from "@/lib/data";
+import { IS_TEST_MODE, random } from "@/lib/testMode";
 
 export type GraphVariant = "orb" | "constellation" | "organism";
 
@@ -159,11 +160,11 @@ function KnowledgeGraph2DImpl({
         Object.assign(prev, n);
         return prev;
       }
-      const hubSeed = n.is_subject_root ? 0 : Math.random();
+      const hubSeed = n.is_subject_root ? 0 : random();
       return {
         ...n,
-        x: width / 2 + (Math.random() - 0.5) * 40,
-        y: height / 2 + (Math.random() - 0.5) * 40,
+        x: width / 2 + (random() - 0.5) * 40,
+        y: height / 2 + (random() - 0.5) * 40,
         vx: 0,
         vy: 0,
         index: undefined,
@@ -205,8 +206,12 @@ function KnowledgeGraph2DImpl({
       .force("x", forceX<SimNode>(width / 2).strength(0.02))
       .force("y", forceY<SimNode>(height / 2).strength(0.02));
 
-    const reducedMotion = typeof window !== "undefined"
-      && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    // Test mode rides the reduced-motion path: the simulation settles
+    // synchronously (fixed tick count) instead of animating on rAF, so
+    // node coordinates are identical on every load.
+    const reducedMotion = IS_TEST_MODE
+      || (typeof window !== "undefined"
+        && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
     if (reducedMotion) {
       sim.alpha(1).tick(200).alpha(0).stop();
       forceRerender();
