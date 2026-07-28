@@ -1,0 +1,25 @@
+{
+  "assignments": [
+    {
+      "description": null,
+      "due_date": "2026-02-07",
+      "title": "Lab 1",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": "2026-02-21",
+      "title": "Lab 2",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": "2026-05-04",
+      "title": "Final exam",
+      "weight_pct": null
+    }
+  ],
+  "course_title": "PHYS 101",
+  "grading_categories": [],
+  "instructor": null
+}

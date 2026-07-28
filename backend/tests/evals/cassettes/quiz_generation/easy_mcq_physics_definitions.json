@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Newton's First Law",
+      "correct_answer": "An object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced force.",
+      "difficulty": "easy",
+      "explanation": "Newton's First Law states that an object will remain at rest or in uniform motion in a straight line unless acted upon by an external force. This is also known as the law of inertia.",
+      "options": [
+        "An object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced force.",
+        "For every action, there is an equal and opposite reaction.",
+        "The acceleration of an object is directly proportional to the net force acting on it and inversely proportional to its mass.",
+        "The total momentum of an isolated system remains constant."
+      ],
+      "question": "What is Newton's First Law of Motion, also known as the Law of Inertia?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Kinetic Energy",
+      "correct_answer": "The energy an object possesses due to its motion.",
+      "difficulty": "easy",
+      "explanation": "Kinetic energy is the energy an object has because it is moving. It depends on the object's mass and velocity.",
+      "options": [
+        "The energy an object possesses due to its position or height.",
+        "The energy an object possesses due to its motion.",
+        "The energy stored in chemical bonds.",
+        "The energy associated with temperature."
+      ],
+      "question": "Which of the following best defines kinetic energy?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Momentum",
+      "correct_answer": "The product of an object's mass and its velocity.",
+      "difficulty": "easy",
+      "explanation": "Momentum is a measure of an object's motion and is calculated as the product of its mass and velocity. It is a vector quantity.",
+      "options": [
+        "The force applied to an object over a period of time.",
+        "The product of an object's mass and its velocity.",
+        "The rate of change of an object's velocity.",
+        "The total energy of an object."
+      ],
+      "question": "What is the definition of momentum?",
+      "type": "multiple_choice"
+    }
+  ]
+}

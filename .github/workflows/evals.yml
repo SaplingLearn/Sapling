@@ -1,19 +1,20 @@
 name: Evals
-# Triggered manually only until cassette coverage is complete.
-#
-# Today only 4 of 70 cassettes are recorded, so a pull_request trigger
-# would mark every PR red on missing cassettes. Once the remaining 66
-# are recorded (one-time SAPLING_EVAL_MODE=record pass against live
-# Gemini, then commit cassettes/), re-enable the pull_request trigger
-# below to gate prompt changes on eval pass/fail.
+# Gates agent/prompt changes on the offline extraction-accuracy harness
+# (backend/tests/evals). Runs in replay mode against committed cassettes, so it
+# needs no Gemini key and is fully deterministic: a task only goes red when its
+# aggregate score drops below the committed baseline in baselines.json (someone
+# weakened an evaluator/expectation or swapped a cassette) or a cassette is
+# missing. Refresh cassettes + baselines with a local
+# `SAPLING_EVAL_MODE=record` pass and a `SAPLING_EVAL_UPDATE_BASELINES=1` pass,
+# then commit the changes (see backend/tests/evals/README or the ADR).
 on:
   workflow_dispatch:
-  # pull_request:
-  #   paths:
-  #     - 'backend/agents/**'
-  #     - 'backend/tests/evals/**'
-  #     - 'backend/services/agent_events.py'
-  #     - 'backend/routes/documents.py'
+  pull_request:
+    paths:
+      - 'backend/agents/**'
+      - 'backend/tests/evals/**'
+      - 'backend/services/agent_events.py'
+      - 'backend/routes/documents.py'
 
 jobs:
   evals:
@@ -38,7 +39,4 @@ jobs:
           ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
         run: |
           cd backend
-          python tests/evals/document_classification.py
-          python tests/evals/document_summary.py
-          python tests/evals/concept_extraction.py
-          python tests/evals/syllabus_extraction.py
+          python tests/evals/run_all.py

@@ -272,17 +272,14 @@ npm test            # vitest run
 npm run test:watch  # vitest watch
 ```
 
-**Evals** (live Gemini, on demand) — 95 cases across 6 agents: the 4 worker agents (`document_classification`, `document_summary`, `concept_extraction`, `syllabus_extraction`) plus the chat tutor (`chat_tutor`) and quiz generator (`quiz_generation`). Three modes via `SAPLING_EVAL_MODE`:
+**Evals** — extraction-accuracy harness for the migrated agents. Five offline datasets (`document_classification`, `document_summary`, `concept_extraction`, `syllabus_extraction`, `quiz_generation`) run in replay mode against committed cassettes — no network, fully deterministic. Each task reports a per-evaluator accuracy score; a task fails only when it regresses below the committed baseline in `tests/evals/baselines.json` or a cassette is missing. One command runs them all:
 ```bash
 cd backend
-# Replay (default; no network, requires recorded cassettes):
-SAPLING_EVAL_MODE=replay python tests/evals/document_classification.py
-# Record (hits live Gemini, writes cassettes to tests/evals/cassettes/):
-SAPLING_EVAL_MODE=record python tests/evals/document_classification.py
-# Live (hits live Gemini, no recording):
-SAPLING_EVAL_MODE=live   python tests/evals/document_classification.py
+python tests/evals/run_all.py                                  # replay (default), gate on baselines
+SAPLING_EVAL_MODE=record python tests/evals/run_all.py         # refresh cassettes (live Gemini)
+SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py  # refresh baselines from current scores
 ```
-The `.github/workflows/evals.yml` workflow runs replay-mode in CI; it's currently `workflow_dispatch`-only until cassette coverage is complete (4 / 95 recorded today).
+`.github/workflows/evals.yml` runs `run_all.py` in replay mode on every PR that touches `backend/agents/**` or the harness. The `chat_tutor` dataset is excluded from the offline harness because its retrieval tool reads a live Supabase (tracked under #149). See `backend/tests/evals/README.md` for the record/refresh workflow.
 
 ## Architecture & Dev Context
 

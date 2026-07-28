@@ -1,0 +1,60 @@
+{
+  "questions": [
+    {
+      "concept": "Cell Membrane",
+      "correct_answer": "Regulating passage of substances",
+      "difficulty": "easy",
+      "explanation": "The cell membrane acts as a selective barrier, controlling which molecules enter and leave the cell.",
+      "options": [
+        "Protein synthesis",
+        "Energy production",
+        "Regulating passage of substances",
+        "Waste disposal"
+      ],
+      "question": "Which of the following is the primary function of the cell membrane?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Photosynthesis",
+      "correct_answer": "Oxygen and glucose",
+      "difficulty": "easy",
+      "explanation": "Photosynthesis uses light energy, water, and carbon dioxide to produce glucose (sugar) for energy and oxygen as a byproduct.",
+      "options": [
+        "Carbon dioxide and water",
+        "Oxygen and glucose",
+        "ATP and heat",
+        "Nitrogen and minerals"
+      ],
+      "question": "What are the main products of photosynthesis?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Mitosis",
+      "correct_answer": "Metaphase",
+      "difficulty": "easy",
+      "explanation": "In metaphase, the chromosomes line up along the metaphase plate, an imaginary plane equidistant from the two poles of the cell.",
+      "options": [
+        "Prophase",
+        "Metaphase",
+        "Anaphase",
+        "Telophase"
+      ],
+      "question": "During which phase of mitosis do chromosomes align at the center of the cell?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Diffusion",
+      "correct_answer": "High, low",
+      "difficulty": "easy",
+      "explanation": "Diffusion is a passive process driven by the random motion of molecules, causing them to spread from regions where they are more concentrated to regions where they are less concentrated.",
+      "options": [
+        "Low, high",
+        "High, low",
+        "Equal, equal",
+        "Zero, infinite"
+      ],
+      "question": "Diffusion is the movement of molecules from an area of ________ concentration to an area of ________ concentration.",
+      "type": "multiple_choice"
+    }
+  ]
+}

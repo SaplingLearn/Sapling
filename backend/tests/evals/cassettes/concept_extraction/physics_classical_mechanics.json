@@ -1,0 +1,39 @@
+{
+  "concepts": [
+    {
+      "description": "These fundamental laws describe the relationship between an object and the forces acting upon it, forming the basis of classical mechanics.",
+      "importance": 1.0,
+      "name": "Newton's Laws of Motion"
+    },
+    {
+      "description": "In conservative force fields, the total mechanical energy (sum of kinetic and potential energy) of a system remains constant, a powerful tool for analyzing motion.",
+      "importance": 0.95,
+      "name": "Conservation of Energy"
+    },
+    {
+      "description": "For an isolated system, the total linear momentum remains constant, especially useful for analyzing collisions and explosions.",
+      "importance": 0.9,
+      "name": "Conservation of Linear Momentum"
+    },
+    {
+      "description": "In the absence of external torques, the total angular momentum of a system remains constant, essential for understanding rotational motion.",
+      "importance": 0.85,
+      "name": "Conservation of Angular Momentum"
+    },
+    {
+      "description": "This formulation uses the Lagrangian (kinetic minus potential energy) and the principle of least action to derive equations of motion, offering an alternative and often more general approach than Newtonian mechanics.",
+      "importance": 0.8,
+      "name": "Lagrangian Mechanics"
+    },
+    {
+      "description": "An advanced formulation of classical mechanics using the Hamiltonian (total energy) in terms of generalized coordinates and momenta, providing a bridge to quantum mechanics.",
+      "importance": 0.75,
+      "name": "Hamiltonian Mechanics"
+    },
+    {
+      "description": "A type of periodic motion where the restoring force is directly proportional to the displacement and acts in the direction opposite to the displacement, common in oscillating systems.",
+      "importance": 0.7,
+      "name": "Simple Harmonic Motion"
+    }
+  ]
+}

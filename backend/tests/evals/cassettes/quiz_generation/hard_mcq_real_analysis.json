@@ -1,0 +1,32 @@
+{
+  "questions": [
+    {
+      "concept": "Cauchy Sequences",
+      "correct_answer": "A sequence is Cauchy if and only if it converges in a complete metric space.",
+      "difficulty": "hard",
+      "explanation": "In a complete metric space, the definition of Cauchy sequences and convergent sequences are equivalent. This means every Cauchy sequence converges to a limit within the space, and every convergent sequence is a Cauchy sequence. The completeness of the space is crucial for this equivalence.",
+      "options": [
+        "A Cauchy sequence is convergent if and only if it is bounded.",
+        "A sequence is Cauchy if and only if it converges in a complete metric space.",
+        "A convergent sequence is always Cauchy, but the converse is only true in complete metric spaces.",
+        "A sequence converges if and only if it is a Cauchy sequence in any metric space."
+      ],
+      "question": "Which of the following statements best characterizes the relationship between Cauchy sequences and convergent sequences in a complete metric space?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Uniform Convergence",
+      "correct_answer": "f(x) must be continuous on E.",
+      "difficulty": "hard",
+      "explanation": "A fundamental theorem in real analysis states that the uniform limit of a sequence of continuous functions is continuous. Therefore, if {f_n(x)} converges uniformly to f(x) and each f_n is continuous, then f(x) must also be continuous on E.",
+      "options": [
+        "f(x) must be continuous on E.",
+        "f(x) is not necessarily continuous on E.",
+        "f(x) is continuous on E if E is a compact set.",
+        "f(x) is continuous on E if the convergence is pointwise."
+      ],
+      "question": "Consider a sequence of functions {f_n(x)} converging uniformly to f(x) on a set E. If each f_n is continuous on E, and f is also continuous on E, what can be said about the limit function f(x)?",
+      "type": "multiple_choice"
+    }
+  ]
+}

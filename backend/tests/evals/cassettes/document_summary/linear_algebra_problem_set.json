@@ -1,0 +1,10 @@
+{
+  "abstract": "This document contains Problem Set 6 for a Linear Algebra course. It includes three problems: the first requires diagonalizing a 2x2 matrix and computing its 10th power, the second asks for a proof that every real symmetric matrix has an orthonormal eigenbasis, and the third involves finding the rank, nullity, and column space basis for a 4x5 matrix. All problems require showing detailed work.",
+  "headline": "Problem Set 6: Linear Algebra Problems on Diagonalization, Symmetric Matrices, and Matrix Properties",
+  "key_points": [
+    "Problem 1: Diagonalize a 2x2 matrix and compute its 10th power.",
+    "Problem 2: Prove that real symmetric matrices possess an orthonormal eigenbasis.",
+    "Problem 3: Determine the rank, nullity, and column space basis for a 4x5 matrix.",
+    "The problem set covers key concepts in linear algebra including matrix diagonalization, properties of symmetric matrices, and fundamental subspaces."
+  ]
+}
