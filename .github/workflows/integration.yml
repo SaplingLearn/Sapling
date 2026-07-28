@@ -2,6 +2,8 @@ name: integration (local supabase)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
   integration:
