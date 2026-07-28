@@ -11,11 +11,18 @@
  *   - mint through the frontend origin (proves the same-origin /api proxy);
  *   - cookie flags mirror the real `sapling_session` (HttpOnly/Lax, and
  *     secure:true — Chromium accepts Secure cookies on http://localhost);
- *   - the cookie alone is NOT a signed-in browser: client identity lives in
- *     localStorage (`UserContext` reads `sapling_user`, written only by the
- *     sign-in flows' setActiveUser) — without it authed screens render their
- *     shell but never fetch user data (found by the #386 journey), so the
- *     storageState carries the same origins entry global-setup writes;
+ *   - the cookie alone WAS not a signed-in browser before #430: client
+ *     identity lived only in localStorage (`UserContext` reads
+ *     `sapling_user`, written only by the sign-in flows' setActiveUser) —
+ *     without it authed screens rendered their shell but never fetched user
+ *     data (found by the #386 journey), so the storageState carries the same
+ *     origins entry global-setup writes by DEFAULT;
+ *   - #430 taught UserContext to fall back to cookie-authenticated
+ *     GET /api/auth/me when localStorage has no `sapling_user` entry, so
+ *     `omitLocalStorage` (below) now mints a deliberately cookie-ONLY
+ *     storageState to exercise that fallback (frontend/e2e/auth-session.spec.ts)
+ *     — every other caller keeps the default (cookie + localStorage) exactly
+ *     as before;
  *   - the token is stateless HMAC, so the per-test TRUNCATE + re-seed can
  *     never invalidate it — the re-seed restores the same rich-* user row.
  */
@@ -40,10 +47,16 @@ type StorageState = {
 
 /** Mint a session for a seeded rich-* user and return it as storageState.
  * `displayName` mirrors what setActiveUser would persist after a real
- * sign-in (the user's profile name per db/seed_local_rich.py). */
+ * sign-in (the user's profile name per db/seed_local_rich.py).
+ *
+ * `opts.omitLocalStorage` deliberately leaves out the `sapling_user`
+ * localStorage entry, minting a cookie-ONLY storageState — the shape a real
+ * browser has when a valid `sapling_session` cookie outlives cleared site
+ * data (#430). Defaults to false so every existing caller is unaffected. */
 export async function mintStorageState(
   userId: string,
   displayName: string,
+  opts?: { omitLocalStorage?: boolean },
 ): Promise<StorageState> {
   const res = await fetch(`${FRONTEND_URL}/api/auth/test-login`, {
     method: "POST",
@@ -80,20 +93,22 @@ export async function mintStorageState(
         sameSite: "Lax",
       },
     ],
-    origins: [
-      {
-        origin: FRONTEND_URL,
-        localStorage: [
+    origins: opts?.omitLocalStorage
+      ? []
+      : [
           {
-            name: "sapling_user",
-            value: JSON.stringify({
-              id: userId,
-              name: displayName,
-              avatar: "",
-            }),
+            origin: FRONTEND_URL,
+            localStorage: [
+              {
+                name: "sapling_user",
+                value: JSON.stringify({
+                  id: userId,
+                  name: displayName,
+                  avatar: "",
+                }),
+              },
+            ],
           },
         ],
-      },
-    ],
   };
 }

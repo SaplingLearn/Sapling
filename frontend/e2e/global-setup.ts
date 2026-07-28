@@ -65,13 +65,17 @@ export default async function globalSetup(): Promise<void> {
         sameSite: "Lax" as const,
       },
     ],
-    // The cookie alone is not a signed-in browser: the client identity lives
-    // in localStorage (`UserContext` reads `sapling_user`; only the sign-in
-    // flows write it via setActiveUser). Without it every authed screen
-    // renders its shell but never fetches user data — the #386 journey found
-    // /dashboard stuck on its skeleton forever. Mirror exactly what
-    // setActiveUser persists for the primary seeded user (name per
-    // db/seed_local_rich.py).
+    // The cookie alone WAS not a signed-in browser before #430: the client
+    // identity lived only in localStorage (`UserContext` reads
+    // `sapling_user`; only the sign-in flows write it via setActiveUser).
+    // Without it every authed screen rendered its shell but never fetched
+    // user data — the #386 journey found /dashboard stuck on its skeleton
+    // forever. #430 taught UserContext to fall back to cookie-authenticated
+    // GET /api/auth/me when this entry is missing, but every spec here still
+    // mints cookie + localStorage together (this is the DEFAULT, fast path —
+    // e2e/auth-session.spec.ts covers the cookie-only fallback separately).
+    // Mirror exactly what setActiveUser persists for the primary seeded user
+    // (name per db/seed_local_rich.py).
     origins: [
       {
         origin: FRONTEND_URL,
