@@ -45,6 +45,27 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
 export const getUsers = () =>
   fetchJSON<{ users: { id: string; name: string; room_id: string | null }[] }>('/api/users');
 
+// Auth
+export interface MeResponse {
+  user_id: string;
+  is_approved: boolean;
+  onboarding_completed: boolean;
+  username: string | null;
+  name: string;
+  avatar_url: string;
+  roles: { role: Role; granted_at: string }[];
+  equipped_cosmetics: Record<string, unknown>;
+  is_admin: boolean;
+}
+
+// Cookie-authenticated identity lookup (backend/routes/auth.py::get_me reads
+// the user id off the `sapling_session` cookie alone via get_session_user_id
+// — no user_id param needed). UserContext's bootstrap falls back to this
+// when localStorage has no `sapling_user` entry but the HttpOnly session
+// cookie is still valid (#430); the OAuth callback already calls the same
+// endpoint the same way.
+export const getMe = () => fetchJSON<MeResponse>('/api/auth/me');
+
 // Graph
 export const getGraph = (userId: string) =>
   fetchJSON<{ nodes: any[]; edges: any[]; stats: any }>(`/api/graph/${userId}`);

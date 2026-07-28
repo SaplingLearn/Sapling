@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
-import { API_URL } from '@/lib/api';
+import { API_URL, getMe } from '@/lib/api';
 
 interface UserOption {
   id: string;
@@ -78,8 +78,41 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         if (avatar) setAvatarUrl(avatar);
         setIsAuthenticated(true);
       } catch {}
+      setUserReady(true);
+      return;
     }
-    setUserReady(true);
+
+    // No `sapling_user` in localStorage — but the HttpOnly `sapling_session`
+    // cookie can outlive it (cleared site data, a different browser profile,
+    // a stale-cookie flow): middleware already admits the request on the
+    // cookie alone, and this context has no client-readable way to see it,
+    // so without a fallback userId never gets set and every screen gated on
+    // `userReady && userId` (e.g. Dashboard's load effect) waits forever on
+    // its loading skeleton (#430). Fall back to the cookie-authenticated
+    // GET /api/auth/me — the same call the OAuth callback already makes the
+    // same way (same-origin `fetchJSON`, `credentials: 'include'`).
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await getMe();
+        if (cancelled) return;
+        // Write-through setActiveUser: hydrates state AND persists
+        // localStorage, so the next bootstrap takes the fast synchronous
+        // path above instead of hitting the network again.
+        setActiveUser(me.user_id, me.name || '', me.avatar_url || '');
+        if (me.is_approved) setIsApproved(true);
+      } catch {
+        // 401 (no/expired session) or a network failure — no identity
+        // source is left. Settle into the existing signed-out state
+        // (isAuthenticated stays false); every consumer already gates on
+        // `userReady`, so nothing new to redirect here.
+      } finally {
+        if (!cancelled) setUserReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
