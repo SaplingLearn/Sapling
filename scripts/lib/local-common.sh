@@ -1,16 +1,28 @@
 # Shared helpers for the LOCAL Sapling dev scripts.
 #
-# Sourced (never executed) by scripts/local-up.sh and scripts/local-db-reset.sh
-# so the identical "migrate → ensure buckets → reload PostgREST → seed" sequence
-# lives in exactly one place (#10). LOCAL ONLY — never touches staging/prod.
+# Sourced (never executed) by scripts/local-up.sh, scripts/local-db-reset.sh and
+# scripts/e2e-up.sh so the identical "migrate → ensure buckets → reload
+# PostgREST → seed" sequence lives in exactly one place (#10). LOCAL ONLY —
+# never touches staging/prod.
 #
 # The caller is expected to have already:
 #   • set -uo pipefail
 #   • cd'd to the repo root
-#   • exported DOCKER_HOST (rootless podman socket)
+#   • exported DOCKER_HOST (rootless podman socket) when running under podman
 #   • defined LOCAL_DB_URL and DB_CONTAINER
 #
 # No shebang / +x needed — this file is meant to be `source`d.
+
+# Container runtime used to `exec` into the Supabase DB container: rootless
+# Podman is the documented default, Docker also works (#384). An explicit
+# $CONTAINER_CMD wins; otherwise prefer podman, falling back to docker.
+if [ -z "${CONTAINER_CMD:-}" ]; then
+  if command -v podman >/dev/null 2>&1; then
+    CONTAINER_CMD=podman
+  else
+    CONTAINER_CMD=docker
+  fi
+fi
 
 # Ensure the Supabase Storage buckets the app expects exist locally, plus a
 # blunt LOCAL-ONLY RLS policy so anon-key frontend uploads work (#2).
@@ -48,7 +60,7 @@ CREATE POLICY "local dev storage open"
   WITH CHECK (bucket_id IN ('cosmetic-assets', 'issues-media-files'));
 SQL
 )"
-  if podman exec "$DB_CONTAINER" psql -U postgres -d postgres \
+  if "$CONTAINER_CMD" exec "$DB_CONTAINER" psql -U postgres -d postgres \
        -v ON_ERROR_STOP=1 -c "$sql" >/dev/null 2>&1; then
     echo "  ensured storage buckets"
   else
@@ -77,7 +89,7 @@ migrate_reload_seed() {
   ensure_storage_buckets
 
   echo "▶ Reloading PostgREST schema cache…"
-  podman exec "$DB_CONTAINER" psql -U postgres -d postgres \
+  "$CONTAINER_CMD" exec "$DB_CONTAINER" psql -U postgres -d postgres \
     -c "NOTIFY pgrst, 'reload schema';" >/dev/null 2>&1 || true
 
   echo "▶ Waiting for PostgREST to expose the schema…"

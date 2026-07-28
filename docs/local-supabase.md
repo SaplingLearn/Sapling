@@ -233,6 +233,32 @@ Notes:
   still serves the full build from `.next/` (pages, `/api/*` rewrites, the
   session route, and middleware all verified working).
 
+## One-command E2E stack (`make e2e-up` / `make e2e-down`, #384)
+
+Everything above in one command. From the repo root:
+
+```bash
+make e2e-up      # supabase start → migrate → buckets → NOTIFY pgrst →
+                 # seed (demo + rich) → uvicorn on :5000 →
+                 # `npm run build:test && npm run start:test` on :3000
+make e2e-down    # stop uvicorn + next (tracked PIDs), then `supabase stop`
+```
+
+`e2e-up` health-checks all four services (Postgres, PostgREST, backend
+`/api/health`, frontend `/`) and fails loudly with a log tail if one doesn't
+come up. Server PIDs and logs live in `.e2e/` at the repo root (gitignored).
+It's idempotent: re-running restarts the app servers and re-applies the
+skip-if-done migrations/seeds. The rich dataset (#363) seeds by default so
+`POST /api/auth/test-login` has its `rich-*` users — `SEED_RICH=0 make e2e-up`
+skips it. The backend runs without `--reload` (a mid-test file-watcher restart
+would make E2E runs nondeterministic).
+
+First-time machine setup is the same as `scripts/local-up.sh` (backend `.env`
+from `.env.local.example`, backend venv, `cd frontend && npm ci`); the script
+preflights each piece and fails fast with the exact command if one is missing.
+Rootless Podman is the documented runtime; Docker is auto-detected as a
+fallback (`$CONTAINER_CMD` overrides the choice).
+
 ## Troubleshooting
 
 - **`supabase start` hangs on health checks** — usually the analytics/vector
@@ -248,4 +274,3 @@ Notes:
   version-agnostic and verified to replay on 17; keep new migrations portable.
 - **Ports 54321–54327 already in use** — another project's `supabase start` is
   running; `supabase stop` in that project (or `podman ps` to find it).
-```
