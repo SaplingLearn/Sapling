@@ -18,28 +18,32 @@
  * (#383's test mode seeds the PRNG, but positions stay out of scope) —
  * nothing in this spec reads an x/y.
  *
- * How the UI is counted (per #395: "choose something robust and justify
- * it"): the 2D graph draws into the single `<svg aria-label="Knowledge
- * graph">` inside the registered `graph-container` testid
- * (docs/frontend-testids.md registers the graph surface on the wrapper only,
- * not the 2D/3D internals). Inside it every node renders exactly one <text>
- * label and every edge exactly one <line>, and the component mirrors its
- * `nodes` prop 1:1 into a visually-hidden accessibility list
- * (`<ul aria-label="Knowledge graph nodes">`). Counting those is counting
- * the rendered data layer — structural/ARIA handles under the testid root,
- * no CSS-class or copy anchoring, no geometry. Node identity is matched by
- * concept name, which is seeded DB data, not UI copy.
+ * Anchoring (docs/frontend-testids.md, graph surface): everything is keyed
+ * on registered testids — `graph-node-item` (the graph's hidden a11y list,
+ * mirroring the `nodes` prop 1:1), `graph-node`/`graph-node-circle`/
+ * `graph-edge` (the 2D SVG render layer), under the `graph-container` root.
+ * Nodes are identified by the `data-node-id` attribute those testids carry,
+ * NEVER by display text: `graph_nodes` uniqueness is per course
+ * (UNIQUE(user_id, course_id, concept_name)), so two courses can
+ * legitimately share a concept name — id-keyed assertions make label
+ * collisions structurally irrelevant. Label TEXT is still asserted per node
+ * (it is part of the rendered data), just keyed by id.
  *
  * KNOWN BUG #355: /api/graph duplicates the subject-root hub when a user is
  * enrolled in two offerings of the SAME abstract course (subject-root
  * synthesis iterates enrollments, not distinct courses). The rich seed
  * intentionally has rich-user-active in both the F25 and S26 offerings of
  * rich-course-cs101, so the exact-count test below trips on the duplicated
- * `subject_root__rich-course-cs101` hub (+1 node, +5 spokes). That is this
- * journey catching precisely the defect class it exists for — the correct
- * assertion is kept and the test is marked fixme(#355) rather than relaxed.
- * The companion tests assert everything #355 does not corrupt.
+ * `subject_root__rich-course-cs101` hub (+1 node, +5 spokes) — verified live:
+ * PROBE355 nodes_total=18 nodes_unique=17
+ * dup_node_ids=["subject_root__rich-course-cs101"] edges_total=25
+ * edges_unique=20 dup_edges=5. That is this journey catching precisely the
+ * defect class it exists for — the correct assertion is kept and the test is
+ * marked fixme(#355) rather than relaxed. The companion tests assert
+ * everything #355 does not corrupt.
  */
+import type { Locator, Page } from "@playwright/test";
+
 import { queryRaw } from "./support/db";
 import { expect, test } from "./support/fixtures";
 import { USER_ACTIVE } from "./support/stack";
@@ -58,7 +62,7 @@ function tierFor(score: number): Tier {
 
 /**
  * Mirror of KnowledgeGraph2D's `masteryOpacity` — how the 2D graph ENCODES
- * the mastery class on the rendered node circle. Kept in lockstep with
+ * the mastery class on the `graph-node-circle` mark. Kept in lockstep with
  * frontend/src/components/KnowledgeGraph2D.tsx (a redesign that retunes
  * these constants updates this table in the same PR).
  */
@@ -85,9 +89,8 @@ const conceptLabel = (name: string) =>
 const rootLabel = (code: string | null, name: string | null) =>
   code ? `${code} - ${name ?? ""}` : (name ?? "");
 
-/** Whole-string matcher for Locator.filter({ hasText }) — no substring hits. */
-const exactText = (s: string) =>
-  new RegExp(`^${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+/** Synthetic id get_graph gives a course's subject-root hub. */
+const rootId = (courseId: string) => `subject_root__${courseId}`;
 
 type NodeRow = {
   id: string;
@@ -153,16 +156,22 @@ async function graphExpectations() {
   };
 }
 
-/** Locators under the registered graph surface (docs/frontend-testids.md). */
-function graphLocators(page: import("@playwright/test").Page) {
+/** Registered testid handles under the graph surface (docs/frontend-testids.md). */
+function graphLocators(page: Page) {
   const container = page.getByTestId("graph-container");
-  const svg = container.locator('svg[aria-label="Knowledge graph"]');
   return {
-    svg,
-    labels: svg.locator("text"), // exactly one per rendered node
-    lines: svg.locator("line"), // exactly one per rendered edge
-    srItems: container.locator('ul[aria-label="Knowledge graph nodes"] > li'), // 1:1 with the nodes prop
+    /** 2D SVG node groups — one per rendered node; carry data-node-id. */
+    svgNodes: container.getByTestId("graph-node"),
+    /** 2D SVG edge lines — one per rendered edge. */
+    svgEdges: container.getByTestId("graph-edge"),
+    /** A11y list entries — mirror the nodes prop 1:1; carry data-node-id. */
+    items: container.getByTestId("graph-node-item"),
   };
+}
+
+/** Narrow a graph-node-item / graph-node locator to one node id. */
+function byNodeId(loc: Locator, id: string) {
+  return loc.and(loc.page().locator(`[data-node-id=${JSON.stringify(id)}]`));
 }
 
 // Marked fixme, NOT relaxed: red today solely because of open bug #355 (see
@@ -174,22 +183,22 @@ test.fixme("renders exactly one node per DB graph node plus one subject root per
   expect(g.nodes.length).toBeGreaterThan(0); // journey guard: seeded graph present
 
   await page.goto("/tree");
-  const { labels, lines, srItems } = graphLocators(page);
+  const { svgNodes, svgEdges, items } = graphLocators(page);
 
-  // Node count, at both render layers: the SVG (one <text> per node) and the
-  // accessibility list (one <li> per entry of the same nodes array).
-  await expect(labels).toHaveCount(g.expectedNodeCount);
-  await expect(srItems).toHaveCount(g.expectedNodeCount);
+  // Node count, at both render layers: the SVG (one graph-node group per
+  // node) and the a11y list (one graph-node-item per entry of the same
+  // nodes array).
+  await expect(svgNodes).toHaveCount(g.expectedNodeCount);
+  await expect(items).toHaveCount(g.expectedNodeCount);
 
-  // Edge count: one <line> per DB edge + per subject spoke.
-  await expect(lines).toHaveCount(g.expectedEdgeCount);
+  // Edge count: one graph-edge line per DB edge + per subject spoke.
+  await expect(svgEdges).toHaveCount(g.expectedEdgeCount);
 
   // Each subject-root hub renders exactly once per distinct enrolled course
-  // (the precise duplication #355 causes: this reads 2 for CS101 today).
+  // (the precise duplication #355 causes: these read 2 for CS101 today).
   for (const c of g.courses) {
-    await expect(
-      labels.filter({ hasText: exactText(rootLabel(c.course_code, c.course_name)) }),
-    ).toHaveCount(1);
+    await expect(byNodeId(items, rootId(c.course_id))).toHaveCount(1);
+    await expect(byNodeId(svgNodes, rootId(c.course_id))).toHaveCount(1);
   }
 });
 
@@ -198,63 +207,61 @@ test("renders every DB concept node exactly once, classified by its DB mastery s
   expect(g.nodes.length).toBeGreaterThan(0); // journey guard: seeded graph present
 
   await page.goto("/tree");
-  const { svg, labels, lines, srItems } = graphLocators(page);
+  const { svgNodes, svgEdges, items } = graphLocators(page);
 
-  // Every DB concept node renders exactly once — in the SVG and in the
-  // accessibility list. (Concept rows are what #355 does NOT duplicate, so
-  // exact counts hold here; hub multiplicity lives in the fixme test above.)
+  // Every DB concept node renders exactly once — in the SVG and in the a11y
+  // list — and shows its own concept name. Keyed by node id, so this holds
+  // even if two courses share a concept name. (Concept rows are what #355
+  // does NOT duplicate, so exact counts hold here; hub multiplicity lives in
+  // the fixme test above.)
   for (const n of g.nodes) {
-    await expect(
-      labels.filter({ hasText: exactText(conceptLabel(n.concept_name)) }),
-    ).toHaveCount(1);
-    await expect(
-      srItems.filter({ hasText: exactText(n.concept_name) }),
-    ).toHaveCount(1);
+    const item = byNodeId(items, n.id);
+    await expect(item).toHaveCount(1);
+    await expect(item).toHaveText(n.concept_name);
+    await expect(byNodeId(svgNodes, n.id)).toHaveCount(1);
   }
 
-  // Every enrolled course's subject-root hub is present (≥1 — exact
-  // multiplicity is the #355-blocked assertion above).
+  // Every enrolled course's subject-root hub is present with its course
+  // label (≥1 — exact multiplicity is the #355-blocked assertion above).
   for (const c of g.courses) {
-    await expect(
-      labels.filter({ hasText: exactText(rootLabel(c.course_code, c.course_name)) }).first(),
-    ).toBeVisible();
+    const hub = byNodeId(items, rootId(c.course_id)).first();
+    await expect(hub).toBeVisible();
+    await expect(hub).toHaveText(rootLabel(c.course_code, c.course_name));
   }
 
   // Edge floor: at least every DB edge + hub spoke is drawn (exact equality
   // is #355-blocked — the duplicate hub adds surplus spokes, but a MISSING
   // edge must still fail here).
-  expect(await lines.count()).toBeGreaterThanOrEqual(g.expectedEdgeCount);
+  expect(await svgEdges.count()).toBeGreaterThanOrEqual(g.expectedEdgeCount);
 
   // Mastery classification at the render layer: the 2D graph encodes the
-  // tier as the main circle's opacity (TIER_OPACITY). Read every node
-  // group's label + main-circle opacity in one pass — pure DOM data, no
-  // geometry. A node group is the only <g> with a direct <text> child; its
-  // main circle is the LAST direct <circle> (glow/highlight rings precede
-  // it in source order).
-  const rendered = await svg.evaluate((el) =>
-    Array.from(el.querySelectorAll("g"))
-      .filter((grp) => grp.querySelector(":scope > text"))
-      .map((grp) => {
-        const circles = grp.querySelectorAll(":scope > circle");
-        const main = circles[circles.length - 1];
-        return {
-          label: grp.querySelector(":scope > text")?.textContent ?? "",
-          opacity: main?.getAttribute("opacity") ?? null,
-        };
-      }),
+  // tier as the graph-node-circle's opacity (TIER_OPACITY). Read every node
+  // group's id, label and circle opacity in one pass — pure DOM data, no
+  // geometry — and key the map by node id (a label-keyed map could silently
+  // collapse two same-named nodes into one entry and mask a wrong class).
+  const rendered = await svgNodes.evaluateAll((els) =>
+    els.map((grp) => ({
+      id: grp.getAttribute("data-node-id"),
+      label: grp.querySelector(":scope > text")?.textContent ?? "",
+      opacity:
+        grp
+          .querySelector('[data-testid="graph-node-circle"]')
+          ?.getAttribute("opacity") ?? null,
+    })),
   );
-  const opacityByLabel = new Map(rendered.map((r) => [r.label, r.opacity]));
+  const byId = new Map(rendered.map((r) => [r.id, r]));
 
   for (const n of g.nodes) {
     const tier = tierFor(n.mastery_score);
-    const got = opacityByLabel.get(conceptLabel(n.concept_name));
+    const got = byId.get(n.id);
+    expect(got, `node ${n.id} ("${n.concept_name}") is not in the rendered SVG`).toBeDefined();
     expect(
-      got,
-      `node "${n.concept_name}" (mastery_score ${n.mastery_score} → ${tier}) has no rendered opacity`,
-    ).not.toBeNull();
+      got!.label,
+      `node ${n.id} SVG label should be its (truncated) concept name`,
+    ).toBe(conceptLabel(n.concept_name));
     expect(
-      Number(got),
-      `node "${n.concept_name}" (mastery_score ${n.mastery_score}) must render as "${tier}"`,
+      Number(got!.opacity),
+      `node ${n.id} ("${n.concept_name}", mastery_score ${n.mastery_score}) must render as "${tier}"`,
     ).toBeCloseTo(TIER_OPACITY[tier], 5);
   }
 });
@@ -271,17 +278,18 @@ test("tier filter partitions nodes exactly by the DB-derived mastery classificat
   }
 
   await page.goto("/tree");
-  const { labels } = graphLocators(page);
+  const { items } = graphLocators(page);
 
   // Selecting each tier must show exactly the concepts whose DB score maps
-  // to that tier — and none of the others. (Subject-root hubs stay visible
-  // by design; concept-name matching skips them.)
+  // to that tier — and none of the others. Membership is checked by node id.
+  // (Subject-root hubs stay visible by design; concept ids never collide
+  // with the synthetic subject_root__* ids.)
   for (const tier of TIERS) {
     await page.getByRole("button", { name: TIER_PILL[tier], exact: true }).click();
     for (const n of g.nodes) {
       await expect(
-        labels.filter({ hasText: exactText(conceptLabel(n.concept_name)) }),
-        `tier filter "${tier}": node "${n.concept_name}" (score ${n.mastery_score})`,
+        byNodeId(items, n.id),
+        `tier filter "${tier}": node ${n.id} ("${n.concept_name}", score ${n.mastery_score})`,
       ).toHaveCount(tierFor(n.mastery_score) === tier ? 1 : 0);
     }
   }

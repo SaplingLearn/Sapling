@@ -71,7 +71,7 @@ renders the element.
 | Upload modal | `upload-modal` | `frontend/src/components/DocumentUploadModal.tsx` |
 | Tutor | `tutor` | `frontend/src/components/ChatPanel.tsx` (rendered by `screens/Learn.tsx`; + the session-resume rows in `src/components/screens/Learn.tsx` itself) |
 | Quiz | `quiz` | `frontend/src/components/QuizPanel.tsx` (rendered by `screens/Quiz.tsx`) |
-| Knowledge graph | `graph` | `frontend/src/components/KnowledgeGraph.tsx` (wrapper only — not the 2D/3D internals) |
+| Knowledge graph | `graph` | `frontend/src/components/KnowledgeGraph.tsx` (wrapper: container root + mode toggle) plus `KnowledgeGraph2D.tsx`/`KnowledgeGraph3D.tsx` (the render/data-layer seam — hidden a11y node list, SVG node/edge marks, zoom controls — added with the #395 graph-integrity journey) |
 | App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
 | Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
 | Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
@@ -164,6 +164,21 @@ route:
 | --- | --- |
 | `graph-container` | graph wrapper root (sized box holding 2D or 3D) |
 | `graph-mode-toggle` | 2D ⇄ 3D toggle |
+| `graph-node-items` | hidden a11y node list (`<ul>`) — the whole-list handle; mirrors the rendered nodes 1:1 (2D and 3D) |
+| `graph-node-item` | one a11y list entry (`<li>`); carries `data-node-id={node.id}` so tests assert by node identity, never by label — concept names are only unique per course (2D and 3D) |
+| `graph-node-activate` | the activation `<button>` inside an a11y entry (when the graph is clickable) |
+| `graph-node` | 2D SVG node group (`<g>`); carries `data-node-id={node.id}` |
+| `graph-node-circle` | the main circle inside a 2D node group — the mark that encodes the mastery tier as `opacity` |
+| `graph-edge` | one 2D SVG edge `<line>` |
+| `graph-zoom-in` / `graph-zoom-out` / `graph-zoom-reset` | 2D zoom controls |
+
+`graph-node-item` / `graph-node` carry the node id as a separate
+`data-node-id` attribute instead of a testid suffix (the repeated-items rule
+above): graph node ids are long seeded/UUID strings, and the pair
+`[data-testid="graph-node-item"][data-node-id="…"]` keeps both the "all
+items" handle and the exact-id handle selectable. The 2D and 3D variants
+share these testids — only one implementation mounts at a time, so they
+never collide in the DOM.
 
 ### `app`
 
