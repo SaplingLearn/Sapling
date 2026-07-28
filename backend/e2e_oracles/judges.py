@@ -134,17 +134,10 @@ def ciphertext_findings(
             )
             continue
         try:
-            plain = decrypt_fn(value)
+            not_encrypted = decrypt_fn(value) == value
         except Exception:
-            findings.append(
-                Finding(
-                    oracle="ciphertext",
-                    summary=f"{table}.{column} not encrypted at rest (pk={pk})",
-                    evidence={"pk": pk, "value_prefix": value[:32]},
-                )
-            )
-            continue
-        if plain == value:
+            not_encrypted = True
+        if not_encrypted:
             findings.append(
                 Finding(
                     oracle="ciphertext",
