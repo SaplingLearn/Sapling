@@ -45,8 +45,12 @@ export default async function globalSetup(): Promise<void> {
     );
   }
 
-  // Same flags as the real session cookie (auth.py sets HttpOnly/Secure/Lax;
-  // browsers accept Secure cookies on http://localhost — docs/local-supabase.md).
+  // Flags: the real cookie is HttpOnly/Lax with Secure only when the backend's
+  // SECURE_COOKIES is on (config.py derives it from FRONTEND_URL's scheme, so
+  // it is False under the http:// local stack). We set secure:true anyway —
+  // matching what an https deploy would mint — and Chromium accepts and sends
+  // Secure cookies on http://localhost (a trustworthy origin;
+  // docs/local-supabase.md relies on the same behavior).
   const { hostname } = new URL(FRONTEND_URL);
   const storageState = {
     cookies: [

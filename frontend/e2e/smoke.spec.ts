@@ -7,9 +7,11 @@
  *   middleware-gated shell route renders its known data-testid (#382).
  *
  * /dashboard is middleware-protected: without a valid session cookie the
- * request redirects to the public landing page, so `app-shell` becoming
- * visible at /dashboard proves the session, the approval gate (the seeded
- * rich-user-active is approved), and the Next → FastAPI proxy in one go.
+ * middleware redirects to `${BACKEND_URL}/api/auth/google` (BACKEND_URL is
+ * always set under start:test), i.e. clean off :3000 into the OAuth flow —
+ * so `app-shell` becoming visible at /dashboard proves the session, the
+ * approval gate (the seeded rich-user-active is approved), and the
+ * Next → FastAPI proxy in one go.
  */
 import { expect, test } from "./support/fixtures";
 
@@ -18,7 +20,8 @@ test("authed dashboard shell renders from storageState session", async ({
 }) => {
   await page.goto("/dashboard");
 
-  // Not bounced by the auth middleware (unauthed → "/", unapproved → /pending).
+  // Not bounced by the auth middleware (unauthed → the backend's
+  // /api/auth/google; unapproved → /pending).
   await expect(page).toHaveURL(/\/dashboard$/);
 
   // The authed app shell mounted (data-testid per the #382 convention).
