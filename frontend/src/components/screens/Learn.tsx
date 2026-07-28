@@ -888,7 +888,10 @@ function LearnInner() {
                   <div style={{ fontFamily: "var(--font-display)", fontSize: 19, fontWeight: 500, color: "var(--text)", marginTop: 7, lineHeight: 1.2 }}>
                     {focusConcept ? focusConcept.name : (cardCourse?.course_name ?? topic)}
                   </div>
-                  <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.5 }}>
+                  <div
+                    data-testid="tutor-focus-concept-description"
+                    style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.5 }}
+                  >
                     {focusConcept
                       ? (focusConcept.description
                           ?? descCache[focusConcept.id]
