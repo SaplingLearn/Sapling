@@ -93,6 +93,24 @@ def test_bad_env_module_path_fails_loudly(monkeypatch):
     assert "no_such_module" in str(exc.value)
 
 
+def test_bad_env_module_path_fails_loudly_on_every_dispatch(monkeypatch):
+    """Regression (#434 review): the latch must not cache a FAILED import as
+    loaded. Two dispatches within one latch lifetime (no fixture reset in
+    between) must BOTH surface the module path — the original code latched
+    before importing, so the second dispatch silently downgraded to the
+    generic LookupError and the broken-boot story disappeared."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.no_such_module")
+
+    with socratic_agent.override(model=model_for("chat_tutor")):
+        for attempt in (1, 2):
+            with pytest.raises(Exception) as exc:
+                socratic_agent.run_sync("What is recursion?", deps=_deps())
+            assert "no_such_module" in str(exc.value), (
+                f"dispatch {attempt} lost the bad-module story: {exc.value}"
+            )
+
+
 def test_explicit_registration_wins_over_env_module(monkeypatch):
     """The env module is a dispatch-miss fallback only: a handler registered
     in-process (the pytest pattern) is never shadowed by it."""

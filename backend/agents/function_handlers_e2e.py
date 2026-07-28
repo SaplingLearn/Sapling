@@ -6,9 +6,11 @@ loaded ONLY when the backend boots with both
     SAPLING_MODEL_MODE=function
     SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e
 
-(see `_providers._load_env_handlers_module`). Production and the pytest lane
-never import it: the env vars are unset there, and pytest registers its own
-scripted handlers explicitly per test.
+(see `_providers._load_env_handlers_module`). Production and the normal
+(hermetic) pytest lane never import it: the env vars are unset there, and
+pytest registers its own scripted handlers explicitly per test. The seam's
+own tests (`tests/test_e2e_function_handlers.py`) are the one exception —
+they set the vars deliberately to exercise this module.
 
 Design constraints for every handler in this file:
 

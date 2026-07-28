@@ -69,7 +69,7 @@ renders the element.
 | Sign-in | `signin` | `frontend/src/components/SignInModal.tsx` (+ the trigger in `src/app/(public)/page.tsx`) |
 | Approval gate | `pending` | `frontend/src/app/pending/page.tsx` |
 | Upload modal | `upload-modal` | `frontend/src/components/DocumentUploadModal.tsx` |
-| Tutor | `tutor` | `frontend/src/components/ChatPanel.tsx` (rendered by `screens/Learn.tsx`) |
+| Tutor | `tutor` | `frontend/src/components/ChatPanel.tsx` (rendered by `screens/Learn.tsx`; + the session-resume rows in `src/components/screens/Learn.tsx` itself) |
 | Quiz | `quiz` | `frontend/src/components/QuizPanel.tsx` (rendered by `screens/Quiz.tsx`) |
 | Knowledge graph | `graph` | `frontend/src/components/KnowledgeGraph.tsx` (wrapper only — not the 2D/3D internals) |
 | App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
@@ -136,7 +136,7 @@ route:
 | `tutor-action-hint` | "Hint" |
 | `tutor-action-confused` | "I'm confused" |
 | `tutor-action-skip` | "Skip" |
-| `tutor-session-resume-{sessionId}` | a "Recent sessions" row's resume button (`screens/Learn.tsx`) — suffixed with the session's own id per the stable-domain-id rule; the #392 journey targets a seeded `rich-sess-*` id |
+| `tutor-session-resume-{sessionId}` | a "Recent sessions" row's resume button (`screens/Learn.tsx`), suffixed with the session's own id per the stable-domain-id rule |
 
 ### `quiz`
 
@@ -255,10 +255,9 @@ see the header of `eslint.config.mjs`), so only **new** interactive elements
 in the file must carry a testid. Tag baselined elements as they get browser
 coverage and regenerate with `npm run lint:baseline`.
 
-The same exception covers `tutor-session-resume-{sessionId}` in
-`src/components/screens/Learn.tsx` (#392): the Learn screen has ~20 intrinsic
-interactive elements outside any browser journey, so the file stays out of the
-`files` list and the one tested control is documented here instead.
+`src/components/screens/Learn.tsx` (the session-resume rows, #392) is in the
+`files` list with the same treatment: its 21 pre-existing untagged elements are
+baselined, so only NEW interactive elements there must carry a testid.
 
 ### Adding a surface
 

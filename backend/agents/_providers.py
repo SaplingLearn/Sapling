@@ -155,8 +155,10 @@ def clear_function_handlers() -> None:
 # process start ... then register per-task handlers". SAPLING_FUNCTION_HANDLERS
 # names a module (e.g. `agents.function_handlers_e2e`) whose import registers
 # handlers. It is consulted lazily, once, and ONLY on a dispatch miss — so the
-# pytest lane (which registers explicitly and never sets the var) is unchanged,
-# and a test that forgot to register a handler still gets the loud LookupError.
+# normal (hermetic) pytest lane, which registers explicitly and does not set
+# the var, is unchanged, and a test that forgot to register a handler still
+# gets the loud LookupError. (The seam's own tests DO set the var, resetting
+# the latch around each case.)
 
 _ENV_HANDLERS_LOADED = False
 
@@ -164,17 +166,20 @@ _ENV_HANDLERS_LOADED = False
 def _load_env_handlers_module() -> None:
     """Import the SAPLING_FUNCTION_HANDLERS module (once per process).
 
-    A bad module path raises ImportError loudly at first dispatch — a broken
-    E2E boot must fail the run, never silently fall through to LookupError
-    with the wrong story.
+    A bad module path raises ImportError loudly at EVERY dispatch, not just
+    the first — a broken E2E boot must fail the run, never silently fall
+    through to LookupError with the wrong story. That is why the latch is
+    set only after a successful import (or when there is nothing to load):
+    latching before the import would permanently cache the failure as
+    "loaded" and downgrade every later dispatch to the generic LookupError.
     """
     global _ENV_HANDLERS_LOADED
     if _ENV_HANDLERS_LOADED:
         return
-    _ENV_HANDLERS_LOADED = True
     module = (os.getenv("SAPLING_FUNCTION_HANDLERS") or "").strip()
     if module:
-        importlib.import_module(module)
+        importlib.import_module(module)  # raises before the latch on failure
+    _ENV_HANDLERS_LOADED = True
 
 
 def _function_model_for(task: AgentTask) -> "Model":

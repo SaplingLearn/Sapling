@@ -97,6 +97,9 @@
   "src/components/screens/Learn.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
+    },
+    "no-restricted-syntax": {
+      "count": 21
     }
   },
   "src/components/screens/Library.tsx": {
