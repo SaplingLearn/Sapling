@@ -273,7 +273,19 @@ e2e oracles) is documented in [e2e-exploration.md](e2e-exploration.md).
 - **404 "Could not find the table … in the schema cache"** — PostgREST cache is
   stale after a migration. `podman exec supabase_db_sapling psql -U postgres -d postgres
   -c "NOTIFY pgrst, 'reload schema';"` (the reset script does this for you).
-- **Postgres version** — local is PG17, staging/prod is PG15. The migrations are
-  version-agnostic and verified to replay on 17; keep new migrations portable.
+- **Postgres version** — local, CI, and staging/prod all pin PG15
+  (`supabase/config.toml`'s `major_version`, #441 — local/CI used to run PG17;
+  that skew is now closed). The migrations are version-agnostic and verified
+  to replay on 15; keep new migrations portable. `backend/tests/integration/`
+  asserts the server major version so future drift is loud, not silent.
+  **If you have an existing local stack from before this pin**, its Postgres
+  container is still the old major version on disk — the CLI does not swap a
+  running container's image just because `config.toml` changed. Reset it:
+  `scripts/local-db-reset.sh` (`supabase db reset` under the hood, which
+  recreates the Postgres container against the pinned version, then
+  migrates + seeds). If `supabase start` still reports the old
+  `server_version` afterwards, fully tear down first — `supabase stop` (add
+  `--no-backup` to also drop the old data volume), then `supabase start` — to
+  force the CLI to provision a fresh PG15 container.
 - **Ports 54321–54327 already in use** — another project's `supabase start` is
   running; `supabase stop` in that project (or `podman ps` to find it).
