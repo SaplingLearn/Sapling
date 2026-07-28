@@ -203,8 +203,9 @@ about gradient descent, category "Lecture notes", and concepts "Gradient
 Descent"/"Learning Rate" — content belonging to an entirely different,
 already-uploaded document. Alarming-looking, but not a product bug: Chapter
 2 always runs the document pipeline in function mode
-(`SAPLING_MODEL_MODE=function` / `SAPLING_FUNCTION_HANDLERS=agents.
-function_handlers_e2e`, forced by `scripts/explore.sh`), and
+(`SAPLING_MODEL_MODE=function` /
+`SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e`, forced by
+`scripts/explore.sh`), and
 `agents/function_handlers_e2e.py`'s classifier/summary/concepts handlers are
 *designed* to return the same fixed constants
 (`E2E_DOC_CATEGORY`/`E2E_DOC_ABSTRACT`/`E2E_DOC_CONCEPTS`) for every upload
