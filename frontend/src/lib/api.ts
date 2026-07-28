@@ -58,12 +58,14 @@ export interface MeResponse {
   is_admin: boolean;
 }
 
-// Cookie-authenticated identity lookup (backend/routes/auth.py::get_me reads
-// the user id off the `sapling_session` cookie alone via get_session_user_id
-// — no user_id param needed). UserContext's bootstrap falls back to this
-// when localStorage has no `sapling_user` entry but the HttpOnly session
-// cookie is still valid (#430); the OAuth callback already calls the same
-// endpoint the same way.
+// Cookie-authenticated identity lookup (backend/routes/auth.py::get_me
+// resolves the user via get_session_user_id, which reads the `sapling_session`
+// cookie or an `auth_token` query param — no `user_id` param needed either
+// way). UserContext's bootstrap falls back to this when localStorage has no
+// `sapling_user` entry but the HttpOnly session cookie is still valid
+// (#430); the OAuth callback (src/app/auth/callback/page.tsx) already reads
+// this same endpoint off the same cookie, though via a bare `fetch` rather
+// than this `fetchJSON` wrapper.
 export const getMe = () => fetchJSON<MeResponse>('/api/auth/me');
 
 // Graph
