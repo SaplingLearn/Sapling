@@ -36,6 +36,22 @@ RAG_TRACEBACK = [
     "    raise RuntimeError(\"embed failed\")",
     "RuntimeError: embed failed",
 ]
+BARE_EXCEPTION_TRACEBACK_1 = [
+    "Traceback (most recent call last):",
+    '  File "/app/routes/quiz.py", line 12, in start',
+    "Exception: boom",
+]
+BARE_EXCEPTION_TRACEBACK_2 = [
+    "Traceback (most recent call last):",
+    '  File "/app/routes/other.py", line 20, in other',
+    "Exception: totally different",
+]
+RUNTIME_ERROR_TRACEBACK = [
+    "Traceback (most recent call last):",
+    '  File "/app/routes/other.py", line 5, in handler',
+    "    raise RuntimeError(\"nope\")",
+    "RuntimeError: nope",
+]
 
 
 def _scan(lines):
@@ -101,6 +117,39 @@ def test_4xx_and_startup_noise_are_not_findings():
         ]
     )
     assert findings == []
+
+
+def test_bare_exception_terminal_lines_are_distinct_findings():
+    # Finding 1 (logscan.py:37): KEY_RE requires a class-name prefix before
+    # Error/Exception/Interrupt/Exit, so bare "Exception: ..." terminal lines
+    # never match and _block_key falls back to block_lines[0] — the generic
+    # "Traceback (most recent call last):" line — aggregating two unrelated
+    # tracebacks into one finding.
+    findings, _ = _scan(BARE_EXCEPTION_TRACEBACK_1 + [ACCESS_200] + BARE_EXCEPTION_TRACEBACK_2)
+    assert len(findings) == 2
+    summaries = {f.summary for f in findings}
+    assert len(summaries) == 2
+    assert not any(s == "Traceback: Traceback (most recent call last): (1×)" for s in summaries)
+    assert any("boom" in s for s in summaries)
+    assert any("totally different" in s for s in summaries)
+
+
+def test_ansi_pre_request_line_closes_traceback_block():
+    # Finding 2 (logscan.py:33): NEW_LOG_LINE_RE doesn't recognize the
+    # post-ANSI-strip "HH:MM:SS.mmm " pre-request line shape, so it gets
+    # swallowed into an open traceback block instead of closing it.
+    findings, _ = _scan(PLAIN_TRACEBACK + [ANSI_LINE, ACCESS_200])
+    assert len(findings) == 1
+    excerpt = "\n".join(findings[0].evidence["excerpt"])
+    assert "GET /api/health" not in excerpt
+
+
+def test_ansi_pre_request_line_between_two_tracebacks_yields_two_findings():
+    findings, _ = _scan(PLAIN_TRACEBACK + [ANSI_LINE] + RUNTIME_ERROR_TRACEBACK)
+    assert len(findings) == 2
+    summaries = {f.summary for f in findings}
+    assert any("ValueError: boom" in s for s in summaries)
+    assert any("RuntimeError: nope" in s for s in summaries)
 
 
 def test_render_text_and_json_roundtrip():

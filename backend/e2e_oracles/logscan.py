@@ -30,11 +30,16 @@ _PLAIN_TRACEBACK_START_RE = re.compile(r"^[\s|+]*Traceback \(most recent call la
 _BLOCK_START_SUBSTRINGS = ("Exception in ASGI application", "Exception Group Traceback")
 
 # A line that unambiguously starts a *new* log record — closes an open block.
-NEW_LOG_LINE_RE = re.compile(r"^(INFO|ERROR|WARNING|DEBUG|CRITICAL):|^\d{4}-\d{2}-\d{2} ")
+# The third alternative is the post-ANSI-strip shape of the pre-request log line
+# (e.g. "22:17:08.488 GET /api/health") — scanning runs after ANSI stripping.
+NEW_LOG_LINE_RE = re.compile(
+    r"^(INFO|ERROR|WARNING|DEBUG|CRITICAL):|^\d{4}-\d{2}-\d{2} |^\d{2}:\d{2}:\d{2}\.\d+ "
+)
 
-# The line within a traceback block that names the exception, e.g. "ValueError: boom"
-# or "    | KeyError: 'z'" (ExceptionGroup gutter prefix).
-KEY_RE = re.compile(r"^[\s|+]*\w+(\.\w+)*(Error|Exception|Interrupt|Exit)\b.*")
+# The line within a traceback block that names the exception, e.g. "ValueError: boom",
+# a bare "Exception: boom", or "    | KeyError: 'z'" (ExceptionGroup gutter prefix).
+# The class-name prefix is optional so bare Error:/Exception:/etc. lines still match.
+KEY_RE = re.compile(r"^[\s|+]*(?:\w+(?:\.\w+)*)?(?:Error|Exception|Interrupt|Exit)\b.*")
 
 # #439 by-design noise: RAG indexing failures are retried and logged loudly but
 # don't represent a user-facing bug. Suppressed (counted, not reported).
