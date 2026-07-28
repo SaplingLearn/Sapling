@@ -75,6 +75,7 @@ renders the element.
 | App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
 | Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
 | Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
+| Library | `library` | `frontend/src/components/screens/Library.tsx` (the `/library` document screen — upload trigger, document cards/rows, filters, detail panel) |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -212,6 +213,25 @@ route:
 | --- | --- |
 | `dashboard-courses-key-toggle` | expand/collapse toggle of the "My courses" key overlay on the graph panel (default sidebar layout; the key starts collapsed) |
 | `dashboard-course-code` | a course row's code/name label inside the expanded key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
+
+### `library`
+
+Added with the upload → SSE → library journey (#387).
+
+| testid | element |
+| --- | --- |
+| `library-upload` | TopBar "Upload" button that opens the upload modal (disabled with zero courses) |
+| `library-search` | TopBar "Search documents…" input |
+| `library-course-scan` | TopBar "Scan <course>" button (only while a course filter is active) |
+| `library-doc-{docId}` | one document card (grid view) / row (list view), suffixed with the document's id |
+| `library-course-filter-all` | sidebar "All" course filter |
+| `library-course-filter-uncategorized` | sidebar "Uncategorized" course filter |
+| `library-course-filter-{courseId}` | sidebar per-course filter row |
+| `library-detail-close` | detail panel × close |
+| `library-detail-scan` | detail panel "Scan" / "Re-scan" concept-scan button |
+| `library-detail-delete` | detail panel "Delete document" (click-twice confirm) |
+| `library-concepts-toggle-all` | detail panel "Expand all" / "Collapse all" |
+| `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
 
 ## Enforcement
 

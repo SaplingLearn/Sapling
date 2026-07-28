@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
-from agents._providers import register_function_handler
+from agents._providers import FunctionModelHandler, register_function_handler
 
 # Asserted verbatim by frontend/e2e/tutor.spec.ts (rendered reply + decrypted
 # messages.content readback). Keep the two literals in sync.
@@ -96,3 +96,90 @@ def _quiz_handler(messages, info) -> ModelResponse:
 
 
 register_function_handler("quiz", _quiz_handler)
+
+
+# ── Document upload pipeline (#387) ─────────────────────────────────────────
+#
+# The SSE /api/documents/upload journey runs: classifier → (summary ∥
+# concepts) → graph merge → persist. The classifier is scripted as a
+# NON-syllabus category so syllabus extraction never runs and no assignment
+# side effects fire. `course_summary` covers the post-roll
+# update_course_context task so it completes through the real agent instead
+# of its template fallback.
+#
+# These agents have structured `output_type`s, so each handler emits its
+# fixed payload through the agent's OUTPUT tool (`info.output_tools[0]`) —
+# the same channel a Gemini structured response uses, validated by the real
+# output schema. That stays within this module's no-tool-calls constraint:
+# no *function* tools are invoked and the model drives zero writes; the
+# route itself performs the graph merge and persistence.
+
+E2E_DOC_CATEGORY = "lecture_notes"
+E2E_DOC_HEADLINE = "Deterministic E2E lecture notes on gradient descent."
+# Asserted (as a substring, rendered + decrypted-readback) by
+# frontend/e2e/upload.spec.ts. Keep the literals in sync.
+E2E_DOC_ABSTRACT = (
+    "These lecture notes introduce gradient descent as an iterative "
+    "optimization procedure. They define the loss surface, derive the "
+    "parameter update rule, and discuss how the learning rate governs "
+    "convergence. The treatment is deterministic fixture content for the "
+    "E2E upload journey."
+)
+E2E_DOC_KEY_POINTS = [
+    "Gradient descent iteratively steps against the gradient of the loss.",
+    "The learning rate controls the size of each update step.",
+    "Convergence behavior depends on the shape of the loss surface.",
+]
+E2E_DOC_CONCEPTS = [
+    ("Gradient Descent", "Iterative optimization that steps against the loss gradient.", 0.9),
+    ("Learning Rate", "Step-size hyperparameter governing each descent update.", 0.7),
+]
+
+
+def _structured_output(args: dict) -> FunctionModelHandler:
+    """Handler emitting `args` through the agent's registered output tool, so
+    the REAL output schema validates the payload before the agent returns."""
+
+    def handler(messages, info) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)]
+        )
+
+    return handler
+
+
+register_function_handler(
+    "classifier",
+    _structured_output({
+        "category": E2E_DOC_CATEGORY,
+        "is_syllabus": False,
+        "confidence": 0.95,
+        "rationale": "Scripted E2E classification: narrative notes, no schedule.",
+    }),
+)
+register_function_handler(
+    "summary",
+    _structured_output({
+        "headline": E2E_DOC_HEADLINE,
+        "abstract": E2E_DOC_ABSTRACT,
+        "key_points": E2E_DOC_KEY_POINTS,
+    }),
+)
+register_function_handler(
+    "concepts",
+    _structured_output({
+        "concepts": [
+            {"name": name, "description": desc, "importance": imp}
+            for name, desc, imp in E2E_DOC_CONCEPTS
+        ],
+    }),
+)
+register_function_handler(
+    "course_summary",
+    _structured_output({
+        "summary": (
+            "Scripted E2E course summary: the class is progressing "
+            "steadily; review the struggling concepts listed above."
+        ),
+    }),
+)

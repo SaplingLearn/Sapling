@@ -22,8 +22,10 @@ from pydantic_ai.models.google import GoogleModel
 import agents._providers as providers
 from agents._providers import clear_function_handlers, model_for
 from agents.chat_tutor import socratic_agent
+from agents.classifier import classifier_agent
 from agents.deps import SaplingDeps
 from agents.quiz import quiz_agent
+from agents.summary import summary_agent
 from routes.learn import _resolve_model_pref
 from routes.quiz import (
     _agent_question_to_wire,
@@ -226,3 +228,48 @@ def test_quiz_resolve_model_pref_still_builds_override_in_real_mode(monkeypatch)
     assert isinstance(m, GoogleModel)
     assert m.model_name == "gemini-2.5-pro"
     assert _resolve_quiz_model_pref(None) is None
+
+
+# ── Upload-pipeline handlers (#387) ───────────────────────────────────────
+
+
+def test_env_module_registers_upload_pipeline_handlers_on_dispatch(monkeypatch):
+    """#387's boot contract on the same once-per-process autoload: a real
+    classifier run gets the module's scripted structured output — emitted
+    through the agent's REAL output tool, so the DocumentClassification
+    schema validated it — and that single import also registered the
+    parallel workers (summary, concepts) and the post-roll course_summary."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    with classifier_agent.override(model=model_for("classifier")):
+        result = classifier_agent.run_sync("week 3 lecture notes", deps=_deps())
+
+    from agents.function_handlers_e2e import E2E_DOC_CATEGORY
+
+    assert result.output.category == E2E_DOC_CATEGORY
+    assert result.output.is_syllabus is False
+    for task in ("classifier", "summary", "concepts", "course_summary"):
+        assert task in providers._FUNCTION_HANDLERS
+
+
+def test_env_module_summary_handler_passes_real_output_schema(monkeypatch):
+    """The scripted summary payload must satisfy the Summary output tool's
+    real schema (headline <= 140 chars, 3-8 key points): drift between the
+    module constants and the schema fails here, in the hermetic lane, not
+    three phases into a browser run."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    with summary_agent.override(model=model_for("summary")):
+        result = summary_agent.run_sync("some document text", deps=_deps())
+
+    from agents.function_handlers_e2e import E2E_DOC_ABSTRACT, E2E_DOC_HEADLINE
+
+    assert result.output.headline == E2E_DOC_HEADLINE
+    assert result.output.abstract == E2E_DOC_ABSTRACT
+    assert 3 <= len(result.output.key_points) <= 8

@@ -147,6 +147,7 @@ export function Library() {
             <>
               <div style={{ position: "relative" }}>
                 <input
+                  data-testid="library-search"
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   placeholder="Search documents…"
@@ -159,6 +160,7 @@ export function Library() {
               </div>
               {courseScanCourseId && (
                 <button
+                  data-testid="library-course-scan"
                   className="btn btn--sm"
                   onClick={runCourseScan}
                   disabled={courseScanning}
@@ -169,6 +171,7 @@ export function Library() {
                 </button>
               )}
               <button
+                data-testid="library-upload"
                 className="btn btn--sm btn--primary"
                 onClick={() => setUploadOpen(true)}
                 disabled={courses.length === 0}
@@ -228,6 +231,7 @@ export function Library() {
                   return (
                     <button
                       key={d.id}
+                      data-testid={`library-doc-${d.id}`}
                       onClick={() => setDetail(d)}
                       className="card"
                       style={{
@@ -281,6 +285,7 @@ export function Library() {
                   return (
                     <button
                       key={d.id}
+                      data-testid={`library-doc-${d.id}`}
                       onClick={() => setDetail(d)}
                       style={{
                         width: "100%", display: "flex", alignItems: "center", gap: 16,
@@ -341,12 +346,14 @@ export function Library() {
         }}>
           <div className="label-micro" style={{ marginBottom: 10 }}>Courses</div>
           <CourseRow
+            testid="library-course-filter-all"
             label="All"
             count={groupedByCourse.all || 0}
             active={courseFilter === "all"}
             onClick={() => setCourseFilter("all")}
           />
           <CourseRow
+            testid="library-course-filter-uncategorized"
             label="Uncategorized"
             count={groupedByCourse.uncategorized || 0}
             active={courseFilter === "uncategorized"}
@@ -355,6 +362,7 @@ export function Library() {
           {courses.map(c => (
             <CourseRow
               key={c.course_id}
+              testid={`library-course-filter-${c.course_id}`}
               label={c.course_code || c.course_name}
               subLabel={c.course_code ? c.course_name : undefined}
               color={c.color || undefined}
@@ -419,13 +427,15 @@ export function Library() {
 }
 
 function CourseRow({
-  label, subLabel, color, count, active, onClick,
+  testid, label, subLabel, color, count, active, onClick,
 }: {
+  testid: string;
   label: string; subLabel?: string; color?: string;
   count: number; active: boolean; onClick: () => void;
 }) {
   return (
     <button
+      data-testid={testid}
       onClick={onClick}
       style={{
         width: "100%", display: "flex", alignItems: "center", gap: 8,
@@ -502,7 +512,7 @@ function DetailPanel({
     <aside style={container}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span className="chip">{doc.category.replace("_", " ")}</span>
-        <button className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">
+        <button data-testid="library-detail-close" className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">
           <Icon name="x" size={12} />
         </button>
       </div>
@@ -538,6 +548,7 @@ function DetailPanel({
             </div>
           </div>
           <button
+            data-testid="library-detail-scan"
             onClick={runScan}
             disabled={scanState === "scanning"}
             className="btn btn--sm"
@@ -554,6 +565,7 @@ function DetailPanel({
       </div>
 
       <button
+        data-testid="library-detail-delete"
         onClick={del.trigger}
         className={`btn ${del.armed ? "btn--danger" : ""}`}
         style={{ width: "100%", background: del.armed ? "var(--err-soft)" : undefined, color: del.armed ? "var(--err)" : undefined }}
@@ -584,6 +596,7 @@ function ConceptList({ notes }: { notes: ConceptNote[] }) {
       >
         <div className="label-micro">Key concepts ({notes.length})</div>
         <button
+          data-testid="library-concepts-toggle-all"
           onClick={toggleAll}
           className="btn btn--ghost btn--sm"
           style={{ fontSize: 11 }}
@@ -605,6 +618,7 @@ function ConceptList({ notes }: { notes: ConceptNote[] }) {
               }}
             >
               <button
+                data-testid={`library-concept-toggle-${i}`}
                 onClick={() => setOpen(prev => ({ ...prev, [i]: !prev[i] }))}
                 aria-expanded={isOpen}
                 style={{

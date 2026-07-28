@@ -208,7 +208,19 @@ app.include_router(academics.router,   prefix="/api", tags=["academics"])
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "sapling-backend"}
+    # model_mode surfaces the #391 seam state (real | function | cassette) so
+    # E2E journeys (#387) can fail fast with a pointed message when the stack
+    # was booted in real mode, instead of running agent stages against live
+    # Gemini. (The RAG embed path sits below the seam — #439 — so "function"
+    # here vouches for the agent stages, not every byte of egress.) Not a
+    # secret: it names a mode, not a key.
+    from agents._providers import _model_mode
+
+    return {
+        "status": "ok",
+        "service": "sapling-backend",
+        "model_mode": _model_mode(),
+    }
 
 
 @app.get("/api/users")
