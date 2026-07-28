@@ -7,7 +7,8 @@ selector. `data-testid` is the one attribute that exists purely as a test
 contract and can be kept stable across visual churn.
 
 Introduced by #382. Scope today is the six surfaces the Chapter-1 regression
-suite drives; this is deliberately **not** a whole-app sweep.
+suite drives, plus the authed app-shell anchor added with the Playwright
+harness (#385); this is deliberately **not** a whole-app sweep.
 
 ## Naming
 
@@ -71,6 +72,7 @@ renders the element.
 | Tutor | `tutor` | `frontend/src/components/ChatPanel.tsx` (rendered by `screens/Learn.tsx`) |
 | Quiz | `quiz` | `frontend/src/components/QuizPanel.tsx` (rendered by `screens/Quiz.tsx`) |
 | Knowledge graph | `graph` | `frontend/src/components/KnowledgeGraph.tsx` (wrapper only — not the 2D/3D internals) |
+| App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -158,15 +160,21 @@ route:
 | `graph-container` | graph wrapper root (sized box holding 2D or 3D) |
 | `graph-mode-toggle` | 2D ⇄ 3D toggle |
 
+### `app`
+
+| testid | element |
+| --- | --- |
+| `app-shell` | authed shell root — the scrolling `<main id="main-content">` in `ShellFrame.tsx`, present in both (top-nav and sidebar) layout variants; the Playwright harness smoke spec (#385) anchors on it as the "authed shell mounted" signal |
+
 ## Enforcement
 
 `frontend/eslint.config.mjs` has a per-file `no-restricted-syntax` block scoped
-to the six owning files. It errors on any `<button>`, `<input>` or `<textarea>`
-in those files that has no `data-testid` attribute:
+to the owning files listed above. It errors on any `<button>`, `<input>` or
+`<textarea>` in those files that has no `data-testid` attribute:
 
 ```js
 {
-  files: [ /* the six surface files */ ],
+  files: [ /* the surface files */ ],
   rules: {
     "no-restricted-syntax": ["error", {
       selector:
@@ -180,8 +188,8 @@ in those files that has no `data-testid` attribute:
 
 It is intentionally narrow:
 
-- **Only those six files.** A repo-wide version would be pure noise; the rest of
-  the app has no browser coverage to protect.
+- **Only the listed owning files.** A repo-wide version would be pure noise; the
+  rest of the app has no browser coverage to protect.
 - **Only intrinsic interactive elements.** Custom components (`<CustomSelect>`,
   `<Button>`) are not matched — a testid on a component is a prop the component
   has to forward, which is a code change, not an attribute. Tag the element

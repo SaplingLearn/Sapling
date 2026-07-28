@@ -10,3 +10,9 @@ tsconfig.tsbuildinfo
 .open-next
 .wrangler
 
+# Playwright E2E artifacts (#385)
+test-results/
+playwright-report/
+e2e/.auth/
+e2e/results/
+
