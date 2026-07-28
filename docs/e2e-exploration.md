@@ -45,7 +45,7 @@ Everything Chapter 1's local stack needs (see
   `@playwright/mcp@0.0.78` the first time it's invoked; afterward it's cached
 
 You do **not** need to set a real `GEMINI_API_KEY` or `SEED_RICH` yourself —
-`scripts/explore.sh` forces both (see §3). A real key in your shell is not
+`scripts/explore.sh` forces both. A real key in your shell is not
 used and never billed by this harness.
 
 ## 3. Kick-off: headless
@@ -57,7 +57,12 @@ make explore
 This runs the full pipeline: boot the stack, mint a session, hand the
 explorer prompt to a Playwright-MCP-armed `claude -p`, run the oracle final
 pass, then tear everything down. It takes the machine-singleton stack lock
-for the whole run (see §10) and typically finishes in a few minutes.
+for the whole run (see §10). With warm caches (a repo you've already run
+`make e2e-up` or `make explore` on before), the whole thing typically
+finishes in a few minutes end-to-end; the first-ever run on a machine can
+take closer to ~10 minutes (see §9's cost note — it's the `npx
+@playwright/mcp` download plus a cold test-profile Next build, not the
+exploration itself).
 
 Env knobs (all optional, read by `scripts/explore.sh`):
 
@@ -125,7 +130,7 @@ Everything lands in `.explore/` at the repo root (gitignored in full):
 | `session.log` | The full headless-run transcript: `claude -p --output-format stream-json --verbose`, reformatted by `jq` into readable `[assistant]` / `[tool_use]` / `[tool_result]` / `[result]` lines (each truncated to 500 chars). |
 | `session.stderr.log` | `claude -p`'s stderr, kept in its own file so it can never interleave with (and corrupt) the JSON stream `session.log` is parsed from. |
 | `oracle-final.txt` / `oracle-final.json` | The final `python -m e2e_oracles` pass, run at teardown while the stack is still up, in both text and JSON form. |
-| `traces/` | `@playwright/mcp` session-recording artifacts (page snapshots plus an MCP session directory) — see §6's caveat: these are MCP session recordings, not Playwright Trace Viewer `.zip` files. |
+| `traces/` | `@playwright/mcp` session-recording artifacts (page snapshots plus an MCP session directory) — these are MCP session recordings, not Playwright Trace Viewer `.zip` files. |
 | `storageState.json`, `mcp.json` | Plumbing, not findings: the minted Playwright storage state and the `--mcp-config` fed to `claude -p`. Useful for debugging why the explorer couldn't reach a page, otherwise ignorable. |
 | `lock.ok` | Internal lock-holder bookkeeping (holder-written, self-identifying — its content is the holder process's own PID). Not a finding artifact. |
 
@@ -136,7 +141,7 @@ at teardown — but you can also run them yourself against a stack that's
 already up (e.g. mid-`/explore`, or after driving the app by hand):
 
 ```bash
-cd backend && venv/bin/python -m e2e_oracles [--json] [--check graph|counts|ciphertext|logscan|orphans] [--user ID]
+cd backend && venv/bin/python -m e2e_oracles [--json] [--check ciphertext|counts|graph|logscan|orphans] [--user ID]
 ```
 
 - `--check` is repeatable; omit it to run all five (default, sorted order).
@@ -159,7 +164,10 @@ For each entry in `findings.md` (explorer-written or oracle-appended):
 
 1. **Reproduce it.** By hand in a browser, or by re-running the relevant
    oracle `--check`. Not reproducible → drop it, with a one-line note in your
-   triage record of why.
+   triage record of why. Part of reproducing it is asking whether the
+   "wrong" output is actually the function-mode seam working as designed
+   (see the worked example below) — that's a drop too, just a different
+   reason than "couldn't reproduce."
 2. **Reproducible and real** → `gh issue create` with the finding block
    (steps/expected/actual), the oracle JSON if there is any, and the
    `.explore/traces/` path attached. Label it as sourced from exploration so
@@ -173,21 +181,50 @@ For each entry in `findings.md` (explorer-written or oracle-appended):
    a normal PR against `backend/e2e_oracles/` — don't just delete the finding
    from `findings.md` and move on.
 
-Real evidence for what a genuine finding looks like: this harness's own
-bounded acceptance testing turned up a novel "wrong-data" bug (a newly
-uploaded, unrelated document came back with another document's summary,
-category, and extracted concepts verbatim — polluting the graph with wrong
-concepts) and, in a separate run of the same acceptance round, a real
-tutor-resume `500` on resuming a session (`POST
-/api/graph/<user>/concept-description` failing with `LookupError: ... no
-handler is registered for task 'concept_describe'` — `concept_describe` is
-genuinely unregistered in `backend/agents/function_handlers_e2e.py`),
-independently corroborated by the `logscan` oracle picking up the same `500`
-and traceback. Neither of those is on the known-bugs list — they're exactly
-the kind of thing this chapter is for. By contrast, #355 (the graph's
-duplicated CS subject-root hub) shows up in the graph oracle on essentially
-every run against the rich seed data — that's the known-not-new case
-category 3 above exists for.
+Two worked examples from this harness's own acceptance testing show the
+difference between a genuine finding and noise the *harness itself*
+(not the oracle) produced:
+
+**Genuine, promotable (category 2).** Resuming a tutor session in one
+acceptance run produced a real `500` on `POST
+/api/graph/<user>/concept-description`, traced through the browser console →
+network tab → backend log to `LookupError: SAPLING_MODEL_MODE=function but
+no handler is registered for task 'concept_describe'` — `concept_describe`
+genuinely has no handler in `backend/agents/function_handlers_e2e.py`. The
+`logscan` oracle independently caught the same `500` and traceback in the
+backend log, so this has both a UI-observed repro and oracle corroboration.
+It isn't on the known-bugs list — exactly the kind of thing this chapter
+exists to surface, and a strong promotion candidate (§8).
+
+**Seam artifact — drop it, then improve the harness, not the app (still
+category 1).** A different run's explorer flagged what looked like a
+"wrong-data" bug: uploading a real syllabus PDF came back with a summary
+about gradient descent, category "Lecture notes", and concepts "Gradient
+Descent"/"Learning Rate" — content belonging to an entirely different,
+already-uploaded document. Alarming-looking, but not a product bug: Chapter
+2 always runs the document pipeline in function mode
+(`SAPLING_MODEL_MODE=function` / `SAPLING_FUNCTION_HANDLERS=agents.
+function_handlers_e2e`, forced by `scripts/explore.sh`), and
+`agents/function_handlers_e2e.py`'s classifier/summary/concepts handlers are
+*designed* to return the same fixed constants
+(`E2E_DOC_CATEGORY`/`E2E_DOC_ABSTRACT`/`E2E_DOC_CONCEPTS`) for every upload
+regardless of the file's real content — the module's own docstring says so
+("Fixed output... Echoing request content back would couple the constant to
+route-side prompt assembly"). The pipeline was working exactly as designed;
+the explorer just didn't know that. **The tell:** the "wrong" text is a
+byte-for-byte match to one of `function_handlers_e2e.py`'s `E2E_DOC_*` (or
+`E2E_TUTOR_REPLY`, `E2E_QUIZ_*`) constants — here, `E2E_DOC_ABSTRACT`'s
+"gradient descent... loss surface... learning rate" wording and the fixed
+`lecture_notes` category. If a finding's "wrong" content matches one of
+those constants verbatim, it's the seam, not the app — drop it, and if it
+recurs, improve `scripts/explore/explorer-prompt.md`'s ground rules to name
+the pattern explicitly so a future explorer recognizes it before writing the
+stub, rather than filing an issue against the harness's own known-fixed
+output.
+
+By contrast, #355 (the graph's duplicated CS subject-root hub) shows up in
+the graph oracle on essentially every run against the rich seed data —
+that's the known-not-new case category 3 above exists for.
 
 ## 8. Promotion pipeline
 
@@ -223,8 +260,12 @@ Gemini/function-handler seam).
 
 Cost is bounded but real: each run spends actual Claude tokens (bounded by
 `EXPLORE_MAX_TURNS` — the default 40-turn budget is the knob to shrink if
-you're cost-conscious) and roughly 10 minutes of stack boot/teardown on top
-of the exploration itself.
+you're cost-conscious). Wall-clock is warm-cache-dependent: observed full
+runs (boot → explore → oracle → teardown) land in the 2-4 minute range with
+a warm Next build and an already-cached `@playwright/mcp`; budget closer to
+~10 minutes for the very first run on a machine, which additionally pays for
+the `npx @playwright/mcp` download and a cold test-profile Next build (see
+§3).
 
 ## 10. Lock protocol & hygiene
 
