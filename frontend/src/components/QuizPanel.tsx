@@ -33,7 +33,10 @@ interface QuizQuestion {
 
 interface QuizAnswer {
   question_id: number | string;
-  selected: string;
+  // Wire name per backend models.AnswerItem — the shell revamp renamed this
+  // to `selected` and every UI submission 422'd (caught by the #393 E2E
+  // journey). The RESPONSE items (QuizResult below) do use `selected`.
+  selected_label: string;
 }
 
 interface QuizResult {
@@ -133,7 +136,7 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
     if (!currentQuestion || !currentSelection) return;
     const chosen = currentQuestion.options.find(o => o.label === currentSelection);
     setLastCorrect(!!chosen?.correct);
-    setAnswers(a => [...a, { question_id: currentQuestion.id, selected: currentSelection }]);
+    setAnswers(a => [...a, { question_id: currentQuestion.id, selected_label: currentSelection }]);
     setPhase("review");
   };
 
