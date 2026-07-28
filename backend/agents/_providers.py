@@ -9,6 +9,7 @@ via env vars without touching code:
     SAPLING_MODEL_SYLLABUS=gemini-2.5-flash
     SAPLING_MODEL_QUIZ=gemini-2.5-flash-lite
     SAPLING_MODEL_CHAT_TUTOR=gemini-2.5-pro
+    SAPLING_MODEL_OCR_VISION=gemini-2.5-flash
 
 Defaults are tuned per task: cheaper models for simpler classifications,
 flagship Flash for tasks where output quality drives downstream UX, and
@@ -39,6 +40,7 @@ AgentTask = Literal[
     "flashcard",
     "course_summary", "quiz_context",
     "concept_scan", "concept_describe",
+    "ocr_vision",
 ]
 
 
@@ -83,6 +85,10 @@ _DEFAULTS: dict[AgentTask, str] = {
     # One-sentence concept blurb for the knowledge-map rail — a tiny,
     # short-output generation → the cheap lite tier.
     "concept_describe": "gemini-2.5-flash-lite",
+    # Page-image OCR (handwritten/scanned coursework). Must be a
+    # vision-capable model, and transcription accuracy on handwritten
+    # mathematics is exactly where the lite tier degrades → full Flash.
+    "ocr_vision": "gemini-2.5-flash",
 }
 
 
@@ -207,6 +213,22 @@ def _function_model_for(task: AgentTask) -> "Model":
     return FunctionModel(_dispatch, model_name=f"function:{task}")
 
 
+def model_name_for(task: AgentTask) -> str:
+    """The Gemini model *name* configured for a task, without building a Model.
+
+    The ADR-0008 resolution rule in one place: per-task
+    SAPLING_MODEL_<TASK_UPPER> override first, else the per-task default.
+    `model_for` uses it in real mode; callers that need the name as data (the
+    OCR cache key keys on it, because a different model transcribes a scan
+    differently) use it directly rather than reaching for a parallel env knob.
+
+    Deliberately does NOT dispatch on SAPLING_MODEL_MODE: this is a total,
+    never-raising read of configuration, safe to call on paths (cache keys)
+    where a config-mode error must not become a request failure.
+    """
+    return os.getenv(f"SAPLING_MODEL_{task.upper()}") or _DEFAULTS[task]
+
+
 def model_for(task: AgentTask) -> "Model":
     """Return the configured model for a given pipeline task.
 
@@ -217,9 +239,7 @@ def model_for(task: AgentTask) -> "Model":
     """
     mode = _model_mode()
     if mode == "real":
-        env_key = f"SAPLING_MODEL_{task.upper()}"
-        name = os.getenv(env_key) or _DEFAULTS[task]
-        return GoogleModel(name, provider=_provider)
+        return GoogleModel(model_name_for(task), provider=_provider)
     if mode == "function":
         return _function_model_for(task)
     if mode == "cassette":
