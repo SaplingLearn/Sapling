@@ -91,11 +91,16 @@ class TestPydanticAISharesTheSameSeam:
     provider client blocked as well."""
 
     def test_agent_provider_client_transport_is_guarded(self):
+        """#354/#436: there is no module-level provider singleton anymore
+        (`agents._providers._LoopSafeGoogleModel` builds a fresh one per
+        event loop) — but the guard patches the transport CLASS, not any one
+        instance, so every provider any agent builds is covered regardless.
+        Prove that on a model built the same way agents build theirs."""
         from google.genai._api_client import BaseApiClient
 
-        from agents._providers import _provider
+        from agents._providers import model_for
 
-        api_client = _provider.client._api_client
+        api_client = model_for("classifier").client._api_client
         assert isinstance(api_client, BaseApiClient)
         assert getattr(type(api_client).request, "_sapling_llm_guard", False), (
             "pydantic-ai's provider client is not covered by the LLM guard"

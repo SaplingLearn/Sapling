@@ -40,7 +40,6 @@ from agents._run import run_agent_sync
 from agents.ocr_vision import (
     BLANK_PAGE_SENTINEL,
     TRANSCRIBE_PROMPT,
-    fresh_ocr_vision_model,
     ocr_vision_agent,
 )
 
@@ -122,12 +121,11 @@ def extract_page_with_gemini_vision(image_bytes: bytes) -> str:
                     BinaryContent(data=image_bytes, media_type="image/png"),
                     TRANSCRIBE_PROMPT,
                 ],
-                # Per-run model with its own provider: the shared one binds to
-                # the first asyncio.run loop and every second call in the
-                # per-page loop dies with "Event loop is closed" (#354).
-                # None in the FunctionModel test mode, where the agent's own
-                # model is already loop-free.
-                model=fresh_ocr_vision_model(),
+                # No per-run `model=` override needed: `ocr_vision_agent`'s own
+                # default model (`model_for("ocr_vision")`) is loop-safe on its
+                # own now (#354/#436 — see agents/_providers.py), so it
+                # survives this per-page loop's alternating asyncio.run()
+                # loops without help from this call site.
                 usage_limits=WORKER_LIMITS,
             )
         )
