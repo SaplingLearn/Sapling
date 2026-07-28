@@ -144,3 +144,17 @@ export async function resetDb(): Promise<void> {
   await truncateMutable();
   await reseedBaseline();
 }
+
+/**
+ * Raw-SQL readback for journey assertions (#392): journeys write through the
+ * app and assert directly against Postgres (the #397 posture), so the read
+ * must bypass PostgREST/the API entirely. Parameterized ($1, $2, …) SELECTs
+ * only — mutations stay the fixtures' job. Runs behind the same
+ * loopback-host guard as the reset.
+ */
+export async function queryRaw(
+  sql: string,
+  params: unknown[] = [],
+): Promise<Record<string, unknown>[]> {
+  return withDb(async (client) => (await client.query(sql, params)).rows);
+}

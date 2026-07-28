@@ -17,6 +17,7 @@ the Pro tier for the conversational tutor where reasoning depth matters.
 
 from __future__ import annotations
 
+import importlib
 import os
 from typing import TYPE_CHECKING, Callable, Literal
 
@@ -145,6 +146,37 @@ def clear_function_handlers() -> None:
     _FUNCTION_HANDLERS.clear()
 
 
+# ── Boot-time handler registration for out-of-process runs (#392) ──────────
+#
+# `register_function_handler` covers in-process tests, but the E2E browser lane
+# boots the backend as a separate uvicorn process (`SAPLING_MODEL_MODE=function
+# make e2e-up`) where no pytest fixture can reach the registry. ADR 0019
+# anticipated this: full-journey lanes "must set SAPLING_MODEL_MODE=function at
+# process start ... then register per-task handlers". SAPLING_FUNCTION_HANDLERS
+# names a module (e.g. `agents.function_handlers_e2e`) whose import registers
+# handlers. It is consulted lazily, once, and ONLY on a dispatch miss — so the
+# pytest lane (which registers explicitly and never sets the var) is unchanged,
+# and a test that forgot to register a handler still gets the loud LookupError.
+
+_ENV_HANDLERS_LOADED = False
+
+
+def _load_env_handlers_module() -> None:
+    """Import the SAPLING_FUNCTION_HANDLERS module (once per process).
+
+    A bad module path raises ImportError loudly at first dispatch — a broken
+    E2E boot must fail the run, never silently fall through to LookupError
+    with the wrong story.
+    """
+    global _ENV_HANDLERS_LOADED
+    if _ENV_HANDLERS_LOADED:
+        return
+    _ENV_HANDLERS_LOADED = True
+    module = (os.getenv("SAPLING_FUNCTION_HANDLERS") or "").strip()
+    if module:
+        importlib.import_module(module)
+
+
 def _function_model_for(task: AgentTask) -> "Model":
     """Build a FunctionModel that dispatches to the task's registered handler at
     run time. The lookup is deferred to the call (not capture time) so a handler
@@ -154,10 +186,16 @@ def _function_model_for(task: AgentTask) -> "Model":
     def _dispatch(messages, info):
         handler = _FUNCTION_HANDLERS.get(task)
         if handler is None:
+            # Out-of-process runs (E2E uvicorn) register via the env-named
+            # module; loaded lazily on the first miss, no-op when unset.
+            _load_env_handlers_module()
+            handler = _FUNCTION_HANDLERS.get(task)
+        if handler is None:
             raise LookupError(
                 f"SAPLING_MODEL_MODE=function but no handler is registered for "
                 f"task {task!r}. Call agents._providers.register_function_handler("
-                f"{task!r}, ...) before running the agent."
+                f"{task!r}, ...) before running the agent (or point "
+                f"SAPLING_FUNCTION_HANDLERS at a module that does)."
             )
         return handler(messages, info)
 

@@ -136,6 +136,7 @@ route:
 | `tutor-action-hint` | "Hint" |
 | `tutor-action-confused` | "I'm confused" |
 | `tutor-action-skip` | "Skip" |
+| `tutor-session-resume-{sessionId}` | a "Recent sessions" row's resume button (`screens/Learn.tsx`) — suffixed with the session's own id per the stable-domain-id rule; the #392 journey targets a seeded `rich-sess-*` id |
 
 ### `quiz`
 
@@ -253,6 +254,11 @@ baselined in `eslint-suppressions.json` (the repo's legacy-debt mechanism —
 see the header of `eslint.config.mjs`), so only **new** interactive elements
 in the file must carry a testid. Tag baselined elements as they get browser
 coverage and regenerate with `npm run lint:baseline`.
+
+The same exception covers `tutor-session-resume-{sessionId}` in
+`src/components/screens/Learn.tsx` (#392): the Learn screen has ~20 intrinsic
+interactive elements outside any browser journey, so the file stays out of the
+`files` list and the one tested control is documented here instead.
 
 ### Adding a surface
 
