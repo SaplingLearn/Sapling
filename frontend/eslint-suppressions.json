@@ -87,6 +87,9 @@
     }
   },
   "src/components/screens/Dashboard.tsx": {
+    "no-restricted-syntax": {
+      "count": 25
+    },
     "react/no-unescaped-entities": {
       "count": 2
     }

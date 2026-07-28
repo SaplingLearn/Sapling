@@ -60,6 +60,7 @@ const eslintConfig = [
       "src/components/KnowledgeGraph.tsx",
       "src/components/ShellFrame.tsx",
       "src/components/screens/Social.tsx",
+      "src/components/screens/Dashboard.tsx",
     ],
     rules: {
       "no-restricted-syntax": [
