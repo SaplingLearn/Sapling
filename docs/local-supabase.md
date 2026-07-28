@@ -259,6 +259,9 @@ preflights each piece and fails fast with the exact command if one is missing.
 Rootless Podman is the documented runtime; Docker is auto-detected as a
 fallback (`$CONTAINER_CMD` overrides the choice).
 
+Chapter 2 exploratory testing (`make explore`, the `/explore` skill, and the
+e2e oracles) is documented in [e2e-exploration.md](e2e-exploration.md).
+
 ## Troubleshooting
 
 - **`supabase start` hangs on health checks** — usually the analytics/vector
