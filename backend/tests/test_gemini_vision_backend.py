@@ -130,25 +130,43 @@ class TestTranscription:
         assert images[0].data == PNG
         assert images[0].media_type == "image/png"
 
-    def test_the_transcription_prompt_reaches_the_model(self):
-        """The verbatim-transcription instruction (and the blank-page sentinel
-        it promises) must be in the request, or the sentinel mapping below is
-        asserting on a contract the model was never told about."""
+    def test_the_transcription_prompt_reaches_the_model_in_the_user_turn(self):
+        """The instruction must ride in the USER turn beside the image, not as
+        a system prompt.
+
+        Not a stylistic preference — measured against a rasterized syllabus
+        with known ground truth. As a system prompt, "Use LaTeX for
+        mathematics" reads as a document-format directive and gemini-2.5-flash
+        returns an entire LaTeX file (\\documentclass, five \\usepackage lines,
+        \\begin{document}) — 743 chars for a page whose content is 358. In the
+        user turn it returns the clean Markdown the pipeline expects.
+
+        That preamble would flow into extracted_text, and from there into the
+        concept prompt and course_chunks, making "amsmath" and "booktabs"
+        candidate concepts on a graph shared by the whole course.
+        """
         seen = {}
 
         def handler(messages, info):
+            parts = [p for m in messages for p in m.parts]
             seen["system"] = "\n".join(
-                p.content
-                for m in messages
-                for p in m.parts
-                if type(p).__name__ == "SystemPromptPart"
+                p.content for p in parts if type(p).__name__ == "SystemPromptPart"
+            )
+            seen["user"] = "\n".join(
+                c
+                for p in parts
+                if type(p).__name__ == "UserPromptPart"
+                for c in (p.content if isinstance(p.content, list) else [p.content])
+                if isinstance(c, str)
             )
             return ModelResponse(parts=[TextPart(content="text")])
 
         self._transcribe(handler)
 
-        assert "Transcribe ALL content" in seen["system"]
-        assert BLANK_PAGE_SENTINEL in seen["system"]
+        assert "Transcribe ALL content" in seen["user"]
+        assert BLANK_PAGE_SENTINEL in seen["user"]
+        # The regression guard: no system prompt at all on this agent.
+        assert "Transcribe ALL content" not in seen["system"]
 
     def test_blank_page_sentinel_returns_empty_string(self):
         """A genuinely blank page must come back as "" rather than the literal

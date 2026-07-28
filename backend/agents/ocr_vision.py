@@ -35,7 +35,20 @@ from agents._providers import model_for
 BLANK_PAGE_SENTINEL = "[BLANK PAGE]"
 
 
-_SYSTEM_PROMPT = (
+# Sent as the USER turn, next to the image — deliberately NOT as system_prompt.
+#
+# Measured against a rasterized syllabus (known ground truth): as a system
+# prompt, "Use LaTeX for mathematics" reads as a document-format directive and
+# gemini-2.5-flash returns a whole LaTeX FILE — \documentclass, five \usepackage
+# lines, \begin{document}, a tabular. 743 chars for a page whose content is 358.
+# The same prompt in the user turn returns clean Markdown, which is what the
+# rest of the pipeline expects.
+#
+# That preamble is not cosmetic: extracted_text feeds the classify/summary/
+# concept prompts and is chunked into course_chunks for RAG, so "amsmath" and
+# "booktabs" become candidate concepts on a graph shared by every student in
+# the course — the same class of pollution this whole feature exists to stop.
+TRANSCRIBE_PROMPT = (
     "Transcribe ALL content from this document page exactly as written, "
     "including handwritten work. Use LaTeX for mathematics ($...$ inline, "
     "$$...$$ display). Preserve problem numbers, part labels, and reading "
@@ -43,7 +56,7 @@ _SYSTEM_PROMPT = (
     "only what is present. If the page is genuinely blank, reply with exactly: "
     f"{BLANK_PAGE_SENTINEL}"
 )
-_PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+_PROMPT_HASH = hashlib.sha256(TRANSCRIBE_PROMPT.encode("utf-8")).hexdigest()[:12]
 
 
 # Bounded on purpose: this runs inside the upload pipeline, so a stalled call
@@ -55,7 +68,6 @@ _OCR_VISION_SETTINGS = GoogleModelSettings(timeout=60.0)
 ocr_vision_agent = Agent[None, str](
     model=model_for("ocr_vision"),
     output_type=str,
-    system_prompt=_SYSTEM_PROMPT,
     model_settings=_OCR_VISION_SETTINGS,
     metadata={"prompt_version": _PROMPT_HASH, "agent": "ocr_vision"},
 )

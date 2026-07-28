@@ -37,7 +37,11 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from agents import WORKER_LIMITS
 from agents._providers import model_name_for
 from agents._run import run_agent_sync
-from agents.ocr_vision import BLANK_PAGE_SENTINEL, ocr_vision_agent
+from agents.ocr_vision import (
+    BLANK_PAGE_SENTINEL,
+    TRANSCRIBE_PROMPT,
+    ocr_vision_agent,
+)
 
 
 class GeminiVisionUnavailableError(RuntimeError):
@@ -110,7 +114,13 @@ def extract_page_with_gemini_vision(image_bytes: bytes) -> str:
     try:
         result = _run_from_anywhere(
             ocr_vision_agent.run(
-                [BinaryContent(data=image_bytes, media_type="image/png")],
+                # Image first, then the instruction — the wire shape this was
+                # measured against. Moving the instruction to a system prompt
+                # makes the model emit a whole LaTeX document; see ocr_vision.
+                [
+                    BinaryContent(data=image_bytes, media_type="image/png"),
+                    TRANSCRIBE_PROMPT,
+                ],
                 usage_limits=WORKER_LIMITS,
             )
         )
