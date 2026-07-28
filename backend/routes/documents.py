@@ -376,11 +376,20 @@ def list_documents(user_id: str, request: Request):
         filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         order="created_at.desc",
     ) or []
+    # The row keys on the OFFERING (0025); the HTTP boundary keeps the
+    # abstract course_id (#435 — Library.tsx filters/labels on d.course_id).
+    # Resolve each unique offering_id once (mirrors routes/learn.py's
+    # list_sessions offering_to_course pattern), not once per row.
+    offering_to_course: dict[str, str | None] = {}
     for d in docs:
         d["summary"] = decrypt_if_present(d.get("summary"))
         notes_raw = d.get("concept_notes")
         if isinstance(notes_raw, str):
             d["concept_notes"] = decrypt_json(notes_raw)
+        off_id = d.get("offering_id")
+        if off_id and off_id not in offering_to_course:
+            offering_to_course[off_id] = offering_course_id(off_id)
+        d["course_id"] = offering_to_course.get(off_id)
     return {"documents": docs}
 
 

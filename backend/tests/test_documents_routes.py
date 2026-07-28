@@ -60,6 +60,63 @@ class TestListDocuments:
             # filters should contain the user_id
             assert "user_andres" in str(call_kwargs)
 
+    def test_documents_carry_course_id_resolved_from_offering(self):
+        """#435: Library filters/labels on d.course_id, but this route only
+        ever returned offering_id — uploads never matched a course filter
+        and always fell into "Uncategorized". Each row must now carry the
+        abstract course_id, resolved via services.academics.offering_course_id."""
+        docs = [
+            {"id": "d1", "user_id": "u1", "offering_id": "off-1", "file_name": "notes.pdf", "category": "lecture_notes"},
+            {"id": "d2", "user_id": "u1", "offering_id": "off-2", "file_name": "syllabus.pdf", "category": "syllabus"},
+        ]
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.offering_course_id") as mock_ocid,
+        ):
+            t.return_value.select.return_value = docs
+            mock_ocid.side_effect = {"off-1": "course-A", "off-2": "course-B"}.get
+            r = client.get("/api/documents/user/u1")
+
+        assert r.status_code == 200
+        body = r.json()["documents"]
+        assert body[0]["course_id"] == "course-A"
+        assert body[1]["course_id"] == "course-B"
+
+    def test_course_id_resolved_once_per_unique_offering(self):
+        """Batch resolution: repeated offering_ids across rows must only hit
+        offering_course_id once each, not once per row (mirrors the
+        offering_to_course pattern in routes/learn.py::list_sessions)."""
+        docs = [
+            {"id": "d1", "user_id": "u1", "offering_id": "off-1", "file_name": "a.pdf", "category": "other"},
+            {"id": "d2", "user_id": "u1", "offering_id": "off-1", "file_name": "b.pdf", "category": "other"},
+            {"id": "d3", "user_id": "u1", "offering_id": "off-1", "file_name": "c.pdf", "category": "other"},
+        ]
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.offering_course_id", return_value="course-A") as mock_ocid,
+        ):
+            t.return_value.select.return_value = docs
+            r = client.get("/api/documents/user/u1")
+
+        assert r.status_code == 200
+        assert all(d["course_id"] == "course-A" for d in r.json()["documents"])
+        mock_ocid.assert_called_once_with("off-1")
+
+    def test_missing_offering_id_yields_null_course_id(self):
+        """A document with no offering_id (or one that fails to resolve)
+        surfaces course_id: null — Library.tsx treats that as
+        "Uncategorized" rather than crashing on a missing key."""
+        docs = [
+            {"id": "d1", "user_id": "u1", "offering_id": None, "file_name": "a.pdf", "category": "other"},
+        ]
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = docs
+            r = client.get("/api/documents/user/u1")
+
+        assert r.status_code == 200
+        assert r.json()["documents"][0]["course_id"] is None
 
 # ── DELETE /api/documents/doc/{document_id} ──────────────────────────────────
 
