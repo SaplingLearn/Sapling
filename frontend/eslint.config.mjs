@@ -59,6 +59,7 @@ const eslintConfig = [
       "src/components/QuizPanel.tsx",
       "src/components/KnowledgeGraph.tsx",
       "src/components/ShellFrame.tsx",
+      "src/components/screens/Social.tsx",
     ],
     rules: {
       "no-restricted-syntax": [

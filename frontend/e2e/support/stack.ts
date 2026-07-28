@@ -17,6 +17,12 @@ export const BACKEND_URL =
  * integration fixtures' USER_ACTIVE. */
 export const USER_ACTIVE = "rich-user-active";
 
+/** The second seeded user (db/seed_local_rich.py, "Sam Second") — approved,
+ * onboarded, and a member of the seeded study room alongside USER_ACTIVE.
+ * Multi-user journeys (#394) sign this user into a second browser context
+ * via support/session.ts. */
+export const USER_SECOND = "rich-user-second";
+
 async function isUp(url: string): Promise<boolean> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(3_000) });
