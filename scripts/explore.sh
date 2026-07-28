@@ -30,7 +30,11 @@
 # otherwise the operator's to triage before re-running):
 #   storageState.json        Playwright storage state (cookie + sapling_user localStorage)
 #   mcp.json                 --mcp-config fed to `claude -p` (the playwright MCP server)
-#   session.log               `claude -p` transcript (tee'd)
+#   session.log               readable transcript, reformatted by jq from `claude -p
+#                             --output-format stream-json --verbose` (see run_explorer
+#                             for why plain "text" output can't show tool calls)
+#   session.stderr.log        `claude -p`'s stderr, kept separate so it can never
+#                             corrupt the JSON stream session.log is parsed from
 #   findings.md               running human-readable findings log
 #   oracle-final.{txt,json}   final #400 oracle pass, appended at teardown
 #   traces/                   playwright MCP session artifacts (see write_mcp_config)
@@ -236,6 +240,25 @@ EOF
 # too, labeled "legacy prefix matching" (must end in exactly ":*" — the
 # current preferred form is "Bash(prefix *)", but both are functional). The
 # explorer must not gain broader Bash than the oracle invocation below.
+#
+# --output-format stream-json (which the CLI requires pairing with --verbose —
+# confirmed via `claude -p ... --output-format stream-json` alone erroring
+# "requires --verbose") is load-bearing, not cosmetic: plain "text" (the
+# default) only ever prints claude -p's FINAL message. The first live bounded
+# run (task-8-report.md) hit the normal --max-turns cutoff and produced a
+# session.log containing exactly one line — the CLI's own "Error: Reached max
+# turns" — with zero tool-call evidence, failing the #399 acceptance bar
+# ("session.log shows real Playwright MCP tool calls"). stream-json emits one
+# JSON event per turn, including tool_use/tool_result, so it's the only format
+# that can show the browser actually being driven regardless of how the run
+# ends. The jq filter below reformats each event into one readable
+# `[assistant]`/`[tool_use]`/`[tool_result]`/`[result]` line (each truncated
+# to 500 chars) so session.log stays both grep-able (`grep -c
+# mcp__playwright`) and skimmable by a human — a raw JSONL firehose would
+# satisfy the letter of "shows tool calls" but not "readable transcript".
+# `fromjson?` skips any stray non-JSON line instead of aborting the whole
+# pipeline; stderr is captured to its own file so it can never interleave
+# with (and corrupt) the JSON stream jq is parsing.
 run_explorer() {
   cd "$REPO_ROOT"
   claude -p "$(cat "$REPO_ROOT/scripts/explore/explorer-prompt.md")" \
@@ -243,8 +266,33 @@ run_explorer() {
     --strict-mcp-config \
     --model "$EXPLORE_MODEL" \
     --max-turns "$EXPLORE_MAX_TURNS" \
+    --output-format stream-json \
+    --verbose \
     --allowedTools "mcp__playwright__*,Read,Write,Edit,Bash(cd backend && venv/bin/python -m e2e_oracles:*)" \
-    2>&1 | tee "$EXPLORE_DIR/session.log" || \
+    2>"$EXPLORE_DIR/session.stderr.log" | jq -R -r '
+      def trunc: if (. // "" | length) > 500 then (.[0:500] + " …[truncated]") else . end;
+      (fromjson?) as $d
+      | if $d.type == "assistant" then
+          ($d.message.content // [])[]
+          | (if .type == "text" then "[assistant] " + .text
+             elif .type == "tool_use" then "[tool_use] " + .name + " " + (.input | tostring)
+             else empty end)
+          | trunc
+        elif $d.type == "user" then
+          ($d.message.content // [])[]
+          | (if .type == "tool_result" then
+               "[tool_result] " + (
+                 if (.content | type) == "string" then .content
+                 elif (.content | type) == "array" then ([ .content[] | select(.type=="text") | .text ] | join(" "))
+                 else (.content | tostring) end)
+             else empty end)
+          | trunc
+        elif $d.type == "result" then
+          ("[result] " + ($d.subtype // "unknown") + " turns=" + (($d.num_turns // 0) | tostring)
+           + (if $d.result then " :: " + ($d.result | tostring) else "" end))
+          | trunc
+        else empty end
+    ' > "$EXPLORE_DIR/session.log" || \
     echo "explorer exited nonzero (turn budget or error) — continuing to oracle pass" | tee -a "$EXPLORE_DIR/session.log"
 }
 
