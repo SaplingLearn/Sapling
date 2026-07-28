@@ -183,3 +183,25 @@ register_function_handler(
         ),
     }),
 )
+
+
+# ── Concept description (#446) ──────────────────────────────────────────────
+#
+# `POST /api/graph/{user}/concept-description` (routes/graph.py) runs
+# concept_describe_agent, a tool-less agent with a structured
+# `ConceptDescription` output (a single `description` field — see
+# agents/concept_describe.py). Request-path, not a post-response
+# BackgroundTask, so registering it is safe (unlike `quiz_context`, which
+# stays deliberately unregistered — see the quiz section above).
+
+# Asserted verbatim by frontend/e2e/tutor.spec.ts (rendered concept-blurb
+# text). Keep the two literals in sync.
+E2E_CONCEPT_DESCRIPTION = (
+    "[e2e-function-model] Deterministic concept blurb: recursion is when a "
+    "function calls itself on a smaller version of the same problem."
+)
+
+register_function_handler(
+    "concept_describe",
+    _structured_output({"description": E2E_CONCEPT_DESCRIPTION}),
+)

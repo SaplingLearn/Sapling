@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
-import { API_URL } from '@/lib/api';
+import { API_URL, getMe } from '@/lib/api';
 
 interface UserOption {
   id: string;
@@ -78,8 +78,68 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         if (avatar) setAvatarUrl(avatar);
         setIsAuthenticated(true);
       } catch {}
+      setUserReady(true);
+      return;
     }
-    setUserReady(true);
+
+    // No `sapling_user` in localStorage — but the HttpOnly `sapling_session`
+    // cookie can outlive it (cleared site data, a different browser profile,
+    // a stale-cookie flow): middleware already admits the request on the
+    // cookie alone, and this context has no client-readable way to see it,
+    // so without a fallback userId never gets set and every screen gated on
+    // `userReady && userId` (e.g. Dashboard's load effect) waits forever on
+    // its loading skeleton (#430). Fall back to the cookie-identified
+    // GET /api/auth/me — the same endpoint the OAuth callback
+    // (src/app/auth/callback/page.tsx) already reads off the same cookie,
+    // though the callback calls it via a bare `fetch`, not this `fetchJSON`
+    // wrapper.
+    //
+    // Skip this fallback entirely on the auth-flow routes (`/auth/*`, e.g.
+    // the callback page): the callback POSTs /api/auth/session to mint the
+    // cookie and only THEN calls GET /api/auth/me itself before its own
+    // setActiveUser. Racing our own getMe() here would be a near-guaranteed
+    // 401 before that POST resolves, and — on a shared browser where a
+    // DIFFERENT user's still-valid `sapling_session` cookie is present —
+    // could momentarily hydrate the wrong identity before the callback's
+    // setActiveUser overwrites it moments later. Let the callback own its
+    // own bootstrap.
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/auth')) {
+      setUserReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await getMe();
+        if (cancelled) return;
+        // Write-through setActiveUser: hydrates state AND persists
+        // localStorage, so the next bootstrap takes the fast synchronous
+        // path above instead of hitting the network again.
+        setActiveUser(me.user_id, me.name || '', me.avatar_url || '');
+        if (me.is_approved) setIsApproved(true);
+      } catch {
+        // No identity source is left, for any reason: a 401 (no/expired
+        // session), a 404 (the cookie names a user row that no longer
+        // exists — the #285-family stale-session scenario), or a plain
+        // network failure. Settle into the existing signed-out state
+        // (isAuthenticated stays false); every consumer already gates on
+        // `userReady`, so nothing new to redirect here.
+        //
+        // This also means every anonymous visit to a public page pays for
+        // one 401-destined getMe() call here (UserProvider wraps the whole
+        // app, public routes included) — the HttpOnly cookie can't be
+        // probed client-side without a network round trip, and there's no
+        // existing non-HttpOnly signed-in hint to gate on instead. One
+        // cheap failed request per anonymous mount is the accepted cost of
+        // fixing #430.
+      } finally {
+        if (!cancelled) setUserReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
