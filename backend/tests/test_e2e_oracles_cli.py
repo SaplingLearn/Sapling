@@ -58,6 +58,17 @@ def test_exit_two_when_a_check_raises(monkeypatch, capsys):
     assert "oracle-error" in capsys.readouterr().out
 
 
+def test_exit_two_when_a_check_returns_oracle_error_finding(monkeypatch, capsys):
+    # A check can RETURN an oracle-error finding (e.g. logscan's missing-log-
+    # file case) instead of raising. That must force exit 2 too — an
+    # oracle-error means the run's other results can't be trusted, whether
+    # the check signaled it via an exception or via its own return value.
+    f = Finding(oracle="oracle-error", summary="logscan: log file not found (is the stack up?)")
+    monkeypatch.setattr(cli, "CHECKS", {"logscan": _fake_check([f])})
+    assert cli.main(["--check", "logscan"]) == 2
+    assert "oracle-error" in capsys.readouterr().out
+
+
 def test_unknown_check_name_rejected():
     with pytest.raises(SystemExit):
         cli.main(["--check", "nope"])

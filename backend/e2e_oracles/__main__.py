@@ -8,10 +8,12 @@ Invocation (from `backend/`):
 Check names: `graph`, `counts`, `ciphertext`, `logscan`, `orphans` — default
 is all five, in that (sorted) order. `--check` may repeat to select a subset.
 
-Exit codes: 0 clean / 1 findings / 2 infra error — a check that raises
-becomes a single `Finding(oracle="oracle-error", ...)` and FORCES exit 2,
-even if every other check came back clean (an infra failure means the run's
-other results can't be trusted either).
+Exit codes: 0 clean / 1 findings / 2 infra error — ANY `Finding(oracle=
+"oracle-error", ...)` FORCES exit 2, even if every other check came back
+clean (an infra failure means the run's other results can't be trusted
+either). A check can produce that finding two ways: by raising (`main()`
+catches it and synthesizes the finding itself) or by returning one directly
+(e.g. `gather.run_logscan`'s missing-log-file case) — both are checked.
 
 `CHECKS` is a thin registry (`name -> Callable[[argparse.Namespace],
 tuple[list[Finding], int]]`) over `gather.run_<name>`; tests monkeypatch this
@@ -97,6 +99,13 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             findings.extend(check_findings)
             suppressed += check_suppressed
+            if any(f.oracle == "oracle-error" for f in check_findings):
+                # A check can signal an infra failure by RETURNING an
+                # oracle-error finding (e.g. run_logscan's missing-log-file
+                # case) rather than raising. Either way it forces exit 2 —
+                # an oracle-error means the run's other results can't be
+                # trusted.
+                infra_error = True
     finally:
         gather.close_conn()
 
