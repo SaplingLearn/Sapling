@@ -173,18 +173,19 @@ For each entry in `findings.md` (explorer-written or oracle-appended):
    a normal PR against `backend/e2e_oracles/` — don't just delete the finding
    from `findings.md` and move on.
 
-Real evidence for what a genuine finding looks like: the bounded acceptance
-run documented in `task-8-report.md` found a novel "wrong-data" bug (a newly
+Real evidence for what a genuine finding looks like: this harness's own
+bounded acceptance testing turned up a novel "wrong-data" bug (a newly
 uploaded, unrelated document came back with another document's summary,
 category, and extracted concepts verbatim — polluting the graph with wrong
-concepts) and, in an earlier round of the same run, a real tutor-resume `500`
-on resuming a session (`POST /api/graph/<user>/concept-description` failing
-with `LookupError: ... no handler is registered for task 'concept_describe'`
-— `concept_describe` is genuinely unregistered in
-`backend/agents/function_handlers_e2e.py`), independently corroborated by the
-`logscan` oracle picking up the same `500` and traceback. Neither of those is
-on the known-bugs list — they're exactly the kind of thing this chapter is
-for. By contrast, #355 (the graph's duplicated CS subject-root hub) shows up
+concepts) and, in a separate run of the same acceptance round, a real
+tutor-resume `500` on resuming a session (`POST
+/api/graph/<user>/concept-description` failing with `LookupError: ... no
+handler is registered for task 'concept_describe'` — `concept_describe` is
+genuinely unregistered in `backend/agents/function_handlers_e2e.py`),
+independently corroborated by the `logscan` oracle picking up the same `500`
+and traceback. Neither of those is on the known-bugs list — they're exactly
+the kind of thing this chapter is for. By contrast, #355 (the graph's
+duplicated CS subject-root hub) shows up
 in the graph oracle on essentially every run against the rich seed data —
 that's the known-not-new case category 3 above exists for.
 
