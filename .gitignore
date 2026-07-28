@@ -72,6 +72,9 @@ Thumbs.db
 # ---- Local E2E stack run dir (PIDs + logs, scripts/e2e-up.sh, #384) ----
 .e2e/
 
+# ---- Chapter 2 exploratory runs (scripts/explore.sh, #399) ----
+.explore/
+
 # ---- Superpowers brainstorm sessions ----
 .superpowers/
 
