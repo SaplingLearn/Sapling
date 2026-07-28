@@ -4,6 +4,8 @@ Backs the knowledge-map rail's on-demand concept blurb. Covers:
   - happy path returns the agent's description
   - oversized concept / course_label are truncated before the agent sees them
   - model / transport / validation failures translate to HTTP 502
+  - a LookupError (function-mode seam with no registered handler, #446)
+    degrades the same way rather than a bare 500
   - empty concept is rejected with 400
   - unexpected exceptions still fall through to the generic 500 handler
 """
@@ -64,6 +66,25 @@ def test_oversized_inputs_truncated_before_agent():
 def test_agent_failure_translates_to_502():
     with _agent_run_stub(), \
          patch("routes.graph.run_agent_sync", side_effect=UnexpectedModelBehavior("model exploded")):
+        resp = client.post(URL, json={"concept": "Recursion"})
+    assert resp.status_code == 502
+    assert "concept-description agent failed" in resp.json()["detail"]
+
+
+def test_lookup_error_translates_to_502():
+    # #446: SAPLING_MODEL_MODE=function with no handler registered for
+    # 'concept_describe' raises LookupError out of the dispatch seam
+    # (agents/_providers.py::_dispatch). A misconfigured seam is an upstream
+    # problem, not a route bug — it must degrade the same way AgentRunError
+    # does, not 500.
+    with _agent_run_stub(), \
+         patch(
+             "routes.graph.run_agent_sync",
+             side_effect=LookupError(
+                 "SAPLING_MODEL_MODE=function but no handler is registered "
+                 "for task 'concept_describe'"
+             ),
+         ):
         resp = client.post(URL, json={"concept": "Recursion"})
     assert resp.status_code == 502
     assert "concept-description agent failed" in resp.json()["detail"]

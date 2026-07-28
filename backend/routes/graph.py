@@ -136,9 +136,13 @@ def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Reques
                 usage_limits=WORKER_LIMITS,
             )
         )
-    except (AgentRunError, httpx.HTTPError, ValidationError) as e:
+    except (AgentRunError, httpx.HTTPError, ValidationError, LookupError) as e:
         # Model / transport / output-validation failures are upstream problems —
-        # surface them as 502. Anything else propagates to the generic handler.
+        # surface them as 502. LookupError covers the SAPLING_MODEL_MODE=function
+        # seam (agents/_providers.py::_dispatch) raising when no handler is
+        # registered for 'concept_describe' (#446): a misconfigured seam
+        # shouldn't 500 the route, it should degrade the same way an upstream
+        # model failure does. Anything else propagates to the generic handler.
         raise HTTPException(
             status_code=502, detail=f"concept-description agent failed: {e}"
         ) from e
