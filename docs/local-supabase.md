@@ -279,13 +279,24 @@ e2e oracles) is documented in [e2e-exploration.md](e2e-exploration.md).
   to replay on 15; keep new migrations portable. `backend/tests/integration/`
   asserts the server major version so future drift is loud, not silent.
   **If you have an existing local stack from before this pin**, its Postgres
-  container is still the old major version on disk — the CLI does not swap a
-  running container's image just because `config.toml` changed. Reset it:
-  `scripts/local-db-reset.sh` (`supabase db reset` under the hood, which
-  recreates the Postgres container against the pinned version, then
-  migrates + seeds). If `supabase start` still reports the old
-  `server_version` afterwards, fully tear down first — `supabase stop` (add
-  `--no-backup` to also drop the old data volume), then `supabase start` — to
-  force the CLI to provision a fresh PG15 container.
+  container is still running the old major version. `supabase db reset` (what
+  `scripts/local-db-reset.sh` calls) does **not** reliably pick up a changed
+  `major_version` — it resets data inside the *existing* container, it never
+  stops/starts the stack, so it cannot swap that container's Postgres image
+  (confirmed against `supabase/cli` issues #5555 and #4522, which report the
+  same gap). The reliable fix for a major-version change is a full teardown:
+  `supabase stop --no-backup` (drops the old data volume so nothing stale is
+  left to reattach to), then `supabase start` — that provisions a fresh,
+  empty container on the now-pinned PG15 (no app schema yet — `supabase
+  start` itself never touches `backend/db/migrations/`, same as any
+  first-time bring-up). From there, `scripts/local-db-reset.sh` is for what
+  it's actually for: applying the app's migrations and reseeding data
+  (migrate → reload PostgREST → seed) on a stack that's *already* the correct
+  Postgres version — run it (or just `make e2e-up`, which calls `supabase
+  start` itself before migrating + seeding) after the teardown to get the
+  schema and seed data back.
+  `backend/tests/integration/test_postgres_version.py` is the drift alarm: it
+  asserts the real server's major version, so a stack still on the wrong
+  version fails loud there instead of silently passing everything else.
 - **Ports 54321–54327 already in use** — another project's `supabase start` is
   running; `supabase stop` in that project (or `podman ps` to find it).

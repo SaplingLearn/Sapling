@@ -3,10 +3,14 @@
 Local/CI Postgres is pinned to PG15 via `db.major_version` in
 `supabase/config.toml`, matching staging/prod — the whole point of the
 deterministic local/CI lane is that it tests what production actually runs.
-PR #440 had bumped local/CI to PG17 for local-dev/CI stack consistency
-(consistency is preserved here too: local and CI both still follow the same
-config.toml pin, just at 15 instead of 17); #441 tracked the resulting skew
-against staging/prod, which this pin closes.
+The PG17 pin originated with the local stack's introduction (`config.toml`
+was born with `major_version = 17` — there was never a staging-matching PG15
+pin to regress from). PR #440 (the browser-lane e2e job) didn't change that
+pin; it added the e2e.yml header comment rationalizing the already-existing
+PG17, explicitly noting it went against epic #402 decision 2's recorded PG15
+leaning and that the resulting skew was tracked in #441. This pin closes that
+skew per decision 2; local/CI consistency is preserved since both still
+follow the same config.toml pin, just at 15 instead of 17.
 
 This test runs against the REAL server (via the `db_conn` psycopg fixture,
 never a mock), so a future edit to config.toml — or a local stack that
@@ -41,8 +45,9 @@ def test_server_major_version_matches_config_toml_pin(db_conn):
         f"supabase/config.toml pins db.major_version = {EXPECTED_MAJOR_VERSION} "
         "to match staging/prod (#441). Either config.toml drifted from this "
         "running server, or this is a stale local stack provisioned before "
-        "the pin — its Postgres container doesn't get swapped just because "
-        "config.toml changed. Reset it: scripts/local-db-reset.sh, or a full "
-        "`supabase stop` + `supabase start` if that isn't enough (see "
-        "docs/local-supabase.md's 'Postgres version' troubleshooting entry)."
+        "the pin — `supabase db reset` does not reliably swap a running "
+        "container's Postgres major version. Tear it down and rebuild: "
+        "`supabase stop --no-backup` then `supabase start`, then re-migrate + "
+        "seed (scripts/local-db-reset.sh or `make e2e-up`) — see "
+        "docs/local-supabase.md's 'Postgres version' troubleshooting entry."
     )
