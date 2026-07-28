@@ -129,6 +129,19 @@ FunctionModelHandler = Callable[
 _FUNCTION_HANDLERS: dict[str, FunctionModelHandler] = {}
 
 
+class UnregisteredHandlerError(LookupError):
+    """Raised by the function-mode dispatch when a task has no registered
+    handler (see `_function_model_for`). A dedicated subclass — rather than a
+    bare `LookupError` — lets callers that need to distinguish "seam is
+    misconfigured for this task" from any other `LookupError`-family bug
+    (a stray `KeyError`/`IndexError` deep in agent/response handling) catch
+    precisely this one instead of the whole builtin hierarchy (#446 PR
+    review: routes/graph.py used to catch bare `LookupError`, which silently
+    downgraded unrelated KeyError/IndexError bugs to a 502 instead of letting
+    them surface as the generic 500). Keeping `LookupError` as the base class
+    preserves any existing code that already catches the builtin type."""
+
+
 def _model_mode() -> str:
     """The active model mode. Unset/blank → 'real'. Normalized for stray
     case/whitespace so a CI or shell-exported value isn't brittle."""
@@ -202,7 +215,7 @@ def _function_model_for(task: AgentTask) -> "Model":
             _load_env_handlers_module()
             handler = _FUNCTION_HANDLERS.get(task)
         if handler is None:
-            raise LookupError(
+            raise UnregisteredHandlerError(
                 f"SAPLING_MODEL_MODE=function but no handler is registered for "
                 f"task {task!r}. Call agents._providers.register_function_handler("
                 f"{task!r}, ...) before running the agent (or point "
