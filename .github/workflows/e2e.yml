@@ -7,9 +7,9 @@ name: e2e (browser lane)
 #
 # Trigger is main-only per epic #402 open decision 3 (promote to a PR gate
 # once the #388 stability bar has held for a while). Postgres version comes
-# from supabase/config.toml — the same stack local dev and integration.yml
-# already run (epic decision 2: matching the proven CLI stack; the PG15 prod
-# skew is a documented, accepted gap).
+# from supabase/config.toml (PG17) — this deliberately goes AGAINST epic
+# decision 2's recorded PG15 leaning, choosing consistency with the proven
+# local + integration.yml stack instead; the prod skew is tracked in #441.
 
 on:
   workflow_dispatch:
@@ -19,6 +19,15 @@ on:
 concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  # ubuntu-latest ships Podman ALONGSIDE Docker, so e2e-up's podman-first
+  # detection would target a rootless podman socket nobody started. Pin the
+  # runtime explicitly (local-common.sh: an explicit CONTAINER_CMD wins) and
+  # pre-set DOCKER_HOST so e2e-up's ${DOCKER_HOST:-...} keeps the real
+  # Docker daemon socket.
+  CONTAINER_CMD: docker
+  DOCKER_HOST: unix:///var/run/docker.sock
 
 jobs:
   e2e:
@@ -30,6 +39,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -83,7 +94,9 @@ jobs:
             if [ "$FLAKY" -gt 0 ]; then
               echo ""
               echo "### ⚠ Tests that passed only on retry"
-              jq -r '.. | objects | select(.status? == "flaky") | .title? // empty' "$R" | sed 's/^/- /'
+              # In Playwright's JSON report, status lives on the TEST object
+              # but title on its parent SPEC — select specs whose tests flaked.
+              jq -r '.. | objects | select(.title? and .tests?) | select(any(.tests[]?; .status == "flaky")) | .title' "$R" | sed 's/^/- /'
               echo ""
               echo "A retried-pass is a flake to fix at the root (#388 policy), not a green run."
             fi
