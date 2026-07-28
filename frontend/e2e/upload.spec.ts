@@ -21,9 +21,13 @@
  *   SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e make e2e-up
  *
  * which swaps deterministic FunctionModel handlers in above the transport
- * (ADR 0019) — zero live Gemini calls. The spec fail-fasts via
- * /api/health's `model_mode` before uploading so a real-mode stack can
- * never be silently billed. Scripted outputs (category, abstract, concept
+ * (ADR 0019) — every AGENT stage (classifier/summary/concepts/
+ * course_summary) is scripted. One pre-existing path sits below the seam:
+ * the fire-and-forget RAG post-roll embed (#439) may still attempt a live
+ * embedding call; its failures are swallowed, so determinism holds — run
+ * verification with a dummy GEMINI_API_KEY so it cannot bill. The spec
+ * fail-fasts via /api/health's `model_mode` before uploading so a
+ * real-mode stack is caught before the agent stages run. Scripted outputs (category, abstract, concept
  * names) come from backend/agents/function_handlers_e2e.py; asserting
  * their exact values below is what proves the SSE result payload and the
  * persisted row came from the scripted pipeline, not a fallback path.
