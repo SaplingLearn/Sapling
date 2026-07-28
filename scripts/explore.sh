@@ -156,10 +156,23 @@ stop_lock_holder() {
 # ── Storage-state mint ────────────────────────────────────────────────────────
 # POST through the frontend origin (also proves the /api/:path* proxy), then
 # build the exact shape frontend/e2e/global-setup.ts builds: cookie
-# `sapling_session` (httpOnly/secure/sameSite=Lax — Chromium accepts Secure
-# cookies on http://localhost) plus the `sapling_user` localStorage half. The
-# cookie alone renders an infinite skeleton (bug #430) — both halves are
-# required.
+# `sapling_session` (httpOnly/sameSite=Lax) plus the `sapling_user`
+# localStorage half. The cookie alone renders an infinite skeleton (bug
+# #430) — both halves are required.
+#
+# `secure: False` — NOT True. This mirrors what the backend itself actually
+# issues locally: config.py derives SECURE_COOKIES from FRONTEND_URL's scheme
+# (`FRONTEND_URL=http://localhost:3000` in backend/.env → False), and
+# routes/auth.py's real `Set-Cookie` always passes `secure=SECURE_COOKIES`.
+# A first live bounded run (task-8-report.md's follow-up round) found a live
+# `sapling_session` cookie in the MCP browser's persistent profile with
+# `is_secure=0` — i.e. exactly this real backend policy — while a byte-clean
+# profile probe with the (then) secure:true storageState.json produced ZERO
+# `sapling_session` cookie at all (confirmed via sqlite3 on the profile's
+# Cookies db) and an immediate redirect to a REAL accounts.google.com sign-in
+# page. Root cause turned out to be `--isolated` missing (see write_mcp_config
+# below), not this flag, but a state file that doesn't match what the app
+# would actually set is still wrong on its own — fix it regardless.
 mint_storage_state() {
   local body
   body="$(curl -fsS -X POST "http://localhost:3000/api/auth/test-login" \
@@ -174,7 +187,7 @@ state = {
         "name": "sapling_session", "value": body["token"],
         "domain": "localhost", "path": "/",
         "expires": time.time() + float(body.get("expires_in") or 3600),
-        "httpOnly": True, "secure": True, "sameSite": "Lax",
+        "httpOnly": True, "secure": False, "sameSite": "Lax",
     }],
     "origins": [{
         "origin": "http://localhost:3000",
@@ -203,6 +216,33 @@ PY
 # directory") is the closest available artifact-capture flag, so traces/
 # holds an MCP session recording, not a Playwright Trace Viewer .zip. Revisit
 # this substitution if a future @playwright/mcp version adds real tracing.
+#
+# --isolated is load-bearing, not an optimization — this is the actual fix
+# for the #399 follow-up bug (task-8-report.md): the FIRST live bounded run
+# looked half-signed-in (a valid session cookie but the UI acting fully
+# logged out, the #430 symptom) and a second run looked signed in via a
+# stale leftover cookie. Root-caused by reading @playwright/mcp@0.0.78's
+# bundled source (playwright-core/lib/coreBundle.js): without --isolated,
+# the MCP server launches ONE PERSISTENT Chrome profile per REPO PATH
+# (`mcp-<browser>-<sha256(cwd)[:7]>` under ~/.cache/ms-playwright-mcp/,
+# reused across every explore.sh run from this checkout — confirmed via
+# `createUserDataDir`'s hash) via `browserType.launchPersistentContext`, and
+# then its `factory.create()` does
+# `config.browser.isolated ? await browser.newContext(contextOptions) :
+# browser.contexts()[0]` — i.e. in the DEFAULT (non-isolated) branch it just
+# grabs the browser's already-open context and NEVER calls newContext with
+# our --storage-state at all for that reused context. Confirmed empirically:
+# wiped the profile dir, booted a clean stack, and drove a 3-turn `claude -p`
+# probe against the unmodified (then-current) mcp.json — navigating to
+# /dashboard redirected straight to a REAL accounts.google.com sign-in page
+# (sqlite3 on the profile's Cookies db afterward: zero sapling_session rows
+# — the minted cookie was never applied at all, cookie or localStorage). The
+# exact same probe with `--isolated` added (which routes through
+# `createIsolatedBrowser` + an explicit `browser.newContext(config.browser.
+# contextOptions)` — the same mechanism `@playwright/test` itself uses in
+# Chapter 1's global-setup.ts) rendered the real, fully-authenticated
+# dashboard (concepts/courses/streak all populated) on the FIRST navigation,
+# with `localStorage.sapling_user` correctly present.
 write_mcp_config() {
   local headless_args='"--headless", '
   [ "$EXPLORE_HEADED" = "1" ] && headless_args=''
@@ -211,7 +251,7 @@ write_mcp_config() {
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@$PLAYWRIGHT_MCP_VERSION", ${headless_args}"--browser", "chromium",
+      "args": ["-y", "@playwright/mcp@$PLAYWRIGHT_MCP_VERSION", "--isolated", ${headless_args}"--browser", "chromium",
                "--storage-state", "$EXPLORE_DIR/storageState.json",
                "--output-dir", "$EXPLORE_DIR/traces", "--save-session"]
     }
