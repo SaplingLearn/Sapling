@@ -311,3 +311,18 @@ def test_index_document_chunks_never_reaches_transport_in_function_mode(monkeypa
     captured = capsys.readouterr()
     assert "unstubbed LLM egress" not in captured.out
     assert "SAPLING_MODEL_MODE" in captured.out
+
+
+def test_document_chunk_ids_never_collide_with_catalog_ids():
+    """Document and catalog rows share the course_chunks table and its
+    on_conflict=id upsert. The document id keyspace is namespaced with a
+    literal "document" segment so a document chunk whose text byte-matches a
+    catalog chunk (same course) can never overwrite the catalog row and flip
+    its category out from under the category=eq.catalog readers."""
+    from scripts.ingest_catalog import chunk_id as catalog_chunk_id
+    from services.rag_service import chunk_id as document_chunk_id
+
+    course, text = "CAS CS 132", "This course covers matrices and vector spaces."
+    assert document_chunk_id(course, text) != catalog_chunk_id(course, text)
+    # Still content-addressed within the document keyspace.
+    assert document_chunk_id(course, text) == document_chunk_id(course, text)

@@ -10,9 +10,12 @@ scheme and collapses duplicates. Catalog rows (category=catalog) use
 their own id scheme and are untouched.
 
 For each group of rows sharing chunk_id(course_id, chunk_text), the
-winner is the first row that already has an embedding (avoids
-re-embedding); its metadata (doc_id/uploader_id/chunk_index) carries
-over, matching the last-writer-wins contract in rag_service.
+winner is the first row (id-ascending) that already has an embedding
+(avoids re-embedding); its metadata (doc_id/uploader_id/chunk_index)
+carries over. Which legacy row's metadata survives is arbitrary — no
+timestamp is consulted — and that is fine: rag_service documents these
+columns as non-load-bearing metadata (retrieval reads only course_id +
+chunk_text), so the only invariant that matters is keeping an embedding.
 
 Dry-run by default. Run from backend/:
     python scripts/dedupe_course_chunks.py            # preview

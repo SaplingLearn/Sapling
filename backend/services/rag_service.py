@@ -127,15 +127,22 @@ def retrieve_chunks(
 
 
 def chunk_id(course_code: str, chunk_text: str) -> str:
-    """Content-addressed chunk id, scoped per course.
+    """Content-addressed chunk id, scoped per course and per row kind.
 
     Identical text in the same course maps to one row no matter which
     document or uploader supplied it, so N students uploading the same
     slides dedup to one embedding instead of N. doc_id/uploader_id/
     chunk_index on the row are last-writer-wins metadata; retrieval only
     reads course_id + chunk_text.
+
+    The literal "document" segment keeps this keyspace DISJOINT from
+    catalog rows: scripts/ingest_catalog.py ids category=catalog rows as
+    sha256(course::text) in the SAME course_chunks table (on_conflict=id),
+    so an un-namespaced hash would let a document chunk whose text
+    byte-matches a catalog chunk silently overwrite the catalog row and
+    flip its category — dropping it from every category=eq.catalog reader.
     """
-    return hashlib.sha256(f"{course_code}::{chunk_text}".encode()).hexdigest()
+    return hashlib.sha256(f"{course_code}::document::{chunk_text}".encode()).hexdigest()
 
 
 def index_document_chunks(
