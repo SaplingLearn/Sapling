@@ -8,10 +8,11 @@ import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { QuizPanel } from "../QuizPanel";
 import { useUser } from "@/context/UserContext";
+import { useActiveSemester } from "@/lib/useActiveSemester";
 import { getCourses, getGraph, type EnrolledCourse } from "@/lib/api";
 import type { GraphNode as ApiNode } from "@/lib/types";
 
-type Concept = { id: string; name: string; course_id: string | null; course_code: string | null };
+type Concept = { id: string; name: string; course_id: string | null; course_code: string | null; term: string | null };
 
 export function Quiz() {
   return (
@@ -25,19 +26,23 @@ function QuizInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { userId, userReady } = useUser();
+  const [activeSemester, , semesterHydrated] = useActiveSemester();
 
   const [concepts, setConcepts] = useState<Concept[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
   const [loaded, setLoaded] = useState(false);
 
+  // Waits for the active-semester read from localStorage before the first
+  // fetch, so returning users fetch scoped once instead of unscoped-then-scoped;
+  // re-runs when the active semester changes.
   useEffect(() => {
-    if (!userReady || !userId) return;
+    if (!userReady || !userId || !semesterHydrated) return;
     let cancelled = false;
     (async () => {
       try {
         const [cRes, gRes] = await Promise.all([
           getCourses(userId).catch(() => ({ courses: [] as EnrolledCourse[] })),
-          getGraph(userId).catch(() => ({ nodes: [] as ApiNode[], edges: [], stats: {} })),
+          getGraph(userId, activeSemester || undefined).catch(() => ({ nodes: [] as ApiNode[], edges: [], stats: {} })),
         ]);
         if (cancelled) return;
         setCourses(cRes.courses ?? []);
@@ -51,6 +56,7 @@ function QuizInner() {
               name: n.concept_name || "Concept",
               course_id: n.course_id ?? null,
               course_code: n.course_id ? (courseById.get(n.course_id)?.course_code ?? null) : null,
+              term: n.course_id ? (courseById.get(n.course_id)?.term ?? null) : null,
             })),
         );
       } catch (err) {
@@ -60,7 +66,21 @@ function QuizInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [userReady, userId]);
+  }, [userReady, userId, semesterHydrated, activeSemester]);
+
+  // The graph fetch above is already scoped to the active semester, so this
+  // is defensive rather than load-bearing — matches the Tree/Learn pickers.
+  const scopedConcepts = useMemo(
+    () => (activeSemester ? concepts.filter(c => c.term === activeSemester) : concepts),
+    [concepts, activeSemester],
+  );
+
+  // Scope the course picker to the active semester too, so it stays consistent
+  // with the concept list the quiz draws from.
+  const scopedCourses = useMemo(
+    () => (activeSemester ? courses.filter(c => c.term === activeSemester) : courses),
+    [courses, activeSemester],
+  );
 
   const topicParam = searchParams.get("topic");
   const conceptParam = searchParams.get("concept");
@@ -69,8 +89,8 @@ function QuizInner() {
     if (conceptParam) return conceptParam;
     if (!topicParam) return null;
     const t = topicParam.trim().toLowerCase();
-    return concepts.find(c => c.name.toLowerCase() === t)?.id ?? null;
-  }, [conceptParam, topicParam, concepts]);
+    return scopedConcepts.find(c => c.name.toLowerCase() === t)?.id ?? null;
+  }, [conceptParam, topicParam, scopedConcepts]);
 
   return (
     <FullHeightScreen>
@@ -95,8 +115,8 @@ function QuizInner() {
         ) : loaded ? (
           <QuizPanel
             userId={userId}
-            concepts={concepts}
-            courses={courses}
+            concepts={scopedConcepts}
+            courses={scopedCourses}
             initialConceptId={initialConceptId}
             onExit={() => router.push("/learn")}
           />

@@ -1,15 +1,5 @@
 import type { EnrolledCourse, Semester } from "@/lib/api";
 
-// Bucket for enrollments whose offering has no term joined (the backend
-// sends `term: ""`). These are never archived — an undatable course is
-// shown with the current term rather than hidden behind the archive.
-export const UNKNOWN_TERM_LABEL = "Other";
-
-export type TermGroup = {
-  label: string;
-  courses: EnrolledCourse[];
-};
-
 // Mirrors the `sort_key` formula in migration 0019: year * 10 + term ordinal.
 const TERM_ORDINALS: Record<string, number> = {
   spring: 1,
@@ -91,31 +81,6 @@ function compareLabels(a: string, b: string, index: Map<string, number>): number
 }
 
 /**
- * Group courses by their term label, most recent term first.
- *
- * Ordering keys on each semester's `sort_key` when `semesters` is supplied and
- * degrades to a label-derived rank otherwise. Courses with no term land in the
- * `UNKNOWN_TERM_LABEL` bucket — never dropped. Order within a group is the
- * caller's input order.
- */
-export function groupCoursesByTerm(
-  courses: EnrolledCourse[] | null | undefined,
-  semesters?: Semester[] | null,
-): TermGroup[] {
-  const index = rankIndex(semesters);
-  const buckets = new Map<string, EnrolledCourse[]>();
-  for (const course of courses ?? []) {
-    const label = (course.term || "").trim() || UNKNOWN_TERM_LABEL;
-    const bucket = buckets.get(label);
-    if (bucket) bucket.push(course);
-    else buckets.set(label, [course]);
-  }
-  return Array.from(buckets, ([label, grouped]) => ({ label, courses: grouped })).sort(
-    (a, b) => compareLabels(a.label, b.label, index),
-  );
-}
-
-/**
  * Distinct term labels off a course list, most recent first — the semester
  * chips on the gradebook landing. Courses with no term contribute nothing;
  * a chip for them would filter to an empty gradebook.
@@ -131,43 +96,4 @@ export function courseTermLabels(
     if (label) labels.add(label);
   }
   return Array.from(labels).sort((a, b) => compareLabels(a, b, index));
-}
-
-export type CoursePartition = {
-  current: EnrolledCourse[];
-  archive: TermGroup[];
-};
-
-/**
- * Split enrolled courses into what to show by default and what to hide behind
- * the archive: only a course that ranks strictly below the current term is
- * archived, grouped by term, most recent first.
- *
- * Anything we can't date — no term, an unparseable label, or no semesters at
- * all because `/api/semesters` failed — stays in `current`. Hiding a course is
- * worse than showing it in the wrong bucket, so degradation is always toward
- * the flat, ungrouped list.
- */
-export function partitionCurrentAndArchive(
-  courses: EnrolledCourse[] | null | undefined,
-  semesters: Semester[] | null | undefined,
-  today: Date | string = new Date(),
-): CoursePartition {
-  const all = courses ?? [];
-  const term = currentTerm(semesters, today);
-  if (!term) return { current: all, archive: [] };
-
-  const index = rankIndex(semesters);
-  const currentRank = term.sort_key ?? termRankFromLabel(term.label);
-  if (currentRank === null) return { current: all, archive: [] };
-
-  const current: EnrolledCourse[] = [];
-  const archived: EnrolledCourse[] = [];
-  for (const course of all) {
-    const label = (course.term || "").trim();
-    const rank = label ? labelRank(label, index) : null;
-    if (rank !== null && rank < currentRank) archived.push(course);
-    else current.push(course);
-  }
-  return { current, archive: groupCoursesByTerm(archived, semesters) };
 }

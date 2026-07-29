@@ -468,6 +468,14 @@ class TestLearnHelpers(unittest.TestCase):
         self.assertNotIn("COURSE INTELLIGENCE", prompt)
         mock_ctx.assert_not_called()
 
+    def test_build_system_prompt_carries_academic_integrity_rule(self):
+        """The no-answers integrity rule must be present in every tutor
+        prompt regardless of mode or course context."""
+        from routes.learn import build_system_prompt
+        prompt = build_system_prompt("expository", "Alice", "{}")
+        self.assertIn("ACADEMIC INTEGRITY", prompt)
+        self.assertIn("never to do their graded work for them", prompt)
+
     @patch("routes.learn.table")
     @patch("services.course_context_service.get_course_context", return_value={})
     def test_build_system_prompt_course_id_but_empty_ctx(self, mock_ctx, mock_table):

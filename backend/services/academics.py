@@ -20,6 +20,8 @@ import uuid
 from datetime import date
 from functools import lru_cache
 
+import httpx
+
 from db.connection import table
 
 
@@ -50,6 +52,44 @@ def list_terms() -> list[dict]:
     ) or []
 
 
+def term_id_for_label(label: str | None) -> str | None:
+    """Resolve a semester **label** (e.g. "Spring 2026") to a term id.
+
+    Falls back to treating the value as a term id directly. ``None``/empty → None.
+    The canonical mapping for ``semester`` query values across the API —
+    ``routes/gradebook.py`` and the graph/recommendations scoping both use it.
+    """
+    if not label:
+        return None
+    rows = table("terms").select("id", filters={"label": f"eq.{label}"}, limit=1)
+    if rows:
+        return rows[0]["id"]
+    rows = table("terms").select("id", filters={"id": f"eq.{label}"}, limit=1)
+    return rows[0]["id"] if rows else None
+
+
+def user_course_ids_for_term(user_id: str, term_id: str) -> set[str]:
+    """The abstract ``course_id``s the user is enrolled in for a given term.
+
+    ``enrollments (user_id) → offering_id → course_offerings (term_id) → course_id``.
+    Multi-step reads (this module avoids PostgREST embedded filters); short-circuits
+    on empty sets. Deliberately **not** cached — enrollments mutate.
+    """
+    if not user_id or not term_id:
+        return set()
+    enr = table("enrollments").select(
+        "offering_id", filters={"user_id": f"eq.{user_id}"}
+    ) or []
+    off_ids = {e["offering_id"] for e in enr if e.get("offering_id")}
+    if not off_ids:
+        return set()
+    offs = table("course_offerings").select(
+        "course_id",
+        filters={"id": f"in.({','.join(off_ids)})", "term_id": f"eq.{term_id}"},
+    ) or []
+    return {o["course_id"] for o in offs if o.get("course_id")}
+
+
 def resolve_offering(
     course_id: str,
     term_id: str | None = None,
@@ -60,7 +100,10 @@ def resolve_offering(
 
     ``term_id`` defaults to the current term. If no matching offering exists:
     - ``create=True`` inserts one (NULL section) and returns its id, so a fresh
-      enrollment lands in the real current semester instead of a legacy term;
+      enrollment lands in the real current semester instead of a legacy term.
+      Race-safe: losing a concurrent create to the partial unique index
+      (migration 0036) re-selects and returns the winner's row instead of
+      surfacing the conflict;
     - ``create=False`` falls back to any existing offering of the course.
     Returns None only when the course has no offering and we can't/shouldn't make one.
     """
@@ -82,10 +125,26 @@ def resolve_offering(
 
     if create and term_id:
         new_id = str(uuid.uuid4())
-        table("course_offerings").insert(
-            {"id": new_id, "course_id": course_id, "term_id": term_id}
-        )
-        return new_id
+        try:
+            table("course_offerings").insert(
+                {"id": new_id, "course_id": course_id, "term_id": term_id}
+            )
+            return new_id
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 409:
+                raise
+            # Lost a create race: the NULL-section partial unique index (0036)
+            # rejected a second offering for (course, term). The winner's row
+            # exists now — return it.
+            rows = table("course_offerings").select(
+                "id",
+                filters={"course_id": f"eq.{course_id}", "term_id": f"eq.{term_id}"},
+                order="created_at.asc",
+                limit=1,
+            )
+            if rows:
+                return rows[0]["id"]
+            raise
 
     # No offering in the target term and not creating — fall back to any offering
     # of this course so reads still resolve to something sensible.

@@ -39,23 +39,8 @@ router = APIRouter()
 
 
 # ── Enrollment resolution ────────────────────────────────────────────────────
-
-def _term_id_for_semester(semester: str | None) -> str | None:
-    """Map a `semester` query value to a term id.
-
-    `semester` is a term **label** (e.g. "Spring 2026"); fall back to treating
-    it as a term id directly. None → None (caller defaults to current term).
-    """
-    if not semester:
-        return None
-    rows = table("terms").select(
-        "id", filters={"label": f"eq.{semester}"}, limit=1
-    )
-    if rows:
-        return rows[0]["id"]
-    # Maybe the caller already passed a term id.
-    rows = table("terms").select("id", filters={"id": f"eq.{semester}"}, limit=1)
-    return rows[0]["id"] if rows else None
+# `semester` query values (term labels, with a term-id fallback) resolve via
+# the shared `academics.term_id_for_label` — one mapping across the API.
 
 
 def _resolve_enrollment(user_id: str, course_id: str, semester: str | None) -> dict | None:
@@ -72,7 +57,7 @@ def _resolve_enrollment(user_id: str, course_id: str, semester: str | None) -> d
     if not offering_ids:
         return None
 
-    target_term_id = _term_id_for_semester(semester)
+    target_term_id = academics.term_id_for_label(semester)
     if target_term_id is None and semester is None:
         cur = academics.current_term()
         target_term_id = cur["id"] if cur else None
@@ -203,7 +188,7 @@ def get_summary(request: Request, user_id: str = Query(...), semester: str = Que
     current grade + letter, plus the term GPA."""
     require_self(user_id, request)
 
-    term_id = _term_id_for_semester(semester)
+    term_id = academics.term_id_for_label(semester)
     if not term_id:
         return {"courses": [], "gpa": None, "semester": semester}
 
@@ -597,7 +582,7 @@ def get_gpa(request: Request, user_id: str = Query(...), semester: str | None = 
     """
     require_self(user_id, request)
 
-    term_id = _term_id_for_semester(semester) if semester else None
+    term_id = academics.term_id_for_label(semester) if semester else None
 
     enrollments = table("enrollments").select(
         "id,user_id,offering_id,letter_scale,curve_mode,curve_avg_target,curve_sd_delta",
