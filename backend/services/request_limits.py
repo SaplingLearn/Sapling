@@ -4,6 +4,7 @@ Factored for reuse across CPU/cost-heavy endpoints (OCR extraction, LLM). The
 flashcard import service has an older copy of the same sliding-window limiter
 (`services/flashcard_import_service.check_rate_limit`) that can migrate here.
 """
+import math
 import time
 
 from fastapi import HTTPException, UploadFile
@@ -23,7 +24,10 @@ def check_rate_limit(key: str, *, limit: int, window_sec: int) -> int | None:
     now = time.time()
     bucket = [t for t in _rate_state.get(key, []) if now - t < window_sec]
     if len(bucket) >= limit:
-        retry = int(window_sec - (now - bucket[0])) + 1
+        # Ceiling of the remaining window, capped at window_sec: on coarse
+        # timers (Windows, ~15.6ms tick) `now` can equal `bucket[0]` exactly,
+        # and int(remaining) + 1 would overshoot to window_sec + 1 (#346).
+        retry = min(window_sec, math.ceil(window_sec - (now - bucket[0])))
         _rate_state[key] = bucket
         return retry
     bucket.append(now)

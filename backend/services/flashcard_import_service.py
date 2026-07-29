@@ -93,10 +93,12 @@ def check_rate_limit(user_id: str) -> int | None:
     bucket = [t for t in _rate_state.get(user_id, []) if now - t < _RATE_WINDOW_SEC]
     if len(bucket) >= _RATE_LIMIT:
         # Seconds until the oldest call in the window ages out (freeing a slot),
-        # rounded up. ceil keeps a sub-second remainder from reporting 0, and —
+        # rounded up. ceil keeps a sub-second remainder from reporting 0 and —
         # unlike the old `int(...) + 1` — never overshoots to 61 when the calls
-        # land in the same clock tick (elapsed == 0). Always in [1, _RATE_WINDOW_SEC].
-        retry = math.ceil(_RATE_WINDOW_SEC - (now - bucket[0]))
+        # land in the same clock tick (elapsed == 0). The min() cap additionally
+        # pins the ceiling when `now` reads BEFORE bucket[0] (NTP step / coarse
+        # Windows timers, #346), so the result is always in [1, _RATE_WINDOW_SEC].
+        retry = min(_RATE_WINDOW_SEC, math.ceil(_RATE_WINDOW_SEC - (now - bucket[0])))
         _rate_state[user_id] = bucket
         return retry
     bucket.append(now)
