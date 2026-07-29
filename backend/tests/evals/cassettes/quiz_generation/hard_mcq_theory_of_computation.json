@@ -1,0 +1,32 @@
+{
+  "questions": [
+    {
+      "concept": "Pumping Lemma",
+      "correct_answer": "If a language is regular, then it can be pumped.",
+      "difficulty": "hard",
+      "explanation": "The Pumping Lemma states that if a language is regular, then any string in the language of sufficient length can be divided into three parts that can be 'pumped' to create new strings that are also in the language. The converse is not true; a language that can be pumped is not necessarily regular.",
+      "options": [
+        "If a language is infinite, then it can be pumped.",
+        "If a language is regular, then it can be pumped.",
+        "If a language can be pumped, then it is regular.",
+        "If a language is not regular, then it cannot be pumped."
+      ],
+      "question": "Which of the following is a consequence of the Pumping Lemma for regular languages?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Decidability",
+      "correct_answer": "L is decidable by a Turing machine.",
+      "difficulty": "hard",
+      "explanation": "While L is not a regular language, it is a context-free language and is decidable by a Turing machine. A simple algorithm can verify if a string is in L by counting the number of 'a's and 'b's.",
+      "options": [
+        "L is decidable because it is context-free.",
+        "L is undecidable because it is not regular.",
+        "L is decidable by a Turing machine.",
+        "L is undecidable because no algorithm can determine if a string is in L."
+      ],
+      "question": "Consider the language L = {a^n b^n | n >= 0}. Which of the following statements is true regarding the decidability of L?",
+      "type": "multiple_choice"
+    }
+  ]
+}

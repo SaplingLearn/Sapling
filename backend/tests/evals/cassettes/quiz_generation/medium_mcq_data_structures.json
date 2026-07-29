@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Hash Tables",
+      "correct_answer": "Average O(1) time complexity for insertions, deletions, and searches.",
+      "difficulty": "medium",
+      "explanation": "Hash tables provide an average time complexity of O(1) for insertions, deletions, and searches by using a hash function to map keys to indices in an array. While worst-case scenarios can be O(n), the average performance is excellent.",
+      "options": [
+        "Guaranteed O(1) average time complexity for all operations.",
+        "Efficient handling of ordered data for range queries.",
+        "Average O(1) time complexity for insertions, deletions, and searches.",
+        "Simple implementation with minimal memory overhead."
+      ],
+      "question": "What is the primary advantage of using a hash table for data storage and retrieval?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Binary Search Trees",
+      "correct_answer": "The value of a node is greater than all values in its left subtree and less than all values in its right subtree.",
+      "difficulty": "medium",
+      "explanation": "The defining property of a BST is that for any given node, all values in its left subtree are less than the node's value, and all values in its right subtree are greater than the node's value. This property allows for efficient searching.",
+      "options": [
+        "The left child's value is greater than or equal to the parent's value, and the right child's value is less than or equal to the parent's value.",
+        "All leaf nodes must have a depth of at most 2.",
+        "The value of a node is greater than all values in its left subtree and less than all values in its right subtree.",
+        "The tree must be balanced, with heights of left and right subtrees differing by at most 1."
+      ],
+      "question": "In a Binary Search Tree (BST), which property must hold true for all nodes?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Big-O Analysis",
+      "correct_answer": "The upper bound of an algorithm's time or space complexity as input size grows.",
+      "difficulty": "medium",
+      "explanation": "Big-O notation provides a way to classify algorithms based on how their run time or space requirements grow as the input size increases. It focuses on the worst-case scenario or the upper bound of the growth rate.",
+      "options": [
+        "The exact execution time of an algorithm on a specific machine.",
+        "The best-case performance of an algorithm.",
+        "The amount of memory an algorithm uses.",
+        "The upper bound of an algorithm's time or space complexity as input size grows."
+      ],
+      "question": "When analyzing algorithms, what does Big-O notation primarily describe?",
+      "type": "multiple_choice"
+    }
+  ]
+}

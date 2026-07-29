@@ -1,0 +1,44 @@
+{
+  "concepts": [
+    {
+      "description": "These fundamental forces interact to set the market price and quantity in a competitive market.",
+      "importance": 1.0,
+      "name": "Supply and Demand"
+    },
+    {
+      "description": "The specific price and quantity at which the amount producers are willing to supply equals the amount consumers are willing to buy, determined by the interaction of supply and demand.",
+      "importance": 0.95,
+      "name": "Equilibrium Price and Quantity"
+    },
+    {
+      "description": "The reduction in total surplus (consumer and producer surplus) that results from a market distortion, such as a government intervention that prevents the market from reaching its efficient equilibrium.",
+      "importance": 0.95,
+      "name": "Deadweight Loss"
+    },
+    {
+      "description": "A measure indicating how much the quantity demanded of a good responds to a change in its price.",
+      "importance": 0.9,
+      "name": "Price Elasticity of Demand"
+    },
+    {
+      "description": "Policies such as price floors, price ceilings, and taxes implemented by governments that can affect market outcomes.",
+      "importance": 0.9,
+      "name": "Government Interventions"
+    },
+    {
+      "description": "The difference between the maximum price consumers are willing to pay for a good and the actual market price they pay, representing a measure of consumer welfare.",
+      "importance": 0.85,
+      "name": "Consumer Surplus"
+    },
+    {
+      "description": "The difference between the price producers receive for a good and the minimum price they would have been willing to accept, representing a measure of producer welfare.",
+      "importance": 0.85,
+      "name": "Producer Surplus"
+    },
+    {
+      "description": "A market structure where numerous buyers and sellers interact, and no single participant can influence the market price, allowing supply and demand to freely determine equilibrium.",
+      "importance": 0.8,
+      "name": "Competitive Market"
+    }
+  ]
+}

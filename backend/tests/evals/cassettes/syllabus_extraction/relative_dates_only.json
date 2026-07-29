@@ -1,0 +1,44 @@
+{
+  "assignments": [
+    {
+      "description": null,
+      "due_date": null,
+      "title": "Quiz 1",
+      "weight_pct": 10.0
+    },
+    {
+      "description": null,
+      "due_date": null,
+      "title": "Quiz 2",
+      "weight_pct": 10.0
+    },
+    {
+      "description": null,
+      "due_date": null,
+      "title": "Midterm",
+      "weight_pct": 30.0
+    },
+    {
+      "description": null,
+      "due_date": null,
+      "title": "Final",
+      "weight_pct": 50.0
+    }
+  ],
+  "course_title": "MATH 220",
+  "grading_categories": [
+    {
+      "name": "Quizzes",
+      "weight": 20.0
+    },
+    {
+      "name": "Midterm",
+      "weight": 30.0
+    },
+    {
+      "name": "Final",
+      "weight": 50.0
+    }
+  ],
+  "instructor": null
+}

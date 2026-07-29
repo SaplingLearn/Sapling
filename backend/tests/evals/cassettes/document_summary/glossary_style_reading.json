@@ -1,0 +1,12 @@
+{
+  "abstract": "This document provides a glossary of fundamental statistics terms. It defines key concepts including mean, median, mode, variance, standard deviation, and p-value. Each definition is concise and explains the core meaning of the statistical term.",
+  "headline": "Glossary of basic statistics terms and definitions.",
+  "key_points": [
+    "Mean is the arithmetic average of a dataset.",
+    "Median represents the middle value in an ordered dataset.",
+    "Mode identifies the most frequently occurring value in a dataset.",
+    "Variance measures the spread of data points around the mean.",
+    "Standard deviation is the square root of variance, indicating data dispersion.",
+    "A p-value quantifies the probability of observing extreme results under a null hypothesis."
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "assignments": [
+    {
+      "description": "\u6bcf\u5468\u4e00\u6b21\u7684\u4f5c\u4e1a\u3002",
+      "due_date": null,
+      "title": "\u4f5c\u4e1a",
+      "weight_pct": null
+    },
+    {
+      "description": "\u5b66\u671f\u672b\u8fdb\u884c\u7684\u8003\u8bd5\u3002",
+      "due_date": null,
+      "title": "\u671f\u672b\u8003\u8bd5",
+      "weight_pct": null
+    }
+  ],
+  "course_title": "\u9ad8\u7b49\u6570\u5b66 I",
+  "grading_categories": [],
+  "instructor": null
+}

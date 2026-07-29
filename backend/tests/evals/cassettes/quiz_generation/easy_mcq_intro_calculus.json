@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Limits",
+      "correct_answer": "The value a function approaches as the input approaches some value.",
+      "difficulty": "easy",
+      "explanation": "The limit of a function describes the behavior of the function near a particular point, not necessarily at the point itself.",
+      "options": [
+        "The value a function approaches as the input approaches some value.",
+        "The instantaneous rate of change of a function.",
+        "The area under the curve of a function.",
+        "A point where a function is undefined."
+      ],
+      "question": "What is the definition of a limit in calculus?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Derivatives",
+      "correct_answer": "The instantaneous rate of change of the function.",
+      "difficulty": "easy",
+      "explanation": "The derivative of a function at a point gives the slope of the tangent line to the function at that point, which represents its instantaneous rate of change.",
+      "options": [
+        "The instantaneous rate of change of the function.",
+        "The average rate of change of the function over an interval.",
+        "The total change in the function.",
+        "The point where the function crosses the x-axis."
+      ],
+      "question": "What does the derivative of a function represent?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Continuity",
+      "correct_answer": "The limit as x approaches c exists, the function value at c exists, and these two values are equal.",
+      "difficulty": "easy",
+      "explanation": "Continuity at a point requires that the function is defined at that point, the limit exists at that point, and the limit equals the function value.",
+      "options": [
+        "The limit as x approaches c exists, the function value at c exists, and these two values are equal.",
+        "The function must be differentiable at c.",
+        "The function must be defined for all real numbers.",
+        "The graph of the function must be a straight line."
+      ],
+      "question": "For a function to be continuous at a point 'c', what must be true?",
+      "type": "multiple_choice"
+    }
+  ]
+}
