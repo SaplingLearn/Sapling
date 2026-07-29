@@ -541,19 +541,12 @@ body { font-size: 14px; line-height: 1.5; }
   transition: opacity 0.5s ease, background 0.8s ease;
 }
 
-/* ── Slow pulse ────────────────────────────────────────────────── */
-@keyframes landing-pulse-slow {
-  0%, 100% { transform: scale(0.98); }
-  50%      { transform: scale(1.02); }
-}
-.landing-animate-pulse-slow { animation: landing-pulse-slow 4s ease-in-out infinite; }
-
 /* ── Float indicator ───────────────────────────────────────────── */
 @keyframes landing-float-indicator {
   0%, 100% { transform: translateY(0) translateX(-50%); }
   50%      { transform: translateY(6px) translateX(-50%); }
 }
-.landing-animate-float-indicator { animation: landing-float-indicator 2.5s ease-in-out infinite; }
+.landing-animate-float-indicator { animation: landing-float-indicator 2.5s ease-in-out 3 forwards; }
 
 /* ── Initial load / intro overlay ───────────────────────────────── */
 .landing-intro-overlay {
@@ -591,7 +584,7 @@ body { font-size: 14px; line-height: 1.5; }
   inset: 18px;
   border-radius: inherit;
   border: 1px dashed rgba(148,163,184,0.35);
-  animation: landing-intro-orbit 14s linear infinite;
+  animation: landing-intro-orbit 2.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .landing-intro-orbit-node {
@@ -644,27 +637,6 @@ body { font-size: 14px; line-height: 1.5; }
 }
 .landing-spotlight-card:hover .landing-icon-container {
   transform: scale(1.1) rotate(5deg);
-}
-
-/* ── Feature card float ────────────────────────────────────────── */
-@keyframes landing-card-float {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-8px); }
-}
-.landing-card-float-1 { animation: landing-card-float 5.0s ease-in-out infinite; }
-.landing-card-float-2 { animation: landing-card-float 5.5s ease-in-out infinite 0.4s; }
-.landing-card-float-3 { animation: landing-card-float 4.8s ease-in-out infinite 0.8s; }
-.landing-card-float-4 { animation: landing-card-float 5.3s ease-in-out infinite 1.2s; }
-.landing-card-float-5 { animation: landing-card-float 5.1s ease-in-out infinite 0.6s; }
-.landing-card-float-6 { animation: landing-card-float 4.6s ease-in-out infinite 1.0s; }
-
-.landing-card-float-1:hover,
-.landing-card-float-2:hover,
-.landing-card-float-3:hover,
-.landing-card-float-4:hover,
-.landing-card-float-5:hover,
-.landing-card-float-6:hover {
-  animation-play-state: paused;
 }
 
 /* ── Landing scrollbar ─────────────────────────────────────────── */
@@ -819,17 +791,16 @@ input[type="reset"]:disabled {
 }
 .landing-page .sapling-mesh-blob {
   position: absolute; border-radius: 50%; filter: blur(100px); opacity: 0.7;
-  animation: sapling-blob 10s ease-in-out infinite;
-  will-change: transform; transform: translateZ(0);
+  /* One purposeful entrance: blobs bloom into their resting position once,
+     then hold still. No perpetual loop — the calm is the point (#291). */
+  animation: sapling-blob-settle 2.4s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .landing-page .sapling-mesh-blob--1 { top: -10%; left: -10%; width: 50vw; height: 50vw; max-width: 900px; max-height: 900px; background: rgba(46, 125, 82, 0.22); }
-.landing-page .sapling-mesh-blob--2 { top: 20%; right: -10%; width: 40vw; height: 40vw; max-width: 720px; max-height: 720px; background: rgba(43, 140, 150, 0.2); animation-delay: -2.5s; }
-.landing-page .sapling-mesh-blob--3 { bottom: -20%; left: 20%; width: 60vw; height: 60vw; max-width: 1000px; max-height: 1000px; background: rgba(232, 163, 58, 0.18); opacity: 0.6; animation-delay: -5s; }
-@keyframes sapling-blob {
-  0%   { transform: translate(0, 0) scale(1); }
-  33%  { transform: translate(30px, -50px) scale(1.1); }
-  66%  { transform: translate(-20px, 20px) scale(0.9); }
-  100% { transform: translate(0, 0) scale(1); }
+.landing-page .sapling-mesh-blob--2 { top: 20%; right: -10%; width: 40vw; height: 40vw; max-width: 720px; max-height: 720px; background: rgba(43, 140, 150, 0.2); animation-delay: 0.12s; }
+.landing-page .sapling-mesh-blob--3 { bottom: -20%; left: 20%; width: 60vw; height: 60vw; max-width: 1000px; max-height: 1000px; background: rgba(232, 163, 58, 0.18); opacity: 0.6; animation-delay: 0.24s; }
+@keyframes sapling-blob-settle {
+  from { transform: translate(26px, -34px) scale(1.12); }
+  to   { transform: translate(0, 0) scale(1); }
 }
 
 /* Landing floating-card surfaces — solid (glass removed, #102). */
@@ -861,17 +832,14 @@ input[type="reset"]:disabled {
   transition: opacity 0.5s ease, background 0.8s ease;
 }
 
-/* Slow pulse + float indicator. */
-@keyframes landing-pulse-slow {
-  0%, 100% { transform: scale(0.98); }
-  50%      { transform: scale(1.02); }
-}
-.landing-page .landing-animate-pulse-slow { animation: landing-pulse-slow 4s ease-in-out infinite; }
+/* Scroll cue. A finite nudge that hints "scroll", then settles — the
+   translateX(-50%) in the keyframe also centers it, so `forwards` holds it
+   centered at rest once the bobs finish (#291). */
 @keyframes landing-float-indicator {
   0%, 100% { transform: translateY(0) translateX(-50%); }
   50%      { transform: translateY(6px) translateX(-50%); }
 }
-.landing-page .landing-animate-float-indicator { animation: landing-float-indicator 2.5s ease-in-out infinite; }
+.landing-page .landing-animate-float-indicator { animation: landing-float-indicator 2.5s ease-in-out 3 forwards; }
 
 /* Intro overlay + orbit animation. */
 .landing-page .landing-intro-overlay {
@@ -894,7 +862,9 @@ input[type="reset"]:disabled {
 .landing-page .landing-intro-orbit-ring {
   position: absolute; inset: 18px; border-radius: inherit;
   border: 1px dashed rgba(148,163,184,0.35);
-  animation: landing-intro-orbit 14s linear infinite;
+  /* A single decelerating rotation as the brand mark reveals, then rest —
+     not a perpetual loader spinning forever behind the faded overlay (#291). */
+  animation: landing-intro-orbit 2.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 .landing-page .landing-intro-orbit-node { position: absolute; width: 10px; height: 10px; border-radius: 999px; }
 .landing-page .landing-intro-orbit-node--green  { background: var(--brand-forest);  top: -3px;  left: 50%; transform: translateX(-50%); }
@@ -923,26 +893,6 @@ input[type="reset"]:disabled {
 .landing-page .landing-icon-container { transition: transform 0.4s var(--ease); }
 .landing-page .landing-spotlight-card:hover .landing-icon-container { transform: scale(1.1) rotate(5deg); }
 
-/* Feature card float. */
-@keyframes landing-card-float {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-8px); }
-}
-.landing-page .landing-card-float-1 { animation: landing-card-float 5.0s ease-in-out infinite; }
-.landing-page .landing-card-float-2 { animation: landing-card-float 5.5s ease-in-out infinite 0.4s; }
-.landing-page .landing-card-float-3 { animation: landing-card-float 4.8s ease-in-out infinite 0.8s; }
-.landing-page .landing-card-float-4 { animation: landing-card-float 5.3s ease-in-out infinite 1.2s; }
-.landing-page .landing-card-float-5 { animation: landing-card-float 5.1s ease-in-out infinite 0.6s; }
-.landing-page .landing-card-float-6 { animation: landing-card-float 4.6s ease-in-out infinite 1.0s; }
-.landing-page .landing-card-float-1:hover,
-.landing-page .landing-card-float-2:hover,
-.landing-page .landing-card-float-3:hover,
-.landing-page .landing-card-float-4:hover,
-.landing-page .landing-card-float-5:hover,
-.landing-page .landing-card-float-6:hover {
-  animation-play-state: paused;
-}
-
 /* Landing scrollbar. */
 .landing-page ::-webkit-scrollbar       { width: 6px; }
 .landing-page ::-webkit-scrollbar-track { background: var(--bg-mesh); }
@@ -970,13 +920,6 @@ input[type="reset"]:disabled {
 .modal-backdrop-out { animation: modal-backdrop-out 200ms cubic-bezier(0.4,0,1,1)     forwards; }
 .modal-card-in      { animation: modal-card-in      300ms cubic-bezier(0.22,1,0.36,1) forwards; }
 .modal-card-out     { animation: modal-card-out     200ms cubic-bezier(0.4,0,1,1)     forwards; }
-
-/* ── Beta button border glow pulse ── */
-@keyframes beta-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(74,158,92,0), 0 4px 20px rgba(74,158,92,0.15); }
-  50%       { box-shadow: 0 0 0 5px rgba(74,158,92,0.6), 0 4px 28px rgba(74,158,92,0.3); }
-}
-.beta-glow-btn { animation: beta-glow 2.2s ease-in-out infinite; }
 
 /* ── Editorial feature rows (no boxes, hairline dividers, hover sweep) ── */
 .landing-page .landing-feature-row { transition: background-color 600ms ease, padding 500ms ease; }
