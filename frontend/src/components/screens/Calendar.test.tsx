@@ -94,6 +94,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { Calendar } from "./Calendar";
+import { getAllAssignments } from "@/lib/api";
 
 afterEach(() => {
   cleanup();
@@ -162,6 +163,31 @@ describe("Calendar — view switch (#295)", () => {
     // Switching away must remove the Day body entirely.
     clickView("Month");
     await waitFor(() => expect(screen.queryByText("Nothing scheduled.")).toBeNull());
+    expect(screen.getByText("Mon")).toBeInTheDocument();
+  });
+});
+
+describe("Calendar — load failure (#185)", () => {
+  it("shows an error banner with retry instead of the empty calendar when load fails", async () => {
+    vi.mocked(getAllAssignments).mockRejectedValueOnce(new Error("HTTP 500"));
+    render(<Calendar />);
+    const banner = await screen.findByTestId("calendar-load-error");
+    expect(banner).toBeInTheDocument();
+    expect(screen.getByTestId("calendar-load-retry")).toBeInTheDocument();
+    // The failure must not masquerade as a legitimately empty account: no
+    // month grid, and none of the per-view empty-state copy.
+    expect(screen.queryByText("Mon")).toBeNull();
+    expect(screen.queryByText("No assignments yet.")).toBeNull();
+    expect(screen.queryByTestId("calendar-skeleton")).toBeNull();
+  });
+
+  it("retry re-fetches; a successful retry clears the banner and renders the calendar", async () => {
+    vi.mocked(getAllAssignments).mockRejectedValueOnce(new Error("HTTP 500"));
+    render(<Calendar />);
+    const retry = await screen.findByTestId("calendar-load-retry");
+    // The once-rejection is consumed; the base mock resolves from here on.
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.queryByTestId("calendar-load-error")).toBeNull());
     expect(screen.getByText("Mon")).toBeInTheDocument();
   });
 });

@@ -36,6 +36,11 @@ export function PasteTab({ cards, onCards }: Props) {
   const [autoDetectedOnce, setAutoDetectedOnce] = React.useState(false);
   const [clozeMode, setClozeMode] = React.useState(false);
   const [clozing, setClozing] = React.useState(false);
+  // True once the user has typed in THIS mount. The import tabs share one
+  // deck via onCards, and the modal remounts tabs on every switch — without
+  // this guard the live re-parse effect fires onCards([]) on a bare mount
+  // (text starts empty) and wipes a deck built on another tab (#183).
+  const dirtyRef = React.useRef(false);
 
   // Suppress unused warning — cards prop is available to parent via onCards
   void cards;
@@ -53,9 +58,12 @@ export function PasteTab({ cards, onCards }: Props) {
     setAutoDetectedOnce(true);
   }, [text, autoDetectedOnce]);
 
-  // Live re-parse
+  // Live re-parse. Emits only after the user has typed here, so a bare
+  // (re)mount never clears the shared deck, while deleting all text —
+  // dirtyRef already set — still does.
   React.useEffect(() => {
     if (clozeMode) return;
+    if (!dirtyRef.current) return;
     if (!text || !term || !card) { onCards([]); return; }
     const parsed = splitByDelimiters(text, term, card);
     onCards(parsed);
@@ -92,7 +100,7 @@ export function PasteTab({ cards, onCards }: Props) {
 
       <textarea
         value={text}
-        onChange={e => setText(e.target.value)}
+        onChange={e => { dirtyRef.current = true; setText(e.target.value); }}
         placeholder={clozeMode
           ? "Paste a paragraph. Claude will pick key terms to remove and generate fill-in-the-blank cards."
           : "Paste your cards here. Use Tab between term and definition, Enter between cards."}

@@ -36,6 +36,7 @@ import {
   type GoogleEvent,
 } from "@/lib/api";
 import { now } from "@/lib/testMode";
+import { humanizeError } from "@/lib/errorMessage";
 
 type View = "month" | "week" | "day" | "table";
 
@@ -93,6 +94,7 @@ export function Calendar() {
   const [googleEvents, setGoogleEvents] = React.useState<GoogleEvent[] | null>(null);
   const [importingGoogle, setImportingGoogle] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     if (!userId) return;
@@ -105,12 +107,21 @@ export function Calendar() {
       setAssignments(a.assignments || []);
       setCourses(c.courses || []);
       setGoogleConnected(Boolean(s.connected));
+      setLoadError(null);
     } catch (err) {
+      // Surface the failure (#185) — a swallowed error here renders a
+      // normal-looking empty calendar, indistinguishable from an empty account.
       console.error("calendar load failed", err);
+      setLoadError(humanizeError(err, "Check your connection and try again."));
     } finally {
       setLoading(false);
     }
   }, [userId]);
+
+  const retryLoad = React.useCallback(() => {
+    setLoading(true);
+    void load();
+  }, [load]);
 
   React.useEffect(() => {
     if (userReady && userId) load();
@@ -268,7 +279,7 @@ export function Calendar() {
           pattern so the swap settles instead of snapping (#295). */}
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
-          key={loading ? "loading" : view}
+          key={loading ? "loading" : loadError ? "error" : view}
           initial={prefersReduced ? false : { opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={prefersReduced ? { opacity: 1 } : { opacity: 0, y: -8 }}
@@ -276,6 +287,8 @@ export function Calendar() {
         >
           {loading ? (
             <CalendarMonthSkeleton />
+          ) : loadError ? (
+            <LoadErrorBanner message={loadError} onRetry={retryLoad} />
           ) : view === "month" ? (
             <MonthView cursor={cursor} byDate={byDate} today={today} courses={courses} />
           ) : view === "week" ? (
@@ -317,6 +330,46 @@ export function Calendar() {
           onClose={() => setGoogleEvents(null)}
         />
       )}
+    </div>
+  );
+}
+
+// Load-failure state distinct from a legitimately empty calendar (#185).
+// Mirrors the Gradebook course ErrorBanner: what went wrong + a retry.
+function LoadErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div style={{ padding: "20px 32px" }}>
+      <div
+        role="alert"
+        data-testid="calendar-load-error"
+        style={{
+          padding: "20px 24px",
+          borderRadius: "var(--r-md)",
+          background: "var(--err-soft)",
+          border: "1px solid color-mix(in oklab, var(--err) 20%, transparent)",
+          display: "flex",
+          gap: 16,
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 600, color: "var(--err)", marginBottom: 4 }}>
+            We couldn&apos;t load your calendar.
+          </div>
+          <div style={{ fontSize: 13, color: "var(--text-dim)" }}>{message}</div>
+        </div>
+        <button
+          type="button"
+          className="btn btn--primary"
+          data-testid="calendar-load-retry"
+          onClick={onRetry}
+          style={{ padding: "8px 16px" }}
+        >
+          Try again
+        </button>
+      </div>
     </div>
   );
 }

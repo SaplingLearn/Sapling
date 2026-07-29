@@ -237,6 +237,16 @@ never collide in the DOM.
 | `dashboard-courses-manage` | the cog inside the expanded key that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
 | `dashboard-resume-{sessionId}` | a "Where you left off" card — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
 
+### `calendar`
+
+Added with the #185 load-failure fix (a failed initial fetch must be
+distinguishable from a genuinely empty calendar).
+
+| testid | element |
+| --- | --- |
+| `calendar-load-error` | the load-failure banner (`role="alert"`) rendered instead of the calendar views when the initial assignments/courses fetch fails |
+| `calendar-load-retry` | the banner's "Try again" button — re-runs the load through the skeleton state |
+
 ### `library`
 
 Added with the upload → SSE → library journey (#387).
