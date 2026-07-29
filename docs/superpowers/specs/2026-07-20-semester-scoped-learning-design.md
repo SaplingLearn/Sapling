@@ -43,6 +43,16 @@ course already taken in any (incl. previous) semester cannot be added again, and
    The Dashboard graph respects the active semester so the setting has a visible
    effect on the home screen.
 
+> **Amendment (2026-07-29): default = All semesters, scoping is opt-in.** The
+> e2e lane vetoed auto-resolving a default term: the rich seed spans Fall 2025 /
+> Spring 2026 / Summer 2026 and 7 of 11 journeys failed because the auto-picked
+> term silently hid cross-term data (dashboard lost MATH210; the graph shrank to
+> 1 of 17 nodes). The empty stored value now IS the default and means "All
+> semesters" (every surface fetches/filters unscoped); nothing resolves a
+> default term on the user's behalf. Scoping starts only when the user picks a
+> term in the hub's tabs — the hub gains an explicit "All semesters" tab that
+> clears the stored value — and the persisted choice still scopes every surface.
+
 ## Design
 
 ### 1. Backend — term-scoped reads (`services/academics.py`, `routes/graph.py`)
@@ -137,7 +147,8 @@ Backend (pytest, mock Supabase/Gemini per `tests/conftest.py`):
 Frontend:
 
 - Hub groups enrolled courses by term and lists term tabs.
-- `useActiveSemester` persists across reloads and defaults to the current term.
+- `useActiveSemester` persists across reloads; empty = "All semesters" (the
+  default — see the amendment above; no auto-resolved term).
 - Selecting a term scopes the course list; scoped readers pass the `semester` param.
 - A prior-term course renders the disabled "Already taken · <term>" state.
 

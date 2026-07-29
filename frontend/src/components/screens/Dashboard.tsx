@@ -11,21 +11,19 @@ import { DashboardSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useLayoutPref } from "@/lib/useLayoutPref";
-import { useActiveSemester, resolveActiveSemester } from "@/lib/useActiveSemester";
+import { useActiveSemester } from "@/lib/useActiveSemester";
 import {
   getGraph,
   getCourses,
   getUpcomingAssignments,
   getSessions,
   getRecommendations,
-  getSemesters,
   type EnrolledCourse,
   type Session,
   type Assignment,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
-import { courseTermLabels } from "@/lib/semesters";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 
 const QUOTES = [
@@ -194,7 +192,7 @@ export function Dashboard() {
   const router = useRouter();
   const search = useSearchParams();
   const { userId, userName, userReady } = useUser();
-  const [activeSemester, setActiveSemester, semesterHydrated] = useActiveSemester();
+  const [activeSemester, , semesterHydrated] = useActiveSemester();
   const isMobile = useIsMobile();
   const [layoutPref] = useLayoutPref();
   // Top-nav layout keeps the pre-revamp 3-column dashboard with the
@@ -264,33 +262,12 @@ export function Dashboard() {
     if (!userId) return;
     setLoading(true);
     setLoadError(null);
-    // True when this pass only resolved the default semester: keep `loading`
-    // on so the effect re-run (triggered by setActiveSemester) performs the
-    // single scoped fetch without a skeleton flash in between.
-    let deferredToScopedPass = false;
     try {
-      if (!activeSemester) {
-        // First run with no stored semester: resolve + persist the default
-        // BEFORE the scoped graph/recommendations fetch, so the effect re-run
-        // does one scoped fetch instead of unscoped-then-scoped. Default is the
-        // most-recent enrolled term by `sort_key` (courseTermLabels), falling
-        // back to enrollment order.
-        const [coursesRes, semestersRes] = await Promise.all([
-          getCourses(userId),
-          // Term calendar ranks the default; if it fails we fall back to
-          // enrollment order rather than failing the load.
-          getSemesters().catch(() => ({ semesters: [] })),
-        ]);
-        const cs = coursesRes.courses || [];
-        const def = courseTermLabels(cs, semestersRes.semesters || [])[0] || resolveActiveSemester("", cs);
-        if (def) {
-          deferredToScopedPass = true;
-          setActiveSemester(def);
-          return;
-        }
-        // No enrolled terms (e.g. zero courses) → nothing to scope by; fall
-        // through and load unscoped in this same pass.
-      }
+      // Empty `activeSemester` means "All semesters" — the DEFAULT — so the
+      // fetch goes out unscoped. Scoping is opt-in: it only applies once the
+      // user picks a term in the Courses & Semesters hub (nothing auto-resolves
+      // a default term; an auto-picked term hides cross-term data — vetoed by
+      // the e2e lane, #360).
       const [graphRes, coursesRes, assignsRes, sessionsRes, recsRes] = await Promise.all([
         getGraph(userId, activeSemester || undefined),
         getCourses(userId),
@@ -326,9 +303,9 @@ export function Dashboard() {
       console.error("dashboard load failed", err);
       setLoadError(String(err));
     } finally {
-      if (!deferredToScopedPass) setLoading(false);
+      setLoading(false);
     }
-  }, [userId, activeSemester, setActiveSemester]);
+  }, [userId, activeSemester]);
 
   React.useEffect(() => {
     // Wait for the active-semester read from localStorage before the first load,
@@ -1227,7 +1204,9 @@ function CoursesKey({
               className="btn btn--ghost btn--sm"
               onClick={onManage}
               title="Courses & Semesters"
+              aria-label="Courses & Semesters"
               style={paddedIconBtn}
+              data-testid="dashboard-courses-manage"
             >
               <Icon name="cog" size={13} />
             </button>

@@ -14,7 +14,7 @@ import {
   type EnrolledCourse,
   type OnboardingCourse,
 } from "@/lib/api";
-import { useActiveSemester, distinctTerms, resolveActiveSemester } from "@/lib/useActiveSemester";
+import { useActiveSemester, distinctTerms } from "@/lib/useActiveSemester";
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -35,7 +35,10 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
   const toast = useToast();
   const [activeSemester, setActiveSemester] = useActiveSemester();
   const terms = React.useMemo(() => distinctTerms(courses), [courses]);
-  const activeTerm = resolveActiveSemester(activeSemester, courses);
+  // Empty stored value = "All semesters" (the default): no term filter, and
+  // every surface fetches unscoped. A term only scopes once the user picks it
+  // here — the choice persists via the shared hook.
+  const activeTerm = activeSemester;
   const [query, setQuery] = React.useState("");
   const [results, setResults] = React.useState<OnboardingCourse[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -135,11 +138,26 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
             </div>
           ) : (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+              {/* "All semesters" is the default (empty stored value); clicking
+                  it clears the stored term so every surface goes unscoped. */}
+              <button
+                onClick={() => setActiveSemester("")}
+                className="btn btn--sm"
+                aria-pressed={activeTerm === ""}
+                style={{
+                  background: activeTerm === "" ? "var(--accent-soft)" : "var(--bg-panel)",
+                  color: activeTerm === "" ? "var(--accent)" : "var(--text-dim)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                All semesters
+              </button>
               {terms.map((t) => (
                 <button
                   key={t}
                   onClick={() => setActiveSemester(t)}
                   className="btn btn--sm"
+                  aria-pressed={t === activeTerm}
                   style={{
                     background: t === activeTerm ? "var(--accent-soft)" : "var(--bg-panel)",
                     color: t === activeTerm ? "var(--accent)" : "var(--text-dim)",

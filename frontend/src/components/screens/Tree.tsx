@@ -10,8 +10,7 @@ import { KnowledgeGraph } from "../KnowledgeGraph";
 import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { ensureDefaultActiveSemester, useActiveSemester } from "@/lib/useActiveSemester";
-import { courseTermLabels } from "@/lib/semesters";
+import { useActiveSemester } from "@/lib/useActiveSemester";
 import { getGraph, getCourses, getSessions, deleteGraphNode, type EnrolledCourse, type Session } from "@/lib/api";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
@@ -68,10 +67,6 @@ export function Tree() {
       ]);
       const cs = coursesRes.courses || [];
       setCourses(cs);
-      // No stored semester yet (e.g. first visit lands here, not on the
-      // Dashboard): persist the most-recent enrolled term as the default.
-      // The change event re-runs the load once, scoped.
-      ensureDefaultActiveSemester(courseTermLabels(cs));
       setNodes((graphRes.nodes || []).map((n: ApiNode) => apiToGraphNode(n, cs)));
       setEdges(
         (graphRes.edges || []).map((e: ApiEdge) => ({
