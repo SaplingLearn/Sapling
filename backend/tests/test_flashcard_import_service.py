@@ -90,6 +90,23 @@ class TestRateLimit:
         now[0] = 1061.0  # past 60-second window
         assert svc.check_rate_limit("u1") is None
 
+    def test_retry_capped_at_window_on_coincident_timestamps(self, monkeypatch):
+        # Windows' coarse timer (~15.6ms tick) reliably lands a tight loop of
+        # calls on the identical time.time() value, so elapsed == 0.0 exactly
+        # and the retry hint must still stay within (0, window] (#346).
+        monkeypatch.setattr(svc.time, "time", lambda: 1000.0)
+        for _ in range(5):
+            svc.check_rate_limit("u1")
+        assert svc.check_rate_limit("u1") == 60
+
+    def test_retry_uses_ceiling_of_remaining_window(self, monkeypatch):
+        now = [1000.0]
+        monkeypatch.setattr(svc.time, "time", lambda: now[0])
+        for _ in range(5):
+            svc.check_rate_limit("u1")
+        now[0] = 1059.5  # 0.5s of the window left -> ceil to 1
+        assert svc.check_rate_limit("u1") == 1
+
 
 # ── parse_xlsx ───────────────────────────────────────────────────────────────
 
@@ -430,3 +447,17 @@ class TestGenerateFlashcards:
         assert "- BFS" in sent
         # Free-text context branch.
         assert "Focus on the midterm review session." in sent
+
+
+class TestRateLimitClockSkew:
+    def test_retry_capped_when_clock_steps_backward(self, monkeypatch):
+        # NTP can step time.time() BACKWARD between calls: now < bucket[0]
+        # makes the remaining window exceed the 60s window, and bare ceil()
+        # would report an impossible retry hint. The min() cap is load-bearing
+        # exactly here (#346).
+        now = [1000.0]
+        monkeypatch.setattr(svc.time, "time", lambda: now[0])
+        for _ in range(5):
+            svc.check_rate_limit("u-skew")
+        now[0] = 998.5  # clock stepped back 1.5s
+        assert svc.check_rate_limit("u-skew") == 60
