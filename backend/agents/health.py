@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from pydantic_ai import Agent
 
-from agents._providers import google_model
+from agents._providers import HEALTH_PROBE_MODEL, google_model
 
 
 # Cheapest model on the shared provider; the probe only needs a round-trip.
 health_probe_agent = Agent[None, str](
-    model=google_model("gemini-2.5-flash-lite"),
+    model=google_model(HEALTH_PROBE_MODEL),
     output_type=str,
     system_prompt="You are a connectivity probe. Reply with exactly the text the user asks for.",
     metadata={"agent": "health_probe"},
