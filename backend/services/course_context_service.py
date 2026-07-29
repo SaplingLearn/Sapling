@@ -20,6 +20,7 @@ from functools import lru_cache
 from db.connection import table
 from agents._run import run_agent_sync
 from agents.course_summary import course_summary_agent
+from agents.usage import record_agent_usage
 
 
 def _generate_data_hash(stats_rows: list) -> str:
@@ -52,7 +53,10 @@ def _generate_summary_with_gemini(
     )
 
     try:
-        result = run_agent_sync(course_summary_agent.run(user_message))
+        result = record_agent_usage(
+            run_agent_sync(course_summary_agent.run(user_message)),
+            feature="course_summary", task="course_summary",
+        )
         return result.output.summary
     except Exception:
         # Fallback summary if the agent fails

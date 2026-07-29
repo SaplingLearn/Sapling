@@ -110,12 +110,12 @@ def make_deps():
     )
 
 
-async def collect(agent, deps, on_complete, legacy_fallback=None):
+async def collect(agent, deps, on_complete, legacy_fallback=None, on_usage=None):
     events = []
     async for ev in stream_agent_turn(
         agent=agent, user_message="hi", run_kwargs={}, deps=deps,
         on_complete=on_complete, legacy_fallback=legacy_fallback,
-        request_id="r1",
+        on_usage=on_usage, request_id="r1",
     ):
         events.append(ev)
     return events
@@ -338,5 +338,81 @@ def test_on_complete_raising_yields_error_not_unhandled_exception():
         assert events[-1].data["request_id"] == "r1"
         assert all(e.type != "done" for e in events), "no done after failed persistence"
         assert legacy_calls == [], "reply already streamed — never re-run legacy"
+
+    asyncio.run(run())
+
+
+# ── on_usage hook (#118) ──────────────────────────────────────────────────
+
+def test_on_usage_called_once_with_run_result_before_done():
+    """The success path hands the final AgentRunResult to on_usage exactly
+    once — the seam the routes use to record streamed-tutor token usage."""
+    async def run():
+        agent = FakeAgent([
+            PartStartEvent("Hi"),
+            AgentRunResultEvent("Hi"),
+        ])
+        usage_calls = []
+        events = await collect(
+            agent, make_deps(), lambda r, g, m: {},
+            on_usage=lambda res: usage_calls.append(res),
+        )
+        assert len(usage_calls) == 1, "on_usage must fire exactly once"
+        assert usage_calls[0].output == "Hi", "hook receives the run result itself"
+        assert events[-1].type == "done"
+
+    asyncio.run(run())
+
+
+def test_on_usage_failure_never_breaks_the_stream():
+    """Instrumentation must not turn a fully-streamed reply into an error:
+    a raising on_usage is swallowed and the turn still persists + dones."""
+    async def run():
+        agent = FakeAgent([
+            PartStartEvent("Hi"),
+            AgentRunResultEvent("Hi"),
+        ])
+        persisted = []
+
+        def bad_usage(res):
+            raise RuntimeError("usage capture blew up")
+
+        events = await collect(
+            agent, make_deps(), lambda r, g, m: persisted.append(r) or {},
+            on_usage=bad_usage,
+        )
+        assert persisted == ["Hi"], "persistence still runs after a usage slip"
+        assert events[-1].type == "done"
+
+    asyncio.run(run())
+
+
+def test_on_usage_not_called_on_error_rungs_or_legacy_fallback():
+    """No result event was seen on Rung 1/2, and the legacy fallback's usage
+    is captured inside call_gemini_multiturn — the hook must stay silent."""
+    async def run():
+        usage_calls = []
+
+        async def fake_legacy():
+            return {"reply": "legacy"}
+
+        # Rung 1: failure before any token → legacy fallback.
+        events = await collect(
+            FakeAgent([AgentRunResultEvent("x")], raise_after=0),
+            make_deps(), lambda r, g, m: {},
+            legacy_fallback=fake_legacy,
+            on_usage=lambda res: usage_calls.append(res),
+        )
+        assert events[-1].type == "done" and events[-1].data["reply"] == "legacy"
+        assert usage_calls == [], "legacy fallback must not trigger on_usage"
+
+        # Rung 2: failure after tokens streamed → terminal error.
+        events = await collect(
+            FakeAgent([PartStartEvent("Hi"), AgentRunResultEvent("x")], raise_after=1),
+            make_deps(), lambda r, g, m: {},
+            on_usage=lambda res: usage_calls.append(res),
+        )
+        assert events[-1].type == "error"
+        assert usage_calls == [], "an aborted run has no result to record"
 
     asyncio.run(run())

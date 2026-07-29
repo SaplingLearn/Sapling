@@ -60,6 +60,17 @@ def _clear_lru_caches():
 
 
 @pytest.fixture(autouse=True)
+def _reset_events_service():
+    """#118/#116: reset the observability queue, drop-counter, and one-time
+    pricing-warning state around every test, so a queued row, a tripped
+    overflow counter, or a shrunk test queue can't leak into the next test."""
+    from services import events_service
+    events_service.reset_for_tests()
+    yield
+    events_service.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_supabase_client(request, monkeypatch):
     """Hermetic safety net (#210): no test may make a real Supabase call.
 

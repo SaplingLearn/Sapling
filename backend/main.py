@@ -24,6 +24,7 @@ logging.basicConfig(
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
+from routes.admin_analytics import router as admin_analytics_router
 from routes.newsletter import router as newsletter_router
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services.request_context import RequestIDMiddleware, current_request_id
@@ -80,8 +81,14 @@ async def _lifespan(_app: FastAPI):
         file_size_limit=MAX_AVATAR_SIZE,
         allowed_mime_types=sorted(ALLOWED_CONTENT_TYPES),
     )
+    # #116/#118: start the fire-and-forget observability drain thread so LLM
+    # usage + event rows flush off the request path.
+    from services import events_service
+    events_service.start_worker()
     yield
-    # No shutdown hooks today.
+    # Stop the drain thread and flush anything still queued so the last batch
+    # of usage rows isn't lost on shutdown.
+    events_service.shutdown()
 
 
 def _drop_request_arguments(_request, _attributes):
@@ -199,6 +206,7 @@ app.include_router(careers.router,     prefix="/api/careers")
 app.include_router(onboarding.router,  prefix="/api/onboarding")
 app.include_router(profile_router,     prefix="/api/profile")
 app.include_router(admin_router,       prefix="/api/admin")
+app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
 app.include_router(newsletter_router,  prefix="/api/newsletter")
 app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")
@@ -267,9 +275,13 @@ def gemini_test(request: Request):
     require_admin(request)  # 403 unless the session belongs to an admin; 401 if unauthenticated
     from agents._run import run_agent_sync
     from agents.health import health_probe_agent
+    from agents.usage import record_agent_usage
     try:
-        result = run_agent_sync(
-            health_probe_agent.run('Reply with exactly the text: Gemini OK')
+        result = record_agent_usage(
+            run_agent_sync(
+                health_probe_agent.run('Reply with exactly the text: Gemini OK')
+            ),
+            feature="health",
         )
         return {"ok": True, "reply": result.output.strip()}
     except Exception as e:
