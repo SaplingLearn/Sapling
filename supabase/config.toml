@@ -39,7 +39,10 @@ shadow_port = 54320
 health_timeout = "2m"
 # The database major version to use. This has to be the same as your remote database's. Run `SHOW
 # server_version;` on the remote database to check.
-major_version = 17
+# Pinned to 15 to match staging/prod (#441) — the deterministic local/CI lane
+# should test what production actually runs. 15 is also the Supabase CLI's own
+# documented default for this key.
+major_version = 15
 
 [db.pooler]
 enabled = false

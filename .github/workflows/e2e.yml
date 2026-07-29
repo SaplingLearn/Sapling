@@ -7,9 +7,10 @@ name: e2e (browser lane)
 #
 # Trigger is main-only per epic #402 open decision 3 (promote to a PR gate
 # once the #388 stability bar has held for a while). Postgres version comes
-# from supabase/config.toml (PG17) — this deliberately goes AGAINST epic
-# decision 2's recorded PG15 leaning, choosing consistency with the proven
-# local + integration.yml stack instead; the prod skew is tracked in #441.
+# from supabase/config.toml (PG15, #441) — matching staging/prod, so this
+# deterministic lane tests what production actually runs; local dev and CI
+# still stay consistent with each other (and with integration.yml) since both
+# follow the same config.toml pin.
 
 on:
   workflow_dispatch:
