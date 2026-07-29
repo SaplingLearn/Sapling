@@ -1,6 +1,6 @@
 # 0020 — Interrupted tutor turns keep the partial reply and offer Retry (#356 item 5)
 
-**Status:** decided · **Issue:** #356 (PR #349 e2e-smoke item 5) · **Implements:** the streaming feature in PR #349
+**Status:** implemented (on `main`, with PR #349 merged — ChatPanel `interrupted`/Retry + Learn re-dispatch; journey: `frontend/e2e/streaming.spec.ts`) · **Issue:** #356 (PR #349 e2e-smoke item 5) · **Implements:** the streaming feature in PR #349
 
 ## The decision
 
@@ -64,6 +64,11 @@ carries #354/#355. Acceptance for item 5 in #356 is: this decision recorded
 - ChatPanel gains an `interrupted` bubble treatment (keep `streamingText`, style
   as interrupted) and a Retry action; Learn wires Retry to re-dispatch the
   turn's original `message`/`mode`.
+- Scope note (implementation): this covers chat TURNS (`send`'s ladder — Stop,
+  Rung-2, and a failed Rung-3 fallback all get the interrupted+Retry bubble).
+  A stopped/failed session GREETING (`beginSession`) has no transcript turn to
+  mark: no user message exists yet and nothing was persisted, so it returns to
+  the entry screen with the topic draft intact — Start is its retry affordance.
 - No backend change: the persistence contract and fallback ladder already
   guarantee "nothing persisted on stop/failure," which is what makes Retry a
   plain re-send. This is a client-rendering decision on top of the existing seam.

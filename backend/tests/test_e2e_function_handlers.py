@@ -325,3 +325,65 @@ def test_concept_describe_handler_passes_real_output_schema(monkeypatch):
 
     assert result.output.description == E2E_CONCEPT_DESCRIPTION
     assert len(E2E_CONCEPT_DESCRIPTION) <= 400
+
+
+# ── Slow-stream trigger + lane pacing (#356) ──────────────────────────────
+#
+# frontend/e2e/streaming.spec.ts needs a mid-stream window to press Stop /
+# switch sessions inside. The env module (a) sets the streamed-replay pacing
+# knob at import, and (b) serves a LONG deterministic reply when the user
+# message carries E2E_SLOW_STREAM_TRIGGER — giving those journeys several
+# seconds of real streaming. The default (no trigger) reply must stay
+# E2E_TUTOR_REPLY byte-for-byte: tutor.spec.ts asserts it verbatim.
+
+
+def test_env_module_slow_trigger_returns_slow_reply(monkeypatch):
+    """A tutor turn whose message carries the trigger gets the long slow-lane
+    constant — through the real agent wiring via the env-autoloaded module."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    with socratic_agent.override(model=model_for("chat_tutor")):
+        result = socratic_agent.run_sync(
+            "Walk me through this E2E_SLOW_STREAM please", deps=_deps()
+        )
+
+    from agents.function_handlers_e2e import E2E_TUTOR_SLOW_REPLY
+
+    assert result.output == E2E_TUTOR_SLOW_REPLY
+
+
+def test_env_module_default_reply_unchanged_by_trigger_support(monkeypatch):
+    """Regression guard: a normal message (no trigger) still gets the fixed
+    E2E_TUTOR_REPLY — the slow lane must never hijack the default journey."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    with socratic_agent.override(model=model_for("chat_tutor")):
+        result = socratic_agent.run_sync("What is recursion?", deps=_deps())
+
+    from agents.function_handlers_e2e import E2E_TUTOR_REPLY
+
+    assert result.output == E2E_TUTOR_REPLY
+
+
+def test_env_module_import_sets_stream_pacing(monkeypatch):
+    """Importing the module opts the lane into streamed-replay pacing (150ms
+    between chunked deltas) so mid-stream journeys have a window to act in.
+    In-process tests stay unpaced: the autouse registry reset
+    (clear_function_handlers) zeroes the knob again after each case."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    with socratic_agent.override(model=model_for("chat_tutor")):
+        socratic_agent.run_sync("What is recursion?", deps=_deps())
+
+    from agents._providers import function_stream_delay_ms
+
+    assert function_stream_delay_ms() == 150
