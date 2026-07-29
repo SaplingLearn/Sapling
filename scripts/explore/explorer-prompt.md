@@ -66,12 +66,19 @@ signed in (storage state). Today's in-app date is frozen at 2026-03-11.
 - severity guess: crash | wrong-data | annoyance
 ```
 
-## Known open bugs — do not re-report as new (re-confirming with NEW evidence is fine)
+## Known bugs — current status (do not re-report the open one as new; re-confirming with NEW evidence is fine)
 
-- #355 graph duplicates the CS subject-root hub (the oracle will flag this).
-- #430 cookie-only session renders an infinite dashboard skeleton.
-- #435, #436, #441 — open UI/infra bugs from Chapter 1.
-- #439 RAG indexing errors in the backend log are allowlisted noise.
+- **Known-open:** #449 — `get_courses` per-enrollment fan-out produces
+  duplicate `course_id` rows. Library's instance was fixed render-side in
+  #451; Tree/Dashboard/etc. and the `DocumentUploadModal` course picker still
+  show it.
+- **Recently fixed** — a regression on any of these is a genuine new finding,
+  not a known bug: #355 (graph's duplicated CS subject-root hub), #430
+  (cookie-only session infinite dashboard skeleton), #435 (unresolved
+  course_id), #436 + root cause #354 (Gemini provider event-loop flake),
+  #439 (RAG-indexing log noise — the allowlist entry stays as defense in
+  depth), #446 (concept-description 500), #441 (PG17/PG15 skew — local/CI
+  now pinned to PG15).
 
 ## End of session
 

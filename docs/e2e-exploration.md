@@ -154,9 +154,13 @@ cd backend && venv/bin/python -m e2e_oracles [--json] [--check ciphertext|counts
   results as untrustworthy when this happens, not just the failing check).
 - Needs the stack up (`make e2e-up` or `scripts/explore.sh up`) — it hits the
   local Postgres directly and the backend's `/api/health`-adjacent surface.
-- The `logscan` check allowlists known #439 RAG-indexing log noise — an
-  allowlisted hit still counts toward "N suppressed" in the summary line, but
-  doesn't produce a `Finding`.
+- The `logscan` check allowlists known #439 RAG-indexing log noise. #439
+  itself is fixed (embeddings are now mode-gated), but the allowlist entry
+  stays as defense in depth — the mode-gate abort deliberately routes through
+  the same log line, so a real regression would still need to be
+  distinguishable from the expected abort path. An allowlisted hit still
+  counts toward "N suppressed" in the summary line, but doesn't produce a
+  `Finding`.
 
 ## 7. Triage protocol
 
@@ -172,10 +176,13 @@ For each entry in `findings.md` (explorer-written or oracle-appended):
    (steps/expected/actual), the oracle JSON if there is any, and the
    `.explore/traces/` path attached. Label it as sourced from exploration so
    it's traceable back to a session.
-3. **Already-known** (currently: #355, #430, #435, #436, #439, #441) → don't
-   file a new issue. Add the new evidence as a comment on the existing issue
-   only if it's actually new evidence (a different surface, a clearer repro,
-   fresh oracle output) — otherwise it's just noise on an already-tracked bug.
+3. **Already-known** (currently: #449 — `get_courses` per-enrollment fan-out
+   produces duplicate `course_id` rows; Library's instance was fixed
+   render-side in #451, but Tree/Dashboard/etc. and the
+   `DocumentUploadModal` course picker still show it) → don't file a new
+   issue. Add the new evidence as a comment on the existing issue only if
+   it's actually new evidence (a different surface, a clearer repro, fresh
+   oracle output) — otherwise it's just noise on an already-tracked bug.
 4. **Noise the oracle wrongly flagged** → that's a bug in the oracle itself
    (a missing allowlist entry, or a judge that's too strict/wrong). Fix it as
    a normal PR against `backend/e2e_oracles/` — don't just delete the finding
@@ -194,7 +201,9 @@ genuinely has no handler in `backend/agents/function_handlers_e2e.py`. The
 `logscan` oracle independently caught the same `500` and traceback in the
 backend log, so this has both a UI-observed repro and oracle corroboration.
 It isn't on the known-bugs list — exactly the kind of thing this chapter
-exists to surface, and a strong promotion candidate (§8).
+exists to surface, and a strong promotion candidate (§8). (It was: filed as
+#446, fixed, and promoted into `tutor.spec.ts` — the pipeline working
+end-to-end.)
 
 **Seam artifact — drop it, then improve the harness, not the app (still
 category 1).** A different run's explorer flagged what looked like a
@@ -223,9 +232,11 @@ the pattern explicitly so a future explorer recognizes it before writing the
 stub, rather than filing an issue against the harness's own known-fixed
 output.
 
-By contrast, #355 (the graph's duplicated CS subject-root hub) shows up in
-the graph oracle on essentially every run against the rich seed data —
-that's the known-not-new case category 3 above exists for.
+By contrast, #355 (the graph's duplicated CS subject-root hub) used to show
+up in the graph oracle on essentially every run against the rich seed data —
+that was the known-not-new case category 3 above exists for, back when #355
+was still open (it's since been fixed by #447; see the §8 note on its
+`graph.spec.ts` assertion).
 
 ## 8. Promotion pipeline
 
@@ -249,9 +260,10 @@ written in the existing specs' style —
 
 If the promoted journey documents a bug that's still open and must stay red,
 ride it in on `test.fixme` with the bug number — exactly how
-`frontend/e2e/graph.spec.ts` carries its `#355` assertion today (marked
-`fixme`, not relaxed, with companion tests asserting everything #355 does
-*not* corrupt).
+`frontend/e2e/graph.spec.ts` carried its `#355` assertion (marked `fixme`,
+not relaxed, with companion tests asserting everything #355 did *not*
+corrupt) until the fix landed in #447 and the test was un-`fixme`'d — the
+intended lifecycle.
 
 ## 9. Cadence + cost
 
