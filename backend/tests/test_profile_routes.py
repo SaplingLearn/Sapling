@@ -942,3 +942,53 @@ class TestUpdateSettingsShareClassContext:
             )
         assert r.status_code == 200
         assert captured["data"]["share_class_context"] is False
+
+
+class TestShareClassContextToggleRefresh:
+    """#72 (PR #464 review): persisting the opt-out is not enough — the
+    aggregates must refresh NOW, not whenever a classmate's activity next
+    fires update_course_context. The PATCH schedules one refresh per
+    enrolled offering; update_course_context re-reads user_settings, so the
+    just-written value is what its chokepoint filter sees."""
+
+    def _tables(self):
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "user_settings":
+                m.select.return_value = [{"user_id": USER_ID, "share_class_context": True}]
+                m.update.return_value = [{}]
+            elif name == "enrollments":
+                m.select.return_value = [
+                    {"offering_id": "off-1"},
+                    {"offering_id": "off-2"},
+                    {"offering_id": "off-1"},  # duplicate → deduped
+                ]
+            else:
+                m.select.return_value = []
+            return m
+
+        return table_side_effect
+
+    def test_toggling_share_class_context_refreshes_every_enrolled_offering(self):
+        with (
+            _mock_self(),
+            patch("routes.profile.table", side_effect=self._tables()),
+            patch("routes.profile.update_course_context") as refresh,
+        ):
+            r = client.patch(
+                f"/api/profile/{USER_ID}/settings", json={"share_class_context": False}
+            )
+        assert r.status_code == 200
+        # TestClient runs BackgroundTasks after the response: one refresh per
+        # distinct offering.
+        assert sorted(c.args[0] for c in refresh.call_args_list) == ["off-1", "off-2"]
+
+    def test_other_settings_do_not_trigger_refresh(self):
+        with (
+            _mock_self(),
+            patch("routes.profile.table", side_effect=self._tables()),
+            patch("routes.profile.update_course_context") as refresh,
+        ):
+            r = client.patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})
+        assert r.status_code == 200
+        refresh.assert_not_called()

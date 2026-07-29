@@ -7,7 +7,9 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File, Query
+
+from services.course_context_service import update_course_context
 from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
@@ -399,7 +401,12 @@ def get_settings(user_id: str, request: Request):
 
 
 @router.patch("/{user_id}/settings")
-def update_settings(user_id: str, body: UpdateSettingsBody, request: Request):
+def update_settings(
+    user_id: str,
+    body: UpdateSettingsBody,
+    background_tasks: BackgroundTasks,
+    request: Request,
+):
     require_self(user_id, request)
     _get_or_create_settings(user_id)
 
@@ -431,6 +438,19 @@ def update_settings(user_id: str, body: UpdateSettingsBody, request: Request):
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
+
+    # #72 (PR #464 review): flipping the Class Intel opt-out must take effect
+    # NOW, not whenever some classmate's activity next fires the aggregation.
+    # Refresh every offering the user is enrolled in as a post-response task —
+    # update_course_context re-reads user_settings, so the just-written value
+    # is what the chokepoint filter sees, and an opted-out user's data drops
+    # out of offering_concept_stats/offering_summary immediately.
+    if "share_class_context" in updates:
+        enrollment_rows = table("enrollments").select(
+            "offering_id", filters={"user_id": f"eq.{user_id}"}
+        )
+        for offering_id in {r["offering_id"] for r in enrollment_rows or []}:
+            background_tasks.add_task(update_course_context, offering_id)
 
     return _get_or_create_settings(user_id)
 

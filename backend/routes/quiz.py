@@ -381,6 +381,21 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         raise HTTPException(
             status_code=409, detail="Quiz attempt has already been submitted"
         )
+    # The read above is only the fast path — two CONCURRENT submits (a
+    # double-click on the final submit) would both pass it. The atomic claim
+    # below (conditional update on completed_at IS NULL, PR #464 review) is
+    # the real gate: exactly one request wins the row; the loser 409s before
+    # any mastery write. A crash after the claim leaves the attempt
+    # completed-but-scoreless (retry 409s) — strictly safer than double
+    # mastery. The final update further down fills score/total/answers_json.
+    claimed = table("quiz_attempts").update(
+        {"completed_at": datetime.utcnow().isoformat()},
+        filters={"id": f"eq.{body.quiz_id}", "completed_at": "is.null"},
+    )
+    if not claimed:
+        raise HTTPException(
+            status_code=409, detail="Quiz attempt has already been submitted"
+        )
 
     concept_node_id = attempt["concept_node_id"]
 
@@ -458,7 +473,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             "score": score,
             "total": total,
             "answers_json": [a.model_dump() for a in body.answers],
-            "completed_at": datetime.utcnow().isoformat(),
+            # completed_at was already stamped by the atomic claim above.
         },
         filters={"id": f"eq.{body.quiz_id}"},
     )
