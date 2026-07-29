@@ -18,9 +18,12 @@ the Pro tier for the conversational tutor where reasoning depth matters.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import os
-from typing import TYPE_CHECKING, Callable, Literal
+import threading
+import weakref
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
@@ -92,10 +95,153 @@ _DEFAULTS: dict[AgentTask, str] = {
 }
 
 
-# Pydantic AI's GoogleProvider expects an API key at construction. CI and
-# import-time tools don't have GEMINI_API_KEY set; the dummy keeps imports
-# clean and only fails at .run() time when the agent actually needs Gemini.
-_provider = GoogleProvider(api_key=GEMINI_API_KEY or "dummy-key-for-import")
+def _new_provider() -> GoogleProvider:
+    """A fresh `GoogleProvider` (fresh `google.genai` client + httpx connection
+    pool). CI and import-time tools don't have GEMINI_API_KEY set; the dummy
+    keeps imports clean and only fails at .run() time when the agent actually
+    needs Gemini."""
+    return GoogleProvider(api_key=GEMINI_API_KEY or "dummy-key-for-import")
+
+
+# ── #354 root-cause fix: loop-scoped provider, resolved at READ time ───────
+#
+# Every agent is built ONCE, at import time, from `Agent(model=model_for(task),
+# ...)` — so whatever `Model` instance `model_for`/`google_model` hand back is
+# shared across every later `.run()` call for that agent's whole process
+# lifetime, across every concurrent request. Until this fix, that model
+# wrapped ONE module-level `GoogleProvider` singleton, and `GoogleProvider.
+# __init__` eagerly builds an `httpx.AsyncClient` whose connection pool binds
+# internal asyncio primitives (locks, etc.) to whichever event loop is running
+# the first time a request actually goes out over it.
+#
+# `run_agent_sync` (`agents/_run.py`, `asyncio.run`) drives agents on a BRAND
+# NEW throwaway loop per call, closed on return — and, identically, so does any
+# test that calls `asyncio.run()` more than once against the same shared agent
+# in one process (e.g. `tests/test_ocr_pipeline.py::test_agent_parse` then
+# the `parsed_assignments` fixture feeding `test_save_to_db`, #436). Reusing
+# the singleton's client after its original loop closes trips
+# `RuntimeError: Event loop is closed` on the very next call through it —
+# every SECOND real call, alternating forever.
+#
+# A prior attempt (#358, never merged) fixed this by sweeping every
+# `run_agent_sync` call SITE to pass a `model=` override built on a fresh
+# provider. That requires every current AND future caller to remember the
+# override — `agents/ocr_vision.py` already needed its own ad hoc copy of the
+# same idea for the one path #358 didn't wait for (OCR page transcription),
+# and `test_save_to_db`'s failure shows a caller (`calendar_service`'s
+# syllabus-extraction agent) that wasn't even on #358's sweep list. The issue
+# itself flagged this as "the tactical sweep", with "make the shared provider
+# loop-safe" as the strategic fix.
+#
+# FIX-ROUND-1 CORRECTION (PR review finding, concurrency bug): the first
+# version of `_LoopSafeGoogleModel` resolved the right provider under a lock
+# in `_bind_to_current_loop()`, but then handed it off through a single
+# shared MUTABLE `self._provider` attribute — and `self` is itself a
+# module-level singleton shared by every concurrent call to the agent it
+# backs. `GoogleModel._generate_content` reads `self.client` (→
+# `self._provider.client`) only AFTER an `await` (`self._build_content_and_
+# config(...)`); in that window, a DIFFERENT thread running a DIFFERENT event
+# loop — exactly what happens under concurrent requests, since every
+# sync-`def` route drives `run_agent_sync` on a fresh thread + throwaway
+# loop, and `gemini_vision_backend._run_from_anywhere` does the same for OCR
+# — could call its OWN `_bind_to_current_loop()` and overwrite that same
+# shared attribute. The first call would then resume and read a provider
+# bound to someone ELSE's — possibly already-closed — loop: a deterministic
+# every-second-call flake turned into a probabilistic, load-dependent one,
+# not fixed. Confirmed empirically: 6 threads × 20 sequential `asyncio.run`
+# calls against one shared instance, with an `asyncio.sleep` standing in for
+# the real await gap, produced 95/120 mismatches between the provider bound
+# for a call and the one actually read back.
+#
+# The fix below removes the hand-off entirely — there is no longer any
+# instance attribute that one thread resolves and a later expression, on
+# a possibly-different thread, trusts is still current. `self._provider` (the
+# base `GoogleModel`/`Model` attribute) is now a FIXED TEMPLATE: constructed
+# once, in `__init__`, and never reassigned afterward. It backs only the
+# handful of reads that are genuinely loop-INDEPENDENT — `system`/`base_url`,
+# and the bare `.name`/`.base_url` pydantic-ai's own inherited `count_tokens`/
+# usage-metadata code reads directly off `self._provider` — which are
+# identical no matter which provider instance answers them, because every
+# provider this module ever constructs (`_new_provider()`) is built with the
+# exact same arguments (deterministic given the API key). This module does
+# NOT override `system`/`base_url`; they stay on the inherited GoogleModel
+# implementation, reading the fixed template, by this explicit design choice.
+#
+# The ONE read that IS loop-affine — `.client`, the actual `google.genai.
+# Client` that makes real HTTP requests — is overridden below as a PROPERTY
+# that resolves `asyncio.get_running_loop()` → the loop-keyed cache FRESH, AT
+# THE MOMENT OF EVERY ACCESS, and returns immediately: no `await`, no
+# instance-attribute write, nothing for a concurrent thread to race against
+# in between "resolve" and "use". Every inherited method (`request`,
+# `count_tokens`, `request_stream`, `_generate_content`, ...) reads
+# `self.client` through ordinary Python attribute lookup, so this one
+# override covers every one of them automatically — none of `request`/
+# `count_tokens`/`request_stream` need to be (and are no longer) overridden
+# themselves. Because there is no shared pointer left to go stale, correctness
+# no longer depends on timing: whichever thread/loop happens to be running
+# when `.client` is evaluated gets exactly (and only) the provider that
+# belongs to it, cached per-loop in a `WeakKeyDictionary` keyed by the loop
+# object itself so entries vanish on their own once a throwaway loop is
+# garbage-collected (no unbounded growth over a long process's lifetime of
+# `run_agent_sync` calls). The one persistent loop that matters most —
+# FastAPI's per-process async loop, shared by every `async def` route handler
+# for the app's whole lifetime — still gets the same connection-pooling
+# benefit the old singleton gave it, since its cache entry is looked up (not
+# rebuilt) on every subsequent call. No call site — present or future — has
+# to know event loops (or threads) exist.
+class _LoopSafeGoogleModel(GoogleModel):
+    """A `GoogleModel` whose `.client` resolves the provider bound to the
+    CURRENTLY RUNNING event loop at every access, instead of caching one on
+    `self`. See the module-level comment above for why (#354/#436, and the
+    fix-round-1 correction to this class's first version, which cached a
+    shared `self._provider` pointer and raced under concurrent requests)."""
+
+    def __init__(self, model_name: str) -> None:
+        # `provider=` here becomes a fixed TEMPLATE (see module comment) —
+        # constructed once, never reassigned, read only for loop-independent
+        # metadata. It must NEVER be read for `.client` — that's what the
+        # property override below is for.
+        super().__init__(model_name, provider=_new_provider())
+        self._loop_providers: "weakref.WeakKeyDictionary[Any, GoogleProvider]" = (
+            weakref.WeakKeyDictionary()
+        )
+        self._loop_providers_lock = threading.Lock()
+
+    def _provider_for_current_loop(self) -> GoogleProvider:
+        """The provider bound to whichever event loop is running RIGHT NOW,
+        creating one on first use. Deliberately never cached anywhere on
+        `self` — every caller (`client`, `__aenter__`, `__aexit__`) calls
+        this at the exact point of use, so the result can never go stale by
+        the time it's read. Caching it into an instance attribute between
+        "resolve" and "use" is exactly the fix-round-1 bug this replaces."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop — a plain sync caller inspecting `.client`
+            # outside any asyncio context (e.g. a test). Nothing can race
+            # this: with no loop, there is no concurrent request in flight
+            # to collide with. The fixed template is a safe, deterministic
+            # fallback.
+            return self._provider
+        with self._loop_providers_lock:
+            provider = self._loop_providers.get(loop)
+            if provider is None:
+                provider = _new_provider()
+                self._loop_providers[loop] = provider
+            return provider
+
+    @property
+    def client(self):
+        return self._provider_for_current_loop().client
+
+    async def __aenter__(self):
+        provider = self._provider_for_current_loop()
+        await provider.__aenter__()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        provider = self._provider_for_current_loop()
+        await provider.__aexit__(exc_type, exc_val, exc_tb)
 
 
 # ── Test seam: SAPLING_MODEL_MODE (#391) ───────────────────────────────────
@@ -261,12 +407,14 @@ def model_for(task: AgentTask) -> "Model":
 
     Dispatches on SAPLING_MODEL_MODE (default 'real'). In real mode, reads the
     per-task SAPLING_MODEL_<TASK_UPPER> override first (ADR 0008), else the
-    per-task default, and returns a GoogleModel sharing the project provider.
-    In function mode, returns a FunctionModel (see the seam notes above).
+    per-task default, and returns a `_LoopSafeGoogleModel` (#354/#436 — see the
+    comment above that class) so the caller never has to think about which
+    event loop it ends up running on. In function mode, returns a FunctionModel
+    (see the seam notes above).
     """
     mode = _model_mode()
     if mode == "real":
-        return GoogleModel(model_name_for(task), provider=_provider)
+        return _LoopSafeGoogleModel(model_name_for(task))
     if mode == "function":
         return _function_model_for(task)
     if mode == "cassette":
@@ -284,5 +432,7 @@ def model_for(task: AgentTask) -> "Model":
 
 # Back-compat shim for any caller still using google_model(name).
 def google_model(name: str) -> GoogleModel:
-    """Return a configured GoogleModel sharing the project-wide provider."""
-    return GoogleModel(name, provider=_provider)
+    """Return a configured GoogleModel for a bare model name (bypassing the
+    per-task `_DEFAULTS`/env-override resolution `model_for` does), on the
+    same loop-safe basis as `model_for` (#354/#436)."""
+    return _LoopSafeGoogleModel(name)

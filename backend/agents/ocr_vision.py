@@ -26,7 +26,7 @@ import hashlib
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModelSettings
 
-from agents._providers import _model_mode, model_for, model_name_for
+from agents._providers import model_for
 
 
 # The model is asked to return this verbatim for an empty page. Public because
@@ -72,38 +72,12 @@ ocr_vision_agent = Agent[None, str](
     metadata={"prompt_version": _PROMPT_HASH, "agent": "ocr_vision"},
 )
 
-
-def fresh_ocr_vision_model():
-    """A model bound to no prior event loop, for one `run_agent_sync` call.
-
-    `_providers._provider` is a module-level GoogleProvider, so its async httpx
-    client binds to the first loop `asyncio.run` creates and dies with it:
-    call 1 succeeds, call 2 raises `RuntimeError: Event loop is closed`,
-    call 3 succeeds. Measured exactly that way against the live API.
-
-    Every `run_agent_sync` caller shares this (#354; the sweep is open in PR
-    #358), but transcription is the only one that runs in a LOOP — a 10-page
-    scan alternates success/failure page by page, and
-    `_apply_gemini_vision_fallback`'s per-page `except Exception: continue`
-    keeps Docling's text without a word, so half a document silently degrades.
-    That is the difference between a latent bug and an unusable feature, which
-    is why this path does not wait for #358.
-
-    Scoped deliberately: a fresh provider for THIS agent's runs only, passed as
-    a per-run `model=` override. It leaves the shared `_provider` untouched, so
-    it cannot conflict with whatever #358 lands.
-
-    Returns None when SAPLING_MODEL_MODE is not 'real' — the FunctionModel seam
-    builds no client, has no loop affinity, and must not be overridden.
-    """
-    if _model_mode() != "real":
-        return None
-    from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.google import GoogleProvider
-
-    from config import GEMINI_API_KEY
-
-    return GoogleModel(
-        model_name_for("ocr_vision"),
-        provider=GoogleProvider(api_key=GEMINI_API_KEY or "dummy-key-for-import"),
-    )
+# A 10-page scan calls this agent in a per-page LOOP from
+# `services/extraction_backends/gemini_vision_backend.py`; that used to be the
+# one path that couldn't wait for #354's fresh-provider fix to land (a stale
+# `_providers._provider` singleton alternated success/failure page by page,
+# and `_apply_gemini_vision_fallback`'s per-page `except Exception: continue`
+# silently kept Docling's empty text instead). `model_for("ocr_vision")` above
+# is now loop-safe on its own (`agents._providers._LoopSafeGoogleModel`), so
+# this call site needs no per-run `model=` override anymore — it used to build
+# one here (`fresh_ocr_vision_model`), which is now redundant and removed.
