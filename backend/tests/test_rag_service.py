@@ -128,6 +128,68 @@ def test_index_document_chunks_empty_returns_zero(mock_client):
     mock_client.models.embed_content.assert_not_called()
 
 
+@patch("services.rag_service._client")
+def test_chunk_ids_are_content_addressed_per_course(mock_client):
+    """Identical chunk text in the same course must map to the same chunk id
+    regardless of which document or uploader supplied it — 200 students
+    uploading the same lecture slides should produce one row per unique
+    chunk, not 200 copies of every embedding."""
+    mock_client.models.embed_content.return_value = _make_embedding_response([[0.2] * 768])
+    with patch("services.rag_service.table") as mock_table:
+        mock_table.return_value.upsert.return_value = []
+        from services.rag_service import index_document_chunks
+
+        index_document_chunks("CAS CS 330", "doc-a", "user-1", ["memoization basics"])
+        id_from_doc_a = mock_table.return_value.upsert.call_args[0][0][0]["id"]
+
+        index_document_chunks("CAS CS 330", "doc-b", "user-2", ["memoization basics"])
+        id_from_doc_b = mock_table.return_value.upsert.call_args[0][0][0]["id"]
+
+    assert id_from_doc_a == id_from_doc_b
+
+
+@patch("services.rag_service._client")
+def test_chunk_ids_differ_across_courses(mock_client):
+    """The dedup scope is per-course: the same text indexed under two
+    different course codes must NOT collide, or one course's doc_id/metadata
+    would clobber the other's."""
+    mock_client.models.embed_content.return_value = _make_embedding_response([[0.2] * 768])
+    with patch("services.rag_service.table") as mock_table:
+        mock_table.return_value.upsert.return_value = []
+        from services.rag_service import index_document_chunks
+
+        index_document_chunks("CAS CS 330", "doc-a", "user-1", ["memoization basics"])
+        id_cs330 = mock_table.return_value.upsert.call_args[0][0][0]["id"]
+
+        index_document_chunks("CAS CS 111", "doc-a", "user-1", ["memoization basics"])
+        id_cs111 = mock_table.return_value.upsert.call_args[0][0][0]["id"]
+
+    assert id_cs330 != id_cs111
+
+
+@patch("services.rag_service._client")
+def test_duplicate_chunks_within_one_document_are_deduped(mock_client):
+    """A document repeating the same text (boilerplate headers/footers) must
+    not emit duplicate ids in a single upsert payload — Postgres rejects
+    ON CONFLICT DO UPDATE hitting the same row twice in one statement."""
+    mock_client.models.embed_content.return_value = _make_embedding_response([[0.2] * 768] * 2)
+    with patch("services.rag_service.table") as mock_table:
+        mock_table.return_value.upsert.return_value = []
+        from services.rag_service import index_document_chunks
+
+        count = index_document_chunks(
+            "CAS CS 330",
+            "doc-a",
+            "user-1",
+            ["Page header boilerplate", "actual content", "Page header boilerplate"],
+        )
+        records = mock_table.return_value.upsert.call_args[0][0]
+
+    ids = [r["id"] for r in records]
+    assert len(ids) == len(set(ids)) == 2
+    assert count == 2
+
+
 @patch("services.rag_service._embed_documents_batch")
 def test_index_document_chunks_handles_embedding_failure(mock_embed):
     """Test that embedding failures are caught and records are still upserted with embedding=None."""
@@ -249,3 +311,18 @@ def test_index_document_chunks_never_reaches_transport_in_function_mode(monkeypa
     captured = capsys.readouterr()
     assert "unstubbed LLM egress" not in captured.out
     assert "SAPLING_MODEL_MODE" in captured.out
+
+
+def test_document_chunk_ids_never_collide_with_catalog_ids():
+    """Document and catalog rows share the course_chunks table and its
+    on_conflict=id upsert. The document id keyspace is namespaced with a
+    literal "document" segment so a document chunk whose text byte-matches a
+    catalog chunk (same course) can never overwrite the catalog row and flip
+    its category out from under the category=eq.catalog readers."""
+    from scripts.ingest_catalog import chunk_id as catalog_chunk_id
+    from services.rag_service import chunk_id as document_chunk_id
+
+    course, text = "CAS CS 132", "This course covers matrices and vector spaces."
+    assert document_chunk_id(course, text) != catalog_chunk_id(course, text)
+    # Still content-addressed within the document keyspace.
+    assert document_chunk_id(course, text) == document_chunk_id(course, text)
