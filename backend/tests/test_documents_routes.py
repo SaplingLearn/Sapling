@@ -1381,6 +1381,39 @@ class TestEmptyExtractionGuard:
         assert r.status_code == 422
         assert "no text" in r.json()["detail"].lower()
 
+    def test_threshold_boundary_is_exact(self):
+        """49 stripped chars is rejected; exactly MIN_EXTRACTED_CHARS (50)
+        passes — the guard is >= threshold, and the boundary itself is what a
+        future off-by-one would silently move."""
+        from routes.documents import MIN_EXTRACTED_CHARS
+
+        below = "x" * (MIN_EXTRACTED_CHARS - 1)
+        at = "x" * MIN_EXTRACTED_CHARS
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=below),
+        ):
+            assert _make_upload().status_code == 422
+        ai_result = {
+            "category": "other",
+            "summary": "Boundary-length text.",
+            "key_takeaways": [],
+            "flashcards": [],
+        }
+        with (
+            _mock_validate_user(),
+            patch(
+                "routes.documents.process_document",
+                side_effect=RuntimeError("force legacy fallback for tests"),
+            ),
+            patch("routes.documents.extract_text_from_file", return_value="  " + at + "\n"),
+            patch("routes.documents.call_gemini_json", return_value=ai_result),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "d50", "file_name": "notes.pdf"}]
+            r = _make_upload()
+        assert r.status_code == 200
+
     def test_rejects_whitespace_only_extraction(self):
         with (
             _mock_validate_user(),
