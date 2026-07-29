@@ -47,6 +47,81 @@ function classify(
   return null;
 }
 
+/** The build- and run-time frontend config, resolved from a single knob. */
+export interface ResolvedFrontendEnv {
+  /** The environment we resolved to, or null (unknown / local / preview). */
+  env: FrontendEnv | null;
+  /** Backend origin (used for BACKEND_URL and NEXT_PUBLIC_API_URL). */
+  apiUrl: string;
+  /** Cookie `Domain` attribute, or undefined for a host-only cookie. */
+  cookieDomain: string | undefined;
+  /** True when values came from DEPLOY_ENV, not explicit env vars. */
+  derived: boolean;
+}
+
+/**
+ * Resolve the effective frontend config from an env bag.
+ *
+ * `DEPLOY_ENV` is the single source of truth: when it names a known environment
+ * the API origin and cookie domain are DERIVED from `FRONTEND_ENVS`, so they
+ * cannot drift, be half-set, or be leaked from a stray explicit var. When
+ * `DEPLOY_ENV` is unset (local/dev, docker, or a legacy build that sets the
+ * vars explicitly) this falls back to the explicit env vars — preserving prior
+ * behaviour, including the middleware's `BACKEND_URL`-before-`NEXT_PUBLIC_API_URL`
+ * preference (BACKEND_URL is the server-reachable origin; see middleware.ts).
+ */
+export function resolveFrontendEnv(env: EnvSource): ResolvedFrontendEnv {
+  const deployEnv = (env.DEPLOY_ENV ?? '').trim().toLowerCase();
+  if (deployEnv && deployEnv in FRONTEND_ENVS) {
+    const c = FRONTEND_ENVS[deployEnv as FrontendEnv];
+    return { env: deployEnv as FrontendEnv, apiUrl: c.apiUrl, cookieDomain: c.cookieDomain, derived: true };
+  }
+  return {
+    env: null,
+    apiUrl: (env.BACKEND_URL ?? '').trim() || (env.NEXT_PUBLIC_API_URL ?? '').trim(),
+    cookieDomain: (env.COOKIE_DOMAIN ?? '').trim() || undefined,
+    derived: false,
+  };
+}
+
+/**
+ * Best-effort: which environment SHOULD serve this request host? Returns null
+ * for hosts we don't recognise (preview `*.workers.dev`, localhost, custom
+ * domains) — the guard must not judge those.
+ */
+export function expectedEnvForHost(host: string | undefined | null): FrontendEnv | null {
+  const h = (host ?? '').trim().toLowerCase().split(':')[0];
+  if (!h) return null;
+  if (h === 'staging.saplinglearn.com' || h.endsWith('.staging.saplinglearn.com')) return 'staging';
+  if (h === 'saplinglearn.com' || h === 'www.saplinglearn.com' || h === 'app.saplinglearn.com') {
+    return 'production';
+  }
+  return null;
+}
+
+/**
+ * Detect a host/backend mismatch: the worker is serving a host that belongs to
+ * one environment but is wired to another environment's backend (the exact
+ * failure behind staging's `session_expired` — a prod-config worker answering
+ * `staging.saplinglearn.com`). Returns a human-readable reason, or null when
+ * consistent or indeterminable. Runtime defence-in-depth for what the
+ * build-time guard cannot see (an internally-consistent build shipped to the
+ * wrong worker/route).
+ */
+export function detectHostConfigMismatch(
+  host: string | undefined | null,
+  effectiveApiUrl: string,
+): string | null {
+  const expected = expectedEnvForHost(host);
+  if (!expected) return null;
+  const configured = classify(effectiveApiUrl, 'apiUrl');
+  if (!configured || configured === expected) return null;
+  return (
+    `host ${host} expects the ${expected} backend (${FRONTEND_ENVS[expected].apiUrl}) ` +
+    `but is wired to the ${configured} backend (${effectiveApiUrl})`
+  );
+}
+
 /**
  * Check the frontend deploy variables. Returns a list of problems (empty = OK).
  * Pure — takes an env bag so it is unit-testable.

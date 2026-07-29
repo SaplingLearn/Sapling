@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { signSession, SESSION_MAX_AGE } from '@/lib/sessionToken';
 import { sanitizeCookieDomain } from '@/lib/cookieDomain';
+import { resolveFrontendEnv } from '@/lib/deployGuard';
 
 const SESSION_SECRET = process.env.SESSION_SECRET;
 // #190: validate COOKIE_DOMAIN instead of trusting env verbatim — an
 // overly-broad value would scope the session cookie across unrelated
 // subdomains. An invalid value degrades to a host-only cookie.
-const COOKIE_DOMAIN = sanitizeCookieDomain(process.env.COOKIE_DOMAIN);
+//
+// The domain is derived from DEPLOY_ENV (single source of truth) so the cookie
+// is always scoped to the deployed environment — a staging build can't mint a
+// `.saplinglearn.com` cookie that leaks into prod. Falls back to the explicit
+// COOKIE_DOMAIN env when DEPLOY_ENV is unset (docker/local).
+const COOKIE_DOMAIN = sanitizeCookieDomain(
+  resolveFrontendEnv(process.env as Record<string, string | undefined>).cookieDomain,
+);
 
 /**
  * CSRF defense beyond SameSite=Lax (#190): reject cross-origin requests to the
