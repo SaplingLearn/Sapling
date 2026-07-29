@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
@@ -69,6 +70,10 @@ export function Calendar() {
   const search = useSearchParams();
   const toast = useToast();
   const { userId, userReady } = useUser();
+  // Disable the view-swap fade/slide for users who ask for reduced motion.
+  // The global CSS reduced-motion rule only neutralises CSS transitions;
+  // framer's JS-driven animations need this explicit opt-out.
+  const prefersReduced = useReducedMotion();
 
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
@@ -250,21 +255,38 @@ export function Calendar() {
         actions={topActions}
       />
 
-      {loading && <CalendarMonthSkeleton />}
-      {!loading && view === "month" && <MonthView cursor={cursor} byDate={byDate} today={today} courses={courses} />}
-      {!loading && view === "week" && <WeekView cursor={cursor} byDate={byDate} today={today} courses={courses} />}
-      {!loading && view === "day" && <DayView cursor={cursor} byDate={byDate} courses={courses} />}
-      {!loading && view === "table" && (
-        <AssignmentTable
-          assignments={assignments}
-          courses={courses}
-          selected={selected}
-          onSelectedChange={setSelected}
-          onExport={exportCsv}
-          onReload={load}
-          googleConnected={googleConnected}
-        />
-      )}
+      {/* Crossfade/slide the calendar body when the view (or load state)
+          changes, keyed on that state. Mirrors Study.tsx's mode="wait"
+          pattern so the swap settles instead of snapping (#295). */}
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={loading ? "loading" : view}
+          initial={prefersReduced ? false : { opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={prefersReduced ? { opacity: 1 } : { opacity: 0, y: -8 }}
+          transition={{ duration: prefersReduced ? 0 : 0.22, ease: [0.2, 0.85, 0.35, 1] }}
+        >
+          {loading ? (
+            <CalendarMonthSkeleton />
+          ) : view === "month" ? (
+            <MonthView cursor={cursor} byDate={byDate} today={today} courses={courses} />
+          ) : view === "week" ? (
+            <WeekView cursor={cursor} byDate={byDate} today={today} courses={courses} />
+          ) : view === "day" ? (
+            <DayView cursor={cursor} byDate={byDate} courses={courses} />
+          ) : (
+            <AssignmentTable
+              assignments={assignments}
+              courses={courses}
+              selected={selected}
+              onSelectedChange={setSelected}
+              onExport={exportCsv}
+              onReload={load}
+              googleConnected={googleConnected}
+            />
+          )}
+        </motion.div>
+      </AnimatePresence>
 
       <DocumentUploadModal
         open={uploadOpen}
