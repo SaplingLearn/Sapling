@@ -96,6 +96,14 @@ export function Calendar() {
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
 
+  // True once a load has succeeded — gates HOW a later failure surfaces.
+  // `load` doubles as the background reload (AssignmentTable's onReload,
+  // the OAuth-reconnect effect, upload onComplete), and a reload failure
+  // must never blank an already-populated calendar behind the full-page
+  // banner (PR #463 review; same `error && !data` gating as the Gradebook
+  // screen's ErrorBanner).
+  const hasLoadedRef = React.useRef(false);
+
   const load = React.useCallback(async () => {
     if (!userId) return;
     try {
@@ -108,15 +116,23 @@ export function Calendar() {
       setCourses(c.courses || []);
       setGoogleConnected(Boolean(s.connected));
       setLoadError(null);
+      hasLoadedRef.current = true;
     } catch (err) {
       // Surface the failure (#185) — a swallowed error here renders a
-      // normal-looking empty calendar, indistinguishable from an empty account.
+      // normal-looking empty calendar, indistinguishable from an empty
+      // account. Initial load → full-page banner (there is nothing else to
+      // show); background reload → toast, keeping the loaded view intact.
       console.error("calendar load failed", err);
-      setLoadError(humanizeError(err, "Check your connection and try again."));
+      const message = humanizeError(err, "Check your connection and try again.");
+      if (hasLoadedRef.current) {
+        toast.error(`Couldn't refresh the calendar. ${message}`);
+      } else {
+        setLoadError(message);
+      }
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, toast]);
 
   const retryLoad = React.useCallback(() => {
     setLoading(true);

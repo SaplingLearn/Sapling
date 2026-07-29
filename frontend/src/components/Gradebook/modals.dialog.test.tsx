@@ -5,9 +5,14 @@
  * a modal that silently stops opening, loses its submit handler, or drops the
  * accessible dialog role still typechecks perfectly.
  *
- * These assert the contract every consumer depends on — closed renders
- * nothing, open renders a labelled dialog with its controls wired — rather
- * than the internals of each form.
+ * Two layers of contract are asserted:
+ *
+ * 1. Dialog semantics every consumer depends on (#109) — closed renders
+ *    nothing, open renders a labelled dialog with its controls wired.
+ * 2. Failure surfacing (#166) — a rejected onSave/onDelete keeps the modal
+ *    OPEN, re-enables its button, and toasts the error instead of silently
+ *    looking like a dead button (the modals catch; the parent callbacks in
+ *    screens/Gradebook/Course.tsx deliberately don't).
  */
 
 import React from "react";
@@ -195,6 +200,26 @@ describe("Gradebook modals on the shared Dialog", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     // "Saving…" must give way to an enabled "Save" again so the user can retry.
     await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+  });
+
+  it("LetterScaleEditor's Reset to default toasts on failure and stays usable", async () => {
+    // Reset is the third #166 swallow in this file's modals: a bare floating
+    // onSave(null) used to reject invisibly. On failure the dialog stays
+    // open, the toast says why, and the button re-enables.
+    const onSave = vi.fn(async () => {
+      throw new Error("HTTP 500: boom");
+    });
+    render(<LetterScaleEditor open initial={null} onClose={() => {}} onSave={onSave} />);
+
+    await screen.findByRole("dialog");
+    await userEvent.click(screen.getByRole("button", { name: "Reset to default" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(null));
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Reset to default" })).toBeEnabled(),
+    );
   });
 
   it("keeps AssignmentModal open and toasts when onDelete rejects", async () => {

@@ -86,6 +86,11 @@
       "count": 2
     }
   },
+  "src/components/screens/Calendar.tsx": {
+    "no-restricted-syntax": {
+      "count": 20
+    }
+  },
   "src/components/screens/Dashboard.tsx": {
     "no-restricted-syntax": {
       "count": 20

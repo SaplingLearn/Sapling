@@ -95,7 +95,9 @@ interface Props {
   courseId: string;
 }
 
-function CurveSettingsModal({
+// Exported for Course.curveModal.test.tsx (#166 failure-surfacing contract);
+// only GradebookCourseScreen below renders it in the app.
+export function CurveSettingsModal({
   open,
   course,
   onClose,
