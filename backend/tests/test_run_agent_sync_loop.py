@@ -3,7 +3,8 @@
 
 `run_agent_sync` drives agents via ``asyncio.run`` from sync route handlers.
 Called from a thread that already has a running loop (an async handler's sync
-call chain, e.g. build_system_prompt -> get_course_context), it must never
+call chain, e.g. _legacy_chat -> apply_graph_update -> update_course_context
+-> _generate_summary_with_gemini), it must never
 (a) blindly ``asyncio.run`` — that raises opaquely — nor (b) leak the
 coroutine it was handed (a "never awaited" warning). Cross-loop client safety
 itself lives in `_LoopSafeGoogleModel` (see test_loop_safe_google_model.py).

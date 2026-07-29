@@ -25,8 +25,9 @@ def run_agent_sync(coro: Coroutine[Any, Any, T]) -> T:
     thread with no event loop — there ``asyncio.run`` drives the agent.
 
     Some sync helpers are ALSO reached from *async* handlers via a sync call
-    chain (e.g. ``build_system_prompt`` -> ``get_course_context`` -> here, from
-    the async legacy chat / start-session paths). A loop is already running on
+    chain (e.g. ``_legacy_chat`` -> ``apply_graph_update`` ->
+    ``update_course_context`` -> ``_generate_summary_with_gemini`` -> here,
+    and the same shape from the async upload pipeline). A loop is already running on
     that thread, so ``asyncio.run`` can't be used and — critically — we must not
     block the event loop on an LLM round-trip. The old code let ``asyncio.run``
     raise and leaked a "coroutine 'run' was never awaited" warning. Instead,
