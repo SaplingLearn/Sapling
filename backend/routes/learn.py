@@ -871,11 +871,14 @@ async def start_session_stream(body: StartSessionBody, request: Request):
 
     Rung 1 (agent fails before any token) falls back to
     `_start_session_legacy` — the JSON route's own pipeline, per the spec's
-    fallback ladder. `stream_agent_turn` guarantees exactly one of
+    fallback ladder. `stream_agent_turn` guarantees AT MOST one of
     `on_complete` (`_stash`, below) / `legacy_fallback` (`_legacy`, below)
-    runs per turn, so PENDING_SESSIONS is stashed exactly once either way:
-    `_stash` on the agent-success path, `_start_session_legacy` internally
-    on the Rung-1 fallback path — never both.
+    runs per turn — never both — so PENDING_SESSIONS is stashed at most
+    once: `_stash` on the agent-success path, `_start_session_legacy`
+    internally on the Rung-1 fallback path. A Rung-2 error (failure after
+    the greeting started streaming) stashes NOTHING for this session_id —
+    the client never received it in a `done` event, so a retry simply mints
+    a fresh session.
     """
     require_self(body.user_id, request)
     request_id = (

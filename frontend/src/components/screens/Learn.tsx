@@ -530,6 +530,10 @@ function LearnInner() {
     setMessages([]);
     setStarting(true);
     setStreamingText("");
+    // A stream may already be in flight (e.g. a graph-node click starting a
+    // new session while a reply streams) — abort it first so two streams
+    // never interleave writes into the same streamingText/messages state.
+    streamAbort.current?.abort();
     const controller = new AbortController();
     streamAbort.current = controller;
     let sawToken = false;
@@ -645,6 +649,10 @@ function LearnInner() {
     setMessages(m => [...m, { id: msgId(), role: "user", content: userText }]);
     setSending(true);
     setStreamingText("");
+    // A stream may already be in flight (e.g. a graph-node click starting a
+    // new session while a reply streams) — abort it first so two streams
+    // never interleave writes into the same streamingText/messages state.
+    streamAbort.current?.abort();
     const controller = new AbortController();
     streamAbort.current = controller;
     let sawToken = false;

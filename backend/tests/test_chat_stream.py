@@ -308,3 +308,35 @@ def test_cancel_mid_stream_persists_nothing():
         assert on_complete_calls == [], "a partial reply must never persist"
 
     asyncio.run(run())
+
+
+def test_on_complete_raising_yields_error_not_unhandled_exception():
+    """Persistence failing AFTER the reply fully streamed must surface as a
+    structured `error` event (ADR-0020 interrupted-turn treatment), never an
+    unhandled exception — sse_starlette has already flushed headers by then,
+    so a propagated exception aborts the response with no closing event at
+    all and the client sees an unstructured network failure."""
+    async def run():
+        agent = FakeAgent(
+            [PartStartEvent("hi"), AgentRunResultEvent("hi")]
+        )
+        legacy_calls = []
+
+        def failing_persist(reply, graph_update, mastery_changes):
+            raise RuntimeError("db write failed")
+
+        async def fake_legacy():
+            legacy_calls.append(1)
+            return {"reply": "nope"}
+
+        events = await collect(
+            agent, make_deps(),
+            on_complete=failing_persist,
+            legacy_fallback=fake_legacy,
+        )
+        assert events[-1].type == "error"
+        assert events[-1].data["request_id"] == "r1"
+        assert all(e.type != "done" for e in events), "no done after failed persistence"
+        assert legacy_calls == [], "reply already streamed — never re-run legacy"
+
+    asyncio.run(run())

@@ -13,8 +13,8 @@ which the graph tools populate as they write through
 graph and never persists a message: persistence is the route's, via
 `on_complete`.
 
-Exactly one of `on_complete` / `legacy_fallback` runs per turn — see
-`stream_agent_turn` for the rungs.
+At most one of `on_complete` / `legacy_fallback` runs per turn — never both,
+and the error rungs run neither. See `stream_agent_turn` for the rungs.
 """
 
 from __future__ import annotations
@@ -114,15 +114,21 @@ async def stream_agent_turn(
     """Stream one agent turn as SaplingEvents.
 
     on_complete(reply, merged_graph_update, mastery_changes) -> extra `done`
-    data. It persists; it is called exactly once, after the run completes and
-    BEFORE `done` is yielded, so a mid-generation disconnect (which cancels
-    this generator at its current yield) persists nothing.
+    data. It persists; on the success path it is called once, after the run
+    completes and BEFORE `done` is yielded, so a mid-generation disconnect
+    (which cancels this generator at its current yield) persists nothing.
 
     legacy_fallback() -> awaitable returning the route's pre-agent result,
     used ONLY when the agent fails before emitting any text (Rung 1). It is
     async because the routes' legacy paths are (`_legacy_chat`). It owns its
     own persistence, so on_complete is NOT called on that branch — calling
     both double-writes.
+
+    Invariant: AT MOST one of on_complete / legacy_fallback runs per turn —
+    never both. The error rungs run NEITHER: Rung 2 (failure after tokens
+    streamed), Rung 1 with no fallback, and a Rung-1 fallback that itself
+    raises all yield an `error` event and persist nothing (regression-tested
+    in test_chat_stream.py).
     """
     yield SaplingEvent(type="status", step="start", message="Starting.")
 
@@ -223,7 +229,24 @@ async def stream_agent_turn(
     merged = merge_graph_updates(deps.graph_updates)
     mastery = list(deps.mastery_changes)
 
-    extra = on_complete(reply, merged, mastery) or {}
+    try:
+        extra = on_complete(reply, merged, mastery) or {}
+    except Exception as exc:
+        # Persistence failed AFTER the reply fully streamed. Letting this
+        # propagate would abort the ASGI response mid-stream with no closing
+        # event (sse_starlette has already flushed headers), leaving the
+        # client an unstructured network error. Emit the structured error
+        # instead so the ADR-0020 interrupted-turn treatment (keep partial
+        # text, offer Retry) applies; the turn persisted at most a partial
+        # write, and Retry re-sends it.
+        logger.warning("on_complete persistence failed after streamed reply", exc_info=exc)
+        yield SaplingEvent(
+            type="error",
+            step="reply",
+            message="The tutor was interrupted. Please retry.",
+            data={"request_id": request_id},
+        )
+        return
 
     yield SaplingEvent(
         type="done",
