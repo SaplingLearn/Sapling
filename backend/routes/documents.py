@@ -42,6 +42,7 @@ from services.achievement_service import check_achievements
 from services.agent_events import SaplingEvent, sapling_event_to_sse
 from services.request_context import current_request_id
 from agents import WORKER_LIMITS
+from agents._providers import model_mode
 from agents.classifier import classifier_agent
 from agents.summary import summary_agent
 from agents.concept_extraction import concept_extraction_agent
@@ -376,11 +377,31 @@ def list_documents(user_id: str, request: Request):
         filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         order="created_at.desc",
     ) or []
+    # The row keys on the OFFERING (0025); the HTTP boundary keeps the
+    # abstract course_id (#435 — Library.tsx filters/labels on d.course_id).
+    # Resolve each unique offering_id once (mirrors routes/learn.py's
+    # list_sessions offering_to_course pattern), not once per row.
+    offering_to_course: dict[str, str | None] = {}
     for d in docs:
         d["summary"] = decrypt_if_present(d.get("summary"))
         notes_raw = d.get("concept_notes")
         if isinstance(notes_raw, str):
-            d["concept_notes"] = decrypt_json(notes_raw)
+            try:
+                d["concept_notes"] = decrypt_json(notes_raw)
+            except Exception:
+                # decrypt_json re-raises when both decrypt AND plaintext
+                # parse fail (a genuinely corrupted row) — degrade that one
+                # row instead of 500ing the whole list (matches
+                # _existing_doc_by_request_id and scan_document_concepts).
+                logger.warning(
+                    "concept_notes decrypt failed for document %s; degrading to []",
+                    d.get("id"),
+                )
+                d["concept_notes"] = []
+        off_id = d.get("offering_id")
+        if off_id and off_id not in offering_to_course:
+            offering_to_course[off_id] = offering_course_id(off_id)
+        d["course_id"] = offering_to_course.get(off_id)
     return {"documents": docs}
 
 
@@ -1084,18 +1105,35 @@ def _index_document_chunks(
         except Exception:
             logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
 
-        # Relevance gate: skip docs that are off-topic for the course
-        from google import genai as _genai
-        from google.genai import types as genai_types
-        import os
-        _gclient = _genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
-
+        # Relevance gate: skip docs that are off-topic for the course. The
+        # embedding-based check below is a `google.genai` call site that
+        # predates the #391 SAPLING_MODEL_MODE seam; catalog_rows itself is a
+        # plain Supabase read (not gated) so the gate is only ever skipped
+        # when there's actually a catalog embedding to compare against.
         catalog_rows = table("course_chunks").select(
             "embedding",
             filters={"course_id": f"eq.{bu_course_id}", "category": "eq.catalog"},
             limit=1,
         )
         if catalog_rows and catalog_rows[0].get("embedding"):
+            if model_mode() != "real":
+                # #439: no google.genai.Client in non-real mode. Raising here
+                # (instead of silently skipping the gate) reproduces the exact
+                # behavior a real embed-call failure already produced: the
+                # outer `except` below aborts indexing and logs
+                # "_index_document_chunks failed for doc %s" — the line
+                # e2e_oracles/logscan.py's ALLOWLIST already expects. Function
+                # mode is now that same no-op, by design, not by accident of a
+                # swallowed exception.
+                raise RuntimeError(
+                    "RAG relevance-gate embedding skipped: "
+                    "SAPLING_MODEL_MODE != 'real' (#439)"
+                )
+
+            from google import genai as _genai
+            from google.genai import types as genai_types
+
+            _gclient = _genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
             catalog_vec = catalog_rows[0]["embedding"]
             sample_text = doc_summary or chunks[0]
             resp = _gclient.models.embed_content(

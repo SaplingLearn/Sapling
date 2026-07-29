@@ -122,11 +122,27 @@ export function Library() {
     });
   }, [documents, cat, courseFilter, query]);
 
+  // #449 (upstream, out of scope here): GET /api/graph/{userId}/courses
+  // returns one row per ENROLLMENT, so a course with two offerings (e.g.
+  // CS101 in both fall and spring) surfaces as two rows sharing the same
+  // course_id — the API can't collapse that itself since enrollment_id-
+  // keyed consumers (the gradebook) depend on the per-enrollment rows.
+  // This is the Library render-side dedupe: one filter pill / label per
+  // distinct abstract course, keeping the first enrollment's row (color,
+  // course_code, course_name) as the stable representative.
+  const dedupedCourses = React.useMemo(() => {
+    const byId = new Map<string, EnrolledCourse>();
+    for (const c of courses) {
+      if (!byId.has(c.course_id)) byId.set(c.course_id, c);
+    }
+    return [...byId.values()];
+  }, [courses]);
+
   const courseLookup = React.useMemo(() => {
     const map: Record<string, string> = {};
-    for (const c of courses) map[c.course_id] = c.course_code || c.course_name;
+    for (const c of dedupedCourses) map[c.course_id] = c.course_code || c.course_name;
     return map;
-  }, [courses]);
+  }, [dedupedCourses]);
 
   const groupedByCourse = React.useMemo(() => {
     const counts: Record<string, number> = { all: documents.length, uncategorized: 0 };
@@ -227,7 +243,7 @@ export function Library() {
               }}>
                 {filtered.map(d => {
                   const isSelected = detail?.id === d.id;
-                  const courseLabel = courseLookup[d.course_id];
+                  const courseLabel = courseLookup[d.course_id ?? ""];
                   return (
                     <button
                       key={d.id}
@@ -359,7 +375,7 @@ export function Library() {
             active={courseFilter === "uncategorized"}
             onClick={() => setCourseFilter("uncategorized")}
           />
-          {courses.map(c => (
+          {dedupedCourses.map(c => (
             <CourseRow
               key={c.course_id}
               testid={`library-course-filter-${c.course_id}`}

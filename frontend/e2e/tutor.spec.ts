@@ -39,6 +39,11 @@ const TUTOR_REPLY =
   "[e2e-function-model] Deterministic tutor reply: every recursive function " +
   "needs a base case so it can stop calling itself.";
 
+/** Must match backend/agents/function_handlers_e2e.py::E2E_CONCEPT_DESCRIPTION. */
+const CONCEPT_DESCRIPTION =
+  "[e2e-function-model] Deterministic concept blurb: recursion is when a " +
+  "function calls itself on a smaller version of the same problem.";
+
 test("tutor turn renders a reply and persists encrypted to messages", async ({
   page,
 }) => {
@@ -97,4 +102,38 @@ test("tutor turn renders a reply and persists encrypted to messages", async ({
   ]);
   expect(userPlain).toBe(STUDENT_MESSAGE);
   expect(assistantPlain).toBe(TUTOR_REPLY);
+});
+
+/**
+ * Journey (#446): resuming a session surfaces the knowledge-map rail's
+ * "Focused concept" card for that session's topic node. The seeded
+ * `rich-node-cs-recursion` node (concept "Recursion", db/seed_local_rich.py)
+ * carries no stored `description`, so the card falls through to an
+ * on-demand `POST /api/graph/{user}/concept-description` call
+ * (Learn.tsx's focus-description effect) — exactly the function-mode path
+ * that used to 500 (`agents/_providers.py::_dispatch` raised LookupError
+ * because `function_handlers_e2e.py` had no `concept_describe` handler
+ * registered). No click on the rail is needed: resuming sets `topic` to the
+ * session's topic ("Recursion") synchronously, which the rail's `highlightId`
+ * memo matches against the already-loaded graph nodes and auto-focuses.
+ */
+test("resuming a session surfaces the deterministic concept description in the rail", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+
+  await page.goto("/learn");
+  await page.getByTestId(`tutor-session-resume-${SESSION_ID}`).click();
+
+  // Proves resume actually loaded before asserting on the rail (same signal
+  // the tutor-reply journey above uses).
+  await expect(page.getByTestId("tutor-messages")).toContainText(
+    "Can you explain recursion?",
+  );
+
+  await expect(
+    page.getByTestId("tutor-focus-concept-description"),
+  ).toHaveText(CONCEPT_DESCRIPTION);
 });
