@@ -39,7 +39,7 @@ from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
 from services.course_context_service import update_course_context
 from services.achievement_service import check_achievements
-from services.agent_events import SaplingEvent, sapling_event_to_sse
+from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.request_context import current_request_id
 from agents import WORKER_LIMITS
 from agents._providers import model_mode
@@ -1053,7 +1053,9 @@ async def upload_document(
             ):
                 yield sse_event
 
-    return EventSourceResponse(event_stream())
+    return EventSourceResponse(
+        event_stream(), headers={"Cache-Control": SSE_CACHE_CONTROL}
+    )
 
 
 async def _stream_legacy_fallback(

@@ -196,3 +196,53 @@ class TestStartSessionStream:
         assert stashed["assistant_reply"] == "Legacy greeting"
         assert stashed["topic"] == "Eigenvalues"
         assert "Legacy greeting" in r.text, "the legacy reply must reach the client as a token/done"
+
+
+class TestSseCompressionOptOut:
+    """SSE responses must carry `Cache-Control: no-transform` (#356 journeys).
+
+    The e2e stack (and any self-hosted `next start`) proxies /api/* through
+    Next's production server, which wraps responses in the `compression`
+    middleware unless config.compress is false. gzip BUFFERS small SSE
+    frames: a paced token stream produced nothing client-side for its whole
+    duration and arrived as one burst at `done` — progressive rendering
+    silently broken behind that proxy. `no-transform` is the standard
+    opt-out the middleware honors; sse_starlette only `setdefault`s its
+    own Cache-Control, so the route's value must win.
+    """
+
+    def test_chat_stream_sets_no_transform(self):
+        async def fake_stream(**kwargs):
+            from services.agent_events import SaplingEvent
+            yield SaplingEvent(type="done", step="reply", message="Complete.",
+                               data={"reply": "Hi", "graph_update": {}, "mastery_changes": []})
+
+        with patch("routes.learn.stream_agent_turn", fake_stream), \
+             patch("routes.learn._prepare_chat_run",
+                   return_value=(MagicMock(), "msg", {}, MagicMock())), \
+             patch("routes.learn._consume_pending"), \
+             patch("routes.learn._get_session_offering_id", return_value="off-1"), \
+             patch("routes.learn.offering_course_id", return_value="c1"), \
+             patch("routes.learn._load_message_history", return_value=[]):
+            r = client.post("/api/learn/chat/stream", json={
+                "session_id": "s1", "user_id": "u1", "message": "hello", "mode": "socratic",
+            })
+        assert r.status_code == 200
+        assert "no-transform" in r.headers.get("cache-control", "")
+
+    def test_start_session_stream_sets_no_transform(self):
+        async def fake_stream(**kwargs):
+            from services.agent_events import SaplingEvent
+            yield SaplingEvent(type="done", step="reply", message="Complete.",
+                               data={"reply": "Hello", "session_id": "s-new"})
+
+        with patch("routes.learn.stream_agent_turn", fake_stream), \
+             patch("routes.learn._prepare_chat_run",
+                   return_value=(MagicMock(), "msg", {}, MagicMock())), \
+             patch("routes.learn._get_course_id_for_topic", return_value=""), \
+             patch("routes.learn.resolve_offering", return_value=""):
+            r = client.post("/api/learn/start-session/stream", json={
+                "user_id": "u1", "topic": "Recursion", "mode": "socratic",
+            })
+        assert r.status_code == 200
+        assert "no-transform" in r.headers.get("cache-control", "")
