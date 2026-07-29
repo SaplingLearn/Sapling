@@ -66,6 +66,40 @@ class TestListNotes:
         assert r.status_code == 200
         ro.assert_called_once_with("c2")
 
+    def test_notes_carry_resolved_course_id_and_labels(self, client):
+        # Finding F4: notes key on the OFFERING, but the notetaker UI keys on
+        # the abstract course id (and shows a course label). The list route
+        # must resolve each note's offering → course_id/course_code/course_name,
+        # else every note renders as "Unknown course".
+        async def fake_list(user_id, offering_id=None):
+            return [
+                {"id": "n1", "user_id": "u1", "offering_id": "off1",
+                 "title": "A", "body": "", "tags": [],
+                 "last_summary": None, "last_summary_at": None,
+                 "created_at": "2026-05-11T00:00:00Z",
+                 "updated_at": "2026-05-11T00:00:00Z"},
+            ]
+
+        class _FakeCoursesTable:
+            def select(self, *_a, **_k):
+                return [{"id": "c1", "course_code": "BIO101",
+                         "course_name": "Intro Biology"}]
+
+        with (
+            patch("routes.notes.list_notes", side_effect=fake_list),
+            patch("routes.notes.offering_course_id", return_value="c1") as oc,
+            patch("routes.notes.table", return_value=_FakeCoursesTable()),
+        ):
+            r = client.get("/api/notes/user/u1")
+        assert r.status_code == 200
+        note = r.json()["notes"][0]
+        # The abstract course id the frontend looks up in its courses list.
+        assert note["course_id"] == "c1"
+        # Belt-and-suspenders labels resolved from the courses row.
+        assert note["course_code"] == "BIO101"
+        assert note["course_name"] == "Intro Biology"
+        oc.assert_called_once_with("off1")
+
 
 class TestCreateNote:
     def test_creates_with_required_fields(self, client):
@@ -118,6 +152,34 @@ class TestGetNote:
         with patch("routes.notes.get_note", side_effect=fake_get):
             r = client.get("/api/notes/missing?user_id=u1")
         assert r.status_code == 404
+
+    def test_single_read_carries_resolved_course_id(self, client):
+        # Same enrichment as the list route (finding F4): a single-note read
+        # resolves its offering → abstract course id + labels so any consumer
+        # gets a consistent note shape.
+        async def fake_get(note_id, user_id):
+            return {"id": note_id, "user_id": user_id, "offering_id": "off1",
+                    "title": "T", "body": "B", "tags": [],
+                    "last_summary": None, "last_summary_at": None,
+                    "created_at": "2026-05-11T00:00:00Z",
+                    "updated_at": "2026-05-11T00:00:00Z"}
+
+        class _FakeCoursesTable:
+            def select(self, *_a, **_k):
+                return [{"id": "c1", "course_code": "BIO101",
+                         "course_name": "Intro Biology"}]
+
+        with (
+            patch("routes.notes.get_note", side_effect=fake_get),
+            patch("routes.notes.offering_course_id", return_value="c1"),
+            patch("routes.notes.table", return_value=_FakeCoursesTable()),
+        ):
+            r = client.get("/api/notes/n1?user_id=u1")
+        assert r.status_code == 200
+        note = r.json()
+        assert note["course_id"] == "c1"
+        assert note["course_code"] == "BIO101"
+        assert note["course_name"] == "Intro Biology"
 
 
 class TestUpdateNote:

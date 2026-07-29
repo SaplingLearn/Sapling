@@ -14,13 +14,38 @@ from agents.deps import SaplingDeps
 from agents.study_guide import study_guide_agent
 from agents.usage import record_agent_usage
 from db.connection import table
-from services.academics import offering_course_id, resolve_offering
+from services.academics import (
+    offering_course_id,
+    resolve_offering,
+    user_enrollment_ids,
+    user_offering_ids_for_course,
+)
+from services.graph_service import get_courses as graph_get_courses
 from services.auth_guard import require_self
 from services.encryption import decrypt_if_present, decrypt_json
 from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
 
 router = APIRouter()
+
+
+def _course_enrollment_ids(user_id: str, course_id: str) -> list[str]:
+    """The user's enrollment ids for the given abstract ``course_id``.
+
+    The ``assignments`` table is enrollment-keyed (the gradebook table has no
+    ``user_id``/``course_id`` column — see routes/gradebook.py). The HTTP
+    boundary speaks the abstract course id, so we resolve
+    course → the user's offering(s) of it → their enrollment rows, mirroring
+    routes/calendar.py::_read_assignments.
+    """
+    course_offerings = set(user_offering_ids_for_course(user_id, course_id))
+    if not course_offerings:
+        return []
+    return [
+        e["id"]
+        for e in user_enrollment_ids(user_id)
+        if e.get("offering_id") in course_offerings
+    ]
 
 
 def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
@@ -30,11 +55,21 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
     Study guides + the documents that feed them key on the OFFERING (0025);
     the caller resolves the abstract course id to an offering first.
     """
-    # 1. Fetch exam info
-    exams = table("assignments").select(
-        "id,user_id,title,due_date,assignment_type,course_id",
-        filters={"id": f"eq.{exam_id}", "user_id": f"eq.{user_id}"},
-        limit=1,
+    # 1. Fetch exam info. Assignments key on enrollment_id (no user_id/course_id
+    #    column); scope to the user's own enrollments so one user can't generate a
+    #    guide off another's exam.
+    enrollment_ids = [e["id"] for e in user_enrollment_ids(user_id)]
+    exams = (
+        table("assignments").select(
+            "id,enrollment_id,title,due_date,assignment_type",
+            filters={
+                "id": f"eq.{exam_id}",
+                "enrollment_id": f"in.({','.join(enrollment_ids)})",
+            },
+            limit=1,
+        )
+        if enrollment_ids
+        else []
     )
     if not exams:
         # The frontend renders this detail verbatim, so it has to read like
@@ -183,21 +218,24 @@ def get_cached_guides(user_id: str, request: Request):
 @router.get("/{user_id}/courses")
 def get_courses(user_id: str, request: Request):
     require_self(user_id, request)
-    courses = table("courses").select(
-        "id,course_name,color",
-        filters={"user_id": f"eq.{user_id}"},
-    )
-    return {"courses": courses}
+    # The frontend enumerates courses via /api/graph/{user_id}/courses, so this
+    # endpoint is currently unreachable from the UI. Kept alive (and off the old
+    # non-existent courses.user_id filter that 500'd) by delegating to the same
+    # enrollment-resolving helper the graph endpoint uses.
+    return {"courses": graph_get_courses(user_id)}
 
 
 @router.get("/{user_id}/exams")
 def get_exams(user_id: str, request: Request, course_id: str = Query(...)):
     require_self(user_id, request)
+    enrollment_ids = _course_enrollment_ids(user_id, course_id)
+    if not enrollment_ids:
+        return {"exams": []}
     all_assignments = table("assignments").select(
         "id,title,due_date,assignment_type",
-        filters={"user_id": f"eq.{user_id}"},
+        filters={"enrollment_id": f"in.({','.join(enrollment_ids)})"},
         order="due_date.asc",
-    )
+    ) or []
 
     exam_keywords = ["exam", "midterm", "final", "quiz"]
     exams = []

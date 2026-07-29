@@ -78,12 +78,29 @@ export function Settings() {
 
   React.useEffect(() => {
     if (!userReady || !userId) return;
-    fetchSettings(userId)
-      .then(s => {
-        setSettings(s);
-        setUsernameDraft(s.username || "");
-        if (s.accent_color) {
-          document.documentElement.style.setProperty("--accent", s.accent_color);
+    // The `/settings` payload can come back with the profile identity fields
+    // (display name, username, bio, location, website) unset, which would
+    // leave the Profile form blank and risk a save wiping the stored values.
+    // Seed those fields from the public profile as a fallback so the inputs
+    // reflect what's actually stored. The profile fetch is best-effort — a
+    // failure there must not block settings from loading.
+    Promise.all([
+      fetchSettings(userId),
+      fetchPublicProfile(userId).catch(() => null),
+    ])
+      .then(([s, profile]) => {
+        const seeded: UserSettings = {
+          ...s,
+          display_name: s.display_name || profile?.name || null,
+          username: s.username || profile?.username || null,
+          bio: s.bio || profile?.bio || null,
+          location: s.location || profile?.location || null,
+          website: s.website || profile?.website || null,
+        };
+        setSettings(seeded);
+        setUsernameDraft(seeded.username || "");
+        if (seeded.accent_color) {
+          document.documentElement.style.setProperty("--accent", seeded.accent_color);
         }
       })
       .catch((e) => console.error("settings load", e));

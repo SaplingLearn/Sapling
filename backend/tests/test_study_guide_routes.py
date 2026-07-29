@@ -34,6 +34,29 @@ def _agent_run_returning(content):
 # ── GET /api/study-guide/{user_id}/exams ─────────────────────────────────────
 
 class TestGetExams:
+    @staticmethod
+    def _exam_stack(all_assignments, captured):
+        """A table() side_effect (shared by routes.study_guide + services.academics)
+        that resolves course_1 → offering off1 → enrollment enr1, and records the
+        filters the assignments query is issued with in ``captured``."""
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "course_offerings":
+                m.select.return_value = [{"id": "off1"}]
+            elif name == "enrollments":
+                m.select.return_value = [{"id": "enr1", "offering_id": "off1"}]
+            elif name == "assignments":
+                def _select(cols, filters=None, order=None, limit=None):
+                    captured["filters"] = filters or {}
+                    return all_assignments
+                m.select.side_effect = _select
+            else:
+                m.select.return_value = []
+            return m
+
+        return table_side_effect
+
     def test_filters_by_type_and_keywords(self):
         all_assignments = [
             {"id": "a1", "title": "Midterm Exam", "due_date": "2026-04-01", "assignment_type": "exam"},
@@ -41,8 +64,10 @@ class TestGetExams:
             {"id": "a3", "title": "Reading quiz", "due_date": "2026-04-03", "assignment_type": "other"},
             {"id": "a4", "title": "Project B",   "due_date": "2026-04-04", "assignment_type": "project"},
         ]
-        with patch("routes.study_guide.table") as t:
-            t.return_value.select.return_value = all_assignments
+        captured = {}
+        side_effect = self._exam_stack(all_assignments, captured)
+        with patch("routes.study_guide.table", side_effect=side_effect), \
+             patch("services.academics.table", side_effect=side_effect):
             r = client.get(f"/api/study-guide/{USER_ID}/exams?course_id={COURSE_ID}")
         assert r.status_code == 200
         slugs = {e["title"] for e in r.json()["exams"]}
@@ -50,6 +75,54 @@ class TestGetExams:
         assert "Reading quiz" in slugs  # title contains "quiz"
         assert "Homework 3" not in slugs
         assert "Project B" not in slugs
+
+    def test_scopes_assignments_by_enrollment_id_not_user_id(self):
+        """Regression (F6): the assignments table is enrollment-keyed (no user_id/
+        course_id column). Filtering by user_id makes PostgREST 500 the request, so
+        study guides were bricked for every course. The query must scope by
+        enrollment_id resolved from the abstract course_id."""
+        all_assignments = [
+            {"id": "a1", "title": "Final Exam", "due_date": "2026-05-01", "assignment_type": "exam"},
+        ]
+        captured = {}
+        side_effect = self._exam_stack(all_assignments, captured)
+        with patch("routes.study_guide.table", side_effect=side_effect), \
+             patch("services.academics.table", side_effect=side_effect):
+            r = client.get(f"/api/study-guide/{USER_ID}/exams?course_id={COURSE_ID}")
+        assert r.status_code == 200
+        # The assignments read filters by enrollment_id (the user's enrollment in
+        # an offering of course_1), never by the non-existent user_id column.
+        assert captured["filters"] == {"enrollment_id": "in.(enr1)"}
+        assert "user_id" not in captured["filters"]
+        assert [e["title"] for e in r.json()["exams"]] == ["Final Exam"]
+
+    def test_returns_empty_when_not_enrolled(self):
+        """No enrollment in the course → no assignments query, empty list, 200."""
+        def side_effect(name):
+            m = MagicMock()
+            m.select.return_value = []  # no offerings/enrollments for the course
+            return m
+
+        with patch("routes.study_guide.table", side_effect=side_effect), \
+             patch("services.academics.table", side_effect=side_effect):
+            r = client.get(f"/api/study-guide/{USER_ID}/exams?course_id={COURSE_ID}")
+        assert r.status_code == 200
+        assert r.json() == {"exams": []}
+
+
+# ── GET /api/study-guide/{user_id}/courses ───────────────────────────────────
+
+class TestGetCourses:
+    def test_delegates_to_enrollment_helper(self):
+        """The route is UI-dead (the frontend uses /api/graph/.../courses) but must
+        not 500 on the old courses.user_id filter — it delegates to the shared
+        enrollment-resolving helper instead."""
+        courses = [{"course_id": "c1", "course_name": "Calc II", "color": "#abc"}]
+        with patch("routes.study_guide.graph_get_courses", return_value=courses) as g:
+            r = client.get(f"/api/study-guide/{USER_ID}/courses")
+        assert r.status_code == 200
+        assert r.json() == {"courses": courses}
+        g.assert_called_once_with(USER_ID)
 
 
 # ── GET /api/study-guide/{user_id}/cached ────────────────────────────────────
@@ -128,6 +201,10 @@ class TestGetGuide:
                 m.insert.side_effect = _insert
             elif name == "assignments":
                 m.select.return_value = [{"title": "Final", "due_date": "2026-05-01"}]
+            elif name == "enrollments":
+                # Assignments key on enrollment_id — the exam lookup scopes to the
+                # user's enrollments.
+                m.select.return_value = [{"id": "enr1", "offering_id": "off1"}]
             elif name == "documents":
                 m.select.return_value = []
             else:
@@ -136,6 +213,7 @@ class TestGetGuide:
 
         agent_run = _agent_run_returning(fresh_content)
         with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[{"id": "enr1", "offering_id": "off1"}]), \
              patch("routes.study_guide.resolve_offering", return_value="off1") as ro, \
              patch("routes.study_guide.study_guide_agent.run", new=agent_run):
             r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
@@ -197,6 +275,8 @@ class TestRegenerateGuide:
             return m
 
         with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[{"id": "enr1", "offering_id": "off1"}]), \
+             patch("routes.study_guide.resolve_offering", return_value="off1"), \
              patch("routes.study_guide.study_guide_agent.run", new=_agent_run_returning(fresh_content)):
             r = client.post(
                 "/api/study-guide/regenerate",
@@ -230,6 +310,7 @@ class TestGenerationFailure:
 
         boom = AsyncMock(side_effect=RuntimeError("gemini exploded"))
         with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[{"id": "enr1", "offering_id": "off1"}]), \
              patch("routes.study_guide.resolve_offering", return_value="off1"), \
              patch("routes.study_guide.study_guide_agent.run", new=boom):
             r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")

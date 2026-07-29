@@ -26,6 +26,8 @@ import type {
   GraphNode,
 } from "@/lib/types";
 import { now } from "@/lib/testMode";
+import { useToast } from "@/components/ToastProvider";
+import { humanizeError } from "@/lib/errorMessage";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -113,6 +115,7 @@ function apiConceptToConcept(c: ApiLinkedConcept, courseCode: string): Concept {
 export default function NotetakerPage() {
   const { userId, userReady } = useUser();
   const router = useRouter();
+  const toast = useToast();
 
   const [courses, setCourses] = React.useState<Course[]>([]);
   const [notes, setNotes] = React.useState<Note[]>([]);
@@ -374,6 +377,7 @@ export default function NotetakerPage() {
       );
     } catch (e) {
       console.error("Summarize failed", e);
+      toast.error(humanizeError(e, "Couldn't summarize this note."));
     } finally {
       setBusy(null);
     }
@@ -387,6 +391,7 @@ export default function NotetakerPage() {
       await refreshActiveConcepts();
     } catch (e) {
       console.error("Extract failed", e);
+      toast.error(humanizeError(e, "Couldn't extract concepts from this note."));
     } finally {
       setBusy(null);
     }
@@ -401,6 +406,7 @@ export default function NotetakerPage() {
       router.push(`/quiz?concept=${encodeURIComponent(concept_node_id)}`);
     } catch (e) {
       console.error("Quiz failed", e);
+      toast.error(humanizeError(e, "Couldn't generate a quiz from this note."));
       setBusy(null);
     }
   };
@@ -416,6 +422,7 @@ export default function NotetakerPage() {
       );
     } catch (e) {
       console.error("Send to tutor failed", e);
+      toast.error(humanizeError(e, "Couldn't send this note to the tutor."));
       setBusy(null);
     }
   };
