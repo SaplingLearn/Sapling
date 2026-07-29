@@ -77,8 +77,8 @@ signed in (storage state). Today's in-app date is frozen at 2026-03-11.
   (cookie-only session infinite dashboard skeleton), #435 (unresolved
   course_id), #436 + root cause #354 (Gemini provider event-loop flake),
   #439 (RAG-indexing log noise — the allowlist entry stays as defense in
-  depth), #446 (concept-description 500). #441's fix (PG15 pin, PR #452) is
-  in final verification and expected to land imminently.
+  depth), #446 (concept-description 500), #441 (PG17/PG15 skew — local/CI
+  now pinned to PG15).
 
 ## End of session
 
