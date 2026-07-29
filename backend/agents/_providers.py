@@ -148,6 +148,20 @@ def _model_mode() -> str:
     return (os.getenv("SAPLING_MODEL_MODE") or "real").strip().lower()
 
 
+def model_mode() -> str:
+    """Public read of the active SAPLING_MODEL_MODE, for call sites outside
+    `agents/` that need to gate on the same seam but don't want a `Model`.
+
+    `_model_mode` stays private to this module for `model_for`'s internal
+    dispatch. This is the one sanctioned way a non-agent module reaches the
+    seam: `services/rag_service.py` and `routes/documents.py`'s RAG indexing
+    build raw `google.genai.Client`s directly (predating #391), so they gate
+    on `model_mode() == "real"` rather than importing the private name across
+    a package boundary (#439).
+    """
+    return _model_mode()
+
+
 def register_function_handler(task: AgentTask, handler: FunctionModelHandler) -> None:
     """Register the FunctionModel handler for a task (function mode only).
 
