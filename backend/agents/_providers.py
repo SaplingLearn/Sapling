@@ -371,9 +371,11 @@ def _function_model_for(task: AgentTask) -> "Model":
     """Build a FunctionModel that dispatches to the task's registered handler at
     run time. The lookup is deferred to the call (not capture time) so a handler
     registered after the agent was imported still takes effect."""
-    from pydantic_ai.models.function import FunctionModel
+    import json
 
-    def _dispatch(messages, info):
+    from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+
+    def _resolve_handler() -> FunctionModelHandler:
         handler = _FUNCTION_HANDLERS.get(task)
         if handler is None:
             # Out-of-process runs (E2E uvicorn) register via the env-named
@@ -387,9 +389,38 @@ def _function_model_for(task: AgentTask) -> "Model":
                 f"{task!r}, ...) before running the agent (or point "
                 f"SAPLING_FUNCTION_HANDLERS at a module that does)."
             )
-        return handler(messages, info)
+        return handler
 
-    return FunctionModel(_dispatch, model_name=f"function:{task}")
+    def _dispatch(messages, info):
+        return _resolve_handler()(messages, info)
+
+    async def _stream_dispatch(messages, info):
+        # Streamed runs (`agent.run_stream_events`, the SSE tutor routes) reuse
+        # the SAME registered handler rather than a parallel stream registry:
+        # the handler's ModelResponse is replayed as a stream — each text part
+        # as one delta, each tool call as a DeltaToolCall — so a task's handler
+        # constants stay byte-identical between the JSON and streamed lanes
+        # (spec assertions compare against the same E2E_* constants either way).
+        response = _resolve_handler()(messages, info)
+        for index, part in enumerate(response.parts):
+            kind = getattr(part, "part_kind", "")
+            if kind == "text":
+                if part.content:
+                    yield part.content
+            elif kind == "tool-call":
+                args = part.args
+                json_args = args if isinstance(args, str) else json.dumps(args or {})
+                yield {
+                    index: DeltaToolCall(
+                        name=part.tool_name,
+                        json_args=json_args,
+                        tool_call_id=part.tool_call_id,
+                    )
+                }
+
+    return FunctionModel(
+        _dispatch, stream_function=_stream_dispatch, model_name=f"function:{task}"
+    )
 
 
 def model_name_for(task: AgentTask) -> str:

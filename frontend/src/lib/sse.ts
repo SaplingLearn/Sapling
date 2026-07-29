@@ -25,10 +25,13 @@ export type SSEEvent<T = unknown> = {
  *
  * Throws on non-2xx responses or missing body. The generator completes
  * naturally when the server closes the connection.
+ *
+ * If opts.idleTimeoutMs is set, rejects if no data arrives within that time.
  */
 export async function* streamSSE<T = unknown>(
   url: string,
   init: RequestInit,
+  opts: { idleTimeoutMs?: number } = {},
 ): AsyncGenerator<SSEEvent<T>> {
   const res = await fetch(url, init);
   if (!res.ok) {
@@ -45,7 +48,12 @@ export async function* streamSSE<T = unknown>(
 
   try {
     while (true) {
-      const { value, done } = await reader.read();
+      // A stalled stream (proxy dropped it, backend wedged) otherwise hangs
+      // the composer forever with no error. Race each read against a timer,
+      // clearing the timer once the race settles so it never lingers.
+      const { value, done } = opts.idleTimeoutMs
+        ? await readWithTimeout(reader, opts.idleTimeoutMs)
+        : await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
@@ -68,6 +76,31 @@ export async function* streamSSE<T = unknown>(
   } finally {
     await reader.cancel().catch(() => { /* already closed */ });
     reader.releaseLock();
+  }
+}
+
+/**
+ * Race a single reader.read() against an idle timeout, clearing the timer
+ * on every path (read wins, read throws, or the timer itself fires) so no
+ * timer is ever left pending once the race settles.
+ */
+async function readWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleTimeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error("Stream stalled — no data received.")),
+          idleTimeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

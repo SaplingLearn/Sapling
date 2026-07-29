@@ -12,7 +12,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-SaplingEventType = Literal["status", "progress", "result", "error"]
+# "status"/"progress"/"result" are the document-pipeline vocabulary (ADR 0006).
+# "token"/"graph_update"/"done" extend it for chat streams; "error" is shared.
+SaplingEventType = Literal[
+    "status", "progress", "result", "error", "token", "graph_update", "done"
+]
 
 
 class SaplingEvent(BaseModel):

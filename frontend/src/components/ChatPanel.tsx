@@ -32,6 +32,13 @@ interface ChatPanelProps {
   // Optional seed for the input. Bump `draftSeedKey` to apply.
   draftSeed?: string;
   draftSeedKey?: number;
+  /** Assistant text arriving token-by-token; null/undefined = not streaming.
+   *  Empty string = stream open but no token yet (shows the typing affordance).
+   *  Rendered as a live bubble below the settled messages, then replaced by
+   *  the real message once the `done` event lands. */
+  streamingText?: string | null;
+  /** Abort the in-flight turn. Shown only while streaming. */
+  onStop?: () => void;
 }
 
 export function ChatPanel({
@@ -43,14 +50,17 @@ export function ChatPanel({
   header,
   draftSeed,
   draftSeedKey,
+  streamingText,
+  onStop,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const isStreaming = streamingText !== null && streamingText !== undefined;
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, streamingText]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -73,15 +83,32 @@ export function ChatPanel({
         }}
       >
         {messages.map(m => <Message key={m.id} m={m} />)}
+        {streamingText !== null && streamingText !== undefined && (
+          // Reuse Message/MarkdownChat exactly as settled assistant messages
+          // do, so a streaming reply never styles differently from a
+          // finished one. The `loading` flag reuses the same "Thinking…"
+          // affordance Learn.tsx already shows for in-flight assistant
+          // turns (see ChatMsg loading: true) rather than inventing a new
+          // typing indicator. The scroll container above already declares
+          // role="log" aria-live="polite" aria-relevant="additions", so this
+          // bubble's appearance is announced without a second, nested
+          // aria-live region on the bubble itself.
+          <Message
+            key="streaming"
+            m={{ id: "streaming", role: "assistant", content: streamingText, loading: streamingText === "" }}
+          />
+        )}
       </div>
 
       <ChatInputBar
         onSend={onSend}
         onAction={onAction}
-        disabled={disabled}
+        disabled={disabled || isStreaming}
         placeholder={placeholder}
         draftSeed={draftSeed}
         draftSeedKey={draftSeedKey}
+        streaming={isStreaming}
+        onStop={onStop}
       />
     </div>
   );
@@ -94,6 +121,8 @@ interface ChatInputBarProps {
   placeholder: string;
   draftSeed?: string;
   draftSeedKey?: number;
+  streaming?: boolean;
+  onStop?: () => void;
 }
 
 const ChatInputBar = React.memo(function ChatInputBar({
@@ -103,6 +132,8 @@ const ChatInputBar = React.memo(function ChatInputBar({
   placeholder,
   draftSeed,
   draftSeedKey,
+  streaming,
+  onStop,
 }: ChatInputBarProps) {
   const [text, setText] = useState<string>(draftSeed ?? "");
 
@@ -182,6 +213,16 @@ const ChatInputBar = React.memo(function ChatInputBar({
           }}
           rows={1}
         />
+        {streaming && onStop && (
+          <button
+            data-testid="tutor-stop"
+            className="btn btn--sm"
+            onClick={onStop}
+            aria-label="Stop response"
+          >
+            Stop
+          </button>
+        )}
         <button
           data-testid="tutor-send"
           className="btn btn--primary btn--sm"
