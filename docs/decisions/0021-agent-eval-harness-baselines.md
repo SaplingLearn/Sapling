@@ -1,4 +1,4 @@
-# 0020: Extraction-accuracy eval harness with committed baselines
+# 0021: Extraction-accuracy eval harness with committed baselines
 
 - Status: accepted
 - Date: 2026-07-28
