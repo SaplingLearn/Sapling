@@ -273,7 +273,6 @@ export function TopNav() {
 function DesktopGroups({ pathname }: { pathname: string }) {
   const [openIndex, setOpenIndex] = React.useState<number | null>(null);
   const closeTimer = React.useRef<number | null>(null);
-  const rowRef = React.useRef<HTMLDivElement | null>(null);
 
   const cancelClose = () => {
     if (closeTimer.current !== null) {
@@ -312,7 +311,12 @@ function DesktopGroups({ pathname }: { pathname: string }) {
   React.useEffect(() => {
     if (openIndex === null) return;
     const onClick = (e: MouseEvent) => {
-      if (rowRef.current && !rowRef.current.contains(e.target as Node)) closeNow();
+      // "Outside" means outside every trigger wrapper (+ its panel), NOT
+      // outside rowRef: the row is flex:1 and stretches across the header's
+      // blank strip, so a row-bounds check would swallow clicks in that dead
+      // space and leave a keyboard-opened panel (no hover timer armed) stuck.
+      const target = e.target as Element | null;
+      if (!target?.closest?.("[data-nav-group]")) closeNow();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeNow();
@@ -327,7 +331,7 @@ function DesktopGroups({ pathname }: { pathname: string }) {
   }, [openIndex]);
 
   return (
-    <div ref={rowRef} style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
       {GROUPS.map((g, i) => (
         <NavGroupTrigger
           key={g.label}
@@ -372,6 +376,7 @@ function NavGroupTrigger({
   return (
     <div
       ref={wrapperRef}
+      data-nav-group
       onMouseEnter={onOpen}
       onMouseLeave={onScheduleClose}
       // Symmetric counterpart to onFocus opening the panel: when focus
