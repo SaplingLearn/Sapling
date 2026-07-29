@@ -18,7 +18,8 @@ import { KnowledgeGraph } from "../KnowledgeGraph";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { useActiveSemester } from "@/lib/useActiveSemester";
+import { ensureDefaultActiveSemester, useActiveSemester } from "@/lib/useActiveSemester";
+import { courseTermLabels } from "@/lib/semesters";
 import { useUser } from "@/context/UserContext";
 import {
   startSession,
@@ -448,6 +449,10 @@ function LearnInner() {
           filteredSessions.map(s => [s.id, s.topic] as const),
         );
         setCourses(cRes.courses ?? []);
+        // No stored semester yet (e.g. first visit lands here, not on the
+        // Dashboard): persist the most-recent enrolled term as the default.
+        // The change event re-runs this effect once, scoped.
+        ensureDefaultActiveSemester(courseTermLabels(cRes.courses ?? []));
         const nodes = (gRes.nodes ?? []) as Array<{ id: string; concept_name?: string; name?: string; course_id?: string | null; is_subject_root?: boolean }>;
         const courseById = new Map((cRes.courses ?? []).map(c => [c.course_id, c]));
         setConcepts(

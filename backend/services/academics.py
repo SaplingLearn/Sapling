@@ -20,6 +20,8 @@ import uuid
 from datetime import date
 from functools import lru_cache
 
+import httpx
+
 from db.connection import table
 
 
@@ -98,7 +100,10 @@ def resolve_offering(
 
     ``term_id`` defaults to the current term. If no matching offering exists:
     - ``create=True`` inserts one (NULL section) and returns its id, so a fresh
-      enrollment lands in the real current semester instead of a legacy term;
+      enrollment lands in the real current semester instead of a legacy term.
+      Race-safe: losing a concurrent create to the partial unique index
+      (migration 0036) re-selects and returns the winner's row instead of
+      surfacing the conflict;
     - ``create=False`` falls back to any existing offering of the course.
     Returns None only when the course has no offering and we can't/shouldn't make one.
     """
@@ -120,10 +125,26 @@ def resolve_offering(
 
     if create and term_id:
         new_id = str(uuid.uuid4())
-        table("course_offerings").insert(
-            {"id": new_id, "course_id": course_id, "term_id": term_id}
-        )
-        return new_id
+        try:
+            table("course_offerings").insert(
+                {"id": new_id, "course_id": course_id, "term_id": term_id}
+            )
+            return new_id
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 409:
+                raise
+            # Lost a create race: the NULL-section partial unique index (0036)
+            # rejected a second offering for (course, term). The winner's row
+            # exists now — return it.
+            rows = table("course_offerings").select(
+                "id",
+                filters={"course_id": f"eq.{course_id}", "term_id": f"eq.{term_id}"},
+                order="created_at.asc",
+                limit=1,
+            )
+            if rows:
+                return rows[0]["id"]
+            raise
 
     # No offering in the target term and not creating — fall back to any offering
     # of this course so reads still resolve to something sensible.

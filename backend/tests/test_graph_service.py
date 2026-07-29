@@ -376,9 +376,12 @@ class TestAddCourse:
         assert "course_id" not in inserted             # enrollments key on the offering
 
     def test_skips_insert_for_existing_course(self):
+        # The up-front no-retake check is the single already-existed path (the
+        # redundant per-offering enrollment check was removed): an enrollment in
+        # any offering of the course short-circuits before any term resolution.
         factory, mocks = _cached_mock_table({
             "courses": [{"id": "c1"}],
-            "enrollments": [{"id": "existing"}],       # already enrolled in this offering
+            "enrollments": [{"id": "existing", "offering_id": "off-1"}],
             "terms": [{"id": "t1", "sort_key": 1}],
             "course_offerings": [{"id": "off-1"}],
         })
@@ -387,6 +390,7 @@ class TestAddCourse:
             result = add_course("u1", "c1")
 
         assert result["already_existed"] is True
+        assert "term" in result  # single return contract: duplicate carries term
         mocks["enrollments"].insert.assert_not_called()
 
 

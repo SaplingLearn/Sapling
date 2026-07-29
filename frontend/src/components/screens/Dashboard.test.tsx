@@ -17,7 +17,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import type { EnrolledCourse, Semester } from "@/lib/api";
 import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
 
@@ -33,8 +33,10 @@ vi.mock("@/context/UserContext", () => ({
 }));
 
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
-// "topnav" renders the legacy My Courses panel, the easiest surface to assert on.
-vi.mock("@/lib/useLayoutPref", () => ({ useLayoutPref: () => ["topnav", vi.fn()] }));
+// "topnav" renders the legacy My Courses panel, the easiest surface to assert
+// on; the CoursesKey empty-state test flips this to "sidebar".
+const layoutState = vi.hoisted(() => ({ pref: "topnav" }));
+vi.mock("@/lib/useLayoutPref", () => ({ useLayoutPref: () => [layoutState.pref, vi.fn()] }));
 
 vi.mock("../KnowledgeGraph", () => ({ KnowledgeGraph: () => null }));
 vi.mock("../ManageCoursesModal", () => ({ ManageCoursesModal: () => null }));
@@ -86,6 +88,7 @@ function course(code: string, term: string): EnrolledCourse {
 }
 
 beforeEach(() => {
+  layoutState.pref = "topnav";
   window.localStorage.clear();
   globalThis.ResizeObserver = class {
     observe() {}
@@ -127,6 +130,22 @@ describe("Dashboard course list by active semester", () => {
 
     // No current/archive split any more.
     expect(screen.queryByRole("button", { name: /archive/i })).toBeNull();
+
+    // The default is resolved and persisted BEFORE the scoped fetch, so the
+    // graph is fetched exactly once, already scoped — no unscoped first pass.
+    expect(getGraph).toHaveBeenCalledTimes(1);
+    expect(getGraph).toHaveBeenCalledWith("u1", "Spring 2026");
+  });
+
+  it("loads unscoped in a single pass when the user has no courses", async () => {
+    mockedGetCourses.mockResolvedValue({ courses: [] });
+
+    render(<Dashboard />);
+
+    await waitFor(() => expect(screen.getByText("No enrolled courses yet.")).toBeInTheDocument());
+    // No term to default to → one unscoped fetch, not a resolution pass + refetch.
+    expect(getGraph).toHaveBeenCalledTimes(1);
+    expect(getGraph).toHaveBeenCalledWith("u1", undefined);
   });
 
   it("scopes the list and the graph fetch to a semester chosen from storage", async () => {
@@ -139,6 +158,21 @@ describe("Dashboard course list by active semester", () => {
     // The graph is fetched scoped to the stored term, no unscoped first pass.
     expect(getGraph).toHaveBeenCalledWith("u1", "Fall 2025");
     expect(getGraph).not.toHaveBeenCalledWith("u1", undefined);
+  });
+
+  it("shows the courses-key empty state when the active semester has no courses", async () => {
+    // Sidebar layout renders the CoursesKey overlay instead of the legacy panel.
+    layoutState.pref = "sidebar";
+    // A stored semester none of the enrolled courses belong to → courseProgress
+    // is empty, but courses exist, so the key must render its empty state
+    // rather than disappearing entirely.
+    window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Summer 2026");
+
+    render(<Dashboard />);
+
+    const toggle = await screen.findByTestId("dashboard-courses-key-toggle");
+    fireEvent.click(toggle);
+    expect(screen.getByText("Nothing enrolled this semester.")).toBeInTheDocument();
   });
 
   it("degrades to label-derived ranking when /api/semesters fails", async () => {

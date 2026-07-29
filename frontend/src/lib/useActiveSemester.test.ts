@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { distinctTerms, resolveActiveSemester } from "./useActiveSemester";
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ACTIVE_SEMESTER_STORAGE_KEY,
+  distinctTerms,
+  ensureDefaultActiveSemester,
+  resolveActiveSemester,
+} from "./useActiveSemester";
 
 const c = (term: string) => ({ term });
 
@@ -26,5 +32,32 @@ describe("resolveActiveSemester", () => {
 
   it("returns empty string when there are no terms", () => {
     expect(resolveActiveSemester("", [])).toBe("");
+  });
+});
+
+describe("ensureDefaultActiveSemester", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("persists the first label and notifies mounted hooks when nothing is stored", () => {
+    const listener = vi.fn();
+    window.addEventListener("sapling-active-semester-change", listener);
+    ensureDefaultActiveSemester(["Spring 2026", "Fall 2025"]);
+    expect(window.localStorage.getItem(ACTIVE_SEMESTER_STORAGE_KEY)).toBe("Spring 2026");
+    expect(listener).toHaveBeenCalledTimes(1);
+    window.removeEventListener("sapling-active-semester-change", listener);
+  });
+
+  it("never overwrites an already-stored semester", () => {
+    window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Fall 2025");
+    ensureDefaultActiveSemester(["Spring 2026"]);
+    expect(window.localStorage.getItem(ACTIVE_SEMESTER_STORAGE_KEY)).toBe("Fall 2025");
+  });
+
+  it("no-ops when there is no usable label (screen stays unscoped)", () => {
+    ensureDefaultActiveSemester([]);
+    ensureDefaultActiveSemester([""]);
+    expect(window.localStorage.getItem(ACTIVE_SEMESTER_STORAGE_KEY)).toBeNull();
   });
 });

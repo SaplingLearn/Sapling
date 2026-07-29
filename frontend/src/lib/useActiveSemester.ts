@@ -35,6 +35,24 @@ function read(): string {
   return window.localStorage.getItem(ACTIVE_SEMESTER_STORAGE_KEY) ?? "";
 }
 
+/**
+ * Persist a default active semester when none is stored yet. Screens that read
+ * `useActiveSemester` but don't run the Dashboard's default resolution call
+ * this at the point where they already have the user's term labels (most
+ * recent first, e.g. `courseTermLabels(courses)`). No-op when a value is
+ * already stored or no label is available. Writes through the same
+ * change-event path as the hook's setter, so every mounted `useActiveSemester`
+ * updates and scoped fetches re-run scoped.
+ */
+export function ensureDefaultActiveSemester(termLabels: string[]): void {
+  if (typeof window === "undefined") return;
+  if (read()) return;
+  const def = termLabels.find((t) => !!t);
+  if (!def) return;
+  window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, def);
+  window.dispatchEvent(new Event(CHANGE_EVENT));
+}
+
 /** [activeSemester, setActiveSemester, hydrated] — persisted to localStorage, cross-tab + same-tab
  *  reactive. `hydrated` is false until the localStorage read completes after mount. */
 export function useActiveSemester(): [string, (v: string) => void, boolean] {

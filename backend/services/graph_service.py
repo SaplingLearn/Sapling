@@ -354,6 +354,14 @@ def add_course(
     up under the tab the user was viewing instead of being silently dropped into
     the date-derived current term. When omitted/unresolvable it falls back to the
     current term.
+
+    Single return contract: ``{course_id, already_existed, ...}`` —
+    ``already_existed=True`` carries ``term`` (the label the course is already
+    taken in; "" when unknown), ``already_existed=False`` means a fresh
+    enrollment was created — or ``{course_id, error}`` when the course/term
+    can't be resolved. The up-front no-retake check is the only
+    already-existed path: ``resolve_offering``'s conflict retry (migration
+    0036) makes a lost create race land on the winner's offering.
     """
     # Verify the abstract course exists in the catalog
     course_check = table("courses").select("id", filters={"id": f"eq.{course_id}"})
@@ -385,14 +393,6 @@ def add_course(
     offering_id = resolve_offering(course_id, term_id=term_id, create=True)
     if not offering_id:
         return {"course_id": course_id, "error": "No term available to enroll into"}
-
-    # Check if already enrolled in this offering
-    existing = table("enrollments").select(
-        "id",
-        filters={"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"},
-    )
-    if existing:
-        return {"course_id": course_id, "already_existed": True}
 
     table("enrollments").insert({
         "id": str(uuid.uuid4()),

@@ -73,17 +73,32 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
     return m;
   }, [courses]);
 
+  // Course id whose add request is in flight; disables the Add buttons so a
+  // double-click can't race two enrollments for the same course.
+  const [addingId, setAddingId] = React.useState<string | null>(null);
+
   const handleAdd = async (course: OnboardingCourse) => {
+    if (addingId) return;
+    setAddingId(course.id);
     try {
       const color = DEFAULT_COLORS[courses.length % DEFAULT_COLORS.length];
       // Enroll into the semester tab the user is viewing so the course lands
       // where they expect it. Empty activeTerm (no courses yet) → the backend
       // falls back to the current term.
-      await addCourse(userId, course.id, color, undefined, activeTerm || undefined);
-      toast.success(`Added ${course.course_code || course.course_name}`);
+      const res = await addCourse(userId, course.id, color, undefined, activeTerm || undefined);
+      if (res.already_existed) {
+        // The no-retake rule caught an enrollment this list didn't know about
+        // (e.g. added from another tab/device). Nothing was created, so don't
+        // claim success.
+        toast.info(res.term ? `Already taken in ${res.term}` : "Already taken");
+      } else {
+        toast.success(`Added ${course.course_code || course.course_name}`);
+      }
       await onChanged();
     } catch (err) {
       toast.error(`Failed to add course: ${String(err)}`);
+    } finally {
+      setAddingId(null);
     }
   };
 
@@ -189,7 +204,7 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
                   </div>
                   <button
                     className="btn btn--sm"
-                    disabled={enrolled}
+                    disabled={enrolled || addingId !== null}
                     onClick={() => handleAdd(c)}
                     style={{
                       opacity: enrolled ? 0.55 : 1,
@@ -199,7 +214,9 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
                   >
                     {enrolled
                       ? `Already taken${enrolledTermById.get(c.id) ? ` · ${enrolledTermById.get(c.id)}` : ""}`
-                      : <><Icon name="plus" size={12} /> Add</>}
+                      : addingId === c.id
+                        ? "Adding…"
+                        : <><Icon name="plus" size={12} /> Add</>}
                   </button>
                 </div>
               );

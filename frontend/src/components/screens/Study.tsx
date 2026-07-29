@@ -26,7 +26,8 @@ import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { humanizeError, isNotFound } from "@/lib/errorMessage";
 import { useUser } from "@/context/UserContext";
-import { useActiveSemester } from "@/lib/useActiveSemester";
+import { ensureDefaultActiveSemester, useActiveSemester } from "@/lib/useActiveSemester";
+import { courseTermLabels } from "@/lib/semesters";
 import {
   getCourses,
   getStudyGuideExams,
@@ -82,7 +83,14 @@ export function Study() {
   React.useEffect(() => {
     if (!userReady || !userId) return;
     getCourses(userId)
-      .then(r => setCourses(r.courses || []))
+      .then(r => {
+        const cs = r.courses || [];
+        setCourses(cs);
+        // No stored semester yet (e.g. first visit lands here, not on the
+        // Dashboard): persist the most-recent enrolled term as the default so
+        // the client-side semester filter below scopes like every other screen.
+        ensureDefaultActiveSemester(courseTermLabels(cs));
+      })
       .catch(err => console.error("study courses load failed", err));
   }, [userReady, userId]);
 

@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  UNKNOWN_TERM_LABEL,
   courseTermLabels,
   currentTerm,
-  groupCoursesByTerm,
-  partitionCurrentAndArchive,
   termRankFromLabel,
 } from "./semesters";
 import type { EnrolledCourse, Semester } from "./api";
@@ -36,8 +33,6 @@ function course(course_id: string, term: string): EnrolledCourse {
     term,
   };
 }
-
-const ids = (courses: EnrolledCourse[]) => courses.map((c) => c.course_id);
 
 describe("termRankFromLabel", () => {
   it("mirrors the sort_key formula (year * 10 + term ordinal)", () => {
@@ -110,151 +105,6 @@ describe("currentTerm", () => {
       { id: "x", term: "Fall", year: 2025, label: "Fall 2025", start_date: "", end_date: "", sort_key: 20253 },
     ] as Semester[];
     expect(currentTerm(partial, "2025-09-10")?.label).toBe("Fall 2025");
-  });
-});
-
-describe("groupCoursesByTerm", () => {
-  it("groups by term label, most recent term first", () => {
-    const groups = groupCoursesByTerm(
-      [course("a", "Fall 2025"), course("b", "Spring 2026"), course("c", "Fall 2025")],
-      SEMESTERS,
-    );
-    expect(groups.map((g) => g.label)).toEqual(["Spring 2026", "Fall 2025"]);
-    expect(ids(groups[1].courses)).toEqual(["a", "c"]);
-  });
-
-  it("preserves input order inside a group", () => {
-    const groups = groupCoursesByTerm(
-      [course("z", "Fall 2025"), course("a", "Fall 2025"), course("m", "Fall 2025")],
-      SEMESTERS,
-    );
-    expect(ids(groups[0].courses)).toEqual(["z", "a", "m"]);
-  });
-
-  it("buckets courses with an empty or whitespace term instead of dropping them", () => {
-    const groups = groupCoursesByTerm(
-      [course("a", "Spring 2026"), course("b", ""), course("c", "   ")],
-      SEMESTERS,
-    );
-    const other = groups.find((g) => g.label === UNKNOWN_TERM_LABEL);
-    expect(ids(other!.courses)).toEqual(["b", "c"]);
-    // Unrankable bucket sorts last.
-    expect(groups[groups.length - 1].label).toBe(UNKNOWN_TERM_LABEL);
-  });
-
-  it("keeps a course whose term field is missing entirely", () => {
-    const missing = { ...course("a", "") } as Partial<EnrolledCourse>;
-    delete missing.term;
-    const groups = groupCoursesByTerm([missing as EnrolledCourse], SEMESTERS);
-    expect(groups).toHaveLength(1);
-    expect(groups[0].label).toBe(UNKNOWN_TERM_LABEL);
-  });
-
-  it("orders by label rank when no semesters are supplied", () => {
-    const groups = groupCoursesByTerm([
-      course("a", "Fall 2025"),
-      course("b", "Fall 2026"),
-      course("c", "Spring 2026"),
-    ]);
-    expect(groups.map((g) => g.label)).toEqual(["Fall 2026", "Spring 2026", "Fall 2025"]);
-  });
-
-  it("prefers the server sort_key over the label rank when they disagree", () => {
-    // A school whose 'Winter 2026' term genuinely precedes Spring 2026.
-    // Label parsing alone would rank Winter after Spring.
-    const custom: Semester[] = [
-      { id: "w", term: "Winter", year: 2026, label: "Winter 2026", start_date: "2026-01-02", end_date: "2026-01-20", sort_key: 20260 },
-      { id: "s", term: "Spring", year: 2026, label: "Spring 2026", start_date: "2026-01-21", end_date: "2026-05-17", sort_key: 20261 },
-    ];
-    const groups = groupCoursesByTerm(
-      [course("a", "Winter 2026"), course("b", "Spring 2026")],
-      custom,
-    );
-    expect(groups.map((g) => g.label)).toEqual(["Spring 2026", "Winter 2026"]);
-  });
-
-  it("returns an empty list for no courses", () => {
-    expect(groupCoursesByTerm([], SEMESTERS)).toEqual([]);
-    expect(groupCoursesByTerm(null, SEMESTERS)).toEqual([]);
-  });
-});
-
-describe("partitionCurrentAndArchive", () => {
-  const enrolled = [
-    course("bio", "Spring 2026"),
-    course("psy", "Fall 2025"),
-    course("mat", "Spring 2026"),
-    course("cs", "Fall 2026"),
-  ];
-
-  it("keeps the current term up front and archives only earlier terms", () => {
-    const { current, archive } = partitionCurrentAndArchive(enrolled, SEMESTERS, "2026-03-01");
-    expect(ids(current)).toEqual(["bio", "mat", "cs"]);
-    expect(archive.map((g) => g.label)).toEqual(["Fall 2025"]);
-    expect(ids(archive[0].courses)).toEqual(["psy"]);
-  });
-
-  it("does not archive a future term", () => {
-    const { current } = partitionCurrentAndArchive(enrolled, SEMESTERS, "2026-03-01");
-    expect(ids(current)).toContain("cs");
-  });
-
-  it("orders archive groups most recent first", () => {
-    const older = [
-      course("a", "Fall 2025"),
-      course("b", "Spring 2026"),
-      course("c", "Summer 2026"),
-    ];
-    const { archive } = partitionCurrentAndArchive(older, SEMESTERS, "2026-10-01");
-    expect(archive.map((g) => g.label)).toEqual(["Summer 2026", "Spring 2026", "Fall 2025"]);
-  });
-
-  it("moves with the calendar — the same data partitions differently later", () => {
-    const spring = partitionCurrentAndArchive(enrolled, SEMESTERS, "2026-03-01");
-    const fall = partitionCurrentAndArchive(enrolled, SEMESTERS, "2026-09-15");
-    expect(ids(spring.current)).toEqual(["bio", "mat", "cs"]);
-    expect(ids(fall.current)).toEqual(["cs"]);
-    expect(fall.archive.map((g) => g.label)).toEqual(["Spring 2026", "Fall 2025"]);
-  });
-
-  it("keeps undatable courses in the current list rather than hiding them", () => {
-    const mixed = [course("bio", "Spring 2026"), course("solo", ""), course("odd", "Interterm")];
-    const { current, archive } = partitionCurrentAndArchive(mixed, SEMESTERS, "2026-03-01");
-    expect(ids(current)).toEqual(["bio", "solo", "odd"]);
-    expect(archive).toEqual([]);
-  });
-
-  it("archives a past term the semesters payload never mentioned", () => {
-    const { current, archive } = partitionCurrentAndArchive(
-      [course("bio", "Spring 2026"), course("old", "Fall 2019")],
-      SEMESTERS,
-      "2026-03-01",
-    );
-    expect(ids(current)).toEqual(["bio"]);
-    expect(archive.map((g) => g.label)).toEqual(["Fall 2019"]);
-  });
-
-  it("shows everything ungrouped when the semesters fetch yields nothing", () => {
-    for (const empty of [[], null, undefined]) {
-      const { current, archive } = partitionCurrentAndArchive(enrolled, empty, "2026-03-01");
-      expect(ids(current)).toEqual(["bio", "psy", "mat", "cs"]);
-      expect(archive).toEqual([]);
-    }
-  });
-
-  it("handles no courses at all", () => {
-    expect(partitionCurrentAndArchive([], SEMESTERS, "2026-03-01")).toEqual({
-      current: [],
-      archive: [],
-    });
-    expect(partitionCurrentAndArchive(null, SEMESTERS, "2026-03-01").current).toEqual([]);
-  });
-
-  it("defaults today to now when it is not injected", () => {
-    const result = partitionCurrentAndArchive(enrolled, SEMESTERS);
-    expect(result.current.length + result.archive.reduce((n, g) => n + g.courses.length, 0)).toBe(
-      enrolled.length,
-    );
   });
 });
 

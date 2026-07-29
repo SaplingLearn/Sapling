@@ -264,26 +264,42 @@ export function Dashboard() {
     if (!userId) return;
     setLoading(true);
     setLoadError(null);
+    // True when this pass only resolved the default semester: keep `loading`
+    // on so the effect re-run (triggered by setActiveSemester) performs the
+    // single scoped fetch without a skeleton flash in between.
+    let deferredToScopedPass = false;
     try {
-      const [graphRes, coursesRes, assignsRes, sessionsRes, recsRes, semestersRes] = await Promise.all([
+      if (!activeSemester) {
+        // First run with no stored semester: resolve + persist the default
+        // BEFORE the scoped graph/recommendations fetch, so the effect re-run
+        // does one scoped fetch instead of unscoped-then-scoped. Default is the
+        // most-recent enrolled term by `sort_key` (courseTermLabels), falling
+        // back to enrollment order.
+        const [coursesRes, semestersRes] = await Promise.all([
+          getCourses(userId),
+          // Term calendar ranks the default; if it fails we fall back to
+          // enrollment order rather than failing the load.
+          getSemesters().catch(() => ({ semesters: [] })),
+        ]);
+        const cs = coursesRes.courses || [];
+        const def = courseTermLabels(cs, semestersRes.semesters || [])[0] || resolveActiveSemester("", cs);
+        if (def) {
+          deferredToScopedPass = true;
+          setActiveSemester(def);
+          return;
+        }
+        // No enrolled terms (e.g. zero courses) → nothing to scope by; fall
+        // through and load unscoped in this same pass.
+      }
+      const [graphRes, coursesRes, assignsRes, sessionsRes, recsRes] = await Promise.all([
         getGraph(userId, activeSemester || undefined),
         getCourses(userId),
         getUpcomingAssignments(userId),
         getSessions(userId, 10),
         getRecommendations(userId, activeSemester || undefined).catch(() => ({ recommendations: [] })),
-        // Term calendar drives the default active-semester resolution below;
-        // if it fails we fall back to enrollment order rather than failing the load.
-        getSemesters().catch(() => ({ semesters: [] })),
       ]);
       const cs = coursesRes.courses || [];
-      const sems = semestersRes.semesters || [];
       setCourses(cs);
-      // First run with no stored semester: default to the most-recent enrolled
-      // term by `sort_key` (courseTermLabels), falling back to enrollment order.
-      if (!activeSemester) {
-        const def = courseTermLabels(cs, sems)[0] || resolveActiveSemester("", cs);
-        if (def) setActiveSemester(def);
-      }
       const gNodes: GraphNode[] = (graphRes.nodes || []).map((n: ApiNode) => apiToGraphNode(n, cs));
       setNodes(gNodes);
       setEdges((graphRes.edges || []).map(apiToGraphEdge));
@@ -310,7 +326,7 @@ export function Dashboard() {
       console.error("dashboard load failed", err);
       setLoadError(String(err));
     } finally {
-      setLoading(false);
+      if (!deferredToScopedPass) setLoading(false);
     }
   }, [userId, activeSemester, setActiveSemester]);
 
@@ -450,6 +466,8 @@ export function Dashboard() {
         {!useLegacyPanels && (
           <CoursesKey
             courseProgress={courseProgress}
+            hasCourses={courses.length > 0}
+            semesterActive={!!activeSemester}
             onManage={() => setCoursesOpen(true)}
           />
         )}
@@ -1120,14 +1138,22 @@ function CourseProgressRow({
 
 function CoursesKey({
   courseProgress,
+  hasCourses,
+  semesterActive,
   onManage,
 }: {
   courseProgress: CourseProgressEntry[];
+  hasCourses: boolean;
+  semesterActive: boolean;
   onManage: () => void;
 }) {
   const [collapsed, setCollapsed] = React.useState(true);
 
-  if (courseProgress.length === 0) return null;
+  // No enrolled courses at all → nothing to key, render nothing (the original
+  // null case). But when courses exist and the active semester merely has none
+  // of them, keep the panel so the "Nothing enrolled this semester." empty
+  // state below is reachable.
+  if (courseProgress.length === 0 && !(hasCourses && semesterActive)) return null;
 
   // A thick white outline painted BEHIND the glyphs, plus a soft halo.
   // `paint-order: stroke fill` pushes the stroke under the fill so

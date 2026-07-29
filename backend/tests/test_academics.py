@@ -7,6 +7,9 @@ MagicMock per table name, seeded with canned `.select()` rows and recording
 """
 from unittest.mock import MagicMock, patch
 
+import httpx
+import pytest
+
 import services.academics as ac
 
 
@@ -90,6 +93,55 @@ def test_resolve_offering_creates_when_missing_and_create_true():
     assert payload["course_id"] == "course-1"
     assert payload["term_id"] == "t1"
     assert payload["id"] == off_id
+
+
+def _conflict_error() -> httpx.HTTPStatusError:
+    req = httpx.Request("POST", "http://test/course_offerings")
+    return httpx.HTTPStatusError(
+        "conflict", request=req, response=httpx.Response(409, request=req)
+    )
+
+
+def test_resolve_offering_create_conflict_reselects_winner():
+    """Losing the create race to the 0036 partial unique index re-selects the
+    now-existing offering and returns it instead of raising."""
+    factory = _factory(
+        {"terms": [{"id": "t1", "sort_key": 1}]},
+        # pre-insert term lookup misses, post-conflict re-select finds the winner
+        select_seqs={"course_offerings": [[], [{"id": "off-winner"}]]},
+    )
+    cache: dict = {}
+
+    def make(name):
+        m = cache.get(name) or factory(name)
+        cache[name] = m
+        if name == "course_offerings":
+            m.insert.side_effect = _conflict_error()
+        return m
+
+    with patch.object(ac, "table", side_effect=make):
+        assert ac.resolve_offering("course-1", term_id="t1", create=True) == "off-winner"
+
+
+def test_resolve_offering_create_non_conflict_error_propagates():
+    """Only 409 means 'someone else created it' — other HTTP errors re-raise."""
+    req = httpx.Request("POST", "http://test/course_offerings")
+    err = httpx.HTTPStatusError(
+        "boom", request=req, response=httpx.Response(500, request=req)
+    )
+    factory = _factory({"terms": [{"id": "t1", "sort_key": 1}], "course_offerings": []})
+    cache: dict = {}
+
+    def make(name):
+        m = cache.get(name) or factory(name)
+        cache[name] = m
+        if name == "course_offerings":
+            m.insert.side_effect = err
+        return m
+
+    with patch.object(ac, "table", side_effect=make):
+        with pytest.raises(httpx.HTTPStatusError):
+            ac.resolve_offering("course-1", term_id="t1", create=True)
 
 
 def test_resolve_offering_no_create_falls_back_to_any_offering():

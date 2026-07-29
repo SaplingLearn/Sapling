@@ -8,7 +8,8 @@ import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { QuizPanel } from "../QuizPanel";
 import { useUser } from "@/context/UserContext";
-import { useActiveSemester } from "@/lib/useActiveSemester";
+import { ensureDefaultActiveSemester, useActiveSemester } from "@/lib/useActiveSemester";
+import { courseTermLabels } from "@/lib/semesters";
 import { getCourses, getGraph, type EnrolledCourse } from "@/lib/api";
 import type { GraphNode as ApiNode } from "@/lib/types";
 
@@ -46,6 +47,10 @@ function QuizInner() {
         ]);
         if (cancelled) return;
         setCourses(cRes.courses ?? []);
+        // No stored semester yet (e.g. first visit lands here, not on the
+        // Dashboard): persist the most-recent enrolled term as the default.
+        // The change event re-runs this effect once, scoped.
+        ensureDefaultActiveSemester(courseTermLabels(cRes.courses ?? []));
         const courseById = new Map((cRes.courses ?? []).map(c => [c.course_id, c]));
         const nodes = (gRes.nodes ?? []) as ApiNode[];
         setConcepts(
