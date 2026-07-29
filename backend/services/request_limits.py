@@ -27,6 +27,8 @@ def check_rate_limit(key: str, *, limit: int, window_sec: int) -> int | None:
         # Ceiling of the remaining window, capped at window_sec: on coarse
         # timers (Windows, ~15.6ms tick) `now` can equal `bucket[0]` exactly,
         # and int(remaining) + 1 would overshoot to window_sec + 1 (#346).
+        # The min() cap additionally pins the ceiling when `now` reads BEFORE
+        # bucket[0] (NTP backward step) — ceil alone would exceed the window.
         retry = min(window_sec, math.ceil(window_sec - (now - bucket[0])))
         _rate_state[key] = bucket
         return retry

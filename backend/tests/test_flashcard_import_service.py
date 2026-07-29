@@ -447,3 +447,17 @@ class TestGenerateFlashcards:
         assert "- BFS" in sent
         # Free-text context branch.
         assert "Focus on the midterm review session." in sent
+
+
+class TestRateLimitClockSkew:
+    def test_retry_capped_when_clock_steps_backward(self, monkeypatch):
+        # NTP can step time.time() BACKWARD between calls: now < bucket[0]
+        # makes the remaining window exceed the 60s window, and bare ceil()
+        # would report an impossible retry hint. The min() cap is load-bearing
+        # exactly here (#346).
+        now = [1000.0]
+        monkeypatch.setattr(svc.time, "time", lambda: now[0])
+        for _ in range(5):
+            svc.check_rate_limit("u-skew")
+        now[0] = 998.5  # clock stepped back 1.5s
+        assert svc.check_rate_limit("u-skew") == 60

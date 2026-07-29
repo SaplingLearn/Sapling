@@ -51,3 +51,15 @@ class TestCheckRateLimit:
             request_limits.check_rate_limit("k", limit=3, window_sec=60)
         now[0] = 1059.5  # 0.5s of the window left -> ceil to 1
         assert request_limits.check_rate_limit("k", limit=3, window_sec=60) == 1
+
+    def test_retry_capped_when_clock_steps_backward(self, monkeypatch):
+        # NTP can step time.time() BACKWARD between calls: now < bucket[0]
+        # makes the remaining window exceed window_sec, and bare ceil() would
+        # report an impossible retry hint (e.g. 61+s for a 60s window). The
+        # min() cap is load-bearing exactly here (#346).
+        now = [1000.0]
+        monkeypatch.setattr(request_limits.time, "time", lambda: now[0])
+        for _ in range(3):
+            request_limits.check_rate_limit("k", limit=3, window_sec=60)
+        now[0] = 998.5  # clock stepped back 1.5s
+        assert request_limits.check_rate_limit("k", limit=3, window_sec=60) == 60
