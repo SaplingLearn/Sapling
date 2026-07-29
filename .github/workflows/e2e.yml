@@ -41,7 +41,7 @@ jobs:
         with:
           python-version: '3.13'
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements.lock
       - uses: actions/setup-node@v4
         with:
           # node 22 to match ci.yml's frontend lane: node 20 bundles npm 10.8,
@@ -62,7 +62,14 @@ jobs:
         run: |
           cp .env.local.example .env
           python -m venv venv
-          venv/bin/pip install --quiet -r requirements.txt
+          # Install the HASH-PINNED lock, matching ci.yml's backend lane. This
+          # lane used to install requirements.txt, whose unpinned
+          # pydantic-ai-slim>=0.0.20 freshly resolved to the 2.x major on
+          # every run — where run_stream_events() returns an async context
+          # manager, so every streamed tutor turn TypeError'd pre-token and
+          # fell back to legacy, failing the tutor journey on every push to
+          # main since #349 while ci.yml (lock-pinned 1.107) stayed green.
+          venv/bin/pip install --quiet --require-hashes -r requirements.lock
       - name: Frontend deps + browser
         working-directory: frontend
         run: |
