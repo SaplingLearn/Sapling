@@ -1,7 +1,15 @@
 "use client";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, MotionGlobalConfig, useReducedMotion } from "framer-motion";
+import { IS_TEST_MODE } from "@/lib/testMode";
+
+// Deterministic DOM for browser tests (#383): framer-motion's own test
+// seam jumps every animation straight to its final keyframe. No-op in
+// production builds (flag inlined to false at build time). Same gate as
+// Study.tsx / HowItWorks.tsx — the flag is module-side-effect scoped, so
+// every framer-motion consumer must set it for direct-navigation runs.
+if (IS_TEST_MODE) MotionGlobalConfig.skipAnimations = true;
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
