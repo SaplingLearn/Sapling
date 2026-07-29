@@ -16,7 +16,7 @@ A FastAPI + Supabase backend that ingests student documents, calls Gemini to cla
 - backend/main.py:87 — FastAPI app + CORS; every router mount lives in the block at :150–169.
 - backend/routes/documents.py:182 — `_process_document` single-call classify/summarize/extract (refactor target #1).
 - backend/routes/documents.py:603 — `upload_document` POST `/api/documents/upload` pipeline.
-- backend/routes/learn.py:288 — `build_system_prompt` for the streaming tutor (SSE).
+- backend/routes/learn.py:301 — `build_system_prompt`; the streamed tutor routes live in the same file (`POST /api/learn/chat/stream` + `/start-session/stream` → `services/chat_stream.py::stream_agent_turn`, #349).
 - backend/routes/quiz.py:1 — quiz session create/answer/score endpoints.
 - backend/routes/notes.py:32 — `/api/notes` notetaker CRUD, concept link/unlink, and agent actions (`summarize`/`extract-concepts`/`chat`/`send-to-tutor`/`generate-quiz`).
 - backend/routes/academics.py — `/api` terms/offerings/enrollments endpoints over the redesigned schema.
@@ -28,11 +28,12 @@ A FastAPI + Supabase backend that ingests student documents, calls Gemini to cla
 - backend/services/gemini_service.py:135 — `call_gemini_json` JSON-mode helper used by document/quiz prompts.
 - backend/services/notes_service.py:49 — notes CRUD with column encryption (`create_note`/`update_note`/`save_summary`/`link_concept`).
 - backend/services/graph_service.py:461 — `apply_graph_update` (becomes a Pydantic AI tool).
+- backend/routes/admin_analytics.py — admin-only `/api/admin/analytics` usage/cost rollups over the `events`/`llm_usage` tables (#375); writes go through `services/events_service.py` + `agents/usage.py::record_agent_usage`.
 - backend/services/extraction_service.py:1 — OCR engine router (Docling / GOT-OCR / Tesseract).
 - backend/services/auth_guard.py:68 — `require_self` / `require_admin` FastAPI dependencies.
 - backend/agents/note_summary.py, note_concepts.py, note_chat.py — Pydantic AI agents backing the `/api/notes` agent actions (model slots in `agents/_providers.py`).
 - backend/db/connection.py:102 — `table()` factory; the only sanctioned Supabase entry point (PostgREST, no DDL).
-- backend/db/migrate.py — raw-DDL migration runner (psycopg over `SUPABASE_DB_URL`); migrations are append-only `db/migrations/*.sql` (now at 0030).
+- backend/db/migrate.py — raw-DDL migration runner (psycopg over `SUPABASE_DB_URL`); migrations are append-only `db/migrations/*.sql` (now at 0036).
 
 ## Commands
 
@@ -91,7 +92,7 @@ make explore                       # Chapter 2: bounded AI exploration of the ru
 - Routers are mounted in `main.py` with `/api/<name>` prefixes; new routes follow that pattern.
 - **Verify substantive changes against the E2E lanes before merge**: hermetic suite + the Chapter 1 Playwright lane + the oracles (all three where applicable — `e2e.yml` re-runs the lane on every push to main, but pre-merge is the gate that can still say no). A bug fix in E2E-covered territory pairs with a promoted regression journey in `frontend/e2e/` (triage/promotion recipe: `docs/e2e-exploration.md` §7–§8; journey style: fixtures-based `test` from `support/fixtures.ts`, DB asserts via `support/db.ts`, testids per `docs/frontend-testids.md` "Adding a surface").
 - **The local E2E stack is a machine singleton.** Serialize ALL stack use (yours and every subagent's) via `flock` on `/tmp/claude-<uid>/sapling-e2e-stack.lock`, wrapping each whole up→test→down cycle in ONE flock invocation — never separate flock calls for up and down (detached servers inherit the lock fd; a separately-flocked teardown deadlocks). `make explore` manages its own lock.
-- **Function-mode seam**: the E2E lanes run `SAPLING_MODEL_MODE=function` with fixed handler constants from `agents/function_handlers_e2e.py` — every upload "summarizing" gradient descent is the seam working as designed, not a data bug (the tell: byte-match to an `E2E_*` constant). New request-path agent tasks need a handler registered there (unregistered tasks raise `UnregisteredHandlerError`); post-response BackgroundTask handlers stay deliberately unregistered. Keep handler constants ↔ spec assertions ↔ `tests/test_e2e_function_handlers.py` in sync. Code below the `agents/_providers.py` seam must never construct a raw `google.genai.Client` without a `model_mode()` gate (#439).
+- **Function-mode seam**: the E2E lanes run `SAPLING_MODEL_MODE=function` with fixed handler constants from `agents/function_handlers_e2e.py` (the seam serves STREAMED runs too since #349 — the SSE tutor replays the same constants) — every upload "summarizing" gradient descent is the seam working as designed, not a data bug (the tell: byte-match to an `E2E_*` constant). New request-path agent tasks need a handler registered there (unregistered tasks raise `UnregisteredHandlerError`); post-response BackgroundTask handlers stay deliberately unregistered. Keep handler constants ↔ spec assertions ↔ `tests/test_e2e_function_handlers.py` in sync. Code below the `agents/_providers.py` seam must never construct a raw `google.genai.Client` without a `model_mode()` gate (#439).
 
 ## Pointers
 
