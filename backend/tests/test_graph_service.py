@@ -8,6 +8,7 @@ from datetime import datetime
 import pytest
 from unittest.mock import MagicMock, patch
 
+import services.graph_service as gs
 from services.graph_service import (
     get_graph,
     get_courses,
@@ -769,3 +770,252 @@ class TestGetRecommendations:
         with patch("services.graph_service.table", return_value=_simple_mock([])):
             result = get_recommendations("u1")
         assert result == []
+
+
+# ── get_graph semester scoping ─────────────────────────────────────────────────
+
+def test_get_graph_semester_filters_nodes_and_stats():
+    """With a semester, only that term's course nodes survive and stats recount."""
+    enrolled = [
+        {"id": "e1", "offering_id": "o1", "course_id": "bio-101",
+         "color": None, "nickname": None, "enrolled_at": "2026-01-01", "term": "Spring 2026",
+         "courses": {"course_code": "BIO-101", "course_name": "Biology", "department": "", "school": ""}},
+        {"id": "e2", "offering_id": "o2", "course_id": "psy-110",
+         "color": None, "nickname": None, "enrolled_at": "2025-09-01", "term": "Fall 2025",
+         "courses": {"course_code": "PSY-110", "course_name": "Psych", "department": "", "school": ""}},
+    ]
+    nodes = [
+        {"id": "n1", "course_id": "bio-101", "concept_name": "Cells",
+         "mastery_score": 0.4, "mastery_tier": "learning", "times_studied": 1},
+        {"id": "n2", "course_id": "psy-110", "concept_name": "Freud",
+         "mastery_score": 0.9, "mastery_tier": "mastered", "times_studied": 2},
+    ]
+
+    def fake_table(name):
+        from unittest.mock import MagicMock
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = {"graph_nodes": nodes, "graph_edges": [],
+                                 "node_mastery_events": [], "users": [{"streak_count": 3}]}.get(name, [])
+        return m
+
+    with patch.object(gs, "_user_enrolled_courses", return_value=enrolled), \
+         patch.object(gs, "ensure_user_exists", return_value=None), \
+         patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.term_id_for_label", return_value="t-spring"), \
+         patch("services.academics.user_course_ids_for_term", return_value={"bio-101"}):
+        out = gs.get_graph("user_andres", semester="Spring 2026")
+
+    concept_nodes = [n for n in out["nodes"] if not n.get("is_subject_root")]
+    assert {n["course_id"] for n in concept_nodes} == {"bio-101"}
+    assert out["stats"]["total_nodes"] == 1
+    assert out["stats"]["mastered"] == 0
+    # Only the Spring subject-root hub is built.
+    roots = [n for n in out["nodes"] if n.get("is_subject_root")]
+    assert {r["course_id"] for r in roots} == {"bio-101"}
+
+
+def test_get_graph_no_semester_returns_all():
+    enrolled = []
+    nodes = [
+        {"id": "n1", "course_id": "bio-101", "concept_name": "Cells",
+         "mastery_score": 0.4, "mastery_tier": "learning", "times_studied": 1},
+        {"id": "n2", "course_id": "psy-110", "concept_name": "Freud",
+         "mastery_score": 0.9, "mastery_tier": "mastered", "times_studied": 2},
+    ]
+
+    def fake_table(name):
+        from unittest.mock import MagicMock
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = {"graph_nodes": nodes, "graph_edges": [],
+                                 "node_mastery_events": [], "users": []}.get(name, [])
+        return m
+
+    with patch.object(gs, "_user_enrolled_courses", return_value=enrolled), \
+         patch.object(gs, "ensure_user_exists", return_value=None), \
+         patch.object(gs, "table", side_effect=fake_table):
+        out = gs.get_graph("user_andres")
+
+    assert out["stats"]["total_nodes"] == 2
+
+
+def test_get_recommendations_semester_builds_course_filter():
+    """When scoped, the DB query carries a course_id in.(...) filter and limit 5."""
+    captured = {}
+
+    def fake_table(name):
+        from unittest.mock import MagicMock
+        m = MagicMock(name=f"table({name})")
+        def _select(cols, filters=None, order=None, limit=None):
+            captured["filters"] = filters
+            captured["limit"] = limit
+            return [{"concept_name": "Cells", "mastery_score": 0.2,
+                     "mastery_tier": "struggling", "course_id": "bio-101"}]
+        m.select.side_effect = _select
+        return m
+
+    with patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.term_id_for_label", return_value="t-spring"), \
+         patch("services.academics.user_course_ids_for_term", return_value={"bio-101"}):
+        recs = gs.get_recommendations("user_andres", semester="Spring 2026")
+
+    assert captured["filters"]["course_id"] == "in.(bio-101)"
+    assert captured["limit"] == 5
+    assert [r["concept_name"] for r in recs] == ["Cells"]
+
+
+def test_get_recommendations_semester_empty_allowed_returns_empty():
+    """Unresolved term / no enrollment → [] without querying graph_nodes."""
+    def fake_table(name):
+        from unittest.mock import MagicMock
+        m = MagicMock(name=f"table({name})")
+        m.select.side_effect = AssertionError("must not query when no courses in term")
+        return m
+
+    with patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.term_id_for_label", return_value=None), \
+         patch("services.academics.user_course_ids_for_term", return_value=set()):
+        assert gs.get_recommendations("user_andres", semester="Nope 1999") == []
+
+
+def test_add_course_rejects_course_taken_in_any_term():
+    """A course the user already has in a *different* term can't be re-added."""
+    def fake_table(name):
+        from unittest.mock import MagicMock
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = [{"id": "bio-101"}] if name == "courses" else []
+        m.insert.side_effect = AssertionError("must not insert a duplicate enrollment")
+        return m
+
+    with patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.user_offering_ids_for_course", return_value=["off-old"]), \
+         patch("services.academics.term_for_offering", return_value={"label": "Fall 2025"}):
+        result = gs.add_course("user_andres", "bio-101")
+
+    assert result["already_existed"] is True
+    assert result["term"] == "Fall 2025"
+
+
+def test_add_course_enrolls_when_never_taken():
+    inserted = []
+
+    def fake_table(name):
+        from unittest.mock import MagicMock
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = [{"id": "bio-101"}] if name == "courses" else []
+        def _insert(data):
+            inserted.append((name, data))
+            return [data]
+        m.insert.side_effect = _insert
+        return m
+
+    with patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.user_offering_ids_for_course", return_value=[]), \
+         patch("services.academics.resolve_offering", return_value="off-new"), \
+         patch("services.course_context_service.update_course_context", return_value=None):
+        result = gs.add_course("user_andres", "bio-101")
+
+    assert result["already_existed"] is False
+    assert any(name == "enrollments" for name, _ in inserted)
+
+
+def test_graph_route_passes_semester_through():
+    from fastapi.testclient import TestClient
+    import routes.graph as graph_route
+    from main import app
+
+    captured = {}
+
+    def fake_get_graph(user_id, semester=None):
+        captured["user_id"] = user_id
+        captured["semester"] = semester
+        return {"nodes": [], "edges": [], "stats": {}}
+
+    with patch.object(graph_route, "get_graph", side_effect=fake_get_graph):
+        client = TestClient(app)
+        resp = client.get("/api/graph/user_andres?semester=Spring%202026")
+
+    assert resp.status_code == 200
+    assert captured == {"user_id": "user_andres", "semester": "Spring 2026"}
+
+
+def test_add_course_enrolls_into_requested_term():
+    """A term label picks THAT term's offering, not the date-derived current term.
+
+    Regression: the Courses & Semesters hub adds while a semester tab is active;
+    without threading the term through, every add landed in current_term and was
+    filtered out of the tab the user was viewing.
+    """
+    from unittest.mock import MagicMock
+
+    def fake_table(name):
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = [{"id": "bio-101"}] if name == "courses" else []
+        m.insert.side_effect = lambda data: [data]
+        return m
+
+    captured = {}
+
+    def fake_resolve(course_id, term_id=None, *, create=False):
+        captured["term_id"] = term_id
+        captured["create"] = create
+        return "off-fall"
+
+    with patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.user_offering_ids_for_course", return_value=[]), \
+         patch("services.academics.term_id_for_label", return_value="fall-2026"), \
+         patch("services.academics.resolve_offering", side_effect=fake_resolve), \
+         patch("services.course_context_service.update_course_context", return_value=None):
+        result = gs.add_course("user_andres", "bio-101", term="Fall 2026")
+
+    assert result["already_existed"] is False
+    assert captured["term_id"] == "fall-2026"
+    assert captured["create"] is True
+
+
+def test_add_course_no_term_falls_back_to_current_term():
+    """No term label → resolve_offering gets term_id=None (its current-term default)."""
+    from unittest.mock import MagicMock
+
+    def fake_table(name):
+        m = MagicMock(name=f"table({name})")
+        m.select.return_value = [{"id": "bio-101"}] if name == "courses" else []
+        m.insert.side_effect = lambda data: [data]
+        return m
+
+    captured = {}
+
+    def fake_resolve(course_id, term_id=None, *, create=False):
+        captured["term_id"] = term_id
+        return "off-current"
+
+    with patch.object(gs, "table", side_effect=fake_table), \
+         patch("services.academics.user_offering_ids_for_course", return_value=[]), \
+         patch("services.academics.resolve_offering", side_effect=fake_resolve), \
+         patch("services.course_context_service.update_course_context", return_value=None):
+        result = gs.add_course("user_andres", "bio-101")
+
+    assert result["already_existed"] is False
+    assert captured["term_id"] is None
+
+
+def test_create_course_route_passes_term_through():
+    from fastapi.testclient import TestClient
+    import routes.graph as graph_route
+    from main import app
+
+    captured = {}
+
+    def fake_add_course(user_id, course_id, color=None, nickname=None, term=None):
+        captured.update(user_id=user_id, course_id=course_id, term=term)
+        return {"course_id": course_id, "already_existed": False}
+
+    with patch.object(graph_route, "add_course", side_effect=fake_add_course), \
+         patch.object(graph_route, "require_self", return_value=None):
+        client = TestClient(app)
+        resp = client.post(
+            "/api/graph/user_andres/courses",
+            json={"course_id": "bio-101", "term": "Fall 2026"},
+        )
+
+    assert resp.status_code == 200
+    assert captured["term"] == "Fall 2026"

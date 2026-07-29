@@ -141,15 +141,30 @@ def _compute_velocity(events: list) -> float:
     return round(positive_gain / days, 4)
 
 
-def get_graph(user_id: str) -> dict:
+def get_graph(user_id: str, semester: str | None = None) -> dict:
     ensure_user_exists(user_id)
-    
+
     # Get all enrolled courses for this user
     enrolled_courses = _user_enrolled_courses(user_id)
-    
+
+    # Optional semester scope (Path A): restrict to the courses the user is
+    # enrolled in for that term. `allowed_course_ids is None` means "all terms".
+    allowed_course_ids: set[str] | None = None
+    if semester:
+        from services.academics import term_id_for_label, user_course_ids_for_term
+        term_id = term_id_for_label(semester)
+        allowed_course_ids = (
+            user_course_ids_for_term(user_id, term_id) if term_id else set()
+        )
+        enrolled_courses = [
+            c for c in enrolled_courses if c.get("course_id") in allowed_course_ids
+        ]
+
     # Get all graph nodes for this user
     nodes_raw = table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"})
     nodes = nodes_raw or []
+    if allowed_course_ids is not None:
+        nodes = [n for n in nodes if n.get("course_id") in allowed_course_ids]
     node_ids = {n["id"] for n in nodes}
 
     edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
@@ -321,20 +336,53 @@ def get_courses(user_id: str) -> list:
     return result
 
 
-def add_course(user_id: str, course_id: str, color: str | None = None, nickname: str | None = None) -> dict:
+def add_course(
+    user_id: str,
+    course_id: str,
+    color: str | None = None,
+    nickname: str | None = None,
+    term: str | None = None,
+) -> dict:
     """
     Enroll a user in a course. ``course_id`` is the abstract catalog course id;
-    the enrollment is created against the **current term's offering** of that
-    course (created if the catalog lacks one), so new enrollments land in the
-    real current semester.
+    the enrollment is created against an offering of that course (created if the
+    catalog lacks one).
+
+    ``term`` is an optional semester **label** (e.g. "Fall 2026") — the semester
+    the caller is enrolling into (the active tab in the Courses & Semesters hub).
+    When given and resolvable it picks that term's offering, so the course shows
+    up under the tab the user was viewing instead of being silently dropped into
+    the date-derived current term. When omitted/unresolvable it falls back to the
+    current term.
     """
     # Verify the abstract course exists in the catalog
     course_check = table("courses").select("id", filters={"id": f"eq.{course_id}"})
     if not course_check:
         return {"course_id": course_id, "error": "Course not found in catalog"}
 
-    from services.academics import resolve_offering
-    offering_id = resolve_offering(course_id, create=True)
+    from services.academics import (
+        resolve_offering,
+        user_offering_ids_for_course,
+        term_for_offering,
+        term_id_for_label,
+    )
+
+    # No-retake rule: a course already enrolled in ANY term can't be added again.
+    # (Broadens the old current-term-only check so cross-semester duplicates are
+    # rejected instead of silently creating a second enrollment.)
+    existing_offerings = user_offering_ids_for_course(user_id, course_id)
+    if existing_offerings:
+        existing_term = term_for_offering(existing_offerings[0]) or {}
+        return {
+            "course_id": course_id,
+            "already_existed": True,
+            "term": existing_term.get("label", ""),
+        }
+
+    # Resolve the requested semester label → term id. An unknown label yields
+    # None, which resolve_offering treats as "current term".
+    term_id = term_id_for_label(term) if term else None
+    offering_id = resolve_offering(course_id, term_id=term_id, create=True)
     if not offering_id:
         return {"course_id": course_id, "error": "No term available to enroll into"}
 
@@ -635,13 +683,23 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
     return mastery_changes
 
 
-def get_recommendations(user_id: str) -> list:
+def get_recommendations(user_id: str, semester: str | None = None) -> list:
+    filters = {
+        "user_id": f"eq.{user_id}",
+        "mastery_tier": "in.(struggling,learning,unexplored)",
+    }
+    if semester:
+        from services.academics import term_id_for_label, user_course_ids_for_term
+        term_id = term_id_for_label(semester)
+        allowed = user_course_ids_for_term(user_id, term_id) if term_id else set()
+        # Unresolved label / no enrollment in that term → no recommendations.
+        if not allowed:
+            return []
+        filters["course_id"] = f"in.({','.join(allowed)})"
+
     rows = table("graph_nodes").select(
-        "concept_name,mastery_score,mastery_tier",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "mastery_tier": "in.(struggling,learning,unexplored)",
-        },
+        "concept_name,mastery_score,mastery_tier,course_id",
+        filters=filters,
         order="mastery_score.asc",
         limit=5,
     )

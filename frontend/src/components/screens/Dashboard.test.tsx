@@ -1,19 +1,25 @@
 // @vitest-environment jsdom
 /**
- * Semester grouping on the dashboard course list (#140):
- *   1. Current-term courses render; earlier terms don't until Archive opens.
- *   2. An archived course routes into that semester's gradebook.
- *   3. A failed /api/semesters degrades to one flat list, never a blank panel.
+ * Active-semester scoping of the dashboard course list (#360):
+ *   1. The course list is scoped to the active semester, which defaults to the
+ *      most-recent enrolled term by `sort_key` (from /api/semesters).
+ *   2. A semester previously chosen (persisted in localStorage) scopes both the
+ *      panel and the graph fetch to that term.
+ *   3. When /api/semesters fails there is no `sort_key` to rank by, so the
+ *      default degrades to the term label's derived rank (still Spring 2026),
+ *      not a blank or unscoped panel.
  *
- * The graph, modals and skeleton are stubbed — this exercises the course-list
- * partition only.
+ * There is no separate "current vs. archive" split — the semester selector (the
+ * ManageCoursesModal term tabs, stubbed here) is the single source of truth.
+ * The graph, modals and skeleton are stubbed — this exercises the scoped
+ * course list only.
  */
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { EnrolledCourse, Semester } from "@/lib/api";
+import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
 
 const push = vi.fn();
 
@@ -27,7 +33,7 @@ vi.mock("@/context/UserContext", () => ({
 }));
 
 vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
-// "topnav" renders the legacy My Courses panel, which owns the Archive.
+// "topnav" renders the legacy My Courses panel, the easiest surface to assert on.
 vi.mock("@/lib/useLayoutPref", () => ({ useLayoutPref: () => ["topnav", vi.fn()] }));
 
 vi.mock("../KnowledgeGraph", () => ({ KnowledgeGraph: () => null }));
@@ -80,6 +86,7 @@ function course(code: string, term: string): EnrolledCourse {
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
   globalThis.ResizeObserver = class {
     observe() {}
     unobserve() {}
@@ -94,6 +101,8 @@ beforeEach(() => {
   vi.mocked(getRecommendations).mockResolvedValue({ recommendations: [] });
   mockedGetSemesters.mockResolvedValue({ semesters: SEMESTERS });
   mockedGetCourses.mockResolvedValue({
+    // BIO-101 is enrolled first, so enrollment order ranks it before PSY-110;
+    // by sort_key, Spring 2026 (20261) still outranks Fall 2025 (20253).
     courses: [course("BIO-101", "Spring 2026"), course("PSY-110", "Fall 2025")],
   });
 });
@@ -108,41 +117,39 @@ afterEach(() => {
 // panel assertions have to be scoped.
 const panel = () => within(screen.getByText("My courses").closest(".card") as HTMLElement);
 
-describe("Dashboard course list by semester", () => {
-  it("shows only current-term courses until the archive is opened", async () => {
+describe("Dashboard course list by active semester", () => {
+  it("defaults to the most-recent term by sort_key and scopes the list to it", async () => {
     render(<Dashboard />);
 
+    // Spring 2026 has the higher sort_key, so it is the default active term.
     await waitFor(() => expect(panel().getByText("BIO-101")).toBeInTheDocument());
     expect(screen.queryByText("PSY-110")).toBeNull();
 
-    const archive = screen.getByRole("button", { name: /archive/i });
-    expect(archive).toHaveAttribute("aria-expanded", "false");
-
-    await userEvent.click(archive);
-
-    expect(await screen.findByText("PSY-110")).toBeInTheDocument();
-    expect(panel().getByText("Fall 2025")).toBeInTheDocument();
+    // No current/archive split any more.
+    expect(screen.queryByRole("button", { name: /archive/i })).toBeNull();
   });
 
-  it("opens that semester's gradebook when an archived course is picked", async () => {
+  it("scopes the list and the graph fetch to a semester chosen from storage", async () => {
+    window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Fall 2025");
+
     render(<Dashboard />);
 
-    await waitFor(() => expect(panel().getByText("BIO-101")).toBeInTheDocument());
-    await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-    await userEvent.click(
-      await screen.findByRole("button", { name: /PSY-110 — open the Fall 2025 gradebook/ }),
-    );
-
-    expect(push).toHaveBeenCalledWith("/gradebook?semester=Fall%202025");
+    await waitFor(() => expect(panel().getByText("PSY-110")).toBeInTheDocument());
+    expect(screen.queryByText("BIO-101")).toBeNull();
+    // The graph is fetched scoped to the stored term, no unscoped first pass.
+    expect(getGraph).toHaveBeenCalledWith("u1", "Fall 2025");
+    expect(getGraph).not.toHaveBeenCalledWith("u1", undefined);
   });
 
-  it("falls back to one flat list when /api/semesters fails", async () => {
+  it("degrades to label-derived ranking when /api/semesters fails", async () => {
     mockedGetSemesters.mockRejectedValue(new Error("500"));
 
     render(<Dashboard />);
 
+    // No sort_key to rank by, so the default degrades to the label's derived
+    // rank — Spring 2026 (20261) still outranks Fall 2025 (20253).
     await waitFor(() => expect(panel().getByText("BIO-101")).toBeInTheDocument());
-    expect(panel().getByText("PSY-110")).toBeInTheDocument();
+    expect(screen.queryByText("PSY-110")).toBeNull();
     expect(screen.queryByRole("button", { name: /archive/i })).toBeNull();
   });
 });

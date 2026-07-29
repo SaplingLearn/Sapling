@@ -10,6 +10,7 @@ import { KnowledgeGraph } from "../KnowledgeGraph";
 import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
+import { useActiveSemester } from "@/lib/useActiveSemester";
 import { getGraph, getCourses, getSessions, deleteGraphNode, type EnrolledCourse, type Session } from "@/lib/api";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
@@ -29,6 +30,7 @@ export function Tree() {
   const router = useRouter();
   const search = useSearchParams();
   const { userId, userReady } = useUser();
+  const [activeSemester, , semesterHydrated] = useActiveSemester();
   const isMobile = useIsMobile();
   const suggest = search.get("suggest");
 
@@ -59,7 +61,7 @@ export function Tree() {
     if (!userId) return;
     try {
       const [graphRes, coursesRes, sessionsRes] = await Promise.all([
-        getGraph(userId),
+        getGraph(userId, activeSemester || undefined),
         getCourses(userId),
         getSessions(userId, 50).catch(() => ({ sessions: [] })),
       ]);
@@ -79,11 +81,13 @@ export function Tree() {
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, activeSemester]);
 
   React.useEffect(() => {
-    if (userReady && userId) load();
-  }, [userReady, userId, load]);
+    // Wait for the active-semester read from localStorage before the first load,
+    // so returning users fetch scoped once instead of unscoped-then-scoped.
+    if (userReady && userId && semesterHydrated) load();
+  }, [userReady, userId, semesterHydrated, load]);
 
   // Auto-select node matching ?suggest= once data loads.
   React.useEffect(() => {
@@ -102,6 +106,11 @@ export function Tree() {
       document.removeEventListener("keydown", h);
     };
   }, [fullscreen]);
+
+  const scopedCourses = React.useMemo(
+    () => (activeSemester ? courses.filter((c) => c.term === activeSemester) : courses),
+    [courses, activeSemester],
+  );
 
   const filteredNodes = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -299,7 +308,7 @@ export function Tree() {
         }}
       >
         <Pill active={courseFilter === "all"} onClick={() => setCourseFilter("all")}>All courses</Pill>
-        {courses.map((c) => (
+        {scopedCourses.map((c) => (
           <Pill
             key={c.course_id}
             active={courseFilter === c.course_id}

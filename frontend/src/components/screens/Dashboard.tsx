@@ -11,6 +11,7 @@ import { DashboardSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useLayoutPref } from "@/lib/useLayoutPref";
+import { useActiveSemester, resolveActiveSemester } from "@/lib/useActiveSemester";
 import {
   getGraph,
   getCourses,
@@ -19,13 +20,12 @@ import {
   getRecommendations,
   getSemesters,
   type EnrolledCourse,
-  type Semester,
   type Session,
   type Assignment,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
-import { partitionCurrentAndArchive } from "@/lib/semesters";
+import { courseTermLabels } from "@/lib/semesters";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 
 const QUOTES = [
@@ -194,6 +194,7 @@ export function Dashboard() {
   const router = useRouter();
   const search = useSearchParams();
   const { userId, userName, userReady } = useUser();
+  const [activeSemester, setActiveSemester, semesterHydrated] = useActiveSemester();
   const isMobile = useIsMobile();
   const [layoutPref] = useLayoutPref();
   // Top-nav layout keeps the pre-revamp 3-column dashboard with the
@@ -208,7 +209,6 @@ export function Dashboard() {
     streak: 0, mastered: 0, total: 0, learning: 0, struggling: 0, unexplored: 0,
   });
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
-  const [semesters, setSemesters] = React.useState<Semester[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [recommendations, setRecommendations] = React.useState<{ concept_name: string; reason?: string }[]>([]);
@@ -217,7 +217,6 @@ export function Dashboard() {
   const [activeDays, setActiveDays] = React.useState<Set<string>>(new Set());
 
   const [coursesOpen, setCoursesOpen] = React.useState(false);
-  const [archiveOpen, setArchiveOpen] = React.useState(false);
   const [fullscreen, setFullscreen] = React.useState(false);
   const [mobileTab, setMobileTab] = React.useState<"courses" | "stats">("courses");
 
@@ -267,18 +266,24 @@ export function Dashboard() {
     setLoadError(null);
     try {
       const [graphRes, coursesRes, assignsRes, sessionsRes, recsRes, semestersRes] = await Promise.all([
-        getGraph(userId),
+        getGraph(userId, activeSemester || undefined),
         getCourses(userId),
         getUpcomingAssignments(userId),
         getSessions(userId, 10),
-        getRecommendations(userId).catch(() => ({ recommendations: [] })),
-        // Term calendar is a nicety: without it the course lists stay flat
-        // rather than the dashboard failing to load.
+        getRecommendations(userId, activeSemester || undefined).catch(() => ({ recommendations: [] })),
+        // Term calendar drives the default active-semester resolution below;
+        // if it fails we fall back to enrollment order rather than failing the load.
         getSemesters().catch(() => ({ semesters: [] })),
       ]);
       const cs = coursesRes.courses || [];
+      const sems = semestersRes.semesters || [];
       setCourses(cs);
-      setSemesters(semestersRes.semesters || []);
+      // First run with no stored semester: default to the most-recent enrolled
+      // term by `sort_key` (courseTermLabels), falling back to enrollment order.
+      if (!activeSemester) {
+        const def = courseTermLabels(cs, sems)[0] || resolveActiveSemester("", cs);
+        if (def) setActiveSemester(def);
+      }
       const gNodes: GraphNode[] = (graphRes.nodes || []).map((n: ApiNode) => apiToGraphNode(n, cs));
       setNodes(gNodes);
       setEdges((graphRes.edges || []).map(apiToGraphEdge));
@@ -307,11 +312,13 @@ export function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, activeSemester, setActiveSemester]);
 
   React.useEffect(() => {
-    if (userReady && userId) load();
-  }, [userReady, userId, load]);
+    // Wait for the active-semester read from localStorage before the first load,
+    // so returning users fetch scoped once instead of unscoped-then-scoped.
+    if (userReady && userId && semesterHydrated) load();
+  }, [userReady, userId, semesterHydrated, load]);
 
   useScrollLock(fullscreen);
 
@@ -335,8 +342,13 @@ export function Dashboard() {
   // return JSX), not as TopBar title/subtitle. Leaving the TopBar lean
   // makes the Dashboard feel like an arrival page, not a tool page.
 
+  const scopedCourses = React.useMemo(
+    () => (activeSemester ? courses.filter((c) => c.term === activeSemester) : courses),
+    [courses, activeSemester],
+  );
+
   const courseProgress = React.useMemo(() => {
-    return courses.map(c => {
+    return scopedCourses.map(c => {
       const courseNodes = nodes.filter(n => n.course_id === c.course_id && !n.is_subject_root);
       const mastered = courseNodes.filter(n => n.mastery_tier === "mastered").length;
       const learning = courseNodes.filter(n => n.mastery_tier === "learning").length;
@@ -353,51 +365,7 @@ export function Dashboard() {
         progress: total ? mastered / total : 0,
       };
     });
-  }, [courses, nodes]);
-
-  // Semester split (#140). Only courses that provably belong to an earlier term
-  // move behind the Archive; everything else — including undatable courses and
-  // the whole list when /api/semesters gave us nothing — stays visible.
-  const partition = React.useMemo(
-    () => partitionCurrentAndArchive(courses, semesters, today),
-    [courses, semesters, today],
-  );
-
-  const progressByCourse = React.useMemo(() => {
-    const byId = new Map<string, CourseProgressEntry>();
-    for (const entry of courseProgress) byId.set(entry.course.course_id, entry);
-    return byId;
-  }, [courseProgress]);
-
-  const currentProgress = React.useMemo(
-    () =>
-      partition.current
-        .map((c) => progressByCourse.get(c.course_id))
-        .filter((e): e is CourseProgressEntry => Boolean(e)),
-    [partition, progressByCourse],
-  );
-
-  const archivedProgress = React.useMemo(
-    () =>
-      partition.archive
-        .map((group) => ({
-          label: group.label,
-          entries: group.courses
-            .map((c) => progressByCourse.get(c.course_id))
-            .filter((e): e is CourseProgressEntry => Boolean(e)),
-        }))
-        .filter((group) => group.entries.length > 0),
-    [partition, progressByCourse],
-  );
-
-  const archivedCount = archivedProgress.reduce((n, g) => n + g.entries.length, 0);
-
-  // An archived course opens the gradebook scoped to its own term, not the
-  // current one — the whole point of surfacing it separately.
-  const openArchivedTerm = React.useCallback(
-    (label: string) => router.push(`/gradebook?semester=${encodeURIComponent(label)}`),
-    [router],
-  );
+  }, [scopedCourses, nodes]);
 
   const suggestNode = React.useMemo(() => {
     if (!suggest) return null;
@@ -449,11 +417,11 @@ export function Dashboard() {
         <div>
           <div className="label-micro">Your knowledge graph</div>
           <div className="h-serif" style={{ fontSize: 20, marginTop: 2 }}>
-            {stats.total || nodes.filter((n) => !n.is_subject_root).length} concepts across {courses.length} courses
+            {stats.total || nodes.filter((n) => !n.is_subject_root).length} concepts across {scopedCourses.length} courses
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          {useLegacyPanels && partition.current.slice(0, 5).map((c) => (
+          {useLegacyPanels && scopedCourses.slice(0, 5).map((c) => (
             <div key={c.course_id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)" }}>
               <span style={{ width: 10, height: 10, borderRadius: "50%", background: c.color || "var(--accent)" }} />
               {c.course_code || c.course_name}
@@ -481,10 +449,8 @@ export function Dashboard() {
             full My Courses panel in the left column instead. */}
         {!useLegacyPanels && (
           <CoursesKey
-            courseProgress={currentProgress}
-            archived={archivedProgress}
+            courseProgress={courseProgress}
             onManage={() => setCoursesOpen(true)}
-            onOpenTerm={openArchivedTerm}
           />
         )}
         <div style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
@@ -787,29 +753,19 @@ export function Dashboard() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">My courses</div>
           <button className="btn btn--ghost btn--sm" onClick={() => setCoursesOpen(true)}>
-            <Icon name="cog" size={12} /> Manage
+            <Icon name="cog" size={12} /> Courses & Semesters
           </button>
         </div>
-        {courseProgress.length === 0 && (
+        {courses.length === 0 ? (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No enrolled courses yet.</div>
-        )}
-        {courseProgress.length > 0 && currentProgress.length === 0 && (
+        ) : courseProgress.length === 0 ? (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
             Nothing enrolled this semester.
           </div>
-        )}
-        {currentProgress.map((entry) => (
+        ) : null}
+        {courseProgress.map((entry) => (
           <CourseProgressRow key={entry.course.course_id} entry={entry} />
         ))}
-        {archivedCount > 0 && (
-          <CoursesArchive
-            groups={archivedProgress}
-            count={archivedCount}
-            open={archiveOpen}
-            onToggle={() => setArchiveOpen(v => !v)}
-            onOpenTerm={openArchivedTerm}
-          />
-        )}
       </div>
 
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
@@ -1100,83 +1056,12 @@ type CourseProgressEntry = {
   progress: number;
 };
 
-type ArchivedTermProgress = {
-  label: string;
-  entries: CourseProgressEntry[];
-};
-
-// Past terms, collapsed by default. Expanding lists each prior semester with
-// its courses; picking one opens that semester's gradebook.
-function CoursesArchive({
-  groups,
-  count,
-  open,
-  onToggle,
-  onOpenTerm,
-}: {
-  groups: ArchivedTermProgress[];
-  count: number;
-  open: boolean;
-  onToggle: () => void;
-  onOpenTerm: (label: string) => void;
-}) {
-  return (
-    <div style={{ borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 10 }}>
-      <button
-        type="button"
-        className="btn btn--ghost btn--sm"
-        onClick={onToggle}
-        aria-expanded={open}
-        aria-controls="dashboard-courses-archive"
-        title={open ? "Hide past semesters" : "Show past semesters"}
-        style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "flex-start" }}
-      >
-        <span
-          aria-hidden
-          style={{
-            display: "inline-flex",
-            transition: "transform var(--dur-fast) var(--ease)",
-            transform: open ? "rotate(90deg)" : "none",
-          }}
-        >
-          <Icon name="chev" size={11} />
-        </span>
-        Archive
-        <span className="mono" style={{ color: "var(--text-muted)", fontSize: 11 }}>{count}</span>
-      </button>
-
-      {open && (
-        <div id="dashboard-courses-archive" style={{ marginTop: 10 }}>
-          {groups.map((group) => (
-            <div key={group.label} style={{ marginBottom: 8 }}>
-              <div className="label-micro" style={{ marginBottom: 6 }}>{group.label}</div>
-              {group.entries.map((entry) => (
-                <CourseProgressRow
-                  key={entry.course.course_id}
-                  entry={entry}
-                  onOpen={() => onOpenTerm(group.label)}
-                  ariaLabel={`${entry.course.course_code || entry.course.course_name} — open the ${group.label} gradebook`}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // One "My courses" line: colour dot, course code, mastery percentage and the
-// four-segment mastery bar. Rendered as a button when `onOpen` is supplied so
-// archived courses can route into their own semester's gradebook.
+// four-segment mastery bar.
 function CourseProgressRow({
   entry,
-  onOpen,
-  ariaLabel,
 }: {
   entry: CourseProgressEntry;
-  onOpen?: () => void;
-  ariaLabel?: string;
 }) {
   const { course, mastered, learning, struggling, unexplored, total, progress } = entry;
   const pct = Math.round(progress * 100);
@@ -1230,45 +1115,19 @@ function CourseProgressRow({
     </>
   );
 
-  if (!onOpen) return <div style={{ marginBottom: 12 }}>{body}</div>;
-
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={ariaLabel}
-      style={{
-        display: "block",
-        width: "100%",
-        marginBottom: 12,
-        padding: 0,
-        background: "transparent",
-        border: 0,
-        textAlign: "left",
-        color: "inherit",
-        font: "inherit",
-        cursor: "pointer",
-      }}
-    >
-      {body}
-    </button>
-  );
+  return <div style={{ marginBottom: 12 }}>{body}</div>;
 }
 
 function CoursesKey({
   courseProgress,
-  archived,
   onManage,
-  onOpenTerm,
 }: {
   courseProgress: CourseProgressEntry[];
-  archived: ArchivedTermProgress[];
   onManage: () => void;
-  onOpenTerm: (label: string) => void;
 }) {
   const [collapsed, setCollapsed] = React.useState(true);
 
-  if (courseProgress.length === 0 && archived.length === 0) return null;
+  if (courseProgress.length === 0) return null;
 
   // A thick white outline painted BEHIND the glyphs, plus a soft halo.
   // `paint-order: stroke fill` pushes the stroke under the fill so
@@ -1341,7 +1200,7 @@ function CoursesKey({
             <button
               className="btn btn--ghost btn--sm"
               onClick={onManage}
-              title="Manage courses"
+              title="Courses & Semesters"
               style={paddedIconBtn}
             >
               <Icon name="cog" size={13} />
@@ -1418,39 +1277,6 @@ function CoursesKey({
           {courseProgress.length === 0 && (
             <div style={{ fontSize: 12, color: "var(--text-dim)", ...legibleText }}>
               Nothing enrolled this semester.
-            </div>
-          )}
-
-          {archived.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div className="label-micro" style={{ fontSize: 10, ...legibleText }}>Archive</div>
-              {archived.map((group) => (
-                <button
-                  key={group.label}
-                  type="button"
-                  onClick={() => onOpenTerm(group.label)}
-                  aria-label={`Open the ${group.label} gradebook`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 8,
-                    width: "100%",
-                    padding: 0,
-                    background: "transparent",
-                    border: 0,
-                    cursor: "pointer",
-                    fontSize: 12,
-                    color: "var(--text-dim)",
-                    ...legibleText,
-                  }}
-                >
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {group.label}
-                  </span>
-                  <span className="mono" style={{ fontSize: 11 }}>{group.entries.length}</span>
-                </button>
-              ))}
             </div>
           )}
         </div>

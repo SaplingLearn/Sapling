@@ -70,11 +70,15 @@ export interface MeResponse {
 export const getMe = () => fetchJSON<MeResponse>('/api/auth/me');
 
 // Graph
-export const getGraph = (userId: string) =>
-  fetchJSON<{ nodes: any[]; edges: any[]; stats: any }>(`/api/graph/${userId}`);
+export const getGraph = (userId: string, semester?: string) =>
+  fetchJSON<{ nodes: any[]; edges: any[]; stats: any }>(
+    `/api/graph/${userId}${semester ? `?semester=${encodeURIComponent(semester)}` : ""}`,
+  );
 
-export const getRecommendations = (userId: string) =>
-  fetchJSON<{ recommendations: any[] }>(`/api/graph/${userId}/recommendations`);
+export const getRecommendations = (userId: string, semester?: string) =>
+  fetchJSON<{ recommendations: any[] }>(
+    `/api/graph/${userId}/recommendations${semester ? `?semester=${encodeURIComponent(semester)}` : ""}`,
+  );
 
 export interface EnrolledCourse {
   enrollment_id: string;
@@ -96,10 +100,10 @@ export interface EnrolledCourse {
 export const getCourses = (userId: string) =>
   fetchJSON<{ courses: EnrolledCourse[] }>(`/api/graph/${userId}/courses`);
 
-export const addCourse = (userId: string, courseId: string, color?: string, nickname?: string) =>
-  fetchJSON<{ course_id: string; already_existed: boolean; error?: string }>(`/api/graph/${userId}/courses`, {
+export const addCourse = (userId: string, courseId: string, color?: string, nickname?: string, term?: string) =>
+  fetchJSON<{ course_id: string; already_existed: boolean; term?: string; error?: string }>(`/api/graph/${userId}/courses`, {
     method: 'POST',
-    body: JSON.stringify({ course_id: courseId, ...(color ? { color } : {}), ...(nickname ? { nickname } : {}) }),
+    body: JSON.stringify({ course_id: courseId, ...(color ? { color } : {}), ...(nickname ? { nickname } : {}), ...(term ? { term } : {}) }),
   });
 
 export const deleteCourse = (userId: string, courseId: string) =>

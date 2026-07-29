@@ -50,6 +50,44 @@ def list_terms() -> list[dict]:
     ) or []
 
 
+def term_id_for_label(label: str | None) -> str | None:
+    """Resolve a semester **label** (e.g. "Spring 2026") to a term id.
+
+    Falls back to treating the value as a term id directly. ``None``/empty → None.
+    The canonical mapping for ``semester`` query values across the API —
+    ``routes/gradebook.py`` and the graph/recommendations scoping both use it.
+    """
+    if not label:
+        return None
+    rows = table("terms").select("id", filters={"label": f"eq.{label}"}, limit=1)
+    if rows:
+        return rows[0]["id"]
+    rows = table("terms").select("id", filters={"id": f"eq.{label}"}, limit=1)
+    return rows[0]["id"] if rows else None
+
+
+def user_course_ids_for_term(user_id: str, term_id: str) -> set[str]:
+    """The abstract ``course_id``s the user is enrolled in for a given term.
+
+    ``enrollments (user_id) → offering_id → course_offerings (term_id) → course_id``.
+    Multi-step reads (this module avoids PostgREST embedded filters); short-circuits
+    on empty sets. Deliberately **not** cached — enrollments mutate.
+    """
+    if not user_id or not term_id:
+        return set()
+    enr = table("enrollments").select(
+        "offering_id", filters={"user_id": f"eq.{user_id}"}
+    ) or []
+    off_ids = {e["offering_id"] for e in enr if e.get("offering_id")}
+    if not off_ids:
+        return set()
+    offs = table("course_offerings").select(
+        "course_id",
+        filters={"id": f"in.({','.join(off_ids)})", "term_id": f"eq.{term_id}"},
+    ) or []
+    return {o["course_id"] for o in offs if o.get("course_id")}
+
+
 def resolve_offering(
     course_id: str,
     term_id: str | None = None,

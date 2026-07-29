@@ -8,9 +8,9 @@ resolution, chunking, the relevance gate, and the call into
 `services.rag_service.index_document_chunks`) was never actually
 exercised. These tests call it directly.
 
-`chunk_document` and `index_document_chunks` are imported *inside* the
+`chunk_for_category` and `index_document_chunks` are imported *inside* the
 function body (local imports), so they must be patched at their
-definition sites (`services.chunker.chunk_document`,
+definition sites (`services.chunker.chunk_for_category`,
 `services.rag_service.index_document_chunks`) rather than on
 `routes.documents`.
 """
@@ -51,7 +51,7 @@ class TestIndexDocumentChunks:
                     course_chunks_rows=[],  # no catalog embedding -> gate skipped
                 ),
             ),
-            patch("services.chunker.chunk_document", return_value=chunks) as mock_chunk,
+            patch("services.chunker.chunk_for_category", return_value=chunks) as mock_chunk,
             patch(
                 "services.rag_service.index_document_chunks", return_value=2
             ) as mock_index,
@@ -64,7 +64,7 @@ class TestIndexDocumentChunks:
                 category="lecture_notes",
             )
 
-        mock_chunk.assert_called_once_with("some extracted text")
+        mock_chunk.assert_called_once_with("some extracted text", "lecture_notes")
         mock_index.assert_called_once_with(
             course_code="BIO-101",
             doc_id="doc-1",
@@ -73,7 +73,7 @@ class TestIndexDocumentChunks:
         )
 
     def test_empty_chunks_short_circuits_before_indexing(self):
-        """chunk_document() returning [] (e.g. empty/garbage extracted text)
+        """chunk_for_category() returning [] (e.g. empty/garbage extracted text)
         must bail out before ever calling index_document_chunks."""
         with (
             patch(
@@ -83,7 +83,7 @@ class TestIndexDocumentChunks:
                     course_chunks_rows=[],
                 ),
             ),
-            patch("services.chunker.chunk_document", return_value=[]),
+            patch("services.chunker.chunk_for_category", return_value=[]),
             patch("services.rag_service.index_document_chunks") as mock_index,
         ):
             _index_document_chunks(
@@ -121,7 +121,7 @@ class TestIndexDocumentChunks:
                     course_chunks_rows=[{"embedding": [0.1] * 768}],  # catalog row present
                 ),
             ),
-            patch("services.chunker.chunk_document", return_value=["chunk one"]),
+            patch("services.chunker.chunk_for_category", return_value=["chunk one"]),
             patch("services.rag_service.index_document_chunks") as mock_index,
             caplog.at_level(logging.ERROR, logger="routes.documents"),
         ):
@@ -136,3 +136,30 @@ class TestIndexDocumentChunks:
         ctor.assert_not_called()
         mock_index.assert_not_called()
         assert "_index_document_chunks failed for doc doc-gate" in caplog.text
+
+    def test_category_is_passed_to_chunker(self):
+        """The document's category must reach the chunker so prose docs get
+        the prose strategy."""
+        with (
+            patch(
+                "routes.documents.table",
+                side_effect=_mock_table_for(
+                    courses_rows=[{"course_code": "ENG-201"}],
+                    course_chunks_rows=[],
+                ),
+            ),
+            patch(
+                "services.chunker.chunk_for_category",
+                return_value=["one chunk of prose"],
+            ) as mock_chunk,
+            patch("services.rag_service.index_document_chunks", return_value=1),
+        ):
+            _index_document_chunks(
+                doc_id="doc-3",
+                course_id="course-uuid-1",
+                user_id="user-1",
+                extracted_text="an essay body",
+                category="assignment",
+            )
+
+        mock_chunk.assert_called_once_with("an essay body", "assignment")
