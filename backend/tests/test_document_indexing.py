@@ -14,7 +14,8 @@ definition sites (`services.chunker.chunk_document`,
 `services.rag_service.index_document_chunks`) rather than on
 `routes.documents`.
 """
-from unittest.mock import patch
+import logging
+from unittest.mock import MagicMock, patch
 
 from routes.documents import _index_document_chunks
 
@@ -94,3 +95,44 @@ class TestIndexDocumentChunks:
             )
 
         mock_index.assert_not_called()
+
+    def test_relevance_gate_skips_client_construction_outside_real_mode(self, monkeypatch, caplog):
+        """#439: the catalog-relevance embed call (a `google.genai.Client`
+        construction site predating the SAPLING_MODEL_MODE seam) only fires
+        when a catalog embedding actually exists for the course. When one
+        does and mode != 'real', no client may be constructed — the whole
+        indexing call aborts exactly like an unlucky real embed-call failure
+        already did (the outer `except` logs "_index_document_chunks failed
+        for doc %s", the line e2e_oracles/logscan.py's ALLOWLIST already
+        expects), so services.rag_service.index_document_chunks is never
+        reached either.
+        """
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+        ctor = MagicMock(side_effect=AssertionError(
+            "genai.Client must not be constructed outside real mode"
+        ))
+        monkeypatch.setattr("google.genai.Client", ctor)
+
+        with (
+            patch(
+                "routes.documents.table",
+                side_effect=_mock_table_for(
+                    courses_rows=[{"course_code": "BIO-101"}],
+                    course_chunks_rows=[{"embedding": [0.1] * 768}],  # catalog row present
+                ),
+            ),
+            patch("services.chunker.chunk_document", return_value=["chunk one"]),
+            patch("services.rag_service.index_document_chunks") as mock_index,
+            caplog.at_level(logging.ERROR, logger="routes.documents"),
+        ):
+            _index_document_chunks(
+                doc_id="doc-gate",
+                course_id="course-uuid-1",
+                user_id="user-1",
+                extracted_text="some extracted text",
+                category="lecture_notes",
+            )
+
+        ctor.assert_not_called()
+        mock_index.assert_not_called()
+        assert "_index_document_chunks failed for doc doc-gate" in caplog.text

@@ -11,27 +11,61 @@ import os
 from google import genai
 from google.genai import types as genai_types
 
+from agents._providers import model_mode
 from db.connection import rpc, table
 
 # Bound embedding requests so a stalled Gemini call can't hang quiz/tutor
 # grounding indefinitely — retrieve_chunks() runs inline on the request path.
 _HTTP_TIMEOUT_MS = 60_000
-
-# `genai.Client(api_key="")` raises ValueError at construction, so a missing
-# GEMINI_API_KEY would break `import main` (routes/quiz.py and routes/learn.py
-# both pull this module in). Fall back to a dummy key the same way
-# services/gemini_service.py and agents/_providers.py do: imports stay clean and
-# the failure surfaces at call time, where it's actionable.
-_client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY", "") or "dummy-key-for-import",
-    http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS),
-)
 _EMBED_MODEL = "gemini-embedding-001"
 _OUTPUT_DIM = 768
 
+# `genai.Client(api_key="")` raises ValueError at construction, so a missing
+# GEMINI_API_KEY would break `import main` (routes/quiz.py and routes/learn.py
+# both pull this module in) if built eagerly. #439 goes further: the client is
+# now built lazily, on first REAL-mode use. `_get_client()` is only ever
+# reached from inside an `_embed_*` function AFTER its `model_mode() != "real"`
+# gate below, so a non-real run (SAPLING_MODEL_MODE=function — the hermetic
+# E2E default, ADR 0019) never constructs a genai.Client and never touches the
+# network, instead of constructing one that then degrades by an accidental
+# swallowed exception.
+_client: genai.Client | None = None
+
+
+def _get_client() -> genai.Client:
+    global _client
+    if _client is None:
+        _client = genai.Client(
+            api_key=os.getenv("GEMINI_API_KEY", "") or "dummy-key-for-import",
+            http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS),
+        )
+    return _client
+
+
+class _EmbeddingDisabled(RuntimeError):
+    """Raised by the `_embed_*` helpers when `SAPLING_MODEL_MODE != 'real'`.
+
+    Every caller (`retrieve_chunks`, `index_document_chunks`) already wraps
+    its embed call in a broad try/except — originally there to swallow a real
+    Gemini failure so retrieval/upload degrade gracefully instead of 500ing.
+    Raising here reuses that exact same degrade path, so function-mode
+    behavior is byte-for-byte identical to what an unlucky real-mode failure
+    already produced — except now it happens by design on every run, not by
+    accident of a swallowed exception (#439).
+    """
+
+
+def _require_real_mode() -> None:
+    if model_mode() != "real":
+        raise _EmbeddingDisabled(
+            "embedding skipped: SAPLING_MODEL_MODE != 'real' (below-seam RAG "
+            "embed path, #439)"
+        )
+
 
 def _embed_query(text: str) -> list[float]:
-    resp = _client.models.embed_content(
+    _require_real_mode()
+    resp = _get_client().models.embed_content(
         model=_EMBED_MODEL,
         contents=[text],
         config=genai_types.EmbedContentConfig(
@@ -43,7 +77,8 @@ def _embed_query(text: str) -> list[float]:
 
 
 def _embed_document(text: str) -> list[float]:
-    resp = _client.models.embed_content(
+    _require_real_mode()
+    resp = _get_client().models.embed_content(
         model=_EMBED_MODEL,
         contents=[text],
         config=genai_types.EmbedContentConfig(
@@ -55,7 +90,8 @@ def _embed_document(text: str) -> list[float]:
 
 
 def _embed_documents_batch(texts: list[str]) -> list[list[float]]:
-    resp = _client.models.embed_content(
+    _require_real_mode()
+    resp = _get_client().models.embed_content(
         model=_EMBED_MODEL,
         contents=texts,
         config=genai_types.EmbedContentConfig(
