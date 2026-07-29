@@ -458,6 +458,18 @@ def unapprove_user(user_id: str, request: Request):
 
 # ── Newsletter Allowlist ──────────────────────────────────────────────────────
 
+@router.get("/allowlist")
+def list_allowlist(request: Request):
+    # #130: the admin portal's adminListAllowlist() (frontend/src/lib/api.ts)
+    # reads this list; approve/revoke existed without the GET.
+    require_admin(request)
+    rows = table("newsletter_emails").select(
+        "id,email,created_at,approved_at",
+        order="created_at.desc",
+    )
+    return {"emails": rows or []}
+
+
 @router.post("/allowlist/approve")
 def approve_allowlist(body: AllowlistEmailBody, request: Request):
     require_admin(request)

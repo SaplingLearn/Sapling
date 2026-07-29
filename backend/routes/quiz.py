@@ -370,6 +370,18 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         questions = json.loads(questions)
     user_id = attempt["user_id"]
     require_self(user_id, request)
+
+    # #129: completed_at is written on the first successful submit. A re-POST
+    # of the same quiz_id must not re-run apply_graph_update (double mastery
+    # delta + duplicate node_mastery_events row + streak bump), the background
+    # quiz-context task, or achievements. 409 rather than replaying the original
+    # 200: quiz_attempts stores no mastery_before/after, so faithfully
+    # reconstructing the first response would need a migration.
+    if attempt.get("completed_at"):
+        raise HTTPException(
+            status_code=409, detail="Quiz attempt has already been submitted"
+        )
+
     concept_node_id = attempt["concept_node_id"]
 
     answer_map = {str(a.question_id): a.selected_label for a in body.answers}
@@ -380,7 +392,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         selected = answer_map.get(qid, "")
         correct_opt = next((o for o in q["options"] if o.get("correct")), None)
         correct_label = correct_opt["label"] if correct_opt else ""
-        is_correct = selected == correct_label
+        # #129: a malformed item with NO correct option must never grade as
+        # correct — '' == '' would otherwise hand a free point whenever the
+        # answer is also missing.
+        is_correct = bool(correct_opt) and selected == correct_label
         if is_correct:
             score += 1
         results.append({

@@ -37,7 +37,7 @@ def test_unknown_mode_falls_back_to_socratic():
 def test_all_tools_registered():
     """Chat tutor needs three context tools + two graph tools (add and update mastery)."""
     expected = {
-        "search_course_materials_tool",
+        "search_course_materials",
         "read_session_history_tool",
         "read_user_progress_tool",
         "apply_graph_update_tool",
