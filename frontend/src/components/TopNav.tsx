@@ -198,13 +198,7 @@ export function TopNav() {
       </Link>
 
       {/* Desktop group row — hover/focus reveals each group's items */}
-      {!isMobile && (
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
-          {GROUPS.map((g) => (
-            <NavGroupTrigger key={g.label} group={g} pathname={pathname} />
-          ))}
-        </div>
-      )}
+      {!isMobile && <DesktopGroups pathname={pathname} />}
 
       <div style={{ marginLeft: isMobile ? "auto" : 0, display: "flex", alignItems: "center", gap: 8 }}>
         {isAuthenticated && (
@@ -259,19 +253,27 @@ export function TopNav() {
 }
 
 /**
- * NavGroupTrigger — one of the four top-level group buttons.
+ * DesktopGroups — the horizontal row of group triggers.
  *
- * Hover (or focus) opens a panel anchored to the trigger; mouse-leave
- * with a short delay closes it. The delay (140ms) is deliberate: the
- * trigger and panel touch but a bare 0px gap can still flicker on
- * sub-pixel cursor moves, so we let the close animation tolerate
- * cursor jitter while the user travels from label to item.
+ * Owns a SINGLE `openIndex` for the whole row so that at most one group
+ * panel is ever open. This is the fix for #320: previously each trigger
+ * kept its own open-state and its own close-timer, so moving the cursor
+ * from tab A to tab B cancelled only B's timer — A's 140ms timer kept
+ * A's panel open, briefly showing two panels at once and leaving the
+ * old one lingering. With a shared owner, entering any tab immediately
+ * preempts whichever tab was open (openIndex is replaced synchronously),
+ * so switching tabs closes the old panel with no delay.
+ *
+ * The 140ms close-delay is retained but now only applies when the cursor
+ * leaves the row entirely (to empty space) — its original purpose: the
+ * trigger and panel touch, but a bare 0px gap can still flicker on
+ * sub-pixel cursor moves, so the delay tolerates jitter as the cursor
+ * travels from label to item.
  */
-function NavGroupTrigger({ group, pathname }: { group: NavGroup; pathname: string }) {
-  const active = isActiveGroup(pathname, group);
-  const [open, setOpen] = React.useState(false);
+function DesktopGroups({ pathname }: { pathname: string }) {
+  const [openIndex, setOpenIndex] = React.useState<number | null>(null);
   const closeTimer = React.useRef<number | null>(null);
-  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+  const rowRef = React.useRef<HTMLDivElement | null>(null);
 
   const cancelClose = () => {
     if (closeTimer.current !== null) {
@@ -279,33 +281,41 @@ function NavGroupTrigger({ group, pathname }: { group: NavGroup; pathname: strin
       closeTimer.current = null;
     }
   };
+  // Open a specific group, pre-empting any other open group and any
+  // pending close. Because this replaces openIndex synchronously, the
+  // previously-open panel closes the instant the cursor reaches a new
+  // tab — no two panels can coexist.
+  const openGroup = (i: number) => {
+    cancelClose();
+    setOpenIndex(i);
+  };
+  const closeNow = () => {
+    cancelClose();
+    setOpenIndex(null);
+  };
   const scheduleClose = () => {
     cancelClose();
-    closeTimer.current = window.setTimeout(() => setOpen(false), 140);
+    closeTimer.current = window.setTimeout(() => setOpenIndex(null), 140);
   };
 
-  // Cancel any pending close-timer if this component unmounts mid-flight
-  // (e.g. route change while the dropdown is closing). Avoids a stray
-  // setState on an unmounted component.
-  React.useEffect(() => {
-    return () => cancelClose();
-  }, []);
+  // Cancel any pending close-timer on unmount (e.g. route change while
+  // the dropdown is closing). Avoids a stray setState after unmount.
+  React.useEffect(() => cancelClose, []);
 
   // Close when route changes (navigation triggered).
   React.useEffect(() => {
-    setOpen(false);
+    closeNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  // Click outside / Escape closes.
+  // Click outside the row / Escape closes the open panel.
   React.useEffect(() => {
-    if (!open) return;
+    if (openIndex === null) return;
     const onClick = (e: MouseEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (rowRef.current && !rowRef.current.contains(e.target as Node)) closeNow();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") closeNow();
     };
     document.addEventListener("mousedown", onClick);
     document.addEventListener("keydown", onKey);
@@ -313,13 +323,57 @@ function NavGroupTrigger({ group, pathname }: { group: NavGroup; pathname: strin
       document.removeEventListener("mousedown", onClick);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openIndex]);
+
+  return (
+    <div ref={rowRef} style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
+      {GROUPS.map((g, i) => (
+        <NavGroupTrigger
+          key={g.label}
+          group={g}
+          pathname={pathname}
+          open={openIndex === i}
+          onOpen={() => openGroup(i)}
+          onScheduleClose={scheduleClose}
+          onClose={closeNow}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * NavGroupTrigger — one of the four top-level group buttons.
+ *
+ * Presentational + interaction only; the open-state lives in the parent
+ * DesktopGroups so the row can enforce "at most one panel open" (#320).
+ * Hover/focus asks the parent to open this group; mouse-leave asks it to
+ * schedule a close; focus leaving the wrapper closes immediately.
+ */
+function NavGroupTrigger({
+  group,
+  pathname,
+  open,
+  onOpen,
+  onScheduleClose,
+  onClose,
+}: {
+  group: NavGroup;
+  pathname: string;
+  open: boolean;
+  onOpen: () => void;
+  onScheduleClose: () => void;
+  onClose: () => void;
+}) {
+  const active = isActiveGroup(pathname, group);
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
 
   return (
     <div
       ref={wrapperRef}
-      onMouseEnter={() => { cancelClose(); setOpen(true); }}
-      onMouseLeave={scheduleClose}
+      onMouseEnter={onOpen}
+      onMouseLeave={onScheduleClose}
       // Symmetric counterpart to onFocus opening the panel: when focus
       // leaves the wrapper entirely (Tab past the last item), close.
       // relatedTarget can be null when focus jumps to a non-focusable
@@ -327,7 +381,7 @@ function NavGroupTrigger({ group, pathname }: { group: NavGroup; pathname: strin
       onBlur={(e) => {
         const next = e.relatedTarget as Node | null;
         if (!wrapperRef.current || !next || !wrapperRef.current.contains(next)) {
-          setOpen(false);
+          onClose();
         }
       }}
       style={{ position: "relative" }}
@@ -336,8 +390,8 @@ function NavGroupTrigger({ group, pathname }: { group: NavGroup; pathname: strin
         type="button"
         aria-haspopup="true"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        onFocus={() => { cancelClose(); setOpen(true); }}
+        onClick={() => (open ? onClose() : onOpen())}
+        onFocus={onOpen}
         style={{
           display: "inline-flex",
           alignItems: "center",

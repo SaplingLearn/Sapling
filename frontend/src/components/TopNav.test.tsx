@@ -166,6 +166,27 @@ describe("TopNav — dropdown behavior", () => {
     expect(screen.queryByText("Tutor")).toBeNull();
   });
 
+  it("closes the previously-open group when another opens (#320)", async () => {
+    // Regression for #320: only one group panel may be open at a time.
+    // Previously each trigger owned its own open-state, so opening a
+    // second group left the first one's panel lingering (two panels at
+    // once). Opening Community must immediately close Learn.
+    render(<TopNav />);
+    const learn = screen.getByRole("button", { name: /^Learn/ });
+    const community = screen.getByRole("button", { name: /^Community/ });
+
+    fireEvent.click(learn);
+    expect(screen.getByText("Tutor")).toBeTruthy();
+
+    fireEvent.click(community);
+    // Learn's panel is gone (no lingering second panel)...
+    expect(screen.queryByText("Tutor")).toBeNull();
+    expect(learn.getAttribute("aria-expanded")).toBe("false");
+    // ...and Community's panel is the only one showing.
+    expect(screen.getByText("Social")).toBeTruthy();
+    expect(community.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("renders the right items inside each group", async () => {
     const user = userEvent.setup();
     render(<TopNav />);
