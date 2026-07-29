@@ -95,6 +95,12 @@ _DEFAULTS: dict[AgentTask, str] = {
 }
 
 
+# The admin `/api/gemini-test` connectivity probe has no `_DEFAULTS` task of
+# its own; it just needs the cheapest round-trip. Pinned here so probe sites
+# (agents/health.py) can't drift from each other.
+HEALTH_PROBE_MODEL = "gemini-2.5-flash-lite"
+
+
 def _new_provider() -> GoogleProvider:
     """A fresh `GoogleProvider` (fresh `google.genai` client + httpx connection
     pool). CI and import-time tools don't have GEMINI_API_KEY set; the dummy
