@@ -8,8 +8,9 @@ error feed. Mounted at `/api/admin/analytics`; every endpoint is gated by
 Aggregation strategy: PostgREST (via `db/connection.py::table()`) has no
 GROUP BY, so the grouped endpoints scan the (date-bounded) rows and aggregate
 in Python. Scans page through `select_with_count` and use its exact count both
-to know when to stop and to detect the rare truncation case (logged, never
-silent). The `/errors` feed needs no aggregation, so it paginates server-side.
+to know when to stop and to detect the rare truncation case (logged and
+surfaced as `truncated: true` in the response, never silent). The `/errors`
+feed needs no aggregation, so it paginates server-side.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from db.connection import table
@@ -30,7 +31,8 @@ logger = logging.getLogger("sapling.admin_analytics")
 router = APIRouter()
 
 # Page size for range scans, and a hard ceiling so a pathological range can't
-# pull unbounded rows into memory. Hitting the cap is logged, never silent.
+# pull unbounded rows into memory. Hitting the cap is logged and surfaced via
+# the response's `truncated` flag, never silent.
 _PAGE = 1000
 _SCAN_CAP = 100_000
 
@@ -56,6 +58,7 @@ class UsageSummary(BaseModel):
     total_events: int
     distinct_active_users: int
     by_event_type: list[EventTypeCount]
+    truncated: bool = False
 
 
 class UserUsage(BaseModel):
@@ -72,6 +75,7 @@ class UsageByUser(BaseModel):
     limit: int
     offset: int
     users: list[UserUsage]
+    truncated: bool = False
 
 
 class CostRow(BaseModel):
@@ -96,6 +100,7 @@ class LLMCost(BaseModel):
     group_by: GroupBy
     rows: list[CostRow]
     totals: CostTotals
+    truncated: bool = False
 
 
 class ErrorEvent(BaseModel):
@@ -121,25 +126,49 @@ class ErrorsPage(BaseModel):
 
 
 def _resolve_range(from_: str | None, to: str | None) -> tuple[str, str]:
-    """Default to the last 30 days; echo caller-supplied ISO bounds otherwise."""
+    """Default to the last 30 days; echo caller-supplied ISO bounds otherwise.
+
+    Bounds are validated before use: each must parse as ISO 8601 (422 naming
+    the bad param otherwise) and `from` must not be after `to`. The strings are
+    returned as supplied — validation never reformats them.
+    """
     now = datetime.now(timezone.utc)
     to_iso = to or now.isoformat()
     from_iso = from_ or (now - timedelta(days=30)).isoformat()
+
+    def _parse(param: str, value: str) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid {param!r} datetime: {value!r} is not ISO 8601",
+            )
+        # Treat naive bounds as UTC so mixed naive/aware bounds stay comparable.
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+    from_dt = _parse("from", from_iso)
+    to_dt = _parse("to", to_iso)
+    if from_dt > to_dt:
+        raise HTTPException(status_code=422, detail="'from' must not be after 'to'")
     return from_iso, to_iso
 
 
 def _scan_range(
     table_name: str, columns: str, from_iso: str, to_iso: str,
     extra_filters: dict | None = None,
-) -> list[dict]:
+) -> tuple[list[dict], bool]:
     """Fetch every row in [from, to] for a table, paging via select_with_count.
 
     Aggregation endpoints need the full (date-bounded) set — PostgREST won't
     GROUP BY for us — so we page to completion rather than relying on the
-    server's default row cap. A range large enough to hit _SCAN_CAP is logged.
+    server's default row cap. Returns ``(rows, truncated)``: a range large
+    enough to hit _SCAN_CAP stops the scan early, logs a warning, and sets
+    ``truncated=True`` so callers can surface the partial aggregation.
     """
     out: list[dict] = []
     offset = 0
+    truncated = False
     while True:
         filters: dict = {"created_at": [f"gte.{from_iso}", f"lte.{to_iso}"]}
         if extra_filters:
@@ -151,13 +180,14 @@ def _scan_range(
         if len(out) >= total or not rows:
             break
         if len(out) >= _SCAN_CAP:
+            truncated = True
             logger.warning(
                 "admin_analytics scan hit cap %d on %r (total=%d); results truncated",
                 _SCAN_CAP, table_name, total,
             )
             break
         offset += _PAGE
-    return out
+    return out, truncated
 
 
 def _as_float(value) -> float:
@@ -180,12 +210,15 @@ def _as_int(value) -> int:
 @router.get("/usage/summary", response_model=UsageSummary)
 def usage_summary(
     request: Request,
+    response: Response,
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
 ) -> UsageSummary:
+    """Event totals for the range; `truncated: true` means the scan cap cut the aggregation short."""
     require_admin(request)
+    response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
-    rows = _scan_range("events", "event_type,user_id,created_at", from_iso, to_iso)
+    rows, truncated = _scan_range("events", "event_type,user_id,created_at", from_iso, to_iso)
 
     by_type: dict[str, int] = defaultdict(int)
     users: set[str] = set()
@@ -202,22 +235,28 @@ def usage_summary(
             (EventTypeCount(event_type=k, count=v) for k, v in by_type.items()),
             key=lambda e: e.count, reverse=True,
         ),
+        truncated=truncated,
     )
 
 
 @router.get("/usage/by-user", response_model=UsageByUser)
 def usage_by_user(
     request: Request,
+    response: Response,
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> UsageByUser:
+    """Per-user event/cost rollup; `truncated: true` means a scan cap cut the aggregation short."""
     require_admin(request)
+    response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
 
-    event_rows = _scan_range("events", "user_id,category,created_at", from_iso, to_iso)
-    usage_rows = _scan_range(
+    event_rows, events_truncated = _scan_range(
+        "events", "user_id,category,created_at", from_iso, to_iso,
+    )
+    usage_rows, usage_truncated = _scan_range(
         "llm_usage", "user_id,cost_usd,total_tokens,created_at", from_iso, to_iso,
     )
 
@@ -259,20 +298,24 @@ def usage_by_user(
     return UsageByUser(
         range=Range(from_=from_iso, to=to_iso),
         total_users=len(ordered), limit=limit, offset=offset, users=users,
+        truncated=events_truncated or usage_truncated,
     )
 
 
 @router.get("/llm/cost", response_model=LLMCost)
 def llm_cost(
     request: Request,
+    response: Response,
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
     group_by: GroupBy = Query("feature"),
 ) -> LLMCost:
+    """LLM token/cost rollup; `truncated: true` means the scan cap cut the aggregation short."""
     require_admin(request)
+    response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
     column = _GROUP_COLUMN[group_by]
-    rows = _scan_range(
+    rows, truncated = _scan_range(
         "llm_usage",
         f"{column},prompt_tokens,completion_tokens,total_tokens,cost_usd,created_at",
         from_iso, to_iso,
@@ -310,19 +353,22 @@ def llm_cost(
     )
     return LLMCost(
         range=Range(from_=from_iso, to=to_iso), group_by=group_by,
-        rows=cost_rows, totals=totals,
+        rows=cost_rows, totals=totals, truncated=truncated,
     )
 
 
 @router.get("/errors", response_model=ErrorsPage)
 def errors(
     request: Request,
+    response: Response,
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> ErrorsPage:
+    """Paginated error.* event feed (server-side pagination — no range scan, so no cap)."""
     require_admin(request)
+    response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
     # error.* events, newest first — paginated server-side (no aggregation).
     rows, total = table("events").select_with_count(

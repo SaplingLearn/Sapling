@@ -166,7 +166,11 @@ def dropped_count() -> int:
 
 
 def _flush_batch(items: list[dict]) -> None:
-    """Insert a batch grouped by table. Errors are swallowed + logged."""
+    """Insert a batch grouped by table. Errors are swallowed + logged.
+
+    A failed bulk insert falls back to inserting that table's rows one at a
+    time, so a single poison row can't take its whole batch down with it.
+    """
     if not items:
         return
     grouped: dict[str, list[dict]] = {}
@@ -176,10 +180,33 @@ def _flush_batch(items: list[dict]) -> None:
         try:
             table(table_name).insert(rows)
         except Exception:
-            logger.warning(
-                "events flush failed for table %r (%d row(s)); dropping batch",
+            logger.info(
+                "events bulk insert failed for table %r (%d row(s)); "
+                "retrying rows individually",
                 table_name, len(rows), exc_info=True,
             )
+            _flush_rows_individually(table_name, rows)
+
+
+def _flush_rows_individually(table_name: str, rows: list[dict]) -> None:
+    """Per-row salvage after a failed bulk insert: only the rows that
+    individually fail are dropped (logged per-row at debug, plus one warning
+    with the drop count). Never raises — same contract as _flush_batch."""
+    dropped = 0
+    for row in rows:
+        try:
+            table(table_name).insert([row])
+        except Exception:
+            dropped += 1
+            logger.debug(
+                "events row insert failed for table %r; row dropped",
+                table_name, exc_info=True,
+            )
+    if dropped:
+        logger.warning(
+            "events flush dropped %d of %d row(s) for table %r after per-row retry",
+            dropped, len(rows), table_name,
+        )
 
 
 def flush_now() -> None:

@@ -179,6 +179,34 @@ def test_worker_insert_error_is_swallowed(monkeypatch, caplog):
                for r in caplog.records)
 
 
+def test_bulk_insert_failure_falls_back_to_per_row(monkeypatch, caplog):
+    """A poison row must only take down itself: the failed bulk insert is
+    retried row by row, the good rows land, and the one drop is summarized in
+    a single warning."""
+    landed: list = []
+
+    class _PoisonTable:
+        def insert(self, rows):
+            if any(r.get("event_type") == "poison.row" for r in rows):
+                raise RuntimeError("simulated poison row")
+            landed.extend(rows)
+            return rows
+
+    monkeypatch.setattr(events_service, "table", lambda name: _PoisonTable())
+
+    events_service.log_event("ok.one", category="usage")
+    events_service.log_event("poison.row", category="usage")
+    events_service.log_event("ok.two", category="usage")
+
+    with caplog.at_level("WARNING", logger="sapling.events"):
+        events_service.flush_now()  # must not raise
+
+    assert [r["event_type"] for r in landed] == ["ok.one", "ok.two"]
+    warnings = [r for r in caplog.records if r.levelno >= 30]
+    assert len(warnings) == 1
+    assert "dropped 1 of 3" in warnings[0].getMessage()
+
+
 def test_queue_overflow_drops_and_increments_counter(monkeypatch, sink):
     events_service.reset_for_tests(maxsize=1)
     monkeypatch.setattr(events_service, "table", _fake_table_factory(sink))

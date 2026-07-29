@@ -9,6 +9,7 @@ real (not mocked away).
 from __future__ import annotations
 
 import fnmatch
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,8 +21,8 @@ client = TestClient(app)
 
 BASE = "/api/admin/analytics"
 
-# In-range = July 2026; OUT = 2020. Default range is last 30 days from today
-# (2026-07-21 per the test clock), so the July rows are in the default window.
+# In-range = July 2026; OUT = 2020. The default-range test freezes the module
+# clock at 2026-07-21 so its 30-day window covers the July rows, not the 2020 one.
 IN1 = "2026-07-10T09:00:00+00:00"
 IN2 = "2026-07-12T09:00:00+00:00"
 IN3 = "2026-07-15T09:00:00+00:00"
@@ -117,6 +118,7 @@ def test_usage_summary_counts(seeded):
     body = r.json()
     assert body["total_events"] == 4  # the 2020 auth.login is excluded
     assert body["distinct_active_users"] == 2
+    assert body["truncated"] is False  # nowhere near the scan cap
     by_type = {row["event_type"]: row["count"] for row in body["by_event_type"]}
     assert by_type["quiz.completed"] == 2
     assert by_type["document.upload"] == 1
@@ -205,12 +207,61 @@ def test_narrow_range_excludes_rows(seeded):
     assert r.json()["total_events"] == 1
 
 
-def test_default_range_is_last_30_days(seeded):
-    # No from/to: default window (last 30 days from 2026-07-21) covers the July
-    # rows but not the 2020 ones.
+def test_default_range_is_last_30_days(seeded, monkeypatch):
+    # Freeze the module clock at 2026-07-21 so the default 30-day window covers
+    # the July fixture rows but not the 2020 one — whatever today's date is.
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 21, 12, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(analytics, "datetime", _FrozenDatetime)
     r = client.get(f"{BASE}/usage/summary")
     assert r.status_code == 200
     assert r.json()["total_events"] == 4
+
+
+def test_rejects_malformed_from(seeded):
+    r = client.get(f"{BASE}/usage/summary", params={"from": "not-a-date", "to": RANGE["to"]})
+    assert r.status_code == 422
+    assert "'from'" in r.json()["detail"]
+
+
+def test_rejects_malformed_to(seeded):
+    r = client.get(f"{BASE}/usage/summary", params={"from": RANGE["from"], "to": "2026-13-45"})
+    assert r.status_code == 422
+    assert "'to'" in r.json()["detail"]
+
+
+def test_rejects_from_after_to(seeded):
+    r = client.get(f"{BASE}/usage/summary", params={"from": RANGE["to"], "to": RANGE["from"]})
+    assert r.status_code == 422
+
+
+# ── scan-cap truncation + response headers ───────────────────────────────────
+
+
+def test_scan_cap_truncation_is_surfaced(seeded, monkeypatch):
+    # Shrink the paging + cap so the 4 in-range event rows overflow the scan.
+    monkeypatch.setattr(analytics, "_PAGE", 1)
+    monkeypatch.setattr(analytics, "_SCAN_CAP", 2)
+    r = client.get(f"{BASE}/usage/summary", params=RANGE)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["truncated"] is True
+    assert body["total_events"] == 2  # capped, and the response says so
+
+
+def test_responses_are_cache_control_private(seeded):
+    for path, params in [
+        ("/usage/summary", RANGE),
+        ("/usage/by-user", RANGE),
+        ("/llm/cost", {**RANGE, "group_by": "feature"}),
+        ("/errors", RANGE),
+    ]:
+        r = client.get(f"{BASE}{path}", params=params)
+        assert r.status_code == 200
+        assert r.headers.get("Cache-Control") == "private", path
 
 
 # ── admin gating ─────────────────────────────────────────────────────────────
