@@ -66,6 +66,26 @@ export type GraphEdge = {
   strength: number;
 };
 
+// Deep-link from a knowledge-graph node into the AI Tutor (`/learn`).
+//
+// Subject-root (course) nodes carry the *course* name, which must never be
+// sent as the session topic: doing so pre-selected the course name as a topic
+// on redirect (#319). For a course node we scope the tutor to the course and
+// leave the topic empty so the learner picks a concept; concept nodes seed
+// their own name as the topic. The course is passed as `course` — the param
+// the Learn screen reads (`searchParams.get("course")`); the earlier handlers
+// passed `course_id`, which Learn silently ignored, dropping course scope.
+export function learnHrefForNode(
+  n: Pick<GraphNode, "name" | "course_id" | "is_subject_root">,
+  mode = "socratic",
+): string {
+  const p = new URLSearchParams();
+  if (!n.is_subject_root) p.set("topic", n.name);
+  p.set("mode", mode);
+  if (n.course_id) p.set("course", n.course_id);
+  return `/learn?${p.toString()}`;
+}
+
 // Adapter from the backend `ApiNode` shape to the frontend `GraphNode`
 // shape consumed by `KnowledgeGraph`. Hoisted here from Tree/Learn/
 // Dashboard so the three screens share a single source of truth.
