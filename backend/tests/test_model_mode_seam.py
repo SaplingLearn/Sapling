@@ -301,3 +301,104 @@ def test_default_real_mode_agent_run_still_trips_the_guard():
     class identities differ)."""
     with pytest.raises(RuntimeError, match="unstubbed LLM egress"):
         classifier_agent.run_sync("anything", deps=_deps())
+
+
+# ── Streamed runs (#349): the seam serves run_stream_events too ───────────
+
+
+def test_function_mode_streams_text_from_the_same_handler(monkeypatch):
+    """The SSE tutor routes drive agents via `run_stream_events`. A streamed
+    run in function mode must be served by the SAME registered handler as a
+    JSON run — its text replayed as stream deltas — so spec assertions can
+    compare both lanes against one E2E_* constant. Before #349 the seam's
+    FunctionModel had no `stream_function`, so every streamed turn errored
+    into the legacy fallback and the streamed path was untestable."""
+    import asyncio
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    register_function_handler(
+        "note_chat",
+        lambda m, i: ModelResponse(parts=[TextPart(content="streamed seam reply")]),
+    )
+
+    async def collect() -> tuple[list[str], str | None]:
+        deltas: list[str] = []
+        final: str | None = None
+        with note_chat_agent.override(model=model_for("note_chat")):
+            async for event in note_chat_agent.run_stream_events(
+                "hello", deps=_deps()
+            ):
+                cls_name = type(event).__name__
+                if cls_name == "PartStartEvent":
+                    part = getattr(event, "part", None)
+                    if getattr(part, "part_kind", None) == "text" and part.content:
+                        deltas.append(part.content)
+                elif cls_name == "PartDeltaEvent":
+                    delta = getattr(event, "delta", None)
+                    if getattr(delta, "part_delta_kind", None) == "text":
+                        deltas.append(delta.content_delta)
+                elif cls_name == "AgentRunResultEvent":
+                    final = event.result.output
+        return deltas, final
+
+    deltas, final = asyncio.run(collect())
+    assert "".join(deltas) == "streamed seam reply"
+    assert final == "streamed seam reply"
+
+
+def test_function_mode_streams_scripted_tool_calls(monkeypatch):
+    """A streamed function-mode run must also replay scripted TOOL CALLS (as
+    DeltaToolCall chunks) through the real tool-registration/validation loop —
+    the streamed twin of the JSON-lane acceptance test above."""
+    import asyncio
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+
+    received: dict = {}
+
+    async def _spy_search(course_id, query, limit=5, *, user_id):
+        received.update(query=query, limit=limit)
+        return []
+
+    monkeypatch.setattr(
+        "agents.tools.chat_context.search_course_materials", _spy_search
+    )
+
+    calls = {"n": 0}
+
+    def handler(messages, info) -> ModelResponse:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="search_course_materials_tool",
+                        args={"query": "eigenvalues", "limit": 2},
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart(content="used the tool")])
+
+    register_function_handler("note_chat", handler)
+
+    async def run() -> tuple[str | None, list[str]]:
+        final: str | None = None
+        tool_events: list[str] = []
+        with note_chat_agent.override(model=model_for("note_chat")):
+            async for event in note_chat_agent.run_stream_events(
+                "find eigenvalues", deps=_deps()
+            ):
+                cls_name = type(event).__name__
+                if cls_name == "FunctionToolCallEvent":
+                    tool_events.append(cls_name)
+                elif cls_name == "AgentRunResultEvent":
+                    final = event.result.output
+        return final, tool_events
+
+    final, tool_events = asyncio.run(run())
+    # The scripted call streamed as a real mid-run tool event, was
+    # schema-validated, and dispatched to the real (spied) tool body.
+    assert tool_events == ["FunctionToolCallEvent"]
+    assert received == {"query": "eigenvalues", "limit": 2}
+    assert final == "used the tool"
+    assert calls["n"] == 2

@@ -6,6 +6,7 @@ import type {
   ExtractedSyllabusCategory,
   AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
   Note, LinkedConcept,
+  GraphUpdate, MasteryChange,
 } from '@/lib/types';
 
 export const API_URL = '';
@@ -167,6 +168,130 @@ export const sendChat = (
       ...(modelPref ? { model_pref: modelPref } : {}),
     }),
   });
+
+export interface GraphDelta {
+  nodes: Record<string, Array<Record<string, unknown>>>;
+  mastery_changes: MasteryChange[];
+}
+
+export interface ChatResult {
+  reply: string;
+  graph_update: GraphUpdate;
+  mastery_changes: MasteryChange[];
+  session_id?: string;
+  graph_state?: any;
+}
+
+interface StreamEvent {
+  type: string;
+  step: string;
+  message: string;
+  data?: Record<string, unknown> | null;
+}
+
+// Thrown from consumeChatStream on a mid-stream `error` event. Carries the
+// backend's `request_id` (ADR 0009, stamped for Logfire correlation) as a
+// property — not just baked into the message string — so a caller that
+// wants to display or copy it (see DocumentUploadModal's "Reference:"
+// pattern) doesn't have to re-parse the message text for it.
+export class ChatStreamError extends Error {
+  requestId?: string;
+  constructor(message: string, requestId?: string) {
+    // Keep the full id here (correlation needs an exact match); a caller
+    // that wants a short display form truncates it itself, same as
+    // DocumentUploadModal's "Reference: {id.slice(0, 8)}…" pattern.
+    super(requestId ? `${message} (ref: ${requestId})` : message);
+    this.name = 'ChatStreamError';
+    this.requestId = requestId;
+  }
+}
+
+export interface StreamChatHandlers {
+  onToken?: (delta: string) => void;
+  onGraphUpdate?: (delta: GraphDelta) => void;
+  signal?: AbortSignal;
+}
+
+const STREAM_IDLE_MS = 45_000;
+
+async function consumeChatStream(
+  path: string,
+  payload: Record<string, unknown>,
+  { onToken, onGraphUpdate, signal }: StreamChatHandlers,
+): Promise<ChatResult> {
+  const { streamSSE } = await import('./sse');
+  let result: ChatResult | null = null;
+
+  for await (const e of streamSSE<StreamEvent>(
+    `${API_URL}${path}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'include',
+      signal,
+    },
+    { idleTimeoutMs: STREAM_IDLE_MS },
+  )) {
+    const ev = e.data;
+    if (ev.type === 'token') onToken?.(String(ev.data?.delta ?? ''));
+    else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
+    else if (ev.type === 'error') {
+      const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
+      throw new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId);
+    }
+    else if (ev.type === 'done') result = ev.data as unknown as ChatResult;
+  }
+
+  if (!result) throw new Error('Chat stream ended without a done event.');
+  return result;
+}
+
+export const streamChat = (
+  sessionId: string,
+  userId: string,
+  message: string,
+  mode: string,
+  useSharedContext = true,
+  modelPref?: ModelPref,
+  handlers: StreamChatHandlers = {},
+): Promise<ChatResult> => {
+  return consumeChatStream(
+    '/api/learn/chat/stream',
+    {
+      session_id: sessionId,
+      user_id: userId,
+      message,
+      mode,
+      use_shared_context: useSharedContext,
+      ...(modelPref ? { model_pref: modelPref } : {}),
+    },
+    handlers,
+  );
+};
+
+export const startSessionStream = (
+  userId: string,
+  topic: string,
+  mode: string,
+  useSharedContext = true,
+  courseId?: string,
+  modelPref?: ModelPref,
+  handlers: StreamChatHandlers = {},
+): Promise<ChatResult> => {
+  return consumeChatStream(
+    '/api/learn/start-session/stream',
+    {
+      user_id: userId,
+      topic,
+      mode,
+      use_shared_context: useSharedContext,
+      course_id: courseId,
+      ...(modelPref ? { model_pref: modelPref } : {}),
+    },
+    handlers,
+  );
+};
 
 export interface SessionSummaryData {
   concepts_covered: string[];

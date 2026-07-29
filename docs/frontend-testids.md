@@ -134,6 +134,7 @@ route:
 | `tutor-messages` | conversation log (`role="log"`) |
 | `tutor-input` | message `<textarea>` |
 | `tutor-send` | send button |
+| `tutor-stop` | stop-streaming button (visible only while a streamed reply is in flight, #349) |
 | `tutor-action-hint` | "Hint" |
 | `tutor-action-confused` | "I'm confused" |
 | `tutor-action-skip` | "Skip" |

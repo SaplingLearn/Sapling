@@ -171,4 +171,41 @@ describe('streamSSE', () => {
     expect(events[0]).toEqual({ event: 'a', data: { i: 1 } });
     expect(events[1]).toEqual({ event: 'b', data: { i: 2 } });
   });
+
+  it('rejects when no event arrives within idleTimeoutMs', async () => {
+    const stalledBody = new ReadableStream({
+      start() { /* never enqueues, never closes */ },
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(stalledBody, { status: 200 }) as never,
+    );
+
+    const iterate = async () => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _e of streamSSE('/x', {}, { idleTimeoutMs: 20 })) { /* drain */ }
+    };
+    await expect(iterate()).rejects.toThrow(/stalled/i);
+  });
+
+  it('clears the idle-timeout timer on every successful read (no leaked timers on the happy path)', async () => {
+    vi.useFakeTimers();
+    try {
+      const payload =
+        'event: progress\ndata: {"step":1}\n\n' +
+        'event: progress\ndata: {"step":2}\n\n' +
+        'event: progress\ndata: {"step":3}\n\n';
+      mockFetchResponse(makeStreamingResponse([payload]));
+
+      const events = await collect(
+        streamSSE<{ step: number }>('/x', { method: 'POST' }, { idleTimeoutMs: 45000 }),
+      );
+
+      expect(events).toHaveLength(3);
+      // Every reader.read() races a setTimeout when idleTimeoutMs is set.
+      // If the winning read doesn't clear its timer, this stays > 0.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

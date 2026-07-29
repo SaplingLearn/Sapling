@@ -21,7 +21,9 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { useUser } from "@/context/UserContext";
 import {
   startSession,
+  startSessionStream,
   sendChat,
+  streamChat,
   getSessions,
   resumeSession,
   deleteSession,
@@ -36,6 +38,8 @@ import {
   type Session,
   type SessionSummaryData,
   type EnrolledCourse,
+  type ChatResult,
+  type GraphDelta,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
@@ -75,6 +79,222 @@ function normalizeMode(input: string | null): Mode {
   return (VALID_MODES as string[]).includes(input) ? (input as Mode) : "socratic";
 }
 
+// Mirrors backend/config.py::get_mastery_tier so a streamed delta classifies
+// mastery the same way a full graph refetch would.
+function tierForScore(score: number): GraphNode["mastery_tier"] {
+  if (score >= 0.75) return "mastered";
+  if (score >= 0.45) return "learning";
+  if (score >= 0.1) return "struggling";
+  return "unexplored";
+}
+
+const normalizeConceptName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+// Shared, defensive identity extraction for a single raw graph_update node
+// entry: matched by `id`/`node_id` when present (future-proofing against a
+// payload shape change), otherwise by normalized concept name. Used by both
+// `mergeGraphDelta` and `deltaPlaceholderEdges` so their notions of "is this
+// concept already known" can't drift apart.
+function rawNodeIdentity(raw: Record<string, unknown>): { id?: string; name?: string } {
+  const id = typeof raw.id === "string" ? raw.id : typeof raw.node_id === "string" ? raw.node_id : undefined;
+  const name = typeof raw.concept_name === "string" ? raw.concept_name : typeof raw.name === "string" ? raw.name : undefined;
+  return { id, name };
+}
+
+// Upsert a streamed `graph_update` event into `graphNodes` so the knowledge-map
+// rail's "In this branch" / "Elsewhere in course" panels recompute through
+// their existing useMemo — no refetch, no extra HTTP round-trip (#74).
+//
+// NOTE on the real payload shape: `delta.nodes` is NOT the flat
+// {id, name, course_id, mastery_score, mastery_tier}[] the streaming-design
+// spec sketches. It's a dict keyed by which graph tool wrote
+// (backend/agents/tools/graph.py via services/chat_stream.py
+// merge_graph_updates): `new_nodes` entries are {concept_name,
+// initial_mastery}; `updated_nodes` entries are {concept_name,
+// mastery_delta, reason, event_type}. Neither carries an `id` or an
+// absolute post-update score. `delta.mastery_changes` ({concept, before,
+// after}) IS authoritative for an existing node's new score, so it drives
+// merges for updates; `nodes` entries are read defensively via
+// `rawNodeIdentity` — and any fields we don't recognize are ignored rather
+// than crashing.
+//
+// Pure function of its arguments only — no component state is read. It does
+// NOT compute placeholder edges; see `deltaPlaceholderEdges` below, which
+// `applyGraphDelta` runs as a second, independent, idempotent update instead
+// of threading a value out of this one. Exported for Learn.graph.test.ts.
+export function mergeGraphDelta(
+  prev: GraphNode[],
+  delta: GraphDelta,
+  fallbackCourseId: string,
+): GraphNode[] {
+  const rawNodes = Object.values(delta.nodes ?? {}).flat() as Array<Record<string, unknown>>;
+  const rawMasteryChanges = delta.mastery_changes ?? [];
+  if (!rawNodes.length && !rawMasteryChanges.length) return prev;
+
+  const byId = new Map(prev.map(n => [n.id, n] as const));
+  const byName = new Map(prev.map(n => [normalizeConceptName(n.name), n] as const));
+
+  const upsert = (existing: GraphNode | undefined, name: string, patch: Partial<GraphNode>) => {
+    if (existing) {
+      const merged: GraphNode = { ...existing, ...patch };
+      byId.set(existing.id, merged);
+      byName.set(normalizeConceptName(existing.name), merged);
+      return;
+    }
+    // Unknown concept: insert a placeholder so it's visible immediately; a
+    // later full graph refetch (session end / next visit) reconciles the
+    // real id. The raw payload carries no course_id, so anchor it to the
+    // session's active course when there is one. Mirrors `addConcept`
+    // (~:892): resolve color + subject from the course's subject-root node
+    // instead of a hardcoded `var(--…)` (the 3D rail can't resolve CSS
+    // custom properties — lib/data.ts:78-79 — so that rendered black). The
+    // root-anchoring edge is added separately by `deltaPlaceholderEdges`,
+    // not here.
+    const id = `stream-${normalizeConceptName(name)}`;
+    const already = byId.get(id);
+    const courseId = (typeof patch.course_id === "string" ? patch.course_id : undefined) ?? fallbackCourseId;
+    const root = prev.find(n => n.is_subject_root && n.course_id === courseId);
+    const placeholder: GraphNode = already
+      ? { ...already, ...patch }
+      : {
+          id,
+          name,
+          subject: root?.subject ?? "",
+          color: root?.color ?? "var(--c-sage)",
+          mastery_tier: "unexplored",
+          mastery_score: 0,
+          course_id: courseId,
+          ...patch,
+        };
+    byId.set(id, placeholder);
+    byName.set(normalizeConceptName(name), placeholder);
+  };
+
+  for (const raw of rawNodes) {
+    const { id, name } = rawNodeIdentity(raw);
+    if (!id && !name) continue;
+    const existing = id ? byId.get(id) : byName.get(normalizeConceptName(name as string));
+    const patch: Partial<GraphNode> = {};
+    const score = typeof raw.mastery_score === "number"
+      ? raw.mastery_score
+      : (!existing && typeof raw.initial_mastery === "number") ? raw.initial_mastery : undefined;
+    if (score !== undefined) {
+      patch.mastery_score = score;
+      patch.mastery_tier = tierForScore(score);
+    }
+    if (typeof raw.mastery_tier === "string") patch.mastery_tier = raw.mastery_tier as GraphNode["mastery_tier"];
+    if (typeof raw.course_id === "string") patch.course_id = raw.course_id;
+    upsert(existing, name ?? (id as string), patch);
+  }
+
+  for (const mc of rawMasteryChanges) {
+    const existing = byName.get(normalizeConceptName(mc.concept));
+    if (!existing) continue; // bare mastery_changes entries carry no id/course to synthesize a new node from
+    upsert(existing, mc.concept, { mastery_score: mc.after, mastery_tier: tierForScore(mc.after) });
+  }
+
+  return Array.from(byId.values());
+}
+
+function edgeKey(e: GraphEdge): string {
+  return `${e.source}\u0000${e.target}`;
+}
+
+// The root→placeholder edges a streamed `graph_update` implies, computed
+// against `nodes` — the caller's current `graphNodes` snapshot — rather than
+// against `mergeGraphDelta`'s `prev`: the two run as independent updates
+// (see `applyGraphDelta`), so this can't reach into the other's in-flight
+// result, and doesn't need to. A concept only gets a synthetic edge when it
+// has no existing id/name match in `nodes`, mirroring `mergeGraphDelta`'s
+// "unknown concept" branch; an already-known concept is updated in place by
+// `mergeGraphDelta` and never gets a new edge here. Pure and side-effect
+// free. Exported for Learn.graph.test.ts.
+export function deltaPlaceholderEdges(
+  nodes: GraphNode[],
+  delta: GraphDelta,
+  fallbackCourseId: string,
+): GraphEdge[] {
+  const rawNodes = Object.values(delta.nodes ?? {}).flat() as Array<Record<string, unknown>>;
+  if (!rawNodes.length) return [];
+
+  const byId = new Map(nodes.map(n => [n.id, n] as const));
+  const byName = new Map(nodes.map(n => [normalizeConceptName(n.name), n] as const));
+  const edges: GraphEdge[] = [];
+
+  for (const raw of rawNodes) {
+    const { id, name } = rawNodeIdentity(raw);
+    if (!id && !name) continue;
+    const existing = id ? byId.get(id) : byName.get(normalizeConceptName(name as string));
+    if (existing) continue;
+
+    const courseId = (typeof raw.course_id === "string" ? raw.course_id : undefined) ?? fallbackCourseId;
+    const root = nodes.find(n => n.is_subject_root && n.course_id === courseId);
+    if (!root) continue;
+
+    const label = (name ?? id) as string;
+    edges.push({ source: root.id, target: `stream-${normalizeConceptName(label)}`, strength: 0.4 });
+  }
+  return edges;
+}
+
+// Idempotent edge append: dedupes `additions` against `prev` AND against
+// each other by source+target, so calling this twice with identical inputs —
+// React 18 Strict Mode's dev double-invocation of a setState updater, or the
+// same `graph_update` replayed — leaves `prev` unchanged the second time.
+// Never mutates `prev`. Exported for Learn.graph.test.ts.
+export function mergeGraphEdges(prev: GraphEdge[], additions: GraphEdge[]): GraphEdge[] {
+  if (!additions.length) return prev;
+  const seen = new Set(prev.map(edgeKey));
+  const next: GraphEdge[] = [];
+  for (const e of additions) {
+    const key = edgeKey(e);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    next.push(e);
+  }
+  return next.length ? [...prev, ...next] : prev;
+}
+
+// Course resolution for a rail-focused node: prefer the node's own course,
+// fall back to the course picker's selection, else null. Used both for the
+// rail's focus card (`cardCourseId` in LearnInner) and, via that same value,
+// for the streamed-placeholder course fallback in `applyGraphDelta` — so a
+// streamed node lands in the same course bucket a manually-added one would
+// (Finding B). Exported for Learn.graph.test.ts.
+export function resolveCardCourseId(
+  topicNode: GraphNode | undefined,
+  selectedCourseId: string,
+): string | null {
+  return topicNode?.course_id || selectedCourseId || null;
+}
+
+// The actual call-site assembly `applyGraphDelta` (LearnInner, below) runs on
+// every streamed `graph_update`. Extracted to a standalone, exported function
+// — rather than left inline in the `useCallback` body — specifically so
+// Learn.applyGraphDelta.test.ts can invoke the REAL assembly with fake
+// `setGraphNodes`/`setGraphEdges` and prove the shape below is what actually
+// runs, instead of testing a hand-written mirror of it (fix pass 2's gap).
+//
+// `edges` MUST be computed before either setter is called: it is a plain,
+// eager read of `graphNodesSnapshot` (the caller's current `graphNodes`), not
+// a value threaded out of the `setGraphNodes` updater. That distinction is
+// the entire fix — see the big comment on `applyGraphDelta` for why reading
+// a value out of a functional updater immediately after calling it is
+// unsound (React never runs it synchronously at the call site).
+// `setGraphNodes`/`setGraphEdges` are typed to only the functional-updater
+// overload because that's the only form this call site ever uses.
+export function applyGraphDeltaAssembly(
+  delta: GraphDelta,
+  courseId: string,
+  graphNodesSnapshot: GraphNode[],
+  setGraphNodes: (updater: (prev: GraphNode[]) => GraphNode[]) => void,
+  setGraphEdges: (updater: (prev: GraphEdge[]) => GraphEdge[]) => void,
+): void {
+  const edges = deltaPlaceholderEdges(graphNodesSnapshot, delta, courseId);
+  setGraphNodes(prev => mergeGraphDelta(prev, delta, courseId));
+  setGraphEdges(prev => mergeGraphEdges(prev, edges));
+}
+
 export function Learn() {
   return (
     <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
@@ -106,6 +326,11 @@ function LearnInner() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [sending, setSending] = useState(false);
   const [starting, setStarting] = useState(false);
+  // Assistant text arriving token-by-token for the in-flight turn; null =
+  // not streaming, '' = stream open but no token yet, non-empty = live text.
+  // Passed straight through to ChatPanel's `streamingText` prop.
+  const [streamingText, setStreamingText] = useState<string | null>(null);
+  const streamAbort = useRef<AbortController | null>(null);
 
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
@@ -114,11 +339,70 @@ function LearnInner() {
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
 
   // The rail's focused node — independent of the active session's topic, so
-  // clicking around the map explores without touching the chat. Null means the
-  // focus follows the current session topic. `lastNodeClickRef` powers the
-  // double-click-to-switch shortcut.
+  // clicking around the map explores without touching the chat. Null means
+  // the focus follows the current session topic. `lastNodeClickRef` powers
+  // the double-click-to-switch shortcut. Declared here — ahead of the rest
+  // of the rail state below — because `applyGraphDelta`'s course resolution
+  // needs `cardCourseId`, which is derived from it.
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const lastNodeClickRef = useRef<{ id: string; t: number } | null>(null);
+
+  const suggestParam = searchParams.get("suggest");
+  const highlightId = useMemo(() => {
+    // Pre-revamp Learn honored ?suggest=<concept> from the Dashboard
+    // "Learn next" suggestion; restore that here, falling back to the
+    // current topic if no suggestion is active.
+    const suggestMatch = suggestParam
+      ? graphNodes.find(n => n.name.toLowerCase() === suggestParam.trim().toLowerCase())
+      : null;
+    if (suggestMatch) return suggestMatch.id;
+    return graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id;
+  }, [suggestParam, graphNodes, topic]);
+
+  // The rail focus: an explicitly-clicked node when present, otherwise the
+  // node for the active session topic. Drives the graph highlight, focus
+  // card, "In this branch", and "Elsewhere".
+  const activeFocusId = focusedNodeId ?? highlightId;
+  const topicNode = useMemo(
+    () => graphNodes.find(n => n.id === activeFocusId),
+    [graphNodes, activeFocusId],
+  );
+
+  // Course resolution shared by the rail's focus card, `addConcept` (~:892
+  // below), and the streamed-placeholder fallback right below: prefer the
+  // focused concept's own course, fall back to the course picker. Extracted
+  // to a top-level function (rather than an inline expression) so it's
+  // directly testable — see Learn.graph.test.ts.
+  const cardCourseId = resolveCardCourseId(topicNode, selectedCourseId);
+
+  // Streamed graph_update handler (#74) — see mergeGraphDelta above for why
+  // the match key falls back to concept name. The course fallback is
+  // `cardCourseId`, the same resolution `addConcept` uses for a manually-
+  // added node, so a streamed placeholder lands in the same course bucket;
+  // when nothing resolves at all it falls back to `selectedCourseId`, same
+  // as before.
+  //
+  // The actual assembly lives in `applyGraphDeltaAssembly` (top-level,
+  // exported, above) — nodes and edges are two independent, idempotent
+  // functional updates there, NOT one updater's result threaded into the
+  // other. `setGraphNodes`'s updater runs against the true, always-current
+  // `prev`. `setGraphEdges`'s updater applies edges computed eagerly against
+  // the render-scope `graphNodes` snapshot passed in here — safe because
+  // subject-root nodes never change mid-stream, and any staleness in the "is
+  // this concept already known" check only produces a redundant candidate,
+  // which `mergeGraphEdges` dedupes by source+target rather than an
+  // incorrect edge. Both updaters are pure functions of their arguments, so
+  // calling either twice with the same input — React 18 Strict Mode's dev
+  // double-invocation, or the same delta arriving twice — produces the same
+  // result. No timing assumption, nothing smuggled out.
+  const applyGraphDelta = useCallback(
+    (delta: GraphDelta) => {
+      const courseId = cardCourseId ?? selectedCourseId;
+      applyGraphDeltaAssembly(delta, courseId, graphNodes, setGraphNodes, setGraphEdges);
+    },
+    [cardCourseId, selectedCourseId, graphNodes],
+  );
+
   // Inline "add concept" composer state for the knowledge-map rail.
   const [addingConcept, setAddingConcept] = useState(false);
   const [newConceptName, setNewConceptName] = useState("");
@@ -214,23 +498,80 @@ function LearnInner() {
   // Begins a fresh tutor session on `t`. Shared by the entry-screen Start
   // button and the knowledge-map switch flow. Clears any map focus so the rail
   // snaps back to following the (new) active topic.
+  //
+  // Streams the greeting over startSessionStream, mirroring `send`'s
+  // three-rung fallback ladder verbatim (see the big comment on `send`,
+  // above `send`'s definition, for the full rationale):
+  //   Rung 3 (stream never produced text) -> retry transparently via the
+  //     non-streaming JSON startSession; the user never sees an error.
+  //   Rung 2 (rejected AFTER tokens appeared) -> surface the error via the
+  //     same toast path this handler already used for JSON failures. Never
+  //     silently re-run.
+  //   Stop pressed -> distinguished via the AbortController's signal.aborted;
+  //     intentional, not an error, no fallback. No session exists yet on
+  //     this path (session_id is only set on success below), so aborting
+  //     just drops back to the entry screen once `starting` clears.
+  //
+  // Like `send`, no loading placeholder goes into `messages` up front — the
+  // greeting renders through ChatPanel's `streamingText` bubble instead, so
+  // it appears progressively rather than after a spinner (#70's premise,
+  // extended to session start).
+  //
+  // Field-name note: the JSON route returns `initial_message`; the stream's
+  // `done` event returns `reply` (ChatResult). Both are normalized into
+  // `replyText` below so the rest of this function doesn't care which path
+  // served the turn.
   const beginSession = async (t: string) => {
     const topicName = t.trim();
     if (!topicName || !userId) return;
     setFocusedNodeId(null);
     setTopic(topicName);
     setTopicDraft(topicName);
-    setMessages([{ id: msgId(), role: "assistant", content: "", loading: true }]);
+    setMessages([]);
     setStarting(true);
+    setStreamingText("");
+    // A stream may already be in flight (e.g. a graph-node click starting a
+    // new session while a reply streams) — abort it first so two streams
+    // never interleave writes into the same streamingText/messages state.
+    streamAbort.current?.abort();
+    const controller = new AbortController();
+    streamAbort.current = controller;
+    let sawToken = false;
     try {
-      const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref);
-      setSessionId(res.session_id);
-      setMessages([{ id: msgId(), role: "assistant", content: res.initial_message || "Let's begin." }]);
+      let newSessionId: string;
+      let replyText: string;
+      try {
+        const res = await startSessionStream(userId, topicName, mode, sharedCtx, selectedCourseId || undefined, modelPref, {
+          onToken: (delta) => {
+            sawToken = true;
+            setStreamingText(prev => (prev ?? "") + delta);
+          },
+          onGraphUpdate: applyGraphDelta,
+          signal: controller.signal,
+        });
+        if (!res.session_id) throw new Error("Session stream completed without a session_id.");
+        newSessionId = res.session_id;
+        replyText = res.reply || "Let's begin.";
+      } catch (err) {
+        if (controller.signal.aborted) { setMessages([]); return; } // Stop pressed — intentional, not an error.
+        if (sawToken) throw err; // Rung 2: interrupted after producing text — surface it, don't retry.
+        // Rung 3: the stream never produced text — retry transparently via
+        // the non-streaming JSON route. Clear streamingText first so
+        // ChatPanel drops the Stop affordance for this leg (mirrors `send`).
+        setStreamingText(null);
+        const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref);
+        newSessionId = res.session_id;
+        replyText = res.initial_message || "Let's begin.";
+      }
+      setSessionId(newSessionId);
+      setMessages([{ id: msgId(), role: "assistant", content: replyText }]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't start session.");
       setMessages([]);
     } finally {
       setStarting(false);
+      setStreamingText(null);
+      if (streamAbort.current === controller) streamAbort.current = null;
     }
   };
 
@@ -287,31 +628,80 @@ function LearnInner() {
     }
   }, [userId, toast]);
 
+  // Sends one turn over the SSE stream, with a three-rung fallback ladder:
+  //   Rung 3 (stream never produced text) -> retry transparently via the
+  //     non-streaming sendChat; the user never sees an error.
+  //   Rung 2 (rejected AFTER tokens appeared) -> surface the error through
+  //     the same error-message path the old non-streaming send() used. Never
+  //     silently re-run: the user already saw partial text, and nothing was
+  //     persisted server-side, so re-running would restart the reply.
+  //   Stop pressed -> distinguished via the AbortController's signal.aborted;
+  //     intentional, not an error, no fallback, no message appended (nothing
+  //     was persisted, so the partial bubble just disappears).
+  //
+  // Unlike the old handler, no loading placeholder is pushed into `messages`
+  // up front — ChatPanel renders the in-flight turn itself via streamingText
+  // (a placeholder there would double up with that live bubble). The real
+  // assistant message is appended once, after the turn resolves one way or
+  // another.
   const send = useCallback(async (userText: string) => {
     if (!userText.trim() || !sessionId || !userId) return;
-    setMessages(m => [
-      ...m,
-      { id: msgId(), role: "user", content: userText },
-      { id: msgId(), role: "assistant", content: "", loading: true },
-    ]);
+    setMessages(m => [...m, { id: msgId(), role: "user", content: userText }]);
     setSending(true);
+    setStreamingText("");
+    // A stream may already be in flight (e.g. a graph-node click starting a
+    // new session while a reply streams) — abort it first so two streams
+    // never interleave writes into the same streamingText/messages state.
+    streamAbort.current?.abort();
+    const controller = new AbortController();
+    streamAbort.current = controller;
+    let sawToken = false;
     try {
-      const res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref);
-      setMessages(m => {
-        const next = [...m];
-        next[next.length - 1] = { id: next[next.length - 1].id, role: "assistant", content: res.reply || "" };
-        return next;
-      });
+      let res: ChatResult;
+      try {
+        res = await streamChat(sessionId, userId, userText, mode, sharedCtx, modelPref, {
+          onToken: (delta) => {
+            sawToken = true;
+            setStreamingText(t => (t ?? "") + delta);
+          },
+          onGraphUpdate: applyGraphDelta,
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (controller.signal.aborted) return; // Stop pressed — intentional, not an error.
+        if (sawToken) throw err; // Rung 2: interrupted after producing text — surface it, don't retry.
+        // Rung 3: the stream never produced text — retry transparently via the
+        // non-streaming JSON route. `sendChat`/`fetchJSON` (lib/api.ts) take
+        // no AbortSignal, and plumbing one through is out of scope for this
+        // fix — so the fallback request itself cannot actually be cancelled.
+        // Clear streamingText to null *before* issuing it so ChatPanel drops
+        // both the Stop button and the "Thinking…" bubble for this leg,
+        // rather than offering a Stop affordance that would abort an
+        // already-detached controller while the JSON call keeps running
+        // server-side regardless. `sending` stays true, so the input is
+        // still disabled — the turn just no longer looks interruptible,
+        // which is now the truth.
+        setStreamingText(null);
+        res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref);
+      }
+      setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
     } catch (err) {
-      setMessages(m => {
-        const next = [...m];
-        next[next.length - 1] = { id: next[next.length - 1].id, role: "assistant", content: `Error: ${err instanceof Error ? err.message : "unknown"}` };
-        return next;
-      });
+      setMessages(m => [...m, { id: msgId(), role: "assistant", content: `Error: ${err instanceof Error ? err.message : "unknown"}` }]);
     } finally {
       setSending(false);
+      setStreamingText(null);
+      if (streamAbort.current === controller) streamAbort.current = null;
     }
-  }, [sessionId, userId, mode, sharedCtx, modelPref]);
+  }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta]);
+
+  // Abort any in-flight stream when the active session changes (including to
+  // none) and on unmount — guards the #131/#133 leaked-stream bug class. A
+  // plain unmount-only effect would miss the "switched sessions mid-stream"
+  // case, so this keys on sessionId: its cleanup fires both when sessionId
+  // changes and when the component unmounts.
+  useEffect(() => {
+    return () => streamAbort.current?.abort();
+  }, [sessionId]);
 
   const handleAction = async (action: "hint" | "confused" | "skip") => {
     if (!sessionId || !userId) return;
@@ -404,18 +794,6 @@ function LearnInner() {
 
   const modeOptions = useMemo(() => MODES.map(m => ({ value: m.id, label: m.name, description: m.tip })), []);
 
-  const suggestParam = searchParams.get("suggest");
-  const highlightId = useMemo(() => {
-    // Pre-revamp Learn honored ?suggest=<concept> from the Dashboard
-    // "Learn next" suggestion; restore that here, falling back to the
-    // current topic if no suggestion is active.
-    const suggestMatch = suggestParam
-      ? graphNodes.find(n => n.name.toLowerCase() === suggestParam.trim().toLowerCase())
-      : null;
-    if (suggestMatch) return suggestMatch.id;
-    return graphNodes.find(n => n.name.toLowerCase() === topic.trim().toLowerCase())?.id;
-  }, [suggestParam, graphNodes, topic]);
-
   // Jump the chat to `name`: resume an existing session on that concept if one
   // exists, otherwise start a fresh one. Both paths clear the map focus so the
   // rail follows the now-active session.
@@ -487,15 +865,6 @@ function LearnInner() {
     }
   };
 
-  // The rail focus: an explicitly-clicked node when present, otherwise the
-  // node for the active session topic. Drives the graph highlight, focus card,
-  // "In this branch", and "Elsewhere".
-  const activeFocusId = focusedNodeId ?? highlightId;
-  const topicNode = useMemo(
-    () => graphNodes.find(n => n.id === activeFocusId),
-    [graphNodes, activeFocusId],
-  );
-
   const neighborIds = useMemo(() => {
     if (!topicNode) return new Set<string>();
     const ids = new Set<string>();
@@ -506,7 +875,6 @@ function LearnInner() {
     return ids;
   }, [topicNode, graphEdges]);
 
-  const cardCourseId = topicNode?.course_id || selectedCourseId || null;
   const cardCourse = useMemo(
     () => courses.find(c => c.course_id === cardCourseId) ?? null,
     [courses, cardCourseId],
@@ -785,6 +1153,8 @@ function LearnInner() {
               onSend={send}
               onAction={handleAction}
               disabled={sending || starting}
+              streamingText={streamingText}
+              onStop={() => streamAbort.current?.abort()}
             />
           </div>
         )}
