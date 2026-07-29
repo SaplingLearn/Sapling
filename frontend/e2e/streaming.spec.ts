@@ -115,6 +115,12 @@ test("stream that fails to open falls back to the JSON turn transparently (#356 
   const [userRow, assistantRow] = rows.slice(-2);
   expect(userRow.role).toBe("user");
   expect(assistantRow.role).toBe("assistant");
+  // Both encryption checks, per support/decrypt.ts ("Specs must always make
+  // both"): ciphertext at rest — decrypt_if_present echoes plaintext back,
+  // so decrypt-equality alone can't prove the column was encrypted…
+  expect(userRow.content).not.toBe(STUDENT_MESSAGE);
+  expect(assistantRow.content).not.toBe(TUTOR_REPLY);
+  // …and decrypting to exactly what was sent and rendered.
   const [userPlain, assistantPlain] = await decryptTexts([
     userRow.content,
     assistantRow.content,
@@ -158,12 +164,61 @@ test("Stop mid-stream keeps the partial, marks it interrupted, persists nothing;
   const [userRow, assistantRow] = rows.slice(-2);
   expect(userRow.role).toBe("user");
   expect(assistantRow.role).toBe("assistant");
+  // Both encryption checks, per support/decrypt.ts ("Specs must always make
+  // both") — ciphertext at rest, then decrypt-equality.
+  expect(userRow.content).not.toBe(STUDENT_SLOW_MESSAGE);
+  expect(assistantRow.content).not.toBe(SLOW_REPLY);
   const [userPlain, assistantPlain] = await decryptTexts([
     userRow.content,
     assistantRow.content,
   ]);
   expect(userPlain).toBe(STUDENT_SLOW_MESSAGE);
   expect(assistantPlain).toBe(SLOW_REPLY);
+});
+
+test("switching sessions during the JSON fallback drops the late reply — no stale bubble (#356 item 7, PR #461 review)", async ({
+  page,
+}) => {
+  // The Rung-3 leg is the one that structurally CANNOT be aborted: sendChat
+  // takes no AbortSignal. Kill the stream so the turn degrades to Rung 3,
+  // and delay the JSON route long enough to switch sessions while it is in
+  // flight. The late reply must be dropped client-side (the sessionIdRef
+  // guard on the success append) — it still persists server-side to the
+  // ORIGINAL session, which is exactly why dropping the append loses nothing.
+  await page.route("**/api/learn/chat/stream", route => route.abort());
+  await page.route("**/api/learn/chat", async route => {
+    await new Promise(resolve => setTimeout(resolve, 3_000));
+    await route.continue();
+  });
+
+  const jsonDone = page.waitForResponse(
+    response => response.url().endsWith("/api/learn/chat") && response.request().method() === "POST",
+  );
+
+  await page.goto("/learn");
+  await openSeededSession(page, SESSION_ID);
+  await page.getByTestId("tutor-input").fill(STUDENT_MESSAGE);
+  await page.getByTestId("tutor-send").click();
+
+  // While the delayed JSON call is in flight: leave and open the other session.
+  await page.getByTestId("tutor-back-to-learn").click();
+  await page.getByTestId(`tutor-session-resume-${MATH_SESSION_ID}`).click();
+  const log = page.getByTestId("tutor-messages");
+  await expect(log).toContainText("What is a dot product?");
+
+  // Let the late reply land. Server-side, the JSON route persisted the pair
+  // to the ORIGINAL session (these DB round-trips also give the client time
+  // to mis-append if the guard were broken — the negative asserts below
+  // would then catch it, rather than racing the response's microtask).
+  await jsonDone;
+  const rows = await messageRows(SESSION_ID);
+  expect(rows).toHaveLength(SEEDED_MESSAGE_COUNT + 2);
+  expect(await messageRows(MATH_SESSION_ID)).toHaveLength(MATH_SEEDED_MESSAGE_COUNT);
+
+  // …and the late reply never reached the math transcript.
+  await expect(log).toContainText("What is a dot product?");
+  await expect(log).not.toContainText(TUTOR_REPLY);
+  await expect(log).not.toContainText(STUDENT_MESSAGE);
 });
 
 test("switching sessions mid-stream aborts the stream and leaves no stale bubble (#356 item 7)", async ({

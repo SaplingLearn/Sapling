@@ -354,8 +354,12 @@ function LearnInner() {
   const [sending, setSending] = useState(false);
   const [starting, setStarting] = useState(false);
   // Deep-link resume (#164) in flight — renders a loading state instead of
-  // flashing the session picker the deep link is about to leave.
-  const [resuming, setResuming] = useState(false);
+  // flashing the session picker the deep link is about to leave. Lazily
+  // initialized from the URL so the VERY FIRST paint already shows the
+  // loading branch: starting at false and flipping in the (post-paint)
+  // consume effect would paint the picker for a frame — the exact flash
+  // this state exists to avoid (PR #461 review).
+  const [resuming, setResuming] = useState<boolean>(() => !!readResumeParam(searchParams));
   // Mirror of `sessionId` readable from async closures: `send`'s error paths
   // must know whether the user has switched sessions while the turn was in
   // flight (appending an interrupted bubble then would inject it into the
@@ -539,8 +543,13 @@ function LearnInner() {
   // snaps back to following the (new) active topic.
   //
   // Streams the greeting over startSessionStream, mirroring `send`'s
-  // three-rung fallback ladder verbatim (see the big comment on `send`,
-  // above `send`'s definition, for the full rationale):
+  // three-rung fallback ladder (see the big comment on `send`, above
+  // `send`'s definition, for the full rationale) — EXCEPT the ADR-0020
+  // interrupted+Retry bubble, which is deliberately a chat-turn treatment:
+  // a stopped/failed greeting has no transcript turn to mark (no user
+  // message exists, nothing was persisted), so this path returns to the
+  // entry screen with the topic draft intact — Start is its retry
+  // affordance (ADR 0020's scope note):
   //   Rung 3 (stream never produced text) -> retry transparently via the
   //     non-streaming JSON startSession; the user never sees an error.
   //   Rung 2 (rejected AFTER tokens appeared) -> surface the error via the
@@ -694,14 +703,19 @@ function LearnInner() {
 
   // Sends one turn over the SSE stream, with a three-rung fallback ladder:
   //   Rung 3 (stream never produced text) -> retry transparently via the
-  //     non-streaming sendChat; the user never sees an error.
-  //   Rung 2 (rejected AFTER tokens appeared) -> surface the error through
-  //     the same error-message path the old non-streaming send() used. Never
+  //     non-streaming sendChat; the user never sees an error. If even that
+  //     fails, the turn gets the ADR-0020 interrupted treatment below.
+  //   Rung 2 (rejected AFTER tokens appeared) -> ADR 0020: keep the partial
+  //     as an interrupted bubble with Retry; error detail in a toast. Never
   //     silently re-run: the user already saw partial text, and nothing was
   //     persisted server-side, so re-running would restart the reply.
   //   Stop pressed -> distinguished via the AbortController's signal.aborted;
-  //     intentional, not an error, no fallback, no message appended (nothing
-  //     was persisted, so the partial bubble just disappears).
+  //     intentional, not an error, no fallback. ADR 0020: the partial stays
+  //     as an interrupted bubble with Retry (nothing was persisted, so Retry
+  //     is a plain re-send).
+  // In every non-success outcome — and on a late Rung-3 success — nothing is
+  // appended if the user switched sessions mid-turn (the sessionIdRef guard;
+  // #356 item 7's "no stale bubble").
   //
   // Unlike the old handler, no loading placeholder is pushed into `messages`
   // up front — ChatPanel renders the in-flight turn itself via streamingText
@@ -778,7 +792,15 @@ function LearnInner() {
         setStreamingText(null);
         res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref);
       }
-      setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
+      // Same session-switch guard as appendInterrupted, and it matters most
+      // on the Rung-3 leg: sendChat cannot be aborted, so the user can have
+      // switched sessions while it was in flight — appending its late reply
+      // here would inject it into the OTHER session's transcript. Dropping
+      // it loses nothing: the JSON route persisted the pair server-side, so
+      // re-opening the original session shows the turn (PR #461 review).
+      if (sessionIdRef.current === turnSessionId) {
+        setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
+      }
     } catch (err) {
       // The Rung-3 JSON fallback itself failed — the ladder is exhausted.
       // ADR 0020 treats this like any mid-stream failure: interrupted bubble
@@ -787,8 +809,16 @@ function LearnInner() {
       appendInterrupted();
     } finally {
       setSending(false);
-      setStreamingText(null);
-      if (streamAbort.current === controller) streamAbort.current = null;
+      // Clear the live bubble only while this turn still owns the stream
+      // slot: if a newer send/beginSession took over (it aborts this one,
+      // then seeds its own streamingText), nulling here would blank THAT
+      // turn's in-flight bubble. `sending` stays unconditional — no newer
+      // owner may exist to restore it (e.g. a beginSession interleave), and
+      // a stuck-true `sending` would disable the composer permanently.
+      if (streamAbort.current === controller) {
+        setStreamingText(null);
+        streamAbort.current = null;
+      }
     }
   }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta, toast]);
 

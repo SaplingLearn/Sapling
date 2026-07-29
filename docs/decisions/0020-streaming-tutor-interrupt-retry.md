@@ -51,13 +51,16 @@ The spec (`docs/superpowers/specs/2026-07-16-streaming-design.md`) is explicit:
 
 ## Scope / where it lands
 
-The streaming chat UI (`frontend/src/components/ChatPanel.tsx`,
-`frontend/src/components/screens/Learn.tsx`, `frontend/src/lib/api.ts`) lives on
-the **PR #349 branch (`feat/streaming-tutor`)**, not on `main`. This ADR records
-the product decision; the implementation is a follow-up on that branch (or
-immediately after it merges), not part of the `main`-based follow-up branch that
-carries #354/#355. Acceptance for item 5 in #356 is: this decision recorded
-(done here) and implemented on the streaming branch.
+Recorded while the streaming chat UI (`frontend/src/components/ChatPanel.tsx`,
+`frontend/src/components/screens/Learn.tsx`, `frontend/src/lib/api.ts`) still
+lived on the PR #349 branch (`feat/streaming-tutor`); the decision deliberately
+preceded the implementation. #349 has since merged, and the implementation
+landed on `main` as the ADR-0020 half of the #164/#356 PR: ChatPanel's
+`interrupted`/Retry treatment, Learn's ladder rework (Stop / Rung-2 / failed
+Rung-3 all keep the partial and offer Retry, with a session-switch guard so a
+late turn never writes into another session's transcript), and the
+`frontend/e2e/streaming.spec.ts` journeys pinning it. Acceptance for item 5 in
+#356 — decision recorded and implemented — is met.
 
 ## Consequences
 
