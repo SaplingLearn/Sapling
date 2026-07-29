@@ -53,7 +53,13 @@ pytest-anyio==0.0.0
 ruff==0.15.18
 
 # Pydantic AI agents (see docs/decisions/0001-adopt-pydantic-ai.md)
-pydantic-ai-slim[google]>=0.0.20
+# <2: pydantic-ai 2.x changed run_stream_events() to return an async context
+# manager (async-for over it raises TypeError), breaking the streamed tutor
+# path the moment an unpinned resolve jumps majors — which is exactly how the
+# e2e CI lane went red on every push to main after #349 while the lock-pinned
+# lanes stayed green. Bump this ceiling only together with a chat_stream.py
+# migration and a fresh requirements.lock.
+pydantic-ai-slim[google]>=0.0.20,<2
 logfire[fastapi]>=2.0
 sse-starlette>=2.0
 
