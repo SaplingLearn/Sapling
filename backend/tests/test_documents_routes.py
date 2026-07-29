@@ -27,6 +27,23 @@ def _mock_validate_user():
     return patch("routes.documents._validate_user", return_value=None)
 
 
+def _doc_text(label: str = "document") -> str:
+    """Extraction output long enough to clear `MIN_EXTRACTED_CHARS`.
+
+    The upload routes reject documents whose extracted text is near-empty (a
+    rasterized PDF has no text layer, so extraction returns "" with no
+    exception to catch). Happy-path fixtures therefore have to supply as much
+    text as a real document would - a bare "text" is now indistinguishable
+    from a failed extraction.
+
+    `label` is preserved so each fixture still reads as its own document.
+    """
+    return (
+        f"{label}. This sample body gives the upload fixture enough extracted "
+        "text to look like a document that was actually read successfully."
+    )
+
+
 # ── GET /api/documents/user/{user_id} ────────────────────────────────────────
 
 class TestListDocuments:
@@ -377,7 +394,7 @@ class TestUploadDocument:
         row = {"id": "d1", "file_name": "notes.pdf"}
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="pdf text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("pdf text")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.table") as t,
         ):
@@ -397,7 +414,7 @@ class TestUploadDocument:
         row = {"id": "d2", "file_name": "chapter.docx"}
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="docx text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("docx text")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.table") as t,
         ):
@@ -417,7 +434,7 @@ class TestUploadDocument:
         row = {"id": "d3", "file_name": "lecture.pptx"}
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="pptx text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("pptx text")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.table") as t,
         ):
@@ -439,7 +456,7 @@ class TestUploadDocument:
         inserted_row = {"id": "d4", "category": "study_guide", "summary": "A comprehensive study guide"}
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="some text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("some text")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.table") as t,
         ):
@@ -458,7 +475,7 @@ class TestUploadDocument:
         }
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.table") as t,
         ):
@@ -483,7 +500,7 @@ class TestUploadDocument:
         }
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="syllabus text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("syllabus text")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.save_assignments_to_db") as mock_save,
             patch("routes.documents.table") as t,
@@ -503,7 +520,7 @@ class TestUploadDocument:
         }
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="notes text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("notes text")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.save_assignments_to_db") as mock_save,
             patch("routes.documents.table") as t,
@@ -527,7 +544,7 @@ class TestUploadDocument:
         }
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="syllabus text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("syllabus text")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update") as mock_apply,
@@ -558,7 +575,7 @@ class TestUploadDocument:
         }
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="pset text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("pset text")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.save_assignments_to_db") as mock_save,
             patch("routes.documents.apply_graph_update") as mock_apply,
@@ -586,7 +603,7 @@ class TestUploadDocument:
         }
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="notes"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("notes")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.apply_graph_update") as mock_apply,
             patch("routes.documents.table") as t,
@@ -607,7 +624,7 @@ class TestUploadDocument:
         }
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update", side_effect=RuntimeError("oops")),
@@ -629,7 +646,7 @@ class TestUploadDocument:
         }
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.save_assignments_to_db", side_effect=RuntimeError("oops")),
             patch("routes.documents.table") as t,
@@ -654,7 +671,7 @@ class TestUploadDocument:
         with (
             _mock_validate_user(),
             patch("routes.documents.resolve_offering", return_value="off-99") as ro,
-            patch("routes.documents.extract_text_from_file", return_value="t"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("t")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.table") as t,
         ):
@@ -678,7 +695,7 @@ class TestUploadDocument:
         }
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="t"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("t")),
             patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.table") as t,
         ):
@@ -779,7 +796,7 @@ class TestUploadDocumentOrchestrator:
         row = {"id": "doc-1", "file_name": "notes.pdf", "category": "lecture_notes"}
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
         ):
@@ -798,7 +815,7 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
         ):
@@ -819,7 +836,7 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update"),
@@ -850,7 +867,7 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update"),
@@ -875,7 +892,7 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.save_assignments_to_db") as mock_save,
             patch("routes.documents.apply_graph_update"),
@@ -903,7 +920,7 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.apply_graph_update") as mock_apply,
             patch("routes.documents.table") as t,
@@ -927,7 +944,7 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.apply_graph_update") as mock_apply,
             patch("routes.documents.table") as t,
@@ -944,7 +961,7 @@ class TestUploadDocumentOrchestrator:
         )
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.apply_graph_update") as mock_apply,
             patch("routes.documents.table") as t,
@@ -1033,7 +1050,7 @@ class TestUploadDocumentStreaming:
         cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             cls_p, sum_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.table") as t,
             patch("routes.documents._spawn_post_roll"),  # avoid stray asyncio.create_task in tests
@@ -1069,7 +1086,7 @@ class TestUploadDocumentStreaming:
         cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs(is_syllabus=True)
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             cls_p, sum_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update"),
@@ -1143,6 +1160,46 @@ class TestUploadDocumentStreaming:
             json.loads(e["data"]) for e in events
             if e["event"] == "error" and json.loads(e["data"])["step"] == "failed"
         )
+        assert failed_data.get("data", {}).get("request_id")
+
+    def test_async_ocr_empty_extraction_emits_terminal_error(self):
+        """OCR_ASYNC_ENABLED=true: extraction that *succeeds* but returns no
+        usable text must stop the pipeline too.
+
+        The test above covers an extractor that raises. A rasterized PDF raises
+        nothing -- it simply returns "" -- so that exception path never fires
+        and the model gets asked to summarize an empty document, which it
+        answers by inventing one. Streaming counterpart of
+        TestEmptyExtractionGuard.
+        """
+        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.OCR_ASYNC_ENABLED", True),
+            patch("routes.documents.extract_text_from_file", return_value=""),
+            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []  # no idempotency cache hit
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("scan.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                assert r.status_code == 200
+                body = r.read()
+
+        events = _parse_sse_stream(body)
+        types_steps = [(e["event"], json.loads(e["data"])["step"]) for e in events]
+        assert ("error", "failed") in types_steps
+        assert types_steps[-1] == ("status", "done")
+        # Never reached the model, and never persisted a fabrication.
+        assert ("progress", "classify") not in types_steps
+        failed_data = next(
+            json.loads(e["data"]) for e in events
+            if e["event"] == "error" and json.loads(e["data"])["step"] == "failed"
+        )
+        assert "no text" in failed_data["message"].lower()
         assert failed_data.get("data", {}).get("request_id")
 
     def test_sync_ocr_failure_in_streaming_route_returns_422_before_stream(self):
@@ -1233,7 +1290,7 @@ class TestUploadIdempotency:
         }
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document") as proc,
             patch("routes.documents.table") as t,
         ):
@@ -1266,7 +1323,7 @@ class TestUploadIdempotency:
         cls_run = AsyncMock()
         with (
             _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value="text"),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.classifier_agent.run", cls_run),
             patch("routes.documents.table") as t,
             patch("routes.documents._spawn_post_roll"),
@@ -1294,3 +1351,133 @@ class TestUploadIdempotency:
         done_evt = json.loads(events[-1]["data"])
         assert done_evt["data"]["document_id"] == "doc-existing-stream"
         assert done_evt["data"]["request_id"] == "trace-replay-stream-1"
+
+
+# -- Empty-extraction guard --------------------------------------------------
+
+class TestEmptyExtractionGuard:
+    """Documents whose text extraction yields (almost) nothing must be
+    rejected *before* any LLM call is made.
+
+    Regression test for the scanned-PDF fabrication bug: a rasterized practice
+    exam had no text layer at all, so extraction returned "" with no exception
+    to catch. The classify/summarize prompt was still issued with an empty
+    `Content:` block, and because that prompt's JSON schema requires a summary
+    and a concept list with no "insufficient content" escape hatch, the model
+    invented a document -- yielding a summary about the 1964 Berkeley Free
+    Speech Movement and concepts about neural networks for a linear-algebra
+    final. Those fabricated concepts were persisted and were bound for the
+    course's shared knowledge graph, where they would have misled every
+    enrolled student.
+    """
+
+    def test_rejects_pdf_with_no_extractable_text(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=""),
+        ):
+            r = _make_upload()
+
+        assert r.status_code == 422
+        assert "no text" in r.json()["detail"].lower()
+
+    def test_threshold_boundary_is_exact(self):
+        """49 stripped chars is rejected; exactly MIN_EXTRACTED_CHARS (50)
+        passes — the guard is >= threshold, and the boundary itself is what a
+        future off-by-one would silently move."""
+        from routes.documents import MIN_EXTRACTED_CHARS
+
+        below = "x" * (MIN_EXTRACTED_CHARS - 1)
+        at = "x" * MIN_EXTRACTED_CHARS
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=below),
+        ):
+            assert _make_upload().status_code == 422
+        ai_result = {
+            "category": "other",
+            "summary": "Boundary-length text.",
+            "key_takeaways": [],
+            "flashcards": [],
+        }
+        with (
+            _mock_validate_user(),
+            patch(
+                "routes.documents.process_document",
+                side_effect=RuntimeError("force legacy fallback for tests"),
+            ),
+            patch("routes.documents.extract_text_from_file", return_value="  " + at + "\n"),
+            patch("routes.documents.call_gemini_json", return_value=ai_result),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "d50", "file_name": "notes.pdf"}]
+            r = _make_upload()
+        assert r.status_code == 200
+
+    def test_rejects_whitespace_only_extraction(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="  \n\n\t   \n "),
+        ):
+            r = _make_upload()
+
+        assert r.status_code == 422
+
+    def test_rejects_extraction_below_minimum(self):
+        """A scanned page often yields a few stray characters -- a page number,
+        a header, a watermark -- rather than nothing at all. That is still far
+        too little to summarize, and still enough to trigger fabrication, so
+        testing for emptiness alone would be too weak."""
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="Page 1 of 13"),
+        ):
+            r = _make_upload()
+
+        assert r.status_code == 422
+
+    def test_never_calls_the_model_when_extraction_is_empty(self):
+        """The defect was not the bad copy -- it was spending an LLM call on an
+        empty document and persisting the result. Assert neither the agent
+        pipeline nor the legacy Gemini call is reached, and that nothing is
+        written."""
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=""),
+            patch("routes.documents.process_document") as agent,
+            patch("routes.documents.call_gemini_json") as gemini,
+            patch("routes.documents.table") as t,
+        ):
+            r = _make_upload()
+
+        assert r.status_code == 422
+        agent.assert_not_called()
+        gemini.assert_not_called()
+        t.return_value.insert.assert_not_called()
+
+    def test_accepts_a_document_with_real_text(self):
+        """The guard must not reject genuine documents."""
+        real_text = (
+            "Practice Final 2 Solutions. Problem 1: compute the eigenvalues of "
+            "the matrix A and determine whether A is diagonalizable over R."
+        )
+        ai_result = {
+            "category": "assignment",
+            "summary": "Eigenvalue practice problems.",
+            "key_takeaways": [],
+            "flashcards": [],
+        }
+        with (
+            _mock_validate_user(),
+            patch(
+                "routes.documents.process_document",
+                side_effect=RuntimeError("force legacy fallback for tests"),
+            ),
+            patch("routes.documents.extract_text_from_file", return_value=real_text),
+            patch("routes.documents.call_gemini_json", return_value=ai_result),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.insert.return_value = [{"id": "d9", "file_name": "notes.pdf"}]
+            r = _make_upload()
+
+        assert r.status_code == 200
