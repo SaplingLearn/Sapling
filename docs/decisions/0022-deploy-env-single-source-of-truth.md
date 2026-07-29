@@ -1,4 +1,4 @@
-# 0020 — DEPLOY_ENV as the single source of truth for frontend environment config
+# 0022 — DEPLOY_ENV as the single source of truth for frontend environment config
 
 **Status:** accepted · **Relates to:** #190, [0018](0018-session-token-lifecycle.md)
 

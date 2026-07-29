@@ -62,7 +62,7 @@ export async function middleware(request: NextRequest) {
       `[sapling] deploy misconfiguration: ${mismatch}. This worker is serving the ` +
         'wrong environment — redeploy with the correct DEPLOY_ENV build variable and ' +
         '`wrangler deploy --env <env>`, and confirm the custom-domain route binding. ' +
-        'See docs/decisions/0018-session-token-lifecycle.md.',
+        'See docs/decisions/0022-deploy-env-single-source-of-truth.md.',
     )
     return redirectToSignin(request, 'env_misconfig')
   }
