@@ -68,6 +68,16 @@ ruff check .                    # lint, gated in CI against the ruff.toml baseli
 ruff format .                   # formatter — available, not yet CI-gated (see ruff.toml)
 ```
 
+E2E (repo root; full guide `docs/e2e-exploration.md`, stack guide `docs/local-supabase.md`):
+
+```
+make e2e-up                        # deterministic local stack: Supabase PG15 from config.toml + backend + frontend, function-mode LLM seam, rich seed
+cd frontend && npx playwright test # Chapter 1 journeys (frontend/e2e/*.spec.ts) — needs the stack up
+cd backend && venv/bin/python -m e2e_oracles   # deterministic judges (graph|counts|ciphertext|logscan|orphans); exit 0 clean / 1 findings / 2 infra
+make e2e-down                      # ALWAYS tear down, even after failures
+make explore                       # Chapter 2: bounded AI exploration of the running app (interactive: /explore); local-only, never CI
+```
+
 ## Conventions
 
 - All Supabase access goes through `db/connection.py::table()`. Do not instantiate `httpx` clients or import `supabase` directly elsewhere. The one sanctioned exception is `db/migrate.py`, which connects with psycopg to run DDL.
@@ -79,6 +89,9 @@ ruff format .                   # formatter — available, not yet CI-gated (see
 - `functools.lru_cache` is reserved for **deterministic, per-process reads** (#98) — either immutable mappings that never need invalidation (e.g. `academics.offering_course_id`) or reads with a matching `clear_*_cache()` hook that every mutator calls (e.g. `course_context_service.get_course_context` is cleared by `update_course_context`). Cache only hashable-arg functions; return a deep copy if the cached value is mutable; never cache without a clear invalidation story. The autouse `_clear_lru_caches` fixture in `tests/conftest.py` resets these between tests.
 - Backend tests live in `backend/tests/` and run via `pytest`; shared fixtures (mock Supabase, mock Gemini) are in `tests/conftest.py`.
 - Routers are mounted in `main.py` with `/api/<name>` prefixes; new routes follow that pattern.
+- **Verify substantive changes against the E2E lanes before merge**: hermetic suite + the Chapter 1 Playwright lane + the oracles (all three where applicable — `e2e.yml` re-runs the lane on every push to main, but pre-merge is the gate that can still say no). A bug fix in E2E-covered territory pairs with a promoted regression journey in `frontend/e2e/` (triage/promotion recipe: `docs/e2e-exploration.md` §7–§8; journey style: fixtures-based `test` from `support/fixtures.ts`, DB asserts via `support/db.ts`, testids per `docs/frontend-testids.md` "Adding a surface").
+- **The local E2E stack is a machine singleton.** Serialize ALL stack use (yours and every subagent's) via `flock` on `/tmp/claude-<uid>/sapling-e2e-stack.lock`, wrapping each whole up→test→down cycle in ONE flock invocation — never separate flock calls for up and down (detached servers inherit the lock fd; a separately-flocked teardown deadlocks). `make explore` manages its own lock.
+- **Function-mode seam**: the E2E lanes run `SAPLING_MODEL_MODE=function` with fixed handler constants from `agents/function_handlers_e2e.py` — every upload "summarizing" gradient descent is the seam working as designed, not a data bug (the tell: byte-match to an `E2E_*` constant). New request-path agent tasks need a handler registered there (unregistered tasks raise `UnregisteredHandlerError`); post-response BackgroundTask handlers stay deliberately unregistered. Keep handler constants ↔ spec assertions ↔ `tests/test_e2e_function_handlers.py` in sync. Code below the `agents/_providers.py` seam must never construct a raw `google.genai.Client` without a `model_mode()` gate (#439).
 
 ## Pointers
 
@@ -86,6 +99,7 @@ ruff format .                   # formatter — available, not yet CI-gated (see
 - For things that didn't work, see `docs/attempts/`.
 - For the current architecture overview, see `docs/architecture.md`.
 - For agent-building patterns, run `/sync-context` at session start.
+- For E2E testing (Chapter 1 scripted journeys + Chapter 2 AI exploration, oracles, triage, promotion), see `docs/e2e-exploration.md`.
 
 ## Gotchas
 
