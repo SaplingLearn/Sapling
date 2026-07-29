@@ -143,7 +143,7 @@ export interface ConceptNote {
 export interface Document {
   id: string;
   user_id: string;
-  course_id: string;
+  course_id: string | null;
   file_name: string;
   category: 'syllabus' | 'lecture_notes' | 'slides' | 'reading' | 'assignment' | 'study_guide' | 'other';
   summary: string | null;

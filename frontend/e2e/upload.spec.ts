@@ -34,6 +34,13 @@
  *
  * Waiting is event-based only (no waitForTimeout): every wait is an
  * auto-retrying expect() on UI state that a pipeline event flips.
+ *
+ * Also carries the #435 library-course-filter regression coverage: once the
+ * uploaded document appears, the journey resolves its seeded course from
+ * Postgres and asserts filtering the library by that course still surfaces
+ * the document (and "Uncategorized" does not) — the regression being that
+ * GET /api/documents/user/{id} never returned course_id, so every upload
+ * silently miscategorized as "Uncategorized" regardless of its real course.
  */
 import path from "node:path";
 
@@ -153,4 +160,37 @@ test("upload → SSE → document appears in library and Postgres", async ({
   // The card renders the decrypted summary — the encryption round-trip
   // (encrypt at persist, decrypt at read) closed correctly.
   await expect(card).toContainText(SCRIPTED_ABSTRACT_SNIPPET);
+
+  // ── Library course filter matches the seeded course (#435) ────────────
+  // Regression: GET /api/documents/user/{id} used to return offering_id but
+  // never the abstract course_id that Library.tsx filters/labels on, so a
+  // freshly uploaded doc could never match a course filter — it always
+  // counted as "Uncategorized" no matter which course it was tagged with.
+  // Resolve the seeded course from the persisted row itself (offering_id →
+  // course_offerings.course_id) rather than assuming which enrolled course
+  // the upload modal defaulted to.
+  const offeringRows = await queryRaw(
+    `SELECT course_id FROM course_offerings WHERE id = $1`,
+    [doc.offering_id],
+  );
+  const courseId = (offeringRows[0] as { course_id: string } | undefined)
+    ?.course_id;
+  expect(
+    courseId,
+    "the document's offering must resolve to an abstract course",
+  ).toBeTruthy();
+
+  const courseFilter = page.getByTestId(`library-course-filter-${courseId}`);
+  await expect(courseFilter).toBeVisible();
+  await courseFilter.click();
+
+  // The uploaded doc matches its course's filter — not dropped, not stuck
+  // under "Uncategorized".
+  await expect(card).toBeVisible();
+
+  const uncategorizedFilter = page.getByTestId(
+    "library-course-filter-uncategorized",
+  );
+  await uncategorizedFilter.click();
+  await expect(card).not.toBeVisible();
 });
