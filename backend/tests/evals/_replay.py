@@ -110,10 +110,12 @@ def ensure_utf8_output() -> None:
 def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool = True) -> bool:
     """Evaluate one dataset, print an accuracy summary, and return ``ok``.
 
-    ``ok`` is False when a case raised (e.g. a missing cassette in replay mode)
-    or a task's aggregate evaluator score regressed below its committed baseline
-    in ``baselines.json``. Sub-1.0 scores alone are NOT failures — the harness
-    measures accuracy, it doesn't assume perfection. With ``update=True`` the
+    ``ok`` is False when a case raised (e.g. a missing cassette in replay mode),
+    a task's aggregate evaluator score regressed below its committed baseline
+    in ``baselines.json``, or the dataset/an evaluator has NO committed baseline
+    (fail closed — an ungated dataset must not read as PASS in CI). Sub-1.0
+    scores alone are NOT failures — the harness measures accuracy, it doesn't
+    assume perfection. With ``update=True`` the
     current scores are written back as the new baseline (unless the run had
     failures). This function never calls ``sys.exit`` so callers can aggregate
     across datasets.
@@ -159,11 +161,16 @@ def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool =
 
     baseline = all_baselines.get(name)
     if baseline is None:
+        # Fail closed: this function is CI's regression gate (evals.yml). A
+        # dataset with no committed baseline has ZERO protection — reporting
+        # PASS here would read as "covered" while gating nothing (a rename in
+        # `Dataset(name=...)` not mirrored in baselines.json hits this too).
         print(
             f"\nNo committed baseline for {name}; run with "
             "SAPLING_EVAL_UPDATE_BASELINES=1 to record one.",
             file=sys.stderr,
         )
+        ok = False
     else:
         regressions: list[str] = []
         for ev_name, base in baseline.items():
@@ -172,9 +179,17 @@ def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool =
                 regressions.append(f"{ev_name}: missing (baseline {base:.3f})")
             elif got < base - BASELINE_TOLERANCE:
                 regressions.append(f"{ev_name}: {got:.3f} < baseline {base:.3f}")
+        # Same fail-closed logic per evaluator: one added to a dataset but not
+        # committed to the baseline would otherwise never be gated at all.
+        unbaselined = sorted(set(scores) - set(baseline))
+        for ev_name in unbaselined:
+            regressions.append(
+                f"{ev_name}: no committed baseline (scored {scores[ev_name]:.3f}) — "
+                "refresh baselines.json with SAPLING_EVAL_UPDATE_BASELINES=1"
+            )
         if regressions:
             print(
-                f"\n{len(regressions)} accuracy regression(s) in {name} vs baseline:",
+                f"\n{len(regressions)} baseline gap(s)/regression(s) in {name}:",
                 file=sys.stderr,
             )
             for line in regressions:
