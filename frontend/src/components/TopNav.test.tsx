@@ -166,6 +166,74 @@ describe("TopNav — dropdown behavior", () => {
     expect(screen.queryByText("Tutor")).toBeNull();
   });
 
+  it("closes the previously-open group when another opens (#320)", async () => {
+    // Regression for #320: only one group panel may be open at a time.
+    // Previously each trigger owned its own open-state, so opening a
+    // second group left the first one's panel lingering (two panels at
+    // once). Opening Community must immediately close Learn.
+    render(<TopNav />);
+    const learn = screen.getByRole("button", { name: /^Learn/ });
+    const community = screen.getByRole("button", { name: /^Community/ });
+
+    fireEvent.click(learn);
+    expect(screen.getByText("Tutor")).toBeTruthy();
+
+    fireEvent.click(community);
+    // Learn's panel is gone (no lingering second panel)...
+    expect(screen.queryByText("Tutor")).toBeNull();
+    expect(learn.getAttribute("aria-expanded")).toBe("false");
+    // ...and Community's panel is the only one showing.
+    expect(screen.getByText("Social")).toBeTruthy();
+    expect(community.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("dismisses an open panel on a click in the row's dead space", () => {
+    // The DesktopGroups row is flex:1, stretching across the header's blank
+    // strip. "Outside" must mean outside every trigger wrapper, not outside
+    // the row — a keyboard-opened panel (no hover timer armed) followed by a
+    // click in that strip used to stay stuck open.
+    render(<TopNav />);
+    const learn = screen.getByRole("button", { name: /^Learn/ });
+    fireEvent.focus(learn); // keyboard-style open: no close timer armed
+    expect(screen.getByText("Tutor")).toBeTruthy();
+
+    fireEvent.mouseDown(document.body); // dead space / anywhere off-wrapper
+    expect(screen.queryByText("Tutor")).toBeNull();
+    expect(learn.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("cancels a pending hover close-timer when another group opens (#320)", () => {
+    // The actual #320 mechanism: leaving Learn arms a 140ms close-timer;
+    // entering Community must (a) close Learn instantly and (b) cancel the
+    // stale timer so it cannot fire later against the shared openIndex and
+    // close Community.
+    vi.useFakeTimers();
+    try {
+      render(<TopNav />);
+      const learn = screen.getByRole("button", { name: /^Learn/ });
+      const community = screen.getByRole("button", { name: /^Community/ });
+      const learnWrapper = learn.closest("[data-nav-group]")!;
+      const communityWrapper = community.closest("[data-nav-group]")!;
+
+      fireEvent.mouseEnter(learnWrapper);
+      expect(screen.getByText("Tutor")).toBeTruthy();
+
+      fireEvent.mouseLeave(learnWrapper); // arms the 140ms close-timer
+      fireEvent.mouseEnter(communityWrapper); // pre-empts synchronously
+
+      // Learn closed instantly, Community open.
+      expect(screen.queryByText("Tutor")).toBeNull();
+      expect(screen.getByText("Social")).toBeTruthy();
+
+      // The stale timer must NOT fire and close Community.
+      vi.advanceTimersByTime(300);
+      expect(screen.getByText("Social")).toBeTruthy();
+      expect(community.getAttribute("aria-expanded")).toBe("true");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("renders the right items inside each group", async () => {
     const user = userEvent.setup();
     render(<TopNav />);
