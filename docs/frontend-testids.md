@@ -139,6 +139,10 @@ route:
 | `tutor-action-confused` | "I'm confused" |
 | `tutor-action-skip` | "Skip" |
 | `tutor-session-resume-{sessionId}` | a "Recent sessions" row's resume button (`screens/Learn.tsx`), suffixed with the session's own id per the stable-domain-id rule |
+| `tutor-interrupted` | the "Interrupted" marker inside a stopped/failed assistant bubble (ADR 0020, #356; the partial text stays in the bubble itself) |
+| `tutor-retry` | the Retry button inside that marker — re-dispatches the interrupted turn |
+| `tutor-back-to-learn` | the chat header's breadcrumb back to the session picker (`screens/Learn.tsx::BackToLearnLink`) |
+| `tutor-resume-loading` | the transient loading state while a `/learn?resume=` deep link hydrates (#164) |
 | `tutor-focus-concept-description` | the knowledge-map rail's "Focused concept" card description text (`screens/Learn.tsx`) — stored `description` if the node has one, else the AI-fetched blurb (`POST /api/graph/{user}/concept-description`, #446), else the connected-concepts fallback sentence |
 
 ### `quiz`
@@ -231,6 +235,7 @@ never collide in the DOM.
 | `dashboard-courses-key-toggle` | expand/collapse toggle of the "My courses" key overlay on the graph panel (default sidebar layout; the key starts collapsed) |
 | `dashboard-course-code` | a course row's code/name label inside the expanded key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
 | `dashboard-courses-manage` | the cog inside the expanded key that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
+| `dashboard-resume-{sessionId}` | a "Where you left off" card — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
 
 ### `library`
 

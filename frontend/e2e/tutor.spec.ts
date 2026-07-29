@@ -13,14 +13,11 @@
  *
  * so `model_for("chat_tutor")` builds a FunctionModel (#391) and the backend
  * self-registers the fixed-reply handler at first dispatch (#392). The spec
- * enters the chat by RESUMING a seeded session — deliberately not via
- * "Start learning": `POST /api/learn/start-session` still runs on the legacy
- * `call_gemini_multiturn` path (routes/learn.py), which the seam does not
- * cover, and this journey must never depend on live Gemini.
- *
- * No token streaming: `sendChat` (src/lib/api.ts) is a plain fetch returning
- * the full `{ reply, ... }` object, so the assertions wait on the rendered
- * reply locator — no SSE handling, no waitForTimeout.
+ * enters the chat by RESUMING a seeded session — keeping the journey off the
+ * greeting turn entirely, so its assertions are exactly one send → one reply.
+ * (Since #349 the composer streams over SSE with a JSON fallback ladder; the
+ * seam replays the same constant on both lanes, so the assertions just wait
+ * on the rendered reply locator either way — no SSE handling here.)
  */
 import { expect, test } from "./support/fixtures";
 import { queryRaw } from "./support/db";
@@ -102,6 +99,39 @@ test("tutor turn renders a reply and persists encrypted to messages", async ({
   ]);
   expect(userPlain).toBe(STUDENT_MESSAGE);
   expect(assistantPlain).toBe(TUTOR_REPLY);
+});
+
+/**
+ * Journey (#164): the Dashboard "Where you left off" card deep-links into the
+ * exact session with its history hydrated. The bug being pinned: Learn read
+ * only `topic`/`mode`/`course`/`suggest` off the URL, so the `?resume=` the
+ * card pushes (and Tree's session rows, now unified on the same param) was
+ * silently dropped — the card landed on the "Start a session" picker, a dead
+ * button in effect. Entry is via the REAL dashboard card, not a direct URL,
+ * so the whole caller → param → resume wiring is on the hook.
+ */
+test("dashboard 'Where you left off' card resumes the exact session (#164)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+
+  await page.goto("/dashboard");
+  await page.getByTestId(`dashboard-resume-${SESSION_ID}`).click();
+  await expect(page).toHaveURL(/\/learn\?/);
+
+  // The seeded conversation hydrates — both an early and a late seeded turn,
+  // proving the full history loaded rather than a fresh chat on the topic.
+  const log = page.getByTestId("tutor-messages");
+  await expect(log).toContainText("Can you explain recursion?");
+  await expect(log).toContainText(
+    "The base case is the condition where the function stops calling itself.",
+  );
+
+  // And it's the chat view, not the session picker the bug used to strand
+  // users on (the picker's resume row only exists on the entry screen).
+  await expect(page.getByTestId(`tutor-session-resume-${SESSION_ID}`)).toHaveCount(0);
 });
 
 /**

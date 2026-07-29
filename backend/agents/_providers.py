@@ -280,6 +280,31 @@ FunctionModelHandler = Callable[
 ]
 _FUNCTION_HANDLERS: dict[str, FunctionModelHandler] = {}
 
+# Streamed-replay pacing (#356). 0 = off: text parts replay as one whole
+# delta each, exactly the pre-pacing behavior. When a handlers module opts
+# in (set_function_stream_delay_ms), _stream_dispatch re-chunks text into
+# _FUNCTION_STREAM_CHUNK_CHARS-sized deltas with this delay between them, so
+# browser journeys have a real mid-stream window to act in (Stop a turn,
+# switch sessions). Only the streamed lane paces; the JSON lane and the
+# joined stream text stay byte-identical to the handler's constant.
+_FUNCTION_STREAM_DELAY_MS = 0.0
+_FUNCTION_STREAM_CHUNK_CHARS = 24
+
+
+def set_function_stream_delay_ms(ms: float) -> None:
+    """Opt the function-mode STREAMED replay into pacing (see the comment on
+    _FUNCTION_STREAM_DELAY_MS above). Called by boot-time handler modules
+    (agents/function_handlers_e2e.py) rather than wired to another lane env
+    var; `clear_function_handlers()` resets it so in-process tests always
+    start unpaced."""
+    global _FUNCTION_STREAM_DELAY_MS
+    _FUNCTION_STREAM_DELAY_MS = max(0.0, float(ms))
+
+
+def function_stream_delay_ms() -> float:
+    """Public read of the streamed-replay pacing knob (tests pin it)."""
+    return _FUNCTION_STREAM_DELAY_MS
+
 
 class UnregisteredHandlerError(LookupError):
     """Raised by the function-mode dispatch when a task has no registered
@@ -326,9 +351,12 @@ def register_function_handler(task: AgentTask, handler: FunctionModelHandler) ->
 
 
 def clear_function_handlers() -> None:
-    """Drop all registered handlers. Tests call this around each case so
-    process-global registrations never leak between them."""
+    """Drop all registered handlers and reset the streamed-replay pacing
+    knob. Tests call this around each case so process-global registrations
+    (and a handlers module's pacing opt-in) never leak between them."""
+    global _FUNCTION_STREAM_DELAY_MS
     _FUNCTION_HANDLERS.clear()
+    _FUNCTION_STREAM_DELAY_MS = 0.0
 
 
 # ── Boot-time handler registration for out-of-process runs (#392) ──────────
@@ -401,12 +429,32 @@ def _function_model_for(task: AgentTask) -> "Model":
         # as one delta, each tool call as a DeltaToolCall — so a task's handler
         # constants stay byte-identical between the JSON and streamed lanes
         # (spec assertions compare against the same E2E_* constants either way).
+        #
+        # Pacing (#356): when set_function_stream_delay_ms opted this process
+        # in, text is re-chunked into small deltas with a sleep between them —
+        # a real mid-stream window for browser journeys. The delay is read
+        # AFTER _resolve_handler(), which is what imports a boot-time handlers
+        # module that sets the knob, so the very first paced stream paces.
         response = _resolve_handler()(messages, info)
+        delay_s = _FUNCTION_STREAM_DELAY_MS / 1000.0
+        emitted_text = False
         for index, part in enumerate(response.parts):
             kind = getattr(part, "part_kind", "")
             if kind == "text":
-                if part.content:
-                    yield part.content
+                if not part.content:
+                    continue
+                if delay_s > 0:
+                    chunks = [
+                        part.content[i : i + _FUNCTION_STREAM_CHUNK_CHARS]
+                        for i in range(0, len(part.content), _FUNCTION_STREAM_CHUNK_CHARS)
+                    ]
+                else:
+                    chunks = [part.content]
+                for chunk in chunks:
+                    if emitted_text and delay_s > 0:
+                        await asyncio.sleep(delay_s)
+                    emitted_text = True
+                    yield chunk
             elif kind == "tool-call":
                 args = part.args
                 json_args = args if isinstance(args, str) else json.dumps(args or {})

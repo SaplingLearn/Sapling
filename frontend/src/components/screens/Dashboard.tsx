@@ -564,6 +564,7 @@ export function Dashboard() {
           sessions.slice(0, 3).map((s) => (
             <button
               key={s.id}
+              data-testid={`dashboard-resume-${s.id}`}
               onClick={() => router.push(`/learn?resume=${encodeURIComponent(s.id)}`)}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%",

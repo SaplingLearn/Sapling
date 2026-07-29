@@ -31,7 +31,21 @@ from __future__ import annotations
 
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
-from agents._providers import FunctionModelHandler, register_function_handler
+from agents._providers import (
+    FunctionModelHandler,
+    register_function_handler,
+    set_function_stream_delay_ms,
+)
+
+# Streamed-replay pacing (#356): re-chunk streamed text into small deltas with
+# 150ms between them, giving the mid-stream journeys (Stop a turn, switch
+# sessions while streaming — frontend/e2e/streaming.spec.ts) a real window to
+# act in. Import-time is the right moment: this module only loads in the E2E
+# lane, and the seam reads the knob after resolving the handler, so even the
+# first stream paces. Replies are unchanged byte-for-byte — pacing only slices
+# HOW the same constant streams. The seam tests' clear_function_handlers()
+# resets the knob, so in-process pytest runs stay unpaced.
+set_function_stream_delay_ms(150)
 
 # Asserted verbatim by frontend/e2e/tutor.spec.ts (rendered reply + decrypted
 # messages.content readback). Keep the two literals in sync.
@@ -40,8 +54,53 @@ E2E_TUTOR_REPLY = (
     "needs a base case so it can stop calling itself."
 )
 
+# Slow lane for mid-stream journeys (#356). A tutor message carrying the
+# trigger substring streams this LONG reply instead — ~1000 chars ≈ 40+ paced
+# chunks ≈ a 6-second window to press Stop or switch sessions inside.
+# Asserted verbatim by frontend/e2e/streaming.spec.ts (including the final
+# sentence as the completion sentinel). Keep the literals in sync.
+E2E_SLOW_STREAM_TRIGGER = "E2E_SLOW_STREAM"
+E2E_TUTOR_SLOW_REPLY = (
+    "[e2e-function-model] Deterministic SLOW tutor reply for mid-stream "
+    "journeys. Recursion solves a problem by reducing it to a smaller copy "
+    "of itself, and every recursive function needs two ingredients: a base "
+    "case that stops the descent, and a recursive step that makes real "
+    "progress toward that base case on every call. Picture the call stack "
+    "as a tower of postponed promises: each frame waits for the smaller "
+    "problem beneath it to resolve before it can finish its own work. When "
+    "the base case finally answers, the tower unwinds in reverse order and "
+    "every waiting frame completes with the value it was promised. If the "
+    "recursive step ever fails to shrink the problem, the tower grows "
+    "without bound until the runtime refuses to add another frame and the "
+    "program crashes with a stack overflow. That is the whole discipline in "
+    "one sentence: shrink toward a base case you are certain to reach. This "
+    "is the final sentence of the slow deterministic reply."
+)
+
+
+def _last_user_prompt_text(messages) -> str:
+    """The most recent user-prompt text in a pydantic-ai message history.
+
+    Used only for trigger sniffing, so it is deliberately tolerant: content
+    may be a plain string or a sequence mixing strings with binary parts
+    (pydantic-ai allows both); non-string members are ignored."""
+    for message in reversed(messages):
+        for part in reversed(getattr(message, "parts", None) or []):
+            if getattr(part, "part_kind", "") != "user-prompt":
+                continue
+            content = getattr(part, "content", "")
+            if isinstance(content, str):
+                return content
+            try:
+                return " ".join(c for c in content if isinstance(c, str))
+            except TypeError:
+                return ""
+    return ""
+
 
 def _chat_tutor_handler(messages, info) -> ModelResponse:
+    if E2E_SLOW_STREAM_TRIGGER in _last_user_prompt_text(messages):
+        return ModelResponse(parts=[TextPart(content=E2E_TUTOR_SLOW_REPLY)])
     return ModelResponse(parts=[TextPart(content=E2E_TUTOR_REPLY)])
 
 

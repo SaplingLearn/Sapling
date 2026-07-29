@@ -296,6 +296,31 @@ export function applyGraphDeltaAssembly(
   setGraphEdges(prev => mergeGraphEdges(prev, edges));
 }
 
+// #164: Dashboard's "Where you left off" cards push /learn?resume=<id>; Tree's
+// session rows used ?session=<id> before both callers unified on ?resume=.
+// Accept both so any bookmarked/legacy link keeps working.
+export function readResumeParam(params: { get(name: string): string | null }): string | null {
+  return params.get("resume") ?? params.get("session");
+}
+
+// ADR 0020 Retry: drop the interrupted assistant bubble and — when it sits
+// directly before it — the user bubble of the same turn, so the re-send
+// (which appends a fresh user bubble) doesn't duplicate either. Pure and
+// exported for Learn.resume.test.ts.
+export function removeInterruptedTurn(
+  messages: ChatMsg[],
+  interruptedId: string,
+  retryText: string,
+): ChatMsg[] {
+  const i = messages.findIndex(m => m.id === interruptedId);
+  if (i === -1) return messages;
+  const next = [...messages.slice(0, i), ...messages.slice(i + 1)];
+  if (i > 0 && next[i - 1]?.role === "user" && next[i - 1].content === retryText) {
+    next.splice(i - 1, 1);
+  }
+  return next;
+}
+
 export function Learn() {
   return (
     <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
@@ -328,6 +353,19 @@ function LearnInner() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [sending, setSending] = useState(false);
   const [starting, setStarting] = useState(false);
+  // Deep-link resume (#164) in flight — renders a loading state instead of
+  // flashing the session picker the deep link is about to leave. Lazily
+  // initialized from the URL so the VERY FIRST paint already shows the
+  // loading branch: starting at false and flipping in the (post-paint)
+  // consume effect would paint the picker for a frame — the exact flash
+  // this state exists to avoid (PR #461 review).
+  const [resuming, setResuming] = useState<boolean>(() => !!readResumeParam(searchParams));
+  // Mirror of `sessionId` readable from async closures: `send`'s error paths
+  // must know whether the user has switched sessions while the turn was in
+  // flight (appending an interrupted bubble then would inject it into the
+  // OTHER session's transcript — the #356 item-7 "stale bubble").
+  const sessionIdRef = useRef<string | null>(null);
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   // Assistant text arriving token-by-token for the in-flight turn; null =
   // not streaming, '' = stream open but no token yet, non-empty = live text.
   // Passed straight through to ChatPanel's `streamingText` prop.
@@ -505,8 +543,13 @@ function LearnInner() {
   // snaps back to following the (new) active topic.
   //
   // Streams the greeting over startSessionStream, mirroring `send`'s
-  // three-rung fallback ladder verbatim (see the big comment on `send`,
-  // above `send`'s definition, for the full rationale):
+  // three-rung fallback ladder (see the big comment on `send`, above
+  // `send`'s definition, for the full rationale) — EXCEPT the ADR-0020
+  // interrupted+Retry bubble, which is deliberately a chat-turn treatment:
+  // a stopped/failed greeting has no transcript turn to mark (no user
+  // message exists, nothing was persisted), so this path returns to the
+  // entry screen with the topic draft intact — Start is its retry
+  // affordance (ADR 0020's scope note):
   //   Rung 3 (stream never produced text) -> retry transparently via the
   //     non-streaming JSON startSession; the user never sees an error.
   //   Rung 2 (rejected AFTER tokens appeared) -> surface the error via the
@@ -582,13 +625,17 @@ function LearnInner() {
 
   const handleStart = () => beginSession(topicDraft);
 
-  const handleResume = async (s: Session) => {
+  // Loads a session by id and enters it. Server-authoritative: topic/mode/
+  // course come off the resume payload itself, so a deep link works even for
+  // a session outside the 10-row recent list (#164).
+  const resumeSessionById = async (id: string, opts?: { deepLink?: boolean }) => {
+    if (opts?.deepLink) setResuming(true);
     try {
-      const res = await resumeSession(s.id);
-      setSessionId(s.id);
-      setTopic(s.topic);
-      setMode(normalizeMode(s.mode));
-      setSelectedCourseId(s.course_id || "");
+      const res = await resumeSession(id);
+      setSessionId(res.session.id);
+      setTopic(res.session.topic);
+      setMode(normalizeMode(res.session.mode));
+      setSelectedCourseId(res.session.course_id || "");
       setMessages(
         (res.messages ?? []).map(m => ({
           id: msgId(),
@@ -598,8 +645,29 @@ function LearnInner() {
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Resume failed.");
+    } finally {
+      if (opts?.deepLink) setResuming(false);
     }
   };
+
+  const handleResume = (s: Session) => resumeSessionById(s.id);
+
+  // #164: consume /learn?resume=<id> (legacy ?session= accepted too) —
+  // Dashboard's "Where you left off" cards and Tree's session rows deep-link
+  // here. Consumed once per id via the guard ref, so the mode-sync URL
+  // rewrite above (which preserves all params) can't re-trigger it and a
+  // session the user opened manually afterwards isn't yanked away.
+  const resumeParam = readResumeParam(searchParams);
+  const consumedResumeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!resumeParam || !userReady || !userId) return;
+    if (consumedResumeRef.current === resumeParam) return;
+    consumedResumeRef.current = resumeParam;
+    void resumeSessionById(resumeParam, { deepLink: true });
+    // resumeSessionById is a plain function (same pattern as handleResume);
+    // the guard ref makes re-runs from its identity changing harmless.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeParam, userReady, userId]);
 
   const handleDeleteSession = async (s: Session) => {
     if (!userId) return;
@@ -635,14 +703,19 @@ function LearnInner() {
 
   // Sends one turn over the SSE stream, with a three-rung fallback ladder:
   //   Rung 3 (stream never produced text) -> retry transparently via the
-  //     non-streaming sendChat; the user never sees an error.
-  //   Rung 2 (rejected AFTER tokens appeared) -> surface the error through
-  //     the same error-message path the old non-streaming send() used. Never
+  //     non-streaming sendChat; the user never sees an error. If even that
+  //     fails, the turn gets the ADR-0020 interrupted treatment below.
+  //   Rung 2 (rejected AFTER tokens appeared) -> ADR 0020: keep the partial
+  //     as an interrupted bubble with Retry; error detail in a toast. Never
   //     silently re-run: the user already saw partial text, and nothing was
   //     persisted server-side, so re-running would restart the reply.
   //   Stop pressed -> distinguished via the AbortController's signal.aborted;
-  //     intentional, not an error, no fallback, no message appended (nothing
-  //     was persisted, so the partial bubble just disappears).
+  //     intentional, not an error, no fallback. ADR 0020: the partial stays
+  //     as an interrupted bubble with Retry (nothing was persisted, so Retry
+  //     is a plain re-send).
+  // In every non-success outcome — and on a late Rung-3 success — nothing is
+  // appended if the user switched sessions mid-turn (the sessionIdRef guard;
+  // #356 item 7's "no stale bubble").
   //
   // Unlike the old handler, no loading placeholder is pushed into `messages`
   // up front — ChatPanel renders the in-flight turn itself via streamingText
@@ -651,6 +724,7 @@ function LearnInner() {
   // another.
   const send = useCallback(async (userText: string) => {
     if (!userText.trim() || !sessionId || !userId) return;
+    const turnSessionId = sessionId;
     setMessages(m => [...m, { id: msgId(), role: "user", content: userText }]);
     setSending(true);
     setStreamingText("");
@@ -661,20 +735,49 @@ function LearnInner() {
     const controller = new AbortController();
     streamAbort.current = controller;
     let sawToken = false;
+    // The partial reply so far — what an interrupted bubble keeps (ADR 0020).
+    // streamingText can't serve here: it's cleared before the Rung-3 leg.
+    let acc = "";
+    // ADR 0020: keep the partial, mark the bubble interrupted, offer Retry.
+    // Skipped when the user has switched sessions (or left the chat) while
+    // this turn was in flight — appending then would inject a stale bubble
+    // into the OTHER session's transcript (#356 item 7). Nothing was
+    // persisted server-side for the turn (routes persist only on
+    // completion), so Retry is a plain re-send.
+    const appendInterrupted = () => {
+      if (sessionIdRef.current !== turnSessionId) return;
+      setMessages(m => [
+        ...m,
+        { id: msgId(), role: "assistant", content: acc, interrupted: true, retryText: userText },
+      ]);
+    };
     try {
       let res: ChatResult;
       try {
         res = await streamChat(sessionId, userId, userText, mode, sharedCtx, modelPref, {
           onToken: (delta) => {
             sawToken = true;
+            acc += delta;
             setStreamingText(t => (t ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
           signal: controller.signal,
         });
       } catch (err) {
-        if (controller.signal.aborted) return; // Stop pressed — intentional, not an error.
-        if (sawToken) throw err; // Rung 2: interrupted after producing text — surface it, don't retry.
+        if (controller.signal.aborted) {
+          // Stop pressed (or the session switched, aborting via the
+          // sessionId-keyed effect below) — intentional, not an error.
+          appendInterrupted();
+          return;
+        }
+        if (sawToken) {
+          // Rung 2: interrupted after producing text — surface it, never
+          // silently re-run (the user already saw partial text). The error
+          // detail goes to a toast; the transcript keeps the partial.
+          toast.error(err instanceof Error ? err.message : "The tutor was interrupted.");
+          appendInterrupted();
+          return;
+        }
         // Rung 3: the stream never produced text — retry transparently via the
         // non-streaming JSON route. `sendChat`/`fetchJSON` (lib/api.ts) take
         // no AbortSignal, and plumbing one through is out of scope for this
@@ -689,15 +792,45 @@ function LearnInner() {
         setStreamingText(null);
         res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref);
       }
-      setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
+      // Same session-switch guard as appendInterrupted, and it matters most
+      // on the Rung-3 leg: sendChat cannot be aborted, so the user can have
+      // switched sessions while it was in flight — appending its late reply
+      // here would inject it into the OTHER session's transcript. Dropping
+      // it loses nothing: the JSON route persisted the pair server-side, so
+      // re-opening the original session shows the turn (PR #461 review).
+      if (sessionIdRef.current === turnSessionId) {
+        setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
+      }
     } catch (err) {
-      setMessages(m => [...m, { id: msgId(), role: "assistant", content: `Error: ${err instanceof Error ? err.message : "unknown"}` }]);
+      // The Rung-3 JSON fallback itself failed — the ladder is exhausted.
+      // ADR 0020 treats this like any mid-stream failure: interrupted bubble
+      // + Retry, error detail in a toast rather than a fake assistant reply.
+      toast.error(err instanceof Error ? err.message : "The tutor is unavailable.");
+      appendInterrupted();
     } finally {
       setSending(false);
-      setStreamingText(null);
-      if (streamAbort.current === controller) streamAbort.current = null;
+      // Clear the live bubble only while this turn still owns the stream
+      // slot: if a newer send/beginSession took over (it aborts this one,
+      // then seeds its own streamingText), nulling here would blank THAT
+      // turn's in-flight bubble. `sending` stays unconditional — no newer
+      // owner may exist to restore it (e.g. a beginSession interleave), and
+      // a stuck-true `sending` would disable the composer permanently.
+      if (streamAbort.current === controller) {
+        setStreamingText(null);
+        streamAbort.current = null;
+      }
     }
-  }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta]);
+  }, [sessionId, userId, mode, sharedCtx, modelPref, applyGraphDelta, toast]);
+
+  // ADR 0020 Retry: re-dispatch the interrupted turn's original text. Drop
+  // the failed pair first (removeInterruptedTurn) so `send`'s own user-bubble
+  // append doesn't duplicate it. Guarded while a turn is in flight.
+  const handleRetry = useCallback((m: ChatMsg) => {
+    const text = m.retryText;
+    if (!text || sending || starting) return;
+    setMessages(prev => removeInterruptedTurn(prev, m.id, text));
+    void send(text);
+  }, [send, sending, starting]);
 
   // Abort any in-flight stream when the active session changes (including to
   // none) and on unmount — guards the #131/#133 leaked-stream bug class. A
@@ -1021,6 +1154,19 @@ function LearnInner() {
   };
 
   // ────────── Entry screen (no active session) ──────────
+  // Deep-link resume in flight (#164): a quiet loading state instead of
+  // flashing the "Start a session" picker the deep link is about to leave.
+  if (resuming && !sessionId) {
+    return (
+      <FullHeightScreen>
+        <DisclaimerModal />
+        <div data-testid="tutor-resume-loading" style={{ padding: 40, color: "var(--text-dim)" }}>
+          Loading…
+        </div>
+      </FullHeightScreen>
+    );
+  }
+
   if (!sessionId && !starting) {
     return (
       <FullHeightScreen className="fade-in">
@@ -1169,6 +1315,7 @@ function LearnInner() {
               disabled={sending || starting}
               streamingText={streamingText}
               onStop={() => streamAbort.current?.abort()}
+              onRetry={handleRetry}
             />
           </div>
         )}
@@ -1581,6 +1728,7 @@ function BackToLearnLink({ onClick }: { onClick: () => void }) {
   const [hover, setHover] = useState(false);
   return (
     <button
+      data-testid="tutor-back-to-learn"
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}

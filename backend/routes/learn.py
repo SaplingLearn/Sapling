@@ -19,7 +19,7 @@ from agents.usage import record_agent_usage
 from db.connection import table
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
-from services.agent_events import sapling_event_to_sse
+from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
 from services.auth_guard import require_self, get_session_user_id
 from services.chat_stream import merge_graph_updates, stream_agent_turn
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
@@ -869,7 +869,8 @@ async def chat_stream(body: ChatBody, request: Request):
             yield sapling_event_to_sse(ev)
 
     return EventSourceResponse(
-        event_stream(), headers={"X-Request-ID": request_id}
+        event_stream(),
+        headers={"X-Request-ID": request_id, "Cache-Control": SSE_CACHE_CONTROL},
     )
 
 
@@ -975,7 +976,8 @@ async def start_session_stream(body: StartSessionBody, request: Request):
             yield sapling_event_to_sse(ev)
 
     return EventSourceResponse(
-        event_stream(), headers={"X-Request-ID": request_id}
+        event_stream(),
+        headers={"X-Request-ID": request_id, "Cache-Control": SSE_CACHE_CONTROL},
     )
 
 
