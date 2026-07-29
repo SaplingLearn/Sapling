@@ -17,6 +17,7 @@ from agents.note_chat import note_chat_agent
 from agents.note_concepts import note_concepts_agent
 from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
+from agents.usage import record_agent_usage
 from db.connection import table
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
@@ -267,8 +268,11 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     # The graph keys on the abstract course; the note carries the offering.
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    result = await _run_note_worker(
-        note_summary_agent, user_prompt, deps, action="summarization"
+    result = record_agent_usage(
+        await _run_note_worker(
+            note_summary_agent, user_prompt, deps, action="summarization"
+        ),
+        feature="notes", task="note_summary", user_id=body.user_id,
     )
     summary_text = result.output.summary
     await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
@@ -290,8 +294,11 @@ async def extract_concepts(
     # Concepts land in the abstract-course graph; resolve offering → course.
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    result = await _run_note_worker(
-        note_concepts_agent, user_prompt, deps, action="concept extraction"
+    result = record_agent_usage(
+        await _run_note_worker(
+            note_concepts_agent, user_prompt, deps, action="concept extraction"
+        ),
+        feature="notes", task="note_concepts", user_id=body.user_id,
     )
     names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
     await apply_concepts_to_graph(
@@ -322,8 +329,11 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
     try:
-        result = await note_chat_agent.run(
-            body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS
+        result = record_agent_usage(
+            await note_chat_agent.run(
+                body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS
+            ),
+            feature="notes", task="note_chat", user_id=body.user_id,
         )
     except UsageLimitExceeded as e:
         # Only a real budget trip reaches the in-band degrade, so the budget

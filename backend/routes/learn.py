@@ -15,6 +15,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from agents import ORCHESTRATOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
+from agents.usage import record_agent_usage
 from db.connection import table
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
@@ -498,7 +499,8 @@ def _start_session_legacy(body: StartSessionBody, session_id: str | None = None)
 
     try:
         raw = call_gemini_multiturn(
-            system_prompt, [], user_message, model=_resolve_legacy_model(body.model_pref)
+            system_prompt, [], user_message, model=_resolve_legacy_model(body.model_pref),
+            feature="chat_tutor",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
@@ -657,7 +659,10 @@ async def _chat_via_agent(
         model_pref=model_pref,
     )
 
-    result = await agent.run(user_message, **run_kwargs)
+    result = record_agent_usage(
+        await agent.run(user_message, **run_kwargs),
+        feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
+    )
     reply = result.output  # str — chat_tutor agents return plain Markdown.
 
     # Merge all graph update payloads accumulated by tools during this run
@@ -716,7 +721,8 @@ async def _legacy_chat(body: ChatBody, request: Request) -> dict:
 
     try:
         raw = call_gemini_multiturn(
-            system_prompt, history, body.message, model=_resolve_legacy_model(body.model_pref)
+            system_prompt, history, body.message, model=_resolve_legacy_model(body.model_pref),
+            feature="chat_tutor",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
@@ -842,6 +848,13 @@ async def chat_stream(body: ChatBody, request: Request):
         # stream_agent_turn enforces that exclusivity.
         return await _legacy_chat(body, request)
 
+    def _usage(run_result) -> None:
+        # #118: streaming turns report usage via the final AgentRunResultEvent,
+        # surfaced by stream_agent_turn's on_usage hook after the run completes.
+        record_agent_usage(
+            run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+        )
+
     async def event_stream():
         async for ev in stream_agent_turn(
             agent=agent,
@@ -850,6 +863,7 @@ async def chat_stream(body: ChatBody, request: Request):
             deps=deps,
             on_complete=_persist,
             legacy_fallback=_legacy,
+            on_usage=_usage,
             request_id=request_id,
         ):
             yield sapling_event_to_sse(ev)
@@ -940,6 +954,13 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         # per turn — see stream_agent_turn's docstring).
         return _start_session_legacy(body, session_id)
 
+    def _usage(run_result) -> None:
+        # #118: same hook as /chat/stream — the opener runs the same
+        # chat_tutor agent, so it rolls up under the same feature/task.
+        record_agent_usage(
+            run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+        )
+
     async def event_stream():
         async for ev in stream_agent_turn(
             agent=agent,
@@ -948,6 +969,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
             deps=deps,
             on_complete=_stash,
             legacy_fallback=_legacy,
+            on_usage=_usage,
             request_id=request_id,
         ):
             yield sapling_event_to_sse(ev)
@@ -1211,7 +1233,8 @@ def action(body: ActionBody, request: Request):
 
     try:
         raw = call_gemini_multiturn(
-            system_prompt, history, action_message, model=_resolve_legacy_model(body.model_pref)
+            system_prompt, history, action_message, model=_resolve_legacy_model(body.model_pref),
+            feature="chat_tutor",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")

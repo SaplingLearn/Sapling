@@ -52,6 +52,7 @@ from agents.summary import summary_agent, Summary
 from agents.concept_extraction import concept_extraction_agent, ConceptList
 from agents.syllabus_extraction import syllabus_extraction_agent, SyllabusAssignments
 from agents.tools.graph import apply_concepts_to_graph
+from agents.usage import record_agent_usage
 from services.durable import workflow as durable_workflow, step as durable_step
 
 
@@ -86,25 +87,37 @@ class _WorkerResults:
 
 @durable_step
 async def _step_classify(text: str, deps: SaplingDeps) -> DocumentClassification:
-    result = await classifier_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
+    result = record_agent_usage(
+        await classifier_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
+        feature="document", task="classifier", user_id=deps.user_id,
+    )
     return result.output
 
 
 @durable_step
 async def _step_summary(text: str, deps: SaplingDeps) -> Summary:
-    result = await summary_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
+    result = record_agent_usage(
+        await summary_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
+        feature="document", task="summary", user_id=deps.user_id,
+    )
     return result.output
 
 
 @durable_step
 async def _step_concepts(text: str, deps: SaplingDeps) -> ConceptList:
-    result = await concept_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
+    result = record_agent_usage(
+        await concept_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
+        feature="document", task="concepts", user_id=deps.user_id,
+    )
     return result.output
 
 
 @durable_step
 async def _step_syllabus(text: str, deps: SaplingDeps) -> SyllabusAssignments:
-    result = await syllabus_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS)
+    result = record_agent_usage(
+        await syllabus_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
+        feature="document", task="syllabus", user_id=deps.user_id,
+    )
     return result.output
 
 

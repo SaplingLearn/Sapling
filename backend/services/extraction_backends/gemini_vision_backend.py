@@ -42,6 +42,7 @@ from agents.ocr_vision import (
     TRANSCRIBE_PROMPT,
     ocr_vision_agent,
 )
+from agents.usage import record_agent_usage
 
 
 class GeminiVisionUnavailableError(RuntimeError):
@@ -112,22 +113,30 @@ def extract_page_with_gemini_vision(image_bytes: bytes) -> str:
         raise GeminiVisionUnavailableError("GEMINI_API_KEY is not set")
 
     try:
-        result = _run_from_anywhere(
-            ocr_vision_agent.run(
-                # Image first, then the instruction — the wire shape this was
-                # measured against. Moving the instruction to a system prompt
-                # makes the model emit a whole LaTeX document; see ocr_vision.
-                [
-                    BinaryContent(data=image_bytes, media_type="image/png"),
-                    TRANSCRIBE_PROMPT,
-                ],
-                # No per-run `model=` override needed: `ocr_vision_agent`'s own
-                # default model (`model_for("ocr_vision")`) is loop-safe on its
-                # own now (#354/#436 — see agents/_providers.py), so it
-                # survives this per-page loop's alternating asyncio.run()
-                # loops without help from this call site.
-                usage_limits=WORKER_LIMITS,
-            )
+        # #118: one usage row per transcribed page — this per-page loop is the
+        # largest per-document LLM spend in the app, so it must show up in
+        # llm_usage. No user_id here: extraction is content-addressed and
+        # user-agnostic; the request-id contextvar still attributes the row.
+        result = record_agent_usage(
+            _run_from_anywhere(
+                ocr_vision_agent.run(
+                    # Image first, then the instruction — the wire shape this
+                    # was measured against. Moving the instruction to a system
+                    # prompt makes the model emit a whole LaTeX document; see
+                    # ocr_vision.
+                    [
+                        BinaryContent(data=image_bytes, media_type="image/png"),
+                        TRANSCRIBE_PROMPT,
+                    ],
+                    # No per-run `model=` override needed: `ocr_vision_agent`'s
+                    # own default model (`model_for("ocr_vision")`) is loop-safe
+                    # on its own now (#354/#436 — see agents/_providers.py), so
+                    # it survives this per-page loop's alternating asyncio.run()
+                    # loops without help from this call site.
+                    usage_limits=WORKER_LIMITS,
+                )
+            ),
+            feature="document", task="ocr_vision",
         )
     except UnexpectedModelBehavior:
         # The model produced no usable text for this page (empty candidate, a

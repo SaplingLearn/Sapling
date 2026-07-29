@@ -109,6 +109,7 @@ async def stream_agent_turn(
     deps: Any,
     on_complete: Callable[[str, dict, list], dict | None],
     legacy_fallback: Callable[[], Awaitable[dict]] | None = None,
+    on_usage: Callable[[Any], None] | None = None,
     request_id: str = "",
 ) -> AsyncIterator[SaplingEvent]:
     """Stream one agent turn as SaplingEvents.
@@ -117,6 +118,14 @@ async def stream_agent_turn(
     data. It persists; on the success path it is called once, after the run
     completes and BEFORE `done` is yielded, so a mid-generation disconnect
     (which cancels this generator at its current yield) persists nothing.
+
+    on_usage(run_result) -> observability hook (#118): called once with the
+    final `AgentRunResult` after the stream completes, BEFORE on_complete —
+    tokens were spent even if persistence subsequently fails. Routes pass
+    `agents.usage.record_agent_usage` here. Not called on the error rungs
+    (no result event was seen) nor on the legacy fallback, whose usage is
+    captured inside `call_gemini_multiturn` (feature=). A hook failure is
+    swallowed: usage capture must never break the stream.
 
     legacy_fallback() -> awaitable returning the route's pre-agent result,
     used ONLY when the agent fails before emitting any text (Rung 1). It is
@@ -134,6 +143,7 @@ async def stream_agent_turn(
 
     chunks: list[str] = []
     final_output: str | None = None
+    run_result: Any = None
     # High-water marks: how much of deps.* we have already emitted.
     graph_hw = 0
     mastery_hw = 0
@@ -173,7 +183,8 @@ async def stream_agent_turn(
                 continue
 
             if cls_name == "AgentRunResultEvent":
-                output = getattr(getattr(event, "result", None), "output", None)
+                run_result = getattr(event, "result", None)
+                output = getattr(run_result, "output", None)
                 if isinstance(output, str):
                     final_output = output
 
@@ -228,6 +239,15 @@ async def stream_agent_turn(
     reply = final_output if final_output is not None else "".join(chunks)
     merged = merge_graph_updates(deps.graph_updates)
     mastery = list(deps.mastery_changes)
+
+    # Usage first, persistence second: the tokens were spent regardless of
+    # whether on_complete manages to persist. Guarded — instrumentation must
+    # never turn a fully-streamed reply into an error event.
+    if on_usage is not None and run_result is not None:
+        try:
+            on_usage(run_result)
+        except Exception:
+            logger.debug("on_usage hook failed; usage row dropped", exc_info=True)
 
     try:
         extra = on_complete(reply, merged, mastery) or {}
