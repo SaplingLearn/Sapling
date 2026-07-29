@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Recursion",
+      "correct_answer": "If n is 0 or 1, return n.",
+      "difficulty": "medium",
+      "explanation": "The base cases for the Fibonacci sequence are F(0) = 0 and F(1) = 1. The function should return these values directly to stop the recursion.",
+      "options": [
+        "If n is 0 or 1, return n.",
+        "If n is less than 2, return n.",
+        "If n is 0, return 0. If n is 1, return 1.",
+        "If n is 0, return 1. If n is 1, return 0."
+      ],
+      "question": "What is the base case in a recursive function for calculating the nth Fibonacci number?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Dynamic Programming",
+      "correct_answer": "It avoids recomputing solutions to overlapping subproblems.",
+      "difficulty": "medium",
+      "explanation": "Memoization is a technique used in dynamic programming to store the results of expensive function calls and return the cached result when the same inputs occur again, thus avoiding redundant computations.",
+      "options": [
+        "It allows for parallel processing of subproblems.",
+        "It avoids recomputing solutions to overlapping subproblems.",
+        "It reduces the space complexity of the solution.",
+        "It guarantees a unique solution to the problem."
+      ],
+      "question": "In dynamic programming, what is the primary advantage of using memoization?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Graph Traversal",
+      "correct_answer": "Queue",
+      "difficulty": "medium",
+      "explanation": "Breadth-First Search (BFS) uses a queue to keep track of the nodes to visit. Nodes are added to the queue as they are discovered, and processed in a first-in, first-out (FIFO) manner.",
+      "options": [
+        "Stack",
+        "Queue",
+        "Heap",
+        "Hash Map"
+      ],
+      "question": "Which of the following data structures is most commonly used to implement Breadth-First Search (BFS) for graph traversal?",
+      "type": "multiple_choice"
+    }
+  ]
+}

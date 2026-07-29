@@ -1,0 +1,11 @@
+{
+  "abstract": "This document details binary search trees (BSTs), defining them as binary trees where each node's key is greater than all keys in its left subtree and less than all keys in its right subtree. It explains insertion and lookup operations by traversing the tree based on key comparisons. Deletion, particularly for nodes with two children, is addressed by replacing the node with its in-order successor. The notes also highlight the BST's worst-case O(n) performance due to potential imbalance and introduce self-balancing variants like AVL and red-black trees as solutions.",
+  "headline": "Binary Search Trees: Properties, Operations, and Balancing",
+  "key_points": [
+    "A Binary Search Tree (BST) organizes nodes such that each node's key is greater than all keys in its left subtree and less than all keys in its right subtree.",
+    "Insertion and lookup in a BST involve traversing the tree from the root, comparing keys to determine the correct path.",
+    "Deleting a node with two children typically involves replacing it with its in-order successor to maintain BST properties.",
+    "The performance of a BST can degrade to O(n) in the worst case if the tree becomes unbalanced.",
+    "Self-balancing BST variants, such as AVL trees and red-black trees, are used to prevent imbalance and ensure efficient operations."
+  ]
+}

@@ -58,46 +58,155 @@ def make_deps() -> SaplingDeps:
     )
 
 
-def cli_main(make_dataset, run_fn) -> None:
-    """Shared `__main__` entrypoint for eval scripts.
+BASELINES_PATH = Path(__file__).parent / "baselines.json"
 
-    Runs the dataset, prints a report, and exits non-zero when any case
-    raised (e.g. missing cassette in replay mode) or any evaluator score
-    is below 1.0. Without this, pydantic-evals catches per-case errors
-    and the script exits 0, which would let CI silently rubber-stamp a
-    completely-broken run.
+# Accuracy is measured, not assumed perfect: replay is deterministic (the model
+# output is frozen in the cassette), so a task's aggregate score only moves when
+# evaluators, expected outputs, or cassettes change. We gate on *regression*
+# below a committed baseline rather than on "< 1.0" — the whole point of the
+# harness is to track sub-100% accuracy over time. A small tolerance absorbs
+# float noise.
+BASELINE_TOLERANCE = 1e-6
+
+
+def _aggregate_scores(report) -> dict[str, float]:
+    """Mean of each evaluator's score across all (non-errored) cases."""
+    sums: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for case in report.cases:
+        for ev_name, result in case.scores.items():
+            sums[ev_name] = sums.get(ev_name, 0.0) + float(result.value)
+            counts[ev_name] = counts.get(ev_name, 0) + 1
+    return {ev: sums[ev] / counts[ev] for ev in sums if counts[ev]}
+
+
+def _load_baselines() -> dict[str, dict[str, float]]:
+    if not BASELINES_PATH.exists():
+        return {}
+    return json.loads(BASELINES_PATH.read_text())
+
+
+def _write_baselines(all_baselines: dict[str, dict[str, float]]) -> None:
+    BASELINES_PATH.write_text(json.dumps(all_baselines, indent=2, sort_keys=True) + "\n")
+
+
+def ensure_utf8_output() -> None:
+    """Force UTF-8 on stdout/stderr.
+
+    Cases carry non-ASCII content (e.g. Mandarin syllabi). rich renders the
+    report through the console's native encoding, which is cp1252 on Windows
+    when stdout is redirected/piped, and crashes on CJK. Forcing UTF-8 makes the
+    harness run identically on every platform.
+    """
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
+def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool = True) -> bool:
+    """Evaluate one dataset, print an accuracy summary, and return ``ok``.
+
+    ``ok`` is False when a case raised (e.g. a missing cassette in replay mode),
+    a task's aggregate evaluator score regressed below its committed baseline
+    in ``baselines.json``, or the dataset/an evaluator has NO committed baseline
+    (fail closed — an ungated dataset must not read as PASS in CI). Sub-1.0
+    scores alone are NOT failures — the harness measures accuracy, it doesn't
+    assume perfection. With ``update=True`` the
+    current scores are written back as the new baseline (unless the run had
+    failures). This function never calls ``sys.exit`` so callers can aggregate
+    across datasets.
     """
     import asyncio
     import sys
 
     dataset = make_dataset()
     report = asyncio.run(dataset.evaluate(run_fn))
-    report.print(include_input=False, include_output=True)
+    if print_report:
+        report.print(include_input=False, include_output=True)
 
-    failed = False
+    name = getattr(dataset, "name", None) or "unknown"
+    scores = _aggregate_scores(report)
+
+    print(f"\nAccuracy ({name}):")
+    for ev_name in sorted(scores):
+        print(f"  {ev_name}: {scores[ev_name]:.3f}")
+
+    ok = True
     if report.failures:
         print(
             f"\n{len(report.failures)} case(s) raised during evaluation.",
             file=sys.stderr,
         )
-        failed = True
+        ok = False
 
-    # Surface any evaluator score < 1.0 as a CI failure.
-    bad_scores: list[str] = []
-    for case in report.cases:
-        for ev_name, result in case.scores.items():
-            if result.value < 1.0:
-                bad_scores.append(f"{case.name}:{ev_name}={result.value}")
-    if bad_scores:
+    all_baselines = _load_baselines()
+
+    if update:
+        # Never persist baselines from a partially-broken run — that would bake
+        # a crash's degraded scores in as the new "expected".
+        if not ok:
+            print(
+                f"\nRefusing to update {name} baselines: run had case failures.",
+                file=sys.stderr,
+            )
+            return False
+        all_baselines[name] = {ev: round(scores[ev], 6) for ev in scores}
+        _write_baselines(all_baselines)
+        print(f"\nUpdated baselines for {name} in {BASELINES_PATH.name}.")
+        return True
+
+    baseline = all_baselines.get(name)
+    if baseline is None:
+        # Fail closed: this function is CI's regression gate (evals.yml). A
+        # dataset with no committed baseline has ZERO protection — reporting
+        # PASS here would read as "covered" while gating nothing (a rename in
+        # `Dataset(name=...)` not mirrored in baselines.json hits this too).
         print(
-            f"\n{len(bad_scores)} evaluator score(s) below 1.0:",
+            f"\nNo committed baseline for {name}; run with "
+            "SAPLING_EVAL_UPDATE_BASELINES=1 to record one.",
             file=sys.stderr,
         )
-        for line in bad_scores:
-            print(f"  - {line}", file=sys.stderr)
-        failed = True
+        ok = False
+    else:
+        regressions: list[str] = []
+        for ev_name, base in baseline.items():
+            got = scores.get(ev_name)
+            if got is None:
+                regressions.append(f"{ev_name}: missing (baseline {base:.3f})")
+            elif got < base - BASELINE_TOLERANCE:
+                regressions.append(f"{ev_name}: {got:.3f} < baseline {base:.3f}")
+        # Same fail-closed logic per evaluator: one added to a dataset but not
+        # committed to the baseline would otherwise never be gated at all.
+        unbaselined = sorted(set(scores) - set(baseline))
+        for ev_name in unbaselined:
+            regressions.append(
+                f"{ev_name}: no committed baseline (scored {scores[ev_name]:.3f}) — "
+                "refresh baselines.json with SAPLING_EVAL_UPDATE_BASELINES=1"
+            )
+        if regressions:
+            print(
+                f"\n{len(regressions)} baseline gap(s)/regression(s) in {name}:",
+                file=sys.stderr,
+            )
+            for line in regressions:
+                print(f"  - {line}", file=sys.stderr)
+            ok = False
 
-    if failed:
+    return ok
+
+
+def cli_main(make_dataset, run_fn) -> None:
+    """Shared `__main__` entrypoint for a single eval script."""
+    import sys
+
+    ensure_utf8_output()
+    update = os.getenv("SAPLING_EVAL_UPDATE_BASELINES") == "1"
+    ok = evaluate_dataset(make_dataset, run_fn, update=update)
+    if not ok:
         sys.exit(1)
 
 
@@ -125,10 +234,42 @@ async def run_with_cassette(
         return output_model.model_validate(body)
 
     deps = make_deps()
-    result = await agent.run(case_input, deps=deps)
+    result = await _run_with_retry(agent, case_input, deps)
     output = result.output
 
     if MODE == "record":
         save_cassette(dataset, case_name, output)
 
     return output
+
+
+# Gemini returns 503/UNAVAILABLE under load; a whole record run shouldn't lose a
+# case (and leave a permanent cassette gap) to a transient blip. Retry only the
+# transient provider errors, with linear backoff. Passed timestamps aren't
+# available here and we're offline-recording, so a fixed short sleep is fine.
+_TRANSIENT_RECORD_RETRIES = 4
+_TRANSIENT_BACKOFF_SECONDS = 3.0
+
+
+async def _run_with_retry(agent, case_input: str, deps):
+    import asyncio
+
+    last_exc: Exception | None = None
+    for attempt in range(_TRANSIENT_RECORD_RETRIES + 1):
+        try:
+            return await agent.run(case_input, deps=deps)
+        except Exception as exc:  # noqa: BLE001 - re-raised below if non-transient
+            if not _is_transient(exc) or attempt == _TRANSIENT_RECORD_RETRIES:
+                raise
+            last_exc = exc
+            await asyncio.sleep(_TRANSIENT_BACKOFF_SECONDS * (attempt + 1))
+    # Unreachable: the loop either returns or raises. Kept for type-checkers.
+    raise last_exc  # type: ignore[misc]
+
+
+def _is_transient(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None)
+    if status in (429, 503):
+        return True
+    text = str(exc).upper()
+    return "UNAVAILABLE" in text or "503" in text or "RESOURCE_EXHAUSTED" in text

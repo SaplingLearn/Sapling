@@ -1,0 +1,11 @@
+{
+  "abstract": "This document outlines a project to redesign the Sapling onboarding flow, specifically the signup-to-first-document process. The primary goal is to decrease the median time for users to complete their first upload to under 90 seconds. The redesign will cover the handoff from marketing, the signup form, and the upload screen. Features such as chat, library, and settings are excluded from this project's scope. The design team is responsible for this 4-week project.",
+  "headline": "Redesign of Sapling onboarding to reduce time-to-first-upload.",
+  "key_points": [
+    "Redesign the Sapling onboarding flow from signup to first document upload.",
+    "Reduce the median time-to-first-upload to under 90 seconds.",
+    "The project scope includes marketing-to-app handoff, signup form, and upload screen.",
+    "Chat, library, and settings are out of scope for this project.",
+    "The design team owns this 4-week project."
+  ]
+}

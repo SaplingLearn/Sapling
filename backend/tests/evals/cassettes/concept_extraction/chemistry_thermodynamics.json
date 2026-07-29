@@ -1,0 +1,34 @@
+{
+  "concepts": [
+    {
+      "description": "A branch of chemistry that deals with the relationships between heat and other forms of energy in chemical reactions and physical changes.",
+      "importance": 1.0,
+      "name": "Chemical Thermodynamics"
+    },
+    {
+      "description": "A thermodynamic potential that combines enthalpy and entropy, used to predict the spontaneity of a chemical reaction at constant temperature and pressure.",
+      "importance": 0.95,
+      "name": "Gibbs Free Energy"
+    },
+    {
+      "description": "States that energy is conserved and is applied through enthalpy to understand energy changes in chemical reactions.",
+      "importance": 0.9,
+      "name": "First Law of Thermodynamics"
+    },
+    {
+      "description": "Introduces the concept of entropy, defining it as a measure of disorder within a system.",
+      "importance": 0.9,
+      "name": "Second Law of Thermodynamics"
+    },
+    {
+      "description": "A thermodynamic property used to quantify the heat exchanged in chemical reactions, particularly when applying the First Law of Thermodynamics.",
+      "importance": 0.85,
+      "name": "Enthalpy"
+    },
+    {
+      "description": "A thermodynamic property that quantifies the degree of disorder or randomness within a system, central to the Second Law of Thermodynamics.",
+      "importance": 0.85,
+      "name": "Entropy"
+    }
+  ]
+}

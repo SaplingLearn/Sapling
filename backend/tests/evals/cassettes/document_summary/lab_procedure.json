@@ -1,0 +1,12 @@
+{
+  "abstract": "This document outlines the procedure for an acid-base titration to determine the concentration of an unknown hydrochloric acid (HCl) solution. The process involves calibrating a burette, pipetting a precise volume of HCl into an Erlenmeyer flask, and adding phenolphthalein indicator. The HCl is then titrated with a standardized sodium hydroxide (NaOH) solution until a persistent pink color indicates the equivalence point. The volume of NaOH used is recorded, and the experiment is repeated for accuracy. ",
+  "headline": "Acid-Base Titration Procedure for Determining Unknown HCl Concentration",
+  "key_points": [
+    "Calibrate the burette before starting the titration.",
+    "Pipette 25.0 mL of the unknown HCl solution into an Erlenmeyer flask.",
+    "Add three drops of phenolphthalein indicator to the HCl solution.",
+    "Titrate with standardized NaOH until the first persistent pink color appears.",
+    "Record the volume of NaOH dispensed from the burette.",
+    "Repeat the titration for a total of three trials and average the results to ensure accuracy."
+  ]
+}

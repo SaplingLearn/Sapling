@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Resonance Structures",
+      "correct_answer": "They represent different distributions of electrons within the same molecule.",
+      "difficulty": "medium",
+      "explanation": "Resonance structures are different Lewis structures that can be drawn for a molecule or ion, where the actual structure is an average of all the resonance forms. They differ only in the placement of electrons, not in the arrangement of atoms.",
+      "options": [
+        "They are constitutional isomers with the same molecular formula.",
+        "They are enantiomers that are non-superimposable mirror images.",
+        "They are different compounds with different chemical properties.",
+        "They represent different distributions of electrons within the same molecule."
+      ],
+      "question": "Which of the following best describes the relationship between two structures that are resonance forms of the same molecule?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "SN1 vs SN2",
+      "correct_answer": "SN1 reactions involve a carbocation intermediate, while SN2 reactions involve a concerted mechanism.",
+      "difficulty": "medium",
+      "explanation": "SN1 reactions are a two-step process involving the formation of a carbocation intermediate, while SN2 reactions are a one-step (concerted) process where bond breaking and bond formation occur simultaneously.",
+      "options": [
+        "SN1 reactions occur in one step, while SN2 reactions occur in two steps.",
+        "SN1 reactions involve a carbocation intermediate, while SN2 reactions involve a concerted mechanism.",
+        "SN1 reactions are favored by primary alkyl halides, while SN2 reactions are favored by tertiary alkyl halides.",
+        "SN1 reactions proceed with inversion of configuration, while SN2 reactions proceed with racemization."
+      ],
+      "question": "What is the key difference between an SN1 and an SN2 reaction?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Stereochemistry",
+      "correct_answer": "A carbon atom bonded to four different groups.",
+      "difficulty": "medium",
+      "explanation": "A chiral center, typically a carbon atom, is a stereogenic center that is bonded to four different atoms or groups, leading to the existence of stereoisomers (enantiomers).",
+      "options": [
+        "A carbon atom bonded to four different groups.",
+        "A carbon atom bonded to two identical groups.",
+        "A carbon atom participating in a double bond.",
+        "A carbon atom with no lone pairs of electrons."
+      ],
+      "question": "Which of the following best defines a chiral center in stereochemistry?",
+      "type": "multiple_choice"
+    }
+  ]
+}
