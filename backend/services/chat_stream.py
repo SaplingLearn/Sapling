@@ -101,6 +101,44 @@ def _tool_name_from(event: Any) -> str | None:
     return None
 
 
+async def _rung1_fallback_events(
+    legacy_fallback: Callable[[], Awaitable[dict]] | None,
+    request_id: str,
+) -> AsyncIterator[SaplingEvent]:
+    """The Rung-1 tail shared by 'agent failed before text' and 'agent
+    finished but produced a blank reply' (#153): degrade to the route's
+    legacy path when one exists, else a terminal `error`. The legacy path
+    owns its own persistence, so callers must NOT also run on_complete."""
+    if legacy_fallback is None:
+        yield SaplingEvent(
+            type="error",
+            step="reply",
+            message="The tutor is unavailable. Please retry.",
+            data={"request_id": request_id},
+        )
+        return
+    try:
+        legacy = await legacy_fallback()
+    except Exception:
+        logger.exception("Legacy fallback also failed")
+        yield SaplingEvent(
+            type="error",
+            step="reply",
+            message="The tutor is unavailable. Please retry.",
+            data={"request_id": request_id},
+        )
+        return
+    # legacy_fallback persisted its own rows; the caller must NOT call
+    # on_complete after this.
+    yield SaplingEvent(
+        type="token", step="reply", message="",
+        data={"delta": legacy.get("reply", "")},
+    )
+    yield SaplingEvent(
+        type="done", step="reply", message="Complete.", data=legacy
+    )
+
+
 async def stream_agent_turn(
     *,
     agent: Any,
@@ -123,9 +161,11 @@ async def stream_agent_turn(
     final `AgentRunResult` after the stream completes, BEFORE on_complete —
     tokens were spent even if persistence subsequently fails. Routes pass
     `agents.usage.record_agent_usage` here. Not called on the error rungs
-    (no result event was seen) nor on the legacy fallback, whose usage is
-    captured inside `call_gemini_multiturn` (feature=). A hook failure is
-    swallowed: usage capture must never break the stream.
+    (no result event was seen) nor on the Rung-1 legacy fallback, whose
+    usage is captured inside `call_gemini_multiturn` (feature=). It IS
+    called on the degenerate blank-reply rung (#153) — there the agent run
+    completed and billed before its output was judged unusable. A hook
+    failure is swallowed: usage capture must never break the stream.
 
     legacy_fallback() -> awaitable returning the route's pre-agent result,
     used ONLY when the agent fails before emitting any text (Rung 1). It is
@@ -138,6 +178,12 @@ async def stream_agent_turn(
     streamed), Rung 1 with no fallback, and a Rung-1 fallback that itself
     raises all yield an `error` event and persist nothing (regression-tested
     in test_chat_stream.py).
+
+    A run that COMPLETES with a whitespace-only reply (#153: gemini-2.5-pro
+    sometimes emits a bare-newline final text after an end-of-turn tool
+    call) is degenerate, not a success: the joined streamed chunks stand in
+    when they carry real text; otherwise the turn takes the Rung-1 ladder
+    above rather than persisting an empty assistant row.
     """
     yield SaplingEvent(type="status", step="start", message="Starting.")
 
@@ -207,47 +253,47 @@ async def stream_agent_turn(
 
         # Rung 1: nothing shown yet — degrade to the route's legacy path.
         logger.warning("Chat agent failed before first token; using legacy", exc_info=exc)
-        if legacy_fallback is None:
-            yield SaplingEvent(
-                type="error",
-                step="reply",
-                message="The tutor is unavailable. Please retry.",
-                data={"request_id": request_id},
-            )
-            return
-        try:
-            legacy = await legacy_fallback()
-        except Exception:
-            logger.exception("Legacy fallback also failed")
-            yield SaplingEvent(
-                type="error",
-                step="reply",
-                message="The tutor is unavailable. Please retry.",
-                data={"request_id": request_id},
-            )
-            return
-        # legacy_fallback persisted its own rows; do NOT call on_complete.
-        yield SaplingEvent(
-            type="token", step="reply", message="",
-            data={"delta": legacy.get("reply", "")},
-        )
-        yield SaplingEvent(
-            type="done", step="reply", message="Complete.", data=legacy
-        )
+        async for ev in _rung1_fallback_events(legacy_fallback, request_id):
+            yield ev
         return
 
-    reply = final_output if final_output is not None else "".join(chunks)
-    merged = merge_graph_updates(deps.graph_updates)
-    mastery = list(deps.mastery_changes)
+    joined = "".join(chunks)
+    reply = final_output if final_output is not None else joined
 
     # Usage first, persistence second: the tokens were spent regardless of
-    # whether on_complete manages to persist. Guarded — instrumentation must
-    # never turn a fully-streamed reply into an error event.
+    # whether on_complete manages to persist — including on the degenerate
+    # blank-reply rung below, where the agent run DID complete and bill.
+    # Guarded — instrumentation must never turn a streamed reply into an
+    # error event.
     if on_usage is not None and run_result is not None:
         try:
             on_usage(run_result)
         except Exception:
             logger.debug("on_usage hook failed; usage row dropped", exc_info=True)
+
+    if not reply.strip():
+        # Degenerate output (#153, ADR-0023 follow-up): gemini-2.5-pro
+        # occasionally follows an end-of-turn tool call with a bare-newline
+        # final text, making the run OUTPUT whitespace-only. The real reply
+        # may still have streamed earlier in the turn — prefer the joined
+        # chunks. If nothing non-blank streamed either, never persist an
+        # empty assistant row: degrade exactly like Rung 1 (legacy fallback
+        # owns the turn, or a terminal `error` without one). Tool writes
+        # that already landed stay, matching the existing Rung-1 contract
+        # for a failure after a tool write.
+        if joined.strip():
+            reply = joined
+        else:
+            logger.warning(
+                "Agent turn produced a blank reply (%d graph write(s) "
+                "already applied); degrading to Rung 1", graph_hw,
+            )
+            async for ev in _rung1_fallback_events(legacy_fallback, request_id):
+                yield ev
+            return
+
+    merged = merge_graph_updates(deps.graph_updates)
+    mastery = list(deps.mastery_changes)
 
     try:
         extra = on_complete(reply, merged, mastery) or {}

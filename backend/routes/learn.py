@@ -714,6 +714,18 @@ async def _chat_via_agent(
     )
     reply = result.output  # str — chat_tutor agents return plain Markdown.
 
+    if not reply.strip():
+        # #153 / ADR-0023 follow-up: gemini-2.5-pro occasionally follows an
+        # end-of-turn tool call with a bare-newline final text. On this JSON
+        # path that whitespace IS the run output; treat it as degenerate
+        # model output so the caller's UnexpectedModelBehavior handler
+        # degrades to the legacy pipeline instead of persisting an empty
+        # assistant row. (The streamed path handles the same quirk inside
+        # `stream_agent_turn`.) Usage was recorded above — tokens were spent.
+        raise UnexpectedModelBehavior(
+            "chat_tutor produced a whitespace-only reply"
+        )
+
     # Merge all graph update payloads accumulated by tools during this run
     # into a single dict so the route can persist graph_update_json and
     # end_session can derive concepts_covered correctly.

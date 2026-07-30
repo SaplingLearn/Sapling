@@ -57,6 +57,10 @@ concept_extraction_agent = Agent[SaplingDeps, ConceptList](
     model=model_for("concepts"),
     deps_type=SaplingDeps,
     output_type=ConceptList,
+    # #153: bounded output-validation retry budget for this idempotent
+    # generation task. Tool-less agent, so `retries=` IS the output budget
+    # (see the validation-retry policy note in agents/__init__.py).
+    retries=2,
     system_prompt=_SYSTEM_PROMPT,
     metadata={"prompt_version": _PROMPT_HASH, "agent": "concept_extraction"},
 )
