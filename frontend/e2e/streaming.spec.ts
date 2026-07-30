@@ -10,10 +10,11 @@
  *   item 7 — switching sessions mid-stream aborts the stream and leaves no
  *            stale bubble in the other session's transcript.
  *
- * (Item 3 — the SERVER-side Rung-1 legacy fallback — deliberately has no
- * journey here: the legacy gemini_service seam has no function-mode gate by
- * design (fallback-only, slated for deletion in #151), so it cannot run
- * deterministically in this lane. Its live proof is
+ * (Item 3 — the SERVER-side Rung-1 fallback — deliberately has no journey
+ * here: since #151 (ADR 0024) it is a plain non-streaming run of the SAME
+ * agent — the legacy gemini_service seam is deleted — so a browser journey
+ * would need the seam to fail only the streamed attempt, which the
+ * function-mode lane can't steer. Its live proof is
  * backend/tests/test_streaming_rung1_live.py; its mechanics are pinned
  * hermetically in test_chat_stream.py / test_learn_stream_routes.py.)
  *

@@ -48,7 +48,6 @@ mocked per-test, not globally.
 | File | What it covers |
 |---|---|
 | `test_config.py` | `get_mastery_tier()` — all tier boundary values |
-| `test_gemini_service.py` | JSON extraction utilities, `extract_graph_update`, `call_gemini` / `call_gemini_json` with mocked client |
 | `test_graph_service.py` | `get_graph`, `add_course`, `delete_course`, `apply_graph_update`, `get_recommendations` — all with mocked DB |
 | `test_calendar_routes.py` | Calendar route endpoints (`/save`, `/upcoming`, `/suggest-study-blocks`, `/status`, `/disconnect`), OAuth state encoding |
 | `test_learn_routes.py` | Topic→course resolution, `/sessions` list & resume, mode-switch & rename, agent chat path with legacy fallback |

@@ -11,9 +11,9 @@ Design goals:
   / ``get_str`` / ``set_str`` (or set ``REDIS_URL`` against a fake).
 
 Scope: currently the OCR/extraction content-cache. The Gemini-response cache the
-original #97 described is mostly obsolete post agent-migration (agents bypass
-``gemini_service.call_gemini``); this wrapper is the reusable seam if that need
-returns.
+original #97 described became obsolete with the agent migration (every LLM call
+is now a Pydantic AI agent; the raw-call seam it would have fronted was deleted
+in ADR 0024); this wrapper is the reusable seam if that need returns.
 """
 
 from __future__ import annotations

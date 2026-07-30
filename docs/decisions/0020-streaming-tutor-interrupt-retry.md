@@ -48,7 +48,8 @@ The spec (`docs/superpowers/specs/2026-07-16-streaming-design.md`) is explicit:
   errors `retryable: false` and the client ladder honors it (no automatic
   re-run; the interrupted+Retry treatment lets the STUDENT decide), and 413s
   are likewise never auto-retried. The transcript half of this argument is
-  unchanged.)* (`CancelledError`
+  unchanged. ADR 0024 records the full server+client rung ladder as the
+  canonical description post-#151.)* (`CancelledError`
   is deliberately not caught; a mid-stream disconnect cancels the generator
   before persistence — covered by `backend/tests/test_chat_stream.py`.)
 - **Consistency across rungs.** The same interrupted+Retry affordance covers a

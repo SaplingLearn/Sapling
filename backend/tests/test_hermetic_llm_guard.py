@@ -66,14 +66,9 @@ class TestDefaultLaneIsOffline:
 class TestRealSaplingCallPathsAreBlocked:
     """The synthetic-client tests above prove the seam; these prove it on the
     real, module-level clients Sapling actually builds at import time — the
-    exact objects a forgotten `patch(...)` would leave live."""
-
-    def test_gemini_service_call_gemini_is_blocked(self):
-        """services/gemini_service.py holds a module-level genai.Client."""
-        from services.gemini_service import call_gemini
-
-        with pytest.raises(RuntimeError, match="unstubbed LLM egress"):
-            call_gemini("summarize this", retries=0)
+    exact objects a forgotten `patch(...)` would leave live. (The
+    gemini_service client this class also covered was deleted in #151b /
+    ADR 0024; rag_service holds the one remaining module-level client.)"""
 
     def test_rag_service_embedding_is_blocked(self):
         """services/rag_service.py holds its own module-level genai.Client

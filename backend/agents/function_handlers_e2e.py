@@ -266,6 +266,30 @@ register_function_handler(
 )
 
 
+# ── Concept scan (#151b) ────────────────────────────────────────────────────
+#
+# routes/documents.py's POST /doc/{id}/scan-concepts and
+# /course/{id}/scan-concepts run concept_scan_agent — tool-less, structured
+# `NewConcepts` output (names only, max 15 — see agents/concept_scan.py).
+# Request-path: the route drives the agent via run_agent_sync and performs
+# the graph write itself, so registering it is correct (the concept_describe
+# reasoning; quiz_context stays deliberately unregistered — see the quiz
+# section above). Unregistered, function mode's dispatch raised
+# UnregisteredHandlerError, which the route's best-effort degrade (#151b)
+# masked as an empty scan — hiding real scan coverage from the browser lane.
+#
+# Constants continue the upload fixture's gradient-descent theme so a scan
+# after the scripted upload reads coherently in the UI. Backend contract
+# test: tests/test_e2e_function_handlers.py. Keep them in sync.
+
+E2E_SCAN_NEW_CONCEPTS = ["Momentum Optimization", "Convex Loss Surfaces"]
+
+register_function_handler(
+    "concept_scan",
+    _structured_output({"concepts": E2E_SCAN_NEW_CONCEPTS}),
+)
+
+
 # ── Notetaker agent actions (F5a) ───────────────────────────────────────────
 #
 # routes/notes.py runs three request-path notetaker actions the browser awaits

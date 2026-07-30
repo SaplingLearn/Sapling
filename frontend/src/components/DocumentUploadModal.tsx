@@ -173,15 +173,11 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
         }
 
         if (ev.type === "error") {
-          // Two flavors of error event from the streaming route:
-          //   step === "fallback" — orchestrator tripped, legacy path will run.
-          //                         Degraded mode, NOT a terminal failure.
-          //   step === "failed"   — terminal failure from _stream_legacy_fallback.
-          // Anything else we treat as informational and skip toasting to avoid
-          // double-firing alongside the catch-block toast.
-          if (ev.step === "fallback") {
-            toast.warn(`Switching to fallback: ${ev.message}`);
-          } else if (ev.step === "failed") {
+          // The streaming route's only error step is "failed" — terminal
+          // (#151b retired the legacy pipeline and its step === "fallback"
+          // event with it). Anything else we treat as informational and skip
+          // toasting to avoid double-firing alongside the catch-block toast.
+          if (ev.step === "failed") {
             toast.error(`Upload failed: ${ev.message}`);
           }
           setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: ev.message } : i));
@@ -548,8 +544,9 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
 
 /**
  * Pull concept names out of either the orchestrator result shape
- * ({ concepts: { concepts: [{ name, ... }] } }) or the legacy fallback
- * shape ({ concept_notes: [{ name }] }). Returns at most a flat string[].
+ * ({ concepts: { concepts: [{ name, ... }] } }) or the persisted-row
+ * shape ({ concept_notes: [{ name }] }) that idempotent replays and
+ * /upload/sync responses carry. Returns at most a flat string[].
  */
 function extractConceptNames(resp: any): string[] {
   const fromOrchestrator = resp?.concepts?.concepts;
@@ -558,9 +555,9 @@ function extractConceptNames(resp: any): string[] {
       .map((c: { name?: unknown }) => c?.name)
       .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
   }
-  const fromLegacy = resp?.concept_notes;
-  if (Array.isArray(fromLegacy)) {
-    return fromLegacy
+  const fromRow = resp?.concept_notes;
+  if (Array.isArray(fromRow)) {
+    return fromRow
       .map((n: { name?: unknown }) => n?.name)
       .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
   }

@@ -35,7 +35,6 @@ from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
-from services.gemini_service import MODEL_LITE, call_gemini_json
 from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
 from services.course_context_service import update_course_context
@@ -94,6 +93,15 @@ UNREADABLE_DOCUMENT_DETAIL = (
     "with selectable text."
 )
 
+# 502 detail for agent-pipeline failures on /upload/sync (#151b — the ADR-0001
+# legacy fallback is gone, see ADR 0024). Retry-friendly on purpose: nothing
+# was persisted, and the client mints a fresh X-Request-ID per attempt, so a
+# retry re-runs the pipeline instead of replaying the failure.
+UPLOAD_FAILED_DETAIL = (
+    "Document processing failed and nothing was saved. Please try uploading "
+    "the file again."
+)
+
 
 def _has_usable_text(text: str | None) -> bool:
     """True when extraction produced enough text to be worth analyzing."""
@@ -107,92 +115,6 @@ def _validate_user(user_id: str) -> None:
         raise HTTPException(status_code=403, detail="Invalid user.")
 
 
-def _coerce_str_list(value) -> list[str]:
-    """Coerce LLM output into a list[str], dropping non-strings and blanks."""
-    if not isinstance(value, list):
-        return []
-    out: list[str] = []
-    for item in value:
-        if isinstance(item, str):
-            s = item.strip()
-            if s:
-                out.append(s)
-    return out
-
-
-def _coerce_dict_list(value) -> list[dict]:
-    """Coerce LLM output into a list[dict]."""
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
-
-
-def _extend_course_concepts(
-    *,
-    course_label: str,
-    existing_concepts: list[str],
-    doc_filename: str | None = None,
-    doc_summary: str | None = None,
-    doc_concept_notes: list[dict] | None = None,
-) -> list[str]:
-    """Focused LLM call: extend an existing course concept set.
-
-    The LLM is shown the course label, every concept already in the graph,
-    and (when scanning a specific document) that document's stored summary
-    and concept notes. It returns new concepts to add, avoiding duplicates.
-    """
-    existing_block = (
-        "\n".join(f"- {c}" for c in existing_concepts) if existing_concepts else "(none yet)"
-    )
-    doc_block = ""
-    if doc_filename or doc_summary or doc_concept_notes:
-        notes_block = (
-            "\n".join(
-                f"  - {n.get('name', '?')}: {n.get('description', '')[:200]}"
-                for n in (doc_concept_notes or [])
-            )
-            or "  (none)"
-        )
-        doc_block = (
-            "\nNew document being scanned:\n"
-            f"  Title: {doc_filename or '(untitled)'}\n"
-            f"  Summary: {doc_summary or '(none)'}\n"
-            "  Concepts already extracted from this document:\n"
-            f"{notes_block}\n"
-        )
-
-    prompt = (
-        f"You are curating the concept set for the course \"{course_label}\".\n"
-        "Concepts already in the student's graph for this course:\n"
-        f"{existing_block}\n"
-        f"{doc_block}"
-        "Return ONLY valid JSON with no markdown or backticks:\n"
-        '{ "concepts": ["...", "..."] }\n'
-        "Rules:\n"
-        "- Return between 0 and 15 NEW concepts that should be in this course's "
-        "graph but are not in the existing list above.\n"
-        "- If the existing set already covers the relevant material, return [].\n"
-        "- Each concept is a short Title Case noun phrase "
-        "(e.g. \"Linear Regression\", \"Big-O Analysis\").\n"
-        "- Do NOT repeat or paraphrase any existing concept.\n"
-        "- No assignment titles, week labels, page numbers, problem numbers, or "
-        "administrative items.\n"
-        "- concepts must be a JSON array of strings."
-    )
-    try:
-        raw = call_gemini_json(prompt, model=MODEL_LITE, feature="document")
-    except ValueError:
-        # #153 defensive-parsing: call_gemini_json raises ValueError on
-        # non-JSON model output. This is the last-resort legacy path (the
-        # concept_scan agent already failed), so degrade to "no new
-        # concepts" rather than 500 the scan route. Until #151 retires it.
-        logger.exception("legacy concept scan returned non-JSON; degrading to []")
-        return []
-    if not isinstance(raw, dict):
-        return []
-    return _coerce_str_list(raw.get("concepts"))
-
-
 def _scan_user_message(
     *,
     course_label: str,
@@ -202,8 +124,7 @@ def _scan_user_message(
     doc_concept_notes: list[dict] | None = None,
 ) -> str:
     """Build the concept_scan agent's user message: course label + existing
-    concepts + (optional) document context. Mirrors the legacy prompt's data
-    section so agent and legacy paths see the same signal."""
+    concepts + (optional) document context."""
     existing_block = (
         "\n".join(f"- {c}" for c in existing_concepts) if existing_concepts else "(none yet)"
     )
@@ -242,7 +163,7 @@ async def _extend_via_agent(
     doc_concept_notes: list[dict] | None = None,
 ) -> list[str]:
     """Run concept_scan_agent and return new concept names. Raises on agent
-    failure so the sync dispatcher can fall back to legacy."""
+    failure; the sync dispatcher (_extend_concepts) degrades to []."""
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id,
@@ -275,11 +196,14 @@ def _extend_concepts(
     doc_summary: str | None = None,
     doc_concept_notes: list[dict] | None = None,
 ) -> list[str]:
-    """Agent-first concept extension with legacy fallback (ADR 0001).
+    """Concept extension via concept_scan_agent — the only scan path since
+    #151b (ADR 0024 retired the legacy call_gemini_json fallback).
 
     Sync entry point for the sync /scan-concepts handlers: drives the async
-    agent via run_agent_sync, falling back to the legacy call_gemini_json
-    path on any agent failure.
+    agent via run_agent_sync. Best-effort enrichment (D4): any agent failure
+    degrades to "no new concepts" with a warning log, so the scan response
+    reports {"concepts": [], "added": 0, "existing": N} instead of 500ing a
+    route whose whole job is optional graph enrichment.
     """
     try:
         return run_agent_sync(
@@ -293,130 +217,17 @@ def _extend_concepts(
                 doc_concept_notes=doc_concept_notes,
             )
         )
-    except (UsageLimitExceeded, UnexpectedModelBehavior):
-        logger.warning("concept_scan agent guardrails tripped; using legacy")
-    except Exception:
-        logger.exception("concept_scan agent failed; using legacy")
-    return _extend_course_concepts(
-        course_label=course_label,
-        existing_concepts=existing_concepts,
-        doc_filename=doc_filename,
-        doc_summary=doc_summary,
-        doc_concept_notes=doc_concept_notes,
-    )
-
-
-def _coerce_concept_notes(value) -> list[dict]:
-    """Coerce LLM output into a list of {name, description} dicts.
-
-    Drops entries missing either field. Names are stripped; descriptions
-    preserve their markdown body verbatim so the frontend MarkdownChat
-    renderer can handle math, mermaid, plots, and theorem callouts.
-    """
-    if not isinstance(value, list):
-        return []
-    out: list[dict] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        name = item.get("name")
-        desc = item.get("description")
-        if not isinstance(name, str) or not isinstance(desc, str):
-            continue
-        name = name.strip()
-        desc = desc.strip()
-        if not name or not desc:
-            continue
-        out.append({"name": name, "description": desc})
-    return out
-
-
-def _process_document(filename: str, extracted_text: str) -> dict:
-    """Single LLM call: classify, summarize, and extract assignments + concepts.
-
-    Returns a normalized shape with all fields validated and coerced — callers
-    can trust the types without further isinstance checks.
-    """
-    prompt = (
-        f"You are processing a student document titled '{filename}'.\n"
-        f"Content: {extracted_text[:12000]}\n"
-        "Return ONLY valid JSON with no markdown or backticks:\n"
-        "{\n"
-        '  "category": one of ["syllabus","lecture_notes","slides","reading","assignment","study_guide","other"],\n'
-        '  "summary": "2-3 sentence overview of the document",\n'
-        '  "concept_notes": [{"name": "Concept Name", "description": "..."}],\n'
-        '  "categories": [],\n'
-        '  "assignments": []\n'
-        "}\n"
-        'If category is "syllabus", populate "assignments" with every deadline found:\n'
-        '  {"title": "...", "due_date": "YYYY-MM-DD (assume 2026 if year missing)", '
-        '"course_name": "...", "assignment_type": one of [homework,exam,reading,project,quiz,other], "notes": "..." or null}\n'
-        'For non-syllabus documents, "assignments" must be [].\n'
-        'If category is "syllabus", also populate "categories" with the grading-weight buckets:\n'
-        '  {"name": "Exams", "weight": 40}  // weight passes through verbatim, do not normalize\n'
-        'For non-syllabus documents, "categories" must be [].\n'
-        "\n"
-        'Populate "concept_notes" with the document\'s key concepts. Use this for ALL categories — '
-        "this is the single takeaways list for the document.\n"
-        "  - Syllabus: 5–15 high-level course topics drawn from the schedule, learning outcomes, or topic list.\n"
-        "  - Assignment: 1–8 specific topics the assignment tests or practices.\n"
-        "  - Lecture notes / slides / reading / study_guide / other: 4–12 concepts the document covers.\n"
-        '  - "name" is a short Title Case noun phrase (e.g. "Linear Regression", "Big-O Analysis"). '
-        "Do NOT use problem numbers, week labels, or administrative items as names. The name is what "
-        "becomes the concept node in the student's knowledge graph, so it must read as a standalone topic.\n"
-        '  - "description" is a 2–4 sentence explanation of the concept written for the student. '
-        "It must be MARKDOWN and may use:\n"
-        "      • inline math `$x^2$` and display math `$$\\int f(x)\\,dx$$`\n"
-        "      • fenced ```mermaid``` blocks for diagrams\n"
-        "      • fenced ```plot``` blocks for function plots (function-plot.js JSON spec)\n"
-        "      • `:::theorem`, `:::definition`, `:::proof`, `:::lemma`, `:::example`, `:::note` directives\n"
-        "    Use these tools only when they genuinely clarify the concept; otherwise keep it prose. "
-        "Each description should align tightly with what a graph node for this concept would represent.\n"
-        "\n"
-        '"concept_notes" must be a JSON array of {"name": str, "description": str} objects.'
-    )
-    try:
-        raw = call_gemini_json(prompt, feature="document")
-    except ValueError:
-        # #153 defensive-parsing: non-JSON model output on the last-resort
-        # legacy pipeline (the agent path already failed) must not become a
-        # raw 500 on upload — degrade to the same safe shape a non-dict
-        # reply gets (category "other", empty summary/concepts), so the
-        # document row still persists. Until #151 retires this path.
-        logger.exception(
-            "legacy document processing returned non-JSON; degrading to "
-            "minimal shape"
+    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+        logger.warning(
+            "concept_scan agent guardrails tripped; degrading to no new concepts",
+            exc_info=e,
         )
-        raw = {}
-    if not isinstance(raw, dict):
-        raw = {}
-
-    category = raw.get("category")
-    if category not in VALID_CATEGORIES:
-        category = "other"
-
-    summary = raw.get("summary")
-    if not isinstance(summary, str):
-        summary = ""
-
-    concept_notes = _coerce_concept_notes(raw.get("concept_notes"))
-
-    categories = _coerce_dict_list(raw.get("categories"))
-    clean_categories = []
-    for c in categories:
-        name = c.get("name")
-        weight = c.get("weight")
-        if isinstance(name, str) and name.strip() and isinstance(weight, (int, float)):
-            clean_categories.append({"name": name.strip(), "weight": float(weight)})
-
-    return {
-        "category": category,
-        "summary": summary.strip(),
-        "categories": clean_categories,
-        "assignments": _coerce_dict_list(raw.get("assignments")),
-        "concept_notes": concept_notes,
-        "concepts": [c["name"] for c in concept_notes],
-    }
+    except Exception:
+        logger.warning(
+            "concept_scan agent failed; degrading to no new concepts",
+            exc_info=True,
+        )
+    return []
 
 
 @router.get("/user/{user_id}")
@@ -789,30 +600,26 @@ async def upload_document_sync(
         supabase=None,
         request_id=request_id,
     )
+    # Failure mapping (#151b): the agent pipeline is the ONLY pipeline — the
+    # ADR-0001 legacy fallback is gone (ADR 0024). Nothing has been persisted
+    # at this point and the client mints a fresh X-Request-ID per attempt, so
+    # both branches surface a retry-friendly 502: guardrail trips (budget /
+    # degenerate output) log at WARNING, anything else is a bug and logs the
+    # full exception.
     try:
         result: DocumentProcessingResult = await process_document(extracted_text, deps)
     except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
         logger.warning(
-            "Agent guardrails tripped for '%s'; falling back to legacy",
+            "Agent guardrails tripped for '%s'; returning 502",
             filename, exc_info=e,
         )
-        return await _legacy_upload_pipeline(
-            filename=filename, extracted_text=extracted_text,
-            course_id=course_id, offering_id=offering_id, user_id=user_id,
-            background_tasks=background_tasks,
-            request_id=request_id,
-        )
-    except Exception:
+        raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
+    except Exception as e:
         logger.exception(
-            "Unexpected agent failure for '%s'; falling back to legacy",
+            "Unexpected agent failure for '%s'; returning 502",
             filename,
         )
-        return await _legacy_upload_pipeline(
-            filename=filename, extracted_text=extracted_text,
-            course_id=course_id, offering_id=offering_id, user_id=user_id,
-            background_tasks=background_tasks,
-            request_id=request_id,
-        )
+        raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
 
     # async def route: these are synchronous PostgREST round-trips — keep them
     # off the event loop, same as the SSE generator's post-roll (#132 item 22).
@@ -1085,47 +892,52 @@ async def upload_document(
                 data=final_output.model_dump(mode="json"),
             ))
         except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+            # Terminal (#151b): `step="fallback"` left the SSE vocabulary
+            # with the legacy pipeline (ADR 0024). Emit the exact
+            # error:failed + status:done tail the deleted fallback used on
+            # double-failure, so clients need no new case. Retry is safe —
+            # nothing was persisted, and a retry mints a fresh X-Request-ID.
             logger.warning(
-                "Agent guardrails tripped during stream for '%s'; falling back",
+                "Agent guardrails tripped during stream for '%s'; failing",
                 filename, exc_info=e,
             )
             yield sapling_event_to_sse(SaplingEvent(
-                type="error", step="fallback",
-                message="Agent guardrails tripped; using legacy pipeline.",
-                data={"request_id": request_id},
+                type="error", step="failed",
+                message="Document processing failed. Please try again.",
+                data={"request_id": request_id} if request_id else None,
             ))
-            async for sse_event in _stream_legacy_fallback(
-                filename=filename, extracted_text=extracted_text,
-                course_id=course_id, offering_id=offering_id, user_id=user_id,
-                request_id=request_id,
-            ):
-                yield sse_event
+            yield sapling_event_to_sse(SaplingEvent(
+                type="status", step="done",
+                message="Failed.",
+            ))
             return
         except Exception:
+            # Same terminal tail; a bare exception is a bug, so keep the
+            # full exception log where the guardrail branch logs a WARNING.
             logger.exception("Unexpected streaming failure for '%s'", filename)
             yield sapling_event_to_sse(SaplingEvent(
-                type="error", step="fallback",
-                message="Unexpected error during processing; using legacy pipeline.",
-                data={"request_id": request_id},
+                type="error", step="failed",
+                message="Document processing failed. Please try again.",
+                data={"request_id": request_id} if request_id else None,
             ))
-            async for sse_event in _stream_legacy_fallback(
-                filename=filename, extracted_text=extracted_text,
-                course_id=course_id, offering_id=offering_id, user_id=user_id,
-                request_id=request_id,
-            ):
-                yield sse_event
+            yield sapling_event_to_sse(SaplingEvent(
+                type="status", step="done",
+                message="Failed.",
+            ))
             return
 
         # ── Post-roll: side effects + persistence (#132 item 11) ──────────
         # Runs AFTER the terminal `result` event is on the wire, in its own
-        # try/except: a failure here must NOT reach the legacy fallback
-        # above. The client already holds the processed document, so falling
-        # back would spend a second model call re-running the whole pipeline
-        # and emit a SECOND result (result → error → result → done). The
-        # legacy fallback stays reachable only for failures BEFORE the first
-        # result event. On post-roll failure, emit the same terminal
-        # error+done pair _stream_legacy_fallback's failure tail uses, then
-        # stop.
+        # try/except. A post-result failure still emits the terminal
+        # error:failed + status:done pair and NEVER a second result — the
+        # client already holds the processed document, and every emitter in
+        # this generator sends at most one result per stream. The legacy
+        # fallback this separation used to guard against re-triggering
+        # (result → error → result → done, plus a second model call) is
+        # GONE (#151b, ADR 0024); the separate try/except now simply keeps
+        # the post-result failure tail identical to the pre-result failure
+        # branches above. #154 builds on this structure — keep persistence
+        # in the post-roll, after the result event.
         try:
             # Synchronous PostgREST writes — threaded so they don't block
             # the event loop serving this (and every other) SSE stream
@@ -1186,58 +998,6 @@ async def upload_document(
     return EventSourceResponse(
         event_stream(), headers={"Cache-Control": SSE_CACHE_CONTROL}
     )
-
-
-async def _stream_legacy_fallback(
-    *, filename: str, extracted_text: str, course_id: str, offering_id: str,
-    user_id: str, request_id: str | None = None,
-):
-    """Run _legacy_upload_pipeline and yield SSE progress/result/done events.
-
-    Used by the streaming /upload route's exception handlers to deliver
-    a document via the legacy path even when the agent pipeline trips.
-    The legacy path is a single-shot Gemini call so we cannot observe
-    its internal phases — instead we emit a synthetic ``progress`` event
-    before kicking it off so the UI doesn't sit on a blank spinner for
-    the legacy call's wall-clock latency. If the legacy path also fails,
-    we yield a terminal error event so the client doesn't see a silent
-    EOF mid-stream. ``request_id`` is the middleware-stamped correlation
-    ID — included in any error event so callers can match the failure
-    to a Logfire span, and threaded into the legacy insert so a retry
-    with the same X-Request-ID is deduped.
-    """
-    yield sapling_event_to_sse(SaplingEvent(
-        type="progress", step="fallback_processing",
-        message="Falling back to single-call pipeline. Processing document...",
-    ))
-    try:
-        legacy_response = await _legacy_upload_pipeline(
-            filename=filename, extracted_text=extracted_text,
-            course_id=course_id, offering_id=offering_id, user_id=user_id,
-            request_id=request_id,
-        )
-    except Exception:
-        logger.exception("Legacy fallback also failed for '%s'", filename)
-        yield sapling_event_to_sse(SaplingEvent(
-            type="error", step="failed",
-            message="Document processing failed. Please try again.",
-            data={"request_id": request_id} if request_id else None,
-        ))
-        yield sapling_event_to_sse(SaplingEvent(
-            type="status", step="done",
-            message="Failed.",
-        ))
-        return
-    yield sapling_event_to_sse(SaplingEvent(
-        type="result", step="finalize",
-        message="Processing complete (legacy fallback).",
-        data=legacy_response,
-    ))
-    yield sapling_event_to_sse(SaplingEvent(
-        type="status", step="done",
-        message="Saved.",
-        data={"document_id": legacy_response.get("id")},
-    ))
 
 
 def _invalidate_study_guide_cache(user_id: str, offering_id: str) -> None:
@@ -1377,116 +1137,6 @@ def _log_post_roll_exc(task: "asyncio.Task", label: str) -> None:
     exc = task.exception()
     if exc is not None:
         logger.error("Post-roll task '%s' failed: %s", label, exc, exc_info=exc)
-
-
-async def _legacy_upload_pipeline(
-    *,
-    filename: str,
-    extracted_text: str,
-    course_id: str,
-    offering_id: str,
-    user_id: str,
-    background_tasks: BackgroundTasks | None = None,
-    request_id: str | None = None,
-) -> dict:
-    """The pre-orchestrator upload pipeline, kept as a fallback per ADR-0001.
-
-    Verbatim copy of the previous upload_document body from text-extraction
-    onward. File validation already happened in the caller, so this function
-    starts at the AI processing step.
-
-    The documents row keys on ``offering_id`` (0025); the graph,
-    assignment-calendar, and course-context side effects key on the abstract
-    ``course_id``.
-
-    background_tasks is optional: in streaming-fallback contexts there is
-    no FastAPI BackgroundTasks to attach to (the response IS the stream),
-    so post-roll work is fired via asyncio.create_task instead.
-
-    ``request_id`` (when provided) is stored on the documents row so a
-    client retry with the same X-Request-ID can short-circuit instead of
-    re-running the pipeline.
-    """
-    # ── AI: classify, summarize, and extract assignments (single call) ─────────
-    ai = _process_document(filename, extracted_text)
-
-    if ai["category"] == "syllabus" and ai["assignments"]:
-        try:
-            for a in ai["assignments"]:
-                a["course_id"] = course_id
-            save_assignments_to_db(user_id, ai["assignments"], source="syllabus")
-        except Exception:
-            logger.exception("Assignment save failed for '%s' (best-effort)", filename)
-
-    if ai["category"] in ("syllabus", "assignment") and ai["concepts"]:
-        try:
-            new_nodes = [
-                {"concept_name": name, "initial_mastery": 0.0}
-                for name in ai["concepts"]
-            ]
-            apply_graph_update(user_id, {"new_nodes": new_nodes}, course_id=course_id)
-        except Exception:
-            logger.exception("Concept population failed for '%s' (best-effort)", filename)
-
-    # ── Persist to documents table ────────────────────────────────────────────
-    now = datetime.now(timezone.utc).isoformat()
-    row = {
-        "id": str(uuid.uuid4()),
-        "user_id": user_id,
-        "offering_id": offering_id,
-        "file_name": filename,
-        "category": ai["category"],
-        "summary": encrypt_if_present(ai["summary"] or None),
-        "concept_notes": encrypt_json(ai["concept_notes"]) if ai["concept_notes"] is not None else None,
-        "created_at": now,
-        "processed_at": now,
-    }
-    if request_id:
-        row["request_id"] = request_id
-    try:
-        inserted = table("documents").insert(row)
-    except Exception:
-        # Schema may not yet have the request_id column; retry without it
-        # so deployments can ship the code before the migration runs.
-        if "request_id" in row:
-            row.pop("request_id", None)
-            inserted = table("documents").insert(row)
-        else:
-            raise
-
-    # #117 (D6): the ADR-0001 legacy fallback persists its own documents row,
-    # so it emits its own document.processed — fallback uploads must count too.
-    events_service.log_event(
-        "document.processed",
-        category="usage",
-        user_id=user_id,
-        request_id=request_id,
-        payload={
-            "document_id": (inserted[0] if inserted else row).get("id"),
-            "category": ai["category"],
-            "course_id": course_id,
-            "char_count": len(extracted_text),
-        },
-    )
-
-    if background_tasks is not None:
-        background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
-        background_tasks.add_task(update_course_context, course_id)
-        background_tasks.add_task(_check_upload_achievements, user_id)
-    else:
-        _spawn_post_roll(
-            ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
-            ("update_course_context", update_course_context, course_id),
-            ("check_upload_achievements", _check_upload_achievements, user_id),
-        )
-
-    response = dict(inserted[0] if inserted else row)
-    response["summary"] = decrypt_if_present(response.get("summary"))
-    notes_raw = response.get("concept_notes")
-    if isinstance(notes_raw, str):
-        response["concept_notes"] = decrypt_json(notes_raw)
-    response["categories"] = ai.get("categories", [])
-    return response
 
 
 def _course_label(course_id: str) -> str:

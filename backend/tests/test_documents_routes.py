@@ -7,17 +7,17 @@ Tests cover:
   - PATCH /api/documents/doc/{doc_id}    → update_document
   - POST /api/documents/upload           → upload_document
 
-All Gemini calls, DB access, and file-extraction are mocked.
+All agent runs, DB access, and file-extraction are mocked.
 """
 import io
 import json
 from types import SimpleNamespace
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
+from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from main import app
-from routes.documents import _process_document
 
 client = TestClient(app)
 
@@ -273,9 +273,9 @@ def _make_upload(
 ):
     """Helper: build a multipart upload request.
 
-    Targets /upload/sync so the response is a single JSON dict (the
-    legacy contract). The streaming /upload route is exercised
-    separately in stream-specific tests.
+    Targets /upload/sync so the response is a single JSON dict. The
+    streaming /upload route is exercised separately in stream-specific
+    tests.
     """
     return client.post(
         "/api/documents/upload/sync",
@@ -284,120 +284,11 @@ def _make_upload(
     )
 
 
-class TestProcessDocumentHelper:
-    """Direct unit tests for _process_document.
-
-    These bypass the FastAPI route entirely (they call the helper
-    directly), so they must NOT be inside TestUploadDocument or they
-    needlessly trip the orchestrator-fallback autouse fixture.
-    """
-
-    def test_coerces_garbage_into_safe_shape(self):
-        """When the LLM emits the wrong types, _process_document normalizes them."""
-        garbage = {
-            "category": "not-a-real-category",
-            "summary": 12345,
-            "key_takeaways": "should be a list, not a string",
-            "assignments": "not a list either",
-            "concept_notes": "Linear Regression, Big-O",  # string instead of list
-        }
-        with patch("routes.documents.call_gemini_json", return_value=garbage):
-            result = _process_document("file.pdf", "text")
-
-        assert result["category"] == "other"
-        assert result["summary"] == ""  # int coerced to ""
-        assert result["assignments"] == []
-        assert result["concept_notes"] == []
-        assert result["concepts"] == []
-
-    def test_strips_invalid_concept_notes(self):
-        ai_result = {
-            "category": "syllabus",
-            "summary": "S",
-            "key_takeaways": [],
-            "assignments": [],
-            "concept_notes": [
-                {"name": "  Linear Regression  ", "description": "Fits a line."},
-                {"name": "Big-O", "description": ""},  # empty desc dropped
-                {"name": "", "description": "no name"},  # empty name dropped
-                {"description": "no name field"},  # missing name dropped
-                "not a dict",  # wrong type dropped
-                {"name": "Cross-Entropy", "description": "Loss for classification."},
-            ],
-        }
-        with patch("routes.documents.call_gemini_json", return_value=ai_result):
-            result = _process_document("file.pdf", "text")
-
-        assert result["concept_notes"] == [
-            {"name": "Linear Regression", "description": "Fits a line."},
-            {"name": "Cross-Entropy", "description": "Loss for classification."},
-        ]
-        assert result["concepts"] == ["Linear Regression", "Cross-Entropy"]
-
-    def test_handles_non_dict_response(self):
-        with patch("routes.documents.call_gemini_json", return_value=["not", "a", "dict"]):
-            result = _process_document("file.pdf", "text")
-
-        assert result["category"] == "other"
-        assert result["concepts"] == []
-        assert result["concept_notes"] == []
-        assert result["assignments"] == []
-
-    def test_non_json_model_output_degrades_to_safe_shape(self):
-        """#153 defensive-parsing: `call_gemini_json` raises ValueError when
-        the model emits non-JSON. This helper runs on the LAST-RESORT legacy
-        path (the agent pipeline already failed), so a parse failure must
-        degrade to the same safe shape as a non-dict response — never
-        propagate into a raw 500 on upload."""
-        with patch(
-            "routes.documents.call_gemini_json",
-            side_effect=ValueError("Gemini response was not valid JSON"),
-        ):
-            result = _process_document("file.pdf", "text")
-
-        assert result["category"] == "other"
-        assert result["summary"] == ""
-        assert result["concepts"] == []
-        assert result["concept_notes"] == []
-        assert result["assignments"] == []
-        assert result["categories"] == []
-
-
-class TestExtendCourseConceptsLegacyParsing:
-    """#153 defensive-parsing for the OTHER remaining raw call_gemini_json
-    path: the legacy concept-scan fallback must swallow a non-JSON model
-    reply as 'no new concepts', not 500 the scan route (it only runs after
-    the concept_scan agent already failed)."""
-
-    def test_non_json_model_output_returns_empty_list(self):
-        from routes.documents import _extend_course_concepts
-
-        with patch(
-            "routes.documents.call_gemini_json",
-            side_effect=ValueError("Gemini response was not valid JSON"),
-        ):
-            assert _extend_course_concepts(
-                course_label="CS101",
-                existing_concepts=["Recursion"],
-            ) == []
-
-
-class TestUploadDocument:
-    @pytest.fixture(autouse=True)
-    def _force_legacy_pipeline(self):
-        """Route every upload-test through _legacy_upload_pipeline.
-
-        These tests assert against the legacy AI shape (call_gemini_json
-        return value, apply_graph_update calls keyed off concept_notes).
-        Forcing process_document to raise sends the route into its
-        documented fallback, which is exactly the legacy code path the
-        existing mocks were written for.
-        """
-        with patch(
-            "routes.documents.process_document",
-            side_effect=RuntimeError("force legacy fallback for tests"),
-        ):
-            yield
+class TestUploadValidation:
+    """Request validation on /upload/sync — extension/content-type, size cap,
+    and OCR-failure mapping. (The legacy-pipeline upload tests that used to
+    live here died with the pipeline itself in #151b; the agent path's
+    success behavior is TestUploadDocumentOrchestrator below.)"""
     # ── File-type validation ───────────────────────────────────────────────────
 
     def test_rejects_unsupported_extension(self):
@@ -432,19 +323,15 @@ class TestUploadDocument:
         assert MAX_FILE_SIZE == 100 * 1024 * 1024
 
     def test_accepts_pdf_by_extension(self):
-        ai_result = {
-            "category": "lecture_notes",
-            "summary": "Test summary",
-            "key_takeaways": ["point 1"],
-            "flashcards": [{"question": "Q?", "answer": "A"}],
-        }
+        result = _make_orchestrator_result(category="lecture_notes")
         row = {"id": "d1", "file_name": "notes.pdf"}
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("pdf text")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
+            patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
         ):
+            t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
             r = _make_upload(filename="notes.pdf", content_type="application/pdf")
 
@@ -452,19 +339,15 @@ class TestUploadDocument:
         assert r.json()["file_name"] == "notes.pdf"
 
     def test_accepts_docx_by_extension(self):
-        ai_result = {
-            "category": "reading",
-            "summary": "A reading",
-            "key_takeaways": [],
-            "flashcards": [],
-        }
+        result = _make_orchestrator_result(category="reading")
         row = {"id": "d2", "file_name": "chapter.docx"}
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("docx text")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
+            patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
         ):
+            t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
             ct = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             r = _make_upload(filename="chapter.docx", content_type=ct)
@@ -472,285 +355,20 @@ class TestUploadDocument:
         assert r.status_code == 200
 
     def test_accepts_pptx_by_extension(self):
-        ai_result = {
-            "category": "slides",
-            "summary": "Slides summary",
-            "key_takeaways": [],
-            "flashcards": [],
-        }
+        result = _make_orchestrator_result(category="slides")
         row = {"id": "d3", "file_name": "lecture.pptx"}
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("pptx text")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
+            patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
         ):
+            t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
             ct = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             r = _make_upload(filename="lecture.pptx", content_type=ct)
 
         assert r.status_code == 200
-
-    # ── AI classification ─────────────────────────────────────────────────────
-
-    def test_stores_ai_category_summary_takeaways_flashcards(self):
-        ai_result = {
-            "category": "study_guide",
-            "summary": "A comprehensive study guide",
-            "key_takeaways": ["concept A", "concept B"],
-            "flashcards": [{"question": "What is X?", "answer": "X is Y"}],
-        }
-        inserted_row = {"id": "d4", "category": "study_guide", "summary": "A comprehensive study guide"}
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("some text")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.table") as t,
-        ):
-            t.return_value.insert.return_value = [inserted_row]
-            r = _make_upload()
-
-        assert r.status_code == 200
-        assert r.json()["category"] == "study_guide"
-
-    def test_unknown_ai_category_falls_back_to_other(self):
-        ai_result = {
-            "category": "invalid_category_xyz",
-            "summary": "Something",
-            "key_takeaways": [],
-            "flashcards": [],
-        }
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.table") as t,
-        ):
-            t.return_value.insert.return_value = [{"id": "d5", "category": "other"}]
-            r = _make_upload()
-
-        assert r.status_code == 200
-        # The insert call should have received category="other"
-        insert_call = t.return_value.insert.call_args[0][0]
-        assert insert_call["category"] == "other"
-
-    # ── Syllabus auto-extraction ───────────────────────────────────────────────
-
-    def test_syllabus_triggers_assignment_extraction(self):
-        assignments = [{"title": "HW 1", "due_date": "2026-04-01"}]
-        ai_result = {
-            "category": "syllabus",
-            "summary": "Course syllabus",
-            "key_takeaways": [],
-            "flashcards": [],
-            "assignments": assignments,
-        }
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("syllabus text")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.save_assignments_to_db") as mock_save,
-            patch("routes.documents.table") as t,
-        ):
-            t.return_value.insert.return_value = [{"id": "d6"}]
-            r = _make_upload(filename="syllabus.pdf")
-
-        assert r.status_code == 200
-        mock_save.assert_called_once_with("u1", assignments, source="syllabus")
-
-    def test_non_syllabus_skips_assignment_extraction(self):
-        ai_result = {
-            "category": "lecture_notes",
-            "summary": "Lecture notes",
-            "key_takeaways": [],
-            "flashcards": [],
-        }
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("notes text")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.save_assignments_to_db") as mock_save,
-            patch("routes.documents.table") as t,
-        ):
-            t.return_value.insert.return_value = [{"id": "d7"}]
-            r = _make_upload()
-
-        assert r.status_code == 200
-        mock_save.assert_not_called()
-
-    def test_syllabus_populates_graph_concepts(self):
-        ai_result = {
-            "category": "syllabus",
-            "summary": "Course syllabus",
-            "key_takeaways": [],
-            "assignments": [],
-            "concept_notes": [
-                {"name": "Linear Regression", "description": "Fits a line."},
-                {"name": "Big-O Analysis", "description": "Asymptotic growth."},
-            ],
-        }
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("syllabus text")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.save_assignments_to_db"),
-            patch("routes.documents.apply_graph_update") as mock_apply,
-            patch("routes.documents.table") as t,
-        ):
-            t.return_value.insert.return_value = [{"id": "d_concept"}]
-            r = _make_upload(filename="syllabus.pdf", course_id="course-42", user_id="u1")
-
-        assert r.status_code == 200
-        mock_apply.assert_called_once()
-        args, kwargs = mock_apply.call_args
-        assert args[0] == "u1"
-        assert kwargs["course_id"] == "course-42"
-        new_nodes = args[1]["new_nodes"]
-        assert [n["concept_name"] for n in new_nodes] == ["Linear Regression", "Big-O Analysis"]
-        assert all(n["initial_mastery"] == 0.0 for n in new_nodes)
-
-    def test_assignment_populates_graph_concepts(self):
-        ai_result = {
-            "category": "assignment",
-            "summary": "Problem set 3",
-            "key_takeaways": [],
-            "assignments": [],
-            "concept_notes": [
-                {"name": "Gradient Descent", "description": "Iterative minimization."},
-                {"name": "Cross-Entropy Loss", "description": "Classification loss."},
-            ],
-        }
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("pset text")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.save_assignments_to_db") as mock_save,
-            patch("routes.documents.apply_graph_update") as mock_apply,
-            patch("routes.documents.table") as t,
-        ):
-            t.return_value.insert.return_value = [{"id": "d_assign_concept"}]
-            r = _make_upload(filename="pset3.pdf", course_id="course-7", user_id="u1")
-
-        assert r.status_code == 200
-        mock_save.assert_not_called()
-        mock_apply.assert_called_once()
-        args, kwargs = mock_apply.call_args
-        assert args[0] == "u1"
-        assert kwargs["course_id"] == "course-7"
-        assert [n["concept_name"] for n in args[1]["new_nodes"]] == ["Gradient Descent", "Cross-Entropy Loss"]
-
-    def test_non_syllabus_non_assignment_skips_concept_population(self):
-        ai_result = {
-            "category": "lecture_notes",
-            "summary": "Notes",
-            "key_takeaways": [],
-            "concept_notes": [
-                {"name": "Should be ignored", "description": "..."},
-            ],
-        }
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("notes")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.apply_graph_update") as mock_apply,
-            patch("routes.documents.table") as t,
-        ):
-            t.return_value.insert.return_value = [{"id": "d_no_concept"}]
-            r = _make_upload()
-
-        assert r.status_code == 200
-        mock_apply.assert_not_called()
-
-    def test_concept_population_failure_does_not_fail_upload(self):
-        ai_result = {
-            "category": "syllabus",
-            "summary": "Syllabus",
-            "key_takeaways": [],
-            "assignments": [],
-            "concept_notes": [{"name": "Concept A", "description": "Body."}],
-        }
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.save_assignments_to_db"),
-            patch("routes.documents.apply_graph_update", side_effect=RuntimeError("oops")),
-            patch("routes.documents.table") as t,
-        ):
-            t.return_value.insert.return_value = [{"id": "d_concept_fail"}]
-            r = _make_upload(filename="syllabus.pdf")
-
-        assert r.status_code == 200
-
-    def test_syllabus_extraction_failure_does_not_fail_upload(self):
-        """Assignment save errors must be swallowed so the upload succeeds."""
-        ai_result = {
-            "category": "syllabus",
-            "summary": "Syllabus",
-            "key_takeaways": [],
-            "flashcards": [],
-            "assignments": [{"title": "HW 1", "due_date": "2026-04-01"}],
-        }
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.save_assignments_to_db", side_effect=RuntimeError("oops")),
-            patch("routes.documents.table") as t,
-        ):
-            t.return_value.insert.return_value = [{"id": "d8"}]
-            r = _make_upload(filename="syllabus.pdf")
-
-        assert r.status_code == 200
-
-    # ── Row persistence ───────────────────────────────────────────────────────
-
-    def test_persisted_row_contains_user_and_offering(self):
-        """The documents row keys on the OFFERING (0025). The upload form
-        sends the abstract course id, which the route resolves to the
-        current-term offering before persisting."""
-        ai_result = {
-            "category": "other",
-            "summary": "s",
-            "key_takeaways": [],
-            "flashcards": [],
-        }
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.resolve_offering", return_value="off-99") as ro,
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("t")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.table") as t,
-        ):
-            t.return_value.insert.return_value = []
-            _make_upload(course_id="c-99", user_id="user_andres")
-            insert_call = t.return_value.insert.call_args[0][0]
-
-        # The abstract course id was resolved to the offering for the row.
-        ro.assert_called_once_with("c-99", create=True)
-        assert insert_call["user_id"] == "user_andres"
-        assert insert_call["offering_id"] == "off-99"
-        assert "course_id" not in insert_call
-
-    def test_falls_back_to_row_dict_when_insert_returns_empty(self):
-        """If table.insert returns [], the endpoint should return the constructed row dict."""
-        ai_result = {
-            "category": "other",
-            "summary": None,
-            "key_takeaways": None,
-            "flashcards": None,
-        }
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("t")),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
-            patch("routes.documents.table") as t,
-        ):
-            t.return_value.insert.return_value = []
-            r = _make_upload(filename="notes.pdf")
-
-        assert r.status_code == 200
-        assert r.json()["file_name"] == "notes.pdf"
 
     def test_sync_ocr_failure_returns_422_not_500(self):
         """An extractor exception must surface as a clean 4xx with a friendly
@@ -870,6 +488,30 @@ class TestUploadDocumentOrchestrator:
             r = _make_upload()
         assert r.status_code == 200
         assert r.json()["summary"] == "Plain English summary."
+
+    def test_persisted_row_contains_user_and_offering(self):
+        """The documents row keys on the OFFERING (0025). The upload form
+        sends the abstract course id, which the route resolves to the
+        current-term offering before persisting — the row carries
+        offering_id, never course_id."""
+        result = _make_orchestrator_result()
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.resolve_offering", return_value="off-99") as ro,
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("t")),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = []
+            _make_upload(course_id="c-99", user_id="user_andres")
+            insert_call = t.return_value.insert.call_args[0][0]
+
+        # The abstract course id was resolved to the offering for the row.
+        ro.assert_called_once_with("c-99", create=True)
+        assert insert_call["user_id"] == "user_andres"
+        assert insert_call["offering_id"] == "off-99"
+        assert "course_id" not in insert_call
 
     def test_syllabus_grading_categories_pass_through_to_response(self):
         result = _make_orchestrator_result(
@@ -1017,6 +659,45 @@ class TestUploadDocumentOrchestrator:
             r = _make_upload()
         assert r.status_code == 200
         mock_apply.assert_not_called()
+
+
+# ── POST /api/documents/upload/sync — agent-failure → HTTP status (#151b) ───
+
+class TestUploadSyncAgentFailure:
+    """#151b: the agent pipeline is the ONLY upload pipeline — the ADR-0001
+    legacy fallback is gone (ADR 0024). Failures map to a 502 with a
+    retry-friendly detail: nothing was persisted, and the client mints a
+    fresh X-Request-ID per attempt, so retrying re-runs the pipeline."""
+
+    @pytest.mark.parametrize(
+        "exc",
+        [UsageLimitExceeded("token cap"), UnexpectedModelBehavior("degenerate output")],
+    )
+    def test_guardrail_failure_maps_to_502(self, exc):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.process_document", side_effect=exc),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []  # no idempotent replay hit
+            r = _make_upload()
+        assert r.status_code == 502
+        assert "try" in r.json()["detail"].lower()  # retry-friendly copy
+        t.return_value.insert.assert_not_called()  # nothing persisted
+
+    def test_unexpected_failure_maps_to_502(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.process_document", side_effect=RuntimeError("boom")),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            r = _make_upload()
+        assert r.status_code == 502
+        assert "try" in r.json()["detail"].lower()
+        t.return_value.insert.assert_not_called()
 
 
 # ── POST /api/documents/upload — streaming SSE route ────────────────────────
@@ -1292,18 +973,18 @@ class TestUploadDocumentStreaming:
 
     def test_post_result_persistence_failure_is_terminal_not_double_result(self):
         """#132 item 11: a persistence failure AFTER the terminal result event
-        must NOT fall into the legacy fallback.
+        emits the terminal error:failed + status:done pair and never a second
+        result.
 
         Before the fix, the post-roll block (syllabus save, graph backstop,
         document insert) shared the pipeline's try/except, so a failed insert
-        re-ran the whole pipeline via _stream_legacy_fallback: the client saw
-        result → error → result → done, and a second model call was spent on
-        a document that had already been fully processed. Contract: exactly
-        ONE result event, then the same terminal error+done pair
-        _stream_legacy_fallback's own failure tail uses.
+        re-ran the whole pipeline via the (now-deleted, #151b) legacy
+        fallback: the client saw result → error → result → done, and a second
+        model call was spent on a document that had already been fully
+        processed. Contract: exactly ONE result event, then the same terminal
+        error+done tail the pre-result failure branches use.
         """
         cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
-        legacy_spy = AsyncMock(return_value={"id": "legacy-doc"})
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
@@ -1312,7 +993,6 @@ class TestUploadDocumentStreaming:
                 "routes.documents._persist_document",
                 side_effect=RuntimeError("documents insert blew up"),
             ),
-            patch("routes.documents._legacy_upload_pipeline", legacy_spy),
             patch("routes.documents.table") as t,
             patch("routes.documents._spawn_post_roll") as spawn,
         ):
@@ -1327,18 +1007,66 @@ class TestUploadDocumentStreaming:
 
         events = _parse_sse_stream(body)
         types_steps = [(e["event"], json.loads(e["data"])["step"]) for e in events]
-        # Exactly ONE result event — never a second (legacy-fallback) one.
+        # Exactly ONE result event — never a second one.
         assert [ts for ts in types_steps if ts[0] == "result"] == [("result", "finalize")]
-        # Terminal shape mirrors _stream_legacy_fallback's failure tail.
+        # Terminal tail matches the pre-result failure branches.
         assert types_steps[-2:] == [("error", "failed"), ("status", "done")]
-        # The legacy pipeline never ran — no second model call, no re-run.
-        legacy_spy.assert_not_called()
         # Side-effect tasks are never spawned when persistence failed.
         spawn.assert_not_called()
         # The failure event carries the request_id for support.
         failed_data = next(
             json.loads(e["data"]) for e in events
             if e["event"] == "error" and json.loads(e["data"])["step"] == "failed"
+        )
+        assert failed_data.get("data", {}).get("request_id")
+
+
+# ── Streaming /upload — agent failure is terminal (#151b) ───────────────────
+
+class TestUploadStreamingAgentFailure:
+    """#151b: an agent failure mid-stream is TERMINAL — the exact
+    error:failed + status:done tail the deleted legacy fallback emitted on
+    double-failure, with request_id for support. `step="fallback"` left the
+    SSE vocabulary: no fallback event, no second pipeline, no result."""
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            UsageLimitExceeded("token cap"),
+            UnexpectedModelBehavior("degenerate output"),
+            RuntimeError("boom"),
+        ],
+    )
+    def test_agent_failure_emits_terminal_error_done_pair(self, exc):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.classifier_agent.run", AsyncMock(side_effect=exc)),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []  # no idempotency cache hit
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                assert r.status_code == 200
+                body = r.read()
+
+        events = _parse_sse_stream(body)
+        types_steps = [(e["event"], json.loads(e["data"])["step"]) for e in events]
+        # Terminal tail, nothing after it.
+        assert types_steps[-2:] == [("error", "failed"), ("status", "done")]
+        # Never a result — the pipeline failed before one existed.
+        assert all(ts[0] != "result" for ts in types_steps)
+        # The fallback vocabulary is gone from the wire.
+        assert ("error", "fallback") not in types_steps
+        assert ("progress", "fallback_processing") not in types_steps
+        # Nothing was persisted.
+        t.return_value.insert.assert_not_called()
+        # The failure event carries the request_id for support.
+        failed_data = next(
+            json.loads(e["data"]) for e in events if e["event"] == "error"
         )
         assert failed_data.get("data", {}).get("request_id")
 
@@ -1514,22 +1242,16 @@ class TestEmptyExtractionGuard:
             patch("routes.documents.extract_text_from_file", return_value=below),
         ):
             assert _make_upload().status_code == 422
-        ai_result = {
-            "category": "other",
-            "summary": "Boundary-length text.",
-            "key_takeaways": [],
-            "flashcards": [],
-        }
         with (
             _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value="  " + at + "\n"),
             patch(
                 "routes.documents.process_document",
-                side_effect=RuntimeError("force legacy fallback for tests"),
+                return_value=_make_orchestrator_result(category="other"),
             ),
-            patch("routes.documents.extract_text_from_file", return_value="  " + at + "\n"),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
             patch("routes.documents.table") as t,
         ):
+            t.return_value.select.return_value = []
             t.return_value.insert.return_value = [{"id": "d50", "file_name": "notes.pdf"}]
             r = _make_upload()
         assert r.status_code == 200
@@ -1558,21 +1280,18 @@ class TestEmptyExtractionGuard:
 
     def test_never_calls_the_model_when_extraction_is_empty(self):
         """The defect was not the bad copy -- it was spending an LLM call on an
-        empty document and persisting the result. Assert neither the agent
-        pipeline nor the legacy Gemini call is reached, and that nothing is
-        written."""
+        empty document and persisting the result. Assert the agent pipeline
+        is never reached and nothing is written."""
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=""),
             patch("routes.documents.process_document") as agent,
-            patch("routes.documents.call_gemini_json") as gemini,
             patch("routes.documents.table") as t,
         ):
             r = _make_upload()
 
         assert r.status_code == 422
         agent.assert_not_called()
-        gemini.assert_not_called()
         t.return_value.insert.assert_not_called()
 
     def test_accepts_a_document_with_real_text(self):
@@ -1581,22 +1300,17 @@ class TestEmptyExtractionGuard:
             "Practice Final 2 Solutions. Problem 1: compute the eigenvalues of "
             "the matrix A and determine whether A is diagonalizable over R."
         )
-        ai_result = {
-            "category": "assignment",
-            "summary": "Eigenvalue practice problems.",
-            "key_takeaways": [],
-            "flashcards": [],
-        }
         with (
             _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=real_text),
             patch(
                 "routes.documents.process_document",
-                side_effect=RuntimeError("force legacy fallback for tests"),
+                return_value=_make_orchestrator_result(category="assignment"),
             ),
-            patch("routes.documents.extract_text_from_file", return_value=real_text),
-            patch("routes.documents.call_gemini_json", return_value=ai_result),
+            patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
         ):
+            t.return_value.select.return_value = []
             t.return_value.insert.return_value = [{"id": "d9", "file_name": "notes.pdf"}]
             r = _make_upload()
 

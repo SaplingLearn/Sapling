@@ -24,6 +24,7 @@ from agents._providers import clear_function_handlers, model_for
 from agents.chat_tutor import socratic_agent
 from agents.classifier import classifier_agent
 from agents.concept_describe import build_message, concept_describe_agent
+from agents.concept_scan import concept_scan_agent
 from agents.deps import SaplingDeps
 from agents.note_chat import note_chat_agent
 from agents.note_concepts import note_concepts_agent
@@ -371,6 +372,41 @@ def test_concept_describe_handler_passes_real_output_schema(monkeypatch):
 
     assert result.output.description == E2E_CONCEPT_DESCRIPTION
     assert len(E2E_CONCEPT_DESCRIPTION) <= 400
+
+
+# ── Concept scan (#151b) ──────────────────────────────────────────────────
+#
+# routes/documents.py's POST /doc/{id}/scan-concepts and
+# /course/{id}/scan-concepts run concept_scan_agent (tool-less, structured
+# NewConcepts output — names only). Request-path: the route drives the agent
+# via run_agent_sync and performs the graph write itself, so registering it
+# is correct (the concept_describe reasoning). Unregistered, a function-mode
+# scan raised UnregisteredHandlerError — which the route's #151b best-effort
+# degrade would mask as {"concepts": [], "added": 0, ...}, silently hiding
+# real scan coverage from the browser lane.
+
+
+def test_env_module_registers_concept_scan_handler_on_dispatch(monkeypatch):
+    """Full E2E-boot contract for concept_scan: function mode + the env-named
+    module give a real concept_scan_agent run the module's fixed new-concept
+    names — through the REAL structured output tool (NewConcepts caps the
+    list at 15), with no handler registered by the test itself."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    with concept_scan_agent.override(model=model_for("concept_scan")):
+        result = concept_scan_agent.run_sync(
+            'Course: "CS 101"\nConcepts already in the graph:\n- Recursion',
+            deps=_deps(),
+        )
+
+    from agents.function_handlers_e2e import E2E_SCAN_NEW_CONCEPTS
+
+    assert result.output.concepts == E2E_SCAN_NEW_CONCEPTS
+    assert 0 < len(E2E_SCAN_NEW_CONCEPTS) <= 15
+    assert "concept_scan" in providers._FUNCTION_HANDLERS
 
 
 # ── Notetaker agent actions (F5a) ─────────────────────────────────────────
