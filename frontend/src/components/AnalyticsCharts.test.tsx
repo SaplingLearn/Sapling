@@ -14,6 +14,7 @@ import {
   DayLineChart,
   linePoints,
   niceTicks,
+  tooltipLeftPct,
   zeroFillDays,
 } from "./AnalyticsCharts";
 
@@ -72,6 +73,20 @@ describe("linePoints", () => {
     expect(pts[1].x).toBe(100);
     expect(pts[0].y).toBe(50); // value 0 sits on the baseline
     expect(pts[1].y).toBe(0);  // max value sits at the top
+  });
+});
+
+describe("tooltipLeftPct", () => {
+  // The tooltip is an HTML sibling of a scaled SVG (viewBox width ≠ rendered
+  // CSS width when the container is narrow), so its position must be a
+  // PERCENTAGE of the wrapper, never viewBox pixels (PR #479 review).
+  it("maps the hovered x to a wrapper percentage", () => {
+    expect(tooltipLeftPct(264, 36, 600)).toBe(50); // (264+36)/600
+  });
+
+  it("clamps to the 8–92% band so the box never clips the edges", () => {
+    expect(tooltipLeftPct(0, 0, 600)).toBe(8);
+    expect(tooltipLeftPct(600, 36, 600)).toBe(92);
   });
 });
 

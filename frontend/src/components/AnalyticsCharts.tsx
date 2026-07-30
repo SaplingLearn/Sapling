@@ -19,37 +19,11 @@
  */
 
 import React from "react";
+import { type DayPointValue, zeroFillDays } from "@/lib/daySeries";
 
-export interface DayPointValue {
-  date: string; // YYYY-MM-DD (UTC)
-  value: number;
-}
-
-const DAY_MS = 86_400_000;
-const ZERO_FILL_CAP_DAYS = 400;
-
-/** Zero-fill the sparse server series to one point per UTC day across the
- * range. Ranges longer than the cap return the sparse input unchanged (the
- * line still renders; zero-filling years of days helps nobody). */
-export function zeroFillDays(
-  points: DayPointValue[],
-  fromIso: string,
-  toIso: string,
-  capDays: number = ZERO_FILL_CAP_DAYS,
-): DayPointValue[] {
-  const start = Date.parse(fromIso.slice(0, 10) + "T00:00:00.000Z");
-  const end = Date.parse(toIso.slice(0, 10) + "T00:00:00.000Z");
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return points;
-  const days = Math.round((end - start) / DAY_MS) + 1;
-  if (days > capDays) return points;
-  const byDate = new Map(points.map((p) => [p.date, p.value]));
-  const out: DayPointValue[] = [];
-  for (let i = 0; i < days; i++) {
-    const date = new Date(start + i * DAY_MS).toISOString().slice(0, 10);
-    out.push({ date, value: byDate.get(date) ?? 0 });
-  }
-  return out;
-}
+// Re-exported so chart consumers/tests can keep a single import site; the
+// canonical home is lib/daySeries.ts (JSX-free — see its header for why).
+export { zeroFillDays, type DayPointValue };
 
 /** Uniform "nice"-stepped ticks from 0 covering max (used for the y grid). */
 export function niceTicks(max: number, count = 4): number[] {
@@ -61,6 +35,16 @@ export function niceTicks(max: number, count = 4): number[] {
   const ticks: number[] = [];
   for (let v = 0; v < target + step; v += step) ticks.push(Number(v.toFixed(6)));
   return ticks;
+}
+
+/** Tooltip x-position as a PERCENTAGE of the chart wrapper. The tooltip is
+ * an HTML sibling of a scaled SVG (viewBox width ≠ rendered CSS width when
+ * the container is narrower than the measurement floor), so viewBox pixels
+ * would drift; a wrapper percentage tracks the rendered scale exactly.
+ * Clamped to 8–92% so the box never clips the panel edges. */
+export function tooltipLeftPct(x: number, padL: number, width: number): number {
+  const pct = ((x + padL) / Math.max(width, 1)) * 100;
+  return Math.round(Math.min(Math.max(pct, 8), 92) * 100) / 100;
 }
 
 /** Map day points onto plot coordinates; y is inverted (SVG grows downward). */
@@ -179,7 +163,8 @@ export function DayLineChart({
           role="status"
           style={{
             position: "absolute",
-            left: Math.min(Math.max(hovered.x + PAD_L - 40, 0), width - 120),
+            left: `${tooltipLeftPct(hovered.x, PAD_L, width)}%`,
+            transform: "translateX(-50%)",
             top: 0,
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",

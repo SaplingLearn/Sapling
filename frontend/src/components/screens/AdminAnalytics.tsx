@@ -1,11 +1,12 @@
 "use client";
 
 /**
- * Admin analytics screen (#121): typed data layer + raw tables over
+ * Admin analytics dashboard (#121 data layer + #122 charts) over
  * /api/admin/analytics (usage summary, per-user rollup, LLM cost, errors).
  * One date range drives every panel; each panel owns its loading/error/empty
- * state so a single failed query never blanks the page. Charts and visual
- * polish are #122 — this screen deliberately renders plain numbers/tables.
+ * state so a single failed query never blanks the page. Charts render from
+ * the ?bucket=day series via the lazy-loaded AnalyticsCharts primitives,
+ * with the #121 raw tables kept as per-panel "View data" fallbacks.
  */
 
 import React from "react";
@@ -13,10 +14,13 @@ import dynamic from "next/dynamic";
 import { TopBar } from "../TopBar";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
-import { zeroFillDays, type DayPointValue } from "../AnalyticsCharts";
+import { zeroFillDays } from "@/lib/daySeries";
 
-// Chart components load lazily (the #122 bundle-discipline checkbox); the
-// pure helpers above are a few hundred bytes and import statically.
+// Chart components load lazily (the #122 bundle-discipline checkbox). The
+// pure helper imports statically from lib/daySeries — its own JSX-free
+// module, so no synchronous edge pulls AnalyticsCharts into the main chunk
+// (a static import from the SAME module would defeat dynamic(); PR #479
+// review).
 const DayLineChart = dynamic(() => import("../AnalyticsCharts").then((m) => m.DayLineChart), {
   ssr: false,
   loading: () => null,
