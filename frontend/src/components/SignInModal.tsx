@@ -158,13 +158,17 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       const data = event.data as {
         type?: string; success?: boolean; error?: string;
         userId?: string; name?: string; avatar?: string;
-        onboardingCompleted?: boolean;
+        onboardingCompleted?: boolean; profileConfirmed?: boolean;
       } | null;
       if (!data || data.type !== "sapling_signin") return;
       cleanupPopupListeners();
       setWaiting(false);
       if (data.success && data.userId) {
-        setActiveUser(data.userId, data.name || "", data.avatar || "");
+        // #191: the callback tells us whether /me confirmed the identity;
+        // absent field (older payload) keeps the persisting behavior.
+        setActiveUser(data.userId, data.name || "", data.avatar || "", {
+          persist: data.profileConfirmed !== false,
+        });
         confirmApproved();
         if (data.onboardingCompleted) {
           router.replace("/dashboard");

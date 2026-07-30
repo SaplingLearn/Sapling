@@ -19,10 +19,12 @@ export const FRONTEND_ENVS = {
   production: {
     apiUrl: 'https://api.saplinglearn.com',
     cookieDomain: '.saplinglearn.com',
+    siteUrl: 'https://saplinglearn.com',
   },
   staging: {
     apiUrl: 'https://api.staging.saplinglearn.com',
     cookieDomain: '.staging.saplinglearn.com',
+    siteUrl: 'https://staging.saplinglearn.com',
   },
 } as const;
 
@@ -82,6 +84,22 @@ export function resolveFrontendEnv(env: EnvSource): ResolvedFrontendEnv {
     cookieDomain: (env.COOKIE_DOMAIN ?? '').trim() || undefined,
     derived: false,
   };
+}
+
+/**
+ * The canonical public origin for metadata (metadataBase, sitemap, robots).
+ * `DEPLOY_ENV` drives it like every other environment value; a local/preview
+ * build can override with `NEXT_PUBLIC_SITE_URL`. Defaults to production so
+ * crawlers scraping an unconfigured build never index a non-canonical host.
+ */
+export function resolveSiteUrl(env: EnvSource): string {
+  const explicit = (env.NEXT_PUBLIC_SITE_URL ?? '').trim();
+  if (explicit) return explicit.replace(/\/+$/, '');
+  const deployEnv = (env.DEPLOY_ENV ?? '').trim().toLowerCase();
+  if (deployEnv && deployEnv in FRONTEND_ENVS) {
+    return FRONTEND_ENVS[deployEnv as FrontendEnv].siteUrl;
+  }
+  return FRONTEND_ENVS.production.siteUrl;
 }
 
 /**
