@@ -141,6 +141,49 @@ def test_explicit_registration_wins_over_env_module(monkeypatch):
     assert result.output == "explicit wins"
 
 
+def test_start_session_json_route_serves_tutor_handler_in_function_mode(monkeypatch):
+    """#151a: the JSON /start-session route now runs chat_tutor_agent (task
+    "chat_tutor") — so in function mode the SAME env-registered chat_tutor
+    handler covers the session opener by task dispatch, with no new handler
+    registration. Route-level: the greeting the route returns IS
+    E2E_TUTOR_REPLY (the constant frontend/e2e/tutor.spec.ts asserts), and
+    the lazy PENDING_SESSIONS contract holds. /action dispatches the same
+    task, so this one route-level proof covers the whole by-task claim."""
+    from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from main import app
+    from routes.learn import PENDING_SESSIONS
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    PENDING_SESSIONS.clear()
+    client = TestClient(app)
+    try:
+        with (
+            socratic_agent.override(model=model_for("chat_tutor")),
+            patch("routes.learn._get_course_id_for_topic", return_value=""),
+            patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
+        ):
+            r = client.post("/api/learn/start-session", json={
+                "user_id": "e2e-user", "topic": "Recursion", "mode": "socratic",
+            })
+
+        from agents.function_handlers_e2e import E2E_TUTOR_REPLY
+
+        assert r.status_code == 200
+        data = r.json()
+        assert data["initial_message"] == E2E_TUTOR_REPLY
+        assert data["session_id"] in PENDING_SESSIONS
+        assert PENDING_SESSIONS[data["session_id"]]["assistant_reply"] == E2E_TUTOR_REPLY
+    finally:
+        PENDING_SESSIONS.clear()
+
+
 # ── routes.learn model_pref override respects the mode ────────────────────
 
 

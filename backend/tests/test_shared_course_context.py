@@ -2,7 +2,16 @@
 Unit tests for the shared course context system.
 
 Tests: course_context_service (incl. course_summary agent), graph_service
-       (apply_graph_update side-effects), learn.py (build_system_prompt).
+       (apply_graph_update side-effects), learn.py topic/offering helpers.
+
+(The legacy build_system_prompt tests were deleted with the template
+pipeline in #151a. Their surviving contracts moved to the agent side:
+academic integrity + injection guard per mode in
+test_prompt_injection.py::TestAgentPromptHardening, peer-aggregate text
+wrapped as untrusted in
+test_prompt_injection.py::test_read_misconceptions_tool_neutralizes_peer_text,
+and the use_shared_context opt-out constraint in
+test_learn_routes.py::test_use_shared_context_false_appends_constraint.)
 
 Run from backend/:
     python -m pytest tests/test_shared_course_context.py -v
@@ -522,7 +531,7 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. learn.py — build_system_prompt
+# 4. learn.py — topic/offering resolution helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestLearnHelpers(unittest.TestCase):
@@ -596,66 +605,6 @@ class TestLearnHelpers(unittest.TestCase):
         from routes.learn import _get_session_offering_id
         result = _get_session_offering_id("session-missing")
         self.assertEqual(result, "")
-
-    @patch("services.course_context_service.get_course_context", return_value={})
-    def test_build_system_prompt_no_course_id(self, mock_ctx):
-        from routes.learn import build_system_prompt
-        prompt = build_system_prompt("socratic", "Alice", "{}")
-        self.assertNotIn("COURSE INTELLIGENCE", prompt)
-        mock_ctx.assert_not_called()
-
-    def test_build_system_prompt_carries_academic_integrity_rule(self):
-        """The no-answers integrity rule must be present in every tutor
-        prompt regardless of mode or course context."""
-        from routes.learn import build_system_prompt
-        prompt = build_system_prompt("expository", "Alice", "{}")
-        self.assertIn("ACADEMIC INTEGRITY", prompt)
-        self.assertIn("never to do their graded work for them", prompt)
-
-    @patch("routes.learn.table")
-    @patch("services.course_context_service.get_course_context", return_value={})
-    def test_build_system_prompt_course_id_but_empty_ctx(self, mock_ctx, mock_table):
-        mock_table.return_value.select.return_value = []
-        from routes.learn import build_system_prompt
-        prompt = build_system_prompt("socratic", "Alice", "{}", course_id="course-1")
-        self.assertNotIn("COURSE INTELLIGENCE", prompt)
-        mock_ctx.assert_called_once_with("course-1")
-
-    @patch("routes.learn.table")
-    @patch("services.course_context_service.get_course_context")
-    def test_build_system_prompt_injects_shared_block(self, mock_ctx, mock_table):
-        mock_ctx.return_value = {
-            "course_summary": {"avg_class_mastery": 0.6, "top_struggling_concepts": ["Pointers"]},
-            "concept_stats": [],
-        }
-        mock_table.return_value.select.return_value = [
-            {"course_code": "CS101", "course_name": "Intro CS"}
-        ]
-
-        from routes.learn import build_system_prompt
-        prompt = build_system_prompt("socratic", "Alice", "{}", course_id="course-1")
-        self.assertIn("COURSE INTELLIGENCE", prompt)
-        self.assertIn("CS101", prompt)
-        mock_ctx.assert_called_once_with("course-1")
-
-    @patch("routes.learn.table")
-    @patch("services.course_context_service.get_course_context")
-    def test_build_system_prompt_mode_appended_after_shared_block(self, mock_ctx, mock_table):
-        """Mode prompt must always be the last section."""
-        mock_ctx.return_value = {
-            "course_summary": {"avg_class_mastery": 0.5, "top_struggling_concepts": []},
-            "concept_stats": [],
-        }
-        mock_table.return_value.select.return_value = [
-            {"course_code": "CS101", "course_name": "Intro CS"}
-        ]
-
-        from routes.learn import build_system_prompt, MODE_PROMPTS
-        prompt = build_system_prompt("expository", "Bob", "{}", course_id="course-1")
-        expository_text = MODE_PROMPTS["expository"]
-        ctx_pos = prompt.find("COURSE INTELLIGENCE")
-        mode_pos = prompt.find(expository_text[:40])
-        self.assertGreater(mode_pos, ctx_pos)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

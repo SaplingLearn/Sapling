@@ -110,11 +110,11 @@ def make_deps():
     )
 
 
-async def collect(agent, deps, on_complete, legacy_fallback=None, on_usage=None):
+async def collect(agent, deps, on_complete, nonstream_fallback=None, on_usage=None):
     events = []
     async for ev in stream_agent_turn(
         agent=agent, user_message="hi", run_kwargs={}, deps=deps,
-        on_complete=on_complete, legacy_fallback=legacy_fallback,
+        on_complete=on_complete, nonstream_fallback=nonstream_fallback,
         on_usage=on_usage, request_id="r1",
     ):
         events.append(ev)
@@ -262,24 +262,68 @@ def test_graph_update_emitted_once_per_new_write():
 
 # ── failure rungs ─────────────────────────────────────────────────────────
 
-def test_rung1_failure_before_any_token_uses_legacy_and_skips_on_complete():
+def test_rung1_failure_before_any_token_uses_nonstream_fallback_and_skips_on_complete():
     async def run():
         agent = FakeAgent([PartStartEvent("x")], raise_after=0)
         on_complete_calls = []
 
-        async def fake_legacy():
-            # async because the real routes' legacy paths are (_legacy_chat)
-            return {"reply": "legacy reply", "graph_update": {}, "mastery_changes": []}
+        async def fake_fallback():
+            # async because the routes' nonstream turns are (_chat_turn_json)
+            return {"reply": "fallback reply", "graph_update": {}, "mastery_changes": []}
 
         events = await collect(
             agent, make_deps(),
             on_complete=lambda r, g, m: on_complete_calls.append(r),
-            legacy_fallback=fake_legacy,
+            nonstream_fallback=fake_fallback,
         )
         assert [e.type for e in events] == ["status", "token", "done"]
-        assert events[1].data["delta"] == "legacy reply"
-        assert events[-1].data["reply"] == "legacy reply"
-        assert on_complete_calls == [], "legacy owns persistence — on_complete must NOT run"
+        assert events[1].data["delta"] == "fallback reply"
+        assert events[-1].data["reply"] == "fallback reply"
+        assert on_complete_calls == [], "the fallback owns persistence — on_complete must NOT run"
+
+    asyncio.run(run())
+
+
+def test_rung1_failure_with_writes_is_terminal_error_and_skips_fallback():
+    """#470 generalized to EVERY fallback entry: an agent that WROTE (graph
+    upsert / append-only mastery event) and then failed before any text must
+    NOT hand the turn to the nonstream fallback — the fallback re-runs the
+    whole turn and its tools would apply the writes AGAIN. Terminal error
+    instead, marked retryable: False so the client skips its own JSON-rung
+    too (§2d: a client retry re-runs the same double-apply)."""
+    async def run():
+        deps = make_deps()
+
+        def write():
+            deps.mastery_changes.append({"concept": "Slope", "before": 0.2, "after": 0.4})
+
+        agent = FakeAgent([
+            FunctionToolCallEvent("update_mastery_tool"),
+            FunctionToolResultEvent(on_fire=write),
+            PartStartEvent("never reached"),
+        ], raise_after=2)
+        on_complete_calls = []
+        fallback_calls = []
+
+        async def fake_fallback():
+            fallback_calls.append(1)
+            return {"reply": "nope"}
+
+        events = await collect(
+            agent, deps,
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+            nonstream_fallback=fake_fallback,
+        )
+        assert events[-1].type == "error"
+        assert events[-1].data["request_id"] == "r1"
+        assert events[-1].data["retryable"] is False
+        assert fallback_calls == [], (
+            "a fallback after real tool writes would double-apply mastery"
+        )
+        assert on_complete_calls == []
+        assert all(e.type != "done" for e in events)
+        # The write the tool made stays — it was a real action.
+        assert deps.mastery_changes
 
     asyncio.run(run())
 
@@ -288,21 +332,46 @@ def test_rung2_failure_after_tokens_errors_and_persists_nothing():
     async def run():
         agent = FakeAgent([PartStartEvent("Half a th"), PartDeltaEvent("ought")], raise_after=1)
         on_complete_calls = []
-        legacy_calls = []
+        fallback_calls = []
 
-        async def fake_legacy():
-            legacy_calls.append(1)
+        async def fake_fallback():
+            fallback_calls.append(1)
             return {"reply": "nope"}
 
         events = await collect(
             agent, make_deps(),
             on_complete=lambda r, g, m: on_complete_calls.append(r),
-            legacy_fallback=fake_legacy,
+            nonstream_fallback=fake_fallback,
         )
         assert events[-1].type == "error"
         assert events[-1].data["request_id"] == "r1"
+        assert events[-1].data["retryable"] is True, (
+            "no writes landed — the client may retry the turn"
+        )
         assert on_complete_calls == [], "nothing may persist after a mid-stream failure"
-        assert legacy_calls == [], "never silently re-run once text was shown"
+        assert fallback_calls == [], "never silently re-run once text was shown"
+
+    asyncio.run(run())
+
+
+def test_rung2_failure_after_writes_marks_error_not_retryable():
+    """Rung 2 with writes: the error event must carry retryable: False —
+    a retry would re-run the turn and re-apply the landed writes."""
+    async def run():
+        deps = make_deps()
+
+        def write():
+            deps.graph_updates.append({"new_nodes": [{"name": "Slope"}]})
+
+        agent = FakeAgent([
+            FunctionToolCallEvent("apply_graph_update_tool"),
+            FunctionToolResultEvent(on_fire=write),
+            PartStartEvent("Half a th"),
+            PartDeltaEvent("ought"),
+        ], raise_after=3)
+        events = await collect(agent, deps, on_complete=lambda r, g, m: {})
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is False
 
     asyncio.run(run())
 
@@ -334,24 +403,25 @@ def test_on_complete_raising_yields_error_not_unhandled_exception():
         agent = FakeAgent(
             [PartStartEvent("hi"), AgentRunResultEvent("hi")]
         )
-        legacy_calls = []
+        fallback_calls = []
 
         def failing_persist(reply, graph_update, mastery_changes):
             raise RuntimeError("db write failed")
 
-        async def fake_legacy():
-            legacy_calls.append(1)
+        async def fake_fallback():
+            fallback_calls.append(1)
             return {"reply": "nope"}
 
         events = await collect(
             agent, make_deps(),
             on_complete=failing_persist,
-            legacy_fallback=fake_legacy,
+            nonstream_fallback=fake_fallback,
         )
         assert events[-1].type == "error"
         assert events[-1].data["request_id"] == "r1"
+        assert events[-1].data["retryable"] is True, "no writes landed — retry is safe"
         assert all(e.type != "done" for e in events), "no done after failed persistence"
-        assert legacy_calls == [], "reply already streamed — never re-run legacy"
+        assert fallback_calls == [], "reply already streamed — never re-run the fallback"
 
     asyncio.run(run())
 
@@ -389,11 +459,12 @@ def test_blank_final_output_falls_back_to_streamed_chunks():
 
 
 def test_blank_reply_after_tool_call_with_writes_is_terminal_error():
-    """Tool call (which WROTE mastery) then only whitespace text: the legacy
-    fallback must NOT run — it would re-run the turn and apply_graph_update
-    AGAIN, double-counting one student turn in the append-only mastery
-    ledger (PR #470 review). Terminal error instead: the tool writes stay,
-    nothing persists to the transcript, the client offers Retry."""
+    """Tool call (which WROTE mastery) then only whitespace text: the
+    nonstream fallback must NOT run — it would re-run the turn and its tools
+    would apply the writes AGAIN, double-counting one student turn in the
+    append-only mastery ledger (PR #470 review). Terminal error instead: the
+    tool writes stay, nothing persists to the transcript, the client offers
+    Retry."""
     async def run():
         deps = make_deps()
 
@@ -410,17 +481,20 @@ def test_blank_reply_after_tool_call_with_writes_is_terminal_error():
         usage_calls = []
         fallback_calls = []
 
-        async def fake_legacy():
+        async def fake_fallback():
             fallback_calls.append(1)
-            return {"reply": "legacy reply", "graph_update": {}, "mastery_changes": []}
+            return {"reply": "fallback reply", "graph_update": {}, "mastery_changes": []}
 
         events = await collect(
             agent, deps,
             on_complete=lambda r, g, m: on_complete_calls.append(r),
-            legacy_fallback=fake_legacy,
+            nonstream_fallback=fake_fallback,
             on_usage=lambda res: usage_calls.append(res),
         )
         assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is False, (
+            "writes landed — the client must not re-run this turn either"
+        )
         assert fallback_calls == [], (
             "a fallback after real tool writes would double-apply mastery"
         )
@@ -436,10 +510,10 @@ def test_blank_reply_after_tool_call_with_writes_is_terminal_error():
     asyncio.run(run())
 
 
-def test_blank_reply_with_no_writes_still_takes_legacy_fallback():
+def test_blank_reply_with_no_writes_still_takes_nonstream_fallback():
     """The no-writes twin: a blank turn whose tools wrote NOTHING degrades to
-    the legacy fallback exactly as before — re-running is safe when there is
-    nothing to double-apply."""
+    the nonstream fallback exactly as before — re-running is safe when there
+    is nothing to double-apply."""
     async def run():
         deps = make_deps()
         agent = FakeAgent([
@@ -448,16 +522,16 @@ def test_blank_reply_with_no_writes_still_takes_legacy_fallback():
         ])
         on_complete_calls = []
 
-        async def fake_legacy():
-            return {"reply": "legacy reply", "graph_update": {}, "mastery_changes": []}
+        async def fake_fallback():
+            return {"reply": "fallback reply", "graph_update": {}, "mastery_changes": []}
 
         events = await collect(
             agent, deps,
             on_complete=lambda r, g, m: on_complete_calls.append(r),
-            legacy_fallback=fake_legacy,
+            nonstream_fallback=fake_fallback,
         )
         assert events[-1].type == "done"
-        assert events[-1].data["reply"] == "legacy reply"
+        assert events[-1].data["reply"] == "fallback reply"
         assert on_complete_calls == []
 
     asyncio.run(run())
@@ -478,6 +552,7 @@ def test_blank_reply_without_fallback_errors_and_persists_nothing():
         )
         assert events[-1].type == "error"
         assert events[-1].data["request_id"] == "r1"
+        assert events[-1].data["retryable"] is True, "no writes landed — retry is safe"
         assert all(e.type != "done" for e in events)
         assert on_complete_calls == [], "an empty assistant row must never persist"
 
@@ -485,21 +560,22 @@ def test_blank_reply_without_fallback_errors_and_persists_nothing():
 
 
 def test_blank_reply_fallback_failure_is_terminal_error():
-    """Blank agent turn + a legacy fallback that itself raises → structured
+    """Blank agent turn + a nonstream fallback that itself raises → structured
     error, nothing persisted (mirrors the Rung-1 fallback-failure contract)."""
     async def run():
         agent = FakeAgent([PartStartEvent("\n"), AgentRunResultEvent("\n")])
         on_complete_calls = []
 
-        async def bad_legacy():
-            raise RuntimeError("legacy also down")
+        async def bad_fallback():
+            raise RuntimeError("fallback also down")
 
         events = await collect(
             agent, make_deps(),
             on_complete=lambda r, g, m: on_complete_calls.append(r),
-            legacy_fallback=bad_legacy,
+            nonstream_fallback=bad_fallback,
         )
         assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is True, "no writes landed — retry is safe"
         assert all(e.type != "done" for e in events)
         assert on_complete_calls == []
 
@@ -551,24 +627,25 @@ def test_on_usage_failure_never_breaks_the_stream():
     asyncio.run(run())
 
 
-def test_on_usage_not_called_on_error_rungs_or_legacy_fallback():
-    """No result event was seen on Rung 1/2, and the legacy fallback's usage
-    is captured inside call_gemini_multiturn — the hook must stay silent."""
+def test_on_usage_not_called_on_error_rungs_or_nonstream_fallback():
+    """No result event was seen on Rung 1/2, and the nonstream fallback
+    captures its own usage (record_agent_usage inside the route's JSON turn)
+    — the hook must stay silent."""
     async def run():
         usage_calls = []
 
-        async def fake_legacy():
-            return {"reply": "legacy"}
+        async def fake_fallback():
+            return {"reply": "fallback"}
 
-        # Rung 1: failure before any token → legacy fallback.
+        # Rung 1: failure before any token → nonstream fallback.
         events = await collect(
             FakeAgent([AgentRunResultEvent("x")], raise_after=0),
             make_deps(), lambda r, g, m: {},
-            legacy_fallback=fake_legacy,
+            nonstream_fallback=fake_fallback,
             on_usage=lambda res: usage_calls.append(res),
         )
-        assert events[-1].type == "done" and events[-1].data["reply"] == "legacy"
-        assert usage_calls == [], "legacy fallback must not trigger on_usage"
+        assert events[-1].type == "done" and events[-1].data["reply"] == "fallback"
+        assert usage_calls == [], "the nonstream fallback must not trigger on_usage"
 
         # Rung 2: failure after tokens streamed → terminal error.
         events = await collect(
@@ -581,3 +658,50 @@ def test_on_usage_not_called_on_error_rungs_or_legacy_fallback():
 
     asyncio.run(run())
 
+
+
+def test_fallback_that_wrote_then_failed_marks_error_not_retryable():
+    """PR #472 review: the writes-guard protects ENTRY to the fallback, but
+    the fallback is itself a tool-calling agent run — if ITS tools wrote and
+    it then failed, the terminal error must carry retryable: False so the
+    client cannot re-run the turn a third time and re-apply the writes. The
+    route helpers stamp `sapling_wrote` on the raised exception."""
+    async def run():
+        deps = make_deps()
+        agent = FakeAgent([PartStartEvent("x")], raise_after=0)
+
+        async def fallback_that_wrote_then_failed():
+            exc = RuntimeError("fallback blank after tool write")
+            exc.sapling_wrote = True
+            raise exc
+
+        events = await collect(
+            agent, deps,
+            on_complete=lambda r, g, m: (_ for _ in ()).throw(AssertionError("persisted")),
+            nonstream_fallback=fallback_that_wrote_then_failed,
+        )
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is False
+
+    asyncio.run(run())
+
+
+def test_fallback_failure_without_writes_stays_retryable():
+    """The no-writes twin: a fallback that failed before any tool write
+    keeps retryable: True — the client's JSON retry is safe and wanted."""
+    async def run():
+        deps = make_deps()
+        agent = FakeAgent([PartStartEvent("x")], raise_after=0)
+
+        async def clean_failure():
+            raise RuntimeError("network blip")
+
+        events = await collect(
+            agent, deps,
+            on_complete=lambda r, g, m: None,
+            nonstream_fallback=clean_failure,
+        )
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is True
+
+    asyncio.run(run())

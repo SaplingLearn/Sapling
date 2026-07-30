@@ -632,7 +632,6 @@ def test_chat_json_emits_message_sent_with_fingerprint(sink):
     with (
         patch("routes.learn.table", side_effect=_learn_table_factory()),
         patch("routes.learn.agent_for_mode", return_value=agent),
-        patch("routes.learn.apply_graph_update"),
     ):
         r = client.post("/api/learn/chat", json={
             "session_id": "s1",
@@ -889,43 +888,50 @@ def test_unhandled_exception_emits_exactly_one_error_5xx(sink):
     assert ev["request_id"]
 
 
-def test_legacy_chat_fallback_still_emits_chat_message_sent(sink):
-    """PR #465 review (F1): a turn served by _legacy_chat (agent guardrails
-    tripped / unexpected agent failure) is a fully persisted turn and must
-    count — both routes' fallback branches exit before the main-path
-    emissions, so the emission inside _legacy_chat is the only shot (and is
-    exactly-once: the main path never runs _legacy_chat on success)."""
+def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
+    """PR #465 review (F1), reworked for #151a: a streamed turn served by the
+    Rung-1 nonstream fallback (`_chat_turn_json`) is a fully persisted turn
+    and must count exactly once — the emission lives INSIDE _chat_turn_json
+    (the single JSON-turn emission site), and stream_agent_turn's
+    mutual-exclusion contract guarantees the on_complete hook (the streamed
+    route's own emission site) never also runs on that branch."""
     import routes.learn as learn_routes
 
+    async def fake_stream(**kwargs):
+        from services.agent_events import SaplingEvent
+        # Rung 1: the streamed agent failed before any token, no writes —
+        # real stream_agent_turn invokes ONLY nonstream_fallback here.
+        fallback_result = await kwargs["nonstream_fallback"]()
+        yield SaplingEvent(type="done", step="reply", message="Complete.",
+                           data=fallback_result)
+
+    fallback_agent = MagicMock()
+    fallback_agent.run = AsyncMock(
+        return_value=SimpleNamespace(output="a fallback reply")
+    )
+
     with (
-        patch.object(learn_routes, "_chat_via_agent", side_effect=RuntimeError("agent down")),
+        patch.object(learn_routes, "stream_agent_turn", fake_stream),
         patch.object(learn_routes, "_consume_pending"),
-        patch.object(learn_routes, "_get_session_offering_id", return_value="off-1"),
-        patch.object(learn_routes, "offering_course_id", return_value="course-1"),
-        patch.object(learn_routes, "_load_message_history", return_value=[]),
+        patch.object(learn_routes, "table", side_effect=_learn_table_factory()),
+        patch.object(learn_routes, "agent_for_mode", return_value=fallback_agent),
         patch.object(learn_routes, "save_message"),
-        patch.object(learn_routes, "get_user_name", return_value="Student"),
-        patch.object(learn_routes, "get_graph", return_value={"nodes": [], "edges": []}),
-        patch.object(learn_routes, "get_conversation_history", return_value=[{}]),
-        patch.object(learn_routes, "_get_course_documents", return_value=[]),
-        patch.object(learn_routes, "resolve_offering", return_value="off-1"),
-        patch.object(learn_routes, "call_gemini_multiturn", return_value="a legacy reply"),
-        patch.object(learn_routes, "extract_graph_update", return_value=("a legacy reply", {})),
-        patch.object(learn_routes, "apply_graph_update", return_value=[]),
     ):
         client = TestClient(app)
-        r = client.post("/api/learn/chat", json={
-            "session_id": "sess-legacy",
+        r = client.post("/api/learn/chat/stream", json={
+            "session_id": "sess-fallback",
             "user_id": "user_andres",
             "message": "SECRET fallback message",
             "mode": "socratic",
         })
     assert r.status_code == 200
+    assert "a fallback reply" in r.text
 
     events = _of_type(sink, "chat.message_sent")
     assert len(events) == 1
     ev = events[0]
-    assert ev["payload"]["session_id"] == "sess-legacy"
+    assert ev["payload"]["session_id"] == "sess-fallback"
+    assert ev["request_id"] == r.headers["X-Request-ID"]
     assert ev["content_fp"]
     assert "SECRET fallback message" not in str(ev)
 

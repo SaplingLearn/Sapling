@@ -1,21 +1,13 @@
 """Compact, course-scoped knowledge-graph context for tutor prompts (#149).
 
-Two callers, one serialization:
-
-  - `build_graph_context_block(user_id, course_id, message)` — the agent
-    path's deterministic seed block. Selects up to `max_concepts` of the
-    student's course concepts (message token-overlap first, weakest-mastery
-    fill after), plus the depth-1 edges among the selected, and renders the
-    compact GRAPH CONTEXT block `routes.learn._prepare_chat_run` prefixes
-    onto the user message. Returns "" when there is no course or no
-    concepts — the block is simply omitted.
-
-  - `compact_graph_context(graph, course_id)` — the legacy-prompt
-    de-dump. Takes an already-built `graph_service.get_graph` payload and
-    renders the SAME compact serialization, course-scoped, replacing the
-    old `json.dumps(get_graph(user_id), indent=2)` (which leaked every
-    OTHER course's concepts into the prompt and burned tokens on ids and
-    event history).
+`build_graph_context_block(user_id, course_id, message)` — the tutor's
+deterministic seed block. Selects up to `max_concepts` of the student's
+course concepts (message token-overlap first, weakest-mastery fill after),
+plus the depth-1 edges among the selected, and renders the compact GRAPH
+CONTEXT block `routes.learn._prepare_chat_run` prefixes onto the user
+message. Returns "" when there is no course or no concepts — the block is
+simply omitted. (`compact_graph_context`, the legacy-prompt de-dump twin,
+was deleted with the legacy pipeline in #151a.)
 
 Serialization: one line per concept —
 
@@ -199,36 +191,3 @@ def build_graph_context_block(
             course_id,
         )
         return ""
-
-
-def compact_graph_context(
-    graph: dict,
-    course_id: str | None,
-    *,
-    max_concepts: int = 12,
-) -> str:
-    """Legacy-prompt serializer (#149 decision 3): compact course-scoped
-    subgraph text from an already-built `get_graph` payload.
-
-    Filters out other courses' nodes (the old `json.dumps(get_graph(...))`
-    was user-wide) and the synthesized subject-root hubs. No message in
-    scope on the legacy path, so selection is weakest-mastery-first —
-    the concepts the tutor most needs to see. Renders via the same
-    serializer as the agent seed block, same character budget.
-    """
-    if not course_id:
-        return ""
-    nodes = [
-        n
-        for n in (graph or {}).get("nodes", [])
-        if n.get("course_id") == course_id
-        and not n.get("is_subject_root")
-        and n.get("mastery_tier") != "subject_root"
-    ]
-    if not nodes:
-        return ""
-    edge_rows = (graph or {}).get("edges", [])
-    # get_graph edges use source/target keys; subject edges reference the
-    # synthetic subject_root ids, which never appear in `nodes` and are
-    # therefore dropped by the both-endpoints-selected rule.
-    return graph_context_from_rows(nodes, edge_rows, message="", max_concepts=max_concepts)

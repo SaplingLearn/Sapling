@@ -1,8 +1,8 @@
 """Rung 1 of the streaming fallback ladder against the REAL provider (#356 item 3).
 
 The hermetic suite pins the ladder's mechanics with scripted agents
-(test_chat_stream.py: legacy owns persistence, on_complete never runs on the
-fallback branch; test_learn_stream_routes.py: the route wiring). What it
+(test_chat_stream.py: the fallback owns persistence, on_complete never runs on
+the fallback branch; test_learn_stream_routes.py: the route wiring). What it
 structurally cannot prove is the two provider-shaped facts Rung 1 depends on:
 
   1. a real pre-token agent failure (here: a nonexistent model name, which the
@@ -10,16 +10,17 @@ structurally cannot prove is the two provider-shaped facts Rung 1 depends on:
      `stream_agent_turn` catches — across whatever exception wrapping the
      INSTALLED pydantic-ai does (the 1.x → 2.x drift in exactly this seam broke
      every main e2e run once, #459);
-  2. the legacy `call_gemini_multiturn` path can then serve the turn live, and
-     the client-visible shape is a SINGLE token event carrying the whole legacy
-     reply followed by `done` — "the legacy reply arrives as one message".
+  2. the nonstream fallback — since #151a a plain `Agent.run()` on the fast
+     tier (D2), the same shape `_chat_turn_json`/`_start_session_agent` run —
+     can then serve the turn live, and the client-visible shape is a SINGLE
+     token event carrying the whole fallback reply followed by `done` — "the
+     fallback reply arrives as one message".
 
-This cannot run in the browser E2E lane: the legacy seam (gemini_service) has
-no function-mode gate by design — it is fallback-only and scheduled for
-deletion in #151 — so the lane's dummy key would make the fallback itself fail.
-A live test is the honest vehicle. Costs one real Gemini call. Skipped unless
-RUN_LIVE_STREAM_RUNGS=1 and a real key is set (same opt-in posture as
-test_vision_ocr_live.py).
+Both rungs now ride the same Pydantic AI provider stack (the gemini_service
+seam is gone from learn.py), so what this lane really exercises is the live
+Google provider erroring on one model while serving another within one
+process. Costs one real Gemini call. Skipped unless RUN_LIVE_STREAM_RUNGS=1
+and a real key is set (same opt-in posture as test_vision_ocr_live.py).
 """
 from __future__ import annotations
 
@@ -41,14 +42,13 @@ def _requires_live_rungs():
         pytest.skip("needs a real GEMINI_API_KEY — this test makes live model calls")
 
 
-def test_rung1_real_agent_failure_degrades_to_live_legacy_reply(monkeypatch):
+def test_rung1_real_agent_failure_degrades_to_live_fast_tier_agent(monkeypatch):
     _requires_live_rungs()
 
     from pydantic_ai import Agent
 
-    from agents._providers import model_for
+    from agents._providers import google_model, model_for
     from services.chat_stream import stream_agent_turn
-    from services.gemini_service import MODEL_LITE, call_gemini_multiturn
 
     # A model name the API cannot serve → the agent fails before any token.
     monkeypatch.setenv("SAPLING_MODEL_CHAT_TUTOR", "gemini-model-that-does-not-exist")
@@ -62,16 +62,17 @@ def test_rung1_real_agent_failure_degrades_to_live_legacy_reply(monkeypatch):
         persisted.append(reply)
         return {}
 
-    async def legacy():
-        reply = await asyncio.to_thread(
-            call_gemini_multiturn,
-            "You are a terse test assistant. Answer in one short sentence.",
-            [],
-            "Reply with the single word: pineapple",
-            model=MODEL_LITE,
-            feature="test_live_rung1",
+    async def fallback():
+        # The D2 shape: a GOOD fast-tier model via a plain Agent.run(), the
+        # same second chance _chat_turn_json(model_pref="fast") takes live.
+        good_agent = Agent(
+            model=google_model("gemini-2.5-flash-lite"),
+            system_prompt=(
+                "You are a terse test assistant. Answer in one short sentence."
+            ),
         )
-        return {"reply": reply}
+        result = await good_agent.run("Reply with the single word: pineapple")
+        return {"reply": result.output}
 
     async def collect():
         events = []
@@ -81,7 +82,7 @@ def test_rung1_real_agent_failure_degrades_to_live_legacy_reply(monkeypatch):
             run_kwargs={},
             deps=deps,
             on_complete=on_complete,
-            legacy_fallback=legacy,
+            nonstream_fallback=fallback,
             request_id="live-rung1",
         ):
             events.append(ev)
@@ -90,8 +91,8 @@ def test_rung1_real_agent_failure_degrades_to_live_legacy_reply(monkeypatch):
     events = asyncio.run(collect())
     types = [ev.type for ev in events]
 
-    # status:start → ONE token (the whole legacy reply as a single message) →
-    # done. No error event: the fallback served the turn.
+    # status:start → ONE token (the whole fallback reply as a single message)
+    # → done. No error event: the fallback served the turn.
     assert types == ["status", "token", "done"], types
     token, done = events[1], events[2]
     assert token.data["delta"] == done.data["reply"]

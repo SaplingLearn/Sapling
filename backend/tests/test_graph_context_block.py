@@ -1,23 +1,20 @@
-"""Tests for the #149 deterministic graph seed block + legacy de-dump.
+"""Tests for the #149 deterministic graph seed block.
 
 Covers:
   - services/graph_context.py selection (token overlap first, weakest-fill,
     deterministic ordering), serialization (no ids), char budget, and the
     empty-course / DB-error degradations;
-  - compact_graph_context course scoping over a get_graph payload (other
-    courses' concepts and subject-root hubs excluded — the old
-    json.dumps(get_graph(...)) leaked both);
   - routes.learn._prepare_chat_run: the GRAPH CONTEXT block is present and
     ordered after catalog/RAG, before [STUDENT QUESTION]; TUTOR_LIMITS wired;
-  - the /chat route persists the RAW body.message (the assembled prefix is
-    never persisted);
-  - all three legacy call sites hand build_system_prompt the compact
-    serialization, not a JSON dump.
+  - both /chat routes persist the RAW body.message (the assembled prefix is
+    never persisted).
+
+(The compact_graph_context legacy de-dump and its three call-site tests
+were deleted with the legacy prompt pipeline in #151a.)
 """
 
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -26,7 +23,6 @@ from main import app
 from services.graph_context import (
     GRAPH_CONTEXT_CHAR_BUDGET,
     build_graph_context_block,
-    compact_graph_context,
     graph_context_from_rows,
 )
 from services.prompt_safety import (
@@ -162,51 +158,6 @@ def test_db_backed_block_selects_and_renders():
     assert "- Derivatives (0.42, learning)" in block
 
 
-# ── compact_graph_context (legacy de-dump) ────────────────────────────────
-
-
-def _graph_payload():
-    """A get_graph-shaped payload: two courses + a subject-root hub."""
-    return {
-        "nodes": [
-            _node("n1", "Derivatives", 0.42, course="c1"),
-            _node("n2", "Limits", 0.78, "mastered", course="c1"),
-            _node("x1", "French Revolution", 0.9, "mastered", course="c2"),
-            {
-                "id": "subject_root__c1",
-                "concept_name": "MATH - Calculus",
-                "mastery_score": 0.6,
-                "mastery_tier": "subject_root",
-                "course_id": "c1",
-                "is_subject_root": True,
-            },
-        ],
-        "edges": [
-            {"source": "n2", "target": "n1", "relationship_type": "prerequisite"},
-            {"source": "subject_root__c1", "target": "n1", "relationship_type": "related"},
-            {"source": "x1", "target": "n1", "relationship_type": "related"},
-        ],
-        "stats": {},
-    }
-
-
-def test_compact_graph_context_scopes_to_course_and_drops_roots():
-    block = compact_graph_context(_graph_payload(), "c1")
-    assert "Derivatives" in block and "Limits" in block
-    assert "French Revolution" not in block, "other-course concept leaked"
-    assert "subject_root" not in block and "MATH - Calculus" not in block
-    assert "prerequisite: Derivatives" in block  # edge among selected renders
-    # It is compact text, not a JSON dump.
-    assert not block.lstrip().startswith("{")
-    assert '"nodes"' not in block and '"mastery_score"' not in block
-
-
-def test_compact_graph_context_empty_course_or_graph():
-    assert compact_graph_context(_graph_payload(), "") == ""
-    assert compact_graph_context({"nodes": [], "edges": []}, "c1") == ""
-    assert compact_graph_context({}, "c1") == ""
-
-
 # ── _prepare_chat_run: seed block presence + ordering ─────────────────────
 
 
@@ -313,134 +264,6 @@ def test_chat_route_saves_raw_body_message():
         "the persisted user row must be the raw body.message — "
         "never the assembled catalog/RAG/graph prefix"
     )
-
-
-# ── legacy call sites hand build_system_prompt the compact block ──────────
-
-
-def test_build_system_prompt_graph_section_is_the_compact_serialization():
-    """The real template: the compact block lands under 'Current Knowledge
-    Graph:' verbatim, and no raw graph-JSON shape appears anywhere."""
-    from routes.learn import build_system_prompt
-
-    compact = compact_graph_context(_graph_payload(), "c1")
-    with patch("routes.learn._get_course_info", return_value={"course_code": "", "course_name": ""}):
-        prompt = build_system_prompt("socratic", "Student", compact)
-    assert compact in prompt
-    assert "Current Knowledge Graph:" in prompt
-    for json_shape in ('"nodes"', '"mastery_score"', '"mastery_events"', '"subject_root__'):
-        assert json_shape not in prompt
-
-
-def _legacy_graph_stack(stack, extra=()):
-    """Enter the shared legacy-path patches (plus `extra`) on an ExitStack."""
-    for p in (
-        patch("routes.learn.get_user_name", return_value="Student"),
-        patch("routes.learn.get_graph", return_value=_graph_payload()),
-        patch("routes.learn._get_course_documents", return_value=[]),
-        patch("routes.learn.call_gemini_multiturn", return_value="hi there"),
-        patch("routes.learn.apply_graph_update", return_value=[]),
-        patch("routes.learn.save_message"),
-        patch("routes.learn.events_service"),
-        *extra,
-    ):
-        stack.enter_context(p)
-
-
-def _assert_compact(graph_json_arg: str):
-    assert graph_json_arg.startswith("GRAPH CONTEXT"), graph_json_arg[:80]
-    assert "French Revolution" not in graph_json_arg, "other-course leak"
-    assert '"nodes"' not in graph_json_arg
-    # Never a JSON document.
-    try:
-        json.loads(graph_json_arg)
-        raise AssertionError("legacy prompt still receives raw JSON")
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-
-def test_legacy_chat_uses_compact_graph_context():
-    import asyncio
-
-    from routes.learn import _legacy_chat
-    from models import ChatBody
-
-    captured = {}
-
-    def spy_build(mode, student_name, graph_json, **kwargs):
-        captured["graph_json"] = graph_json
-        return "SYS"
-
-    body = ChatBody(
-        user_id="u1", session_id="s1", message="hi", mode="socratic"
-    )
-    from contextlib import ExitStack
-
-    with ExitStack() as stack:
-        _legacy_graph_stack(stack, extra=(
-            patch("routes.learn.get_conversation_history", return_value=[{"role": "user", "content": "hi"}]),
-            patch("routes.learn._get_session_offering_id", return_value="off1"),
-            patch("routes.learn.offering_course_id", return_value="c1"),
-            patch("routes.learn._get_course_info", return_value={"course_code": ""}),
-            patch("routes.learn.build_system_prompt", side_effect=spy_build),
-        ))
-        asyncio.run(_legacy_chat(body, MagicMock()))
-
-    _assert_compact(captured["graph_json"])
-
-
-def test_start_session_legacy_uses_compact_graph_context():
-    from routes.learn import _start_session_legacy
-    from models import StartSessionBody
-
-    captured = {}
-
-    def spy_build(mode, student_name, graph_json, **kwargs):
-        captured["graph_json"] = graph_json
-        return "SYS"
-
-    body = StartSessionBody(user_id="u1", topic="Calculus", mode="socratic", course_id="c1")
-    from contextlib import ExitStack
-
-    with ExitStack() as stack:
-        _legacy_graph_stack(stack, extra=(
-            patch("routes.learn.resolve_offering", return_value="off1"),
-            patch("routes.learn.build_system_prompt", side_effect=spy_build),
-            patch("routes.learn.extract_graph_update", return_value=("hi", {})),
-        ))
-        _start_session_legacy(body)
-
-    _assert_compact(captured["graph_json"])
-
-
-def test_action_route_uses_compact_graph_context():
-    captured = {}
-
-    def spy_build(mode, student_name, graph_json, **kwargs):
-        captured["graph_json"] = graph_json
-        return "SYS"
-
-    from contextlib import ExitStack
-
-    with ExitStack() as stack:
-        _legacy_graph_stack(stack, extra=(
-            patch("routes.learn.get_conversation_history", return_value=[]),
-            patch("routes.learn._get_session_offering_id", return_value="off1"),
-            patch("routes.learn.offering_course_id", return_value="c1"),
-            patch("routes.learn.build_system_prompt", side_effect=spy_build),
-            patch("routes.learn.extract_graph_update", return_value=("hi", {})),
-        ))
-        resp = client.post(
-            "/api/learn/action",
-            json={
-                "user_id": "u1",
-                "session_id": "s1",
-                "action_type": "hint",
-                "mode": "socratic",
-            },
-        )
-    assert resp.status_code == 200
-    _assert_compact(captured["graph_json"])
 
 
 def test_stream_route_saves_raw_body_message():

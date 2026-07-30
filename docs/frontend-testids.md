@@ -146,6 +146,9 @@ route:
 | `tutor-back-to-learn` | the chat header's breadcrumb back to the session picker (`screens/Learn.tsx::BackToLearnLink`) |
 | `tutor-resume-loading` | the transient loading state while a `/learn?resume=` deep link hydrates (#164) |
 | `tutor-focus-concept-description` | the knowledge-map rail's "Focused concept" card description text (`screens/Learn.tsx`) — stored `description` if the node has one, else the AI-fetched blurb (`POST /api/graph/{user}/concept-description`, #446), else the connected-concepts fallback sentence |
+| `tutor-topic-picker` | the entry screen's topic dropdown trigger (`screens/Learn.tsx::TopicPicker`) — opens the concept/custom-topic search |
+| `tutor-topic-search` | the search input inside the open topic dropdown; Enter picks the first match, or the typed text as a custom topic |
+| `tutor-start` | the entry screen's "Start learning" button — dispatches the streamed session opener (#151a greeting journey) |
 
 ### `quiz`
 

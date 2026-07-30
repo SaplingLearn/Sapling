@@ -36,7 +36,14 @@ export async function* streamSSE<T = unknown>(
   const res = await fetch(url, init);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(body || `HTTP ${res.status}`);
+    // Attach the status so callers can branch on it (lib/errorMessage.ts's
+    // statusOf reads `.status` off any thrown object) — the body is often a
+    // JSON `detail` payload that carries no status field of its own. The
+    // chat ladder needs this: an HTTP 413 (body too large) fails
+    // identically on the JSON fallback, so it must not be retried there.
+    throw Object.assign(new Error(body || `HTTP ${res.status}`), {
+      status: res.status,
+    });
   }
   if (!res.body) {
     throw new Error("Streaming response has no body.");

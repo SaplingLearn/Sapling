@@ -104,4 +104,84 @@ describe('streamChat', () => {
       streamChat('s1', 'u1', 'hi', 'socratic', true, undefined, { onToken: () => {} }),
     ).rejects.toThrow(/without a done/i);
   });
+
+  it('surfaces retryable:false from the error event on the thrown ChatStreamError (#151a)', async () => {
+    // The backend marks errors after landed graph/mastery writes with
+    // retryable:false — a client fallback would re-run the turn and
+    // double-apply them. The flag must survive onto the thrown error so
+    // the ladder can skip its JSON rung.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        sseBody([
+          ev('error', {
+            type: 'error', step: 'reply', message: 'Interrupted.',
+            data: { request_id: 'r1', retryable: false },
+          }),
+        ]),
+        { status: 200 },
+      ) as never,
+    );
+    const { streamChat, ChatStreamError } = await import('./api');
+    let caught: unknown;
+    try {
+      await streamChat('s1', 'u1', 'hi', 'socratic', true, undefined, {});
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ChatStreamError);
+    expect((caught as InstanceType<typeof ChatStreamError>).retryable).toBe(false);
+  });
+
+  it('defaults retryable to true when the error event carries no flag', async () => {
+    // Additive-field compatibility: older backends (and the no-writes
+    // rungs) omit or set retryable true — the ladder keeps its Rung 3.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        sseBody([
+          ev('error', {
+            type: 'error', step: 'reply', message: 'Interrupted.',
+            data: { request_id: 'r1' },
+          }),
+        ]),
+        { status: 200 },
+      ) as never,
+    );
+    const { streamChat, ChatStreamError } = await import('./api');
+    let caught: unknown;
+    try {
+      await streamChat('s1', 'u1', 'hi', 'socratic', true, undefined, {});
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ChatStreamError);
+    expect((caught as InstanceType<typeof ChatStreamError>).retryable).toBe(true);
+  });
+});
+
+describe('shouldFallBackToJson (the client rung-3 ladder decision, #151a)', () => {
+  it('is false for a ChatStreamError marked retryable:false', async () => {
+    const { ChatStreamError, shouldFallBackToJson } = await import('./api');
+    expect(shouldFallBackToJson(new ChatStreamError('Interrupted.', 'r1', false))).toBe(false);
+  });
+
+  it('is true for a ChatStreamError without an explicit flag', async () => {
+    const { ChatStreamError, shouldFallBackToJson } = await import('./api');
+    expect(shouldFallBackToJson(new ChatStreamError('Interrupted.', 'r1'))).toBe(true);
+  });
+
+  it('is false for an HTTP 413 (the JSON fallback fails identically)', async () => {
+    const { ApiError, shouldFallBackToJson } = await import('./api');
+    expect(shouldFallBackToJson(new ApiError('{"detail":"too large"}', 413))).toBe(false);
+    // The streamSSE throw shape: a bare Error with .status attached.
+    const streamErr = Object.assign(new Error('{"detail":"too large"}'), { status: 413 });
+    expect(shouldFallBackToJson(streamErr)).toBe(false);
+    // And the empty-body shape, where only the message carries the status.
+    expect(shouldFallBackToJson(new Error('HTTP 413'))).toBe(false);
+  });
+
+  it('is true for transport-ish failures with no status', async () => {
+    const { shouldFallBackToJson } = await import('./api');
+    expect(shouldFallBackToJson(new TypeError('Failed to fetch'))).toBe(true);
+    expect(shouldFallBackToJson(new Error('Stream stalled — no data received.'))).toBe(true);
+  });
 });
