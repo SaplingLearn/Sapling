@@ -68,7 +68,9 @@ function CallbackInner() {
       // #191: only a confirmed GET /api/auth/me makes the identity durable.
       // On failure the sign-in still completes for this tab (the session
       // cookie was minted above), but nothing is persisted to localStorage —
-      // the provider's cookie fallback reconciles on the next full load.
+      // the provider's cookie fallback reconciles on the next full load. If
+      // the session itself is dead (repeatable 401/404), the provider's
+      // reconciliation clears the tab and bounces shell routes to sign-in.
       let meOk = false;
       let onboardingCompleted = true;
       let name = '';

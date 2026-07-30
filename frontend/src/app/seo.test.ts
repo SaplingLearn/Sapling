@@ -39,7 +39,7 @@ import { JOBS } from './(public)/careers/jobs';
 import robots from './robots';
 import sitemap from './sitemap';
 import manifest from './manifest';
-import { resolveSiteUrl } from '@/lib/deployGuard';
+import { checkFrontendDeployEnv, resolveSiteUrl } from '@/lib/deployGuard';
 
 const ENV_KEYS = ['DEPLOY_ENV', 'NEXT_PUBLIC_SITE_URL'] as const;
 const saved: Record<string, string | undefined> = {};
@@ -174,9 +174,25 @@ describe('resolveSiteUrl', () => {
   it('derives staging from DEPLOY_ENV', () => {
     expect(resolveSiteUrl({ DEPLOY_ENV: 'staging' })).toBe('https://staging.saplinglearn.com');
   });
-  it('lets NEXT_PUBLIC_SITE_URL override for local/preview', () => {
+  it('falls back to NEXT_PUBLIC_SITE_URL only when DEPLOY_ENV is unset (local/preview)', () => {
+    expect(resolveSiteUrl({ NEXT_PUBLIC_SITE_URL: 'http://localhost:3000/' })).toBe(
+      'http://localhost:3000',
+    );
+  });
+  it('DEPLOY_ENV beats a stray NEXT_PUBLIC_SITE_URL (ADR-0022 single knob)', () => {
     expect(
-      resolveSiteUrl({ NEXT_PUBLIC_SITE_URL: 'http://localhost:3000/', DEPLOY_ENV: 'production' }),
-    ).toBe('http://localhost:3000');
+      resolveSiteUrl({
+        DEPLOY_ENV: 'production',
+        NEXT_PUBLIC_SITE_URL: 'https://staging.saplinglearn.com',
+      }),
+    ).toBe('https://saplinglearn.com');
+  });
+  it('the build-time explicit lock flags a cross-env NEXT_PUBLIC_SITE_URL', () => {
+    const problems = checkFrontendDeployEnv({
+      DEPLOY_ENV: 'production',
+      NEXT_PUBLIC_SITE_URL: 'https://staging.saplinglearn.com',
+    });
+    expect(problems.some(p => p.includes('NEXT_PUBLIC_SITE_URL'))).toBe(true);
+    expect(checkFrontendDeployEnv({ DEPLOY_ENV: 'production' })).toEqual([]);
   });
 });

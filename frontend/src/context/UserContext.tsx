@@ -53,6 +53,20 @@ export const UserContext = createContext<UserContextValue>({
   setAvatarUrl: () => {},
 });
 
+// Mirror of middleware.ts PROTECTED (keep in sync; app/robots.ts mirrors it
+// too): the shell routes where a cleared session leaves no usable UI.
+const SHELL_PREFIXES = [
+  '/dashboard', '/learn', '/quiz', '/study', '/tree',
+  '/library', '/calendar', '/social',
+  '/settings', '/achievements', '/admin',
+  '/gradebook', '/course-planner', '/notetaker', '/profile',
+];
+
+// Pure + exported for tests (window.location is unstubbable under jsdom).
+export function shouldBounceToSignin(pathname: string): boolean {
+  return SHELL_PREFIXES.some(p => pathname.startsWith(p));
+}
+
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState('');
   const [userName, setUserName] = useState('');
@@ -186,7 +200,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         // mount, so the stale-localStorage case self-heals with no extra
         // request. Transient failures (5xx, network) fall through and keep
         // the session — a server blip must not sign the user out.
-        if (res.status === 401 || res.status === 404) clearStaleClientAuth();
+        if (res.status === 401 || res.status === 404) {
+          clearStaleClientAuth();
+          // On a shell route a cleared session has no usable UI left (every
+          // screen gates on userId) and the next server navigation would be
+          // bounced by the middleware anyway — bounce now, with the same
+          // greppable code the middleware uses.
+          if (typeof window !== 'undefined' && shouldBounceToSignin(window.location.pathname)) {
+            window.location.replace('/?error=session_expired');
+          }
+        }
         return;
       }
       const data = await res.json();
