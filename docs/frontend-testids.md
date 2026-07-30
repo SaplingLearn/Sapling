@@ -281,7 +281,7 @@ entered the lint block new, so there is no baselined backlog.
 | --- | --- |
 | `admin-analytics-range-7d` / `-30d` / `-90d` | the last-N-days range presets — each re-queries every panel |
 | `admin-analytics-range-from` / `-to` | the custom date inputs (UTC day start/end) |
-| `admin-analytics-costgroup-feature` / `-user` / `-model` | the LLM-cost group-by toggle (drives the `group_by` query) |
+| `admin-analytics-cost-group-feature` / `-user` / `-model` | the LLM-cost group-by toggle (drives the `group_by` query) |
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 
 ### `library`

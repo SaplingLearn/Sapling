@@ -10,6 +10,7 @@
 
 import React from "react";
 import { TopBar } from "../TopBar";
+import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import {
   presetRange,
@@ -40,9 +41,12 @@ const td: React.CSSProperties = {
 const tdNum: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
 
 function TruncatedBadge() {
+  // Copy stays meaning-neutral: on the aggregation panels `truncated` means
+  // the visible aggregates are partial; on the errors panel it refers to the
+  // (bucket=day) series scan only — the feed and total stay exact.
   return (
-    <span className="chip chip--err" title="The range was too large for a full scan — aggregates are partial.">
-      Truncated — partial aggregation
+    <span className="chip chip--err" title="The range was too large for a full scan — some of this panel's data is partial.">
+      Truncated — partial data
     </span>
   );
 }
@@ -102,18 +106,33 @@ export function AdminAnalytics() {
 function AnalyticsBody() {
   const [range, setRange] = React.useState<AnalyticsRangeValue>(() => presetRange(30));
   const [groupBy, setGroupBy] = React.useState<LlmCostGroupBy>("feature");
+  const toast = useToast();
+  // Failed BACKGROUND reloads keep the loaded view and toast (#463 convention).
+  const onBackgroundError = React.useCallback(
+    (message: string) => toast.error(message),
+    [toast],
+  );
 
-  const summary = useUsageSummary(range);
-  const byUser = useUsageByUser(range);
-  const cost = useLlmCost(range, groupBy);
-  const errs = useErrorsFeed(range);
+  const summary = useUsageSummary(range, { onBackgroundError });
+  const byUser = useUsageByUser(range, { onBackgroundError });
+  const cost = useLlmCost(range, { groupBy, onBackgroundError });
+  const errs = useErrorsFeed(range, { onBackgroundError });
 
   const setCustom = (edge: "from" | "to", day: string) => {
     if (!day) return;
-    setRange((r) => ({
-      ...r,
-      [edge]: edge === "from" ? `${day}T00:00:00.000Z` : `${day}T23:59:59.999Z`,
-    }));
+    setRange((r) => {
+      const next = {
+        ...r,
+        [edge]: edge === "from" ? `${day}T00:00:00.000Z` : `${day}T23:59:59.999Z`,
+      };
+      // Keep the window valid (the backend 422s from > to): moving one edge
+      // past the other drags the other edge to the same day.
+      if (next.from > next.to) {
+        if (edge === "from") next.to = `${day}T23:59:59.999Z`;
+        else next.from = `${day}T00:00:00.000Z`;
+      }
+      return next;
+    });
   };
 
   return (
@@ -144,6 +163,7 @@ function AnalyticsBody() {
           type="date"
           aria-label="Range start"
           value={range.from.slice(0, 10)}
+          max={range.to.slice(0, 10)}
           onChange={(e) => setCustom("from", e.target.value)}
           style={{ fontSize: 13 }}
         />
@@ -153,6 +173,7 @@ function AnalyticsBody() {
           type="date"
           aria-label="Range end"
           value={range.to.slice(0, 10)}
+          min={range.from.slice(0, 10)}
           onChange={(e) => setCustom("to", e.target.value)}
           style={{ fontSize: 13 }}
         />
@@ -228,7 +249,7 @@ function AnalyticsBody() {
                 {GROUPS.map((g) => (
                   <button
                     key={g}
-                    data-testid={`admin-analytics-costgroup-${g}`}
+                    data-testid={`admin-analytics-cost-group-${g}`}
                     className="btn btn--sm"
                     style={g === groupBy ? { fontWeight: 600, borderColor: "var(--accent)" } : undefined}
                     onClick={() => setGroupBy(g)}

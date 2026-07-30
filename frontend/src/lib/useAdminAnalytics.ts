@@ -50,20 +50,40 @@ export interface AnalyticsQuery<T> {
   reload: () => void;
 }
 
-function useAnalyticsQuery<T>(fetcher: () => Promise<T>): AnalyticsQuery<T> {
+function useAnalyticsQuery<T>(
+  fetcher: () => Promise<T>,
+  onBackgroundError?: (message: string) => void,
+): AnalyticsQuery<T> {
   const [data, setData] = React.useState<T | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  // Monotonic sequence: only the newest in-flight request may commit state,
+  // so an out-of-order response (7d resolving after 30d) can't overwrite
+  // newer data (PR #478 review).
+  const seqRef = React.useRef(0);
+  const hasDataRef = React.useRef(false);
+  // Read through a ref so an unstable callback can't retrigger the effect.
+  const bgErrorRef = React.useRef(onBackgroundError);
+  bgErrorRef.current = onBackgroundError;
 
   const load = React.useCallback(async () => {
+    const seq = ++seqRef.current;
     setLoading(true);
     try {
-      setData(await fetcher());
+      const result = await fetcher();
+      if (seq !== seqRef.current) return;
+      hasDataRef.current = true;
+      setData(result);
       setError(null);
     } catch (err) {
-      setError(humanizeError(err, "Couldn't load analytics."));
+      if (seq !== seqRef.current) return;
+      const message = humanizeError(err, "Couldn't load analytics.");
+      setError(message);
+      // #463 convention: initial failure renders the banner (no data yet);
+      // a failed BACKGROUND reload keeps the loaded view and toasts instead.
+      if (hasDataRef.current) bgErrorRef.current?.(message);
     } finally {
-      setLoading(false);
+      if (seq === seqRef.current) setLoading(false);
     }
   }, [fetcher]);
 
@@ -74,54 +94,63 @@ function useAnalyticsQuery<T>(fetcher: () => Promise<T>): AnalyticsQuery<T> {
   return { data, loading, error, reload: load };
 }
 
+export interface AnalyticsHookOptions {
+  bucket?: AnalyticsBucket;
+  limit?: number;
+  offset?: number;
+  groupBy?: LlmCostGroupBy;
+  /** Called instead of the banner when a reload fails AFTER data has loaded. */
+  onBackgroundError?: (message: string) => void;
+}
+
 export function useUsageSummary(
   range: AnalyticsRangeValue,
-  bucket?: AnalyticsBucket,
+  opts?: AnalyticsHookOptions,
 ): AnalyticsQuery<UsageSummaryData> {
   const { from, to } = range;
+  const { bucket, onBackgroundError } = opts ?? {};
   const fetcher = React.useCallback(
     () => adminUsageSummary({ from, to, bucket }),
     [from, to, bucket],
   );
-  return useAnalyticsQuery(fetcher);
+  return useAnalyticsQuery(fetcher, onBackgroundError);
 }
 
 export function useUsageByUser(
   range: AnalyticsRangeValue,
-  limit?: number,
-  offset?: number,
+  opts?: AnalyticsHookOptions,
 ): AnalyticsQuery<UsageByUserData> {
   const { from, to } = range;
+  const { limit, offset, onBackgroundError } = opts ?? {};
   const fetcher = React.useCallback(
     () => adminUsageByUser({ from, to, limit, offset }),
     [from, to, limit, offset],
   );
-  return useAnalyticsQuery(fetcher);
+  return useAnalyticsQuery(fetcher, onBackgroundError);
 }
 
 export function useLlmCost(
   range: AnalyticsRangeValue,
-  groupBy?: LlmCostGroupBy,
-  bucket?: AnalyticsBucket,
+  opts?: AnalyticsHookOptions,
 ): AnalyticsQuery<LlmCostData> {
   const { from, to } = range;
+  const { groupBy, bucket, onBackgroundError } = opts ?? {};
   const fetcher = React.useCallback(
     () => adminLlmCost({ from, to, group_by: groupBy, bucket }),
     [from, to, groupBy, bucket],
   );
-  return useAnalyticsQuery(fetcher);
+  return useAnalyticsQuery(fetcher, onBackgroundError);
 }
 
 export function useErrorsFeed(
   range: AnalyticsRangeValue,
-  limit?: number,
-  offset?: number,
-  bucket?: AnalyticsBucket,
+  opts?: AnalyticsHookOptions,
 ): AnalyticsQuery<ErrorsPageData> {
   const { from, to } = range;
+  const { limit, offset, bucket, onBackgroundError } = opts ?? {};
   const fetcher = React.useCallback(
     () => adminErrors({ from, to, limit, offset, bucket }),
     [from, to, limit, offset, bucket],
   );
-  return useAnalyticsQuery(fetcher);
+  return useAnalyticsQuery(fetcher, onBackgroundError);
 }

@@ -25,6 +25,17 @@ vi.mock("../TopBar", () => ({
   TopBar: ({ title }: { title: string }) => <div>{title}</div>,
 }));
 
+// Hoisted toast spies — background-reload failures surface via toast.error
+// (the #463 Calendar convention), never via the banner once data exists.
+const toastSpies = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  warn: vi.fn(),
+}));
+vi.mock("../ToastProvider", () => ({
+  useToast: () => toastSpies,
+}));
+
 vi.mock("../Icon", () => ({
   Icon: ({ name }: { name: string }) => <span data-testid={`icon-${name}`} />,
 }));
@@ -143,5 +154,48 @@ describe("AdminAnalytics", () => {
     render(<AdminAnalytics />);
     await screen.findByText("quiz");
     expect(screen.getByText(/truncated/i)).toBeTruthy();
+  });
+
+  it("toasts a failed background reload and keeps the loaded view (no banner)", async () => {
+    primeHappyPath();
+    render(<AdminAnalytics />);
+    await screen.findByText("42");
+    api.adminUsageSummary.mockRejectedValueOnce(new Error("reload boom"));
+    fireEvent.click(screen.getByTestId("admin-analytics-range-7d"));
+    await waitFor(() => expect(toastSpies.error).toHaveBeenCalled());
+    // Stale-but-loaded data stays visible; the initial-load banner never appears.
+    expect(screen.getByText("42")).toBeTruthy();
+    expect(screen.queryByTestId("admin-analytics-usage-retry")).toBeNull();
+  });
+
+  it("ignores a stale response that resolves after a newer request", async () => {
+    primeHappyPath();
+    let resolveStale!: (v: typeof summaryFixture) => void;
+    // First (30d) summary request hangs; the later (7d) one resolves first.
+    api.adminUsageSummary
+      .mockReturnValueOnce(new Promise((r) => { resolveStale = r; }))
+      .mockResolvedValueOnce({ ...summaryFixture, total_events: 99 });
+    render(<AdminAnalytics />);
+    await screen.findByText("u-alpha"); // other panels loaded
+    fireEvent.click(screen.getByTestId("admin-analytics-range-7d"));
+    await screen.findByText("99");
+    resolveStale(summaryFixture); // the out-of-order 30d response lands late
+    await waitFor(() => expect(screen.queryByText("42")).toBeNull());
+    expect(screen.getByText("99")).toBeTruthy();
+  });
+
+  it("clamps an inverted custom range instead of sending from > to", async () => {
+    primeHappyPath();
+    render(<AdminAnalytics />);
+    await screen.findByText("42");
+    // Move `from` past the current `to` — the `to` edge must be dragged along.
+    fireEvent.change(screen.getByTestId("admin-analytics-range-from"), {
+      target: { value: "2099-09-01" },
+    });
+    await waitFor(() => {
+      const last = api.adminUsageSummary.mock.calls.at(-1)![0];
+      expect(last.from).toBe("2099-09-01T00:00:00.000Z");
+      expect(last.to >= last.from).toBe(true);
+    });
   });
 });
