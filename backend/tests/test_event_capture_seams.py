@@ -452,6 +452,35 @@ def test_upload_sync_agent_failure_emits_upload_but_no_processed(sink):
     assert _of_type(sink, "document.processed") == []
 
 
+def test_upload_stream_agent_failure_emits_upload_but_no_processed(sink):
+    """#151b twin of the sync contract above for the SSE route: agent
+    failure ends in the terminal error:failed + status:done pair with
+    nothing persisted, so document.processed must NOT fire while
+    document.upload keeps counting the accepted attempt."""
+    import io
+
+    with (
+        patch("routes.documents._validate_user", return_value=None),
+        patch("routes.documents.resolve_offering", return_value="off-1"),
+        patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
+        patch(
+            "routes.documents.classifier_agent.run",
+            AsyncMock(side_effect=RuntimeError("agent pipeline failure")),
+        ),
+        patch("routes.documents.table") as t,
+    ):
+        t.return_value.select.return_value = []
+        r = client.post(
+            "/api/documents/upload",
+            files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+            data={"course_id": "c1", "user_id": "user_andres"},
+        )
+    assert r.status_code == 200
+
+    assert len(_of_type(sink, "document.upload")) == 1
+    assert _of_type(sink, "document.processed") == []
+
+
 # ── Quiz: quiz.started + quiz.completed ──────────────────────────────────────
 
 

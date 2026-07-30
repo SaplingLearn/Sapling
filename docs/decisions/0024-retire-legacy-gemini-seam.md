@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-07-30
-- Relates to: #151 (this cutover, shipped as #151a + #151b), #152 (agent-migration epic)
+- Relates to: #151 (this cutover, shipped as #151a + #151b), #152 (agent-migration epic), #154 (DBOS durability validation — builds on the post-roll persistence structure this cutover preserves)
 - Supersedes: the legacy-fallback clause of ADR 0001 (the framework adoption itself stands)
 
 ## Context
