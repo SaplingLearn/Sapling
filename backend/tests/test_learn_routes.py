@@ -936,3 +936,67 @@ class TestActionAgent:
             r = self._post()
         assert r.status_code == 502
         save.assert_not_called()
+
+
+class TestFallbackWriteStateStamp:
+    """PR #472 review: the route helpers stamp `sapling_wrote` on any
+    exception raised after the agent run, so the streaming fallback's
+    terminal error can set retryable correctly."""
+
+    def test_chat_via_agent_stamps_write_state_on_blank_reply(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        deps = MagicMock()
+        deps.graph_updates = [{"updated_nodes": [{"concept_name": "X"}]}]
+        deps.mastery_changes = []
+        agent = MagicMock()
+        run_result = MagicMock()
+        run_result.output = "\n"
+        agent.run = AsyncMock(return_value=run_result)
+
+        with (
+            patch("routes.learn._prepare_chat_run",
+                  return_value=(agent, "msg", {}, deps)),
+            patch("routes.learn.record_agent_usage", side_effect=lambda r, **k: r),
+        ):
+            import routes.learn as learn_routes
+
+            with pytest.raises(UnexpectedModelBehavior) as excinfo:
+                asyncio.run(learn_routes._chat_via_agent(
+                    user_id="u1", session_id="s1", course_id="c1",
+                    mode="socratic", user_message="m", message_history=[],
+                    use_shared_context=True, request_id="r1", model_pref=None,
+                ))
+        assert getattr(excinfo.value, "sapling_wrote", None) is True
+
+    def test_chat_via_agent_stamp_false_without_writes(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        deps = MagicMock()
+        deps.graph_updates = []
+        deps.mastery_changes = []
+        agent = MagicMock()
+        run_result = MagicMock()
+        run_result.output = "\n"
+        agent.run = AsyncMock(return_value=run_result)
+
+        with (
+            patch("routes.learn._prepare_chat_run",
+                  return_value=(agent, "msg", {}, deps)),
+            patch("routes.learn.record_agent_usage", side_effect=lambda r, **k: r),
+        ):
+            import routes.learn as learn_routes
+
+            with pytest.raises(UnexpectedModelBehavior) as excinfo:
+                asyncio.run(learn_routes._chat_via_agent(
+                    user_id="u1", session_id="s1", course_id="c1",
+                    mode="socratic", user_message="m", message_history=[],
+                    use_shared_context=True, request_id="r1", model_pref=None,
+                ))
+        assert getattr(excinfo.value, "sapling_wrote", None) is False

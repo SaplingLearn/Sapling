@@ -658,3 +658,50 @@ def test_on_usage_not_called_on_error_rungs_or_nonstream_fallback():
 
     asyncio.run(run())
 
+
+
+def test_fallback_that_wrote_then_failed_marks_error_not_retryable():
+    """PR #472 review: the writes-guard protects ENTRY to the fallback, but
+    the fallback is itself a tool-calling agent run — if ITS tools wrote and
+    it then failed, the terminal error must carry retryable: False so the
+    client cannot re-run the turn a third time and re-apply the writes. The
+    route helpers stamp `sapling_wrote` on the raised exception."""
+    async def run():
+        deps = make_deps()
+        agent = FakeAgent([PartStartEvent("x")], raise_after=0)
+
+        async def fallback_that_wrote_then_failed():
+            exc = RuntimeError("fallback blank after tool write")
+            exc.sapling_wrote = True
+            raise exc
+
+        events = await collect(
+            agent, deps,
+            on_complete=lambda r, g, m: (_ for _ in ()).throw(AssertionError("persisted")),
+            nonstream_fallback=fallback_that_wrote_then_failed,
+        )
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is False
+
+    asyncio.run(run())
+
+
+def test_fallback_failure_without_writes_stays_retryable():
+    """The no-writes twin: a fallback that failed before any tool write
+    keeps retryable: True — the client's JSON retry is safe and wanted."""
+    async def run():
+        deps = make_deps()
+        agent = FakeAgent([PartStartEvent("x")], raise_after=0)
+
+        async def clean_failure():
+            raise RuntimeError("network blip")
+
+        events = await collect(
+            agent, deps,
+            on_complete=lambda r, g, m: None,
+            nonstream_fallback=clean_failure,
+        )
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is True
+
+    asyncio.run(run())

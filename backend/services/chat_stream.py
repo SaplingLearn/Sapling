@@ -125,13 +125,21 @@ async def _rung1_fallback_events(
         return
     try:
         fallback_result = await nonstream_fallback()
-    except Exception:
+    except Exception as exc:
         logger.exception("Nonstream fallback also failed")
+        # PR #472 review: the fallback is itself a tool-calling agent run.
+        # If ITS tools wrote graph/mastery before it failed, a client retry
+        # would re-apply them — the route helpers stamp `sapling_wrote` on
+        # the exception for exactly this decision. Absent attribute (a
+        # pre-run failure, or a caller that can't write) → retryable.
         yield SaplingEvent(
             type="error",
             step="reply",
             message="The tutor is unavailable. Please retry.",
-            data={"request_id": request_id, "retryable": True},
+            data={
+                "request_id": request_id,
+                "retryable": not getattr(exc, "sapling_wrote", False),
+            },
         )
         return
     # nonstream_fallback persisted its own rows; the caller must NOT call

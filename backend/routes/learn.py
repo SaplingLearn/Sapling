@@ -445,15 +445,23 @@ async def _start_session_agent(
         model_pref=model_pref if model_pref is not None else body.model_pref,
     )
 
-    result = record_agent_usage(
-        await agent.run(assembled, **run_kwargs),
-        feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
-    )
-    reply = result.output  # str — chat_tutor agents return plain Markdown.
-    if not reply.strip():
-        raise UnexpectedModelBehavior(
-            "chat_tutor produced a whitespace-only session greeting"
+    try:
+        result = record_agent_usage(
+            await agent.run(assembled, **run_kwargs),
+            feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
         )
+        reply = result.output  # str — chat_tutor agents return plain Markdown.
+        if not reply.strip():
+            raise UnexpectedModelBehavior(
+                "chat_tutor produced a whitespace-only session greeting"
+            )
+    except Exception as exc:
+        # PR #472 review: THIS run's tools may have written graph/mastery
+        # before the failure. Stamp the write-state so the streaming
+        # route's fallback error can set retryable correctly — a client
+        # retry after real writes would re-apply them.
+        exc.sapling_wrote = bool(deps.graph_updates or deps.mastery_changes)
+        raise
 
     # Graph writes (if any) already landed in-band via the agent's tools;
     # merge their payloads for the response echo, exactly like the chat turn.
@@ -623,24 +631,32 @@ async def _chat_via_agent(
         model_pref=model_pref,
     )
 
-    result = record_agent_usage(
-        await agent.run(user_message, **run_kwargs),
-        feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
-    )
-    reply = result.output  # str — chat_tutor agents return plain Markdown.
-
-    if not reply.strip():
-        # #153 / ADR-0023 follow-up: gemini-2.5-pro occasionally follows an
-        # end-of-turn tool call with a bare-newline final text. On this JSON
-        # path that whitespace IS the run output; treat it as degenerate
-        # model output so the caller's UnexpectedModelBehavior handling —
-        # the route's 502 mapping, or the stream fallback's Rung-1 ladder —
-        # applies instead of persisting an empty assistant row. (The
-        # streamed path handles the same quirk inside `stream_agent_turn`.)
-        # Usage was recorded above — tokens were spent.
-        raise UnexpectedModelBehavior(
-            "chat_tutor produced a whitespace-only reply"
+    try:
+        result = record_agent_usage(
+            await agent.run(user_message, **run_kwargs),
+            feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
         )
+        reply = result.output  # str — chat_tutor agents return plain Markdown.
+
+        if not reply.strip():
+            # #153 / ADR-0023 follow-up: gemini-2.5-pro occasionally follows an
+            # end-of-turn tool call with a bare-newline final text. On this JSON
+            # path that whitespace IS the run output; treat it as degenerate
+            # model output so the caller's UnexpectedModelBehavior handling —
+            # the route's 502 mapping, or the stream fallback's Rung-1 ladder —
+            # applies instead of persisting an empty assistant row. (The
+            # streamed path handles the same quirk inside `stream_agent_turn`.)
+            # Usage was recorded above — tokens were spent.
+            raise UnexpectedModelBehavior(
+                "chat_tutor produced a whitespace-only reply"
+            )
+    except Exception as exc:
+        # PR #472 review: THIS run's tools may have written graph/mastery
+        # before the failure. Stamp the write-state so the streaming
+        # route's fallback error can set retryable correctly — a client
+        # retry after real writes would re-apply them.
+        exc.sapling_wrote = bool(deps.graph_updates or deps.mastery_changes)
+        raise
 
     # Merge all graph update payloads accumulated by tools during this run
     # into a single dict so the route can persist graph_update_json and

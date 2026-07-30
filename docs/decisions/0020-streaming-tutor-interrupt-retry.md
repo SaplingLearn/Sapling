@@ -41,8 +41,14 @@ The spec (`docs/superpowers/specs/2026-07-16-streaming-design.md`) is explicit:
   answer so far; keeping them visible (dimmed/"interrupted") is more useful than
   blanking the bubble.
 - **Retry is already safe.** The persistence contract persists exactly once, on
-  completion, before `done` — so a stopped/failed turn wrote nothing, and Retry
-  re-sends without risk of a double-write or a phantom half-message. (`CancelledError`
+  completion, before `done` — so a stopped/failed turn wrote nothing to the
+  TRANSCRIPT, and Retry re-sends without risk of a double-write or a phantom
+  half-message. *(Amended by #151a: since the tutor gained in-band graph/mastery
+  TOOLS, a failed turn may have real tool writes — the server marks such
+  errors `retryable: false` and the client ladder honors it (no automatic
+  re-run; the interrupted+Retry treatment lets the STUDENT decide), and 413s
+  are likewise never auto-retried. The transcript half of this argument is
+  unchanged.)* (`CancelledError`
   is deliberately not caught; a mid-stream disconnect cancels the generator
   before persistence — covered by `backend/tests/test_chat_stream.py`.)
 - **Consistency across rungs.** The same interrupted+Retry affordance covers a
