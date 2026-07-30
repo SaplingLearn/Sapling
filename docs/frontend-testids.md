@@ -183,6 +183,9 @@ route:
 | `graph-node-circle` | the main circle inside a 2D node group — the mark that encodes the mastery tier as `opacity` |
 | `graph-edge` | one 2D SVG edge `<line>` |
 | `graph-zoom-in` / `graph-zoom-out` / `graph-zoom-reset` | 2D zoom controls |
+| `graph-add-concept` | Tree toolbar: "＋ Add concept" opener (#330) — rendered only when a single course pill is selected (the "all" filter gives no course to attribute the node to) |
+| `graph-add-concept-input` | the concept-name `<input>` (Enter submits, Escape cancels) |
+| `graph-add-concept-submit` | the "Add" button — POSTs create-or-merge, toasts, reloads the graph |
 
 `graph-node-item` / `graph-node` carry the node id as a separate
 `data-node-id` attribute instead of a testid suffix (the repeated-items rule

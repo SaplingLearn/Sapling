@@ -11,7 +11,7 @@ import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
-import { getGraph, getCourses, getSessions, deleteGraphNode, type EnrolledCourse, type Session } from "@/lib/api";
+import { getGraph, getCourses, getSessions, addGraphNode, deleteGraphNode, type EnrolledCourse, type Session } from "@/lib/api";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
@@ -49,6 +49,13 @@ export function Tree() {
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [loading, setLoading] = React.useState(true);
 
+  // Manual add-concept composer (#330) — only offered when a single course
+  // is selected: courseFilter is a FILTER whose "all" value gives no course
+  // to attribute the new node to.
+  const [addingConcept, setAddingConcept] = React.useState(false);
+  const [newConceptName, setNewConceptName] = React.useState("");
+  const [savingConcept, setSavingConcept] = React.useState(false);
+
   const toast = useToast();
 
   React.useEffect(() => {
@@ -82,6 +89,32 @@ export function Tree() {
       setLoading(false);
     }
   }, [userId, activeSemester]);
+
+  // Manual add-concept (#330): create-or-merge server-side (the backend
+  // dedups case/whitespace-insensitively), then reload so the canonical row
+  // and its anchor edge render from DB truth. The selected node anchors the
+  // edge when it belongs to the chosen course; otherwise the course root
+  // does, server-side.
+  const submitAddConcept = async () => {
+    const name = newConceptName.trim();
+    if (!name || courseFilter === "all" || !userId || savingConcept) return;
+    setSavingConcept(true);
+    try {
+      const res = await addGraphNode(userId, {
+        concept_name: name,
+        course_id: courseFilter,
+        anchor_node_id: selected && selected.course_id === courseFilter ? selected.id : undefined,
+      });
+      toast.success(res.already_existed ? `Merged into your existing “${name}” node.` : `Added “${name}”.`);
+      setNewConceptName("");
+      setAddingConcept(false);
+      await load();
+    } catch {
+      toast.error("Couldn't add the concept.");
+    } finally {
+      setSavingConcept(false);
+    }
+  };
 
   React.useEffect(() => {
     // Wait for the active-semester read from localStorage before the first load,
@@ -323,6 +356,44 @@ export function Tree() {
             {c.course_code || c.course_name}
           </Pill>
         ))}
+        {courseFilter !== "all" && (
+          addingConcept ? (
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center", marginLeft: "auto" }}>
+              <input
+                data-testid="graph-add-concept-input"
+                autoFocus
+                value={newConceptName}
+                placeholder="Concept name"
+                onChange={(e) => setNewConceptName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submitAddConcept();
+                  if (e.key === "Escape") { setAddingConcept(false); setNewConceptName(""); }
+                }}
+                style={{
+                  fontSize: 13, padding: "5px 10px", border: "1px solid var(--border)",
+                  borderRadius: "var(--r-full)", background: "var(--bg-panel)", width: 180,
+                }}
+              />
+              <button
+                data-testid="graph-add-concept-submit"
+                className="btn btn--sm btn--primary"
+                disabled={!newConceptName.trim() || savingConcept}
+                onClick={submitAddConcept}
+              >
+                Add
+              </button>
+            </span>
+          ) : (
+            <button
+              data-testid="graph-add-concept"
+              className="btn btn--sm"
+              style={{ marginLeft: "auto" }}
+              onClick={() => setAddingConcept(true)}
+            >
+              ＋ Add concept
+            </button>
+          )
+        )}
       </div>
 
       <div style={{ display: "flex", height: "calc(100vh - 240px)" }}>

@@ -576,6 +576,66 @@ def _coerce_unit(value, default: float = 0.0) -> float:
     return max(0.0, min(1.0, f))
 
 
+def add_node(
+    user_id: str,
+    concept_name: str,
+    course_id: str,
+    anchor_node_id: str | None = None,
+    initial_mastery: float = 0.0,
+) -> dict:
+    """Create-or-merge one manually named concept (#330).
+
+    A thin wrapper over apply_graph_update so the UNIQUE-backed dedup, edge
+    machinery, and offering-analytics refresh stay in one place (routes never
+    write graph_nodes/graph_edges directly). The anchor id resolves to its
+    concept NAME because apply_graph_update's edge _lookup is name-keyed; a
+    stale anchor (deleted mid-flight) silently drops the edge, never the node.
+    Returns {"node": <canonical row>, "already_existed": bool} so the UI can
+    toast merge-vs-create and reconcile its optimistic id.
+    """
+    name = " ".join((concept_name or "").split())
+    if not name:
+        raise ValueError("concept_name must be non-empty")
+    if not course_id:
+        raise ValueError("course_id is required")
+    norm = _normalize_concept(name)
+    scope = {"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
+
+    pre = table("graph_nodes").select("id,concept_name", filters=scope) or []
+    already_existed = any(
+        _normalize_concept(r.get("concept_name") or "") == norm for r in pre
+    )
+
+    update: dict = {
+        "new_nodes": [
+            {"concept_name": name, "course_id": course_id, "initial_mastery": initial_mastery},
+        ],
+    }
+    if anchor_node_id:
+        anchor_rows = table("graph_nodes").select(
+            "id,concept_name",
+            filters={"id": f"eq.{anchor_node_id}", "user_id": f"eq.{user_id}"},
+        ) or []
+        anchor_name = (anchor_rows[0].get("concept_name") if anchor_rows else "") or ""
+        if anchor_name and _normalize_concept(anchor_name) != norm:
+            update["new_edges"] = [
+                {"source": anchor_name, "target": name, "relationship_type": "related", "strength": 0.5},
+            ]
+
+    apply_graph_update(user_id, update, course_id=course_id)
+
+    rows = table("graph_nodes").select(
+        "id,concept_name,course_id,mastery_score,mastery_tier", filters=scope,
+    ) or []
+    node = next(
+        (r for r in rows if _normalize_concept(r.get("concept_name") or "") == norm),
+        None,
+    )
+    if node is None:
+        raise RuntimeError(f"add_node: {name!r} missing after apply_graph_update")
+    return {"node": node, "already_existed": already_existed}
+
+
 def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None = None) -> list:
     """
     Apply a graph_update dict to the DB. Returns mastery_changes list.

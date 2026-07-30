@@ -34,6 +34,7 @@ import {
   learnAction,
   getCourses,
   getGraph,
+  addGraphNode,
   deleteGraphNode,
   describeConcept,
   shouldFallBackToJson,
@@ -43,6 +44,7 @@ import {
   type ChatResult,
   type GraphDelta,
 } from "@/lib/api";
+import { reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
@@ -1150,8 +1152,10 @@ function LearnInner() {
 
   // Manually add a concept to the current course. The new node links to the
   // focused concept (or the course root) so it joins the tree, starts as
-  // "unexplored", and becomes the focus. State-first; real-backend
-  // persistence for add would need a dedicated endpoint.
+  // "unexplored", and becomes the focus. Optimistic-first, then persisted
+  // via POST /api/graph/{user}/nodes (#330): the temp id is swapped for the
+  // canonical row (which may be a dedup MERGE into an existing node), or
+  // rolled back with a toast when the write fails.
   const addConcept = (name: string) => {
     const label = name.trim();
     if (!label || !cardCourseId) return;
@@ -1172,6 +1176,24 @@ function LearnInner() {
     setFocusedNodeId(id);
     setNewConceptName("");
     setAddingConcept(false);
+    if (!userId) return;
+    addGraphNode(userId, {
+      concept_name: label,
+      course_id: cardCourseId,
+      anchor_node_id: anchorId || undefined,
+    })
+      .then((res) => {
+        setGraphNodes(prev => reconcileNodes(prev, id, res.node));
+        setGraphEdges(prev => retargetEdges(prev, id, res.node.id));
+        setFocusedNodeId(cur => (cur === id ? res.node.id : cur));
+        if (res.already_existed) toast.success(`Merged into your existing “${label}” node.`);
+      })
+      .catch(() => {
+        setGraphNodes(prev => prev.filter(n => n.id !== id));
+        setGraphEdges(prev => prev.filter(e => e.source !== id && e.target !== id));
+        setFocusedNodeId(cur => (cur === id ? null : cur));
+        toast.error("Couldn't save the concept — it was removed.");
+      });
   };
 
   // Remove a concept: drop the node + its edges and clear focus if it was

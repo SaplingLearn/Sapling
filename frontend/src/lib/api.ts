@@ -135,6 +135,21 @@ export const describeConcept = (userId: string, concept: string, courseLabel?: s
     { method: 'POST', body: JSON.stringify({ concept, course_label: courseLabel ?? null }) }
   );
 
+// Manual add-concept (#330). Returns the CANONICAL node — freshly created,
+// or the dedup survivor when the (case/whitespace-insensitive) name already
+// existed on this course — plus the merge flag the UI toasts on.
+export const addGraphNode = (
+  userId: string,
+  body: { concept_name: string; course_id: string; anchor_node_id?: string },
+) =>
+  fetchJSON<{
+    node: {
+      id: string; concept_name: string; course_id: string | null;
+      mastery_score: number; mastery_tier: string;
+    };
+    already_existed: boolean;
+  }>(`/api/graph/${userId}/nodes`, { method: 'POST', body: JSON.stringify(body) });
+
 export const deleteGraphNode = (userId: string, nodeId: string) =>
   fetchJSON<{ deleted: boolean }>(
     `/api/graph/${userId}/nodes/${encodeURIComponent(nodeId)}`,
