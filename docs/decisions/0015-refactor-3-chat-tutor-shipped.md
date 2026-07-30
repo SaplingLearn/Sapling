@@ -23,7 +23,14 @@ mode-specific instances (`socratic_agent`, `expository_agent`,
 `teachback_agent`), all sharing the same four-tool surface
 (`search_course_materials_tool`, `read_session_history_tool`,
 `read_user_progress_tool`, `apply_graph_update_tool`). Output type is
-`str` (plain Markdown reply). `routes/learn.py` dispatches to the right
+`str` (plain Markdown reply).
+
+> **Update (#127, #149 / ADR 0023):** the shared tool surface is now
+> seven: `update_mastery_tool` (#127 split mastery writes out of
+> `apply_graph_update_tool`), plus the two read-only graph tools
+> `read_graph_neighborhood` and `read_concepts_for_user` (#149,
+> registered under those prompt-facing names). The prompt hashes below
+> are historical; hashes change with every preamble revision. `routes/learn.py` dispatches to the right
 mode via `agent_for_mode(body.mode)`, with the same orchestrator-vs-
 legacy fallback pattern PR #67 and #71 established.
 

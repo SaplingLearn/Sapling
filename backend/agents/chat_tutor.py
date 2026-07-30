@@ -35,6 +35,10 @@ from agents.tools.chat_context import (
     search_course_materials_tool,
 )
 from agents.tools.graph import apply_graph_update_tool, update_mastery_tool
+from agents.tools.graph_read import (
+    read_concepts_for_user_tool,
+    read_graph_neighborhood_tool,
+)
 
 
 TutorMode = Literal["socratic", "expository", "teachback"]
@@ -58,6 +62,15 @@ _SHARED_PREAMBLE = (
     "Use +0.1 to +0.3 when they answer correctly; −0.05 to −0.1 for gaps. "
     "Call this at the END of every turn where the student demonstrated "
     "understanding or revealed a misconception.\n\n"
+    "Graph tools (read):\n"
+    "- read_graph_neighborhood: expand around named concepts — their "
+    "mastery, tier, and how they connect (prerequisite/builds_on/related).\n"
+    "- read_concepts_for_user: list the student's tracked concepts, "
+    "weakest mastery first.\n"
+    "The GRAPH CONTEXT block in the message already lists the student's "
+    "tracked concepts for this course — use these read tools only to "
+    "expand beyond it (e.g. relationships of a concept the block didn't "
+    "include). Hard cap: at most TWO graph reads per turn.\n\n"
 )
 
 _SOCRATIC_PROMPT = _SHARED_PREAMBLE + (
@@ -120,6 +133,10 @@ def _build_tools() -> list:
         read_user_progress_tool,
         apply_graph_update_tool,
         update_mastery_tool,
+        # #149: read-only graph tools, registered under the prompt-facing
+        # names the _SHARED_PREAMBLE "Graph tools (read)" paragraph uses.
+        Tool(read_graph_neighborhood_tool, name="read_graph_neighborhood", takes_ctx=True),
+        Tool(read_concepts_for_user_tool, name="read_concepts_for_user", takes_ctx=True),
     ]
 
 

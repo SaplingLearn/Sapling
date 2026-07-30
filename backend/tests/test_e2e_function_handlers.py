@@ -403,6 +403,37 @@ def test_env_module_registers_note_chat_handler_on_dispatch(monkeypatch):
     assert "note_chat" in providers._FUNCTION_HANDLERS
 
 
+# ── #149 guard: the e2e tutor handler stays tool-free ─────────────────────
+
+
+def test_e2e_tutor_handler_makes_no_tool_calls_and_no_graph_writes(monkeypatch):
+    """The chat tutor grew two read tools (#149), but the deterministic E2E
+    handler must keep answering in ONE text response: zero ToolCallParts in
+    the transcript, and the deps write accumulators (graph_updates /
+    mastery_changes) stay empty — the browser journeys' graph oracles
+    depend on tutor turns not mutating the graph."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    deps = _deps()
+    with socratic_agent.override(model=model_for("chat_tutor")):
+        result = socratic_agent.run_sync("What is recursion?", deps=deps)
+
+    tool_calls = [
+        part
+        for message in result.all_messages()
+        for part in getattr(message, "parts", []) or []
+        if type(part).__name__ == "ToolCallPart"
+    ]
+    assert tool_calls == [], (
+        f"E2E tutor handler scripted tool calls: {[p.tool_name for p in tool_calls]}"
+    )
+    assert deps.graph_updates == []
+    assert deps.mastery_changes == []
+
+
 # ── Slow-stream trigger + lane pacing (#356) ──────────────────────────────
 #
 # frontend/e2e/streaming.spec.ts needs a mid-stream window to press Stop /

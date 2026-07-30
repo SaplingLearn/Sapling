@@ -1,0 +1,17 @@
+{
+  "text": "That's a great start. You've correctly described the overall outcome of mitosis. The key points are there: one parent cell becomes two identical daughter cells, each with the same genetic material.\n\nWhat you've described is the \"big picture.\" Can you tell me what happens *in between* the DNA duplication and the final split? What are the phases of mitosis?",
+  "tool_calls": [
+    {
+      "args": {
+        "updates": [
+          {
+            "concept_name": "Mitosis",
+            "mastery_delta": 0.1,
+            "reason": "Correctly explained the high-level outcome."
+          }
+        ]
+      },
+      "tool_name": "update_mastery_tool"
+    }
+  ]
+}

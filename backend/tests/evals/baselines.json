@@ -1,4 +1,14 @@
 {
+  "chat_tutor": {
+    "ExpositoryHasStructureEvaluator": 1.0,
+    "GraphToolUsedEvaluator": 1.0,
+    "GroundedConceptEvaluator": 0.875,
+    "MasteryUpdateEmittedEvaluator": 1.0,
+    "NoToolMisuseEvaluator": 1.0,
+    "NonEmptyEvaluator": 1.0,
+    "SocraticEndsWithQuestionEvaluator": 1.0,
+    "TeachBackProbesEvaluator": 1.0
+  },
   "concept_extraction": {
     "AllNamesTitleCaseEvaluator": 1.0,
     "ConceptCountInRangeEvaluator": 1.0,

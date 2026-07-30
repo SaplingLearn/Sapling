@@ -248,6 +248,79 @@ def test_function_model_output_tool_args_validate_and_retry_loop_runs(monkeypatc
     assert calls["n"] == 2  # the retry actually happened
 
 
+def test_tutor_graph_read_scripted_through_real_registration(monkeypatch):
+    """#149 seam test (mirrors the note_chat AC test above): a scripted
+    `read_graph_neighborhood` ToolCallPart flows through the REAL chat-tutor
+    tool registration + pydantic arg-schema validation, the spied tool body
+    receives the LLM-chosen concepts/limit with the deps-injected user/course
+    ids, and the agent loops to a second-turn final text."""
+    from agents.chat_tutor import socratic_agent
+    from agents.tools.graph_read import ConceptNode, GraphNeighborhood
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+
+    received: dict = {}
+
+    async def _spy_hood(user_id, course_id, concepts, *, limit=20):
+        received.update(
+            user_id=user_id, course_id=course_id,
+            concepts=list(concepts), limit=limit,
+        )
+        return GraphNeighborhood(
+            concepts=[
+                ConceptNode(
+                    concept_name="Limits", mastery=0.7, mastery_tier="learning"
+                )
+            ],
+            edges=[],
+            truncated=False,
+        )
+
+    # Patch the pure function; deps.retrieval is None here, so the wrapper
+    # resolves SupabaseRetrieval, which delegates to exactly this seam.
+    monkeypatch.setattr(
+        "agents.tools.graph_read.read_graph_neighborhood", _spy_hood
+    )
+
+    seen_tools: dict = {}
+    calls = {"n": 0}
+
+    def handler(messages, info) -> ModelResponse:
+        seen_tools["names"] = sorted(t.name for t in info.function_tools)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="read_graph_neighborhood",
+                        args={"concepts": ["limits"], "limit": 5},
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[TextPart(content="Your grasp of Limits is coming along — what does a limit describe?")]
+        )
+
+    register_function_handler("chat_tutor", handler)
+
+    with socratic_agent.override(model=model_for("chat_tutor")):
+        result = socratic_agent.run_sync("How solid are my limits?", deps=_deps())
+
+    # Both #149 read tools are registered under their prompt-facing names.
+    assert "read_graph_neighborhood" in seen_tools["names"]
+    assert "read_concepts_for_user" in seen_tools["names"]
+    # Schema-validated args reached the real body with deps-injected ids.
+    assert received == {
+        "user_id": "seam-user",
+        "course_id": "seam-course",
+        "concepts": ["limits"],
+        "limit": 5,
+    }
+    # Second turn produced the final text; exactly one tool round trip.
+    assert "Limits" in result.output
+    assert calls["n"] == 2
+
+
 # ── The load-bearing property: function mode is ABOVE the transport guard. ──
 
 

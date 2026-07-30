@@ -15,6 +15,11 @@ on:
       - 'backend/tests/evals/**'
       - 'backend/services/agent_events.py'
       - 'backend/routes/documents.py'
+      # chat_tutor joined the harness (#149): its prompt assembly lives in
+      # the learn route and its graph tools sit on graph_service.
+      - 'backend/routes/learn.py'
+      - 'backend/services/graph_service.py'
+      - 'backend/services/graph_context.py'
 
 jobs:
   evals:

@@ -1,0 +1,23 @@
+{
+  "text": "Photosynthesis is how plants, algae, and some bacteria convert light energy into chemical energy. This process occurs inside a specialized organelle called the **chloroplast**.\n\nThink of a chloroplast as a tiny solar-powered factory within the plant cell.\n\n### Key Components\n\n*   **Chloroplast:** The site of photosynthesis. It has an inner and outer membrane.\n*   **Thylakoids:** Disc-like structures inside the chloroplast, stacked into columns called grana. The thylakoid membranes contain chlorophyll.\n*   **Chlorophyll:** The green pigment that absorbs light energy.\n*   **Stroma:** The fluid-filled space surrounding the grana within the chloroplast.\n\n### The Two Stages of Photosynthesis\n\nPhotosynthesis is a two-stage process:\n\n1.  **Light-Dependent Reactions:** These reactions happen in the thylakoid membranes and require sunlight.\n    *   Chlorophyll absorbs light energy.\n    *   This energy is used to split water molecules ($H_2O$) into oxygen ($O_2$), protons ($H^+$), and electrons. This is why plants release oxygen.\n    *   The energy is temporarily stored in the molecules ATP and NADPH.\n\n2.  **Calvin Cycle (Light-Independent Reactions):** This cycle occurs in the stroma and does not directly require light.\n    *   It uses the ATP and NADPH from the light-dependent reactions as fuel.\n    *   Carbon dioxide ($CO_2$) from the atmosphere is \"fixed\" and converted into glucose ($C_6H_{12}O_6$), a sugar molecule.\n    *   The plant uses glucose for energy and to build other organic molecules.\n\n### Overall Equation\n\nThe overall chemical equation for photosynthesis is:\n\n$6CO_2 + 6H_2O + \\text{Light Energy} \\rightarrow C_6H_{12}O_6 + 6O_2$\n\nThis means that six molecules of carbon dioxide and six molecules of water, powered by light energy, produce one molecule of glucose and six molecules of oxygen.",
+  "tool_calls": [
+    {
+      "args": {
+        "query": "photosynthesis at the cellular level"
+      },
+      "tool_name": "search_course_materials"
+    },
+    {
+      "args": {
+        "updates": [
+          {
+            "concept_name": "Photosynthesis",
+            "mastery_delta": 0.1,
+            "reason": "Student asked for an explanation."
+          }
+        ]
+      },
+      "tool_name": "update_mastery_tool"
+    }
+  ]
+}

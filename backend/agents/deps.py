@@ -33,6 +33,12 @@ class SaplingDeps:
         mastery_changes: Accumulates the real before/after mastery deltas
             returned by apply_graph_update so the route can surface them in
             the chat response for parity with the legacy path.
+        retrieval: Optional TutorRetrieval implementation (ADR 0023). When
+            None (production), the tutor's read tools fall back to the
+            Supabase-backed impl in agents/tools/retrieval.py — byte-
+            identical behavior. Evals inject a FixtureRetrieval here so
+            record/live runs never touch a database. Typed Any to avoid
+            the circular import deps → retrieval → chat_context → deps.
     """
 
     user_id: str
@@ -42,3 +48,4 @@ class SaplingDeps:
     session_id: str | None = None
     graph_updates: list = field(default_factory=list)
     mastery_changes: list = field(default_factory=list)
+    retrieval: Any = None

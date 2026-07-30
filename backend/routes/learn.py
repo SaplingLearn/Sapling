@@ -12,7 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from agents import ORCHESTRATOR_LIMITS
+from agents import TUTOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
@@ -31,6 +31,7 @@ from services.gemini_service import (
     call_gemini_multiturn,
     extract_graph_update,
 )
+from services.graph_context import compact_graph_context
 from services.graph_service import get_graph, apply_graph_update
 from services.request_context import current_request_id
 
@@ -508,7 +509,6 @@ def _start_session_legacy(body: StartSessionBody, session_id: str | None = None)
         session_id = str(uuid.uuid4())
 
     student_name = get_user_name(body.user_id)
-    graph_data = get_graph(body.user_id)
 
     # Use abstract course_id from body, or resolve it from the topic. The graph
     # + shared context key on this abstract id; documents + the session row key
@@ -517,8 +517,13 @@ def _start_session_legacy(body: StartSessionBody, session_id: str | None = None)
     offering_id = resolve_offering(course_id, create=True) if course_id else ""
     documents = _get_course_documents(body.user_id, offering_id)
 
+    # #149 decision 3: compact course-scoped subgraph instead of the raw
+    # user-wide json.dumps — same serializer as the agent path's seed block,
+    # so the legacy prompt stops leaking OTHER courses' concepts.
+    graph_context = compact_graph_context(get_graph(body.user_id), course_id)
+
     system_prompt = build_system_prompt(
-        body.mode, student_name, json.dumps(graph_data, indent=2),
+        body.mode, student_name, graph_context,
         course_id=course_id, use_shared_context=body.use_shared_context,
         documents=documents,
     )
@@ -620,6 +625,17 @@ def _prepare_chat_run(
         if rag_block:
             context_blocks.append(rag_block)
 
+    if course_id:
+        # #149 AC(1): deterministic graph seed block — the student's tracked
+        # concepts for THIS course (message-relevant first, weakest fill),
+        # compact serialization, no ids. Placed after catalog/RAG so the
+        # ordering matches the rest of the assembled context. The agent's
+        # graph read tools exist to expand BEYOND this block mid-turn.
+        from services.graph_context import build_graph_context_block
+        graph_block = build_graph_context_block(user_id, course_id, user_message)
+        if graph_block:
+            context_blocks.append(graph_block)
+
     if context_blocks:
         user_message = "\n\n".join(context_blocks) + "\n\n[STUDENT QUESTION]\n" + user_message
 
@@ -634,7 +650,10 @@ def _prepare_chat_run(
     run_kwargs: dict = {
         "deps": deps,
         "message_history": message_history,
-        "usage_limits": ORCHESTRATOR_LIMITS,
+        # #149: the tutor's own budget — seven tools (incl. two graph
+        # readers) need more request/tool headroom than the generic
+        # ORCHESTRATOR_LIMITS; token ceiling unchanged.
+        "usage_limits": TUTOR_LIMITS,
     }
     if model_override is not None:
         run_kwargs["model"] = model_override
@@ -724,7 +743,6 @@ async def _legacy_chat(body: ChatBody, request: Request) -> dict:
     save_message(body.session_id, "user", body.message)
 
     student_name = get_user_name(body.user_id)
-    graph_data = get_graph(body.user_id)
     # Exclude the just-saved user message so history is prior turns only
     history = get_conversation_history(body.session_id)[:-1]
 
@@ -741,8 +759,11 @@ async def _legacy_chat(body: ChatBody, request: Request) -> dict:
         rag_chunks = retrieve_chunks(body.message, course_id=bu_code, k=5)
         rag_block = format_rag_context(rag_chunks)
 
+    # #149 decision 3: compact course-scoped subgraph, not the raw dump.
+    graph_context = compact_graph_context(get_graph(body.user_id), course_id)
+
     system_prompt = build_system_prompt(
-        body.mode, student_name, json.dumps(graph_data, indent=2),
+        body.mode, student_name, graph_context,
         course_id=course_id, use_shared_context=body.use_shared_context,
         documents=documents,
     )
@@ -1295,7 +1316,6 @@ def action(body: ActionBody, request: Request):
     }
 
     student_name = get_user_name(body.user_id)
-    graph_data = get_graph(body.user_id)
     history = get_conversation_history(body.session_id)
 
     # Session keys on the offering; docs read by offering, graph + shared
@@ -1304,8 +1324,11 @@ def action(body: ActionBody, request: Request):
     course_id = offering_course_id(offering_id) if offering_id else ""
     documents = _get_course_documents(body.user_id, offering_id)
 
+    # #149 decision 3: compact course-scoped subgraph, not the raw dump.
+    graph_context = compact_graph_context(get_graph(body.user_id), course_id)
+
     system_prompt = build_system_prompt(
-        body.mode, student_name, json.dumps(graph_data, indent=2),
+        body.mode, student_name, graph_context,
         course_id=course_id, use_shared_context=body.use_shared_context,
         documents=documents,
     )

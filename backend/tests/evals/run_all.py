@@ -9,9 +9,10 @@ Exits non-zero if any dataset regressed below its committed baseline or had a
 case failure (e.g. a missing cassette). This is the single command CI runs and
 the one to run locally before changing an agent's prompt or model.
 
-``chat_tutor`` is intentionally excluded: its retrieval tool reads a live
-Supabase and cannot run offline against cassettes. Bringing it into the harness
-is tracked with the graph-grounded tutor work (#149).
+``chat_tutor`` joined the offline harness with #149: its read tools now fetch
+through the TutorRetrieval seam (ADR 0023), so record/live runs use the
+committed fixture course instead of a live Supabase, and replay stays
+cassette-only like every other dataset.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ DATASETS = [
     "concept_extraction",
     "syllabus_extraction",
     "quiz_generation",
+    "chat_tutor",
 ]
 
 

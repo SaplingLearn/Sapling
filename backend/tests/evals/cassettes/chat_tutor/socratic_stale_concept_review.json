@@ -1,0 +1,9 @@
+{
+  "text": "Of the concepts you've studied, it looks like you've gone the longest without reviewing Mitosis. However, there are two concepts you haven't explored at all yet: `Supply And Demand` and `Closures`.\n\nHow about we start with `Supply And Demand`? To begin, what do those two terms mean to you in the context of economics?",
+  "tool_calls": [
+    {
+      "args": {},
+      "tool_name": "read_concepts_for_user"
+    }
+  ]
+}

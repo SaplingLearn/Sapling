@@ -43,6 +43,9 @@ Complete the harness and gate agent changes on it.
 4. **`chat_tutor` stays out of the offline harness.** Its retrieval tool reads a
    live Supabase and cannot run against cassettes; it moves in with the
    graph-grounded tutor work (#149).
+   > **Superseded by ADR 0023 (#149):** the TutorRetrieval seam made the
+   > tutor's reads injectable; `chat_tutor` now records against a committed
+   > fixture course and runs in `run_all.py` + CI like every other dataset.
 
 5. **Cross-platform robustness:** the runner forces UTF-8 on stdout/stderr so
    non-ASCII cases (e.g. a Mandarin syllabus) don't crash `rich` on a Windows

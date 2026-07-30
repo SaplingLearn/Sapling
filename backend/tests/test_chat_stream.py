@@ -234,14 +234,28 @@ def test_graph_update_emitted_once_per_new_write():
             PartStartEvent("Done."),
             FunctionToolCallEvent("search_course_materials"),
             FunctionToolResultEvent(),          # writes nothing new
+            # #149 read-only graph tool: its result event must not emit a
+            # graph_update either — reads never touch deps.graph_updates/
+            # mastery_changes, so there is nothing new past the high-water
+            # mark.
+            FunctionToolCallEvent("read_graph_neighborhood"),
+            FunctionToolResultEvent(),          # read-only — writes nothing
             AgentRunResultEvent("Done."),
         ])
         events = await collect(agent, deps, lambda r, g, m: {})
         graph_events = [e for e in events if e.type == "graph_update"]
-        assert len(graph_events) == 1, "second tool result added nothing — must not re-emit"
+        assert len(graph_events) == 1, (
+            "later tool results (incl. the read-only graph tool) added "
+            "nothing — must not re-emit"
+        )
         assert graph_events[0].data["nodes"] == {"new_nodes": [{"name": "Eigenvalues"}]}
         assert graph_events[0].data["mastery_changes"][0]["after"] == 0.6
         assert [e.type for e in events].index("graph_update") < [e.type for e in events].index("done")
+        # The read tool still surfaces as a progress event for the UI.
+        assert any(
+            e.type == "progress" and e.step == "read_graph_neighborhood"
+            for e in events
+        )
 
     asyncio.run(run())
 

@@ -1,0 +1,17 @@
+{
+  "text": "Of course. Big-O notation is a way to describe the efficiency of an algorithm in terms of its input size. It helps us understand how an algorithm's performance will change as the input grows larger.\n\n### Overview\n\nIn short, Big-O describes the **worst-case scenario** for an algorithm's time or space complexity. It focuses on the general shape of the performance curve, ignoring constant factors and lower-order terms. This helps in comparing the scalability of different algorithms.\n\nLet's say the input size is `$n$`. We use Big-O to express how many operations (time complexity) or how much memory (space complexity) an algorithm will need, relative to `$n$`.\n\n### Common Big-O Complexities\n\nHere are some common complexities, from most to least efficient:\n\n1.  **$O(1)$ \u2014 Constant Time**: The algorithm takes the same amount of time, regardless of the input size.\n2.  **$O(\\log n)$ \u2014 Logarithmic Time**: The time taken increases with the size of the input, but it does so very slowly. Doubling the input size does not double the work.\n3.  **$O(n)$ \u2014 Linear Time**: The runtime is directly proportional to the input size `$n$`. If you double `$n$`, you double the work.\n4.  **$O(n^2)$ \u2014 Quadratic Time**: The runtime is proportional to the square of the input size. If `$n$` is 10, the work is 100. If `$n$` is 100, the work is 10,000. This is common with nested loops.\n5.  **$O(2^n)$ \u2014 Exponential Time**: The runtime doubles with each addition to the input dataset. These algorithms become unusable very quickly.\n\nHere's a plot showing how these grow:\n```plot\n{\n  \"data\": [\n    {\n      \"x\": [1, 2, 4, 8, 16, 32],\n      \"y\": [1, 1, 1, 1, 1, 1],\n      \"name\": \"O(1)\",\n      \"type\": \"scatter\",\n      \"mode\": \"lines+markers\"\n    },\n    {\n      \"x\": [1, 2, 4, 8, 16, 32],\n      \"y\": [0, 1, 2, 3, 4, 5],\n      \"name\": \"O(log n)\",\n      \"type\": \"scatter\",\n      \"mode\": \"lines+markers\"\n    },\n    {\n      \"x\": [1, 2, 4, 8, 16, 32],\n      \"y\": [1, 2, 4, 8, 16, 32],\n      \"name\": \"O(n)\",\n      \"type\": \"scatter\",\n      \"mode\": \"lines+markers\"\n    },\n    {\n      \"x\": [1, 2, 4, 8, 16, 32],\n      \"y\": [1, 4, 16, 64, 256, 1024],\n      \"name\": \"O(n^2)\",\n      \"type\": \"scatter\",\n      \"mode\": \"lines+markers\"\n    }\n  ],\n  \"layout\": {\n    \"xaxis\": {\"title\": \"Input Size (n)\"},\n    \"yaxis\": {\"title\": \"Operations\"},\n    \"title\": \"Big-O Complexity Growth\"\n  }\n}\n```\n\n### Worked Example\n\nLet's analyze a simple function that finds a specific number in a list.\n\n```python\ndef find_number(haystack, needle):\n  for item in haystack:\n    if item == needle:\n      return True\n  return False\n```\n\nTo find the Big-O complexity, we consider the worst case. Here, the worst case is that the `needle` is the very last item in the `haystack`, or not in it at all.\n\nIf the list `haystack` has `$n$` elements, the `for` loop will run `$n$` times in the worst case. Therefore, the time complexity of this function is **$O(n)$**. If the list has 10 items, it takes at most 10 steps. If it has 1 million items, it takes at most 1 million steps. The runtime scales linearly with the input size.",
+  "tool_calls": [
+    {
+      "args": {
+        "updates": [
+          {
+            "concept_name": "Big-O Notation",
+            "mastery_delta": 0.1,
+            "reason": "Engaged with explanation."
+          }
+        ]
+      },
+      "tool_name": "update_mastery_tool"
+    }
+  ]
+}
