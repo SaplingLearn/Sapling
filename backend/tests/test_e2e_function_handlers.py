@@ -25,6 +25,9 @@ from agents.chat_tutor import socratic_agent
 from agents.classifier import classifier_agent
 from agents.concept_describe import build_message, concept_describe_agent
 from agents.deps import SaplingDeps
+from agents.note_chat import note_chat_agent
+from agents.note_concepts import note_concepts_agent
+from agents.note_summary import note_summary_agent
 from agents.quiz import quiz_agent
 from agents.summary import summary_agent
 from routes.learn import _resolve_model_pref
@@ -325,6 +328,79 @@ def test_concept_describe_handler_passes_real_output_schema(monkeypatch):
 
     assert result.output.description == E2E_CONCEPT_DESCRIPTION
     assert len(E2E_CONCEPT_DESCRIPTION) <= 400
+
+
+# ── Notetaker agent actions (F5a) ─────────────────────────────────────────
+#
+# routes/notes.py's summarize / extract-concepts / chat run note_summary,
+# note_concepts, and note_chat — all request-path (the route awaits the agent
+# and returns its output to the user). Before F5a this module registered
+# seven tasks but none of these three, so function mode's dispatch raised
+# UnregisteredHandlerError and each route 500'd. These are the boot +
+# constants-sync contract tests: note_summary/note_concepts flow through the
+# REAL structured output tools, note_chat through a plain-text response.
+
+
+def test_env_module_registers_note_summary_handler_on_dispatch(monkeypatch):
+    """note_summary has a structured output (NoteSummary.summary): a real agent
+    run gets the module's fixed summary through the REAL output tool, with no
+    handler registered by the test itself."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    with note_summary_agent.override(model=model_for("note_summary")):
+        result = note_summary_agent.run_sync(
+            "Title: Recursion\n\nBody:\nA function that calls itself.",
+            deps=_deps(),
+        )
+
+    from agents.function_handlers_e2e import E2E_NOTE_SUMMARY
+
+    assert result.output.summary == E2E_NOTE_SUMMARY
+    assert "note_summary" in providers._FUNCTION_HANDLERS
+
+
+def test_env_module_registers_note_concepts_handler_on_dispatch(monkeypatch):
+    """note_concepts has a structured output (NoteConcepts.concepts, a list of
+    Title-Case names, 0–15 entries): the real agent returns the module's fixed
+    list through the REAL output tool, and it satisfies that schema bound."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    with note_concepts_agent.override(model=model_for("note_concepts")):
+        result = note_concepts_agent.run_sync(
+            "Title: Recursion\n\nBody:\nA function that calls itself.",
+            deps=_deps(),
+        )
+
+    from agents.function_handlers_e2e import E2E_NOTE_CONCEPTS
+
+    assert result.output.concepts == E2E_NOTE_CONCEPTS
+    assert all(isinstance(c, str) and c.strip() for c in result.output.concepts)
+    assert len(result.output.concepts) <= 15
+    assert "note_concepts" in providers._FUNCTION_HANDLERS
+
+
+def test_env_module_registers_note_chat_handler_on_dispatch(monkeypatch):
+    """note_chat returns plain str, so its handler emits a text ModelResponse
+    (like chat_tutor): the real agent run yields the module's fixed reply with
+    none of its function tools (read_active_note, ...) fired."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    with note_chat_agent.override(model=model_for("note_chat")):
+        result = note_chat_agent.run_sync("What is a base case?", deps=_deps())
+
+    from agents.function_handlers_e2e import E2E_NOTE_CHAT_REPLY
+
+    assert result.output == E2E_NOTE_CHAT_REPLY
+    assert "note_chat" in providers._FUNCTION_HANDLERS
 
 
 # ── Slow-stream trigger + lane pacing (#356) ──────────────────────────────

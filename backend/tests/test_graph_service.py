@@ -341,6 +341,50 @@ class TestGetCourses:
         assert result[0]["term"] == "Spring 2026"      # term surfaced
         assert result[0]["node_count"] == 2
 
+    def test_collapses_duplicate_course_across_terms(self):
+        """#449 (findings F1/F3): a user enrolled in the SAME abstract course in
+        two terms (CS101 Fall 2025 + CS101 Spring 2026) has two enrollments/
+        offerings sharing one abstract course_id. get_courses must collapse them
+        to ONE row per course_id — not fan out one row per enrollment."""
+        fall = _enrollment_row("cs101", "CS101", "Intro CS",
+                               term="Fall 2025", offering_id="off-fall")
+        fall["id"] = "enr-fall"
+        fall["enrolled_at"] = "2025-09-01"
+        spring = _enrollment_row("cs101", "CS101", "Intro CS",
+                                 term="Spring 2026", offering_id="off-spring")
+        spring["id"] = "enr-spring"
+        spring["enrolled_at"] = "2026-01-15"
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "enrollments":
+                # _user_enrolled_courses orders enrolled_at.asc
+                mock.select.return_value = [fall, spring]
+            elif name == "graph_nodes":
+                mock.select.return_value = [{"id": "n1"}, {"id": "n2"}, {"id": "n3"}]
+            else:
+                mock.select.return_value = []
+            return mock
+
+        with patch("services.graph_service.table", side_effect=factory):
+            result = get_courses("u1")
+
+        # exactly one row per DISTINCT abstract course_id
+        assert len(result) == 1
+        course_ids = [c["course_id"] for c in result]
+        assert course_ids == ["cs101"]
+        row = result[0]
+        # representative = most recent enrollment (latest enrolled_at = Spring 2026)
+        assert row["term"] == "Spring 2026"
+        assert row["enrollment_id"] == "enr-spring"
+        # node_count is the abstract course's count, counted ONCE — not doubled
+        # across the two offerings.
+        assert row["node_count"] == 3
+        # per-enrollment detail is preserved (not silently dropped) for any
+        # enrollment-keyed consumer.
+        assert set(row["enrollment_ids"]) == {"enr-fall", "enr-spring"}
+        assert set(row["terms"]) == {"Fall 2025", "Spring 2026"}
+
     def test_returns_empty_on_exception(self):
         def factory(name):
             mock = MagicMock()

@@ -8,11 +8,11 @@ import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { QuizPanel } from "../QuizPanel";
 import { useUser } from "@/context/UserContext";
-import { useActiveSemester } from "@/lib/useActiveSemester";
+import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { getCourses, getGraph, type EnrolledCourse } from "@/lib/api";
 import type { GraphNode as ApiNode } from "@/lib/types";
 
-type Concept = { id: string; name: string; course_id: string | null; course_code: string | null; term: string | null };
+type Concept = { id: string; name: string; course_id: string | null; course_code: string | null; term: string | null; terms: string[] | null };
 
 export function Quiz() {
   return (
@@ -57,6 +57,7 @@ function QuizInner() {
               course_id: n.course_id ?? null,
               course_code: n.course_id ? (courseById.get(n.course_id)?.course_code ?? null) : null,
               term: n.course_id ? (courseById.get(n.course_id)?.term ?? null) : null,
+              terms: n.course_id ? (courseById.get(n.course_id)?.terms ?? null) : null,
             })),
         );
       } catch (err) {
@@ -71,14 +72,14 @@ function QuizInner() {
   // The graph fetch above is already scoped to the active semester, so this
   // is defensive rather than load-bearing — matches the Tree/Learn pickers.
   const scopedConcepts = useMemo(
-    () => (activeSemester ? concepts.filter(c => c.term === activeSemester) : concepts),
+    () => (activeSemester ? concepts.filter(c => courseInTerm(c, activeSemester)) : concepts),
     [concepts, activeSemester],
   );
 
   // Scope the course picker to the active semester too, so it stays consistent
   // with the concept list the quiz draws from.
   const scopedCourses = useMemo(
-    () => (activeSemester ? courses.filter(c => c.term === activeSemester) : courses),
+    () => (activeSemester ? courses.filter(c => courseInTerm(c, activeSemester)) : courses),
     [courses, activeSemester],
   );
 

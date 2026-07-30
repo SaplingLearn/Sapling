@@ -93,8 +93,15 @@ export interface EnrolledCourse {
   enrolled_at: string;
   // Human term label of the offering the enrollment hangs off, e.g. "Fall 2025".
   // The backend emits "" when the offering has no term joined — treat it as unknown,
-  // never as a past term.
+  // never as a past term. This is the REPRESENTATIVE (most-recent) term of a course
+  // that the backend collapses to one row per abstract course_id (#449); use `terms`
+  // (below) for semester membership so a course enrolled across terms shows on each.
   term: string;
+  // Every term label this abstract course is enrolled in (Fall 2025 + Spring 2026 for
+  // a re-take), alongside `enrollment_ids`. Present since the get_courses collapse;
+  // optional for backward-compat. Filter/scope by membership, not the singular `term`.
+  terms?: string[];
+  enrollment_ids?: string[];
 }
 
 export const getCourses = (userId: string) =>

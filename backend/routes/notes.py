@@ -79,6 +79,34 @@ async def _run_note_worker(agent, user_prompt: str, deps: SaplingDeps, *, action
         ) from e
 
 
+def _course_meta(offering_id: str | None, cache: dict) -> dict:
+    """Resolve an offering to its abstract course id + human labels.
+
+    Notes key on the OFFERING (a course taught in a term), but the notetaker
+    UI keys on the abstract catalog course id (and shows a course label).
+    Without these fields every note renders as "Unknown course" (finding F4).
+    Mirrors calendar.py::_course_meta_cached: a per-request memo keyed on
+    offering_id so a list of notes sharing a course hits the DB once.
+    """
+    if not offering_id:
+        return {"course_id": None, "course_code": None, "course_name": None}
+    if offering_id not in cache:
+        course_id = offering_course_id(offering_id)
+        course = {}
+        if course_id:
+            rows = table("courses").select(
+                "id,course_code,course_name",
+                filters={"id": f"eq.{course_id}"}, limit=1,
+            )
+            course = rows[0] if rows else {}
+        cache[offering_id] = {
+            "course_id": course_id,
+            "course_code": course.get("course_code"),
+            "course_name": course.get("course_name"),
+        }
+    return cache[offering_id]
+
+
 class CreateNoteBody(BaseModel):
     user_id: str
     course_id: str
@@ -106,6 +134,13 @@ async def list_user_notes(
     # the (current-term) offering for the requested course before filtering.
     offering_id = resolve_offering(course_id) if course_id else None
     notes = await list_notes(user_id=user_id, offering_id=offering_id)
+    # Attach the abstract course id + labels resolved from each note's offering.
+    # The notetaker UI keys on course_id; without it every note shows "Unknown
+    # course" (finding F4). Shared per-request memo so notes in the same course
+    # resolve the courses row once.
+    meta_cache: dict = {}
+    for n in notes:
+        n.update(_course_meta(n.get("offering_id"), meta_cache))
     # ETag from each note's (id, updated_at) — any create/edit/delete changes the
     # set or bumps updated_at. A matching If-None-Match returns 304 and skips
     # re-serializing the (already-decrypted) note list.
@@ -132,6 +167,9 @@ async def create(body: CreateNoteBody, request: Request):
         body=body.body,
         tags=body.tags,
     )
+    # Same F4 enrichment as the read paths so a freshly created note carries its
+    # abstract course_id + labels (else it shows "Unknown course" until reload).
+    note.update(_course_meta(note.get("offering_id") or offering_id, {}))
     return note
 
 
@@ -141,6 +179,9 @@ async def read(note_id: str, request: Request, user_id: str):
     note = await get_note(note_id=note_id, user_id=user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # Same offering → course_id/label enrichment as the list route (F4), so a
+    # single-note read returns a consistent shape.
+    note.update(_course_meta(note.get("offering_id"), {}))
     return note
 
 

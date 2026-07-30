@@ -303,22 +303,68 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
 
 def get_courses(user_id: str) -> list:
     """
-    Return user's enrolled courses joined with abstract catalog data + term.
+    Return the user's enrolled courses, collapsed to ONE row per **abstract**
+    ``course_id``.
+
+    A user can hold the same abstract course across multiple terms (e.g. CS101 in
+    Fall 2025 *and* Spring 2026 = two enrollments/offerings sharing one abstract
+    ``course_id``). This list is consumed as *abstract courses* — the dashboard
+    course count, the /tree filter chips, and the quiz / study / notetaker /
+    upload course pickers all key on ``course_id`` — so the old per-enrollment
+    fan-out surfaced the same course twice (#449, findings F1/F3). We collapse
+    here instead of leaving every consumer to de-dupe.
+
+    Collapse rule: one row per ``course_id``; the **most recent** enrollment
+    (latest ``enrolled_at`` — rows arrive ordered ``enrolled_at.asc``, so the
+    last occurrence wins) is the representative for
+    ``enrollment_id``/``color``/``nickname``/``term``/``enrolled_at``.
+    ``node_count`` is the graph-node count for the abstract course (the graph
+    keys on ``course_id``), counted **once** — never doubled across offerings.
+    Per-enrollment detail is preserved, not dropped: ``enrollment_ids`` and
+    ``terms`` carry every offering the user holds for the course. (Gradebook /
+    analytics still resolve per-enrollment/term via their own enrollment-keyed
+    endpoints, not this abstract-course list.)
+
     Returns list of dicts with: enrollment_id, course_id (abstract), course_code,
-    course_name, school, department, color, nickname, term, node_count, enrolled_at.
+    course_name, school, department, color, nickname, term, node_count,
+    enrolled_at, enrollment_ids, terms.
     """
     rows = _user_enrolled_courses(user_id)
 
-    result = []
+    # Collapse enrollments to one representative row per abstract course_id,
+    # preserving first-seen order, while accumulating every enrollment id / term.
+    order: list[str] = []
+    reps: dict[str, dict] = {}
+    enrollment_ids: dict[str, list[str]] = {}
+    terms: dict[str, list[str]] = {}
     for r in rows:
-        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
         course_id = r.get("course_id")  # abstract
+        if not course_id:
+            continue
+        if course_id not in reps:
+            order.append(course_id)
+            enrollment_ids[course_id] = []
+            terms[course_id] = []
+        reps[course_id] = r  # last (most recent enrolled_at) wins as representative
+        eid = r.get("id")
+        if eid and eid not in enrollment_ids[course_id]:
+            enrollment_ids[course_id].append(eid)
+        term_label = r.get("term")
+        if term_label and term_label not in terms[course_id]:
+            terms[course_id].append(term_label)
 
-        # Count nodes for this course (graph keys on the abstract course id)
+    result = []
+    for course_id in order:
+        r = reps[course_id]
+        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
+
+        # Count nodes for this course (graph keys on the abstract course id).
+        # Counted once per distinct course — the fan-out used to run this per
+        # enrollment, double-counting the same abstract course's nodes.
         node_rows = table("graph_nodes").select(
             "id",
             filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-        ) if course_id else []
+        ) or []
 
         result.append({
             "enrollment_id": r["id"],
@@ -332,6 +378,8 @@ def get_courses(user_id: str) -> list:
             "term": r.get("term", ""),
             "node_count": len(node_rows),
             "enrolled_at": r.get("enrolled_at"),
+            "enrollment_ids": enrollment_ids[course_id],
+            "terms": terms[course_id],
         })
     return result
 

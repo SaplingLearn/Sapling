@@ -264,3 +264,53 @@ register_function_handler(
     "concept_describe",
     _structured_output({"description": E2E_CONCEPT_DESCRIPTION}),
 )
+
+
+# ── Notetaker agent actions (F5a) ───────────────────────────────────────────
+#
+# routes/notes.py runs three request-path notetaker actions the browser awaits
+# and renders:
+#   POST /api/notes/{id}/summarize        → note_summary  (structured)
+#   POST /api/notes/{id}/extract-concepts → note_concepts (structured)
+#   POST /api/notes/{id}/chat             → note_chat      (plain text)
+# None were registered here before, so function mode's dispatch raised
+# UnregisteredHandlerError and each route 500'd. All three are request-path
+# (the route awaits the agent and returns its output to the user), never a
+# post-response BackgroundTask, so registering them is correct — the same
+# reason concept_describe above is registered but quiz_context is not.
+#
+# note_summary/note_concepts have structured `output_type`s (NoteSummary /
+# NoteConcepts), so each emits its fixed payload through the agent's OUTPUT
+# tool via `_structured_output` — validated by the real output schema.
+# note_chat returns plain `str`, so it emits a text ModelResponse like
+# `_chat_tutor_handler`. note_chat carries function tools (read_active_note,
+# search_course_materials, apply_graph_update), but the scripted text reply
+# invokes none of them, holding this module's no-tool-calls / zero
+# model-driven-writes constraint.
+
+# NoteSummary.summary — a faithful 2–4 sentence Markdown summary.
+E2E_NOTE_SUMMARY = (
+    "[e2e-function-model] Deterministic note summary: the note captures "
+    "recursion as a function that calls itself on a smaller subproblem, and "
+    "flags the base case as the student's open question."
+)
+# NoteConcepts.concepts — Title-Case names (0–15) merged into the graph.
+E2E_NOTE_CONCEPTS = ["Recursion", "Base Case"]
+# note_chat plain-text reply, rendered in the notetaker's sidecar chat panel.
+E2E_NOTE_CHAT_REPLY = (
+    "[e2e-function-model] Deterministic note-chat reply: your note's base "
+    "case is what stops the recursion from calling itself forever."
+)
+
+
+def _note_chat_handler(messages, info) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content=E2E_NOTE_CHAT_REPLY)])
+
+
+register_function_handler(
+    "note_summary", _structured_output({"summary": E2E_NOTE_SUMMARY})
+)
+register_function_handler(
+    "note_concepts", _structured_output({"concepts": E2E_NOTE_CONCEPTS})
+)
+register_function_handler("note_chat", _note_chat_handler)

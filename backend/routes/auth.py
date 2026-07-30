@@ -554,6 +554,23 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         )
         return resp
 
+    # First-login achievement (F7). The login-streak achievements ("First Steps"
+    # and friends) were only ever evaluated at study-session end (learn.py), so a
+    # user who signs in but hasn't just finished a session sat at 100% progress
+    # yet stayed LOCKED forever — unlike Document Collector, whose upload path
+    # fires its own check. Fire the same grant check here on every approved
+    # sign-in. `check_achievements` dedups against user_achievements (and the
+    # (user_id, achievement_id) PK backstops it), so it awards at most once and is
+    # safe to call on every login. Best-effort: a grant failure must never break
+    # sign-in.
+    try:
+        from services.achievement_service import check_achievements
+        check_achievements(user_id, "login_streak", {})
+    except Exception:
+        logger.warning(
+            "sign-in achievement check failed for %r", user_id, exc_info=True
+        )
+
     # One-shot HMAC token so the frontend can verify this redirect without a
     # second round-trip. The frontend exchanges it for the real, long-lived
     # `sapling_session` cookie (see _REDIRECT_TOKEN_TTL_SECONDS above) — it is

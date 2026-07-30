@@ -49,6 +49,53 @@ class TestSearchCourses:
         assert res.status_code == 200
         assert len(res.json()["courses"]) == 2
 
+    def test_collapses_duplicate_course_codes(self):
+        # The catalog can hold two DISTINCT abstract courses (different ids,
+        # possibly different names) that share a course_code — e.g. the seed-*
+        # (Sapling Demo University) and rich-* (Rich Local University) demo
+        # schools both define CS101 / BIO110. The picker must not surface them
+        # as visually-indistinguishable duplicates (finding F2): collapse by
+        # course_code so each code appears once.
+        mock = MagicMock()
+        mock.select.return_value = [
+            {"id": "seed-course-cs101", "course_code": "CS101",
+             "course_name": "Intro to Computer Science"},
+            {"id": "rich-course-cs101", "course_code": "CS101",
+             "course_name": "Introduction to Computer Science"},
+            {"id": "seed-course-bio110", "course_code": "BIO110",
+             "course_name": "Cell Biology"},
+            {"id": "rich-course-bio110", "course_code": "BIO110",
+             "course_name": "Cell Biology"},
+        ]
+        with patch("routes.onboarding.table", return_value=mock):
+            res = client.get("/api/onboarding/courses?q=c")
+
+        assert res.status_code == 200
+        courses = res.json()["courses"]
+        codes = [c["course_code"] for c in courses]
+        # No two returned entries share a course_code.
+        assert len(codes) == len(set(codes)), f"duplicate course codes leaked: {codes}"
+        assert sorted(codes) == ["BIO110", "CS101"]
+
+    def test_distinct_codes_are_all_kept(self):
+        # Dedup keys on course_code only; distinct codes (even with blank codes)
+        # must all survive so the picker still lists every real course.
+        mock = MagicMock()
+        mock.select.return_value = [
+            {"id": "a", "course_code": "CS101", "course_name": "Intro CS"},
+            {"id": "b", "course_code": "MATH210", "course_name": "Linear Algebra"},
+            {"id": "c", "course_code": "", "course_name": "Uncoded One"},
+            {"id": "d", "course_code": "", "course_name": "Uncoded Two"},
+        ]
+        with patch("routes.onboarding.table", return_value=mock):
+            res = client.get("/api/onboarding/courses")
+
+        assert res.status_code == 200
+        ids = [c["id"] for c in res.json()["courses"]]
+        # All four survive: two distinct codes + two blank-code rows are not
+        # collapsed into each other.
+        assert ids == ["a", "b", "c", "d"]
+
 
 def _make_factory(tables, *, course_rows, enrollment_rows, offering_rows=None):
     """Build a shared table() mock factory across onboarding + academics.

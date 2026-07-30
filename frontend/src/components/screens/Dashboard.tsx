@@ -11,7 +11,7 @@ import { DashboardSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useLayoutPref } from "@/lib/useLayoutPref";
-import { useActiveSemester } from "@/lib/useActiveSemester";
+import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import {
   getGraph,
   getCourses,
@@ -336,7 +336,7 @@ export function Dashboard() {
   // makes the Dashboard feel like an arrival page, not a tool page.
 
   const scopedCourses = React.useMemo(
-    () => (activeSemester ? courses.filter((c) => c.term === activeSemester) : courses),
+    () => (activeSemester ? courses.filter((c) => courseInTerm(c, activeSemester)) : courses),
     [courses, activeSemester],
   );
 
