@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, UnexpectedModelBehavior
 
 from services import flashcard_import_service as svc
 
@@ -310,6 +310,17 @@ class TestGenerateCards:
             with pytest.raises(RuntimeError):
                 svc.gemini_generate_cards("x", count=5, difficulty="recall")
 
+    def test_content_filter_propagates(self):
+        # A provider content-filter block (e.g. Gemini RECITATION, which the
+        # close-grounding flashcard prompt invites) is NOT schema noncompliance.
+        # ContentFilterError subclasses UnexpectedModelBehavior, so without its
+        # own carve-out it would degrade to [] and the route would answer a
+        # misleading 200 with zero cards; it must propagate → route 502 (#340).
+        run = AsyncMock(side_effect=ContentFilterError("blocked: RECITATION"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            with pytest.raises(ContentFilterError):
+                svc.gemini_generate_cards("x", count=5, difficulty="recall")
+
     def test_non_transient_http_error_propagates(self):
         run = AsyncMock(side_effect=ModelHTTPError(status_code=400, model_name="gemini-2.5-flash"))
         with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
@@ -375,6 +386,16 @@ class TestCleanupCards:
         run = AsyncMock(side_effect=RuntimeError("boom"))
         with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             with pytest.raises(RuntimeError):
+                svc.gemini_cleanup_cards(cards)
+
+    def test_content_filter_propagates(self):
+        # A content-filter block propagates (→ route 502) even on the cleanup
+        # path — unlike schema-noncompliant output, which falls back to the
+        # user's original cards (#340).
+        cards = [{"front": "X", "back": "Y"}]
+        run = AsyncMock(side_effect=ContentFilterError("blocked: SAFETY"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            with pytest.raises(ContentFilterError):
                 svc.gemini_cleanup_cards(cards)
 
 

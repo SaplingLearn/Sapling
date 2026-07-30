@@ -18,6 +18,7 @@ import {
   syncGradescopeCourse,
   setCurveSettings,
 } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
 import { applyCurveToAssignment, hasCurveData } from "@/components/Gradebook/curveUtils";
 import { EditWeightsModal } from "@/components/Gradebook/EditWeightsModal";
 import { AssignmentList } from "@/components/Gradebook/AssignmentList";
@@ -94,7 +95,9 @@ interface Props {
   courseId: string;
 }
 
-function CurveSettingsModal({
+// Exported for Course.curveModal.test.tsx (#166 failure-surfacing contract);
+// only GradebookCourseScreen below renders it in the app.
+export function CurveSettingsModal({
   open,
   course,
   onClose,
@@ -108,6 +111,7 @@ function CurveSettingsModal({
     curve_sd_delta: number | null;
   }) => Promise<void>;
 }) {
+  const toast = useToast();
   const [mounted, setMounted] = React.useState(false);
   const [avgTarget, setAvgTarget] = React.useState<string>(
     course.curve_avg_target != null ? (course.curve_avg_target * 100).toFixed(0) : "83"
@@ -173,6 +177,8 @@ function CurveSettingsModal({
             variant="primary"
             size="sm"
             disabled={saving}
+            // On failure the modal stays open (no onClose) so the user can
+            // see the toast and retry — closing would look like success.
             onClick={async () => {
               setSaving(true);
               try {
@@ -181,6 +187,8 @@ function CurveSettingsModal({
                   curve_sd_delta: toFloat(sdDelta),
                 });
                 onClose();
+              } catch (err) {
+                toast.error(humanizeError(err, "Couldn't save curve settings. Try again."));
               } finally { setSaving(false); }
             }}
           >
@@ -626,6 +634,8 @@ export function GradebookCourseScreen({ courseId }: Props) {
 
       {data && (
         <>
+          {/* The onSave/onDelete callbacks below deliberately don't catch:
+              each modal catches, toasts, and stays open on failure (#166). */}
           <EditWeightsModal
             open={editWeights}
             initial={data.categories}

@@ -164,12 +164,14 @@ def test_real_agent_driven_by_function_model_asserts_tool_call_args(monkeypatch)
         calls["n"] += 1
         if calls["n"] == 1:
             # First turn: script a call to a real function tool with real args.
-            # The tool is registered under its function name (note_chat.py wires
-            # `search_course_materials_tool` without a name= override).
+            # The tool is registered under its prompt-facing name (#135:
+            # note_chat.py wires Tool(search_course_materials_tool,
+            # name="search_course_materials") so the wire name matches the
+            # system prompt's `search_course_materials`).
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="search_course_materials_tool",
+                        tool_name="search_course_materials",
                         args={"query": "gradient descent", "limit": 3},
                     )
                 ]
@@ -185,7 +187,7 @@ def test_real_agent_driven_by_function_model_asserts_tool_call_args(monkeypatch)
         result = note_chat_agent.run_sync("How does gradient descent work?", deps=_deps())
 
     # The real tools were registered (registration ran through the agent).
-    assert "search_course_materials_tool" in seen_tools["names"]
+    assert "search_course_materials" in seen_tools["names"]
     assert "read_active_note" in seen_tools["names"]
     # The LLM-chosen tool-call arguments were schema-validated and dispatched to
     # the real tool body with the deps-scoped user/course fields injected.
@@ -372,7 +374,7 @@ def test_function_mode_streams_scripted_tool_calls(monkeypatch):
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="search_course_materials_tool",
+                        tool_name="search_course_materials",
                         args={"query": "eigenvalues", "limit": 2},
                     )
                 ]
@@ -402,3 +404,87 @@ def test_function_mode_streams_scripted_tool_calls(monkeypatch):
     assert received == {"query": "eigenvalues", "limit": 2}
     assert final == "used the tool"
     assert calls["n"] == 2
+
+
+# ── Streamed-replay pacing (#356) ─────────────────────────────────────────
+#
+# Browser journeys that act MID-STREAM (Stop a turn, switch sessions while
+# streaming) need a real time window between deltas — a FunctionModel that
+# replays its whole reply in one instant delta makes those journeys
+# unwritable. `set_function_stream_delay_ms` paces ONLY the streamed replay:
+# text is re-chunked into small deltas with a sleep between them, while the
+# JSON lane (and the joined stream text) stays byte-identical to the
+# handler's constant. Default is 0 — no pacing, single whole-part delta —
+# so nothing changes for existing tests or the hermetic lane unless a
+# handlers module opts in (agents/function_handlers_e2e.py does).
+
+
+async def _collect_stream_deltas(agent, task, prompt) -> tuple[list[str], str | None]:
+    deltas: list[str] = []
+    final: str | None = None
+    with agent.override(model=model_for(task)):
+        async for event in agent.run_stream_events(prompt, deps=_deps()):
+            cls_name = type(event).__name__
+            if cls_name == "PartStartEvent":
+                part = getattr(event, "part", None)
+                if getattr(part, "part_kind", None) == "text" and part.content:
+                    deltas.append(part.content)
+            elif cls_name == "PartDeltaEvent":
+                delta = getattr(event, "delta", None)
+                if getattr(delta, "part_delta_kind", None) == "text":
+                    deltas.append(delta.content_delta)
+            elif cls_name == "AgentRunResultEvent":
+                final = event.result.output
+    return deltas, final
+
+
+def test_stream_pacing_chunks_text_between_sleeps(monkeypatch):
+    """With a pacing delay set, streamed text replays as multiple small
+    deltas (24-char chunks) whose join is byte-identical to the handler's
+    reply, and the run takes at least (chunks - 1) * delay of wall clock —
+    the mid-stream window the #356 journeys act inside."""
+    import asyncio
+    import time
+
+    from agents._providers import function_stream_delay_ms, set_function_stream_delay_ms
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    reply = "x" * 60  # 3 chunks at 24 chars
+    register_function_handler(
+        "note_chat", lambda m, i: ModelResponse(parts=[TextPart(content=reply)])
+    )
+    set_function_stream_delay_ms(25)
+    assert function_stream_delay_ms() == 25
+
+    start = time.monotonic()
+    deltas, final = asyncio.run(_collect_stream_deltas(note_chat_agent, "note_chat", "hi"))
+    elapsed = time.monotonic() - start
+
+    assert deltas == ["x" * 24, "x" * 24, "x" * 12]
+    assert final == reply  # joined text identical to the JSON-lane constant
+    # Two inter-chunk sleeps of 25ms each give a hard lower bound; asserting
+    # only the lower bound keeps this stable on a loaded CI runner.
+    assert elapsed >= 0.05
+
+
+def test_stream_pacing_defaults_off_and_resets_with_clear(monkeypatch):
+    """Default is a single whole-part delta (no pacing), and
+    clear_function_handlers() — which every seam test fixture already calls —
+    also resets a previously-set delay, so pacing can never leak between
+    tests the way a bare module global would."""
+    import asyncio
+
+    from agents._providers import function_stream_delay_ms, set_function_stream_delay_ms
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    set_function_stream_delay_ms(150)
+    clear_function_handlers()
+    assert function_stream_delay_ms() == 0
+
+    reply = "y" * 60
+    register_function_handler(
+        "note_chat", lambda m, i: ModelResponse(parts=[TextPart(content=reply)])
+    )
+    deltas, final = asyncio.run(_collect_stream_deltas(note_chat_agent, "note_chat", "hi"))
+    assert deltas == [reply]  # one delta: the whole part, exactly as before
+    assert final == reply

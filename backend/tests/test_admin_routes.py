@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from unittest.mock import MagicMock, patch
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from main import app
@@ -553,6 +554,49 @@ class TestCosmeticAudits:
             r = client.delete("/api/admin/cosmetics/c1")
         assert r.status_code == 200
         assert audit.call_args.kwargs["action"] == "cosmetic.delete"
+
+
+class TestListAllowlist:
+    """#130: GET /api/admin/allowlist — the listing route the admin portal's
+    adminListAllowlist() calls (frontend/src/lib/api.ts) was never written;
+    approve/revoke existed without a way to read the list back."""
+
+    def test_admin_gets_list_newest_first(self):
+        rows = [
+            {"id": "e2", "email": "b@x.co", "created_at": "2026-05-02T00:00:00Z",
+             "approved_at": None},
+            {"id": "e1", "email": "a@x.co", "created_at": "2026-05-01T00:00:00Z",
+             "approved_at": "2026-05-03T00:00:00Z"},
+        ]
+        with _mock_admin(), patch("routes.admin.table") as t:
+            t.return_value.select.return_value = rows
+            r = client.get("/api/admin/allowlist")
+        assert r.status_code == 200
+        assert r.json() == {"emails": rows}
+        t.assert_called_once_with("newsletter_emails")
+        call = t.return_value.select.call_args
+        columns = call.args[0] if call.args else call.kwargs["columns"]
+        # Shape matches the frontend AllowlistEmail type (types.ts).
+        assert {c.strip() for c in columns.split(",")} == {
+            "id", "email", "created_at", "approved_at",
+        }
+        assert call.kwargs.get("order") == "created_at.desc"
+
+    def test_empty_table_returns_empty_list(self):
+        with _mock_admin(), patch("routes.admin.table") as t:
+            t.return_value.select.return_value = []
+            r = client.get("/api/admin/allowlist")
+        assert r.status_code == 200
+        assert r.json() == {"emails": []}
+
+    def test_non_admin_gets_403(self):
+        with patch(
+            "routes.admin.require_admin",
+            side_effect=HTTPException(status_code=403, detail="Admin access required"),
+        ), patch("routes.admin.table") as t:
+            r = client.get("/api/admin/allowlist")
+        assert r.status_code == 403
+        t.assert_not_called()
 
 
 class TestAllowlistAudits:

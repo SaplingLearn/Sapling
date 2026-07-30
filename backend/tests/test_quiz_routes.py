@@ -106,7 +106,7 @@ def _make_table(questions=None):
             mock.select.return_value = [{"name": "Andres"}]
         else:
             mock.select.return_value = []
-        mock.update.return_value = []
+        mock.update.return_value = [{"id": "updated"}]
         return mock
 
     return factory
@@ -235,7 +235,7 @@ class TestSubmitQuiz:
                 mock.select.return_value = [{"name": "Andres"}]
             else:
                 mock.select.return_value = []
-            mock.update.return_value = []
+            mock.update.return_value = [{"id": "updated"}]
             return mock
 
         with patch("routes.quiz.table", side_effect=factory):
@@ -252,6 +252,113 @@ class TestSubmitQuiz:
 
         assert r.status_code == 200
         assert r.json()["score"] == 2
+
+
+# ── POST /api/quiz/submit — resubmit + malformed-item grading (#129) ────────
+
+
+MALFORMED_QUESTIONS = [
+    {
+        "id": 1,
+        "text": "What does a for-loop do?",
+        "options": [
+            {"label": "A", "correct": True},
+            {"label": "B", "correct": False},
+        ],
+        "explanation": "A is correct.",
+    },
+    {
+        # Malformed: generation drift left NO option flagged correct. Before
+        # #129 this graded as correct whenever the answer was also missing
+        # ('' == '' — the free point).
+        "id": 2,
+        "text": "What is a function?",
+        "options": [
+            {"label": "C", "correct": False},
+            {"label": "D", "correct": False},
+        ],
+        "explanation": "Nothing is marked correct.",
+    },
+]
+
+
+class TestSubmitQuizResubmit:
+    """#129: the first submit writes quiz_attempts.completed_at; re-POSTing
+    the same quiz_id must 409 without re-running apply_graph_update (second
+    mastery delta + duplicate node_mastery_events row + streak bump), the
+    background quiz-context task, or achievements."""
+
+    def _completed_attempt_factory(self):
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz1",
+                    "user_id": "user_andres",
+                    "concept_node_id": "node1",
+                    "difficulty": "medium",
+                    "questions_json": SAMPLE_QUESTIONS,
+                    "completed_at": "2026-07-29T12:00:00",  # already scored
+                }]
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "mastery_score": 0.5,
+                    "concept_name": "Loops",
+                    "course_id": "course1",
+                }]
+            else:
+                mock.select.return_value = []
+            mock.update.return_value = [{"id": "updated"}]
+            return mock
+
+        return factory
+
+    def test_resubmit_of_completed_attempt_returns_409_and_applies_nothing(self):
+        apply_mock = MagicMock()
+        ctx_run = _noop_ctx_agent()
+        with (
+            patch("routes.quiz.table", side_effect=self._completed_attempt_factory()),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
+            patch("routes.quiz.save_quiz_context") as save_mock,
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+        assert r.status_code == 409
+        # No second mastery event: the sanctioned graph write must not fire.
+        apply_mock.assert_not_called()
+        # Nor the background context update behind it.
+        ctx_run.assert_not_called()
+        save_mock.assert_not_called()
+
+
+class TestSubmitQuizMalformedItem:
+    """#129: a malformed item (no option flagged correct) must never grade
+    as correct — before the fix, a missing answer matched the empty
+    correct label ('' == '') and handed out a free point."""
+
+    def test_missing_answer_on_item_without_correct_option_is_not_correct(self):
+        with _submit_quiz_mocks(questions=MALFORMED_QUESTIONS):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                # No answer at all for the malformed question 2.
+                "answers": [{"question_id": 1, "selected_label": "A"}],
+            })
+        assert r.status_code == 200
+        data = r.json()
+        assert data["score"] == 1, (
+            "free-point regression: an unanswered malformed item "
+            "(no correct option) was graded as correct"
+        )
+        flags = {res["question_id"]: res["correct"] for res in data["results"]}
+        assert flags["1"] is True
+        assert flags["2"] is False
 
 
 # ── Cross-user node ownership (IDOR regression, issue #157) ─────────────────
@@ -348,13 +455,13 @@ class TestQuizNodeOwnership:
                     "difficulty": "medium",
                     "questions_json": SAMPLE_QUESTIONS,
                 }]
-                mock.update.return_value = []
+                mock.update.return_value = [{"id": "updated"}]
             elif name == "graph_nodes":
                 mock.select.side_effect = self._ownership_aware_graph_select
                 mock.update.side_effect = lambda *a, **k: update_calls.append((a, k)) or []
             else:
                 mock.select.return_value = []
-                mock.update.return_value = []
+                mock.update.return_value = [{"id": "updated"}]
             return mock
 
         apply_mock = MagicMock()
@@ -537,7 +644,7 @@ class TestSubmitQuizMasteryWrite:
                 mock.select.return_value = [{"name": "Andres"}]
             else:
                 mock.select.return_value = []
-            mock.update.return_value = []
+            mock.update.return_value = [{"id": "updated"}]
             return mock
 
         with (
@@ -1131,3 +1238,112 @@ class TestQuizModelPref:
         assert _resolve_model_pref(None) is None
         assert _resolve_model_pref("") is None
         assert _resolve_model_pref("auto") is None  # not in the map
+
+
+class TestSubmitQuizConcurrentClaim:
+    """#129 (PR #464 review): the completed_at pre-read is only a fast path —
+    two CONCURRENT submits both pass it. The real gate is the atomic claim
+    (conditional update on completed_at IS NULL); the loser sees zero updated
+    rows and must 409 before any mastery write."""
+
+    def _race_loser_factory(self):
+        """Attempt reads as un-scored (completed_at None) — the pre-read
+        passes — but the atomic claim returns [] (another request already
+        stamped the row between our read and our write)."""
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz1",
+                    "user_id": "user_andres",
+                    "concept_node_id": "node1",
+                    "difficulty": "medium",
+                    "questions_json": SAMPLE_QUESTIONS,
+                    "completed_at": None,
+                }]
+                mock.update.return_value = []  # claim lost: no row matched is.null
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "mastery_score": 0.5,
+                    "concept_name": "Loops",
+                    "course_id": "course1",
+                }]
+            else:
+                mock.select.return_value = []
+                mock.update.return_value = []
+            return mock
+
+        return factory
+
+    def test_losing_the_atomic_claim_409s_and_applies_nothing(self):
+        apply_mock = MagicMock()
+        ctx_run = _noop_ctx_agent()
+        with (
+            patch("routes.quiz.table", side_effect=self._race_loser_factory()),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
+            patch("routes.quiz.save_quiz_context") as save_mock,
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+        assert r.status_code == 409
+        apply_mock.assert_not_called()
+        ctx_run.assert_not_called()
+        save_mock.assert_not_called()
+
+    def test_winning_the_claim_stamps_completed_at_with_is_null_filter(self):
+        """The claim must be the conditional-update idiom: filters carry
+        completed_at=is.null so PostgREST arbitrates, not app code."""
+        claim_calls = []
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz1",
+                    "user_id": "user_andres",
+                    "concept_node_id": "node1",
+                    "difficulty": "medium",
+                    "questions_json": SAMPLE_QUESTIONS,
+                    "completed_at": None,
+                }]
+                def _update(data, filters):
+                    claim_calls.append((data, filters))
+                    return [{"id": "quiz1"}]
+                mock.update.side_effect = _update
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "mastery_score": 0.5,
+                    "concept_name": "Loops",
+                    "course_id": "course1",
+                }]
+            else:
+                mock.select.return_value = []
+                mock.update.return_value = []
+            return mock
+
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.apply_graph_update"),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+        assert r.status_code == 200
+        # First update is the claim: stamps completed_at, gated on is.null.
+        data, filters = claim_calls[0]
+        assert "completed_at" in data
+        assert filters.get("completed_at") == "is.null"

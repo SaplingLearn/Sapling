@@ -7,7 +7,9 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File, Query
+
+from services.course_context_service import update_course_context
 from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
@@ -21,6 +23,7 @@ from models import (
     SetFeaturedAchievementsBody,
     DeleteAccountBody,
 )
+from services.academics import school_peer_user_ids
 from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
 from services.storage_service import upload_avatar
@@ -76,7 +79,7 @@ _SETTINGS_COLS = (
     "user_id,"
     "profile_visibility,activity_status_visible,"
     "notification_email,notification_push,notification_in_app,"
-    "theme,font_size,accent_color,"
+    "theme,font_size,accent_color,share_class_context,"
     "equipped_avatar_frame_id,equipped_banner_id,equipped_name_color_id,equipped_title_id,"
     "featured_role_id,featured_achievement_ids,updated_at"
 )
@@ -198,11 +201,60 @@ def check_username(username: str = Query(...), user_id: Optional[str] = Query(No
 # ── Public Profile ───────────────────────────────────────────────────────────
 
 @router.get("/{user_id}")
-def get_public_profile(user_id: str):
+def get_public_profile(user_id: str, request: Request):
     user = _get_user_or_404(user_id)
     settings = _get_or_create_settings(user_id)
     roles = _get_user_roles(user_id)
     equipped = _get_equipped_cosmetics(settings)
+
+    # Resolve the viewer WITHOUT raising — profiles are viewable anonymously;
+    # identity only decides how much is revealed (#134).
+    try:
+        viewer_id = get_session_user_id(request)
+    except HTTPException:
+        viewer_id = None
+
+    is_owner = viewer_id is not None and viewer_id == user_id
+
+    # Effective visibility. The owner always sees everything. 'school' (0031)
+    # reveals the extended profile only to viewers sharing a school with the
+    # owner — resolved through services/academics.py, the same boundary the
+    # #342 school directory uses — and otherwise behaves as 'private'.
+    # Fail-closed: anonymous viewer / no shared school → private.
+    visibility = settings.get("profile_visibility") or "public"
+    if not is_owner and visibility == "school":
+        same_school = (
+            viewer_id is not None and viewer_id in school_peer_user_ids(user_id)
+        )
+        visibility = "public" if same_school else "private"
+
+    profile = {
+        "id": user["id"],
+        "username": user.get("username"),
+        "avatar_url": user.get("avatar_url"),
+        "created_at": user.get("created_at"),
+        "roles": roles,
+        "equipped_cosmetics": equipped,
+    }
+
+    if not is_owner and visibility == "private":
+        # Minimal stub: identity-adjacent decoration only. name/year/majors/
+        # minors/school are personal data and stay hidden alongside
+        # bio/location/website/featured/stats (#134). Keys are kept (nulled)
+        # so the frontend's response shape is unchanged.
+        profile.update({
+            "name": "",
+            "year": None,
+            "majors": [],
+            "minors": [],
+            "school": None,
+            "bio": None,
+            "location": None,
+            "website": None,
+            "featured_achievements": [],
+            "stats": {},
+        })
+        return profile
 
     # Resolve school from user's enrolled courses.
     # School now lives behind enrollments.offering_id → course_offerings.course_id
@@ -220,34 +272,18 @@ def get_public_profile(user_id: str):
         if isinstance(course, dict) and course.get("school_id"):
             school = course["school_id"]
 
-    profile = {
-        "id": user["id"],
+    profile.update({
         "name": user.get("name", ""),
-        "username": user.get("username"),
-        "avatar_url": user.get("avatar_url"),
-        "created_at": user.get("created_at"),
         "year": user.get("year"),
         "majors": user.get("majors") or [],
         "minors": user.get("minors") or [],
         "school": school,
-        "roles": roles,
-        "equipped_cosmetics": equipped,
-    }
-
-    # Respect profile visibility
-    if settings.get("profile_visibility") != "private":
-        profile["bio"] = user.get("bio")
-        profile["location"] = user.get("location")
-        profile["website"] = user.get("website")
-        profile["featured_achievements"] = _get_featured_achievements(user_id)
-        profile["stats"] = _get_user_stats(user_id)
-    else:
-        profile["bio"] = None
-        profile["location"] = None
-        profile["website"] = None
-        profile["featured_achievements"] = []
-        profile["stats"] = {}
-
+        "bio": user.get("bio"),
+        "location": user.get("location"),
+        "website": user.get("website"),
+        "featured_achievements": _get_featured_achievements(user_id),
+        "stats": _get_user_stats(user_id),
+    })
     return profile
 
 
@@ -365,7 +401,12 @@ def get_settings(user_id: str, request: Request):
 
 
 @router.patch("/{user_id}/settings")
-def update_settings(user_id: str, body: UpdateSettingsBody, request: Request):
+def update_settings(
+    user_id: str,
+    body: UpdateSettingsBody,
+    background_tasks: BackgroundTasks,
+    request: Request,
+):
     require_self(user_id, request)
     _get_or_create_settings(user_id)
 
@@ -376,6 +417,10 @@ def update_settings(user_id: str, body: UpdateSettingsBody, request: Request):
         "profile_visibility", "activity_status_visible",
         "notification_email", "notification_push", "notification_in_app",
         "theme", "font_size", "accent_color",
+        # #72: Class Intel opt-out — persisted so the WRITE path
+        # (course_context_service.update_course_context) can honor it; the
+        # SharedContextToggle PATCHes it best-effort (migration 0037).
+        "share_class_context",
     }
     incoming = body.model_dump(exclude_none=True)
     updates = {k: v for k, v in incoming.items() if k in ALLOWED}
@@ -393,6 +438,19 @@ def update_settings(user_id: str, body: UpdateSettingsBody, request: Request):
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
         table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
+
+    # #72 (PR #464 review): flipping the Class Intel opt-out must take effect
+    # NOW, not whenever some classmate's activity next fires the aggregation.
+    # Refresh every offering the user is enrolled in as a post-response task —
+    # update_course_context re-reads user_settings, so the just-written value
+    # is what the chokepoint filter sees, and an opted-out user's data drops
+    # out of offering_concept_stats/offering_summary immediately.
+    if "share_class_context" in updates:
+        enrollment_rows = table("enrollments").select(
+            "offering_id", filters={"user_id": f"eq.{user_id}"}
+        )
+        for offering_id in {r["offering_id"] for r in enrollment_rows or []}:
+            background_tasks.add_task(update_course_context, offering_id)
 
     return _get_or_create_settings(user_id)
 

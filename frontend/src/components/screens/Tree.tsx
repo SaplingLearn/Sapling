@@ -220,7 +220,7 @@ export function Tree() {
           {sessionsForSelected.slice(0, 4).map(s => (
             <button
               key={s.id}
-              onClick={() => router.push(`/learn?session=${s.id}`)}
+              onClick={() => router.push(`/learn?resume=${encodeURIComponent(s.id)}`)}
               style={{
                 display: "flex", justifyContent: "space-between", alignItems: "center",
                 width: "100%", padding: "8px 10px",

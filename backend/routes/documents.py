@@ -39,7 +39,7 @@ from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
 from services.course_context_service import update_course_context
 from services.achievement_service import check_achievements
-from services.agent_events import SaplingEvent, sapling_event_to_sse
+from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.request_context import current_request_id
 from agents import WORKER_LIMITS
 from agents._providers import model_mode
@@ -695,7 +695,10 @@ async def upload_document_sync(
     if len(file_bytes) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,
-            detail="File exceeds the 100 MB limit. Please upload a smaller file.",
+            detail=(
+                f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit. "
+                "Please upload a smaller file."
+            ),
         )
 
     extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
@@ -755,13 +758,20 @@ async def upload_document_sync(
             request_id=request_id,
         )
 
-    _save_orchestrator_syllabus(user_id=user_id, course_id=course_id,
-                                filename=filename, result=result)
-    _graph_backstop(user_id=user_id, course_id=course_id,
-                    filename=filename, result=result)
-    _, full_row = _persist_document(user_id=user_id, offering_id=offering_id,
-                                    filename=filename, result=result,
-                                    request_id=request_id)
+    # async def route: these are synchronous PostgREST round-trips — keep them
+    # off the event loop, same as the SSE generator's post-roll (#132 item 22).
+    await asyncio.to_thread(
+        _save_orchestrator_syllabus, user_id=user_id, course_id=course_id,
+        filename=filename, result=result,
+    )
+    await asyncio.to_thread(
+        _graph_backstop, user_id=user_id, course_id=course_id,
+        filename=filename, result=result,
+    )
+    _, full_row = await asyncio.to_thread(
+        _persist_document, user_id=user_id, offering_id=offering_id,
+        filename=filename, result=result, request_id=request_id,
+    )
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
     background_tasks.add_task(update_course_context, course_id)
@@ -802,7 +812,10 @@ async def upload_document(
     if len(file_bytes) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,
-            detail="File exceeds the 15 MB limit. Please upload a smaller file.",
+            detail=(
+                f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit. "
+                "Please upload a smaller file."
+            ),
         )
 
     # Unify the agent-trace request_id with the middleware-stamped one so
@@ -997,32 +1010,6 @@ async def upload_document(
                 message="Processing complete.",
                 data=final_output.model_dump(mode="json"),
             ))
-
-            # ── Post-roll: side effects + persistence ─────────────────────────
-            _save_orchestrator_syllabus(user_id=user_id, course_id=course_id,
-                                        filename=filename, result=final_output)
-            _graph_backstop(user_id=user_id, course_id=course_id,
-                            filename=filename, result=final_output)
-            doc_id, _ = _persist_document(user_id=user_id, offering_id=offering_id,
-                                          filename=filename, result=final_output,
-                                          request_id=request_id)
-
-            # BackgroundTasks runs after response close — useless for SSE since
-            # the stream IS the response. _spawn_post_roll uses create_task
-            # but attaches a done-callback so exceptions land in the log
-            # instead of disappearing.
-            _spawn_post_roll(
-                ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
-                ("update_course_context", update_course_context, course_id),
-                ("check_upload_achievements", _check_upload_achievements, user_id),
-                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
-            )
-
-            yield sapling_event_to_sse(SaplingEvent(
-                type="status", step="done",
-                message="Saved.",
-                data={"document_id": doc_id},
-            ))
         except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
             logger.warning(
                 "Agent guardrails tripped during stream for '%s'; falling back",
@@ -1039,6 +1026,7 @@ async def upload_document(
                 request_id=request_id,
             ):
                 yield sse_event
+            return
         except Exception:
             logger.exception("Unexpected streaming failure for '%s'", filename)
             yield sapling_event_to_sse(SaplingEvent(
@@ -1052,8 +1040,76 @@ async def upload_document(
                 request_id=request_id,
             ):
                 yield sse_event
+            return
 
-    return EventSourceResponse(event_stream())
+        # ── Post-roll: side effects + persistence (#132 item 11) ──────────
+        # Runs AFTER the terminal `result` event is on the wire, in its own
+        # try/except: a failure here must NOT reach the legacy fallback
+        # above. The client already holds the processed document, so falling
+        # back would spend a second model call re-running the whole pipeline
+        # and emit a SECOND result (result → error → result → done). The
+        # legacy fallback stays reachable only for failures BEFORE the first
+        # result event. On post-roll failure, emit the same terminal
+        # error+done pair _stream_legacy_fallback's failure tail uses, then
+        # stop.
+        try:
+            # Synchronous PostgREST writes — threaded so they don't block
+            # the event loop serving this (and every other) SSE stream
+            # (#132 item 22; same pattern as the async-OCR extraction above).
+            await asyncio.to_thread(
+                _save_orchestrator_syllabus,
+                user_id=user_id, course_id=course_id,
+                filename=filename, result=final_output,
+            )
+            await asyncio.to_thread(
+                _graph_backstop,
+                user_id=user_id, course_id=course_id,
+                filename=filename, result=final_output,
+            )
+            doc_id, _ = await asyncio.to_thread(
+                _persist_document,
+                user_id=user_id, offering_id=offering_id,
+                filename=filename, result=final_output,
+                request_id=request_id,
+            )
+
+            # BackgroundTasks runs after response close — useless for SSE since
+            # the stream IS the response. _spawn_post_roll uses create_task
+            # but attaches a done-callback so exceptions land in the log
+            # instead of disappearing.
+            _spawn_post_roll(
+                ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
+                ("update_course_context", update_course_context, course_id),
+                ("check_upload_achievements", _check_upload_achievements, user_id),
+                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
+            )
+        except Exception:
+            logger.exception(
+                "Post-result persistence failed for '%s' — result already "
+                "sent, so no legacy fallback (it would re-run the pipeline "
+                "and emit a second result)", filename,
+            )
+            yield sapling_event_to_sse(SaplingEvent(
+                type="error", step="failed",
+                message="The document was processed but could not be saved. "
+                        "Please try uploading it again.",
+                data={"request_id": request_id} if request_id else None,
+            ))
+            yield sapling_event_to_sse(SaplingEvent(
+                type="status", step="done",
+                message="Failed.",
+            ))
+            return
+
+        yield sapling_event_to_sse(SaplingEvent(
+            type="status", step="done",
+            message="Saved.",
+            data={"document_id": doc_id},
+        ))
+
+    return EventSourceResponse(
+        event_stream(), headers={"Cache-Control": SSE_CACHE_CONTROL}
+    )
 
 
 async def _stream_legacy_fallback(

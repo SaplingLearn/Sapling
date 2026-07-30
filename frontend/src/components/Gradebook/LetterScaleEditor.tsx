@@ -3,6 +3,8 @@ import React from "react";
 import type { LetterScaleTier } from "@/lib/types";
 import { Button } from "@/components/ui";
 import Dialog from "@/components/Dialog";
+import { useToast } from "@/components/ToastProvider";
+import { humanizeError } from "@/lib/errorMessage";
 
 const DEFAULT_SCALE: LetterScaleTier[] = [
   { min: 93, letter: "A" }, { min: 90, letter: "A-" },
@@ -20,6 +22,7 @@ interface Props {
 }
 
 export function LetterScaleEditor({ open, initial, onClose, onSave }: Props) {
+  const toast = useToast();
   const [tiers, setTiers] = React.useState<LetterScaleTier[]>(DEFAULT_SCALE);
   const [saving, setSaving] = React.useState(false);
 
@@ -70,7 +73,18 @@ export function LetterScaleEditor({ open, initial, onClose, onSave }: Props) {
           justifyContent: "space-between", alignItems: "center",
         }}
       >
-        <button type="button" onClick={() => onSave(null)} disabled={saving}>
+        <button
+          type="button"
+          disabled={saving}
+          // Deliberately no onClose: on success the modal stays open showing
+          // the restored default scale, as before.
+          onClick={async () => {
+            setSaving(true);
+            try { await onSave(null); }
+            catch (err) { toast.error(humanizeError(err, "Couldn't reset the letter scale. Try again.")); }
+            finally { setSaving(false); }
+          }}
+        >
           Reset to default
         </button>
         <div style={{ display: "flex", gap: 8 }}>
@@ -79,9 +93,12 @@ export function LetterScaleEditor({ open, initial, onClose, onSave }: Props) {
             variant="primary"
             size="sm"
             disabled={!monotonic || saving}
+            // On failure the modal stays open (no onClose) so the user can
+            // see the toast and retry — closing would look like success.
             onClick={async () => {
               setSaving(true);
               try { await onSave(tiers); onClose(); }
+              catch (err) { toast.error(humanizeError(err, "Couldn't save the letter scale. Try again.")); }
               finally { setSaving(false); }
             }}
           >

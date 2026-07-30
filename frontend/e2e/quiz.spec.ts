@@ -41,6 +41,45 @@ const CORRECT_LABELS = ["B", "C", "A"] as const;
 /** routes/quiz.py: 3 correct of 3 → delta = 3 × 0.03 = +0.09. */
 const EXPECTED_DELTA = 3 * 0.03;
 
+/**
+ * Journey (#184): a generation that returns ZERO questions must not strand
+ * the user on a blank, control-less panel. Before the fix, start() flipped
+ * to the active phase unconditionally; with an empty array the entire
+ * active branch (including quiz-exit) rendered nothing — a dead end.
+ *
+ * The empty response is forced at the network layer (route interception),
+ * NOT via the function-mode seam: the seam's quiz handler is deliberately a
+ * fixed 3-question quiz shared by the mastery journey above, and the guard
+ * under test is purely client-side.
+ */
+test("a zero-question generation stays on the select phase with a warning (#184)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+  await page.route("**/api/quiz/generate", route =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ quiz_id: "e2e-empty-quiz", questions: [] }),
+    }),
+  );
+
+  await page.goto(`/quiz?concept=${NODE_ID}`);
+  const start = page.getByTestId("quiz-start");
+  await expect(start).toBeEnabled();
+  await start.click();
+
+  // The warning surfaces and the select phase survives: Start is still
+  // there, and the active phase never rendered.
+  await expect(
+    page.getByText("No questions were generated", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByTestId("quiz-start")).toBeVisible();
+  await expect(page.getByTestId("quiz-answer-options")).toHaveCount(0);
+});
+
 test("quiz journey: all-correct answers raise mastery in UI and DB, monotonically", async ({
   page,
 }) => {
@@ -171,4 +210,109 @@ test("quiz journey: all-correct answers raise mastery in UI and DB, monotonicall
   expect(Number(attempts[0].score)).toBe(3);
   expect(Number(attempts[0].total)).toBe(3);
   expect(attempts[0].completed_at).not.toBeNull();
+});
+
+/**
+ * Regression (#129): /api/quiz/submit must reject a replay of an already-
+ * completed attempt. Before the fix, re-POSTing the same quiz_id re-ran
+ * apply_graph_update — a second mastery delta, a duplicate
+ * node_mastery_events row, and a streak bump — plus the background
+ * quiz-context task and achievements.
+ *
+ * Lane-level pin: drive the same seeded fixture through the real UI flow,
+ * capture the exact wire body the UI sent to /api/quiz/submit
+ * ({ quiz_id, answers: [{ question_id, selected_label }] } —
+ * backend/models::SubmitQuizBody), then replay it via page.request.post
+ * (same-origin, so the sapling_session cookie rides along). The replay must
+ * 409, and the DB must be byte-for-byte where the first submit left it.
+ */
+test("quiz resubmit: replaying a completed submission returns 409 and re-applies no mastery", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+
+  // Same pre-ack as the journey above — the disclaimer is unrelated chrome.
+  await page.addInitScript(() => {
+    window.localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+
+  await page.goto(`/quiz?concept=${NODE_ID}`);
+  await expect(page.getByTestId("quiz-panel")).toBeVisible();
+
+  const start = page.getByTestId("quiz-start");
+  await expect(start).toBeEnabled();
+  await start.click();
+
+  await expect(page.getByTestId("quiz-answer-options")).toBeVisible({
+    timeout: 60_000,
+  });
+  // Mode guard, same as above: scripted fixture text proves function mode.
+  await expect(page.getByTestId("quiz-panel")).toContainText(
+    "E2E deterministic question 1",
+  );
+
+  // Arm the capture BEFORE the final click fires /api/quiz/submit.
+  const submitRequestPromise = page.waitForRequest(
+    (req) => req.url().includes("/api/quiz/submit") && req.method() === "POST",
+  );
+
+  for (const label of CORRECT_LABELS) {
+    await page.getByTestId(`quiz-answer-option-${label}`).click();
+    await page.getByTestId("quiz-submit-answer").click();
+    await expect(page.getByTestId("quiz-review-verdict")).toHaveText(
+      "Correct.",
+    );
+    await page.getByTestId("quiz-next").click();
+  }
+
+  // Results rendered ⇒ the first submit's synchronous mastery write landed.
+  await expect(page.getByTestId("quiz-results-score")).toHaveText("100%", {
+    timeout: 30_000,
+  });
+
+  const wireBody = (await submitRequestPromise).postDataJSON() as {
+    quiz_id: string;
+    answers: Array<{ question_id: number | string; selected_label: string }>;
+  };
+  expect(wireBody.quiz_id).toBeTruthy();
+  expect(wireBody.answers).toHaveLength(CORRECT_LABELS.length);
+
+  // First submit's DB state — the baseline the replay must not move.
+  const nodeAfterFirst = await queryRaw(
+    "SELECT mastery_score FROM graph_nodes WHERE id = $1",
+    [NODE_ID],
+  );
+  expect(nodeAfterFirst).toHaveLength(1);
+  const masteryAfterFirst = Number(nodeAfterFirst[0].mastery_score);
+  expect(masteryAfterFirst).toBeCloseTo(SEEDED_MASTERY + EXPECTED_DELTA, 10);
+
+  const eventsAfterFirst = await queryRaw(
+    "SELECT id FROM node_mastery_events WHERE node_id = $1",
+    [NODE_ID],
+  );
+  expect(eventsAfterFirst).toHaveLength(1);
+
+  // Replay the SAME submission over the page's cookie jar → 409, not 200.
+  const replay = await page.request.post("/api/quiz/submit", {
+    data: wireBody,
+  });
+  expect(replay.status()).toBe(409);
+
+  // The replay re-applied nothing: still exactly ONE mastery event…
+  const eventsAfterReplay = await queryRaw(
+    "SELECT id FROM node_mastery_events WHERE node_id = $1",
+    [NODE_ID],
+  );
+  expect(eventsAfterReplay).toHaveLength(1);
+
+  // …and the node's score is unchanged from the first submit.
+  const nodeAfterReplay = await queryRaw(
+    "SELECT mastery_score FROM graph_nodes WHERE id = $1",
+    [NODE_ID],
+  );
+  expect(nodeAfterReplay).toHaveLength(1);
+  expect(Number(nodeAfterReplay[0].mastery_score)).toBeCloseTo(
+    masteryAfterFirst,
+    10,
+  );
 });

@@ -2,8 +2,10 @@
 
 Replaces routes/learn.py:152's build_system_prompt + call_gemini_multiturn
 with a typed Pydantic AI agent. Tools handle the data lookups that used
-to be string-stuffed: search_course_materials, read_session_history,
-read_user_progress, apply_graph_update_tool.
+to be string-stuffed — wire names: search_course_materials (registered
+under that prompt-facing name via Tool(..., name=...), #135),
+read_session_history_tool, read_user_progress_tool,
+apply_graph_update_tool, update_mastery_tool.
 
 Modes (Socratic, Expository, TeachBack) are gated by selecting different
 system prompts at construction time. The route picks the right agent
@@ -23,7 +25,7 @@ from __future__ import annotations
 import hashlib
 from typing import Literal
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, Tool
 
 from agents._providers import model_for
 from agents.deps import SaplingDeps
@@ -102,16 +104,23 @@ _PROMPT_HASHES: dict[TutorMode, str] = {
 # the frontend renders via MarkdownChat. No structured output here; that
 # is reserved for routes that grade or extract.
 
-# All four tools are registered on every mode. The system prompt steers
+# All five tools are registered on every mode. The system prompt steers
 # WHEN to call them; the surface stays uniform so a Pro-tier model can
 # decide for itself which lookups are worth the round trip.
-_TOOLS = [
-    search_course_materials_tool,
-    read_session_history_tool,
-    read_user_progress_tool,
-    apply_graph_update_tool,
-    update_mastery_tool,
-]
+
+
+def _build_tools() -> list:
+    # Fresh Tool instances per agent (rather than one shared module-level
+    # list) so no Tool object is registered on multiple agents.
+    return [
+        # #135: register under the prompt-facing name — the bare callable
+        # would derive the wire name "search_course_materials_tool".
+        Tool(search_course_materials_tool, name="search_course_materials", takes_ctx=True),
+        read_session_history_tool,
+        read_user_progress_tool,
+        apply_graph_update_tool,
+        update_mastery_tool,
+    ]
 
 
 def _build_agent(mode: TutorMode) -> Agent[SaplingDeps, str]:
@@ -125,7 +134,7 @@ def _build_agent(mode: TutorMode) -> Agent[SaplingDeps, str]:
             "agent": "chat_tutor",
             "mode": mode,
         },
-        tools=_TOOLS,
+        tools=_build_tools(),
     )
 
 

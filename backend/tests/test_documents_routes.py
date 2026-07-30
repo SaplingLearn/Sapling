@@ -371,18 +371,27 @@ class TestUploadDocument:
     def test_rejects_file_over_max_size(self):
         # Cap was raised from 15 MB → 100 MB in commit 9912a25. Don't
         # allocate 100MB here — it makes the test fragile under full-suite
-        # memory pressure. Instead, monkeypatch MAX_FILE_SIZE to 1 KB and
-        # pin the rejection-message contract.
+        # memory pressure. Instead, monkeypatch MAX_FILE_SIZE to 1 MB and
+        # pin that the rejection copy DERIVES from the constant (#132 item
+        # 21): a hardcoded "100 MB" in the detail string would not follow
+        # the patched cap. test_default_cap_is_100_mb pins the production
+        # value, so together they pin the production message.
         with (
             _mock_validate_user(),
-            patch("routes.documents.MAX_FILE_SIZE", 1024),
+            patch("routes.documents.MAX_FILE_SIZE", 1024 * 1024),
             patch("routes.documents.extract_text_from_file", return_value=""),
         ):
-            r = _make_upload(content=b"x" * 2048)
+            r = _make_upload(content=b"x" * (1024 * 1024 + 1))
         assert r.status_code == 400
-        # The error message names the actual cap (100 MB) — verifies the
-        # route's hardcoded copy in the detail string didn't drift.
-        assert "100 MB" in r.json()["detail"]
+        assert "1 MB" in r.json()["detail"]
+
+    def test_default_cap_is_100_mb(self):
+        """The rejection copy derives from MAX_FILE_SIZE (see
+        test_rejects_file_over_max_size), so pinning the constant pins the
+        production message ("File exceeds the 100 MB limit.")."""
+        from routes.documents import MAX_FILE_SIZE
+
+        assert MAX_FILE_SIZE == 100 * 1024 * 1024
 
     def test_accepts_pdf_by_extension(self):
         ai_result = {
@@ -1221,6 +1230,79 @@ class TestUploadDocumentStreaming:
             )
         assert r.status_code == 422
         assert "different file" in r.json().get("detail", "").lower()
+
+    def test_streaming_rejects_file_over_max_size_names_actual_cap(self):
+        """#132 item 21: the streaming route's 400 detail drifted to "15 MB"
+        while MAX_FILE_SIZE is 100 MB. The copy must derive from the constant
+        — patch the cap to 1 MB and the message must follow it. (Sync twin:
+        TestUploadDocument.test_rejects_file_over_max_size; the production
+        value is pinned by test_default_cap_is_100_mb.)"""
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.MAX_FILE_SIZE", 1024 * 1024),
+            patch("routes.documents.extract_text_from_file", return_value=""),
+        ):
+            r = client.post(
+                "/api/documents/upload",
+                files={"file": ("notes.pdf", io.BytesIO(b"x" * (1024 * 1024 + 1)), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            )
+        assert r.status_code == 400
+        detail = r.json()["detail"]
+        assert "1 MB" in detail
+        assert "15 MB" not in detail
+
+    def test_post_result_persistence_failure_is_terminal_not_double_result(self):
+        """#132 item 11: a persistence failure AFTER the terminal result event
+        must NOT fall into the legacy fallback.
+
+        Before the fix, the post-roll block (syllabus save, graph backstop,
+        document insert) shared the pipeline's try/except, so a failed insert
+        re-ran the whole pipeline via _stream_legacy_fallback: the client saw
+        result → error → result → done, and a second model call was spent on
+        a document that had already been fully processed. Contract: exactly
+        ONE result event, then the same terminal error+done pair
+        _stream_legacy_fallback's own failure tail uses.
+        """
+        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        legacy_spy = AsyncMock(return_value={"id": "legacy-doc"})
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            patch(
+                "routes.documents._persist_document",
+                side_effect=RuntimeError("documents insert blew up"),
+            ),
+            patch("routes.documents._legacy_upload_pipeline", legacy_spy),
+            patch("routes.documents.table") as t,
+            patch("routes.documents._spawn_post_roll") as spawn,
+        ):
+            t.return_value.select.return_value = []  # no idempotency cache hit
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                assert r.status_code == 200
+                body = r.read()
+
+        events = _parse_sse_stream(body)
+        types_steps = [(e["event"], json.loads(e["data"])["step"]) for e in events]
+        # Exactly ONE result event — never a second (legacy-fallback) one.
+        assert [ts for ts in types_steps if ts[0] == "result"] == [("result", "finalize")]
+        # Terminal shape mirrors _stream_legacy_fallback's failure tail.
+        assert types_steps[-2:] == [("error", "failed"), ("status", "done")]
+        # The legacy pipeline never ran — no second model call, no re-run.
+        legacy_spy.assert_not_called()
+        # Side-effect tasks are never spawned when persistence failed.
+        spawn.assert_not_called()
+        # The failure event carries the request_id for support.
+        failed_data = next(
+            json.loads(e["data"]) for e in events
+            if e["event"] == "error" and json.loads(e["data"])["step"] == "failed"
+        )
+        assert failed_data.get("data", {}).get("request_id")
 
 
 # ── X-Request-ID middleware + error-handler propagation ─────────────────────

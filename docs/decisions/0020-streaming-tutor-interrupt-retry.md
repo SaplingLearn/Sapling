@@ -1,6 +1,6 @@
 # 0020 — Interrupted tutor turns keep the partial reply and offer Retry (#356 item 5)
 
-**Status:** decided · **Issue:** #356 (PR #349 e2e-smoke item 5) · **Implements:** the streaming feature in PR #349
+**Status:** implemented (on `main`, with PR #349 merged — ChatPanel `interrupted`/Retry + Learn re-dispatch; journey: `frontend/e2e/streaming.spec.ts`) · **Issue:** #356 (PR #349 e2e-smoke item 5) · **Implements:** the streaming feature in PR #349
 
 ## The decision
 
@@ -51,19 +51,27 @@ The spec (`docs/superpowers/specs/2026-07-16-streaming-design.md`) is explicit:
 
 ## Scope / where it lands
 
-The streaming chat UI (`frontend/src/components/ChatPanel.tsx`,
-`frontend/src/components/screens/Learn.tsx`, `frontend/src/lib/api.ts`) lives on
-the **PR #349 branch (`feat/streaming-tutor`)**, not on `main`. This ADR records
-the product decision; the implementation is a follow-up on that branch (or
-immediately after it merges), not part of the `main`-based follow-up branch that
-carries #354/#355. Acceptance for item 5 in #356 is: this decision recorded
-(done here) and implemented on the streaming branch.
+Recorded while the streaming chat UI (`frontend/src/components/ChatPanel.tsx`,
+`frontend/src/components/screens/Learn.tsx`, `frontend/src/lib/api.ts`) still
+lived on the PR #349 branch (`feat/streaming-tutor`); the decision deliberately
+preceded the implementation. #349 has since merged, and the implementation
+landed on `main` as the ADR-0020 half of the #164/#356 PR: ChatPanel's
+`interrupted`/Retry treatment, Learn's ladder rework (Stop / Rung-2 / failed
+Rung-3 all keep the partial and offer Retry, with a session-switch guard so a
+late turn never writes into another session's transcript), and the
+`frontend/e2e/streaming.spec.ts` journeys pinning it. Acceptance for item 5 in
+#356 — decision recorded and implemented — is met.
 
 ## Consequences
 
 - ChatPanel gains an `interrupted` bubble treatment (keep `streamingText`, style
   as interrupted) and a Retry action; Learn wires Retry to re-dispatch the
   turn's original `message`/`mode`.
+- Scope note (implementation): this covers chat TURNS (`send`'s ladder — Stop,
+  Rung-2, and a failed Rung-3 fallback all get the interrupted+Retry bubble).
+  A stopped/failed session GREETING (`beginSession`) has no transcript turn to
+  mark: no user message exists yet and nothing was persisted, so it returns to
+  the entry screen with the topic draft intact — Start is its retry affordance.
 - No backend change: the persistence contract and fallback ladder already
   guarantee "nothing persisted on stop/failure," which is what makes Retry a
   plain re-send. This is a client-rendering decision on top of the existing seam.

@@ -22,7 +22,11 @@ from typing import TypedDict
 import httpx
 from bs4 import BeautifulSoup
 from Levenshtein import distance as _levenshtein
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+)
 
 from db.connection import table
 from agents._run import run_agent_sync
@@ -244,6 +248,11 @@ def _run_flashcard_agent(prompt: str) -> list[Card]:
       matches the import seams' long-standing bad-JSON ``[]`` resilience; note
       it is a deliberate contract change for ``/generate``, whose legacy path
       *raised* (surfacing a 502) on malformed output.
+    * Provider content-filter blocks (``ContentFilterError``, e.g. a Gemini
+      RECITATION/SAFETY stop — which this prompt's close grounding to course
+      material invites) are carved out of that degrade: the exception
+      subclasses ``UnexpectedModelBehavior`` but propagates so the route
+      surfaces a 502 instead of a misleading success with zero cards (#340).
     * Transient provider errors (HTTP 429/5xx) are retried once with a ~2s
       backoff, then re-raised.
     * Every other failure — transport, missing GEMINI_API_KEY,
@@ -259,6 +268,12 @@ def _run_flashcard_agent(prompt: str) -> list[Card]:
                 feature="flashcard", task="flashcard",
             )
             break
+        except ContentFilterError:
+            # Subclasses UnexpectedModelBehavior, so this carve-out must come
+            # first: a content-filter block is not schema noncompliance and
+            # must reach the route's 502 handler, not degrade to [] (#340).
+            logger.exception("flashcard agent blocked by provider content filter")
+            raise
         except UnexpectedModelBehavior:
             logger.exception("flashcard agent produced unusable output; degrading to []")
             return []

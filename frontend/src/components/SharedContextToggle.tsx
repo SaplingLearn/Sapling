@@ -1,18 +1,72 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { useUser } from "@/context/UserContext";
+import { fetchSettings, updateSettings } from "@/lib/api";
+import type { UserSettings } from "@/lib/types";
 
 const STORAGE_KEY = "sapling_shared_ctx";
 
+// user_settings.share_class_context (migration 0037): the persisted form of
+// this toggle, enforced server-side at the class-aggregation write chokepoint
+// (#72). Not yet part of the UserSettings type in lib/types.ts, so widen it
+// locally.
+type ShareClassContextSettings = Partial<UserSettings> & {
+  share_class_context?: boolean;
+};
+
 export function useSharedContext(): [boolean, (v: boolean) => void] {
+  const { userId, userReady } = useUser();
   const [enabled, setEnabled] = useState(true);
+  // Once the user toggles locally, a late-arriving server hydration must not
+  // clobber their fresh choice.
+  const dirtyRef = useRef(false);
+
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw === "false") setEnabled(false);
   }, []);
+
+  // Best-effort server hydration (#72): the preference persists on
+  // user_settings so it follows the user across devices and gates the WRITE
+  // path server-side. On any failure — offline, signed out, or a server that
+  // does not serve the column yet — the localStorage value above stands.
+  useEffect(() => {
+    if (!userReady || !userId) return;
+    let cancelled = false;
+    fetchSettings(userId)
+      .then((settings) => {
+        if (cancelled || dirtyRef.current) return;
+        const server = (settings as ShareClassContextSettings).share_class_context;
+        if (typeof server === "boolean") {
+          setEnabled(server);
+          localStorage.setItem(STORAGE_KEY, String(server));
+        }
+      })
+      .catch(() => {
+        /* keep the localStorage value */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userReady, userId]);
+
   const update = (v: boolean) => {
+    dirtyRef.current = true;
     setEnabled(v);
     localStorage.setItem(STORAGE_KEY, String(v));
+    // Best-effort write-through (#72). Swallow failures: the local toggle
+    // still gates this client's read path when offline or when the server
+    // does not accept the field yet.
+    if (userId) {
+      const patch: ShareClassContextSettings = { share_class_context: v };
+      updateSettings(userId, patch).catch((err) => {
+        console.warn(
+          "Failed to persist share_class_context; toggle applied locally only",
+          err,
+        );
+      });
+    }
   };
   return [enabled, update];
 }

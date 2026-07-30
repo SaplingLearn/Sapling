@@ -20,6 +20,14 @@ export interface ChatMsg {
   role: ChatRole;
   content: string;
   loading?: boolean;
+  /** ADR 0020: the turn was stopped or failed mid-stream. The partial text
+   *  stays in `content` (possibly empty when stopped pre-token); the bubble
+   *  renders an "Interrupted" marker and — when `retryText` is set — a Retry
+   *  action. Nothing was persisted server-side for such a turn (routes
+   *  persist only on completion), so Retry is a plain re-send. */
+  interrupted?: boolean;
+  /** The user text that produced this (interrupted) turn — what Retry re-sends. */
+  retryText?: string;
 }
 
 interface ChatPanelProps {
@@ -39,6 +47,9 @@ interface ChatPanelProps {
   streamingText?: string | null;
   /** Abort the in-flight turn. Shown only while streaming. */
   onStop?: () => void;
+  /** Re-dispatch an interrupted turn (ADR 0020). Receives the interrupted
+   *  message; Learn re-sends its `retryText` after dropping the failed pair. */
+  onRetry?: (m: ChatMsg) => void;
 }
 
 export function ChatPanel({
@@ -52,6 +63,7 @@ export function ChatPanel({
   draftSeedKey,
   streamingText,
   onStop,
+  onRetry,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isStreaming = streamingText !== null && streamingText !== undefined;
@@ -82,7 +94,7 @@ export function ChatPanel({
           gap: 16,
         }}
       >
-        {messages.map(m => <Message key={m.id} m={m} />)}
+        {messages.map(m => <Message key={m.id} m={m} onRetry={onRetry} />)}
         {streamingText !== null && streamingText !== undefined && (
           // Reuse Message/MarkdownChat exactly as settled assistant messages
           // do, so a streaming reply never styles differently from a
@@ -237,7 +249,13 @@ const ChatInputBar = React.memo(function ChatInputBar({
   );
 });
 
-const Message = React.memo(function Message({ m }: { m: ChatMsg }) {
+const Message = React.memo(function Message({
+  m,
+  onRetry,
+}: {
+  m: ChatMsg;
+  onRetry?: (m: ChatMsg) => void;
+}) {
   const isUser = m.role === "user";
   return (
     <div
@@ -291,7 +309,37 @@ const Message = React.memo(function Message({ m }: { m: ChatMsg }) {
           // The tutor speaks in Spectral; the per-session DisclaimerModal
           // covers AI disclosure once up front so each message stays clean
           // (no "AI-Powered" pill — that anti-pattern is off the table).
-          <MarkdownChat>{m.content}</MarkdownChat>
+          // ADR 0020: an interrupted turn keeps its partial text visible,
+          // just dimmed — never blanked.
+          <div style={m.interrupted ? { opacity: 0.7 } : undefined}>
+            {m.content ? <MarkdownChat>{m.content}</MarkdownChat> : null}
+          </div>
+        )}
+        {m.interrupted && !isUser && (
+          <div
+            data-testid="tutor-interrupted"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginTop: m.content ? 8 : 0,
+              fontFamily: "var(--font-sans)",
+              fontSize: 12,
+              color: "var(--text-muted)",
+            }}
+          >
+            <span style={{ fontStyle: "italic" }}>Interrupted</span>
+            {onRetry && m.retryText && (
+              <button
+                data-testid="tutor-retry"
+                className="btn btn--sm"
+                onClick={() => onRetry(m)}
+                aria-label="Retry this turn"
+              >
+                Retry
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
