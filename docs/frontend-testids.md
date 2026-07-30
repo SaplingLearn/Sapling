@@ -78,6 +78,7 @@ renders the element.
 | Library | `library` | `frontend/src/components/screens/Library.tsx` (the `/library` document screen — upload trigger, document cards/rows, filters, detail panel) |
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
 | Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
+| Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -269,6 +270,19 @@ inside the `role="grid"` "Courses" grid.
 | `gradebook-add-assignment` | course page: "+ Add Assignment" (`AssignmentList.tsx`) — opens the assignment modal |
 | `gradebook-assignment-title` | assignment modal: the required title `<input>` |
 | `gradebook-assignment-save` | assignment modal: the Save button |
+
+### `admin-analytics`
+
+Added with the #121 data layer (raw tables; #122 replaces the tables with
+charts on the same testids). Every interactive element is tagged — the file
+entered the lint block new, so there is no baselined backlog.
+
+| testid | element |
+| --- | --- |
+| `admin-analytics-range-7d` / `-30d` / `-90d` | the last-N-days range presets — each re-queries every panel |
+| `admin-analytics-range-from` / `-to` | the custom date inputs (UTC day start/end) |
+| `admin-analytics-costgroup-feature` / `-user` / `-model` | the LLM-cost group-by toggle (drives the `group_by` query) |
+| `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 
 ### `library`
 

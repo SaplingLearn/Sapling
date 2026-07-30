@@ -8,6 +8,8 @@ import type {
   AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
+  AnalyticsBucket, LlmCostGroupBy,
+  UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 
@@ -1133,6 +1135,34 @@ export const adminAuditLog = (params?: {
 // Admin — analytics
 export const adminAnalyticsOverview = () =>
   fetchJSON<AnalyticsOverview>('/api/admin/analytics/overview');
+
+// Admin — analytics rollups (#121, over the #120 API). Params the caller
+// leaves unset are omitted so the backend defaults stay server-owned
+// (last 30 days, group_by=feature, no series).
+const analyticsQuery = (params?: Record<string, string | number | undefined>) => {
+  const qp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params ?? {})) {
+    if (v !== undefined && v !== '') qp.set(k, String(v));
+  }
+  const s = qp.toString();
+  return s ? `?${s}` : '';
+};
+
+export const adminUsageSummary = (params?: { from?: string; to?: string; bucket?: AnalyticsBucket }) =>
+  fetchJSON<UsageSummaryData>(`/api/admin/analytics/usage/summary${analyticsQuery(params)}`);
+
+export const adminUsageByUser = (params?: { from?: string; to?: string; limit?: number; offset?: number }) =>
+  fetchJSON<UsageByUserData>(`/api/admin/analytics/usage/by-user${analyticsQuery(params)}`);
+
+export const adminLlmCost = (params?: {
+  from?: string; to?: string; group_by?: LlmCostGroupBy; bucket?: AnalyticsBucket;
+}) =>
+  fetchJSON<LlmCostData>(`/api/admin/analytics/llm/cost${analyticsQuery(params)}`);
+
+export const adminErrors = (params?: {
+  from?: string; to?: string; limit?: number; offset?: number; bucket?: AnalyticsBucket;
+}) =>
+  fetchJSON<ErrorsPageData>(`/api/admin/analytics/errors${analyticsQuery(params)}`);
 
 // Careers
 export const submitJobApplication = async (data: {

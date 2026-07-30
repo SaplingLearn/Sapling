@@ -448,3 +448,110 @@ export interface Note {
   created_at: string;
   updated_at: string;
 }
+
+// ── Admin analytics (#121) ───────────────────────────────────────────────────
+// Mirrors backend/routes/admin_analytics.py's response models (issue #120 plus
+// the #121 bucket/series addition). Distinct names from the legacy
+// AnalyticsOverview family above, which belongs to /admin/analytics/overview.
+// `range` uses the wire key "from" (the backend serializes its `from_` field
+// with an alias); `series` is present only when the request set `bucket=day`
+// and is sparse — days with no rows are omitted, the client zero-fills.
+
+export type LlmCostGroupBy = 'user' | 'feature' | 'model';
+export type AnalyticsBucket = 'day';
+
+export interface AnalyticsRange {
+  from: string;
+  to: string;
+}
+
+export interface UsageDayPoint {
+  date: string; // YYYY-MM-DD, UTC
+  count: number;
+}
+
+export interface CostDayPoint {
+  date: string; // YYYY-MM-DD, UTC
+  calls: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+export interface EventTypeCount {
+  event_type: string;
+  count: number;
+}
+
+export interface UsageSummaryData {
+  range: AnalyticsRange;
+  total_events: number;
+  distinct_active_users: number;
+  by_event_type: EventTypeCount[];
+  truncated: boolean;
+  series: UsageDayPoint[] | null;
+}
+
+export interface UserUsageRow {
+  user_id: string;
+  event_count: number;
+  by_category: Record<string, number>;
+  llm_cost_usd: number;
+  total_tokens: number;
+}
+
+export interface UsageByUserData {
+  range: AnalyticsRange;
+  total_users: number;
+  limit: number;
+  offset: number;
+  users: UserUsageRow[];
+  truncated: boolean;
+}
+
+export interface LlmCostRow {
+  key: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+export interface LlmCostTotals {
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+export interface LlmCostData {
+  range: AnalyticsRange;
+  group_by: LlmCostGroupBy;
+  rows: LlmCostRow[];
+  totals: LlmCostTotals;
+  truncated: boolean;
+  series: CostDayPoint[] | null;
+}
+
+export interface ErrorEventRow {
+  created_at: string | null;
+  event_type: string;
+  request_id: string | null;
+  user_id: string | null;
+  path: string | null;
+  method: string | null;
+  status_code: number | null;
+  duration_ms: number | null;
+}
+
+export interface ErrorsPageData {
+  range: AnalyticsRange;
+  total: number;
+  limit: number;
+  offset: number;
+  errors: ErrorEventRow[];
+  // Refers to the bucket series' scan (the feed itself is paginated).
+  truncated: boolean;
+  series: UsageDayPoint[] | null;
+}
