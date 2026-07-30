@@ -1,11 +1,10 @@
 {
-  "text": "Dependency Injection (DI) is a design pattern used to make code more flexible and testable. Instead of an object creating its own dependencies, the dependencies are \"injected\" from an outside source.\n\nThis pattern is a form of **Inversion of Control (IoC)**, where the control of creating dependencies is shifted from the object itself to an external entity.\n\n### How it Works\n\nImagine you have a `Car` class. A car needs an `Engine` to function.\n\n**Without Dependency Injection**, the `Car` class would create its own `Engine` instance inside its constructor.\n\n```javascript\nclass Engine {\n  start() {\n    console.log(\"Engine started\");\n  }\n}\n\nclass Car {\n  constructor() {\n    this.engine = new Engine(); // Car is creating its own dependency\n  }\n\n  start() {\n    this.engine.start();\n    console.log(\"Car has started\");\n  }\n}\n\nconst myCar = new Car();\nmyCar.start();\n```\n\nThe problem here is that the `Car` class is tightly coupled to the `Engine` class. You can't easily swap in a different type of engine (like an `ElectricEngine`) without changing the `Car` class itself. This also makes testing difficult, as you can't provide a \"mock\" engine for tests.\n\n**With Dependency Injection**, the `Engine` is created outside the `Car` and passed into its constructor.\n\n```javascript\nclass V8Engine {\n  start() {\n    console.log(\"V8 engine started\");\n  }\n}\n\nclass ElectricEngine {\n    start() {\n        console.log(\"Electric engine started... quietly\");\n    }\n}\n\nclass Car {\n  constructor(engine) { // The 'engine' is injected\n    this.engine = engine;\n  }\n\n  start() {\n    this.engine.start();\n    console.log(\"Car has started\");\n  }\n}\n\n// The dependency is created outside and \"injected\"\nconst v8 = new V8Engine();\nconst myCar = new Car(v8);\nmyCar.start();\n\nconst electricEngine = new ElectricEngine();\nconst myTesla = new Car(electricEngine);\nmyTesla.start();\n```\n\nNow, the `Car` class isn't responsible for creating its engine. It just needs *an* engine that has a `start` method. This makes the `Car` class more flexible, reusable, and much easier to test.",
+  "text": "Of course. Let's break down Dependency Injection.\n\n### Overview\n\n**Dependency Injection (DI)** is a design pattern where an object is given its dependencies from an outside source, rather than creating them itself. This leads to more flexible, testable, and reusable code.\n\nThe core principle behind DI is **Inversion of Control (IoC)**. Instead of your object controlling the creation of its dependencies, that control is inverted and given to an external framework or container.\n\n### Detailed Explanation\n\nImagine you're building a `Car` object. A car needs an `Engine` to function.\n\n**Without DI**, the `Car` class would be responsible for creating its own `Engine` instance.\n\n```java\n// Without Dependency Injection\nclass Car {\n    private Engine engine;\n\n    public Car() {\n        // The Car creates its own dependency.\n        // This makes it tightly coupled to the GasEngine.\n        this.engine = new GasEngine();\n    }\n\n    public void start() {\n        this.engine.start();\n    }\n}\n```\n\nThe problem here is that the `Car` is **tightly coupled** to the `GasEngine`. What if you want to create a `Car` with an `ElectricEngine`? You'd have to modify the `Car` class itself.\n\n**With DI**, you \"inject\" the `Engine` into the `Car` when you create it.\n\n```java\n// With Dependency Injection (via the constructor)\nclass Car {\n    private Engine engine;\n\n    // The dependency (the engine) is passed in.\n    public Car(Engine engine) {\n        this.engine = engine;\n    }\n\n    public void start() {\n        this.engine.start();\n    }\n}\n\n// Now, the creator of the Car decides which engine to use.\nEngine gasEngine = new GasEngine();\nCar myGasCar = new Car(gasEngine);\n\nEngine electricEngine = new ElectricEngine();\nCar myElectricCar = new Car(electricEngine);\n```\n\n### Why is this better?\n\n1.  **Decoupling:** The `Car` class doesn't need to know about `GasEngine` or `ElectricEngine`. It only needs to know that it has an `Engine` that can `start()`.\n2.  **Testability:** When you're testing the `Car`, you can inject a \"mock\" or \"fake\" engine to simulate different scenarios without needing a real, complex engine object.\n3.  **Flexibility:** You can easily swap dependencies. If a new `HydrogenEngine` is created tomorrow, you can use it with your `Car` class without changing a single line of its code.\n\nThis pattern is fundamental to many modern software frameworks (like Spring for Java or Angular for TypeScript) which manage the process of creating and injecting these dependencies for you.",
   "tool_calls": [
     {
       "args": {
         "concepts": [
-          "Dependency Injection",
-          "Inversion of Control"
+          "Dependency Injection"
         ]
       },
       "tool_name": "apply_graph_update_tool"
@@ -15,13 +14,8 @@
         "updates": [
           {
             "concept_name": "Dependency Injection",
-            "mastery_delta": 0.1,
-            "reason": "Explained the core concept."
-          },
-          {
-            "concept_name": "Inversion of Control",
             "mastery_delta": 0.05,
-            "reason": "Introduced as related concept."
+            "reason": "Asked for definition."
           }
         ]
       },

@@ -2,44 +2,44 @@
   "questions": [
     {
       "concept": "Recursion",
-      "correct_answer": "If n is 0 or 1, return n.",
+      "correct_answer": "If n == 0, return 1",
       "difficulty": "medium",
-      "explanation": "The base cases for the Fibonacci sequence are F(0) = 0 and F(1) = 1. The function should return these values directly to stop the recursion.",
+      "explanation": "The factorial of 0 is defined as 1. This is the simplest case that stops the recursion.",
       "options": [
-        "If n is 0 or 1, return n.",
-        "If n is less than 2, return n.",
-        "If n is 0, return 0. If n is 1, return 1.",
-        "If n is 0, return 1. If n is 1, return 0."
+        "If n < 0, return -1",
+        "If n == 0, return 1",
+        "If n == 1, return 1",
+        "If n > 1, return n * factorial(n-1)"
       ],
-      "question": "What is the base case in a recursive function for calculating the nth Fibonacci number?",
+      "question": "What is the base case for a recursive function that calculates the factorial of a non-negative integer?",
       "type": "multiple_choice"
     },
     {
       "concept": "Dynamic Programming",
-      "correct_answer": "It avoids recomputing solutions to overlapping subproblems.",
+      "correct_answer": "An optimal solution to a problem contains optimal solutions to its subproblems",
       "difficulty": "medium",
-      "explanation": "Memoization is a technique used in dynamic programming to store the results of expensive function calls and return the cached result when the same inputs occur again, thus avoiding redundant computations.",
+      "explanation": "The principle of optimality states that an optimal solution to a problem must be composed of optimal solutions to its subproblems.",
       "options": [
-        "It allows for parallel processing of subproblems.",
-        "It avoids recomputing solutions to overlapping subproblems.",
-        "It reduces the space complexity of the solution.",
-        "It guarantees a unique solution to the problem."
+        "An optimal solution to a problem contains optimal solutions to its subproblems",
+        "The problem can be broken down into overlapping subproblems",
+        "The solution can be built up from smaller subproblems",
+        "All subproblems must be independent of each other"
       ],
-      "question": "In dynamic programming, what is the primary advantage of using memoization?",
+      "question": "In dynamic programming, what is the principle of optimality?",
       "type": "multiple_choice"
     },
     {
       "concept": "Graph Traversal",
-      "correct_answer": "Queue",
+      "correct_answer": "Finding the shortest path in an unweighted graph",
       "difficulty": "medium",
-      "explanation": "Breadth-First Search (BFS) uses a queue to keep track of the nodes to visit. Nodes are added to the queue as they are discovered, and processed in a first-in, first-out (FIFO) manner.",
+      "explanation": "BFS explores the graph layer by layer, guaranteeing that the first time it reaches a node, it does so via the shortest path from the source in an unweighted graph.",
       "options": [
-        "Stack",
-        "Queue",
-        "Heap",
-        "Hash Map"
+        "Finding the shortest path in an unweighted graph",
+        "Finding the shortest path in a weighted graph",
+        "Detecting cycles in a directed graph",
+        "Topological sorting"
       ],
-      "question": "Which of the following data structures is most commonly used to implement Breadth-First Search (BFS) for graph traversal?",
+      "question": "Which of the following is a common application of Breadth-First Search (BFS) in graph traversal?",
       "type": "multiple_choice"
     }
   ]

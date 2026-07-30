@@ -29,8 +29,19 @@ from services.graph_context import (
     compact_graph_context,
     graph_context_from_rows,
 )
+from services.prompt_safety import (
+    UNTRUSTED_BEGIN_PREFIX,
+    UNTRUSTED_END,
+    untrusted_envelope_overhead,
+)
 
 client = TestClient(app)
+
+
+def _concept_lines(block: str) -> list[str]:
+    """The `- Concept (mastery, tier)` lines, skipping the #150 untrusted
+    envelope (header, BEGIN line, notice, END line)."""
+    return [line for line in block.splitlines() if line.startswith("- ")]
 
 
 def _node(nid, name, mastery, tier="learning", course="c1"):
@@ -66,16 +77,17 @@ def test_overlap_selection_puts_message_matched_concepts_first():
     )
     lines = block.splitlines()
     assert lines[0].startswith("GRAPH CONTEXT")
-    assert lines[1].startswith("- Derivatives (0.42, learning)")
+    # #150: concept lines ride inside the untrusted envelope.
+    assert lines[1].startswith(UNTRUSTED_BEGIN_PREFIX)
+    assert block.rstrip().endswith(UNTRUSTED_END)
+    assert _concept_lines(block)[0].startswith("- Derivatives (0.42, learning)")
 
 
 def test_weak_fill_after_overlap_matches():
     """Remaining slots fill weakest-mastery-first: Taylor Series (0.05)
     before Chain Rule (0.15)."""
     block = graph_context_from_rows(NODES, EDGES, "derivatives", max_concepts=3)
-    names_in_order = [
-        line.split(" (")[0][2:] for line in block.splitlines()[1:]
-    ]
+    names_in_order = [line.split(" (")[0][2:] for line in _concept_lines(block)]
     assert names_in_order == ["Derivatives", "Taylor Series", "Chain Rule"]
 
 
@@ -83,7 +95,7 @@ def test_deterministic_ordering_no_message_is_mastery_then_name():
     block1 = graph_context_from_rows(NODES, EDGES, "", max_concepts=12)
     block2 = graph_context_from_rows(list(reversed(NODES)), EDGES, "", max_concepts=12)
     assert block1 == block2, "input row order must not change the block"
-    names = [line.split(" (")[0][2:] for line in block1.splitlines()[1:]]
+    names = [line.split(" (")[0][2:] for line in _concept_lines(block1)]
     assert names == ["Taylor Series", "Chain Rule", "Integrals", "Derivatives", "Limits"]
 
 
@@ -109,7 +121,11 @@ def test_char_budget_enforced():
         for i in range(200)
     ]
     block = graph_context_from_rows(many, [], "", max_concepts=200)
-    assert len(block) <= GRAPH_CONTEXT_CHAR_BUDGET
+    # The budget bounds the raw serialization; the #150 untrusted envelope
+    # is fixed overhead on top of it.
+    assert len(block) <= GRAPH_CONTEXT_CHAR_BUDGET + untrusted_envelope_overhead(
+        "student graph concepts"
+    )
 
 
 # ── build_graph_context_block (DB-backed) ─────────────────────────────────

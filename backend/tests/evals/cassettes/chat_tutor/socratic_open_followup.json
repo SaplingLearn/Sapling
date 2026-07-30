@@ -1,4 +1,17 @@
 {
-  "text": "Close! You've got the key idea.\n\nBut what if the line is curvy? Does a curve have a single slope?",
-  "tool_calls": []
+  "text": "That's a great starting point! So if a derivative is the slope, how do you find the slope of a function that's a curve? For example, $f(x) = x^2$?",
+  "tool_calls": [
+    {
+      "args": {
+        "updates": [
+          {
+            "concept_name": "Derivatives",
+            "mastery_delta": 0.05,
+            "reason": "Connected derivative to slope"
+          }
+        ]
+      },
+      "tool_name": "update_mastery_tool"
+    }
+  ]
 }

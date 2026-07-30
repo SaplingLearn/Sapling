@@ -2,7 +2,7 @@
   "chat_tutor": {
     "ExpositoryHasStructureEvaluator": 1.0,
     "GraphToolUsedEvaluator": 1.0,
-    "GroundedConceptEvaluator": 0.875,
+    "GroundedConceptEvaluator": 1.0,
     "MasteryUpdateEmittedEvaluator": 1.0,
     "NoToolMisuseEvaluator": 1.0,
     "NonEmptyEvaluator": 1.0,

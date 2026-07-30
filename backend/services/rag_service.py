@@ -215,11 +215,22 @@ def index_document_chunks(
 
 
 def format_rag_context(chunks: list[dict]) -> str:
-    """Format retrieved chunks into a text block for prompt injection."""
+    """Format retrieved chunks into a text block for prompt assembly.
+
+    #150: chunk_text is cut from student-uploaded documents, so the chunk
+    list ships inside the untrusted-content envelope (one envelope for all
+    chunks; embedded delimiter forgeries are neutralized). The header line
+    stays trusted framing.
+    """
+    from services.prompt_safety import wrap_untrusted
+
     if not chunks:
         return ""
-    lines = ["RETRIEVED COURSE CONTEXT (semantically relevant to this question):"]
+    entries = []
     for i, chunk in enumerate(chunks, 1):
         sim = chunk.get("similarity", 0)
-        lines.append(f"\n[{i}] (relevance {sim:.2f})\n{chunk.get('chunk_text', '')}")
-    return "\n".join(lines)
+        entries.append(f"[{i}] (relevance {sim:.2f})\n{chunk.get('chunk_text', '')}")
+    return (
+        "RETRIEVED COURSE CONTEXT (semantically relevant to this question):\n"
+        + wrap_untrusted("\n\n".join(entries), source="student-document chunks")
+    )

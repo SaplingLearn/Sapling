@@ -212,6 +212,45 @@ async def search_course_materials(
     ]
 
 
+def _harden_materials(materials: list[CourseMaterial]) -> list[CourseMaterial]:
+    """#150: envelope student-derived free text at the LLM boundary.
+
+    Summaries and concept-note descriptions are distilled from student
+    uploads — long free text, so they get the full untrusted envelope.
+    Short scalars (file names, concept names) only get delimiter
+    neutralization; the system prompt's UNTRUSTED CONTENT POLICY covers
+    them. Applied in the TOOL wrapper, not the pure function, so routes
+    and tests reading materials directly still get clean data.
+    """
+    from services.prompt_safety import neutralize_delimiters, wrap_untrusted
+
+    hardened: list[CourseMaterial] = []
+    for m in materials:
+        notes: list[dict] = []
+        for note in m.concept_notes:
+            note = dict(note)
+            if isinstance(note.get("name"), str):
+                note["name"] = neutralize_delimiters(note["name"])
+            if isinstance(note.get("description"), str) and note["description"]:
+                note["description"] = wrap_untrusted(
+                    note["description"], source="document concept note"
+                )
+            notes.append(note)
+        hardened.append(
+            CourseMaterial(
+                document_id=m.document_id,
+                file_name=neutralize_delimiters(m.file_name),
+                summary=(
+                    wrap_untrusted(m.summary, source="document summary")
+                    if m.summary
+                    else m.summary
+                ),
+                concept_notes=notes,
+            )
+        )
+    return hardened
+
+
 async def search_course_materials_tool(
     ctx: RunContext[SaplingDeps],
     query: str,
@@ -224,13 +263,15 @@ async def search_course_materials_tool(
     another course's — or another user's — materials. Fetches through the
     retrieval seam (ADR 0023): `deps.retrieval` when injected (evals),
     else the Supabase-backed default — identical to calling
-    `search_course_materials` directly.
+    `search_course_materials` directly. Free-text fields arrive at the
+    model inside the #150 untrusted envelope (`_harden_materials`).
     """
     from agents.tools.retrieval import resolve_retrieval
 
-    return await resolve_retrieval(ctx.deps).course_materials(
+    materials = await resolve_retrieval(ctx.deps).course_materials(
         ctx.deps.course_id, query, limit, user_id=ctx.deps.user_id
     )
+    return _harden_materials(materials)
 
 
 # read_session_history

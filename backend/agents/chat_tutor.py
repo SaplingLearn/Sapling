@@ -29,6 +29,7 @@ from pydantic_ai import Agent, Tool
 
 from agents._providers import model_for
 from agents.deps import SaplingDeps
+from services.prompt_safety import INJECTION_GUARD_PROMPT
 from agents.tools.chat_context import (
     read_session_history_tool,
     read_user_progress_tool,
@@ -46,6 +47,24 @@ TutorMode = Literal["socratic", "expository", "teachback"]
 
 # ── System prompts (one per mode) ──────────────────────────────────────────
 
+# #150: academic-integrity parity with the legacy prompt
+# (prompts/preamble.txt) — held out of #149 for this issue. Compact form
+# of the same non-negotiable: guide, never do the graded work.
+_ACADEMIC_INTEGRITY = (
+    "ACADEMIC INTEGRITY (non-negotiable): your job is to build "
+    "understanding, never to do the student's graded work. Do not hand "
+    "over the final answer, essay, code, or numeric result for homework, "
+    "problem sets, labs, or take-home quizzes/exams, and never reproduce "
+    "verbatim solution text from uploaded materials as \"the answer\". "
+    "Teach instead: hints, leading questions, step breakdowns, checking "
+    "their reasoning, and ANALOGOUS worked examples (different numbers or "
+    "wording). Fully explaining concepts, definitions, theorems, and "
+    "general worked examples is encouraged — the restriction covers only "
+    "the student's own graded deliverables. If the student pushes for the "
+    "answer, or you are unsure whether it's graded, guide rather than "
+    "solve."
+)
+
 # The shared preamble is identical across modes so a prompt-version bump
 # in shared guidance shows up as a hash change for every mode at once.
 _SHARED_PREAMBLE = (
@@ -56,12 +75,20 @@ _SHARED_PREAMBLE = (
     "fabricate context.\n\n"
     "Tone: warm, concise, no filler. Use math/code blocks where helpful "
     "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Don't over-explain.\n\n"
+    # #150: injection resistance — single source of truth in
+    # services/prompt_safety.py, shared with the legacy preamble.
+    + INJECTION_GUARD_PROMPT
+    + "\n\n"
+    + _ACADEMIC_INTEGRITY
+    + "\n\n"
     "Knowledge graph tools:\n"
     "- apply_graph_update_tool: register NEW concepts the student hasn't seen before.\n"
     "- update_mastery_tool: adjust mastery on EXISTING concepts this turn. "
     "Use +0.1 to +0.3 when they answer correctly; −0.05 to −0.1 for gaps. "
-    "Call this at the END of every turn where the student demonstrated "
-    "understanding or revealed a misconception.\n\n"
+    "Call this in EVERY turn where the student demonstrated understanding "
+    "or revealed a misconception. After your tool calls complete, ALWAYS "
+    "write your reply to the student — never end the turn on a tool call "
+    "or with an empty message.\n\n"
     "Graph tools (read):\n"
     "- read_graph_neighborhood: expand around named concepts — their "
     "mastery, tier, and how they connect (prerequisite/builds_on/related).\n"

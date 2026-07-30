@@ -2,44 +2,44 @@
   "questions": [
     {
       "concept": "Marginal Cost",
-      "correct_answer": "Marginal cost is the cost of producing one more unit of a good.",
+      "correct_answer": "The additional cost incurred by producing one more unit of a good.",
       "difficulty": "medium",
-      "explanation": "Marginal cost specifically refers to the change in total cost resulting from producing one additional unit of output.",
+      "explanation": "Marginal cost (MC) specifically refers to the change in total cost resulting from producing one additional unit. It's a key concept in understanding a firm's production decisions.",
       "options": [
-        "Marginal cost is the total cost of all units produced.",
-        "Marginal cost is the cost of producing one more unit of a good.",
-        "Marginal cost is the average cost per unit.",
-        "Marginal cost is the fixed cost that does not change with output."
+        "The total cost of production.",
+        "The cost of all fixed inputs.",
+        "The additional cost incurred by producing one more unit of a good.",
+        "The average cost per unit produced."
       ],
-      "question": "What is the relationship between marginal cost and the production of one additional unit of a good?",
+      "question": "A firm's marginal cost is the additional cost incurred by producing one more unit of a good.",
       "type": "multiple_choice"
     },
     {
       "concept": "Price Elasticity of Demand",
-      "correct_answer": "2.0",
+      "correct_answer": "-2.0",
       "difficulty": "medium",
-      "explanation": "Price elasticity of demand is calculated as the percentage change in quantity demanded divided by the percentage change in price. In this case, 20% / -10% = -2. The absolute value is 2.0, indicating elastic demand.",
+      "explanation": "Price elasticity of demand is calculated as the percentage change in quantity demanded divided by the percentage change in price. In this case, -10% / 5% = -2.0. A value greater than 1 (in absolute terms) indicates elastic demand.",
       "options": [
         "0.5",
         "2.0",
-        "10%",
-        "20%"
+        "-0.5",
+        "-2.0"
       ],
-      "question": "If a 10% decrease in price leads to a 20% increase in the quantity demanded, what is the price elasticity of demand?",
+      "question": "If the quantity demanded of a product decreases by 10% when its price increases by 5%, what is the price elasticity of demand?",
       "type": "multiple_choice"
     },
     {
       "concept": "Comparative Advantage",
-      "correct_answer": "Opportunity cost than another country.",
+      "correct_answer": "With a lower opportunity cost.",
       "difficulty": "medium",
-      "explanation": "Comparative advantage is determined by opportunity cost, meaning the value of the next best alternative forgone. A country has a comparative advantage if it can produce a good with a lower opportunity cost than other countries.",
+      "explanation": "Comparative advantage is determined by opportunity cost, not absolute cost. A country should specialize in producing goods where it has the lowest opportunity cost, even if it's not the most efficient producer in absolute terms.",
       "options": [
-        "Absolute cost than another country.",
-        "Opportunity cost than another country.",
-        "Price than another country.",
-        "Total production cost than another country."
+        "With fewer resources.",
+        "At a lower absolute cost.",
+        "With a lower opportunity cost.",
+        "More efficiently in terms of labor hours."
       ],
-      "question": "A country has a comparative advantage in producing a good if it can produce that good at a lower:",
+      "question": "A country has a comparative advantage in producing a good if it can produce that good at a lower opportunity cost than another country.",
       "type": "multiple_choice"
     }
   ]

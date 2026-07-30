@@ -9,37 +9,37 @@
         "To provide structural support to the cell",
         "To regulate the passage of substances into and out of the cell",
         "To synthesize proteins",
-        "To store genetic information"
+        "To generate energy for the cell"
       ],
       "question": "What is the primary function of the cell membrane?",
       "type": "multiple_choice"
     },
     {
       "concept": "Cell Membrane",
-      "correct_answer": "A double layer of phospholipids with embedded proteins",
+      "correct_answer": "Active transport",
       "difficulty": "medium",
-      "explanation": "The cell membrane is composed of a phospholipid bilayer, where hydrophilic heads face outwards and hydrophobic tails face inwards, with various proteins interspersed throughout.",
+      "explanation": "Active transport requires energy to move molecules across the cell membrane from an area of lower concentration to an area of higher concentration.",
       "options": [
-        "A rigid cell wall made of cellulose",
-        "A single layer of phospholipids",
-        "A double layer of phospholipids with embedded proteins",
-        "A network of microtubules"
+        "Simple diffusion",
+        "Facilitated diffusion",
+        "Osmosis",
+        "Active transport"
       ],
-      "question": "Which of the following best describes the structure of the cell membrane?",
+      "question": "Which of the following processes involves the movement of molecules against their concentration gradient?",
       "type": "multiple_choice"
     },
     {
-      "concept": "Cell Membrane",
-      "correct_answer": "Phagocytosis",
+      "concept": "Photosynthesis",
+      "correct_answer": "To capture light energy from the sun",
       "difficulty": "medium",
-      "explanation": "Phagocytosis is a type of endocytosis where the cell membrane surrounds and engulfs large particles or other cells.",
+      "explanation": "Chlorophyll, the pigment that gives plants their green color, is essential for absorbing light energy, which powers the process of photosynthesis.",
       "options": [
-        "Exocytosis",
-        "Active transport",
-        "Phagocytosis",
-        "Diffusion"
+        "To absorb water from the soil",
+        "To capture light energy from the sun",
+        "To release carbon dioxide into the atmosphere",
+        "To break down glucose for energy"
       ],
-      "question": "The process by which cells absorb large molecules from the outside by engulfing them with the cell membrane is called:",
+      "question": "What is the main role of chlorophyll in photosynthesis?",
       "type": "multiple_choice"
     }
   ]

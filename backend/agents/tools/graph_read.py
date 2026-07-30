@@ -375,5 +375,25 @@ async def read_misconceptions_for_course(
 async def read_misconceptions_for_course_tool(
     ctx: RunContext[SaplingDeps],
 ) -> list[Misconception]:
-    """Pydantic AI tool wrapper. Reads from ctx.deps."""
-    return await read_misconceptions_for_course(ctx.deps.course_id)
+    """Pydantic AI tool wrapper. Reads from ctx.deps.
+
+    #150: misconception strings are distilled from OTHER students'
+    sessions — peer-derived text. Delimiters are neutralized at this LLM
+    boundary so an injected string can't forge untrusted-envelope markers;
+    the consuming agents' UNTRUSTED CONTENT POLICY covers the rest
+    (typed short strings — no per-entry envelope).
+    """
+    from services.prompt_safety import neutralize_delimiters
+
+    out = await read_misconceptions_for_course(ctx.deps.course_id)
+    return [
+        Misconception(
+            text=neutralize_delimiters(m.text),
+            related_concept=(
+                neutralize_delimiters(m.related_concept)
+                if m.related_concept
+                else m.related_concept
+            ),
+        )
+        for m in out
+    ]
