@@ -34,7 +34,10 @@ test("study flashcards follow the semester selection; All semesters shows every 
   // 1. Default = All semesters: fall AND spring decks render together.
   await page.goto("/study?mode=cards");
   await expect(page.getByRole("button", { name: "CS Basics" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Linear Algebra" })).toBeVisible();
+  // .first(): "Linear Algebra" is both MATH210's course pill and the deck's
+  // topic pill under All semesters — any match proves the spring deck
+  // surfaced; the "Card 1 of 6" counter is the actual scoping assertion.
+  await expect(page.getByRole("button", { name: "Linear Algebra" }).first()).toBeVisible();
   await expect(page.getByText("Card 1 of 6")).toBeVisible();
 
   // 2. Scope to Fall 2025 via the Courses & Semesters hub (dashboard).
