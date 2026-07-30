@@ -9,6 +9,7 @@ import type {
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
 } from '@/lib/types';
+import { statusOf } from '@/lib/errorMessage';
 
 export const API_URL = '';
 
@@ -206,16 +207,44 @@ interface StreamEvent {
 // property — not just baked into the message string — so a caller that
 // wants to display or copy it (see DocumentUploadModal's "Reference:"
 // pattern) doesn't have to re-parse the message text for it.
+//
+// `retryable` (#151a): the backend marks an error event retryable:false when
+// graph/mastery tool writes already landed for the turn — re-running it (the
+// ladder's JSON rung, or a transparent client retry) would re-apply those
+// writes. Defaults to true so older backends / events without the field keep
+// today's behavior.
 export class ChatStreamError extends Error {
   requestId?: string;
-  constructor(message: string, requestId?: string) {
+  retryable: boolean;
+  constructor(message: string, requestId?: string, retryable = true) {
     // Keep the full id here (correlation needs an exact match); a caller
     // that wants a short display form truncates it itself, same as
     // DocumentUploadModal's "Reference: {id.slice(0, 8)}…" pattern.
     super(requestId ? `${message} (ref: ${requestId})` : message);
     this.name = 'ChatStreamError';
     this.requestId = requestId;
+    this.retryable = retryable;
   }
+}
+
+/**
+ * The stream ladder's Rung-3 decision (#151a): may this failed stream turn
+ * be transparently re-run through the non-streaming JSON route?
+ *
+ * false when:
+ *  - the backend said so (`ChatStreamError.retryable === false` — tool
+ *    writes landed; a re-run would double-apply them), or
+ *  - the failure was an HTTP 413 (request too large / processing budget —
+ *    the JSON route fails the exact same way, so falling back just doubles
+ *    the wait before the same error).
+ *
+ * Everything else (transport failures, idle timeouts, 5xx before any
+ * token) stays retryable — the transparent JSON fallback is the whole
+ * point of the ladder.
+ */
+export function shouldFallBackToJson(err: unknown): boolean {
+  if (err instanceof ChatStreamError) return err.retryable;
+  return statusOf(err) !== 413;
 }
 
 export interface StreamChatHandlers {
@@ -250,7 +279,10 @@ async function consumeChatStream(
     else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
     else if (ev.type === 'error') {
       const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
-      throw new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId);
+      // Only an explicit false clears the flag — absent/other values keep
+      // the default-true contract with older backends.
+      const retryable = ev.data?.retryable !== false;
+      throw new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
     }
     else if (ev.type === 'done') result = ev.data as unknown as ChatResult;
   }

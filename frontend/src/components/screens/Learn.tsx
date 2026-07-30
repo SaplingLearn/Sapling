@@ -36,6 +36,7 @@ import {
   getGraph,
   deleteGraphNode,
   describeConcept,
+  shouldFallBackToJson,
   type Session,
   type SessionSummaryData,
   type EnrolledCourse,
@@ -553,6 +554,8 @@ function LearnInner() {
   // affordance (ADR 0020's scope note):
   //   Rung 3 (stream never produced text) -> retry transparently via the
   //     non-streaming JSON startSession; the user never sees an error.
+  //     Skipped when shouldFallBackToJson(err) is false (#151a) — those
+  //     surface like Rung 2, returning to the entry screen.
   //   Rung 2 (rejected AFTER tokens appeared) -> surface the error via the
   //     same toast path this handler already used for JSON failures. Never
   //     silently re-run.
@@ -607,6 +610,13 @@ function LearnInner() {
       } catch (err) {
         if (controller.signal.aborted) { setMessages([]); return; } // Stop pressed — intentional, not an error.
         if (sawToken) throw err; // Rung 2: interrupted after producing text — surface it, don't retry.
+        // #151a: the server marked the turn non-retryable (tool writes
+        // landed — a re-run would double-apply them) or it was a 413 the
+        // JSON route fails identically. Skip Rung 3; surface via the same
+        // toast + entry-screen return the outer catch already provides
+        // (Start is this path's retry affordance, per ADR 0020's scope
+        // note — no transcript turn exists to mark interrupted).
+        if (!shouldFallBackToJson(err)) throw err;
         // Rung 3: the stream never produced text — retry transparently via
         // the non-streaming JSON route. Clear streamingText first so
         // ChatPanel drops the Stop affordance for this leg (mirrors `send`).
@@ -709,6 +719,9 @@ function LearnInner() {
   //   Rung 3 (stream never produced text) -> retry transparently via the
   //     non-streaming sendChat; the user never sees an error. If even that
   //     fails, the turn gets the ADR-0020 interrupted treatment below.
+  //     Skipped entirely when shouldFallBackToJson(err) is false (#151a:
+  //     the server flagged landed writes as non-retryable, or an HTTP 413
+  //     the JSON route would fail identically) — straight to interrupted.
   //   Rung 2 (rejected AFTER tokens appeared) -> ADR 0020: keep the partial
   //     as an interrupted bubble with Retry; error detail in a toast. Never
   //     silently re-run: the user already saw partial text, and nothing was
@@ -779,6 +792,18 @@ function LearnInner() {
           // Rung 2: interrupted after producing text — surface it, never
           // silently re-run (the user already saw partial text). The error
           // detail goes to a toast; the transcript keeps the partial.
+          toast.error(err instanceof Error ? err.message : "The tutor was interrupted.");
+          appendInterrupted();
+          return;
+        }
+        if (!shouldFallBackToJson(err)) {
+          // #151a: the server marked the turn non-retryable (tool writes
+          // landed — a re-run would double-apply them) or it was a 413 the
+          // JSON route fails identically. Skip Rung 3 and go straight to
+          // the ADR-0020 interrupted+Retry treatment: the (empty) partial
+          // stays as an interrupted bubble, error detail in a toast, and
+          // Retry is a deliberate user decision rather than a silent
+          // re-run.
           toast.error(err instanceof Error ? err.message : "The tutor was interrupted.");
           appendInterrupted();
           return;
@@ -1222,7 +1247,7 @@ function LearnInner() {
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
-              <button className="btn btn--primary" onClick={handleStart} disabled={!topicDraft.trim() || !userId}>
+              <button data-testid="tutor-start" className="btn btn--primary" onClick={handleStart} disabled={!topicDraft.trim() || !userId}>
                 <Icon name="sparkle" size={13} /> Start learning
               </button>
             </div>
@@ -1957,6 +1982,7 @@ function TopicPicker({
   return (
     <div ref={wrapRef} style={{ position: "relative", marginBottom: 16 }}>
       <button
+        data-testid="tutor-topic-picker"
         onClick={() => setOpen(o => !o)}
         onKeyDown={e => { if (e.key === "Enter" && !open && value.trim()) onSubmit(); }}
         style={{
@@ -1997,6 +2023,7 @@ function TopicPicker({
           }}
         >
           <input
+            data-testid="tutor-topic-search"
             autoFocus
             value={query}
             onChange={e => setQuery(e.target.value)}

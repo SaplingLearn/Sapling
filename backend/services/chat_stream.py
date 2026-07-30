@@ -13,8 +13,8 @@ which the graph tools populate as they write through
 graph and never persists a message: persistence is the route's, via
 `on_complete`.
 
-At most one of `on_complete` / `legacy_fallback` runs per turn — never both,
-and the error rungs run neither. See `stream_agent_turn` for the rungs.
+At most one of `on_complete` / `nonstream_fallback` runs per turn — never
+both, and the error rungs run neither. See `stream_agent_turn` for the rungs.
 """
 
 from __future__ import annotations
@@ -102,40 +102,47 @@ def _tool_name_from(event: Any) -> str | None:
 
 
 async def _rung1_fallback_events(
-    legacy_fallback: Callable[[], Awaitable[dict]] | None,
+    nonstream_fallback: Callable[[], Awaitable[dict]] | None,
     request_id: str,
 ) -> AsyncIterator[SaplingEvent]:
     """The Rung-1 tail shared by 'agent failed before text' and 'agent
     finished but produced a blank reply' (#153): degrade to the route's
-    legacy path when one exists, else a terminal `error`. The legacy path
-    owns its own persistence, so callers must NOT also run on_complete."""
-    if legacy_fallback is None:
+    non-streaming turn when one exists, else a terminal `error`. The
+    fallback owns its own persistence, so callers must NOT also run
+    on_complete.
+
+    Callers guarantee NO graph/mastery writes landed before entering (the
+    writes-guard in `stream_agent_turn` short-circuits to a terminal
+    `retryable: False` error instead), so both error events here are safely
+    `retryable: True` — re-running the turn has nothing to double-apply."""
+    if nonstream_fallback is None:
         yield SaplingEvent(
             type="error",
             step="reply",
             message="The tutor is unavailable. Please retry.",
-            data={"request_id": request_id},
+            data={"request_id": request_id, "retryable": True},
         )
         return
     try:
-        legacy = await legacy_fallback()
+        fallback_result = await nonstream_fallback()
     except Exception:
-        logger.exception("Legacy fallback also failed")
+        logger.exception("Nonstream fallback also failed")
         yield SaplingEvent(
             type="error",
             step="reply",
             message="The tutor is unavailable. Please retry.",
-            data={"request_id": request_id},
+            data={"request_id": request_id, "retryable": True},
         )
         return
-    # legacy_fallback persisted its own rows; the caller must NOT call
-    # on_complete after this.
+    # nonstream_fallback persisted its own rows; the caller must NOT call
+    # on_complete after this. Wire shape: ONE token carrying the whole
+    # fallback reply, then done.
     yield SaplingEvent(
         type="token", step="reply", message="",
-        data={"delta": legacy.get("reply", "")},
+        data={"delta": fallback_result.get("reply", "")},
     )
     yield SaplingEvent(
-        type="done", step="reply", message="Complete.", data=legacy
+        type="done", step="reply", message="Complete.", data=fallback_result
     )
 
 
@@ -146,7 +153,7 @@ async def stream_agent_turn(
     run_kwargs: dict,
     deps: Any,
     on_complete: Callable[[str, dict, list], dict | None],
-    legacy_fallback: Callable[[], Awaitable[dict]] | None = None,
+    nonstream_fallback: Callable[[], Awaitable[dict]] | None = None,
     on_usage: Callable[[Any], None] | None = None,
     request_id: str = "",
 ) -> AsyncIterator[SaplingEvent]:
@@ -161,23 +168,33 @@ async def stream_agent_turn(
     final `AgentRunResult` after the stream completes, BEFORE on_complete —
     tokens were spent even if persistence subsequently fails. Routes pass
     `agents.usage.record_agent_usage` here. Not called on the error rungs
-    (no result event was seen) nor on the Rung-1 legacy fallback, whose
-    usage is captured inside `call_gemini_multiturn` (feature=). It IS
-    called on the degenerate blank-reply rung (#153) — there the agent run
-    completed and billed before its output was judged unusable. A hook
-    failure is swallowed: usage capture must never break the stream.
+    (no result event was seen) nor on the Rung-1 nonstream fallback, which
+    records its own usage (`record_agent_usage` inside the route's JSON
+    turn). It IS called on the degenerate blank-reply rung (#153) — there
+    the agent run completed and billed before its output was judged
+    unusable. A hook failure is swallowed: usage capture must never break
+    the stream.
 
-    legacy_fallback() -> awaitable returning the route's pre-agent result,
-    used ONLY when the agent fails before emitting any text (Rung 1). It is
-    async because the routes' legacy paths are (`_legacy_chat`). It owns its
-    own persistence, so on_complete is NOT called on that branch — calling
-    both double-writes.
+    nonstream_fallback() -> awaitable returning the route's non-streaming
+    turn result (the same agent pipeline the JSON route serves, on the fast
+    tier), used ONLY when the agent fails before emitting any text
+    (Rung 1). It owns its own persistence, so on_complete is NOT called on
+    that branch — calling both double-writes.
 
-    Invariant: AT MOST one of on_complete / legacy_fallback runs per turn —
-    never both. The error rungs run NEITHER: Rung 2 (failure after tokens
-    streamed), Rung 1 with no fallback, and a Rung-1 fallback that itself
-    raises all yield an `error` event and persist nothing (regression-tested
-    in test_chat_stream.py).
+    Writes-guard (#470, generalized): a fallback re-RUNS the whole turn, so
+    it is only safe when the failed run wrote nothing. If any graph/mastery
+    tool write landed (`deps.graph_updates` / `deps.mastery_changes`
+    non-empty) at Rung-1 time, the fallback is NOT invoked — the turn ends
+    in a terminal `error` carrying `retryable: False`, telling the client
+    to skip its own JSON-fallback rung too. Every `error` event carries
+    `retryable` (additive, #151a): True unless writes landed.
+
+    Invariant: AT MOST one of on_complete / nonstream_fallback runs per
+    turn — never both. The error rungs run NEITHER: Rung 2 (failure after
+    tokens streamed), Rung 1 with writes, Rung 1 with no fallback, and a
+    Rung-1 fallback that itself raises all yield an `error` event and
+    persist nothing to the transcript (regression-tested in
+    test_chat_stream.py).
 
     A run that COMPLETES with a whitespace-only reply (#153: gemini-2.5-pro
     sometimes emits a bare-newline final text after an end-of-turn tool
@@ -237,23 +254,49 @@ async def stream_agent_turn(
     # Catches UsageLimitExceeded / UnexpectedModelBehavior (both Exception
     # subclasses) and anything else the model or a tool raises. Deliberately
     # NOT BaseException: asyncio.CancelledError must propagate so a client
-    # disconnect stays a cancellation — never a "fallback to legacy".
+    # disconnect stays a cancellation — never a fallback re-run.
     except Exception as exc:
+        write_count = len(deps.graph_updates) + len(deps.mastery_changes)
         if chunks:
             # Rung 2: text already shown. Never silently re-run — the user
             # would see the reply restart. Terminal error; persist nothing.
+            # retryable is False when tool writes landed: a client re-send
+            # would re-run the turn and re-apply them.
             logger.warning("Chat stream failed mid-generation", exc_info=exc)
             yield SaplingEvent(
                 type="error",
                 step="reply",
                 message="The tutor was interrupted. Please retry.",
-                data={"request_id": request_id},
+                data={"request_id": request_id, "retryable": write_count == 0},
             )
             return
 
-        # Rung 1: nothing shown yet — degrade to the route's legacy path.
-        logger.warning("Chat agent failed before first token; using legacy", exc_info=exc)
-        async for ev in _rung1_fallback_events(legacy_fallback, request_id):
+        if write_count:
+            # Rung 1 with writes (#470 generalized): the fallback would
+            # re-run the whole turn and its tools would apply the writes
+            # AGAIN — double mastery for one student turn. Terminal error;
+            # the writes stay (they were real tool actions), and
+            # retryable: False tells the client to skip its JSON rung too.
+            logger.warning(
+                "Chat agent failed before first token but AFTER %d graph "
+                "write(s); terminal error instead of a fallback that would "
+                "re-apply them", write_count, exc_info=exc,
+            )
+            yield SaplingEvent(
+                type="error",
+                step="reply",
+                message="The tutor was interrupted. Please retry.",
+                data={"request_id": request_id, "retryable": False},
+            )
+            return
+
+        # Rung 1: nothing shown, nothing written — degrade to the route's
+        # non-streaming turn.
+        logger.warning(
+            "Chat agent failed before first token; using the nonstream "
+            "fallback", exc_info=exc,
+        )
+        async for ev in _rung1_fallback_events(nonstream_fallback, request_id):
             yield ev
         return
 
@@ -285,12 +328,14 @@ async def stream_agent_turn(
             reply = joined
         elif deps.graph_updates or deps.mastery_changes:
             # Tool writes ALREADY LANDED this turn (append-only mastery
-            # events, graph upserts). The legacy fallback would re-run the
-            # whole turn and apply_graph_update AGAIN — double mastery for
-            # one student turn (PR #470 review). A terminal error is the
-            # honest degrade: the writes stay (they were real tool actions),
-            # nothing is persisted to the transcript, and the client's
-            # ADR-0020 interrupted+Retry treatment applies.
+            # events, graph upserts). The nonstream fallback would re-run
+            # the whole turn and its tools would apply the writes AGAIN —
+            # double mastery for one student turn (PR #470 review). A
+            # terminal error is the honest degrade: the writes stay (they
+            # were real tool actions), nothing is persisted to the
+            # transcript, and the client's ADR-0020 interrupted+Retry
+            # treatment applies — with retryable: False so it never re-runs
+            # the turn via its JSON rung either.
             logger.warning(
                 "Agent turn produced a blank reply AFTER %d graph write(s); "
                 "terminal error instead of a fallback that would re-apply "
@@ -300,7 +345,7 @@ async def stream_agent_turn(
                 type="error",
                 step="reply",
                 message="The tutor was interrupted. Please retry.",
-                data={"request_id": request_id},
+                data={"request_id": request_id, "retryable": False},
             )
             return
         else:
@@ -308,7 +353,7 @@ async def stream_agent_turn(
                 "Agent turn produced a blank reply and no writes; "
                 "degrading to Rung 1",
             )
-            async for ev in _rung1_fallback_events(legacy_fallback, request_id):
+            async for ev in _rung1_fallback_events(nonstream_fallback, request_id):
                 yield ev
             return
 
@@ -330,7 +375,10 @@ async def stream_agent_turn(
             type="error",
             step="reply",
             message="The tutor was interrupted. Please retry.",
-            data={"request_id": request_id},
+            data={
+                "request_id": request_id,
+                "retryable": not (deps.graph_updates or deps.mastery_changes),
+            },
         )
         return
 

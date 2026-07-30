@@ -159,6 +159,28 @@ describe('streamSSE', () => {
     await expect(collect(gen)).rejects.toThrow(errorBody);
   });
 
+  it('attaches the HTTP status to the non-2xx throw (#151a)', async () => {
+    // The stream ladder must be able to branch on status (a 413 body-size
+    // reject fails identically on the JSON fallback), and the body is a
+    // JSON detail statusOf() can't parse a status out of — so the throw
+    // carries `.status` explicitly, mirroring fetchJSON's ApiError.
+    mockFetchResponse(
+      makeStreamingResponse(['{"detail":"Request body too large"}'], {
+        status: 413,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    let caught: unknown;
+    try {
+      await collect(streamSSE('/x', { method: 'POST' }));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as { status?: number }).status).toBe(413);
+  });
+
   it('correctly splits events separated by \\r\\n\\r\\n with no junk leaking between blocks', async () => {
     const payload =
       'event: a\r\ndata: {"i":1}\r\n\r\n' +

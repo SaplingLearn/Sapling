@@ -167,3 +167,51 @@ test("resuming a session surfaces the deterministic concept description in the r
     page.getByTestId("tutor-focus-concept-description"),
   ).toHaveText(CONCEPT_DESCRIPTION);
 });
+
+/**
+ * Journey (#151a): the greeting turn — "Start learning" through the real
+ * entry screen streams the deterministic chat_tutor greeting (the streamed
+ * opener + JSON opener now share one agent pipeline; the seam replays the
+ * same constant on both lanes). Sessions are LAZY (PENDING_SESSIONS): the
+ * greeting alone persists NO session row — it materializes on the first
+ * chat turn — so the DB asserts run after a follow-up message.
+ */
+test("greeting turn streams the deterministic reply; session materializes on first chat", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+  const TOPIC = "Greeting journey topic (e2e #151a)";
+
+  await page.goto("/learn");
+  await page.getByTestId("tutor-topic-picker").click();
+  await page.getByTestId("tutor-topic-search").fill(TOPIC);
+  await page.keyboard.press("Enter"); // no concept matches → picks the custom topic
+  await page.getByTestId("tutor-start").click();
+
+  // The deterministic greeting renders — and lazily: no session row yet.
+  const log = page.getByTestId("tutor-messages");
+  await expect(log).toContainText(TUTOR_REPLY);
+  const before = (await queryRaw(
+    `SELECT id FROM sessions WHERE topic = $1`, [TOPIC],
+  )) as { id: string }[];
+  expect(before).toHaveLength(0);
+
+  // First chat turn materializes the session: row + greeting + user +
+  // assistant all persist (_consume_pending, then the streamed turn).
+  await page.getByTestId("tutor-input").fill("Follow-up question (e2e #151a)");
+  await page.getByTestId("tutor-send").click();
+  await expect
+    .poll(async () => {
+      const rows = (await queryRaw(
+        `SELECT m.role FROM messages m
+           JOIN sessions s ON s.id = m.session_id
+          WHERE s.topic = $1
+          ORDER BY m.created_at ASC`,
+        [TOPIC],
+      )) as { role: string }[];
+      return rows.map((r) => r.role);
+    })
+    .toEqual(["assistant", "user", "assistant"]);
+});
