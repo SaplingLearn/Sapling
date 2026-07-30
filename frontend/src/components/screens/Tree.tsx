@@ -10,7 +10,7 @@ import { KnowledgeGraph } from "../KnowledgeGraph";
 import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { useActiveSemester } from "@/lib/useActiveSemester";
+import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { getGraph, getCourses, getSessions, deleteGraphNode, type EnrolledCourse, type Session } from "@/lib/api";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
@@ -108,7 +108,7 @@ export function Tree() {
   }, [fullscreen]);
 
   const scopedCourses = React.useMemo(
-    () => (activeSemester ? courses.filter((c) => c.term === activeSemester) : courses),
+    () => (activeSemester ? courses.filter((c) => courseInTerm(c, activeSemester)) : courses),
     [courses, activeSemester],
   );
 

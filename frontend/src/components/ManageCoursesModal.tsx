@@ -14,7 +14,7 @@ import {
   type EnrolledCourse,
   type OnboardingCourse,
 } from "@/lib/api";
-import { useActiveSemester, distinctTerms } from "@/lib/useActiveSemester";
+import { useActiveSemester, distinctTerms, courseInTerm } from "@/lib/useActiveSemester";
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -174,13 +174,13 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
             {activeTerm ? `Courses · ${activeTerm}` : "Your courses"}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-            {courses.filter((c) => !activeTerm || c.term === activeTerm).length === 0 && (
+            {courses.filter((c) => courseInTerm(c, activeTerm)).length === 0 && (
               <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
                 No courses in this semester yet.
               </div>
             )}
             {courses
-              .filter((c) => !activeTerm || c.term === activeTerm)
+              .filter((c) => courseInTerm(c, activeTerm))
               .map((c) => (
                 <EnrolledRow key={c.course_id} userId={userId} course={c} onChanged={onChanged} />
               ))}

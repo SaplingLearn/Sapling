@@ -26,7 +26,7 @@ import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { humanizeError, isNotFound } from "@/lib/errorMessage";
 import { useUser } from "@/context/UserContext";
-import { useActiveSemester } from "@/lib/useActiveSemester";
+import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import {
   getCourses,
   getStudyGuideExams,
@@ -90,7 +90,7 @@ export function Study() {
   // guide/flashcard generation). Study has no graph fetch of its own, so this
   // client-side filter is all the scoping it needs.
   const scopedCourses = React.useMemo(
-    () => (activeSemester ? courses.filter(c => c.term === activeSemester) : courses),
+    () => (activeSemester ? courses.filter(c => courseInTerm(c, activeSemester)) : courses),
     [courses, activeSemester],
   );
 

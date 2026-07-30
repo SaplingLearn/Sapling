@@ -5,14 +5,36 @@ import { useCallback, useEffect, useState } from "react";
 export const ACTIVE_SEMESTER_STORAGE_KEY = "sapling_active_semester";
 const CHANGE_EVENT = "sapling-active-semester-change";
 
-/** Distinct term labels in first-seen order, dropping blanks. */
-export function distinctTerms(courses: { term: string }[]): string[] {
+type TermScoped = { term?: string | null; terms?: string[] | null };
+
+/** Every term label a course/concept belongs to. Prefers the `terms` array (a
+ *  course collapsed across enrollments carries all its terms, #449); falls back
+ *  to the singular `term` for older payloads. */
+function termsOf(c: TermScoped): string[] {
+  if (c.terms && c.terms.length) return c.terms;
+  return c.term ? [c.term] : [];
+}
+
+/** True if the course/concept belongs to `activeSemester`. The empty string
+ *  ("All semesters") always matches. Uses term MEMBERSHIP, so a course enrolled
+ *  in both Fall 2025 and Spring 2026 shows on either tab (not just its
+ *  most-recent representative term). */
+export function courseInTerm(c: TermScoped, activeSemester: string): boolean {
+  if (!activeSemester) return true;
+  return termsOf(c).includes(activeSemester);
+}
+
+/** Distinct term labels in first-seen order, dropping blanks. Flattens the
+ *  per-course `terms` array so every enrolled term surfaces as a tab. */
+export function distinctTerms(courses: TermScoped[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const c of courses) {
-    if (c.term && !seen.has(c.term)) {
-      seen.add(c.term);
-      out.push(c.term);
+    for (const t of termsOf(c)) {
+      if (t && !seen.has(t)) {
+        seen.add(t);
+        out.push(t);
+      }
     }
   }
   return out;

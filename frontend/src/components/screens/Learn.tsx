@@ -18,7 +18,7 @@ import { KnowledgeGraph } from "../KnowledgeGraph";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { useActiveSemester } from "@/lib/useActiveSemester";
+import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useUser } from "@/context/UserContext";
 import {
   startSession,
@@ -336,7 +336,7 @@ function LearnInner() {
 
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
-  const [concepts, setConcepts] = useState<{ id: string; name: string; course_id: string | null; course_code: string | null; term: string | null }[]>([]);
+  const [concepts, setConcepts] = useState<{ id: string; name: string; course_id: string | null; course_code: string | null; term: string | null; terms: string[] | null }[]>([]);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
 
@@ -459,6 +459,7 @@ function LearnInner() {
               course_id: n.course_id ?? null,
               course_code: n.course_id ? (courseById.get(n.course_id)?.course_code ?? null) : null,
               term: n.course_id ? (courseById.get(n.course_id)?.term ?? null) : null,
+              terms: n.course_id ? (courseById.get(n.course_id)?.terms ?? null) : null,
             })),
         );
         const apiNodes = (gRes.nodes ?? []) as ApiNode[];
@@ -803,7 +804,7 @@ function LearnInner() {
   // courses when no semester is selected). The suggest/highlight logic that
   // sat next to this pre-revamp now lives up top with the rail-focus state.
   const scopedCourses = useMemo(
-    () => (activeSemester ? courses.filter(c => c.term === activeSemester) : courses),
+    () => (activeSemester ? courses.filter(c => courseInTerm(c, activeSemester)) : courses),
     [courses, activeSemester],
   );
 
@@ -1771,7 +1772,7 @@ function TopicPicker({
     const q = query.trim().toLowerCase();
     return concepts
       .filter(c => !selectedCourseId || c.course_id === selectedCourseId)
-      .filter(c => (activeSemester ? c.term === activeSemester : true))
+      .filter(c => courseInTerm(c, activeSemester))
       .filter(c => !q || c.name.toLowerCase().includes(q))
       .slice(0, 80);
   }, [concepts, query, selectedCourseId, activeSemester]);
