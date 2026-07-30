@@ -264,6 +264,80 @@ def test_responses_are_cache_control_private(seeded):
         assert r.headers.get("Cache-Control") == "private", path
 
 
+# ── range serialization + day bucketing (#121 backend) ───────────────────────
+
+
+def test_range_serializes_as_from(seeded):
+    # The wire key must be "from" (matching the query param), not the Python
+    # field name "from_" — the TS client types freeze on this shape.
+    r = client.get(f"{BASE}/usage/summary", params=RANGE)
+    assert r.json()["range"] == {"from": RANGE["from"], "to": RANGE["to"]}
+
+
+def test_usage_summary_bucket_day_series(seeded):
+    r = client.get(f"{BASE}/usage/summary", params={**RANGE, "bucket": "day"})
+    assert r.status_code == 200
+    body = r.json()
+    assert [p["date"] for p in body["series"]] == ["2026-07-10", "2026-07-12", "2026-07-15"]
+    assert [p["count"] for p in body["series"]] == [1, 1, 2]
+    # Bucketing adds the series; it must not change the aggregate fields.
+    assert body["total_events"] == 4
+    assert body["distinct_active_users"] == 2
+
+
+def test_usage_summary_without_bucket_has_no_series(seeded):
+    r = client.get(f"{BASE}/usage/summary", params=RANGE)
+    assert r.json()["series"] is None
+
+
+def test_llm_cost_bucket_day_series(seeded):
+    r = client.get(f"{BASE}/llm/cost", params={**RANGE, "bucket": "day"})
+    assert r.status_code == 200
+    series = r.json()["series"]
+    assert [p["date"] for p in series] == ["2026-07-10", "2026-07-12", "2026-07-15"]
+    assert [p["calls"] for p in series] == [1, 1, 1]
+    assert [p["total_tokens"] for p in series] == [150, 300, 120]
+    assert series[0]["cost_usd"] == pytest.approx(0.01)
+    assert series[1]["cost_usd"] == pytest.approx(0.05)
+    assert series[2]["cost_usd"] == pytest.approx(0.02)
+
+
+def test_errors_bucket_day_series(seeded):
+    r = client.get(f"{BASE}/errors", params={**RANGE, "bucket": "day"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["series"] == [{"date": "2026-07-15", "count": 1}]
+    assert body["total"] == 1
+    assert body["truncated"] is False
+
+
+def test_bucket_rejects_invalid_value(seeded):
+    r = client.get(f"{BASE}/usage/summary", params={**RANGE, "bucket": "hour"})
+    assert r.status_code == 422
+
+
+def test_errors_bucket_series_truncation_is_surfaced(monkeypatch):
+    # The errors series needs its own range scan (the feed itself is paginated
+    # server-side); that scan can hit the cap and must say so, never silently.
+    store = {
+        "events": [
+            {"event_type": "error.5xx", "category": "error", "user_id": "u1", "request_id": f"r{i}",
+             "payload": {"path": "/api/x", "method": "GET", "status_code": 500, "duration_ms": 1.0},
+             "created_at": ts}
+            for i, ts in enumerate([IN1, IN2, IN3])
+        ],
+        "llm_usage": [],
+    }
+    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable(store.get(name, [])))
+    monkeypatch.setattr(analytics, "_PAGE", 1)
+    monkeypatch.setattr(analytics, "_SCAN_CAP", 2)
+    r = client.get(f"{BASE}/errors", params={**RANGE, "bucket": "day"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["truncated"] is True
+    assert [p["count"] for p in body["series"]] == [1, 1]  # capped at 2 scanned rows
+
+
 # ── admin gating ─────────────────────────────────────────────────────────────
 
 

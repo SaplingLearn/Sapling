@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from db.connection import table
 from services.auth_guard import require_admin
@@ -39,12 +39,18 @@ _SCAN_CAP = 100_000
 GroupBy = Literal["user", "feature", "model"]
 _GROUP_COLUMN = {"user": "user_id", "feature": "feature", "model": "model"}
 
+# Day is the only bucket the dashboard needs (#121); the Literal keeps the
+# param 422-validated so a future "week"/"hour" is an explicit contract change.
+Bucket = Literal["day"]
+
 
 # ── Response models ──────────────────────────────────────────────────────────
 
 
 class Range(BaseModel):
-    from_: str
+    # Serialized as "from" to match the query param — the reserved word only
+    # forces the underscore on the Python side, never on the wire.
+    from_: str = Field(serialization_alias="from")
     to: str
 
 
@@ -53,12 +59,27 @@ class EventTypeCount(BaseModel):
     count: int
 
 
+class DayCount(BaseModel):
+    date: str  # YYYY-MM-DD, UTC
+    count: int
+
+
+class CostDayPoint(BaseModel):
+    date: str  # YYYY-MM-DD, UTC
+    calls: int
+    total_tokens: int
+    cost_usd: float
+
+
 class UsageSummary(BaseModel):
     range: Range
     total_events: int
     distinct_active_users: int
     by_event_type: list[EventTypeCount]
     truncated: bool = False
+    # Present only when ?bucket=day. Sparse: days with no rows are omitted —
+    # the client zero-fills the axis from `range`.
+    series: list[DayCount] | None = None
 
 
 class UserUsage(BaseModel):
@@ -101,6 +122,8 @@ class LLMCost(BaseModel):
     rows: list[CostRow]
     totals: CostTotals
     truncated: bool = False
+    # Present only when ?bucket=day; sparse (see UsageSummary.series).
+    series: list[CostDayPoint] | None = None
 
 
 class ErrorEvent(BaseModel):
@@ -120,6 +143,11 @@ class ErrorsPage(BaseModel):
     limit: int
     offset: int
     errors: list[ErrorEvent]
+    # `series` needs its own range scan (the feed is paginated server-side),
+    # so unlike the feed it can hit the scan cap — `truncated` refers to the
+    # series only and stays False when no bucket was requested.
+    truncated: bool = False
+    series: list[DayCount] | None = None
 
 
 # ── Date range helpers ───────────────────────────────────────────────────────
@@ -204,6 +232,48 @@ def _as_int(value) -> int:
         return 0
 
 
+# ── Day bucketing (#121) ─────────────────────────────────────────────────────
+
+
+def _bucket_date(raw) -> str | None:
+    """UTC calendar day (YYYY-MM-DD) for a created_at value; None if unparseable."""
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        # Legacy naive rows are UTC by construction (pre-#248 writes).
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc).date().isoformat()
+
+
+def _count_series(rows: list[dict]) -> list[DayCount]:
+    counts: dict[str, int] = defaultdict(int)
+    for r in rows:
+        day = _bucket_date(r.get("created_at"))
+        if day:
+            counts[day] += 1
+    return [DayCount(date=d, count=c) for d, c in sorted(counts.items())]
+
+
+def _cost_series(rows: list[dict]) -> list[CostDayPoint]:
+    days: dict[str, dict] = defaultdict(lambda: {"calls": 0, "total_tokens": 0, "cost_usd": 0.0})
+    for r in rows:
+        day = _bucket_date(r.get("created_at"))
+        if not day:
+            continue
+        d = days[day]
+        d["calls"] += 1
+        d["total_tokens"] += _as_int(r.get("total_tokens"))
+        d["cost_usd"] += _as_float(r.get("cost_usd"))
+    return [
+        CostDayPoint(date=k, calls=v["calls"], total_tokens=v["total_tokens"], cost_usd=round(v["cost_usd"], 6))
+        for k, v in sorted(days.items())
+    ]
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -213,6 +283,7 @@ def usage_summary(
     response: Response,
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
+    bucket: Bucket | None = Query(None),
 ) -> UsageSummary:
     """Event totals for the range; `truncated: true` means the scan cap cut the aggregation short."""
     require_admin(request)
@@ -236,6 +307,7 @@ def usage_summary(
             key=lambda e: e.count, reverse=True,
         ),
         truncated=truncated,
+        series=_count_series(rows) if bucket else None,
     )
 
 
@@ -309,6 +381,7 @@ def llm_cost(
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
     group_by: GroupBy = Query("feature"),
+    bucket: Bucket | None = Query(None),
 ) -> LLMCost:
     """LLM token/cost rollup; `truncated: true` means the scan cap cut the aggregation short."""
     require_admin(request)
@@ -354,6 +427,7 @@ def llm_cost(
     return LLMCost(
         range=Range(from_=from_iso, to=to_iso), group_by=group_by,
         rows=cost_rows, totals=totals, truncated=truncated,
+        series=_cost_series(rows) if bucket else None,
     )
 
 
@@ -365,8 +439,9 @@ def errors(
     to: str | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    bucket: Bucket | None = Query(None),
 ) -> ErrorsPage:
-    """Paginated error.* event feed (server-side pagination — no range scan, so no cap)."""
+    """Paginated error.* event feed; `?bucket=day` adds a per-day series (its own capped scan)."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
@@ -376,6 +451,14 @@ def errors(
         filters={"created_at": [f"gte.{from_iso}", f"lte.{to_iso}"], "event_type": "like.error.*"},
         order="created_at.desc", limit=limit, offset=offset,
     )
+    series = None
+    series_truncated = False
+    if bucket:
+        scan_rows, series_truncated = _scan_range(
+            "events", "created_at", from_iso, to_iso,
+            extra_filters={"event_type": "like.error.*"},
+        )
+        series = _count_series(scan_rows)
     items = []
     for r in rows:
         payload = r.get("payload") or {}
@@ -392,4 +475,5 @@ def errors(
     return ErrorsPage(
         range=Range(from_=from_iso, to=to_iso),
         total=total, limit=limit, offset=offset, errors=items,
+        truncated=series_truncated, series=series,
     )
