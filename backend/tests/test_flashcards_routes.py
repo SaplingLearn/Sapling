@@ -119,6 +119,57 @@ class TestCourseDocumentsTermScope:
         assert captured["filters"]["offering_id"] == "eq.off-f25"
         assert len(docs) == 1
 
+    def test_no_course_match_with_semester_yields_no_docs(self):
+        """#475 F2: with an explicit semester there is no term to anchor the
+        all-docs fallback to — a course-name miss returns NO documents, never
+        every document the user owns."""
+        captured = {}
+
+        def side_effect(name):
+            m = MagicMock()
+            if name == "courses":
+                m.select.return_value = []  # no course match
+            elif name == "documents":
+                def _select(cols, filters=None, order=None, limit=None):
+                    captured["filters"] = filters or {}
+                    return [{"file_name": "x", "category": None,
+                             "summary": None, "concept_notes": None}]
+                m.select.side_effect = _select
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.flashcards.table", side_effect=side_effect):
+            docs = _get_course_documents(USER_ID, "Ghost Course", semester="Fall 2025")
+        assert docs == []
+        assert "filters" not in captured  # the all-docs query never ran
+
+    def test_no_course_match_without_semester_keeps_the_all_docs_fallback(self):
+        # Pre-existing behavior, byte-identical: no semester + no course match
+        # → every non-deleted document the user owns.
+        captured = {}
+
+        def side_effect(name):
+            m = MagicMock()
+            if name == "courses":
+                m.select.return_value = []
+            elif name == "documents":
+                def _select(cols, filters=None, order=None, limit=None):
+                    captured["filters"] = filters or {}
+                    return [{"file_name": "x", "category": None,
+                             "summary": None, "concept_notes": None}]
+                m.select.side_effect = _select
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.flashcards.table", side_effect=side_effect):
+            docs = _get_course_documents(USER_ID, "Ghost Course")
+        assert len(docs) == 1
+        assert captured["filters"] == {
+            "user_id": f"eq.{USER_ID}", "deleted_at": "is.null",
+        }
+
     def test_semester_with_no_offering_yields_no_docs_not_all_docs(self):
         captured = {}
         with patch("routes.flashcards.table", side_effect=self._tables(

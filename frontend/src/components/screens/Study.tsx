@@ -24,7 +24,7 @@ const MarkdownChat = dynamic(
 import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { humanizeError, isNotFound } from "@/lib/errorMessage";
+import { extractErrorDetail, humanizeError, isNotFound } from "@/lib/errorMessage";
 import { useUser } from "@/context/UserContext";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import {
@@ -47,14 +47,17 @@ import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
 
 type Mode = "guide" | "cards";
 
-// A guide load fails two ways that deserve different UI: the exam is gone
-// (normal — a deleted assignment, or a stale "recent guides" entry), or the
-// generation itself broke. Only the second is worth a red toast, and it carries
-// the ids it was built from because opening a recent guide clears the exam
-// selection — the selects are not a reliable retry target.
+// A guide load fails two ways that deserve different UI: the guide's target
+// isn't there (normal — a deleted exam, a stale "recent guides" entry, or a
+// term with no offering of the course, #475 F4; `message` carries the server's
+// sentence when it isn't the exam-deleted one), or the generation itself
+// broke. Only the second is worth a red toast, and it carries the ids + term
+// it was built from because opening a recent guide clears the exam selection —
+// the selects are not a reliable retry target. `semester` is the term the
+// failed load resolved with ("" = unscoped), so retry replays it exactly.
 type GuideProblem =
-  | { kind: "missing" }
-  | { kind: "failed"; message: string; courseId: string; examId: string };
+  | { kind: "missing"; message?: string }
+  | { kind: "failed"; message: string; courseId: string; examId: string; semester: string };
 
 type RawCard = {
   id: string;
@@ -236,12 +239,21 @@ function GuideMode({
       .finally(() => setLoadingExams(false));
   }, [courseId, userId, toast, semester, semesterReady]);
 
-  const loadGuide = React.useCallback(async (cid: string, eid: string) => {
+  // A pending recent-open's OWN term (#475 F1), consumed by exactly one load:
+  // null = no pending recent open; "" = the entry has no term label, open
+  // explicitly unscoped.
+  const recentTermRef = React.useRef<string | null>(null);
+
+  const loadGuide = React.useCallback(async (cid: string, eid: string, termOverride?: string) => {
     if (!userId) return;
+    // termOverride pins the term for THIS load ("" = explicitly unscoped):
+    // recent entries open as their own term (#475 F1) and retries replay the
+    // term that failed. Without it, the active selector applies.
+    const term = termOverride !== undefined ? (termOverride || undefined) : (semester || undefined);
     setLoadingGuide(true);
     setGuideProblem(null);
     try {
-      const r = await getStudyGuide(userId, cid, eid, semester || undefined);
+      const r = await getStudyGuide(userId, cid, eid, term);
       setGuide(r.guide);
       setGeneratedAt(r.generated_at);
       setCached(r.cached);
@@ -250,10 +262,19 @@ function GuideMode({
       console.error("study guide load failed", err);
       setGuide(null);
       if (isNotFound(err)) {
-        setGuideProblem({ kind: "missing" });
+        // #475 F4: not every 404 means "exam deleted" — strict semester
+        // resolution 404s when the course has no offering in the requested
+        // term. Surface the server's sentence unless it IS the exam-deleted
+        // one (or is absent).
+        const { detail } = extractErrorDetail(err);
+        setGuideProblem(
+          !detail || detail.startsWith("Exam not found")
+            ? { kind: "missing" }
+            : { kind: "missing", message: detail },
+        );
       } else {
         const message = humanizeError(err, "Couldn't build that study guide.");
-        setGuideProblem({ kind: "failed", message, courseId: cid, examId: eid });
+        setGuideProblem({ kind: "failed", message, courseId: cid, examId: eid, semester: term ?? "" });
         toast.error(message);
       }
     } finally {
@@ -262,10 +283,21 @@ function GuideMode({
   }, [userId, toast, loadRecent, semester]);
 
   React.useEffect(() => {
-    if (courseId && examId) loadGuide(courseId, examId);
+    if (courseId && examId) {
+      // Consume a pending recent-open term so ONLY this load is pinned to the
+      // entry's own term; later picker-driven loads follow the selector.
+      const recentTerm = recentTermRef.current;
+      recentTermRef.current = null;
+      loadGuide(courseId, examId, recentTerm ?? undefined);
+    }
   }, [courseId, examId, loadGuide]);
 
   const openRecent = (entry: StudyGuideCacheEntry) => {
+    // #475 F1: the entry's guide row keys on ITS offering/term, which need
+    // not match the active selector — a Spring guide in the rail must open as
+    // Spring, or the strict resolver cache-misses under the active term and
+    // silently generates (and persists) a mismatched row.
+    recentTermRef.current = entry.semester ?? "";
     setCourseId(entry.course_id);
     setExamId(entry.exam_id);
   };
@@ -384,10 +416,16 @@ function GuideMode({
           <EmptyHint title="Choose an exam" body="The guide will be generated from your course material the first time." />
         )}
         {!loadingGuide && !regenerating && guideProblem?.kind === "missing" && (
-          <EmptyHint
-            title="That exam isn't around anymore"
-            body="It was probably deleted. Pick another exam above, or add one on the Calendar page to build a guide for it."
-          />
+          guideProblem.message ? (
+            // #475 F4: the server said something more specific than "exam
+            // deleted" (e.g. no offering in the requested term) — show it.
+            <EmptyHint title="That guide isn't available" body={guideProblem.message} />
+          ) : (
+            <EmptyHint
+              title="That exam isn't around anymore"
+              body="It was probably deleted. Pick another exam above, or add one on the Calendar page to build a guide for it."
+            />
+          )
         )}
         {!loadingGuide && !regenerating && guideProblem?.kind === "failed" && (
           <EmptyHint
@@ -396,7 +434,10 @@ function GuideMode({
             action={
               <button
                 className="btn btn--sm btn--primary"
-                onClick={() => loadGuide(guideProblem.courseId, guideProblem.examId)}
+                // Replays the exact load that failed — ids AND term (#475 F1).
+                onClick={() =>
+                  loadGuide(guideProblem.courseId, guideProblem.examId, guideProblem.semester)
+                }
                 disabled={loadingGuide}
               >
                 Try again

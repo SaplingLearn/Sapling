@@ -88,9 +88,15 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
     the caller resolves the abstract course id to an offering first.
     """
     # 1. Fetch exam info. Assignments key on enrollment_id (no user_id/course_id
-    #    column); scope to the user's own enrollments so one user can't generate a
-    #    guide off another's exam.
-    enrollment_ids = [e["id"] for e in user_enrollment_ids(user_id)]
+    #    column); scope to the user's enrollment in THE RESOLVED OFFERING
+    #    (#475 F3, the #462 CodeRabbit fix) — not all of their enrollments, or
+    #    a multi-term user could generate (and persist) a guide keyed on one
+    #    term's offering from another term's exam.
+    enrollment_ids = [
+        e["id"]
+        for e in user_enrollment_ids(user_id)
+        if e.get("offering_id") == offering_id
+    ]
     exams = (
         table("assignments").select(
             "id,enrollment_id,title,due_date,assignment_type",
@@ -210,20 +216,26 @@ def get_cached_guides(user_id: str, request: Request):
     # ETag from the guides' (id, generated_at) — regenerate replaces rows with a
     # fresh id + timestamp, so this captures add/remove/regenerate. A matching
     # If-None-Match returns 304 and skips the per-offering course enrichment below.
-    etag = make_etag("guides", user_id, *sorted(f"{g['id']}:{g.get('generated_at')}" for g in guides))
+    # "guides.v2": the shape gained per-entry `semester` (#475 F1); the version
+    # bump revalidates bodies cached under the old shape.
+    etag = make_etag("guides.v2", user_id, *sorted(f"{g['id']}:{g.get('generated_at')}" for g in guides))
     not_modified = conditional(request, etag)
     if not_modified is not None:
         return not_modified
 
     # Each guide keys on an offering; the frontend speaks abstract course ids.
-    # Map each offering → its abstract course id, then enrich with course_name.
+    # Map each offering → its abstract course id + its term label (#475 F1: the
+    # client opens a recent entry AS ITS OWN TERM, so each entry says which term
+    # that is). Offering ids are deduped here; term_for_offering is lru-cached.
     offering_to_course: dict[str, str | None] = {}
+    offering_terms: dict[str, str | None] = {}
     course_map: dict[str, str] = {}
     for g in guides:
         off_id = g.get("offering_id")
         if off_id and off_id not in offering_to_course:
             cid = offering_course_id(off_id)
             offering_to_course[off_id] = cid
+            offering_terms[off_id] = (term_for_offering(off_id) or {}).get("label")
             if cid and cid not in course_map:
                 rows = table("courses").select(
                     "id,course_name", filters={"id": f"eq.{cid}"}, limit=1
@@ -243,6 +255,8 @@ def get_cached_guides(user_id: str, request: Request):
             "exam_title": content.get("exam", ""),
             "overview": content.get("overview", ""),
             "generated_at": g["generated_at"],
+            # The entry's OWN term label (null when the offering has no term).
+            "semester": offering_terms.get(g.get("offering_id")),
         })
     return cached_json({"guides": result}, etag)
 

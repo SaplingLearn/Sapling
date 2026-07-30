@@ -113,14 +113,17 @@ def _get_course_documents(
     user_id: str, course_name: str, semester: str | None = None
 ) -> list[dict]:
     """
-    Return all library documents for the user that belong to the course
-    matching `course_name`. Falls back to all user documents if no course match.
+    Return the library documents grounding generation for `course_name`.
 
     Documents key on the offering (0025): match the abstract course by name,
     resolve it to the current-term offering — or, with a ``semester`` (#141),
-    STRICTLY to that term's offering — then read documents by offering. A term
-    with no offering of the course contributes no documents; it never falls
-    back to another term's (or all of the user's) material.
+    STRICTLY to that term's offering — then read documents by offering.
+
+    Fallback rules (#475 F2): with a ``semester``, a term with no offering of
+    the course AND a course-name miss both contribute NO documents — an
+    explicit term gives the all-docs fallback nothing to anchor to. Without a
+    ``semester``, a course-name miss keeps the pre-existing fallback to all of
+    the user's documents, byte-identical.
     """
     try:
         course_rows = table("courses").select(
@@ -147,6 +150,10 @@ def _get_course_documents(
                         "deleted_at": "is.null",
                     },
                 )
+        elif semester:
+            # Course-name miss + explicit term: nothing to scope the fallback
+            # to — no documents (#475 F2).
+            docs = []
         else:
             docs = table("documents").select(
                 "file_name,category,summary,concept_notes",

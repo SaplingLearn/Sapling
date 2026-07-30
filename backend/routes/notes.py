@@ -234,8 +234,9 @@ async def patch(note_id: str, body: UpdateNoteBody, request: Request):
     if body.tags is not None:
         patch_dict["tags"] = body.tags
     if body.course_id is not None:
-        # Re-home the note onto the offering for the new abstract course.
-        # CREATE path: current-term by design, not semester-scoped (#141).
+        # RE-HOME path: moving a note onto another abstract course files it
+        # under that course's CURRENT-term offering — deliberately not
+        # semester-scoped (#141), like the create path above.
         patch_dict["offering_id"] = resolve_offering(body.course_id, create=True)
     if not patch_dict:
         raise HTTPException(status_code=400, detail="No fields to update.")

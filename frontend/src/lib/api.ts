@@ -809,11 +809,18 @@ export interface StudyGuideCacheEntry {
   exam_title: string;
   overview: string;
   generated_at: string;
+  // The entry's OWN term label (#475 F1): a recent guide opens as its own
+  // term, overriding the active selector for that open. null when the row's
+  // offering has no term; optional for bodies cached before the field shipped.
+  semester?: string | null;
 }
 
-// The study-guide reads take an optional `semester` (term label, #141): the
-// guide keys on that term's offering instead of always the current term's.
-// Omitted/"" = the unchanged current-term resolution.
+// The study-guide reads take an optional `semester` (term label, #141).
+// With it, each read resolves STRICTLY to that term's offering. Omitted/"":
+// getStudyGuide/regenerateStudyGuide fall back to current-term offering
+// resolution, while getStudyGuideExams lists exams across ALL of the user's
+// enrollments of the course (every term) — that asymmetry is pre-existing
+// behavior, documented as-is.
 export const getStudyGuideExams = (userId: string, courseId: string, semester?: string) =>
   fetchJSON<{ exams: StudyGuideExam[] }>(
     `/api/study-guide/${encodeURIComponent(userId)}/exams?course_id=${encodeURIComponent(courseId)}` +
