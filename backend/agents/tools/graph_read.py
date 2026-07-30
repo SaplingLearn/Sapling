@@ -98,11 +98,18 @@ async def read_concepts_for_user_tool(
     """
     from agents.tools.retrieval import resolve_retrieval
 
+    from services.prompt_safety import neutralize_delimiters
+
     rows = await resolve_retrieval(ctx.deps).concept_mastery(
         ctx.deps.user_id, ctx.deps.course_id
     )
     n = max(0, int(limit))
-    return rows[:n]
+    # #150 (PR #471 review): concept names are student-derived text — the
+    # seed block neutralizes them and this sibling surface must too.
+    return [
+        r.model_copy(update={"concept_name": neutralize_delimiters(r.concept_name)})
+        for r in rows[:n]
+    ]
 
 
 # ── read_graph_neighborhood (#149) ────────────────────────────────────────
@@ -303,9 +310,26 @@ async def read_graph_neighborhood_tool(
     """
     from agents.tools.retrieval import resolve_retrieval
 
-    return await resolve_retrieval(ctx.deps).graph_neighborhood(
+    from services.prompt_safety import neutralize_delimiters
+
+    hood = await resolve_retrieval(ctx.deps).graph_neighborhood(
         ctx.deps.user_id, ctx.deps.course_id, concepts, limit=limit
     )
+    # #150 (PR #471 review): student-derived concept names, same
+    # neutralization as the seed block and the mastery reader above.
+    return hood.model_copy(update={
+        "concepts": [
+            c.model_copy(update={"concept_name": neutralize_delimiters(c.concept_name)})
+            for c in hood.concepts
+        ],
+        "edges": [
+            e.model_copy(update={
+                "source": neutralize_delimiters(e.source),
+                "target": neutralize_delimiters(e.target),
+            })
+            for e in hood.edges
+        ],
+    })
 
 
 # ── read_misconceptions_for_course ────────────────────────────────────────
@@ -375,5 +399,25 @@ async def read_misconceptions_for_course(
 async def read_misconceptions_for_course_tool(
     ctx: RunContext[SaplingDeps],
 ) -> list[Misconception]:
-    """Pydantic AI tool wrapper. Reads from ctx.deps."""
-    return await read_misconceptions_for_course(ctx.deps.course_id)
+    """Pydantic AI tool wrapper. Reads from ctx.deps.
+
+    #150: misconception strings are distilled from OTHER students'
+    sessions — peer-derived text. Delimiters are neutralized at this LLM
+    boundary so an injected string can't forge untrusted-envelope markers;
+    the consuming agents' UNTRUSTED CONTENT POLICY covers the rest
+    (typed short strings — no per-entry envelope).
+    """
+    from services.prompt_safety import neutralize_delimiters
+
+    out = await read_misconceptions_for_course(ctx.deps.course_id)
+    return [
+        Misconception(
+            text=neutralize_delimiters(m.text),
+            related_concept=(
+                neutralize_delimiters(m.related_concept)
+                if m.related_concept
+                else m.related_concept
+            ),
+        )
+        for m in out
+    ]

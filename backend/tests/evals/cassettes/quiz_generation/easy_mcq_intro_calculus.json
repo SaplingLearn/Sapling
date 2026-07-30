@@ -2,42 +2,42 @@
   "questions": [
     {
       "concept": "Limits",
-      "correct_answer": "The value a function approaches as the input approaches some value.",
+      "correct_answer": "The behavior of a function as it approaches a certain input value.",
       "difficulty": "easy",
-      "explanation": "The limit of a function describes the behavior of the function near a particular point, not necessarily at the point itself.",
+      "explanation": "A limit describes the value that a function 'approaches' as the input (or independent variable) approaches some value. It doesn't necessarily mean the function reaches that value at that exact point.",
       "options": [
-        "The value a function approaches as the input approaches some value.",
-        "The instantaneous rate of change of a function.",
-        "The area under the curve of a function.",
-        "A point where a function is undefined."
+        "The value a function reaches at a specific point.",
+        "The behavior of a function as it approaches a certain input value.",
+        "The rate of change of a function at a point.",
+        "The area under the curve of a function."
       ],
-      "question": "What is the definition of a limit in calculus?",
+      "question": "What is the fundamental concept of a limit in calculus?",
       "type": "multiple_choice"
     },
     {
       "concept": "Derivatives",
       "correct_answer": "The instantaneous rate of change of the function.",
       "difficulty": "easy",
-      "explanation": "The derivative of a function at a point gives the slope of the tangent line to the function at that point, which represents its instantaneous rate of change.",
+      "explanation": "The derivative of a function at a point represents the instantaneous rate at which the function's value is changing with respect to its input variable at that specific point.",
       "options": [
         "The instantaneous rate of change of the function.",
-        "The average rate of change of the function over an interval.",
-        "The total change in the function.",
+        "The total change in the function over an interval.",
+        "The area under the curve of the function.",
         "The point where the function crosses the x-axis."
       ],
-      "question": "What does the derivative of a function represent?",
+      "question": "Which of the following best defines the derivative of a function?",
       "type": "multiple_choice"
     },
     {
       "concept": "Continuity",
-      "correct_answer": "The limit as x approaches c exists, the function value at c exists, and these two values are equal.",
+      "correct_answer": "The function must be defined at c, the limit as x approaches c must exist, and these two values must be equal.",
       "difficulty": "easy",
-      "explanation": "Continuity at a point requires that the function is defined at that point, the limit exists at that point, and the limit equals the function value.",
+      "explanation": "The formal definition of continuity at a point requires three conditions to be met: the function is defined at the point, the limit exists at that point, and the limit's value equals the function's value at that point.",
       "options": [
-        "The limit as x approaches c exists, the function value at c exists, and these two values are equal.",
-        "The function must be differentiable at c.",
-        "The function must be defined for all real numbers.",
-        "The graph of the function must be a straight line."
+        "The function must be defined at c, the limit as x approaches c must exist, and these two values must be equal.",
+        "The function must be defined at c, and the limit as x approaches c must exist.",
+        "The limit as x approaches c must exist, and these two values must be equal.",
+        "The function must be defined at c, and the limit as x approaches c from the left must equal the limit as x approaches c from the right."
       ],
       "question": "For a function to be continuous at a point 'c', what must be true?",
       "type": "multiple_choice"

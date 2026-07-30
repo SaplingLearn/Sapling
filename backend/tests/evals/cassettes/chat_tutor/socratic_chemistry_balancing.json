@@ -1,5 +1,5 @@
 {
-  "text": "Great question! It's a multi-step process, but totally manageable.\n\nLet's start with the basics. In a redox reaction, electrons are transferred between atoms, causing their \"oxidation states\" to change.\n\nHave you heard of oxidation states before? What do they represent?",
+  "text": "Great question! A redox reaction is all about the transfer of electrons.\n\nThe name \"redox\" itself is a clue. What two processes are happening in a redox reaction?",
   "tool_calls": [
     {
       "args": {
@@ -10,8 +10,7 @@
     {
       "args": {
         "concepts": [
-          "Redox Reactions",
-          "Oxidation States"
+          "Redox Reactions"
         ]
       },
       "tool_name": "apply_graph_update_tool"

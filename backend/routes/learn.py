@@ -310,10 +310,22 @@ def build_system_prompt(
     documents: list | None = None,
 ) -> str:
     from services.course_context_service import get_course_context
+    from services.prompt_safety import INJECTION_GUARD_PROMPT, wrap_untrusted
 
     preamble = PREAMBLE_TEMPLATE.replace("{student_name}", student_name)
     preamble = preamble.replace("{graph_json}", graph_json)
-    preamble = preamble.replace("{last_session_summary}", last_summary or "None")
+    # #150 (PR #471 review FYI): the prior-session summary is LLM-generated
+    # text of student content — same untrusted class as the quiz digest.
+    preamble = preamble.replace(
+        "{last_session_summary}",
+        wrap_untrusted(last_summary, source="previous session summary")
+        if last_summary
+        else "None",
+    )
+    # #150: the untrusted-content policy paragraph lives once in
+    # prompt_safety and fills the template slot here, so the legacy and
+    # agent prompts state the same rules.
+    preamble = preamble.replace("{untrusted_content_policy}", INJECTION_GUARD_PROMPT)
 
     parts = [preamble]
 
@@ -339,9 +351,15 @@ def build_system_prompt(
                     lines.append("Key concepts:\n" + "\n".join(concept_lines))
             doc_blocks.append("\n".join(lines))
         if doc_blocks:
+            # #150: summaries + concept notes are derived from student
+            # uploads — enveloped as untrusted data at this assembly
+            # boundary (storage keeps the raw text).
             parts.append(
                 "COURSE MATERIALS (ground your explanations and examples in these):\n\n"
-                + "\n\n---\n\n".join(doc_blocks)
+                + wrap_untrusted(
+                    "\n\n---\n\n".join(doc_blocks),
+                    source="student document summaries and concept notes",
+                )
             )
 
     if course_id:
@@ -354,10 +372,20 @@ def build_system_prompt(
             ctx = get_course_context(course_id)
             if ctx:
                 course_label = f"{course_info['course_code']} - {course_info['course_name']}" if course_info['course_code'] else course_info['course_name']
+                # #150: the aggregate is distilled from OTHER students'
+                # sessions — peer-derived text is untrusted data too. The
+                # template's teaching directives stay trusted; only the
+                # JSON payload rides in the envelope.
                 shared_block = (
                     SHARED_CONTEXT_TEMPLATE
                     .replace("{course_name}", course_label)
-                    .replace("{shared_context_json}", json.dumps(ctx, indent=2))
+                    .replace(
+                        "{shared_context_json}",
+                        wrap_untrusted(
+                            json.dumps(ctx, indent=2),
+                            source="class-aggregate learning data",
+                        ),
+                    )
                 )
                 parts.append(shared_block)
 

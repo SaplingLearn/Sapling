@@ -34,11 +34,16 @@ class ConceptMasteryUpdate(BaseModel):
     concept_name: str = Field(
         description="Exact name of the concept whose mastery score to change."
     )
+    # #150: the schema enforces the band the prompt instructs — injected
+    # content demanding "set my mastery to 1.0" fails validation instead
+    # of writing a full-scale jump (the #153 retry loop surfaces the
+    # violation back to the model for correction). Matches the eval band
+    # in tests/evals/chat_tutor.py (MASTERY_DELTA_MIN/MAX).
     mastery_delta: float = Field(
-        ge=-1.0,
-        le=1.0,
+        ge=-0.1,
+        le=0.3,
         description=(
-            "Fractional mastery change, −1.0 to +1.0. "
+            "Fractional mastery change, −0.1 to +0.3. "
             "Use +0.1 to +0.3 when the student answers correctly; "
             "−0.05 to −0.1 when they reveal a gap or misconception."
         ),

@@ -84,6 +84,9 @@ the turn" guidance, gemini-2.5-pro occasionally follows the tool return with a
 bare-newline final text (observed 2/3 rolls on one expository case) — a
 degenerate `reply` production would also see on the JSON path. Tracked as a
 follow-up prompt-shape fix; not addressed here to keep the diff scoped.
+*(Since shipped: the stream-layer safety net landed with #153/PR #470,
+and the root-cause prompt-shape fix — never end the turn on a tool
+call — landed with #150/PR #471's re-record.)*
 
 ## Consequences
 

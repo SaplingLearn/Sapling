@@ -1,5 +1,5 @@
 {
-  "text": "That's exactly right. The number of function calls on the stack grows linearly with the input `n`.\n\nYou've successfully explained the definition of recursion, the importance of the base case, and how to analyze the function's Big-O complexity. Really solid work.\n\nReady to move on to another topic? Based on your progress, the **Chain Rule** might be a good one to tackle next. What do you think?",
+  "text": "That's the right idea! A recursive function does call itself.\n\nWhat's missing is that the function needs a way to *stop* calling itself. Otherwise, it runs forever. This stopping condition is called the \"base case\".\n\nSo, a complete definition would be: recursion is when a function calls itself until it hits a base case.\n\nHere's a question: what happens if you write a recursive function but forget to include a base case?",
   "tool_calls": [
     {
       "args": {
@@ -7,102 +7,12 @@
           {
             "concept_name": "Recursion",
             "mastery_delta": 0.1,
-            "reason": "Correctly defined the core concept."
+            "reason": "Partially correct definition."
           },
           {
             "concept_name": "Base Case",
             "mastery_delta": -0.05,
-            "reason": "Missed this crucial component in their explanation."
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Base Case",
-            "mastery_delta": 0.2,
-            "reason": "Correctly identified the need for a base case."
-          },
-          {
-            "concept_name": "Recursion",
-            "mastery_delta": 0.05,
-            "reason": "Connected recursion to the base case."
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Base Case",
-            "mastery_delta": 0.25,
-            "reason": "Perfectly explained the role of the base case."
-          },
-          {
-            "concept_name": "Recursion",
-            "mastery_delta": 0.1,
-            "reason": "Clearly connected the base case to the overall function."
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Recursion",
-            "mastery_delta": 0.2,
-            "reason": "Provided a correct code example."
-          },
-          {
-            "concept_name": "Base Case",
-            "mastery_delta": 0.2,
-            "reason": "Correctly implemented the base case in a code example."
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Big-O Notation",
-            "mastery_delta": 0.2,
-            "reason": "Correctly identified the time complexity of a recursive function."
-          },
-          {
-            "concept_name": "Recursion",
-            "mastery_delta": 0.05,
-            "reason": "Correctly analyzed the performance of their recursive function."
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Big-O Notation",
-            "mastery_delta": 0.2,
-            "reason": "Clearly explained the reasoning for the time complexity."
-          },
-          {
-            "concept_name": "Recursion",
-            "mastery_delta": 0.1,
-            "reason": "Demonstrated a holistic understanding by connecting it to performance analysis."
-          },
-          {
-            "concept_name": "Base Case",
-            "mastery_delta": 0.05,
-            "reason": "Consistently applied the concept correctly."
+            "reason": "Forgot base case in definition."
           }
         ]
       },

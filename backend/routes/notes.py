@@ -298,6 +298,22 @@ async def _lookup_concept_nodes_by_name(
     return await _asyncio.to_thread(_fetch)
 
 
+def _note_user_prompt(note: dict) -> str:
+    """Assemble the note-worker user prompt (#150-hardened).
+
+    Title and body are student-authored: the body ships inside the
+    untrusted envelope, the title gets delimiter neutralization. Assembly-
+    boundary only — the note row keeps its raw text.
+    """
+    from services.prompt_safety import neutralize_delimiters, wrap_untrusted
+
+    title = neutralize_delimiters(note.get("title") or "(untitled)")
+    body_text = wrap_untrusted(
+        note.get("body") or "", source="student note body"
+    ) or "(empty)"
+    return f"Title: {title}\n\nBody:\n{body_text}"
+
+
 def _deps_for(user_id: str, course_id: str | None, note_id: str | None) -> SaplingDeps:
     from db.connection import _client  # type: ignore  # only for opaque pass-through
     return SaplingDeps(
@@ -315,10 +331,7 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    user_prompt = (
-        f"Title: {note.get('title') or '(untitled)'}\n\n"
-        f"Body:\n{note.get('body') or '(empty)'}"
-    )
+    user_prompt = _note_user_prompt(note)
     # The graph keys on the abstract course; the note carries the offering.
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
@@ -341,10 +354,7 @@ async def extract_concepts(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    user_prompt = (
-        f"Title: {note.get('title') or '(untitled)'}\n\n"
-        f"Body:\n{note.get('body') or '(empty)'}"
-    )
+    user_prompt = _note_user_prompt(note)
     # Concepts land in the abstract-course graph; resolve offering → course.
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)

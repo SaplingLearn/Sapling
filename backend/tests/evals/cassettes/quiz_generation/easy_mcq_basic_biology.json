@@ -2,58 +2,58 @@
   "questions": [
     {
       "concept": "Cell Membrane",
-      "correct_answer": "Regulating passage of substances",
+      "correct_answer": "To regulate the passage of substances into and out of the cell",
       "difficulty": "easy",
-      "explanation": "The cell membrane acts as a selective barrier, controlling which molecules enter and leave the cell.",
+      "explanation": "The cell membrane acts as a selectively permeable barrier, controlling which molecules can enter or leave the cell.",
       "options": [
-        "Protein synthesis",
-        "Energy production",
-        "Regulating passage of substances",
-        "Waste disposal"
+        "To provide structural support to the cell",
+        "To regulate the passage of substances into and out of the cell",
+        "To synthesize proteins for the cell",
+        "To store genetic information"
       ],
-      "question": "Which of the following is the primary function of the cell membrane?",
+      "question": "What is the primary function of the cell membrane?",
       "type": "multiple_choice"
     },
     {
       "concept": "Photosynthesis",
-      "correct_answer": "Oxygen and glucose",
+      "correct_answer": "Carbon Dioxide",
       "difficulty": "easy",
-      "explanation": "Photosynthesis uses light energy, water, and carbon dioxide to produce glucose (sugar) for energy and oxygen as a byproduct.",
+      "explanation": "Plants use carbon dioxide from the air, water from the soil, and light energy to produce glucose (food) and oxygen during photosynthesis.",
       "options": [
-        "Carbon dioxide and water",
-        "Oxygen and glucose",
-        "ATP and heat",
-        "Nitrogen and minerals"
+        "Oxygen",
+        "Nitrogen",
+        "Carbon Dioxide",
+        "Hydrogen"
       ],
-      "question": "What are the main products of photosynthesis?",
+      "question": "What gas do plants primarily take in from the atmosphere for photosynthesis?",
       "type": "multiple_choice"
     },
     {
       "concept": "Mitosis",
-      "correct_answer": "Metaphase",
+      "correct_answer": "Two genetically identical daughter cells",
       "difficulty": "easy",
-      "explanation": "In metaphase, the chromosomes line up along the metaphase plate, an imaginary plane equidistant from the two poles of the cell.",
+      "explanation": "Mitosis produces two daughter cells that are exact genetic copies of the parent cell, crucial for growth and repair.",
       "options": [
-        "Prophase",
-        "Metaphase",
-        "Anaphase",
-        "Telophase"
+        "Four genetically identical daughter cells",
+        "Two genetically identical daughter cells",
+        "Four genetically different daughter cells",
+        "Two genetically different daughter cells"
       ],
-      "question": "During which phase of mitosis do chromosomes align at the center of the cell?",
+      "question": "Mitosis is a type of cell division that results in:",
       "type": "multiple_choice"
     },
     {
       "concept": "Diffusion",
-      "correct_answer": "High, low",
+      "correct_answer": "High concentration to an area of low concentration",
       "difficulty": "easy",
-      "explanation": "Diffusion is a passive process driven by the random motion of molecules, causing them to spread from regions where they are more concentrated to regions where they are less concentrated.",
+      "explanation": "Diffusion is a passive process where molecules spread out from a region where they are more concentrated to a region where they are less concentrated.",
       "options": [
-        "Low, high",
-        "High, low",
-        "Equal, equal",
-        "Zero, infinite"
+        "High concentration to an area of low concentration",
+        "Low concentration to an area of high concentration",
+        "High temperature to an area of low temperature",
+        "Low pressure to an area of high pressure"
       ],
-      "question": "Diffusion is the movement of molecules from an area of ________ concentration to an area of ________ concentration.",
+      "question": "Diffusion is the movement of molecules from an area of:",
       "type": "multiple_choice"
     }
   ]

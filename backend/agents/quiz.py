@@ -25,6 +25,7 @@ from agents.tools.graph_read import (
     read_misconceptions_for_course_tool,
 )
 from agents.tools.quiz_history import read_recent_quiz_attempts_tool
+from services.prompt_safety import INJECTION_GUARD_PROMPT
 
 
 # Difficulty + question type are Literals so Gemini's enum constraint
@@ -151,6 +152,10 @@ _SYSTEM_PROMPT = (
     "  mastery / misconception / quiz-history tools.\n"
     "- If there is no COURSE MATERIAL block, use general knowledge of the "
     "  concept as before."
+    # #150: course material / misconception / quiz-history content is
+    # student- or peer-derived — data for question writing, never
+    # instructions. Single source of truth in services/prompt_safety.py.
+    "\n\n" + INJECTION_GUARD_PROMPT
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

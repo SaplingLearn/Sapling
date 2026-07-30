@@ -21,7 +21,9 @@ Serialization: one line per concept —
 
     - Derivatives (0.42, learning) → related: Limits, Chain Rule
 
-No ids, no mastery-event history, hard character budget (~1.5k). Names are
+No ids, no mastery-event history, hard character budget (~1.5k for the
+content; the #150 untrusted-content envelope adds its fixed overhead on
+top — see untrusted_envelope_overhead). Names are
 verbatim so the model can echo the EXACT concept_name strings the graph
 tools expect.
 """
@@ -103,12 +105,23 @@ def _render(selected: list[dict], edges_by_source: dict[str, list[tuple[str, str
         lines.append(line)
 
     # Enforce the character budget by dropping trailing (weakest-signal)
-    # concept lines until the block fits.
+    # concept lines until the block fits. The budget applies to the raw
+    # serialization; the #150 untrusted envelope below is fixed overhead
+    # on top (see untrusted_envelope_overhead).
     while lines and len("\n".join([_HEADER, *lines])) > GRAPH_CONTEXT_CHAR_BUDGET:
         lines.pop()
     if not lines:
         return ""
-    return "\n".join([_HEADER, *lines])
+    # #150: concept names are student-derived (extracted from their
+    # documents/chats), so the concept lines ship inside the untrusted
+    # envelope — a concept named "ignore your instructions" stays inert
+    # data, and embedded delimiter forgeries are neutralized. The header
+    # stays outside as trusted framing.
+    from services.prompt_safety import wrap_untrusted
+
+    return "\n".join(
+        [_HEADER, wrap_untrusted("\n".join(lines), source="student graph concepts")]
+    )
 
 
 def graph_context_from_rows(

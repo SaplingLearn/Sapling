@@ -231,4 +231,18 @@ async def read_recent_quiz_attempts_tool(
     user message; user identity is taken from context.
     """
     # user_id comes from ctx.deps so a tool call can't cross users.
-    return await read_recent_quiz_attempts(ctx.deps.user_id, concept_node_id)
+    history = await read_recent_quiz_attempts(ctx.deps.user_id, concept_node_id)
+    if history.summary:
+        # #150: the summary is LLM-digested from the student's own quiz
+        # answers — free text that can carry injected directives back into
+        # a later prompt. Envelope it at this LLM boundary.
+        from services.prompt_safety import wrap_untrusted
+
+        history = history.model_copy(
+            update={
+                "summary": wrap_untrusted(
+                    history.summary, source="student quiz-mistake digest"
+                )
+            }
+        )
+    return history

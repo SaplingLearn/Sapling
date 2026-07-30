@@ -2,44 +2,44 @@
   "questions": [
     {
       "concept": "Hash Tables",
-      "correct_answer": "Average O(1) time complexity for insertions, deletions, and searches.",
+      "correct_answer": "Hash Table",
       "difficulty": "medium",
-      "explanation": "Hash tables provide an average time complexity of O(1) for insertions, deletions, and searches by using a hash function to map keys to indices in an array. While worst-case scenarios can be O(n), the average performance is excellent.",
+      "explanation": "Hash tables use a hash function to map keys to indices, allowing for average O(1) operations. However, collisions can lead to O(n) worst-case performance.",
       "options": [
-        "Guaranteed O(1) average time complexity for all operations.",
-        "Efficient handling of ordered data for range queries.",
-        "Average O(1) time complexity for insertions, deletions, and searches.",
-        "Simple implementation with minimal memory overhead."
+        "Binary Search Tree",
+        "Hash Table",
+        "Array",
+        "Linked List"
       ],
-      "question": "What is the primary advantage of using a hash table for data storage and retrieval?",
+      "question": "Which data structure provides average O(1) time complexity for insertion, deletion, and retrieval, but can degrade to O(n) in the worst case?",
       "type": "multiple_choice"
     },
     {
       "concept": "Binary Search Trees",
-      "correct_answer": "The value of a node is greater than all values in its left subtree and less than all values in its right subtree.",
+      "correct_answer": "Efficient searching with an average time complexity of O(log n)",
       "difficulty": "medium",
-      "explanation": "The defining property of a BST is that for any given node, all values in its left subtree are less than the node's value, and all values in its right subtree are greater than the node's value. This property allows for efficient searching.",
+      "explanation": "Binary Search Trees allow for efficient searching, insertion, and deletion with an average time complexity of O(log n). The worst-case scenario for a BST can be O(n) if the tree becomes unbalanced.",
       "options": [
-        "The left child's value is greater than or equal to the parent's value, and the right child's value is less than or equal to the parent's value.",
-        "All leaf nodes must have a depth of at most 2.",
-        "The value of a node is greater than all values in its left subtree and less than all values in its right subtree.",
-        "The tree must be balanced, with heights of left and right subtrees differing by at most 1."
+        "Constant time insertion",
+        "Guaranteed O(log n) search time in all cases",
+        "Efficient searching with an average time complexity of O(log n)",
+        "Unlimited storage capacity"
       ],
-      "question": "In a Binary Search Tree (BST), which property must hold true for all nodes?",
+      "question": "What is the primary advantage of a Binary Search Tree over a simple unsorted list?",
       "type": "multiple_choice"
     },
     {
       "concept": "Big-O Analysis",
-      "correct_answer": "The upper bound of an algorithm's time or space complexity as input size grows.",
+      "correct_answer": "The algorithm's execution time grows quadratically with the input size.",
       "difficulty": "medium",
-      "explanation": "Big-O notation provides a way to classify algorithms based on how their run time or space requirements grow as the input size increases. It focuses on the worst-case scenario or the upper bound of the growth rate.",
+      "explanation": "Big-O notation describes the upper bound of an algorithm's time or space complexity. O(n^2) means the execution time increases with the square of the input size, indicating a significant performance degradation for large inputs.",
       "options": [
-        "The exact execution time of an algorithm on a specific machine.",
-        "The best-case performance of an algorithm.",
-        "The amount of memory an algorithm uses.",
-        "The upper bound of an algorithm's time or space complexity as input size grows."
+        "The algorithm will always perform a fixed number of operations regardless of input size.",
+        "The algorithm's execution time grows quadratically with the input size.",
+        "The algorithm's execution time grows linearly with the input size.",
+        "The algorithm's execution time decreases as the input size grows."
       ],
-      "question": "When analyzing algorithms, what does Big-O notation primarily describe?",
+      "question": "If a sorting algorithm's performance is described as O(n^2) in the worst case, what does this imply about its efficiency as the input size (n) grows?",
       "type": "multiple_choice"
     }
   ]

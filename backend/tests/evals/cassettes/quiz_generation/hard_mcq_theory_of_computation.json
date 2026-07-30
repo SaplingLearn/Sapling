@@ -2,30 +2,30 @@
   "questions": [
     {
       "concept": "Pumping Lemma",
-      "correct_answer": "If a language is regular, then it can be pumped.",
+      "correct_answer": "The Pumping Lemma can be used to prove that a language is regular.",
       "difficulty": "hard",
-      "explanation": "The Pumping Lemma states that if a language is regular, then any string in the language of sufficient length can be divided into three parts that can be 'pumped' to create new strings that are also in the language. The converse is not true; a language that can be pumped is not necessarily regular.",
+      "explanation": "The Pumping Lemma is a necessary condition for regularity, not a sufficient one. It can only be used to prove that a language is *not* regular by showing that the conditions of the lemma cannot hold for any division of a sufficiently long string. If the conditions seem to hold, it doesn't guarantee regularity.",
       "options": [
-        "If a language is infinite, then it can be pumped.",
-        "If a language is regular, then it can be pumped.",
-        "If a language can be pumped, then it is regular.",
-        "If a language is not regular, then it cannot be pumped."
+        "If a language is regular, then any sufficiently long string in the language can be 'pumped'.",
+        "The Pumping Lemma can be used to prove that a language is regular.",
+        "The Pumping Lemma states that there exists a pumping length 'p' such that any string 's' in the language with length at least 'p' can be divided into three substrings x, y, and z, where y is not empty, and for all integers i >= 0, the string xy^iz is also in the language.",
+        "If the conditions of the Pumping Lemma do not hold for a string, the language may still be regular."
       ],
-      "question": "Which of the following is a consequence of the Pumping Lemma for regular languages?",
+      "question": "Which of the following statements about the Pumping Lemma for regular languages is FALSE?",
       "type": "multiple_choice"
     },
     {
-      "concept": "Decidability",
-      "correct_answer": "L is decidable by a Turing machine.",
+      "concept": "Pumping Lemma",
+      "correct_answer": "Choose s = a^p b^p. No matter how we divide s into x, y, z with |y| >= 1 and |xy| <= p, pumping y (i.e., creating xy^i z) will result in a string not in L.",
       "difficulty": "hard",
-      "explanation": "While L is not a regular language, it is a context-free language and is decidable by a Turing machine. A simple algorithm can verify if a string is in L by counting the number of 'a's and 'b's.",
+      "explanation": "The correct application involves choosing a string s = a^p b^p. The conditions of the Pumping Lemma require that the substring y must not be empty, and that the division occurs within the first p characters. If y contains only 'a's or only 'b's, or if y contains both and is pumped, the resulting string will not be in the form a^n b^n, thus proving the language is not regular.",
       "options": [
-        "L is decidable because it is context-free.",
-        "L is undecidable because it is not regular.",
-        "L is decidable by a Turing machine.",
-        "L is undecidable because no algorithm can determine if a string is in L."
+        "Choose s = a^p b^p. We can divide s into x = a^p, y = b^p, z = \"\" which violates the condition that y must be non-empty.",
+        "Choose s = a^p b^p. No matter how we divide s into x, y, z with |y| >= 1 and |xy| <= p, pumping y (i.e., creating xy^i z) will result in a string not in L.",
+        "Choose s = a^p b^p. We can divide s into x = \"\", y = a, z = a^(p-1) b^p. Pumping y (i.e., creating xy^i z) will result in a string not in L.",
+        "Choose s = a^p b^p. We can divide s into x = a, y = b, z = a^(p-1) b^(p-1). Pumping y will result in a string not in L because the number of 'a's and 'b's will no longer be equal."
       ],
-      "question": "Consider the language L = {a^n b^n | n >= 0}. Which of the following statements is true regarding the decidability of L?",
+      "question": "Consider the language L = {a^n b^n | n >= 0}. Which of the following is a valid application of the Pumping Lemma to prove L is not regular?",
       "type": "multiple_choice"
     }
   ]
