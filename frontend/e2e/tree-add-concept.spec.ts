@@ -22,7 +22,10 @@ const CONCEPT = "E2E Manual Concept";
 
 test("Tree add-concept persists, renders, and dedups on re-add (#330)", async ({ page }) => {
   await page.goto(`${FRONTEND_URL}/tree`);
-  await page.getByRole("button", { name: /MATH210/ }).click();
+  // `exact` matters: the course pill's label is a prefix of the graph node's
+  // a11y activate button ("MATH210 - Linear Algebra"), so a loose match is a
+  // strict-mode violation once the graph renders.
+  await page.getByRole("button", { name: "MATH210", exact: true }).click();
 
   await page.getByTestId("graph-add-concept").click();
   await page.getByTestId("graph-add-concept-input").fill(CONCEPT);
