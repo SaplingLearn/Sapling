@@ -179,7 +179,15 @@ def _extend_course_concepts(
         "administrative items.\n"
         "- concepts must be a JSON array of strings."
     )
-    raw = call_gemini_json(prompt, model=MODEL_LITE, feature="document")
+    try:
+        raw = call_gemini_json(prompt, model=MODEL_LITE, feature="document")
+    except ValueError:
+        # #153 defensive-parsing: call_gemini_json raises ValueError on
+        # non-JSON model output. This is the last-resort legacy path (the
+        # concept_scan agent already failed), so degrade to "no new
+        # concepts" rather than 500 the scan route. Until #151 retires it.
+        logger.exception("legacy concept scan returned non-JSON; degrading to []")
+        return []
     if not isinstance(raw, dict):
         return []
     return _coerce_str_list(raw.get("concepts"))
@@ -367,7 +375,19 @@ def _process_document(filename: str, extracted_text: str) -> dict:
         "\n"
         '"concept_notes" must be a JSON array of {"name": str, "description": str} objects.'
     )
-    raw = call_gemini_json(prompt, feature="document")
+    try:
+        raw = call_gemini_json(prompt, feature="document")
+    except ValueError:
+        # #153 defensive-parsing: non-JSON model output on the last-resort
+        # legacy pipeline (the agent path already failed) must not become a
+        # raw 500 on upload — degrade to the same safe shape a non-dict
+        # reply gets (category "other", empty summary/concepts), so the
+        # document row still persists. Until #151 retires this path.
+        logger.exception(
+            "legacy document processing returned non-JSON; degrading to "
+            "minimal shape"
+        )
+        raw = {}
     if not isinstance(raw, dict):
         raw = {}
 

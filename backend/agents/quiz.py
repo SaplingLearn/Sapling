@@ -159,6 +159,14 @@ quiz_agent = Agent[SaplingDeps, Quiz](
     model=model_for("quiz"),
     deps_type=SaplingDeps,
     output_type=Quiz,
+    # #153: bounded output-validation retry budget. `output_retries=`
+    # (not `retries=`) so the three read tools keep their default tool-
+    # retry budget. NB: pydantic-ai 1.107+ deprecates this kwarg for
+    # retries={"output": ...}, but the dict form silently breaks 1.89's
+    # retry accounting (the dict lands in the retry counter and raises
+    # TypeError at retry time) — keep the kwarg while the version floor
+    # spans both.
+    output_retries=2,
     system_prompt=_SYSTEM_PROMPT,
     metadata={"prompt_version": _PROMPT_HASH, "agent": "quiz"},
     tools=[

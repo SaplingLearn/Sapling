@@ -592,7 +592,10 @@ function LearnInner() {
       try {
         const res = await startSessionStream(userId, topicName, mode, sharedCtx, selectedCourseId || undefined, modelPref, {
           onToken: (delta) => {
-            sawToken = true;
+            // Whitespace-only deltas don't count as "the user saw content" —
+            // a degenerate blank stream must take the transparent Rung-3
+            // retry, not the manual-Retry Rung-2 branch (PR #470 review).
+            if (delta.trim()) sawToken = true;
             setStreamingText(prev => (prev ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
@@ -757,7 +760,8 @@ function LearnInner() {
       try {
         res = await streamChat(sessionId, userId, userText, mode, sharedCtx, modelPref, {
           onToken: (delta) => {
-            sawToken = true;
+            // Same whitespace rule as beginSession's onToken above.
+            if (delta.trim()) sawToken = true;
             acc += delta;
             setStreamingText(t => (t ?? "") + delta);
           },

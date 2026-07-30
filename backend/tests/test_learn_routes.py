@@ -571,6 +571,26 @@ class TestChatViaAgent:
         assert r.status_code == 200
         assert r.json()["reply"] == "L"
 
+    def test_blank_agent_reply_falls_back_to_legacy(self):
+        """#153 / ADR-0023 follow-up: a whitespace-only agent reply (the
+        bare-newline-after-tool-call quirk on the JSON path) is degenerate
+        model output, not a success — it must degrade to the legacy path
+        instead of persisting an empty assistant row."""
+        from types import SimpleNamespace
+        agent = MagicMock()
+        agent.run = AsyncMock(return_value=SimpleNamespace(output="\n"))
+        with (
+            patch("routes.learn.table", side_effect=self._make_table_factory()),
+            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
+            patch("routes.learn.apply_graph_update", return_value=[]),
+            patch("routes.learn.call_gemini_multiturn", return_value="LEGACY REPLY"),
+            patch("routes.learn.extract_graph_update", return_value=("LEGACY REPLY", {})),
+        ):
+            r = self._post()
+        assert r.status_code == 200
+        assert r.json()["reply"] == "LEGACY REPLY"
+
     def test_message_history_loaded_with_decryption(self):
         """`_load_message_history` calls `decrypt_if_present` on each row's
         `content` so the agent never receives ciphertext."""

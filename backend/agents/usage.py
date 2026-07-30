@@ -56,6 +56,37 @@ def _model_name(result: Any, task: AgentTask | None) -> str:
     return "unknown"
 
 
+def _log_recovered_retries(result: Any, task: AgentTask | None, feature: str) -> None:
+    """Make recovered validation retries observable (#153).
+
+    A run that needed output/tool validation retries but ultimately succeeded
+    is invisible today: pydantic-ai re-rolls internally and only exhaustion
+    surfaces (as UnexpectedModelBehavior in the route's logs). Count the
+    `RetryPromptPart`s in the final message history and WARN so a drifting
+    prompt/schema shows up in logs before it starts failing requests outright.
+    A log line, not a #117 event: the frozen taxonomy stays untouched.
+    """
+    retry_parts = [
+        part
+        for message in result.all_messages()
+        for part in getattr(message, "parts", [])
+        if type(part).__name__ == "RetryPromptPart"
+    ]
+    if retry_parts:
+        tools = sorted(
+            {t for t in (getattr(p, "tool_name", None) for p in retry_parts) if t}
+        )
+        logger.warning(
+            "agent run recovered after %d validation retr%s "
+            "(task=%s feature=%s tools=%s)",
+            len(retry_parts),
+            "y" if len(retry_parts) == 1 else "ies",
+            task,
+            feature,
+            tools or "output",
+        )
+
+
 def record_agent_usage(
     result: Any,
     *,
@@ -68,6 +99,9 @@ def record_agent_usage(
     ``user_id`` is optional: pass it where the actor is in scope (routes with a
     ``deps.user_id`` / request body) for per-user rollups; omit it and the
     request_id from the contextvar still attributes the row.
+
+    Also warns when the run only succeeded after validation retries (#153) —
+    same guarded, never-raises contract.
     """
     try:
         events_service.log_llm_usage(
@@ -79,4 +113,8 @@ def record_agent_usage(
         )
     except Exception:
         logger.debug("record_agent_usage: could not capture usage", exc_info=True)
+    try:
+        _log_recovered_retries(result, task, feature)
+    except Exception:
+        logger.debug("record_agent_usage: retry observability slipped", exc_info=True)
     return result

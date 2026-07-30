@@ -356,6 +356,156 @@ def test_on_complete_raising_yields_error_not_unhandled_exception():
     asyncio.run(run())
 
 
+# ── degenerate blank reply (#153, ADR-0023 follow-up) ─────────────────────
+#
+# Observed live while recording the #149 eval cassettes: with the "call
+# update_mastery at the END of the turn" guidance, gemini-2.5-pro sometimes
+# follows the final tool return with a bare-newline text part (2/3 rolls on
+# one expository case). Without special handling that whitespace becomes the
+# run OUTPUT, and the turn persists an empty assistant row + streams a blank
+# bubble. The rungs below pin the fix.
+
+def test_blank_final_output_falls_back_to_streamed_chunks():
+    """A whitespace-only final output after tool activity must not clobber
+    the real reply text that already streamed earlier in the turn."""
+    async def run():
+        agent = FakeAgent([
+            PartStartEvent("The slope tells you the direction. "),
+            FunctionToolCallEvent("update_mastery_tool"),
+            FunctionToolResultEvent(),
+            PartStartEvent("\n"),               # the degenerate final text
+            AgentRunResultEvent("\n"),          # output == bare newline
+        ])
+        saved = {}
+        events = await collect(agent, make_deps(), lambda r, g, m: saved.update(reply=r) or {})
+        assert events[-1].type == "done"
+        assert saved["reply"] == "The slope tells you the direction. \n", (
+            "the joined streamed chunks are the real reply — the blank "
+            "output must not be persisted in their place"
+        )
+        assert events[-1].data["reply"] == saved["reply"]
+
+    asyncio.run(run())
+
+
+def test_blank_reply_after_tool_call_with_writes_is_terminal_error():
+    """Tool call (which WROTE mastery) then only whitespace text: the legacy
+    fallback must NOT run — it would re-run the turn and apply_graph_update
+    AGAIN, double-counting one student turn in the append-only mastery
+    ledger (PR #470 review). Terminal error instead: the tool writes stay,
+    nothing persists to the transcript, the client offers Retry."""
+    async def run():
+        deps = make_deps()
+
+        def write():
+            deps.mastery_changes.append({"concept": "Slope", "before": 0.2, "after": 0.4})
+
+        agent = FakeAgent([
+            FunctionToolCallEvent("update_mastery_tool"),
+            FunctionToolResultEvent(on_fire=write),
+            PartStartEvent("\n"),
+            AgentRunResultEvent("\n"),
+        ])
+        on_complete_calls = []
+        usage_calls = []
+        fallback_calls = []
+
+        async def fake_legacy():
+            fallback_calls.append(1)
+            return {"reply": "legacy reply", "graph_update": {}, "mastery_changes": []}
+
+        events = await collect(
+            agent, deps,
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+            legacy_fallback=fake_legacy,
+            on_usage=lambda res: usage_calls.append(res),
+        )
+        assert events[-1].type == "error"
+        assert fallback_calls == [], (
+            "a fallback after real tool writes would double-apply mastery"
+        )
+        assert on_complete_calls == [], (
+            "nothing persists to the transcript on the terminal-error rung"
+        )
+        # The agent run completed and billed tokens even though its reply was
+        # blank — its usage is still recorded.
+        assert len(usage_calls) == 1
+        # The mastery write the tool made is untouched — it was a real action.
+        assert deps.mastery_changes
+
+    asyncio.run(run())
+
+
+def test_blank_reply_with_no_writes_still_takes_legacy_fallback():
+    """The no-writes twin: a blank turn whose tools wrote NOTHING degrades to
+    the legacy fallback exactly as before — re-running is safe when there is
+    nothing to double-apply."""
+    async def run():
+        deps = make_deps()
+        agent = FakeAgent([
+            PartStartEvent("\n"),
+            AgentRunResultEvent("\n"),
+        ])
+        on_complete_calls = []
+
+        async def fake_legacy():
+            return {"reply": "legacy reply", "graph_update": {}, "mastery_changes": []}
+
+        events = await collect(
+            agent, deps,
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+            legacy_fallback=fake_legacy,
+        )
+        assert events[-1].type == "done"
+        assert events[-1].data["reply"] == "legacy reply"
+        assert on_complete_calls == []
+
+    asyncio.run(run())
+
+
+def test_blank_reply_without_fallback_errors_and_persists_nothing():
+    async def run():
+        agent = FakeAgent([
+            FunctionToolCallEvent("update_mastery_tool"),
+            FunctionToolResultEvent(),
+            PartStartEvent("\n"),
+            AgentRunResultEvent("\n"),
+        ])
+        on_complete_calls = []
+        events = await collect(
+            agent, make_deps(),
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+        )
+        assert events[-1].type == "error"
+        assert events[-1].data["request_id"] == "r1"
+        assert all(e.type != "done" for e in events)
+        assert on_complete_calls == [], "an empty assistant row must never persist"
+
+    asyncio.run(run())
+
+
+def test_blank_reply_fallback_failure_is_terminal_error():
+    """Blank agent turn + a legacy fallback that itself raises → structured
+    error, nothing persisted (mirrors the Rung-1 fallback-failure contract)."""
+    async def run():
+        agent = FakeAgent([PartStartEvent("\n"), AgentRunResultEvent("\n")])
+        on_complete_calls = []
+
+        async def bad_legacy():
+            raise RuntimeError("legacy also down")
+
+        events = await collect(
+            agent, make_deps(),
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+            legacy_fallback=bad_legacy,
+        )
+        assert events[-1].type == "error"
+        assert all(e.type != "done" for e in events)
+        assert on_complete_calls == []
+
+    asyncio.run(run())
+
+
 # ── on_usage hook (#118) ──────────────────────────────────────────────────
 
 def test_on_usage_called_once_with_run_result_before_done():
@@ -430,3 +580,4 @@ def test_on_usage_not_called_on_error_rungs_or_legacy_fallback():
         assert usage_calls == [], "an aborted run has no result to record"
 
     asyncio.run(run())
+

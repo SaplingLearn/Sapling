@@ -343,6 +343,44 @@ class TestProcessDocumentHelper:
         assert result["concept_notes"] == []
         assert result["assignments"] == []
 
+    def test_non_json_model_output_degrades_to_safe_shape(self):
+        """#153 defensive-parsing: `call_gemini_json` raises ValueError when
+        the model emits non-JSON. This helper runs on the LAST-RESORT legacy
+        path (the agent pipeline already failed), so a parse failure must
+        degrade to the same safe shape as a non-dict response — never
+        propagate into a raw 500 on upload."""
+        with patch(
+            "routes.documents.call_gemini_json",
+            side_effect=ValueError("Gemini response was not valid JSON"),
+        ):
+            result = _process_document("file.pdf", "text")
+
+        assert result["category"] == "other"
+        assert result["summary"] == ""
+        assert result["concepts"] == []
+        assert result["concept_notes"] == []
+        assert result["assignments"] == []
+        assert result["categories"] == []
+
+
+class TestExtendCourseConceptsLegacyParsing:
+    """#153 defensive-parsing for the OTHER remaining raw call_gemini_json
+    path: the legacy concept-scan fallback must swallow a non-JSON model
+    reply as 'no new concepts', not 500 the scan route (it only runs after
+    the concept_scan agent already failed)."""
+
+    def test_non_json_model_output_returns_empty_list(self):
+        from routes.documents import _extend_course_concepts
+
+        with patch(
+            "routes.documents.call_gemini_json",
+            side_effect=ValueError("Gemini response was not valid JSON"),
+        ):
+            assert _extend_course_concepts(
+                course_label="CS101",
+                existing_concepts=["Recursion"],
+            ) == []
+
 
 class TestUploadDocument:
     @pytest.fixture(autouse=True)
