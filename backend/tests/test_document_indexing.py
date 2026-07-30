@@ -97,8 +97,9 @@ class TestIndexDocumentChunks:
         mock_index.assert_not_called()
 
     def test_relevance_gate_skips_client_construction_outside_real_mode(self, monkeypatch, caplog):
-        """#439: the catalog-relevance embed call (a `google.genai.Client`
-        construction site predating the SAPLING_MODEL_MODE seam) only fires
+        """#439: the catalog-relevance embed call (routed through
+        rag_service.embed_document_text since #413 — no raw client remains
+        at this site) only fires
         when a catalog embedding actually exists for the course. When one
         does and mode != 'real', no client may be constructed — the whole
         indexing call aborts exactly like an unlucky real embed-call failure

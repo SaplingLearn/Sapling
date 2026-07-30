@@ -89,7 +89,9 @@ resolve_backend_session_secret() { # env_file → BACKEND_SECRET, BACKEND_SECRET
     BACKEND_SECRET_SRC="exported SESSION_SECRET env (overrides $env_file)"
     return 0
   fi
-  val="$(grep -E '^SESSION_SECRET=' "$env_file" 2>/dev/null | head -n1 | cut -d= -f2-)"
+  # python-dotenv accepts an optional `export ` prefix and we may be handed a
+  # CRLF-edited .env — accept both, strip any trailing CR (PR #467 review).
+  val="$(grep -E '^(export[[:space:]]+)?SESSION_SECRET=' "$env_file" 2>/dev/null | head -n1 | sed -E 's/^export[[:space:]]+//' | cut -d= -f2- | tr -d '\r')"
   # python-dotenv strips one layer of matching quotes; mirror that.
   case "$val" in
     \"*\") val="${val#\"}"; val="${val%\"}" ;;
