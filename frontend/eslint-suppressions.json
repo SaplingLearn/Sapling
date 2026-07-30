@@ -35,6 +35,16 @@
       "count": 1
     }
   },
+  "src/components/Gradebook/AssignmentList.tsx": {
+    "no-restricted-syntax": {
+      "count": 7
+    }
+  },
+  "src/components/Gradebook/AssignmentModal.tsx": {
+    "no-restricted-syntax": {
+      "count": 12
+    }
+  },
   "src/components/Gradebook/SyllabusUploadFlow.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2

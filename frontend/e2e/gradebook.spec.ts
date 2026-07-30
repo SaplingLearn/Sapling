@@ -13,7 +13,10 @@
  *    db/seed_local_rich.py) — the precondition that makes the ambiguity
  *    real. Then each chip's CS101 card must open THAT term's enrollment,
  *    told apart by seeded category names (Fall: Homework/Exams; Spring:
- *    Homework/Projects).
+ *    Homework/Projects). The Fall leg also WRITES (#468 review): an
+ *    assignment created from the Fall page must hang off the fall-2025
+ *    enrollment row — mutations used to resolve term-blind and would have
+ *    landed it on the CURRENT (spring-2026) enrollment.
  *
  * 2. Transcript — the landing's Transcript button opens the cumulative
  *    modal: a real x.xx GPA plus per-semester sections for both seeded
@@ -60,6 +63,25 @@ test("a course taken in two terms opens the right enrollment from each chip", as
   ).toBeVisible();
   await expect(page.getByText("Exams").first()).toBeVisible();
   await expect(page.getByText("We couldn't load this course.")).toHaveCount(0);
+
+  // Mutation leg (#468): a write from the Fall page must land on the FALL
+  // enrollment. Create an assignment through the modal, then assert the row
+  // hangs off rich-enr-active-cs101-f25 — NOT the spring enrollment the
+  // term-blind resolver would have picked (spring-2026 is the current term
+  // under the frozen clock).
+  await page.getByTestId("gradebook-add-assignment").click();
+  await page.getByTestId("gradebook-assignment-title").fill("Fall-only essay");
+  await page.getByTestId("gradebook-assignment-save").click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const rows = await queryRaw(
+        `SELECT enrollment_id FROM assignments WHERE title = $1`,
+        ["Fall-only essay"],
+      );
+      return rows.map((r) => r.enrollment_id);
+    })
+    .toEqual(["rich-enr-active-cs101-f25"]);
 
   // Back on the landing, pick Spring 2026 explicitly: its CS101 card must
   // load the OTHER enrollment — Projects only exists on spring-2026.

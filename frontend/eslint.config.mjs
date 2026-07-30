@@ -70,6 +70,8 @@ const eslintConfig = [
       "src/components/screens/Gradebook/Course.tsx",
       "src/components/Gradebook/TranscriptModal.tsx",
       "src/components/Gradebook/CourseCard.tsx",
+      "src/components/Gradebook/AssignmentList.tsx",
+      "src/components/Gradebook/AssignmentModal.tsx",
     ],
     rules: {
       "no-restricted-syntax": [

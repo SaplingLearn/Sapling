@@ -1198,25 +1198,35 @@ export const getGpa = (userId: string, semester?: string) =>
       (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
   );
 
+// Course-keyed gradebook MUTATIONS below take the same optional `semester`
+// (term-label body field, matching the backend body models) as
+// getGradebookCourse: the backend resolves (course, semester) to ONE
+// enrollment, and without the term a write from an archived term's page
+// would silently land on the current term's enrollment (#139/#468).
+// Id-keyed calls (deleteCategory, update/deleteGradedAssignment) resolve by
+// row ownership and don't need it. `JSON.stringify` drops an undefined
+// `semester`, so the wire format is unchanged when unset.
 export const createCategory = (
   userId: string,
   courseId: string,
   name: string,
   weight: number,
+  semester?: string,
 ) =>
   fetchJSON<{ category: GradeCategory }>(
     `/api/gradebook/courses/${encodeURIComponent(courseId)}/categories`,
-    { method: 'POST', body: JSON.stringify({ user_id: userId, name, weight }) },
+    { method: 'POST', body: JSON.stringify({ user_id: userId, semester, name, weight }) },
   );
 
 export const bulkUpdateCategories = (
   userId: string,
   courseId: string,
   categories: { id?: string; name: string; weight: number; sort_order: number; drop_lowest: number }[],
+  semester?: string,
 ) =>
   fetchJSON<{ categories: GradeCategory[] }>(
     `/api/gradebook/courses/${encodeURIComponent(courseId)}/categories`,
-    { method: 'PATCH', body: JSON.stringify({ user_id: userId, categories }) },
+    { method: 'PATCH', body: JSON.stringify({ user_id: userId, semester, categories }) },
   );
 
 export const deleteCategory = (userId: string, categoryId: string) =>
@@ -1229,10 +1239,11 @@ export const createGradedAssignment = (
   userId: string,
   courseId: string,
   fields: Partial<Omit<GradedAssignment, 'id' | 'course_id' | 'source'>> & { title: string },
+  semester?: string,
 ) =>
   fetchJSON<{ assignment: GradedAssignment }>('/api/gradebook/assignments', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, course_id: courseId, ...fields }),
+    body: JSON.stringify({ user_id: userId, course_id: courseId, semester, ...fields }),
   });
 
 export const updateGradedAssignment = (
@@ -1255,10 +1266,11 @@ export const setLetterScale = (
   userId: string,
   courseId: string,
   scale: LetterScaleTier[] | null,
+  semester?: string,
 ) =>
   fetchJSON<{ updated: true; letter_scale: LetterScaleTier[] | null }>(
     `/api/gradebook/courses/${encodeURIComponent(courseId)}/scale`,
-    { method: 'PATCH', body: JSON.stringify({ user_id: userId, scale }) },
+    { method: 'PATCH', body: JSON.stringify({ user_id: userId, semester, scale }) },
   );
 
 export async function setCurveSettings(
@@ -1271,11 +1283,12 @@ export async function setCurveSettings(
     curve_final_mean?: number | null;
     curve_final_sd?: number | null;
   },
+  semester?: string,
 ): Promise<{ updated: boolean }> {
   return fetchJSON(`/api/gradebook/courses/${encodeURIComponent(courseId)}/curve`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: userId, ...settings }),
+    body: JSON.stringify({ user_id: userId, semester, ...settings }),
   });
 }
 

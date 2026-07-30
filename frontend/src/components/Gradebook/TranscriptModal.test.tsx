@@ -71,7 +71,9 @@ const REPORT: GpaReport = {
       course_id: "bio110",
       course_code: "BIO110",
       semester: "Spring 2026",
-      credits: null,
+      // Zero credits: the display must show the 1 the GPA math would weigh
+      // (effectiveCredits), not a literal 0 (#468 review).
+      credits: 0,
       percent: null,
       letter: null,
       grade_points: null,
@@ -134,6 +136,11 @@ describe("TranscriptModal", () => {
     expect(screen.getByText("MATH210")).toBeInTheDocument();
     expect(screen.getByText("BIO110")).toBeInTheDocument();
     expect(screen.getByText(/in progress/i)).toBeInTheDocument();
+
+    // Credits display goes through effectiveCredits: BIO110's 0 credits
+    // render as the 1 the GPA math would weigh, never "0 cr".
+    expect(screen.getByText("1 cr")).toBeInTheDocument();
+    expect(screen.queryByText("0 cr")).toBeNull();
   });
 
   it("shows a loading state while the report is in flight", async () => {

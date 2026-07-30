@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { buildTranscript, weightedGpa } from "./transcript";
+import { buildTranscript, effectiveCredits, weightedGpa } from "./transcript";
 import type { GpaCourseRow } from "./types";
 
 function row(overrides: Partial<GpaCourseRow>): GpaCourseRow {
@@ -22,6 +22,19 @@ function row(overrides: Partial<GpaCourseRow>): GpaCourseRow {
     ...overrides,
   };
 }
+
+describe("effectiveCredits", () => {
+  it("passes real credits through and defaults null/zero/negative to 1", () => {
+    // The shared display+math rule (#468 review): what the transcript SHOWS
+    // must be what the GPA WEIGHS. 0 was the divergence — `credits ?? 1`
+    // displayed 0 while the math counted 1.
+    expect(effectiveCredits({ credits: 3 })).toBe(3);
+    expect(effectiveCredits({ credits: 0.5 })).toBe(0.5);
+    expect(effectiveCredits({ credits: null })).toBe(1);
+    expect(effectiveCredits({ credits: 0 })).toBe(1);
+    expect(effectiveCredits({ credits: -2 })).toBe(1);
+  });
+});
 
 describe("weightedGpa", () => {
   it("credit-weights grade points (mirrors backend weighted_gpa)", () => {

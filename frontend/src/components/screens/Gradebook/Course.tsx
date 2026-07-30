@@ -95,6 +95,19 @@ interface Props {
   courseId: string;
 }
 
+// /gradebook/<id>?semester=<label> — the landing's cards carry the selected
+// term so a course enrolled in several terms resolves to that term's
+// enrollment instead of 404ing off the current one (#139). Read straight off
+// location (useSearchParams() would need a Suspense boundary in the route
+// shell, which this screen doesn't own), and read it at CALL time — every
+// fetch AND every course-keyed mutation below must see the URL the user is
+// actually on, not a mount-frozen copy. Writes that drop the term would
+// silently land on the CURRENT term's enrollment (#468 review).
+function currentSemesterParam(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  return new URLSearchParams(window.location.search).get("semester") || undefined;
+}
+
 // Exported for Course.curveModal.test.tsx (#166 failure-surfacing contract);
 // only GradebookCourseScreen below renders it in the app.
 export function CurveSettingsModal({
@@ -209,17 +222,6 @@ export function GradebookCourseScreen({ courseId }: Props) {
   const [loading, setLoading] = React.useState(true);
   const [fetchError, setFetchError] = React.useState<string | null>(null);
 
-  // /gradebook/<id>?semester=<label> — the landing's cards carry the selected
-  // term so a course enrolled in several terms resolves to that term's
-  // enrollment instead of 404ing off the current one (#139). Read straight
-  // off location like Landing.tsx does: useSearchParams() would need a
-  // Suspense boundary in the route shell, which this component doesn't own.
-  const [requestedSemester] = React.useState(() =>
-    typeof window === "undefined"
-      ? ""
-      : new URLSearchParams(window.location.search).get("semester") ?? "",
-  );
-
   const skeletonCount = React.useMemo<number>(() => {
     if (typeof window === "undefined") return 4;
     const n = window.sessionStorage.getItem(`gb-cats-${courseId}`);
@@ -255,18 +257,14 @@ export function GradebookCourseScreen({ courseId }: Props) {
     if (!userId) return;
     setFetchError(null);
     try {
-      const fresh = await getGradebookCourse(
-        userId,
-        courseId,
-        requestedSemester || undefined,
-      );
+      const fresh = await getGradebookCourse(userId, courseId, currentSemesterParam());
       setData(fresh);
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : "Unknown error";
       setFetchError(errMsg);
       toast.error(`Couldn't load course: ${errMsg}`);
     }
-  }, [userId, courseId, requestedSemester, toast]);
+  }, [userId, courseId, toast]);
 
   const loadInitial = React.useCallback(async () => {
     setLoading(true);
@@ -465,7 +463,12 @@ export function GradebookCourseScreen({ courseId }: Props) {
     const newMode = data.curve_mode === "curved" ? "raw" : "curved";
     setData((prev) => prev ? { ...prev, curve_mode: newMode } : prev);
     try {
-      await setCurveSettings(userId, courseId, { curve_mode: newMode });
+      await setCurveSettings(
+        userId,
+        courseId,
+        { curve_mode: newMode },
+        currentSemesterParam(),
+      );
       await refresh(); // Server recomputes data.percent with the new curve_mode
     } catch {
       setData((prev) => prev ? { ...prev, curve_mode: data.curve_mode } : prev);
@@ -478,10 +481,12 @@ export function GradebookCourseScreen({ courseId }: Props) {
       curve_sd_delta: number | null;
     }) => {
       if (!data || !userId) return;
-      await setCurveSettings(userId, courseId, {
-        curve_mode: data.curve_mode,
-        ...settings,
-      });
+      await setCurveSettings(
+        userId,
+        courseId,
+        { curve_mode: data.curve_mode, ...settings },
+        currentSemesterParam(),
+      );
       await refresh(); // Recompute server grade with new curve policy
     },
     [data, userId, courseId, refresh],
@@ -658,9 +663,11 @@ export function GradebookCourseScreen({ courseId }: Props) {
             onSave={async (drafts) => {
               const draftIds = new Set(drafts.map((d) => d.id).filter(Boolean) as string[]);
               for (const c of data.categories) {
+                // deleteCategory is id-keyed (ownership check server-side) —
+                // no term needed; the course-keyed bulk PATCH below is.
                 if (!draftIds.has(c.id)) await deleteCategory(userId, c.id);
               }
-              await bulkUpdateCategories(userId, courseId, drafts);
+              await bulkUpdateCategories(userId, courseId, drafts, currentSemesterParam());
               await refresh();
             }}
           />
@@ -672,9 +679,10 @@ export function GradebookCourseScreen({ courseId }: Props) {
             onClose={() => setAssignModal({ open: false, initial: null })}
             onSave={async (draft: AssignmentDraft) => {
               if (assignModal.initial) {
+                // Id-keyed — the existing assignment already pins its enrollment.
                 await updateGradedAssignment(userId, assignModal.initial.id, draft);
               } else {
-                await createGradedAssignment(userId, courseId, draft);
+                await createGradedAssignment(userId, courseId, draft, currentSemesterParam());
               }
               await refresh();
             }}
@@ -693,7 +701,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
             initial={data.letter_scale}
             onClose={() => setEditScale(false)}
             onSave={async (scale) => {
-              await setLetterScale(userId, courseId, scale);
+              await setLetterScale(userId, courseId, scale, currentSemesterParam());
               await refresh();
             }}
           />

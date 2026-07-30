@@ -77,7 +77,7 @@ renders the element.
 | Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
 | Library | `library` | `frontend/src/components/screens/Library.tsx` (the `/library` document screen — upload trigger, document cards/rows, filters, detail panel) |
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
-| Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links) — added with the #139 term-switcher/transcript journey |
+| Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -263,6 +263,9 @@ inside the `role="grid"` "Courses" grid.
 | `gradebook-transcript-open` | landing: "Transcript" button opening the transcript modal |
 | `gradebook-transcript-gpa` | transcript modal: the cumulative GPA value |
 | `gradebook-transcript-retry` | transcript modal: inline "Try again" after a failed load (#463 catch+toast pattern) |
+| `gradebook-add-assignment` | course page: "+ Add Assignment" (`AssignmentList.tsx`) — opens the assignment modal |
+| `gradebook-assignment-title` | assignment modal: the required title `<input>` |
+| `gradebook-assignment-save` | assignment modal: the Save button |
 
 ### `library`
 
@@ -330,8 +333,9 @@ coverage and regenerate with `npm run lint:baseline`.
 `files` list with the same treatment: its 21 pre-existing untagged elements are
 baselined, so only NEW interactive elements there must carry a testid.
 
-The four `gradebook` surface files (#139) get the same treatment:
-`screens/Gradebook/Course.tsx` and `Landing.tsx` carry pre-existing untagged
+The `gradebook` surface files (#139/#468) get the same treatment:
+`screens/Gradebook/Course.tsx`, `Landing.tsx`, `Gradebook/AssignmentList.tsx`
+and `Gradebook/AssignmentModal.tsx` carry pre-existing untagged
 buttons/inputs that are baselined in `eslint-suppressions.json`; only NEW
 interactive elements there must carry a testid.
 

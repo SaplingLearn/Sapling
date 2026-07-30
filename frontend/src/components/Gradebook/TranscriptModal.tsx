@@ -4,7 +4,7 @@ import Dialog from "@/components/Dialog";
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
 import { getGpa } from "@/lib/api";
-import { buildTranscript } from "@/lib/transcript";
+import { buildTranscript, effectiveCredits } from "@/lib/transcript";
 import { percentColor } from "@/components/Gradebook/CourseCard";
 import type { GpaReport } from "@/lib/types";
 
@@ -188,7 +188,8 @@ function TranscriptBody({ report }: { report: GpaReport }) {
                     className="mono"
                     style={{ fontSize: 11, color: "var(--text-muted)" }}
                   >
-                    {c.credits ?? 1} cr
+                    {/* Same rule as the GPA math — display what is weighed. */}
+                    {effectiveCredits(c)} cr
                   </span>
                   {c.letter === null ? (
                     <span
