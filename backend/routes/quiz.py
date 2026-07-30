@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
@@ -404,7 +404,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # completed-but-scoreless (retry 409s) — strictly safer than double
     # mastery. The final update further down fills score/total/answers_json.
     claimed = table("quiz_attempts").update(
-        {"completed_at": datetime.utcnow().isoformat()},
+        {"completed_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{body.quiz_id}", "completed_at": "is.null"},
     )
     if not claimed:

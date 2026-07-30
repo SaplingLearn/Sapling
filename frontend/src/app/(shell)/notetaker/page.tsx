@@ -305,7 +305,7 @@ export default function NotetakerPage() {
     if (!active) return;
     setNotes((prev) =>
       prev.map((n) =>
-        n.id === active.id ? { ...n, ...patch, updatedAt: new Date() } : n,
+        n.id === active.id ? { ...n, ...patch, updatedAt: new Date(now()) } : n,
       ),
     );
     const apiPatch: Partial<Pick<ApiNote, "title" | "body" | "tags">> = {};

@@ -40,7 +40,7 @@ sys.path.insert(0, str(BASE))
 
 from db.connection import table  # noqa: E402
 from services.chunker import chunk_for_category  # noqa: E402
-from services.rag_service import _embed_document, index_document_chunks  # noqa: E402
+from services.rag_service import embed_document_text, index_document_chunks  # noqa: E402
 from services.encryption import decrypt_if_present  # noqa: E402
 
 MIN_COURSE_RELEVANCE = 0.35
@@ -133,7 +133,7 @@ def main() -> None:
             )
             if catalog_rows and catalog_rows[0].get("embedding"):
                 catalog_vec = catalog_rows[0]["embedding"]
-                doc_sample_vec = _embed_document(chunks[0])
+                doc_sample_vec = embed_document_text(chunks[0])
                 dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
                 if dot < MIN_COURSE_RELEVANCE:
                     print(f"SKIP (relevance {dot:.2f})")

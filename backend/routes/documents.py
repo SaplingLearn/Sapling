@@ -1260,7 +1260,7 @@ def _index_document_chunks(
     """
     import time
     from services.chunker import chunk_for_category
-    from services.rag_service import index_document_chunks
+    from services.rag_service import embed_document_text, index_document_chunks
     from services.encryption import encrypt_if_present
 
     MIN_COURSE_RELEVANCE = 0.35
@@ -1286,10 +1286,11 @@ def _index_document_chunks(
             logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
 
         # Relevance gate: skip docs that are off-topic for the course. The
-        # embedding-based check below is a `google.genai` call site that
-        # predates the #391 SAPLING_MODEL_MODE seam; catalog_rows itself is a
-        # plain Supabase read (not gated) so the gate is only ever skipped
-        # when there's actually a catalog embedding to compare against.
+        # embedding-based check below routes through services.rag_service
+        # (#413) — the shared lazy client behind the #439 model_mode() gate —
+        # catalog_rows itself is a plain Supabase read (not gated) so the gate
+        # is only ever skipped when there's actually a catalog embedding to
+        # compare against.
         catalog_rows = table("course_chunks").select(
             "embedding",
             filters={"course_id": f"eq.{bu_course_id}", "category": "eq.catalog"},
@@ -1310,21 +1311,14 @@ def _index_document_chunks(
                     "SAPLING_MODEL_MODE != 'real' (#439)"
                 )
 
-            from google import genai as _genai
-            from google.genai import types as genai_types
-
-            _gclient = _genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+            # #413: no raw genai.Client here — a keyless run used to construct
+            # Client(api_key="") whose ValueError the outer `except` swallowed
+            # into a silent no-index degrade. rag_service's shared lazy client
+            # (dummy-key fallback + timeout) fails at call time with a clear
+            # API error instead, on the same degrade path.
             catalog_vec = catalog_rows[0]["embedding"]
             sample_text = doc_summary or chunks[0]
-            resp = _gclient.models.embed_content(
-                model="gemini-embedding-001",
-                contents=[sample_text],
-                config=genai_types.EmbedContentConfig(
-                    output_dimensionality=768,
-                    task_type="RETRIEVAL_DOCUMENT",
-                ),
-            )
-            doc_sample_vec = list(resp.embeddings[0].values)
+            doc_sample_vec = embed_document_text(sample_text)
             time.sleep(1.5)
             dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
             if dot < MIN_COURSE_RELEVANCE:

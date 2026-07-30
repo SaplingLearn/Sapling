@@ -97,8 +97,9 @@ class TestIndexDocumentChunks:
         mock_index.assert_not_called()
 
     def test_relevance_gate_skips_client_construction_outside_real_mode(self, monkeypatch, caplog):
-        """#439: the catalog-relevance embed call (a `google.genai.Client`
-        construction site predating the SAPLING_MODEL_MODE seam) only fires
+        """#439: the catalog-relevance embed call (routed through
+        rag_service.embed_document_text since #413 — no raw client remains
+        at this site) only fires
         when a catalog embedding actually exists for the course. When one
         does and mode != 'real', no client may be constructed — the whole
         indexing call aborts exactly like an unlucky real embed-call failure
@@ -136,6 +137,50 @@ class TestIndexDocumentChunks:
         ctor.assert_not_called()
         mock_index.assert_not_called()
         assert "_index_document_chunks failed for doc doc-gate" in caplog.text
+
+    def test_relevance_gate_embeds_via_rag_service_not_raw_client(self, monkeypatch):
+        """#413: in real mode the relevance embed must go through
+        services.rag_service.embed_document_text (shared lazy client:
+        dummy-key fallback, request timeout, #439 gate) instead of
+        constructing a raw ``genai.Client`` with an empty-string API-key
+        fallback, whose keyless construction ValueError the outer ``except`` swallowed
+        into a silent no-index degrade that looked like a clean upload."""
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
+        ctor = MagicMock(side_effect=AssertionError(
+            "raw genai.Client constructed below the seam (#413/#439)"
+        ))
+        monkeypatch.setattr("google.genai.Client", ctor)
+        # High-similarity vectors so the gate passes and indexing proceeds.
+        vec = [1.0] + [0.0] * 767
+
+        with (
+            patch(
+                "routes.documents.table",
+                side_effect=_mock_table_for(
+                    courses_rows=[{"course_code": "BIO-101"}],
+                    course_chunks_rows=[{"embedding": vec}],  # catalog row present
+                ),
+            ),
+            patch("services.chunker.chunk_for_category", return_value=["chunk one"]),
+            patch(
+                "services.rag_service.embed_document_text", return_value=vec
+            ) as mock_embed,
+            patch(
+                "services.rag_service.index_document_chunks", return_value=1
+            ) as mock_index,
+            patch("time.sleep"),  # the gate's rate-limit spacing
+        ):
+            _index_document_chunks(
+                doc_id="doc-real",
+                course_id="course-uuid-1",
+                user_id="user-1",
+                extracted_text="some extracted text",
+                category="lecture_notes",
+            )
+
+        ctor.assert_not_called()
+        mock_embed.assert_called_once_with("chunk one")
+        mock_index.assert_called_once()
 
     def test_category_is_passed_to_chunker(self):
         """The document's category must reach the chunker so prose docs get

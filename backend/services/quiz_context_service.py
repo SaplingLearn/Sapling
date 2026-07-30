@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from db.connection import table
 
@@ -21,7 +21,7 @@ def save_quiz_context(user_id: str, concept_node_id: str, context: dict):
             "user_id": user_id,
             "concept_node_id": concept_node_id,
             "context_json": context,
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         },
         on_conflict="user_id,concept_node_id",
     )

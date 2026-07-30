@@ -4,7 +4,7 @@ import logging
 import uuid
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
@@ -418,13 +418,29 @@ def save_message(session_id: str, role: str, content: str, graph_update: dict = 
         "role": role,
         "content": encrypt_if_present(content),
         "graph_update_json": graph_update if graph_update else None,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
 
 def get_user_name(user_id: str) -> str:
     # Display name lives on user_profiles (0024); resolve + decrypt via helper.
     return get_display_name(user_id) or "Student"
+
+
+def _elapsed_minutes(started_at_iso: str) -> int:
+    """Whole minutes since ``started_at_iso``, robust to both timestamp shapes
+    in the wild: tz-aware ISO (TIMESTAMPTZ reads via PostgREST, and every write
+    after the #248 sweep) and legacy naive strings (pre-sweep ``utcnow()``
+    writes), which are UTC by construction. The old inline
+    ``utcnow() - fromisoformat(...)`` raised TypeError on the aware shape and
+    silently reported 0. Returns 0 for anything unparseable."""
+    try:
+        started = datetime.fromisoformat(started_at_iso)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        return int((datetime.now(timezone.utc) - started).total_seconds() / 60)
+    except Exception:
+        return 0
 
 
 def _consume_pending(session_id: str, user_id: str) -> None:
@@ -1062,7 +1078,7 @@ def end_session(body: EndSessionBody, request: Request):
     session = session_rows[0]
 
     table("sessions").update(
-        {"ended_at": datetime.utcnow().isoformat()},
+        {"ended_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{body.session_id}"},
     )
 
@@ -1071,12 +1087,7 @@ def end_session(body: EndSessionBody, request: Request):
         filters={"session_id": f"eq.{body.session_id}"},
     )
 
-    try:
-        elapsed_minutes = int(
-            (datetime.utcnow() - datetime.fromisoformat(session["started_at"])).total_seconds() / 60
-        )
-    except Exception:
-        elapsed_minutes = 0
+    elapsed_minutes = _elapsed_minutes(session["started_at"])
 
     concepts_covered = set()
     for msg in msgs:
@@ -1222,7 +1233,7 @@ def resume_session(session_id: str, request: Request):
         p = PENDING_SESSIONS[session_id]
         if p["user_id"] != user_id:
             raise HTTPException(status_code=403, detail="Session user mismatch")
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         return {
             "session": {
                 "id": session_id,
