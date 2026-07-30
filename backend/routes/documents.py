@@ -41,6 +41,7 @@ from services.course_context_service import update_course_context
 from services.achievement_service import check_achievements
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.request_context import current_request_id
+from services.durable import workflow_id
 from agents import WORKER_LIMITS
 from agents._providers import model_mode
 from agents.classifier import classifier_agent
@@ -606,8 +607,13 @@ async def upload_document_sync(
     # both branches surface a retry-friendly 502: guardrail trips (budget /
     # degenerate output) log at WARNING, anything else is a bug and logs the
     # full exception.
+    # Scope the DBOS workflow id to user_id + request_id, not request_id
+    # alone: X-Request-ID is client-supplied, so an unscoped id would let
+    # one user's replay attach to another user's in-flight/completed
+    # workflow (state poisoning). No-op (nullcontext) when DBOS is off.
     try:
-        result: DocumentProcessingResult = await process_document(extracted_text, deps)
+        with workflow_id(f"doc:{user_id}:{request_id}"):
+            result: DocumentProcessingResult = await process_document(extracted_text, deps)
     except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
         logger.warning(
             "Agent guardrails tripped for '%s'; returning 502",

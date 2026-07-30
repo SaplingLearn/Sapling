@@ -29,6 +29,7 @@ from routes.newsletter import router as newsletter_router
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services.request_context import RequestIDMiddleware, current_request_id
 from services.storage_service import ALLOWED_CONTENT_TYPES, ensure_bucket_exists
+from services.durable import init_dbos, shutdown_dbos
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -85,10 +86,15 @@ async def _lifespan(_app: FastAPI):
     # usage + event rows flush off the request path.
     from services import events_service
     events_service.start_worker()
+    # ADR 0011 / #154: construct + launch DBOS when DBOS_ENABLED=true; no-op
+    # passthrough otherwise. Fails loudly (raises) if the operator opted in
+    # and launch fails — see services/durable.py::init_dbos.
+    init_dbos()
     yield
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
+    shutdown_dbos()
 
 
 def _drop_request_arguments(_request, _attributes):
