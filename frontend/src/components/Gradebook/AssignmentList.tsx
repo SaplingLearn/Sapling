@@ -2,6 +2,7 @@
 import React from "react";
 import type { GradedAssignment, GradeCategory } from "@/lib/types";
 import { categoryColor } from "@/components/Gradebook/categoryColor";
+import { now } from "@/lib/testMode";
 
 interface Props {
   assignments: GradedAssignment[];
@@ -608,7 +609,9 @@ function EmptyEntries({ onAdd }: { onAdd: () => void }) {
 function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();
   if (!Number.isFinite(then)) return "just now";
-  const diffSec = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  // now() = the test-mode clock (frozen under NEXT_PUBLIC_TEST_MODE, #426),
+  // Date.now() otherwise — keeps the "Synced Xm ago" label deterministic in e2e.
+  const diffSec = Math.max(0, Math.floor((now() - then) / 1000));
   if (diffSec < 60) return "just now";
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
   if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;

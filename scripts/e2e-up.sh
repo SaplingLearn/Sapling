@@ -49,7 +49,8 @@ BACKEND_PORT="${BACKEND_PORT:-5000}"
 FRONTEND_PORT=3000
 
 # Poll a URL until it returns HTTP 200 (same curl style as local-common.sh),
-# failing the boot with a log tail if it never comes up.
+# failing the boot if it never comes up — with a log tail when the caller has
+# a logfile to tail (the app servers do; the PostgREST check passes "").
 wait_for_http() { # name url attempts logfile [extra curl args…]
   local name="$1" url="$2" attempts="$3" logfile="$4" code=000
   shift 4
@@ -64,6 +65,73 @@ wait_for_http() { # name url attempts logfile [extra curl args…]
     tail -n 20 "$logfile" | sed 's/^/    /'
   fi
   exit 1
+}
+
+# ── SESSION_SECRET preflight (#425) ─────────────────────────────────────────
+# All four health checks are unauthenticated, so a backend/frontend
+# SESSION_SECRET drift yields a "healthy" stack where every
+# POST /api/auth/test-login session then fails signature verification in the
+# frontend session route (frontend/src/app/api/auth/session/route.ts).
+# Resolve the value each side will ACTUALLY use and fail fast on
+# mismatch/empty. Only sha256 fingerprints are printed — never the secrets.
+
+secret_fingerprint() { # value → first 8 hex chars of sha256, or "(empty)"
+  [ -n "$1" ] || { echo "(empty)"; return; }
+  printf '%s' "$1" | sha256sum | cut -c1-8
+}
+
+resolve_backend_session_secret() { # env_file → BACKEND_SECRET, BACKEND_SECRET_SRC
+  # Mirrors backend/config.py: load_dotenv() never overrides existing env, so
+  # an exported SESSION_SECRET beats the backend/.env line.
+  local env_file="$1" val
+  if [ -n "${SESSION_SECRET:-}" ]; then
+    BACKEND_SECRET="$SESSION_SECRET"
+    BACKEND_SECRET_SRC="exported SESSION_SECRET env (overrides $env_file)"
+    return 0
+  fi
+  val="$(grep -E '^SESSION_SECRET=' "$env_file" 2>/dev/null | head -n1 | cut -d= -f2-)"
+  # python-dotenv strips one layer of matching quotes; mirror that.
+  case "$val" in
+    \"*\") val="${val#\"}"; val="${val%\"}" ;;
+    \'*\') val="${val#\'}"; val="${val%\'}" ;;
+  esac
+  BACKEND_SECRET="$val"
+  BACKEND_SECRET_SRC="$env_file SESSION_SECRET="
+}
+
+resolve_frontend_session_secret() { # package_json → FRONTEND_SECRET, FRONTEND_SECRET_SRC
+  # start:test bakes SESSION_SECRET in as a command-prefix assignment (#380),
+  # which beats any inherited env — that literal is what `next start` sees.
+  local package_json="$1" line
+  line="$(grep -E '"start:test"[[:space:]]*:' "$package_json" 2>/dev/null | head -n1)"
+  case "$line" in
+    *SESSION_SECRET=*)
+      FRONTEND_SECRET="$(printf '%s' "$line" | sed -E 's/.*SESSION_SECRET=([^ "]*).*/\1/')"
+      FRONTEND_SECRET_SRC="$package_json \"start:test\" SESSION_SECRET="
+      ;;
+    *)
+      FRONTEND_SECRET="${SESSION_SECRET:-}"
+      FRONTEND_SECRET_SRC="inherited env (no SESSION_SECRET= in $package_json \"start:test\")"
+      ;;
+  esac
+}
+
+check_session_secrets() { # env_file package_json → 0 match, 1 empty/mismatch (message printed)
+  resolve_backend_session_secret "$1"
+  resolve_frontend_session_secret "$2"
+  local why
+  if [ -z "$BACKEND_SECRET" ] || [ -z "$FRONTEND_SECRET" ]; then
+    why="empty on at least one side"
+  elif [ "$BACKEND_SECRET" != "$FRONTEND_SECRET" ]; then
+    why="mismatch"
+  else
+    return 0
+  fi
+  echo "✗ SESSION_SECRET $why — the stack would pass every health check (they're unauthenticated) while all test-login sessions silently fail signature verification (#425):"
+  echo "    backend  ← $BACKEND_SECRET_SRC  (sha256 $(secret_fingerprint "$BACKEND_SECRET"))"
+  echo "    frontend ← $FRONTEND_SECRET_SRC  (sha256 $(secret_fingerprint "$FRONTEND_SECRET"))"
+  echo "  Fix: make both sides identical — SESSION_SECRET in backend/.env and the SESSION_SECRET=… baked into frontend/package.json's \"start:test\"."
+  return 1
 }
 
 # ── Preflight ────────────────────────────────────────────────────────────────
@@ -82,10 +150,20 @@ command -v supabase >/dev/null 2>&1 \
 # nonstandard backend port would silently break the Next → FastAPI proxy.
 [ "$BACKEND_PORT" = "5000" ] \
   || { echo "✗ backend/.env sets PORT=$BACKEND_PORT, but the test-profile frontend proxies to :5000. Unset PORT (or set it to 5000) for E2E."; exit 1; }
+# Same class of baked-in constant: the frontend's SESSION_SECRET lives in
+# package.json's start:test, the backend's in backend/.env — verify they agree
+# up front, because no health check would ever notice the drift (#425).
+check_session_secrets backend/.env frontend/package.json || exit 1
 # The E2E sign-in seam POST /api/auth/test-login (#381) only exists when
 # APP_ENV is exactly local or test — warn, the stack still boots without it.
 grep -qE '^APP_ENV=(local|test)$' backend/.env \
   || echo "  ⚠ backend/.env APP_ENV is not local/test — /api/auth/test-login will 404 for E2E harnesses"
+# e2e-up deliberately does NOT set the LLM-seam envs — a live-model stack is
+# legitimate. But the deterministic lanes need them, so leave a pointer when
+# they're absent instead of letting journeys silently hit live Gemini.
+if [ -z "${SAPLING_MODEL_MODE:-}" ] && ! grep -qE '^SAPLING_MODEL_MODE=' backend/.env; then
+  echo "  ℹ SAPLING_MODEL_MODE is unset — agents will call the LIVE model; for deterministic E2E export SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e (what e2e.yml does)"
+fi
 
 mkdir -p "$E2E_DIR"
 

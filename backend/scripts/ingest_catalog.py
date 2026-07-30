@@ -38,7 +38,30 @@ BATCH_SIZE    = 50    # courses per Supabase upsert batch
 EMBED_BATCH   = 100   # texts per Gemini embed_content call
 RATE_DELAY    = 3.0   # 100 texts / 3s = ~2,000 texts/min (limit is 3,000/min)
 
-_gemini = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+# Deliberately NOT gated on agents/_providers.model_mode() (#439): this is an
+# offline ops CLI, run by hand against a real Gemini key — it is never imported
+# on the request path and never runs under the E2E function seam, and catalog
+# ingestion is meaningless without real embeddings. What #413 does fix here:
+# the client used to be built at module import with api_key=os.getenv(..., ""),
+# and genai.Client(api_key="") raises a bare ValueError at construction — so a
+# keyless invocation died on an opaque import error. Build lazily and fail
+# fast with an actionable message instead.
+_gemini: genai.Client | None = None
+
+
+def _get_gemini() -> genai.Client:
+    global _gemini
+    if _gemini is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            sys.exit(
+                "GEMINI_API_KEY is not set. ingest_catalog.py embeds with the real "
+                "Gemini API and has no offline mode — set the key in backend/.env "
+                "(or the environment) and re-run."
+            )
+        _gemini = genai.Client(api_key=api_key)
+    return _gemini
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -69,7 +92,7 @@ def chunk_id(course_id: str, chunk_text: str) -> str:
 
 def embed_batch(texts: list[str]) -> list[list[float]]:
     """Embed up to EMBED_BATCH texts in one Gemini call, truncated to 768-dim."""
-    response = _gemini.models.embed_content(
+    response = _get_gemini().models.embed_content(
         model=EMBED_MODEL,
         contents=texts,
         config=genai_types.EmbedContentConfig(

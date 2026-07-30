@@ -1347,3 +1347,39 @@ class TestSubmitQuizConcurrentClaim:
         data, filters = claim_calls[0]
         assert "completed_at" in data
         assert filters.get("completed_at") == "is.null"
+
+
+# ── quiz_context_update.txt template hygiene (#306) ──────────────────────────
+
+class TestQuizContextPromptTemplate:
+    """#306: the template is the *user message* for quiz_context_agent, whose
+    output shape is owned by `output_type=QuizContext`. A duplicated in-prompt
+    JSON schema is dead weight that can only drift silently (editing it changes
+    nothing about what the agent returns), so the template must not carry one —
+    but it must keep every placeholder routes/quiz.py's .replace chain fills."""
+
+    @staticmethod
+    def _template_text() -> str:
+        from routes.quiz import PROMPTS_DIR
+        import os
+        with open(os.path.join(PROMPTS_DIR, "quiz_context_update.txt")) as f:
+            return f.read()
+
+    def test_no_dead_json_schema_block(self):
+        text = self._template_text()
+        assert "Output ONLY valid JSON" not in text
+        # The field list lives on QuizContext, not in the template.
+        assert '"weak_areas"' not in text
+        assert '"recommended_difficulty"' not in text
+
+    def test_placeholders_the_route_fills_are_present(self):
+        text = self._template_text()
+        for placeholder in (
+            "{concept_name}",
+            "{student_name}",
+            "{existing_quiz_context_json}",
+            "{score}",
+            "{total}",
+            "{quiz_results_json}",
+        ):
+            assert placeholder in text, f"missing placeholder: {placeholder}"

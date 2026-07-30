@@ -341,7 +341,7 @@ def save_assignments(body: SaveAssignmentsBody, request: FastAPIRequest):
 @router.get("/upcoming/{user_id}")
 def get_upcoming(user_id: str, request: FastAPIRequest):
     require_self(user_id, request)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return {"assignments": _read_assignments(user_id, due_gte=today, limit=20)}
 
 
@@ -402,7 +402,7 @@ def delete_assignment(assignment_id: str, request: FastAPIRequest, user_id: str 
 @router.post("/suggest-study-blocks")
 def suggest_study_blocks(body: StudyBlockBody, request: FastAPIRequest):
     require_self(body.user_id, request)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     assignments = _read_assignments(body.user_id, due_gte=today)
     blocks = []
     for a in assignments:

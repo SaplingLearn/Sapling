@@ -1,9 +1,11 @@
 """Quiz-context agent.
 
 Replaces the inline `call_gemini_json` in `routes/quiz.py::_update_context`.
-Maintains the per-concept "learning notes" that steer the next quiz. Output
-mirrors the legacy `quiz_context_update.txt` JSON schema exactly, so the stored
-`quiz_context.context_json` shape is unchanged.
+Maintains the per-concept "learning notes" that steer the next quiz. The output
+shape is owned entirely by `output_type=QuizContext` below — the
+`quiz_context_update.txt` template is data-only and carries no schema (#306) —
+and `QuizContext.model_dump()` still matches the legacy
+`quiz_context.context_json` shape, so stored rows are unchanged.
 """
 
 from __future__ import annotations

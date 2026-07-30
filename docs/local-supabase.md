@@ -245,8 +245,10 @@ make e2e-down    # stop uvicorn + next (tracked PIDs), then `supabase stop`
 ```
 
 `e2e-up` health-checks all four services (Postgres, PostgREST, backend
-`/api/health`, frontend `/`) and fails loudly with a log tail if one doesn't
-come up. Server PIDs and logs live in `.e2e/` at the repo root (gitignored).
+`/api/health`, frontend `/`) and fails loudly if one doesn't come up — with a
+`.e2e/` log tail for the backend and frontend checks (the Postgres and
+PostgREST checks have no logfile to tail; inspect those containers directly).
+Server PIDs and logs live in `.e2e/` at the repo root (gitignored).
 It's idempotent: re-running restarts the app servers and re-applies the
 skip-if-done migrations/seeds. The rich dataset (#363) seeds by default so
 `POST /api/auth/test-login` has its `rich-*` users — `SEED_RICH=0 make e2e-up`
@@ -256,6 +258,17 @@ would make E2E runs nondeterministic).
 First-time machine setup is the same as `scripts/local-up.sh` (backend `.env`
 from `.env.local.example`, backend venv, `cd frontend && npm ci`); the script
 preflights each piece and fails fast with the exact command if one is missing.
+The preflight also verifies that the backend's `SESSION_SECRET` (exported env,
+else `backend/.env` — `load_dotenv()` never overrides existing env) matches
+the one baked into `frontend/package.json`'s `start:test` (#425): the health
+checks are all unauthenticated, so a drifted secret would otherwise boot a
+"healthy" stack where every `test-login` session fails signature verification.
+On mismatch it fails fast naming both sources (printing sha256 fingerprints,
+never the secrets). It also prints an informational note when
+`SAPLING_MODEL_MODE` is unset — `e2e-up` deliberately doesn't set the LLM-seam
+envs (a live-model stack is legitimate), but deterministic E2E runs need
+`SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e`
+exported, as `e2e.yml` does.
 Rootless Podman is the documented runtime; Docker is auto-detected as a
 fallback (`$CONTAINER_CMD` overrides the choice).
 

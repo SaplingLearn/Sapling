@@ -11,6 +11,7 @@ import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { useUser } from "@/context/UserContext";
 import { getGradebookSummary, getCourses, getSemesters } from "@/lib/api";
 import { courseTermLabels, currentTerm } from "@/lib/semesters";
+import { now } from "@/lib/testMode";
 import type { GradebookCourseSummary } from "@/lib/types";
 import { SyllabusUploadFlow } from "@/components/Gradebook/SyllabusUploadFlow";
 import { Button } from "@/components/ui";
@@ -135,7 +136,9 @@ export function GradebookLanding() {
         setSemesters(labels);
         const preferred = labels.includes(requestedTerm)
           ? requestedTerm
-          : currentTerm(terms)?.label;
+          : // Thread the test-mode clock (frozen under NEXT_PUBLIC_TEST_MODE,
+            // #426) — currentTerm's default `today` is the real wall clock.
+            currentTerm(terms, new Date(now()))?.label;
         setSelected(preferred && labels.includes(preferred) ? preferred : labels[0] ?? "");
         const colors: Record<string, string> = {};
         for (const c of all) {

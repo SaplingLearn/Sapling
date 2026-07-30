@@ -3,7 +3,7 @@ Unit tests for services/graph_service.py
 
 All Supabase calls are mocked so no live DB connection is needed.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from unittest.mock import MagicMock, patch
@@ -236,7 +236,7 @@ class TestGetGraph:
     def test_learning_velocity_computed_from_event_rows(self):
         """learning_velocity + trimmed mastery_events come from node_mastery_events
         (the JSON column was dropped in 0023), not from a node column."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         nodes = [
             {"id": "n1", "concept_name": "Loops", "mastery_tier": "learning",
              "mastery_score": 0.5, "subject": "CS", "times_studied": 3,

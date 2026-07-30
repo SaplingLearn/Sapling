@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
 from config import get_mastery_tier
 from db.connection import table
@@ -111,6 +111,20 @@ def _event_ts(e: dict) -> str | None:
     return e.get("created_at") or e.get("ts")
 
 
+def _parse_event_ts(raw: str) -> datetime:
+    """Parse a mastery-event timestamp to an aware-UTC datetime.
+
+    Rows in the wild carry three shapes: tz-aware ISO (TIMESTAMPTZ reads via
+    PostgREST, and every write after the #248 sweep), legacy naive strings
+    (pre-sweep ``utcnow()`` writes — UTC by construction), and Z-suffixed
+    strings. Normalize all three to aware UTC so arithmetic against
+    ``datetime.now(timezone.utc)`` never mixes naive and aware."""
+    ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
 def _compute_velocity(events: list) -> float:
     """Mastery gained per day over the last 14 days. Returns 0.0 if insufficient data.
 
@@ -119,12 +133,11 @@ def _compute_velocity(events: list) -> float:
     """
     if not events:
         return 0.0
-    cutoff = datetime.utcnow() - timedelta(days=14)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=14)
     recent = []
     for e in events:
         try:
-            ts = datetime.fromisoformat(_event_ts(e).replace("Z", "+00:00")).replace(tzinfo=None)
-            if ts > cutoff:
+            if _parse_event_ts(_event_ts(e)) > cutoff:
                 recent.append(e)
         except Exception:
             pass
@@ -134,8 +147,8 @@ def _compute_velocity(events: list) -> float:
     if positive_gain == 0:
         return 0.0
     try:
-        first_ts = datetime.fromisoformat(_event_ts(recent[0]).replace("Z", "+00:00")).replace(tzinfo=None)
-        days = max(1, (datetime.utcnow() - first_ts).days)
+        first_ts = _parse_event_ts(_event_ts(recent[0]))
+        days = max(1, (datetime.now(timezone.utc) - first_ts).days)
     except Exception:
         days = 1
     return round(positive_gain / days, 4)
@@ -654,7 +667,7 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         before = row["mastery_score"]
         after = max(0.0, min(1.0, before + delta))
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         # Update only the scalar columns — the mastery_events JSONB blob is gone (0023).
         table("graph_nodes").update(
             {

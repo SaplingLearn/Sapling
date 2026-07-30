@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -203,7 +203,7 @@ def generate(body: GenerateFlashcardsBody, request: Request):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
 
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     rows_to_insert = [
         {
             "id": str(uuid.uuid4()),
@@ -288,7 +288,7 @@ def rate_card(body: FlashcardRatingBody, request: Request):
         {
             "times_reviewed": current + 1,
             "last_rating": body.rating,
-            "last_reviewed_at": datetime.utcnow().isoformat(),
+            "last_reviewed_at": datetime.now(timezone.utc).isoformat(),
         },
         filters={"id": f"eq.{body.card_id}"},
     )
@@ -338,7 +338,7 @@ def import_commit(body: ImportCommitBody, request: Request):
         cards = keep
         skipped_count = len(skipped)
 
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     rows = [
         {
             "id": str(uuid.uuid4()),

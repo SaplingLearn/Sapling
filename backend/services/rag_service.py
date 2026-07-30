@@ -89,6 +89,19 @@ def _embed_document(text: str) -> list[float]:
     return list(resp.embeddings[0].values)
 
 
+def embed_document_text(text: str) -> list[float]:
+    """Embed one document-side text (RETRIEVAL_DOCUMENT, 768-dim).
+
+    The sanctioned entry point for the one below-seam embed consumer outside
+    this module: routes/documents.py's catalog-relevance gate. Routing it
+    through here (lazy shared client with the dummy-key fallback, request
+    timeout, and the #439 real-mode gate) replaced a raw ``genai.Client``
+    built with an empty-string API-key fallback, whose keyless construction
+    ``ValueError`` was swallowed into a silent no-index degrade (#413).
+    """
+    return _embed_document(text)
+
+
 def _embed_documents_batch(texts: list[str]) -> list[list[float]]:
     _require_real_mode()
     resp = _get_client().models.embed_content(
