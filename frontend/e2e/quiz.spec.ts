@@ -41,6 +41,45 @@ const CORRECT_LABELS = ["B", "C", "A"] as const;
 /** routes/quiz.py: 3 correct of 3 → delta = 3 × 0.03 = +0.09. */
 const EXPECTED_DELTA = 3 * 0.03;
 
+/**
+ * Journey (#184): a generation that returns ZERO questions must not strand
+ * the user on a blank, control-less panel. Before the fix, start() flipped
+ * to the active phase unconditionally; with an empty array the entire
+ * active branch (including quiz-exit) rendered nothing — a dead end.
+ *
+ * The empty response is forced at the network layer (route interception),
+ * NOT via the function-mode seam: the seam's quiz handler is deliberately a
+ * fixed 3-question quiz shared by the mastery journey above, and the guard
+ * under test is purely client-side.
+ */
+test("a zero-question generation stays on the select phase with a warning (#184)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+  await page.route("**/api/quiz/generate", route =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ quiz_id: "e2e-empty-quiz", questions: [] }),
+    }),
+  );
+
+  await page.goto(`/quiz?concept=${NODE_ID}`);
+  const start = page.getByTestId("quiz-start");
+  await expect(start).toBeEnabled();
+  await start.click();
+
+  // The warning surfaces and the select phase survives: Start is still
+  // there, and the active phase never rendered.
+  await expect(
+    page.getByText("No questions were generated", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByTestId("quiz-start")).toBeVisible();
+  await expect(page.getByTestId("quiz-answer-options")).toHaveCount(0);
+});
+
 test("quiz journey: all-correct answers raise mastery in UI and DB, monotonically", async ({
   page,
 }) => {

@@ -1,14 +1,20 @@
 // @vitest-environment jsdom
 /**
- * Component tests for the Calendar view switch (#295).
+ * Component tests for the Calendar screen: the view switch (#295) and the
+ * load-failure surfacing (#185).
  *
- * The fix wraps the calendar body in `AnimatePresence` + a keyed
- * `motion.div` so switching Month/Week/Day/Table crossfades instead of
- * snapping. Animation itself isn't asserted here — framer-motion is
+ * View switch: the #295 fix wraps the calendar body in `AnimatePresence` +
+ * a keyed `motion.div` so switching Month/Week/Day/Table crossfades instead
+ * of snapping. Animation itself isn't asserted here — framer-motion is
  * stubbed to a passthrough so assertions don't race the real 220ms
  * transition. What these tests guard is the behavior the wrapper must
  * preserve: the correct view renders for each toggle state, the loading
  * skeleton still shows first, and nothing leaks between views.
+ *
+ * Load failure (#185): a failed INITIAL fetch renders the error banner +
+ * retry instead of a normal-looking empty calendar; a failed BACKGROUND
+ * reload (post-delete/export/reconnect) toasts and keeps the loaded view —
+ * it must never blank real data behind the banner (PR #463 review).
  *
  * Unique per-view markers used below (with zero assignments):
  *   - Month  : weekday header row ("Mon".."Sun"), and NO em-dash filler.
@@ -43,8 +49,15 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true }),
 }));
 
+// Hoisted shared spies so tests can assert on toast traffic (the background
+// reload-failure path surfaces via toast.error, not the banner).
+const toastSpies = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  warn: vi.fn(),
+}));
 vi.mock("../ToastProvider", () => ({
-  useToast: () => ({ success: vi.fn(), error: vi.fn(), warn: vi.fn() }),
+  useToast: () => toastSpies,
 }));
 
 vi.mock("@/lib/useConfirm", () => ({
@@ -94,6 +107,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { Calendar } from "./Calendar";
+import { getAllAssignments } from "@/lib/api";
 
 afterEach(() => {
   cleanup();
@@ -163,5 +177,67 @@ describe("Calendar — view switch (#295)", () => {
     clickView("Month");
     await waitFor(() => expect(screen.queryByText("Nothing scheduled.")).toBeNull());
     expect(screen.getByText("Mon")).toBeInTheDocument();
+  });
+});
+
+describe("Calendar — load failure (#185)", () => {
+  it("shows an error banner with retry instead of the empty calendar when load fails", async () => {
+    vi.mocked(getAllAssignments).mockRejectedValueOnce(new Error("HTTP 500"));
+    render(<Calendar />);
+    const banner = await screen.findByTestId("calendar-load-error");
+    expect(banner).toBeInTheDocument();
+    expect(screen.getByTestId("calendar-load-retry")).toBeInTheDocument();
+    // The failure must not masquerade as a legitimately empty account: no
+    // month grid, and none of the per-view empty-state copy.
+    expect(screen.queryByText("Mon")).toBeNull();
+    expect(screen.queryByText("No assignments yet.")).toBeNull();
+    expect(screen.queryByTestId("calendar-skeleton")).toBeNull();
+  });
+
+  it("retry re-fetches; a successful retry clears the banner and renders the calendar", async () => {
+    vi.mocked(getAllAssignments).mockRejectedValueOnce(new Error("HTTP 500"));
+    render(<Calendar />);
+    const retry = await screen.findByTestId("calendar-load-retry");
+    // The once-rejection is consumed; the base mock resolves from here on.
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.queryByTestId("calendar-load-error")).toBeNull());
+    expect(screen.getByText("Mon")).toBeInTheDocument();
+  });
+
+  it("a failing BACKGROUND reload toasts and keeps the loaded view — never the banner (PR #463 review)", async () => {
+    // Initial load succeeds with one real assignment…
+    vi.mocked(getAllAssignments).mockResolvedValueOnce({
+      assignments: [
+        {
+          id: "a-1",
+          title: "Problem Set 4",
+          course_id: "c-1",
+          course_code: "CS101",
+          course_name: "Intro CS",
+          due_date: "2026-03-20",
+          assignment_type: "homework",
+          notes: "",
+        },
+      ],
+    } as never);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<Calendar />);
+    clickView("Table");
+    await screen.findByText("Problem Set 4");
+
+    // …then the reload triggered by a successful delete fails.
+    vi.mocked(getAllAssignments).mockRejectedValueOnce(new Error("HTTP 500"));
+    fireEvent.click(screen.getByTitle("Delete"));
+
+    await waitFor(() =>
+      expect(toastSpies.error).toHaveBeenCalledWith(
+        expect.stringContaining("Couldn't refresh the calendar"),
+      ),
+    );
+    // The already-loaded view survives: no full-page banner, table intact
+    // (the row itself remains because the failed reload changed no data).
+    expect(screen.queryByTestId("calendar-load-error")).toBeNull();
+    expect(screen.getByText("Problem Set 4")).toBeInTheDocument();
   });
 });

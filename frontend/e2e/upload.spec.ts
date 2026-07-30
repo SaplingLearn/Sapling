@@ -57,6 +57,59 @@ const SCRIPTED_CATEGORY = "lecture_notes";
 const SCRIPTED_ABSTRACT_SNIPPET = "deterministic fixture content";
 const SCRIPTED_CONCEPTS = ["Gradient Descent", "Learning Rate"];
 
+/**
+ * Journey (#186): a course added inline from the upload modal must be
+ * immediately selectable in the per-file Course dropdown — the whole point
+ * of the inline affordance. Before the fix, `courses` was a parent-owned
+ * prop refreshed only via onComplete (fired at done/close), so the freshly
+ * added course never appeared within the same modal session.
+ *
+ * Uses the REAL catalog search + enroll routes against the seeded catalog:
+ * HIST200 (rich-course-hist200, db/seed_local_rich.py) exists in the
+ * catalog but rich-user-active is NOT enrolled in it — exactly the state
+ * the inline add exists for. No LLM stage runs (no upload is started), so
+ * this journey needs only the stack, not the model seam.
+ */
+test("a course added inline is immediately selectable for the queued file (#186)", async ({
+  page,
+}) => {
+  await page.goto("/library");
+  const uploadButton = page.getByTestId("library-upload");
+  await expect(uploadButton).toBeEnabled();
+  await uploadButton.click();
+  await expect(page.getByTestId("upload-modal")).toBeVisible();
+
+  // Queue a file so a per-file Course dropdown exists to assert on.
+  await page.getByTestId("upload-modal-file-input").setInputFiles(FIXTURE_PDF);
+  await expect(page.getByTestId("upload-modal-file-row-0")).toBeVisible();
+
+  // Inline-add the unenrolled seeded catalog course through the real flow.
+  await page.getByTestId("upload-modal-course-search").fill("HIST200");
+  await page
+    .getByTestId("upload-modal-course-result-rich-course-hist200")
+    .click();
+
+  // The just-added course is selectable in the file row's dropdown NOW —
+  // without closing/reopening the modal.
+  await page
+    .getByTestId("upload-modal-file-row-0")
+    .getByRole("button", { name: "Course" })
+    .click();
+  await expect(
+    page.getByRole("option", { name: /HIST200/ }),
+  ).toBeVisible();
+
+  // And the enrollment really happened server-side (real route, real DB).
+  const enrollments = await queryRaw(
+    `SELECT e.id
+       FROM enrollments e
+       JOIN course_offerings o ON o.id = e.offering_id
+      WHERE e.user_id = $1 AND o.course_id = $2`,
+    [USER_ACTIVE, "rich-course-hist200"],
+  );
+  expect(enrollments.length).toBeGreaterThanOrEqual(1);
+});
+
 test("upload → SSE → document appears in library and Postgres", async ({
   page,
 }) => {

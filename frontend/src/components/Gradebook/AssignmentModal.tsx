@@ -3,6 +3,8 @@ import React from "react";
 import type { GradedAssignment, GradeCategory } from "@/lib/types";
 import { Button } from "@/components/ui";
 import Dialog from "@/components/Dialog";
+import { useToast } from "@/components/ToastProvider";
+import { humanizeError } from "@/lib/errorMessage";
 
 export interface AssignmentDraft {
   title: string;
@@ -31,6 +33,7 @@ interface Props {
 export function AssignmentModal({
   open, initial, categories, onClose, onSave, onDelete,
 }: Props) {
+  const toast = useToast();
   const titleRef = React.useRef<HTMLInputElement>(null);
   const [draft, setDraft] = React.useState<AssignmentDraft>({
     title: "",
@@ -311,7 +314,15 @@ export function AssignmentModal({
           {onDelete && initial && (
             <button
               type="button"
-              onClick={async () => { await onDelete(); onClose(); }}
+              disabled={saving}
+              // On failure the modal stays open (no onClose) so the user can
+              // see the toast and retry — closing would look like success.
+              onClick={async () => {
+                setSaving(true);
+                try { await onDelete(); onClose(); }
+                catch (err) { toast.error(humanizeError(err, "Couldn't delete the assignment. Try again.")); }
+                finally { setSaving(false); }
+              }}
               style={{ color: "var(--err)" }}
             >
               Delete
@@ -327,6 +338,7 @@ export function AssignmentModal({
             onClick={async () => {
               setSaving(true);
               try { await onSave(draft); onClose(); }
+              catch (err) { toast.error(humanizeError(err, "Couldn't save the assignment. Try again.")); }
               finally { setSaving(false); }
             }}
           >

@@ -3,6 +3,8 @@ import React from "react";
 import type { GradeCategory } from "@/lib/types";
 import { Button } from "@/components/ui";
 import Dialog from "@/components/Dialog";
+import { useToast } from "@/components/ToastProvider";
+import { humanizeError } from "@/lib/errorMessage";
 
 interface Draft {
   id?: string;
@@ -20,6 +22,7 @@ interface Props {
 }
 
 export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
+  const toast = useToast();
   const [drafts, setDrafts] = React.useState<Draft[]>([]);
   const [saving, setSaving] = React.useState(false);
   const dragIndex = React.useRef<number | null>(null);
@@ -246,9 +249,12 @@ export function EditWeightsModal({ open, initial, onClose, onSave }: Props) {
             variant="primary"
             size="sm"
             disabled={!valid || saving}
+            // On failure the modal stays open (no onClose) so the user can
+            // see the toast and retry — closing would look like success.
             onClick={async () => {
               setSaving(true);
               try { await onSave(drafts); onClose(); }
+              catch (err) { toast.error(humanizeError(err, "Couldn't save categories. Try again.")); }
               finally { setSaving(false); }
             }}
           >

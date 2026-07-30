@@ -118,8 +118,15 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
     setLoading(true);
     try {
       const res = await generateQuiz(userId, conceptId, Number(count), difficulty);
+      const nextQuestions = res.questions || [];
+      if (nextQuestions.length === 0) {
+        // Zero questions would render the "active" phase blank (it's gated on
+        // currentQuestion, and quiz-exit lives inside it) — stay in select (#184).
+        toast.warn("No questions were generated — try another concept or difficulty.");
+        return;
+      }
       setQuizId(res.quiz_id);
-      setQuestions(res.questions || []);
+      setQuestions(nextQuestions);
       setAnswers([]);
       setQIndex(0);
       setCurrentSelection(null);

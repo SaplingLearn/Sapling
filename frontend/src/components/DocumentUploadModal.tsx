@@ -53,6 +53,9 @@ interface Props {
   onComplete: (uploaded: UploadItem[]) => void;
 }
 
+/** The slice of a course the per-file dropdown + inline-add flow need. */
+type CourseOption = Pick<EnrolledCourse, "course_id" | "course_code" | "course_name">;
+
 const CATEGORY_OPTIONS = [
   { value: "syllabus", label: "Syllabus" },
   { value: "lecture_notes", label: "Lecture notes" },
@@ -71,6 +74,10 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   const [courseQuery, setCourseQuery] = React.useState("");
   const [courseResults, setCourseResults] = React.useState<OnboardingCourse[]>([]);
   const [addingCourse, setAddingCourse] = React.useState(false);
+  // Courses added inline this session (#186). `courses` is a read-only prop
+  // the parent only refreshes via onComplete (fired at done/close), so a
+  // just-added course must be merged locally to be selectable right away.
+  const [extraCourses, setExtraCourses] = React.useState<CourseOption[]>([]);
 
   React.useEffect(() => setMounted(true), []);
 
@@ -81,6 +88,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       setItems([]);
       setCourseQuery("");
       setCourseResults([]);
+      setExtraCourses([]);
     }
   }, [open]);
 
@@ -91,6 +99,11 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     }, 200);
     return () => clearTimeout(t);
   }, [courseQuery]);
+
+  const allCourses = React.useMemo<CourseOption[]>(() => {
+    const seen = new Set(courses.map(c => c.course_id));
+    return [...courses, ...extraCourses.filter(c => !seen.has(c.course_id))];
+  }, [courses, extraCourses]);
 
   const activeUploads = items.filter(it => it.status === "uploading").length;
 
@@ -103,7 +116,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   };
 
   const addFiles = (fileList: File[]) => {
-    const defaultCourseId = courses[0]?.course_id || "";
+    const defaultCourseId = allCourses[0]?.course_id || "";
     const candidates = fileList
       .slice(0, MAX_FILES - items.length)
       .filter(f => {
@@ -256,11 +269,16 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   const addCourseInline = async (course: OnboardingCourse) => {
     setAddingCourse(true);
     try {
-      await addCourse(userId, course.id);
+      const resp = await addCourse(userId, course.id);
       toast.success(`Added ${course.course_code}`);
       setCourseQuery("");
       setCourseResults([]);
-      // Parent refreshes courses via onComplete.
+      // Parent refreshes courses via onComplete (fired at done/close), so
+      // merge the new course locally to make it selectable this session.
+      const courseId = resp?.course_id || course.id;
+      setExtraCourses(prev => prev.some(c => c.course_id === courseId)
+        ? prev
+        : [...prev, { course_id: courseId, course_code: course.course_code, course_name: course.course_name }]);
     } catch (err) {
       toast.error(`Failed: ${String(err)}`);
     } finally {
@@ -340,7 +358,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             </label>
           </div>
 
-          {courses.length < 10 && (
+          {allCourses.length < 10 && (
             <div style={{ marginTop: 16 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>+ Add a course</div>
               <input
@@ -425,7 +443,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                     onChange={(v) => setItemField(item.id, p => ({ ...p, courseId: v }))}
                     placeholder="Pick a course"
                     ariaLabel="Course"
-                    options={courses.map(c => ({ value: c.course_id, label: c.course_code || c.course_name }))}
+                    options={allCourses.map(c => ({ value: c.course_id, label: c.course_code || c.course_name }))}
                   />
                   {item.status === "processed" && (
                     <>
