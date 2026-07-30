@@ -283,10 +283,30 @@ async def stream_agent_turn(
         # for a failure after a tool write.
         if joined.strip():
             reply = joined
+        elif deps.graph_updates or deps.mastery_changes:
+            # Tool writes ALREADY LANDED this turn (append-only mastery
+            # events, graph upserts). The legacy fallback would re-run the
+            # whole turn and apply_graph_update AGAIN — double mastery for
+            # one student turn (PR #470 review). A terminal error is the
+            # honest degrade: the writes stay (they were real tool actions),
+            # nothing is persisted to the transcript, and the client's
+            # ADR-0020 interrupted+Retry treatment applies.
+            logger.warning(
+                "Agent turn produced a blank reply AFTER %d graph write(s); "
+                "terminal error instead of a fallback that would re-apply "
+                "them", len(deps.graph_updates) + len(deps.mastery_changes),
+            )
+            yield SaplingEvent(
+                type="error",
+                step="reply",
+                message="The tutor was interrupted. Please retry.",
+                data={"request_id": request_id},
+            )
+            return
         else:
             logger.warning(
-                "Agent turn produced a blank reply (%d graph write(s) "
-                "already applied); degrading to Rung 1", graph_hw,
+                "Agent turn produced a blank reply and no writes; "
+                "degrading to Rung 1",
             )
             async for ev in _rung1_fallback_events(legacy_fallback, request_id):
                 yield ev

@@ -388,10 +388,12 @@ def test_blank_final_output_falls_back_to_streamed_chunks():
     asyncio.run(run())
 
 
-def test_blank_reply_after_tool_call_uses_legacy_fallback():
-    """Tool call then ONLY whitespace text: nothing meaningful was shown, so
-    the turn degrades like Rung 1 — legacy owns the reply and persistence;
-    on_complete must NOT run (an empty assistant row must never persist)."""
+def test_blank_reply_after_tool_call_with_writes_is_terminal_error():
+    """Tool call (which WROTE mastery) then only whitespace text: the legacy
+    fallback must NOT run — it would re-run the turn and apply_graph_update
+    AGAIN, double-counting one student turn in the append-only mastery
+    ledger (PR #470 review). Terminal error instead: the tool writes stay,
+    nothing persists to the transcript, the client offers Retry."""
     async def run():
         deps = make_deps()
 
@@ -406,8 +408,10 @@ def test_blank_reply_after_tool_call_uses_legacy_fallback():
         ])
         on_complete_calls = []
         usage_calls = []
+        fallback_calls = []
 
         async def fake_legacy():
+            fallback_calls.append(1)
             return {"reply": "legacy reply", "graph_update": {}, "mastery_changes": []}
 
         events = await collect(
@@ -416,15 +420,45 @@ def test_blank_reply_after_tool_call_uses_legacy_fallback():
             legacy_fallback=fake_legacy,
             on_usage=lambda res: usage_calls.append(res),
         )
-        assert events[-1].type == "done"
-        assert events[-1].data["reply"] == "legacy reply"
+        assert events[-1].type == "error"
+        assert fallback_calls == [], (
+            "a fallback after real tool writes would double-apply mastery"
+        )
         assert on_complete_calls == [], (
-            "legacy owns persistence — a blank agent turn must not also persist"
+            "nothing persists to the transcript on the terminal-error rung"
         )
         # The agent run completed and billed tokens even though its reply was
-        # blank — its usage is still recorded (legacy records its own inside
-        # call_gemini_multiturn).
+        # blank — its usage is still recorded.
         assert len(usage_calls) == 1
+        # The mastery write the tool made is untouched — it was a real action.
+        assert deps.mastery_changes
+
+    asyncio.run(run())
+
+
+def test_blank_reply_with_no_writes_still_takes_legacy_fallback():
+    """The no-writes twin: a blank turn whose tools wrote NOTHING degrades to
+    the legacy fallback exactly as before — re-running is safe when there is
+    nothing to double-apply."""
+    async def run():
+        deps = make_deps()
+        agent = FakeAgent([
+            PartStartEvent("\n"),
+            AgentRunResultEvent("\n"),
+        ])
+        on_complete_calls = []
+
+        async def fake_legacy():
+            return {"reply": "legacy reply", "graph_update": {}, "mastery_changes": []}
+
+        events = await collect(
+            agent, deps,
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+            legacy_fallback=fake_legacy,
+        )
+        assert events[-1].type == "done"
+        assert events[-1].data["reply"] == "legacy reply"
+        assert on_complete_calls == []
 
     asyncio.run(run())
 
@@ -546,3 +580,4 @@ def test_on_usage_not_called_on_error_rungs_or_legacy_fallback():
         assert usage_calls == [], "an aborted run has no result to record"
 
     asyncio.run(run())
+
