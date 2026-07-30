@@ -30,6 +30,7 @@ from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from db.connection import table
+from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
@@ -559,6 +560,8 @@ def _persist_document(
     filename: str,
     result: DocumentProcessingResult,
     request_id: str | None = None,
+    course_id: str | None = None,
+    char_count: int | None = None,
 ) -> tuple[str, dict]:
     """Insert a documents row from an orchestrator result.
 
@@ -568,7 +571,9 @@ def _persist_document(
     returned row carries the plaintext shape so callers can pass it
     straight back to the client without an extra decrypt step.
     ``request_id`` (when provided) is stored verbatim for idempotent
-    replay detection. Returns (document_id, full_row).
+    replay detection. ``course_id``/``char_count`` only feed the
+    document.processed observability event (#117); they are not persisted
+    on the row. Returns (document_id, full_row).
     """
     now = datetime.now(timezone.utc).isoformat()
     concept_notes = [
@@ -602,6 +607,21 @@ def _persist_document(
     full_row = inserted[0] if inserted else row
     full_row["summary"] = summary
     full_row["concept_notes"] = concept_notes
+    # #117: one document.processed per persisted document, covering both the
+    # sync and the streaming agent path. Ids/counts only — never the text,
+    # summary, or concept notes.
+    events_service.log_event(
+        "document.processed",
+        category="usage",
+        user_id=user_id,
+        request_id=request_id,
+        payload={
+            "document_id": full_row["id"],
+            "category": result.classification.category,
+            "course_id": course_id,
+            "char_count": char_count,
+        },
+    )
     return full_row["id"], full_row
 
 
@@ -727,6 +747,22 @@ async def upload_document_sync(
         response.setdefault("categories", [])
         return response
 
+    # #117: one document.upload per accepted upload attempt — AFTER the
+    # idempotency short-circuit (PR #465 review), so an X-Request-ID retry of
+    # an already-persisted upload doesn't inflate the count. Counts only —
+    # the extracted text itself never enters a payload.
+    events_service.log_event(
+        "document.upload",
+        category="usage",
+        user_id=user_id,
+        request_id=request_id,
+        payload={
+            "course_id": course_id,
+            "offering_id": offering_id,
+            "char_count": len(extracted_text),
+        },
+    )
+
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id,
@@ -771,6 +807,7 @@ async def upload_document_sync(
     _, full_row = await asyncio.to_thread(
         _persist_document, user_id=user_id, offering_id=offering_id,
         filename=filename, result=result, request_id=request_id,
+        course_id=course_id, char_count=len(extracted_text),
     )
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
@@ -869,6 +906,23 @@ async def upload_document(
                     data={"document_id": existing.get("id"), "request_id": request_id},
                 ))
                 return
+
+            # #117: one document.upload per accepted upload attempt — AFTER
+            # the idempotent-replay short-circuit (PR #465 review), so an
+            # X-Request-ID retry doesn't inflate the count. char_count is
+            # unknown (None) when OCR_ASYNC_ENABLED defers extraction below —
+            # document.processed carries the real count once extraction ran.
+            events_service.log_event(
+                "document.upload",
+                category="usage",
+                user_id=user_id,
+                request_id=request_id,
+                payload={
+                    "course_id": course_id,
+                    "offering_id": offering_id,
+                    "char_count": len(extracted_text) if extracted_text is not None else None,
+                },
+            )
 
             # ── Phase 0: text extraction (when OCR_ASYNC_ENABLED) ─────────────
             # Failures here can NOT fall through to the legacy fallback —
@@ -1071,6 +1125,8 @@ async def upload_document(
                 user_id=user_id, offering_id=offering_id,
                 filename=filename, result=final_output,
                 request_id=request_id,
+                course_id=course_id,
+                char_count=len(extracted_text) if extracted_text is not None else None,
             )
 
             # BackgroundTasks runs after response close — useless for SSE since
@@ -1383,6 +1439,21 @@ async def _legacy_upload_pipeline(
             inserted = table("documents").insert(row)
         else:
             raise
+
+    # #117 (D6): the ADR-0001 legacy fallback persists its own documents row,
+    # so it emits its own document.processed — fallback uploads must count too.
+    events_service.log_event(
+        "document.processed",
+        category="usage",
+        user_id=user_id,
+        request_id=request_id,
+        payload={
+            "document_id": (inserted[0] if inserted else row).get("id"),
+            "category": ai["category"],
+            "course_id": course_id,
+            "char_count": len(extracted_text),
+        },
+    )
 
     if background_tasks is not None:
         background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)

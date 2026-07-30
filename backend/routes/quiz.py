@@ -18,6 +18,7 @@ from agents.usage import record_agent_usage
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
+from services import events_service
 from services.auth_guard import require_self
 from services.profiles import get_display_name
 from services.graph_service import apply_graph_update
@@ -355,6 +356,20 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         "difficulty": body.difficulty,
         "questions_json": questions,
     })
+    # #117: quiz.started once the attempt row exists. num_questions is the
+    # actual generated count (the agent may return fewer than requested).
+    events_service.log_event(
+        "quiz.started",
+        category="usage",
+        user_id=body.user_id,
+        request_id=request_id,
+        payload={
+            "quiz_id": quiz_id,
+            "concept_node_id": body.concept_node_id,
+            "num_questions": len(questions),
+            "difficulty": body.difficulty,
+        },
+    )
     return {"quiz_id": quiz_id, "questions": questions}
 
 
@@ -515,6 +530,21 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         check_achievements(user_id, "quizzes_completed", {})
     except Exception:
         pass
+
+    # #117: quiz.completed on the success path only — a 409 replay (the
+    # atomic completed_at claim above) or any earlier 4xx never reaches here.
+    events_service.log_event(
+        "quiz.completed",
+        category="usage",
+        user_id=user_id,
+        payload={
+            "quiz_id": body.quiz_id,
+            "concept_node_id": concept_node_id,
+            "score": score,
+            "total": total,
+            "mastery_delta": mastery_delta,
+        },
+    )
 
     return {
         "score": score,

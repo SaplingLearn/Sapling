@@ -21,6 +21,28 @@ Design guarantees:
 
 Cost computation and token-field normalization live in
 ``services/llm_pricing.py``; this module just persists what it's given.
+
+Event taxonomy (issue #117) — the twelve event types the app emits, pinned in
+``EVENT_TAXONOMY`` below. Payloads carry ids/counts/enums only: never raw
+text, titles, summaries, full URLs, or timestamps (``created_at`` is a DB
+default). Free-text that must be correlatable (chat messages, session topics)
+goes through ``content=`` and lands only as a ``content_fp`` fingerprint.
+
+============================  ========  =====================================================
+event_type                    category  payload keys
+============================  ========  =====================================================
+error.4xx / error.5xx         error     path, method, status_code, duration_ms, route (template)
+auth.login                    audit     method ("google" / "test_login")
+auth.permission_denied        audit     reason, route
+document.upload               usage     course_id, offering_id, char_count
+document.processed            usage     document_id, category, course_id, char_count
+quiz.started                  usage     quiz_id, concept_node_id, num_questions, difficulty
+quiz.completed                usage     quiz_id, concept_node_id, score, total, mastery_delta
+chat.message_sent             usage     mode, session_id (+ content=message -> fingerprint)
+note.created                  usage     note_id, course_id, offering_id, has_body
+session.started               usage     session_id, mode, offering_id (+ content=topic -> fingerprint)
+session.ended                 usage     session_id, time_spent_minutes, concepts_covered
+============================  ========  =====================================================
 """
 
 from __future__ import annotations
@@ -37,6 +59,24 @@ from services.fingerprint import fingerprint_text
 from services.request_context import current_request_id
 
 logger = logging.getLogger("sapling.events")
+
+# The pinned #117 taxonomy (see the module docstring for payload shapes).
+# Shared constant so a rename breaks tests loudly; ``log_event`` deliberately
+# does NOT enforce membership — it must stay a cannot-raise sink.
+EVENT_TAXONOMY: frozenset[str] = frozenset({
+    "error.4xx",
+    "error.5xx",
+    "auth.login",
+    "auth.permission_denied",
+    "document.upload",
+    "document.processed",
+    "quiz.started",
+    "quiz.completed",
+    "chat.message_sent",
+    "note.created",
+    "session.started",
+    "session.ended",
+})
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink
 # the queue via reset_for_tests(maxsize=...).

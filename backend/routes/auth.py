@@ -37,6 +37,7 @@ from config import (
     ALLOWED_EMAIL_DOMAINS,
 )
 from db.connection import table
+from services import events_service
 from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
 from services.auth_guard import get_session_user_id
 from services.session_tokens import SESSION_COOKIE_NAME, mint_session
@@ -588,6 +589,17 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
             user_id, ttl=_REDIRECT_TOKEN_TTL_SECONDS, secret=SESSION_SECRET
         )
 
+    # #117: auth.login fires at the two real session-mint sites (here and
+    # /test-login), NOT in auth_guard on session decode — decode runs on
+    # every authenticated request, which would emit thousands of meaningless
+    # "logins" per user per day and blow the analytics scan cap.
+    events_service.log_event(
+        "auth.login",
+        category="audit",
+        user_id=user_id,
+        payload={"method": "google"},
+    )
+
     params = urlencode({
         "user_id": user_id,
         "avatar": avatar_url,
@@ -694,6 +706,15 @@ async def mint_test_session(request: Request):
     token = mint_session(user_id, ttl=ttl, secret=secret)
 
     logger.warning("test-login: minted a session for %r (APP_ENV=%s)", user_id, config.APP_ENV)
+
+    # #117: the second real session-mint site (see google_callback for why
+    # auth.login is emitted at mint time, not on session decode).
+    events_service.log_event(
+        "auth.login",
+        category="audit",
+        user_id=user_id,
+        payload={"method": "test_login"},
+    )
 
     response = JSONResponse({
         "ok": True,
