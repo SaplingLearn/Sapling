@@ -22,14 +22,19 @@ ALLOWED_SCREENSHOT_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"
 
 
 @router.post("/feedback")
-def submit_feedback(body: SubmitFeedbackBody):
+def submit_feedback(body: SubmitFeedbackBody, request: Request):
+    # #134: attribute the row to the SESSION user — body.user_id stays on the
+    # wire for backward compatibility (the frontend sends it) but is never
+    # trusted; an unauthenticated caller gets a 401 instead of writing rows
+    # under an arbitrary user_id.
+    user_id = get_session_user_id(request)  # 401 if unauthenticated
     # 0026_ops: feedback.id is now a TEXT PK (was SERIAL). Follow the repo
     # convention (services/academics.py, graph_service.py) and hand-build it
     # rather than relying on the DB default. user_id/session_id now carry real
-    # FKs (users / sessions), which the request body / session already satisfy.
+    # FKs (users / sessions), which the session / request body satisfy.
     table("feedback").insert({
         "id": str(uuid.uuid4()),
-        "user_id": body.user_id,
+        "user_id": user_id,
         "type": body.type,
         "rating": body.rating,
         "selected_options": body.selected_options,
@@ -41,12 +46,15 @@ def submit_feedback(body: SubmitFeedbackBody):
 
 
 @router.post("/issue-reports")
-def submit_issue_report(body: SubmitIssueReportBody):
+def submit_issue_report(body: SubmitIssueReportBody, request: Request):
+    # #134: same contract as submit_feedback — the session, not the body,
+    # decides who the report is attributed to.
+    user_id = get_session_user_id(request)  # 401 if unauthenticated
     # 0026_ops: issue_reports.id is now a TEXT PK (was SERIAL); user_id now has
     # a real FK to users(id). Hand-build the text PK per repo convention.
     table("issue_reports").insert({
         "id": str(uuid.uuid4()),
-        "user_id": body.user_id,
+        "user_id": user_id,
         "topic": body.topic,
         "description": body.description,
         "screenshot_urls": body.screenshot_urls,

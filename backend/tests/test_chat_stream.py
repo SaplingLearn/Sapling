@@ -232,7 +232,7 @@ def test_graph_update_emitted_once_per_new_write():
             FunctionToolCallEvent("update_mastery_tool"),
             FunctionToolResultEvent(on_fire=first_write),
             PartStartEvent("Done."),
-            FunctionToolCallEvent("search_course_materials_tool"),
+            FunctionToolCallEvent("search_course_materials"),
             FunctionToolResultEvent(),          # writes nothing new
             AgentRunResultEvent("Done."),
         ])

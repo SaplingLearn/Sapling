@@ -5,11 +5,12 @@ Powers the AI Chat panel inside the notetaker. Distinct from
 tutoring session, and the system prompt nudges the agent to ground
 in what the student is actively writing.
 
-Tools:
+Tools (wire names — what the model sees):
   - read_active_note (note-specific; from agents/tools/note_context.py)
-  - search_course_materials (existing; reuses chat_tutor's grounding)
-  - apply_graph_update (existing; lets the agent mark new concepts
-    while answering, the same way the course tutor does)
+  - search_course_materials (chat_tutor's grounding; registered under the
+    prompt-facing name via Tool(..., name=...) — #135)
+  - apply_graph_update_tool (lets the agent mark new concepts while
+    answering, the same way the course tutor does)
 """
 from __future__ import annotations
 
@@ -47,7 +48,10 @@ note_chat_agent = Agent[SaplingDeps, str](
     metadata={"prompt_version": _PROMPT_HASH, "agent": "note_chat"},
     tools=[
         Tool(read_active_note_tool, name="read_active_note", takes_ctx=True),
-        search_course_materials_tool,
+        # #135: register under the prompt-facing name — the bare callable would
+        # derive the wire name "search_course_materials_tool", which the system
+        # prompt never mentions.
+        Tool(search_course_materials_tool, name="search_course_materials", takes_ctx=True),
         apply_graph_update_tool,
     ],
 )

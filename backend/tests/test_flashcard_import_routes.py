@@ -1,6 +1,6 @@
 """Integration tests for /api/flashcards/import/* routes."""
 import base64
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -193,6 +193,21 @@ class TestImportGenerate:
         with _mock_self(), patch("routes.flashcards.check_rate_limit", return_value=None):
             r = client.post("/api/flashcards/import/generate", json=body)
         assert r.status_code == 400
+
+    def test_content_filter_block_returns_502(self):
+        # A Gemini content-filter block (e.g. RECITATION) raised at the agent
+        # seam must surface as the route's 502 — never 200 {"cards": []} with
+        # a success toast for zero cards (#340). Mocks the agent seam (not the
+        # service) so the service's exception handling is exercised end-to-end.
+        from pydantic_ai.exceptions import ContentFilterError
+        body = {"user_id": "u1", "source": "paste", "text": "notes", "count": 5, "difficulty": "recall"}
+        run = AsyncMock(side_effect=ContentFilterError("blocked: RECITATION"))
+        with _mock_self(), \
+             patch("services.flashcard_import_service.flashcard_agent.run", new=run), \
+             patch("routes.flashcards.check_rate_limit", return_value=None):
+            r = client.post("/api/flashcards/import/generate", json=body)
+        assert r.status_code == 502
+        assert "RECITATION" in r.json()["detail"]
 
     def test_library_doc_belonging_to_other_user_returns_404(self):
         body = {"user_id": "u1", "source": "library_doc", "document_id": "doc1", "count": 5, "difficulty": "recall"}

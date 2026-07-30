@@ -164,12 +164,14 @@ def test_real_agent_driven_by_function_model_asserts_tool_call_args(monkeypatch)
         calls["n"] += 1
         if calls["n"] == 1:
             # First turn: script a call to a real function tool with real args.
-            # The tool is registered under its function name (note_chat.py wires
-            # `search_course_materials_tool` without a name= override).
+            # The tool is registered under its prompt-facing name (#135:
+            # note_chat.py wires Tool(search_course_materials_tool,
+            # name="search_course_materials") so the wire name matches the
+            # system prompt's `search_course_materials`).
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="search_course_materials_tool",
+                        tool_name="search_course_materials",
                         args={"query": "gradient descent", "limit": 3},
                     )
                 ]
@@ -185,7 +187,7 @@ def test_real_agent_driven_by_function_model_asserts_tool_call_args(monkeypatch)
         result = note_chat_agent.run_sync("How does gradient descent work?", deps=_deps())
 
     # The real tools were registered (registration ran through the agent).
-    assert "search_course_materials_tool" in seen_tools["names"]
+    assert "search_course_materials" in seen_tools["names"]
     assert "read_active_note" in seen_tools["names"]
     # The LLM-chosen tool-call arguments were schema-validated and dispatched to
     # the real tool body with the deps-scoped user/course fields injected.
@@ -372,7 +374,7 @@ def test_function_mode_streams_scripted_tool_calls(monkeypatch):
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="search_course_materials_tool",
+                        tool_name="search_course_materials",
                         args={"query": "eigenvalues", "limit": 2},
                     )
                 ]

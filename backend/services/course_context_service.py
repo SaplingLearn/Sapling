@@ -2,9 +2,11 @@
 services/course_context_service.py
 
 Builds and caches shared class-level context from real DB data.
-Aggregates graph_nodes mastery data and quiz_context across all students in an
-offering (a course taught in a term). The graph is keyed on the abstract course;
-analytics are keyed on the offering.
+Aggregates graph_nodes mastery data and quiz_context across the students in an
+offering (a course taught in a term) who share class context (#72 — the
+persisted user_settings.share_class_context opt-out is enforced here, at the
+write chokepoint). The graph is keyed on the abstract course; analytics are
+keyed on the offering.
 
 Stores data in:
 - offering_concept_stats: per-concept aggregated metrics (per offering)
@@ -27,6 +29,33 @@ def _generate_data_hash(stats_rows: list) -> str:
     """Generate a hash of the stats data to detect changes."""
     data_str = json.dumps(stats_rows, sort_keys=True, default=str)
     return hashlib.sha256(data_str.encode()).hexdigest()
+
+
+def _filter_shared_context_users(user_ids: list) -> list:
+    """#72: keep only users who share class context.
+
+    The Class Intel toggle used to gate only the READ path (a per-request
+    flag); the persisted ``user_settings.share_class_context`` column (0037)
+    makes the opt-out durable, and this filter enforces it here — the single
+    write chokepoint every class-aggregate refresh funnels through. A user
+    with no settings row (or a row predating 0037) is opted IN, matching the
+    column default: only an explicit ``false`` excludes them.
+    """
+    if not user_ids:
+        return []
+    id_filter = ",".join(user_ids)
+    settings_rows = table("user_settings").select(
+        "user_id,share_class_context",
+        filters={"user_id": f"in.({id_filter})"},
+    )
+    opted_out = {
+        r["user_id"]
+        for r in (settings_rows or [])
+        if r.get("share_class_context") is False
+    }
+    if not opted_out:
+        return user_ids
+    return [uid for uid in user_ids if uid not in opted_out]
 
 
 def _generate_summary_with_gemini(
@@ -124,9 +153,11 @@ def clear_course_context_cache() -> None:
 
 def update_course_context(offering_id: str) -> None:
     """
-    Aggregate mastery + quiz data for all students enrolled in an **offering**
+    Aggregate mastery + quiz data for the students enrolled in an **offering**
     (a course taught in a term) and upsert into offering_concept_stats and
     offering_summary. Offering-scoped. Called automatically after any graph update.
+    Students who opted out of sharing (user_settings.share_class_context = false,
+    #72) are excluded before any of their graph data is read.
 
     The knowledge graph is keyed on the *abstract* course id, so we resolve the
     offering → its abstract course to read graph_nodes.
@@ -147,6 +178,18 @@ def update_course_context(offering_id: str) -> None:
         return
 
     user_ids = [r["user_id"] for r in enrollment_rows]
+
+    # ── 1b. Respect the persisted Class Intel opt-out (#72) ───────────────────
+    user_ids = _filter_shared_context_users(user_ids)
+    if not user_ids:
+        # Every enrolled student opted out — same treatment as "no students":
+        # purge any stale aggregates so previously shared data stops being
+        # served, rather than crashing or publishing stats nobody consented to.
+        table("offering_concept_stats").delete({"offering_id": f"eq.{offering_id}"})
+        table("offering_summary").delete({"offering_id": f"eq.{offering_id}"})
+        clear_course_context_cache()  # #98: aggregates changed → drop cached read
+        return
+
     student_count = len(user_ids)
 
     # ── 2. Resolve the offering → abstract course (graph key) + term label ────

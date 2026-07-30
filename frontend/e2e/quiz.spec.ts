@@ -211,3 +211,108 @@ test("quiz journey: all-correct answers raise mastery in UI and DB, monotonicall
   expect(Number(attempts[0].total)).toBe(3);
   expect(attempts[0].completed_at).not.toBeNull();
 });
+
+/**
+ * Regression (#129): /api/quiz/submit must reject a replay of an already-
+ * completed attempt. Before the fix, re-POSTing the same quiz_id re-ran
+ * apply_graph_update — a second mastery delta, a duplicate
+ * node_mastery_events row, and a streak bump — plus the background
+ * quiz-context task and achievements.
+ *
+ * Lane-level pin: drive the same seeded fixture through the real UI flow,
+ * capture the exact wire body the UI sent to /api/quiz/submit
+ * ({ quiz_id, answers: [{ question_id, selected_label }] } —
+ * backend/models::SubmitQuizBody), then replay it via page.request.post
+ * (same-origin, so the sapling_session cookie rides along). The replay must
+ * 409, and the DB must be byte-for-byte where the first submit left it.
+ */
+test("quiz resubmit: replaying a completed submission returns 409 and re-applies no mastery", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+
+  // Same pre-ack as the journey above — the disclaimer is unrelated chrome.
+  await page.addInitScript(() => {
+    window.localStorage.setItem("sapling_disclaimer_ack", "true");
+  });
+
+  await page.goto(`/quiz?concept=${NODE_ID}`);
+  await expect(page.getByTestId("quiz-panel")).toBeVisible();
+
+  const start = page.getByTestId("quiz-start");
+  await expect(start).toBeEnabled();
+  await start.click();
+
+  await expect(page.getByTestId("quiz-answer-options")).toBeVisible({
+    timeout: 60_000,
+  });
+  // Mode guard, same as above: scripted fixture text proves function mode.
+  await expect(page.getByTestId("quiz-panel")).toContainText(
+    "E2E deterministic question 1",
+  );
+
+  // Arm the capture BEFORE the final click fires /api/quiz/submit.
+  const submitRequestPromise = page.waitForRequest(
+    (req) => req.url().includes("/api/quiz/submit") && req.method() === "POST",
+  );
+
+  for (const label of CORRECT_LABELS) {
+    await page.getByTestId(`quiz-answer-option-${label}`).click();
+    await page.getByTestId("quiz-submit-answer").click();
+    await expect(page.getByTestId("quiz-review-verdict")).toHaveText(
+      "Correct.",
+    );
+    await page.getByTestId("quiz-next").click();
+  }
+
+  // Results rendered ⇒ the first submit's synchronous mastery write landed.
+  await expect(page.getByTestId("quiz-results-score")).toHaveText("100%", {
+    timeout: 30_000,
+  });
+
+  const wireBody = (await submitRequestPromise).postDataJSON() as {
+    quiz_id: string;
+    answers: Array<{ question_id: number | string; selected_label: string }>;
+  };
+  expect(wireBody.quiz_id).toBeTruthy();
+  expect(wireBody.answers).toHaveLength(CORRECT_LABELS.length);
+
+  // First submit's DB state — the baseline the replay must not move.
+  const nodeAfterFirst = await queryRaw(
+    "SELECT mastery_score FROM graph_nodes WHERE id = $1",
+    [NODE_ID],
+  );
+  expect(nodeAfterFirst).toHaveLength(1);
+  const masteryAfterFirst = Number(nodeAfterFirst[0].mastery_score);
+  expect(masteryAfterFirst).toBeCloseTo(SEEDED_MASTERY + EXPECTED_DELTA, 10);
+
+  const eventsAfterFirst = await queryRaw(
+    "SELECT id FROM node_mastery_events WHERE node_id = $1",
+    [NODE_ID],
+  );
+  expect(eventsAfterFirst).toHaveLength(1);
+
+  // Replay the SAME submission over the page's cookie jar → 409, not 200.
+  const replay = await page.request.post("/api/quiz/submit", {
+    data: wireBody,
+  });
+  expect(replay.status()).toBe(409);
+
+  // The replay re-applied nothing: still exactly ONE mastery event…
+  const eventsAfterReplay = await queryRaw(
+    "SELECT id FROM node_mastery_events WHERE node_id = $1",
+    [NODE_ID],
+  );
+  expect(eventsAfterReplay).toHaveLength(1);
+
+  // …and the node's score is unchanged from the first submit.
+  const nodeAfterReplay = await queryRaw(
+    "SELECT mastery_score FROM graph_nodes WHERE id = $1",
+    [NODE_ID],
+  );
+  expect(nodeAfterReplay).toHaveLength(1);
+  expect(Number(nodeAfterReplay[0].mastery_score)).toBeCloseTo(
+    masteryAfterFirst,
+    10,
+  );
+});

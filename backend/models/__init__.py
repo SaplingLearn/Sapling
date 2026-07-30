@@ -231,6 +231,8 @@ class UpdateSettingsBody(BaseModel):
     theme: Optional[str] = None
     font_size: Optional[str] = None
     accent_color: Optional[str] = None
+    # #72: Class Intel opt-out (user_settings.share_class_context, 0037)
+    share_class_context: Optional[bool] = None
 
 
 class EquipCosmeticBody(BaseModel):
