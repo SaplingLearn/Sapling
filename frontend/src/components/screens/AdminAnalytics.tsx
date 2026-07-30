@@ -9,9 +9,22 @@
  */
 
 import React from "react";
+import dynamic from "next/dynamic";
 import { TopBar } from "../TopBar";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
+import { zeroFillDays, type DayPointValue } from "../AnalyticsCharts";
+
+// Chart components load lazily (the #122 bundle-discipline checkbox); the
+// pure helpers above are a few hundred bytes and import statically.
+const DayLineChart = dynamic(() => import("../AnalyticsCharts").then((m) => m.DayLineChart), {
+  ssr: false,
+  loading: () => null,
+});
+const CategoryBars = dynamic(() => import("../AnalyticsCharts").then((m) => m.CategoryBars), {
+  ssr: false,
+  loading: () => null,
+});
 import {
   presetRange,
   useErrorsFeed,
@@ -113,10 +126,18 @@ function AnalyticsBody() {
     [toast],
   );
 
-  const summary = useUsageSummary(range, { onBackgroundError });
+  const summary = useUsageSummary(range, { bucket: "day", onBackgroundError });
   const byUser = useUsageByUser(range, { onBackgroundError });
-  const cost = useLlmCost(range, { groupBy, onBackgroundError });
-  const errs = useErrorsFeed(range, { onBackgroundError });
+  const cost = useLlmCost(range, { groupBy, bucket: "day", onBackgroundError });
+  const errs = useErrorsFeed(range, { bucket: "day", onBackgroundError });
+
+  // Users-table sort: null = keep the server order (cost desc, then events).
+  const [userSort, setUserSort] = React.useState<{
+    key: "events" | "cost" | "tokens" | null;
+    desc: boolean;
+  }>({ key: null, desc: true });
+  const toggleUserSort = (key: "events" | "cost" | "tokens") =>
+    setUserSort((s) => (s.key === key ? { key, desc: !s.desc } : { key, desc: true }));
 
   const setCustom = (edge: "from" | "to", day: string) => {
     if (!day) return;
@@ -180,18 +201,34 @@ function AnalyticsBody() {
       </div>
 
       <div style={{ padding: "24px 32px", display: "grid", gap: 16 }}>
+        {/* Headline stats — type carries the hierarchy, no card chrome. */}
+        <div style={{ display: "flex", gap: 40, flexWrap: "wrap", padding: "4px 2px" }}>
+          <Stat label="Total events" value={summary.data ? summary.data.total_events : "—"} />
+          <Stat label="Active users" value={summary.data ? summary.data.distinct_active_users : "—"} />
+          <Stat label="LLM cost" value={cost.data ? `$${cost.data.totals.cost_usd.toFixed(2)}` : "—"} />
+          <Stat label="LLM calls" value={cost.data ? cost.data.totals.calls : "—"} />
+        </div>
+
         <Panel title="Usage" query={summary} testid="admin-analytics-usage">
           {(d) => (
             <>
               {d.truncated && <TruncatedBadge />}
-              <div style={{ display: "flex", gap: 32, margin: "8px 0 16px" }}>
-                <Stat label="Total events" value={d.total_events} />
-                <Stat label="Active users" value={d.distinct_active_users} />
-              </div>
-              {d.by_event_type.length === 0 ? (
-                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No events in this range.</div>
-              ) : (
-                <table style={{ borderCollapse: "collapse", minWidth: 360 }}>
+              <DayLineChart
+                points={d.series?.length
+                  ? zeroFillDays(d.series.map((p) => ({ date: p.date, value: p.count })), d.range.from, d.range.to)
+                  : []}
+                color="var(--brand-forest, #1B6C42)"
+                fillColor="var(--sap-100, #e0ecd8)"
+                ariaLabel="Events per day"
+              />
+              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Top event types</h3>
+              <CategoryBars
+                rows={d.by_event_type.slice(0, 8).map((r) => ({ label: r.event_type, value: r.count }))}
+                ariaLabel="Top event types"
+              />
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data</summary>
+                <table style={{ borderCollapse: "collapse", minWidth: 360, marginTop: 8 }}>
                   <thead>
                     <tr><th style={th}>Event type</th><th style={{ ...th, textAlign: "right" }}>Count</th></tr>
                   </thead>
@@ -204,41 +241,66 @@ function AnalyticsBody() {
                     ))}
                   </tbody>
                 </table>
-              )}
+              </details>
             </>
           )}
         </Panel>
 
         <Panel title="Top users" query={byUser} testid="admin-analytics-users">
-          {(d) => (
-            <>
-              {d.truncated && <TruncatedBadge />}
-              {d.users.length === 0 ? (
-                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No user activity in this range.</div>
-              ) : (
-                <table style={{ borderCollapse: "collapse", minWidth: 520 }}>
-                  <thead>
-                    <tr>
-                      <th style={th}>User</th>
-                      <th style={{ ...th, textAlign: "right" }}>Events</th>
-                      <th style={{ ...th, textAlign: "right" }}>LLM cost</th>
-                      <th style={{ ...th, textAlign: "right" }}>Tokens</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {d.users.map((u) => (
-                      <tr key={u.user_id}>
-                        <td style={{ ...td, fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{u.user_id}</td>
-                        <td style={tdNum}>{u.event_count}</td>
-                        <td style={tdNum}>${u.llm_cost_usd.toFixed(4)}</td>
-                        <td style={tdNum}>{u.total_tokens}</td>
+          {(d) => {
+            const selectors = {
+              events: (u: (typeof d.users)[number]) => u.event_count,
+              cost: (u: (typeof d.users)[number]) => u.llm_cost_usd,
+              tokens: (u: (typeof d.users)[number]) => u.total_tokens,
+            } as const;
+            const users = userSort.key
+              ? [...d.users].sort((a, b) => {
+                  const sel = selectors[userSort.key!];
+                  return userSort.desc ? sel(b) - sel(a) : sel(a) - sel(b);
+                })
+              : d.users;
+            const sortBtn = (key: keyof typeof selectors, label: string) => (
+              <button
+                data-testid={`admin-analytics-users-sort-${key}`}
+                onClick={() => toggleUserSort(key)}
+                style={{
+                  font: "inherit", color: "inherit", textTransform: "inherit", letterSpacing: "inherit",
+                  fontWeight: userSort.key === key ? 700 : "inherit",
+                }}
+              >
+                {label}{userSort.key === key ? (userSort.desc ? " ↓" : " ↑") : ""}
+              </button>
+            );
+            return (
+              <>
+                {d.truncated && <TruncatedBadge />}
+                {d.users.length === 0 ? (
+                  <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No user activity in this range.</div>
+                ) : (
+                  <table style={{ borderCollapse: "collapse", minWidth: 520 }}>
+                    <thead>
+                      <tr>
+                        <th style={th}>User</th>
+                        <th style={{ ...th, textAlign: "right" }}>{sortBtn("events", "Events")}</th>
+                        <th style={{ ...th, textAlign: "right" }}>{sortBtn("cost", "LLM cost")}</th>
+                        <th style={{ ...th, textAlign: "right" }}>{sortBtn("tokens", "Tokens")}</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </>
-          )}
+                    </thead>
+                    <tbody>
+                      {users.map((u) => (
+                        <tr key={u.user_id}>
+                          <td style={{ ...td, fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{u.user_id}</td>
+                          <td style={tdNum}>{u.event_count}</td>
+                          <td style={tdNum}>${u.llm_cost_usd.toFixed(4)}</td>
+                          <td style={tdNum}>{u.total_tokens}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </>
+            );
+          }}
         </Panel>
 
         <Panel title="LLM cost" query={cost} testid="admin-analytics-cost">
@@ -259,10 +321,24 @@ function AnalyticsBody() {
                 ))}
                 {d.truncated && <TruncatedBadge />}
               </div>
-              {d.rows.length === 0 ? (
-                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No LLM calls in this range.</div>
-              ) : (
-                <table style={{ borderCollapse: "collapse", minWidth: 560 }}>
+              <DayLineChart
+                points={d.series?.length
+                  ? zeroFillDays(d.series.map((p) => ({ date: p.date, value: p.cost_usd })), d.range.from, d.range.to)
+                  : []}
+                color="var(--brand-forest, #1B6C42)"
+                fillColor="var(--sap-100, #e0ecd8)"
+                ariaLabel="Cost per day"
+                format={(v) => `$${v.toFixed(2)}`}
+              />
+              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Cost by {d.group_by}</h3>
+              <CategoryBars
+                rows={d.rows.slice(0, 8).map((r) => ({ label: r.key || "(none)", value: r.cost_usd }))}
+                ariaLabel={`Cost by ${d.group_by}`}
+                format={(v) => `$${v.toFixed(4)}`}
+              />
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data</summary>
+                <table style={{ borderCollapse: "collapse", minWidth: 560, marginTop: 8 }}>
                   <thead>
                     <tr>
                       <th style={th}>{d.group_by}</th>
@@ -294,7 +370,7 @@ function AnalyticsBody() {
                     </tr>
                   </tbody>
                 </table>
-              )}
+              </details>
             </>
           )}
         </Panel>
@@ -303,6 +379,14 @@ function AnalyticsBody() {
           {(d) => (
             <>
               {d.truncated && <TruncatedBadge />}
+              <DayLineChart
+                points={d.series?.length
+                  ? zeroFillDays(d.series.map((p) => ({ date: p.date, value: p.count })), d.range.from, d.range.to)
+                  : []}
+                color="var(--err, #a83a3a)"
+                ariaLabel="Errors per day"
+              />
+              <div style={{ height: 12 }} />
               {d.errors.length === 0 ? (
                 <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No errors in this range. 🎉</div>
               ) : (
