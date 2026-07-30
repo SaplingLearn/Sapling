@@ -116,7 +116,12 @@ export interface RoomMember {
 }
 
 export interface RoomOverviewData {
-  room: { id: string; name: string; invite_code: string; created_by: string };
+  room: {
+    id: string; name: string; invite_code: string; created_by: string;
+    // #405: real ownership, distinct from the immutable creator record.
+    // Optional so rows predating the 0038 backfill still typecheck.
+    owner_id?: string | null;
+  };
   members: RoomMember[];
   ai_summary: string;
 }

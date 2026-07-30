@@ -202,15 +202,19 @@ function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoi
   const { userId } = useUser();
   const toast = useToast();
   const [rooms, setRooms] = React.useState<PublicRoom[]>([]);
+  const [joining, setJoining] = React.useState<string | null>(null);
 
   const refresh = React.useCallback(async () => {
     if (!userId) return;
     try {
       setRooms((await listPublicRooms(userId)).rooms);
-    } catch {
-      // Discovery is best-effort; the rooms list itself stays authoritative.
+    } catch (err) {
+      // Never swallow: an empty list has to mean "no public rooms", not
+      // "the fetch broke" (#463/#185 convention). This is a secondary
+      // surface, so it toasts rather than taking over with a banner.
+      toast.error(`Couldn't load public rooms. ${String(err)}`);
     }
-  }, [userId]);
+  }, [userId, toast]);
 
   React.useEffect(() => { refresh(); }, [refresh]);
 
@@ -218,13 +222,19 @@ function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoi
   if (discoverable.length === 0) return null;
 
   const join = async (roomId: string) => {
-    if (!userId) return;
+    if (!userId || joining) return;
+    setJoining(roomId);
     try {
       await joinPublicRoom(userId, roomId);
       toast.success("Joined room");
       onJoined();
+      // onJoined reloads MY rooms; this list owns its own data, so refresh
+      // it too or the joined room lingers as "discoverable" (#485 review).
+      await refresh();
     } catch (err) {
       toast.error(String(err));
+    } finally {
+      setJoining(null);
     }
   };
 
@@ -249,9 +259,10 @@ function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoi
           <button
             data-testid={`social-public-join-${r.id}`}
             className="btn btn--sm"
+            disabled={joining !== null}
             onClick={() => join(r.id)}
           >
-            Join
+            {joining === r.id ? "Joining…" : "Join"}
           </button>
         </div>
       ))}
@@ -770,7 +781,11 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
   }, [roomId]);
 
   const refresh = () => getRoomOverview(roomId).then(setData).catch(console.error);
-  const isLeader = data?.room?.created_by === userId;
+  // Ownership, not authorship: the backend's kick gate keys on owner_id
+  // (#405, transferable later). Fall back to created_by for rows predating
+  // the 0038 backfill.
+  const roomOwnerId = data?.room?.owner_id ?? data?.room?.created_by;
+  const isLeader = roomOwnerId === userId;
 
   const comparison = React.useMemo(() => {
     if (!data || !suggestedId || suggestedId === userId) return null;
@@ -854,7 +869,7 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
           <MemberRow
             key={m.user_id}
             member={m}
-            isLeader={data.room.created_by === m.user_id}
+            isLeader={(data.room.owner_id ?? data.room.created_by) === m.user_id}
             canKick={isLeader && m.user_id !== userId}
             onKick={async () => {
               try {

@@ -100,7 +100,13 @@ def join_public_room(room_id: str, body: PublicJoinBody, request: Request):
         "room_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"},
     )
     if not existing:
-        table("room_members").insert({"room_id": room_id, "user_id": body.user_id})
+        # UPSERT, not insert: the pre-read is only a "did we actually add"
+        # signal, so a double-click racing itself must no-op on the
+        # room_members PK rather than surface a raw 500 (PR #485 review;
+        # same shape as #464's check-then-act finding).
+        table("room_members").upsert(
+            {"room_id": room_id, "user_id": body.user_id}, on_conflict="room_id,user_id",
+        )
         _touch_room(room_id)
         invalidate_summary(room_id)
     return {"joined": True, "room_id": room_id}
@@ -122,7 +128,10 @@ def join_room(body: JoinRoomBody, request: Request):
         filters={"room_id": f"eq.{room['id']}", "user_id": f"eq.{body.user_id}"},
     )
     if not existing:
-        table("room_members").insert({"room_id": room["id"], "user_id": body.user_id})
+        table("room_members").upsert(
+            {"room_id": room["id"], "user_id": body.user_id}, on_conflict="room_id,user_id",
+        )
+        _touch_room(room["id"])
         invalidate_summary(room["id"])
 
     members = table("room_members").select("user_id", filters={"room_id": f"eq.{room['id']}"})

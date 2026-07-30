@@ -44,7 +44,7 @@ import {
   type ChatResult,
   type GraphDelta,
 } from "@/lib/api";
-import { reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
+import { dropOptimisticConcept, reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
@@ -449,6 +449,7 @@ function LearnInner() {
   // Inline "add concept" composer state for the knowledge-map rail.
   const [addingConcept, setAddingConcept] = useState(false);
   const [newConceptName, setNewConceptName] = useState("");
+  const optimisticSeq = useRef(0);
   // AI-generated concept descriptions, fetched lazily for the focused concept
   // when it has no stored description (keyed by node id). `descInflightRef`
   // dedupes concurrent fetches for the same node.
@@ -1161,7 +1162,11 @@ function LearnInner() {
     if (!label || !cardCourseId) return;
     const root = graphNodes.find(n => n.is_subject_root && n.course_id === cardCourseId);
     const anchorId = focusConcept?.id ?? root?.id;
-    const id = `node-new-${Date.now()}`;
+    // Monotonic suffix: Date.now() alone is ms-resolution, and this path has
+    // no in-flight guard (Enter key-repeat can fire twice before the composer
+    // unmounts), so two adds could share a temp id and desync reconcile
+    // (PR #485 review).
+    const id = `node-new-${Date.now()}-${++optimisticSeq.current}`;
     const newNode: GraphNode = {
       id,
       name: label,
@@ -1183,14 +1188,19 @@ function LearnInner() {
       anchor_node_id: anchorId || undefined,
     })
       .then((res) => {
+        // A live tutor turn may already have rendered this concept as a
+        // `stream-<name>` placeholder; the backend merged by name, so absorb
+        // that node and its edges too (PR #485 review).
+        const streamId = `stream-${normalizeConceptName(label)}`;
         setGraphNodes(prev => reconcileNodes(prev, id, res.node));
-        setGraphEdges(prev => retargetEdges(prev, id, res.node.id));
-        setFocusedNodeId(cur => (cur === id ? res.node.id : cur));
+        setGraphEdges(prev =>
+          retargetEdges(retargetEdges(prev, id, res.node.id), streamId, res.node.id));
+        setFocusedNodeId(cur => (cur === id || cur === streamId ? res.node.id : cur));
         if (res.already_existed) toast.success(`Merged into your existing “${label}” node.`);
       })
       .catch(() => {
-        setGraphNodes(prev => prev.filter(n => n.id !== id));
-        setGraphEdges(prev => prev.filter(e => e.source !== id && e.target !== id));
+        setGraphNodes(prev => dropOptimisticConcept(prev, [], id).nodes);
+        setGraphEdges(prev => dropOptimisticConcept([], prev, id).edges);
         setFocusedNodeId(cur => (cur === id ? null : cur));
         toast.error("Couldn't save the concept — it was removed.");
       });

@@ -34,6 +34,7 @@ def _tables(data=None):
             m = MagicMock()
             m.select.return_value = (data or {}).get(name, [])
             m.insert.return_value = []
+            m.upsert.return_value = []
             m.update.return_value = []
             m.delete.return_value = []
             cache[name] = m
@@ -106,8 +107,11 @@ class TestPublicRooms:
         with patch("routes.social.table", side_effect=factory):
             r = client.post("/api/social/public-rooms/r-pub/join", json={"user_id": "u2"})
         assert r.status_code == 200
-        member = mocks["room_members"].insert.call_args.args[0]
+        # UPSERT, not insert: a double-click racing itself must no-op on the
+        # room_members PK rather than 500 (PR #485 review).
+        member = mocks["room_members"].upsert.call_args.args[0]
         assert member == {"room_id": "r-pub", "user_id": "u2"}
+        assert mocks["room_members"].upsert.call_args.kwargs["on_conflict"] == "room_id,user_id"
         assert "updated_at" in mocks["rooms"].update.call_args.args[0]
 
     def test_join_private_room_is_403(self):

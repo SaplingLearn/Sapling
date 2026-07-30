@@ -450,7 +450,12 @@ def seed_rooms() -> None:
     for room_id, name, invite_code, created_by in _ROOMS:
         h.upsert(
             "rooms",
-            {"id": room_id, "name": name, "invite_code": invite_code, "created_by": created_by},
+            # owner_id mirrors create_room's semantics (#405): ownership starts
+            # with the creator. 0038 makes it NOT NULL and SQL has no
+            # cross-column default, so the seed must set it explicitly or a
+            # from-empty replay fails on the INSERT.
+            {"id": room_id, "name": name, "invite_code": invite_code,
+             "created_by": created_by, "owner_id": created_by},
             on_conflict="invite_code",
         )
 

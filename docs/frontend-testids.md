@@ -358,9 +358,11 @@ coverage and regenerate with `npm run lint:baseline`.
 baselined, so only NEW interactive elements there must carry a testid.
 
 `screens/Tree.tsx` (#330) gets the same treatment: its 8 pre-existing
-untagged buttons/inputs (search, zoom, detail-panel actions) are baselined
-in `eslint-suppressions.json`; only NEW interactive elements there must
-carry a testid (the `graph-add-concept*` trio entered tagged).
+untagged elements — the search input, the five detail-panel actions
+(close / learn / quiz / delete / resume), and the two fullscreen toggles —
+are baselined in `eslint-suppressions.json`; only NEW interactive elements
+there must carry a testid (the `graph-add-concept*` trio entered tagged).
+Note the `graph-zoom-*` controls live in `KnowledgeGraph2D.tsx`, not here.
 
 The `gradebook` surface files (#139/#468) get the same treatment:
 `screens/Gradebook/Course.tsx`, `Landing.tsx`, `Gradebook/AssignmentList.tsx`

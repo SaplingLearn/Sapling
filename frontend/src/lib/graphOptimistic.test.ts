@@ -26,6 +26,27 @@ describe("reconcileNodes", () => {
     const out = reconcileNodes(withCanon, TEMP, CANON);
     expect(out.map((n) => n.id)).toEqual(["n-root", "n-canon"]);
   });
+
+  it("absorbs a live stream-* placeholder for the same concept (PR #485 review)", () => {
+    // A tutor turn can introduce `stream-<normalized-name>` placeholders that
+    // haven't been swapped for real ids yet. Manually re-adding that concept
+    // merges server-side, so the client must not end up rendering both.
+    const withPlaceholder = [
+      ...nodes,
+      { id: "stream-recursion", name: "Recursion", mastery_tier: "unexplored", mastery_score: 0 },
+    ];
+    const out = reconcileNodes(withPlaceholder, TEMP, { ...CANON, concept_name: "  RECURSION " });
+    expect(out.map((n) => n.id)).toEqual(["n-root", "n-canon"]);
+  });
+
+  it("keeps a same-named node that is NOT a placeholder (distinct real rows)", () => {
+    const withReal = [
+      ...nodes,
+      { id: "n-other", name: "Recursion", mastery_tier: "learning", mastery_score: 0.4 },
+    ];
+    const out = reconcileNodes(withReal, TEMP, { ...CANON, concept_name: "Recursion" });
+    expect(out.map((n) => n.id)).toEqual(["n-root", "n-canon", "n-other"]);
+  });
 });
 
 describe("retargetEdges", () => {

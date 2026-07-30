@@ -52,7 +52,7 @@ test("a public room is created with real semantics and joined invite-less (#405)
 
   // Second user discovers and joins WITHOUT an invite.
   const ctx2 = await browser.newContext({
-    storageState: await mintStorageState(USER_SECOND, "Casey Second"),
+    storageState: await mintStorageState(USER_SECOND, "Sam Second"),
   });
   try {
     const page2 = await ctx2.newPage();

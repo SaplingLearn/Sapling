@@ -25,22 +25,48 @@ export interface OptimisticEdge {
 
 export interface CanonicalNode {
   id: string;
+  concept_name?: string;
   mastery_score?: number;
   mastery_tier?: string;
 }
 
+/** Client-side placeholder ids: the optimistic add (`node-new-<ts>`) and the
+ * streamed-turn merge's unknown-concept entries (`stream-<normalized-name>`,
+ * see Learn.tsx's mergeGraphDelta). Both stand in for a row whose real id
+ * isn't known yet, so either may be absorbed by a canonical row. */
+const PLACEHOLDER_ID = /^(node-new-|stream-)/;
+
+const norm = (s: unknown) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
 /** Swap the optimistic node for the canonical row. When the canonical id is
  * already rendered (the name merged into an existing node), the optimistic
- * entry is simply dropped. */
+ * entry is simply dropped.
+ *
+ * Also absorbs any OTHER placeholder standing in for the same concept — a
+ * live tutor turn can have introduced a `stream-<name>` node that hasn't been
+ * swapped for its real id yet, and the backend merges by name, so without
+ * this the client renders two nodes for one row until the next full refetch
+ * (PR #485 review). Same-named nodes with REAL ids are left alone: they are
+ * distinct rows the server chose not to merge.
+ */
 export function reconcileNodes<N extends OptimisticNode>(
   nodes: N[],
   tempId: string,
   canonical: CanonicalNode,
 ): N[] {
-  if (nodes.some((n) => n.id === canonical.id)) {
-    return nodes.filter((n) => n.id !== tempId);
+  const canonName = norm(canonical.concept_name);
+  const absorbed = (n: N) =>
+    n.id !== canonical.id &&
+    n.id !== tempId &&
+    PLACEHOLDER_ID.test(n.id) &&
+    canonName !== "" &&
+    norm((n as { name?: unknown }).name) === canonName;
+
+  const kept = nodes.filter((n) => !absorbed(n));
+  if (kept.some((n) => n.id === canonical.id)) {
+    return kept.filter((n) => n.id !== tempId);
   }
-  return nodes.map((n) =>
+  return kept.map((n) =>
     n.id === tempId
       ? {
           ...n,

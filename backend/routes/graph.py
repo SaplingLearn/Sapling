@@ -91,10 +91,13 @@ def remove_course(user_id: str, course_id: str, request: Request):
 class AddNodeBody(BaseModel):
     """Body for manually adding a single concept node (#330).
 
-    ``course_id`` is required: the UNIQUE (user_id, course_id, concept_name)
-    dedup treats NULL course as always-distinct, so courseless manual nodes
-    would duplicate freely. ``anchor_node_id`` optionally links the new node
-    to an existing one (the client defaults it to the focused concept/root).
+    ``course_id`` is required as a PRODUCT rule, not a storage one: a manual
+    concept always belongs to a course, and the graph is course-scoped
+    everywhere else. (The 0023 constraint is UNIQUE NULLS NOT DISTINCT, so a
+    courseless node would in fact collide with any other courseless node of
+    the same name rather than duplicate — a confusing merge either way.)
+    ``anchor_node_id`` optionally links the new node to an existing one (the
+    client defaults it to the focused concept/root).
     """
     concept_name: str
     course_id: str
