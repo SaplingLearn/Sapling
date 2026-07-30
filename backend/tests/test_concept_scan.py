@@ -91,21 +91,17 @@ def test_extend_concepts_handles_empty(monkeypatch):
     "exc",
     [UsageLimitExceeded("limit"), UnexpectedModelBehavior("weird"), RuntimeError("boom")],
 )
-def test_extend_concepts_falls_back_to_legacy(monkeypatch, exc):
+def test_extend_concepts_degrades_to_empty_on_agent_failure(monkeypatch, caplog, exc):
+    """#151b (D4): /scan-concepts is best-effort graph enrichment — any agent
+    failure degrades to 'no new concepts' with a warning log. The legacy
+    call_gemini_json fallback is gone (ADR 0024)."""
     monkeypatch.setattr(documents, "concept_scan_agent", _FakeAgent(exc=exc))
-    captured = {}
-
-    def _legacy(**kwargs):
-        captured.update(kwargs)
-        return ["Legacy Concept"]
-
-    monkeypatch.setattr(documents, "_extend_course_concepts", _legacy)
-    out = documents._extend_concepts(
-        "u1", "c1", course_label="CS101", existing_concepts=["Recursion"],
-    )
-    assert out == ["Legacy Concept"]
-    assert captured["course_label"] == "CS101"
-    assert captured["existing_concepts"] == ["Recursion"]
+    with caplog.at_level("WARNING", logger="routes.documents"):
+        out = documents._extend_concepts(
+            "u1", "c1", course_label="CS101", existing_concepts=["Recursion"],
+        )
+    assert out == []
+    assert any("concept_scan" in rec.message for rec in caplog.records)
 
 
 client = TestClient(app)
@@ -129,4 +125,26 @@ def test_course_scan_endpoint_uses_agent_and_keeps_response_shape():
     body = r.json()
     assert body["concepts"] == ["Binary Search", "Hashing"]
     assert "added" in body and "existing" in body
-    assert fake.calls  # the agent path (not legacy) served the request
+    assert fake.calls  # the agent path served the request
+
+
+def test_course_scan_endpoint_degrades_to_empty_shape_on_agent_failure():
+    """Route-level #151b contract: an agent failure yields HTTP 200 with the
+    same shape an actually-empty scan produces — {"concepts": [], "added": 0,
+    "existing": N} — and writes nothing to the graph."""
+    fake = _FakeAgent(exc=RuntimeError("boom"))
+    with patch("routes.documents._validate_user", return_value=None), \
+         patch("routes.documents._course_label", return_value="CS101"), \
+         patch("routes.documents.apply_graph_update") as apply_update, \
+         patch("routes.documents.concept_scan_agent", fake), \
+         patch("routes.documents.table") as t:
+        t.return_value.select.return_value = [
+            {"id": "n1", "concept_name": "Recursion"},
+        ]
+        r = client.post(
+            "/api/documents/course/c1/scan-concepts",
+            json={"user_id": "u1"},
+        )
+    assert r.status_code == 200
+    assert r.json() == {"concepts": [], "added": 0, "existing": 1}
+    apply_update.assert_not_called()

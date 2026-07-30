@@ -2,9 +2,10 @@
 /**
  * Component tests for DocumentUploadModal — covers SSE-driven error UX:
  *   1. Terminal error event (`step="failed"`) -> toast.error
- *   2. Fallback error event (`step="fallback"`) -> toast.warn (NOT toast.error)
- *   3. Retry button mints a fresh request_id on the second uploadDocumentStream call
- *   4. request_id is surfaced under the row with a working "copy" button
+ *      (the only error step since #151b — `step="fallback"` died with the
+ *      legacy pipeline)
+ *   2. Retry button mints a fresh request_id on the second uploadDocumentStream call
+ *   3. request_id is surfaced under the row with a working "copy" button
  *
  * Plus the inline course-add flow (#186): a course added via the modal's
  * search must be immediately selectable in the per-file Course dropdown,
@@ -139,47 +140,6 @@ describe("DocumentUploadModal SSE error UX", () => {
     await waitFor(() => {
       expect(screen.getAllByText(/upload failed/i).length).toBe(2);
     });
-  });
-
-  it("emits toast.warn (not toast.error) on fallback SSE error event", async () => {
-    const events: UploadEvent[] = [
-      { type: "status", step: "start", message: "Document received." },
-      {
-        type: "error",
-        step: "fallback",
-        message: "Switching to legacy",
-        data: { request_id: "trace-fallback-1" },
-      },
-      {
-        // Wire-format note: the streaming /upload route emits the result
-        // event with step="finalize" (see backend/routes/documents.py).
-        // The component branches on `ev.type` only, but matching the
-        // backend's actual step keeps the fixture honest.
-        type: "result",
-        step: "finalize",
-        message: "Saved.",
-        data: { id: "doc-1", classification: { category: "other" } },
-      },
-      { type: "status", step: "done", message: "Done." },
-    ];
-    mockedUpload.mockImplementation(async (_fd, onEvent) => {
-      for (const e of events) onEvent(e);
-      // Result already streamed; resolve with the same shape uploadDocumentStream
-      // would return after collecting the result event.
-      return { id: "doc-1", classification: { category: "other" } };
-    });
-
-    const user = userEvent.setup();
-    renderModal();
-    await addFile(user);
-
-    await user.click(screen.getByRole("button", { name: /start upload/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/switching to fallback/i)).toBeInTheDocument();
-    });
-    // No "upload failed" toast — fallback is a warn, not an error.
-    expect(screen.queryByText(/upload failed/i)).not.toBeInTheDocument();
   });
 
   it("retry mints a fresh request_id on the second uploadDocumentStream call", async () => {

@@ -429,41 +429,27 @@ def test_upload_sync_emits_upload_and_processed(sink):
     assert _DOC_TEXT[:40] not in str(uploads + processed)
 
 
-def test_legacy_upload_pipeline_emits_processed(sink):
-    """ADR-0001 fallback uploads must emit document.processed too (D6)."""
-    legacy_ai = {
-        "category": "lecture_notes",
-        "summary": "legacy summary",
-        "concept_notes": [],
-        "concepts": [],
-        "assignments": [],
-        "categories": [],
-    }
+def test_upload_sync_agent_failure_emits_upload_but_no_processed(sink):
+    """#151b: the ADR-0001 legacy fallback is GONE (ADR 0024) — an agent
+    failure maps to a 502 with no documents row, so document.processed must
+    NOT fire. document.upload already counted the accepted attempt and
+    stays: upload/processed deltas are how the failure rate is measured."""
     with (
         patch("routes.documents._validate_user", return_value=None),
         patch("routes.documents.resolve_offering", return_value="off-1"),
         patch("routes.documents.extract_text_from_file", return_value=_DOC_TEXT),
         patch(
             "routes.documents.process_document",
-            side_effect=RuntimeError("force legacy fallback"),
+            side_effect=RuntimeError("agent pipeline failure"),
         ),
-        patch("routes.documents._process_document", return_value=legacy_ai),
         patch("routes.documents.table") as t,
     ):
         t.return_value.select.return_value = []
-        t.return_value.insert.return_value = [{"id": "doc-legacy-1"}]
         r = _upload_sync()
-    assert r.status_code == 200
+    assert r.status_code == 502
 
-    processed = _of_type(sink, "document.processed")
-    assert len(processed) == 1
-    assert processed[0]["payload"] == {
-        "document_id": "doc-legacy-1",
-        "category": "lecture_notes",
-        "course_id": "c1",
-        "char_count": len(_DOC_TEXT),
-    }
-    assert "legacy summary" not in str(processed)
+    assert len(_of_type(sink, "document.upload")) == 1
+    assert _of_type(sink, "document.processed") == []
 
 
 # ── Quiz: quiz.started + quiz.completed ──────────────────────────────────────

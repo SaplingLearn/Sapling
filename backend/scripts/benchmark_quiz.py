@@ -25,16 +25,16 @@ load_dotenv(BASE / ".env.staging", override=True)
 from services.rag_service import retrieve_chunks  # noqa: E402
 
 import asyncio  # noqa: E402
-from services.gemini_service import call_gemini_json  # noqa: E402
+from _raw_gemini import call_gemini_json  # noqa: E402  (benchmark-only helper, ADR 0024)
 from routes.quiz import _quiz_via_agent  # noqa: E402
 from seed_quiz_fixture import FIXTURE_COURSE_ID, seed_fixture_course  # noqa: E402
 
 # Judge uses a DIFFERENT (stronger) model than the quiz generator to avoid
 # self-preference bias. gemini-2.5-pro judges; the quiz agent runs on
 # model_for("quiz") (gemini-2.5-flash-lite by default — see
-# agents/_providers.py). call_gemini_json already accepts a `model`
-# override, so the two are guaranteed to differ; document the exact judge
-# model in the run output.
+# agents/_providers.py). call_gemini_json accepts a `model` override, so the
+# two are guaranteed to differ; document the exact judge model in the run
+# output.
 JUDGE_MODEL = "gemini-2.5-pro"
 
 FIX = Path(__file__).parent / "fixtures" / "quiz_grounding"

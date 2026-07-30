@@ -6,7 +6,7 @@ A FastAPI + Supabase backend that ingests student documents, calls Gemini to cla
 
 - FastAPI: HTTP layer; app + router mounts in `backend/main.py`.
 - Supabase (PostgREST): primary datastore; accessed via `httpx` REST through `db/connection.py`.
-- Gemini (`google-genai`): current LLM provider; wrapped in `services/gemini_service.py` (being deprecated).
+- Gemini (`google-genai`): LLM provider, reached only through Pydantic AI agents (the legacy `services/gemini_service.py` seam was deleted — ADR 0024).
 - Pydantic AI: agent framework (`pydantic-ai-slim[google]` in `requirements.txt`); agents live under `backend/agents/`.
 - React frontend: lives in `frontend/` (out of scope for backend sessions).
 - pytest: backend test runner, fixtures in `tests/conftest.py`.
@@ -14,9 +14,8 @@ A FastAPI + Supabase backend that ingests student documents, calls Gemini to cla
 ## Repo map
 
 - backend/main.py:87 — FastAPI app + CORS; every router mount lives in the block at :150–169.
-- backend/routes/documents.py:182 — `_process_document` single-call classify/summarize/extract (refactor target #1).
-- backend/routes/documents.py:603 — `upload_document` POST `/api/documents/upload` pipeline.
-- backend/routes/learn.py:301 — `build_system_prompt`; the streamed tutor routes live in the same file (`POST /api/learn/chat/stream` + `/start-session/stream` → `services/chat_stream.py::stream_agent_turn`, #349).
+- backend/routes/documents.py — `upload_document` POST `/api/documents/upload` streaming SSE pipeline (+ `/upload/sync` JSON twin) over the classifier/summary/concepts/syllabus agents.
+- backend/routes/learn.py — tutor routes; streamed turns (`POST /api/learn/chat/stream` + `/start-session/stream`) run through `services/chat_stream.py::stream_agent_turn` (#349).
 - backend/routes/quiz.py:1 — quiz session create/answer/score endpoints.
 - backend/routes/notes.py:32 — `/api/notes` notetaker CRUD, concept link/unlink, and agent actions (`summarize`/`extract-concepts`/`chat`/`send-to-tutor`/`generate-quiz`).
 - backend/routes/academics.py — `/api` terms/offerings/enrollments endpoints over the redesigned schema.
@@ -24,8 +23,7 @@ A FastAPI + Supabase backend that ingests student documents, calls Gemini to cla
 - backend/services/session_tokens.py — canonical `mint_session` / `SESSION_COOKIE_NAME`; the only place the `sapling_session` wire format is built.
 - backend/services/academics.py — term/offering/enrollment resolver (`current_term`/`list_terms`/`resolve_offering`/`offering_course_id`/`user_offering_ids_for_course`/`term_for_offering`); the API boundary keeps the abstract `course_id`.
 - backend/services/profiles.py — `get_display_name`/`get_display_names`, decrypting the name off `user_profiles`.
-- backend/services/gemini_service.py:64 — `call_gemini` plain-text call (LLM seam being deprecated).
-- backend/services/gemini_service.py:135 — `call_gemini_json` JSON-mode helper used by document/quiz prompts.
+- backend/agents/_providers.py — per-task model slots (`model_for`) + the `SAPLING_MODEL_MODE` seam; the single LLM chokepoint every agent runs through.
 - backend/services/notes_service.py:49 — notes CRUD with column encryption (`create_note`/`update_note`/`save_summary`/`link_concept`).
 - backend/services/graph_service.py:461 — `apply_graph_update` (becomes a Pydantic AI tool).
 - backend/routes/admin_analytics.py — admin-only `/api/admin/analytics` usage/cost rollups over the `events`/`llm_usage` tables (#375); writes go through `services/events_service.py` + `agents/usage.py::record_agent_usage`.
@@ -85,7 +83,7 @@ make explore                       # Chapter 2: bounded AI exploration of the ru
 - Schema changes are append-only numbered migrations in `backend/db/migrations/` (applied via `python -m db.migrate`); never edit an applied migration or run DDL in the Supabase dashboard.
 - Term/offering/enrollment resolution goes through `services/academics.py`. The HTTP boundary keeps the abstract `course_id`; the graph stays on the abstract course, gradebook keys on `enrollment_id`, and study/analytics key on `offering_id`.
 - Display names are resolved via `services/profiles.py` (`get_display_name`/`get_display_names`), which decrypts off `user_profiles` — don't read name columns off `users`.
-- All current LLM calls route through `services/gemini_service.py` (`call_gemini`, `call_gemini_json`, `call_gemini_multiturn`). New LLM-driven code should be written as Pydantic AI agents in `backend/agents/` rather than extending `gemini_service.py`.
+- All LLM calls are Pydantic AI agents in `backend/agents/` (model slots in `agents/_providers.py`); there is no other sanctioned LLM seam (ADR 0024). The one raw-`google-genai` exception is `scripts/_raw_gemini.py`, benchmark-only by contract.
 - Knowledge-graph mutations go through `services/graph_service.py::apply_graph_update` — routes never write `graph_nodes`/`graph_edges` directly.
 - `functools.lru_cache` is reserved for **deterministic, per-process reads** (#98) — either immutable mappings that never need invalidation (e.g. `academics.offering_course_id`) or reads with a matching `clear_*_cache()` hook that every mutator calls (e.g. `course_context_service.get_course_context` is cleared by `update_course_context`). Cache only hashable-arg functions; return a deep copy if the cached value is mutable; never cache without a clear invalidation story. The autouse `_clear_lru_caches` fixture in `tests/conftest.py` resets these between tests.
 - Backend tests live in `backend/tests/` and run via `pytest`; shared fixtures (mock Supabase, mock Gemini) are in `tests/conftest.py`.

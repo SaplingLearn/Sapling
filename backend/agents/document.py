@@ -15,19 +15,17 @@ Concurrency model:
   extraction runs at all.
 - The graph update is a direct async function call after workers complete.
 
-Fallback contract (see docs/decisions/0001-adopt-pydantic-ai.md):
-- If process_document raises any exception, routes/documents.py catches
-  it, logs at WARNING, and runs _legacy_upload_pipeline
-  (services/gemini_service.py-backed). The streaming route emits an
-  error SSE event then falls through to the same legacy pipeline.
+Failure contract (ADR 0024 — this pipeline is the ONLY upload pipeline;
+ADR 0001's legacy fallback was retired in #151b):
 - If a worker fails inside _run_workers, the exception propagates up to
-  process_document, then to the route, then to the legacy fallback.
-- UsageLimitExceeded and UnexpectedModelBehavior are explicit fallback
-  triggers, not user-facing errors.
-
-Until the route stops calling _legacy_upload_pipeline (i.e., until we
-delete services/gemini_service.py per ADR 0001's migration plan),
-every new agent must respect this contract.
+  process_document and then to the route.
+- routes/documents.py maps failures to the client: /upload/sync raises a
+  retry-friendly 502 (guardrail trips log at WARNING, anything else logs
+  the full exception); the streaming route emits a terminal
+  error:failed + status:done SSE pair.
+- UsageLimitExceeded and UnexpectedModelBehavior are the expected
+  guardrail failures, not bugs — routes must keep them distinguishable
+  from bare exceptions in logs.
 
 Internal API: the `_step_*` functions defined below are wrapped with
 @durable_step and are meant to be called ONLY from `_run_workers`,

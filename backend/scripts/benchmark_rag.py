@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env.staging")  # use staging DB
 
 from routes.learn import _get_catalog_chunk  # noqa: E402
-from services.gemini_service import call_gemini  # noqa: E402
+from _raw_gemini import call_gemini  # noqa: E402  (benchmark-only helper, ADR 0024)
 
 
 # ── Ground-truth test cases ────────────────────────────────────────────────────

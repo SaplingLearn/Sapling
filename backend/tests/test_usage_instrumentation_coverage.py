@@ -1,19 +1,20 @@
 """Guard: no LLM seam is left uninstrumented (issue #118 success criterion).
 
-Two invariants, enforced by static analysis so a *future* call site that skips
+One invariant, enforced by static analysis so a *future* call site that skips
 usage capture fails CI rather than silently dropping billing data:
 
-1. Every ``*_agent.run(...)`` / ``.run_sync(...)`` call site in a production
-   module must be usage-recorded **per call site**: a function enclosing the
-   call must invoke ``record_agent_usage``. One documented escape hatch: a
-   helper that directly ``return``s the run result (a "pass-through runner",
-   e.g. ``notes._run_note_worker``) defers recording to its callers — every
-   module-local call to such a helper is then itself checked under the same
-   rule. Cross-module runner indirection is NOT tracked: keep the run and its
-   ``record_agent_usage`` wrap in the same module, or this guard goes blind.
-2. Every direct-Gemini helper in ``gemini_service`` (``call_gemini`` and
-   ``call_gemini_multiturn``) must call ``_log_gemini_usage``; ``call_gemini_json``
-   delegates to ``call_gemini`` and is exempt (it would double-count otherwise).
+Every ``*_agent.run(...)`` / ``.run_sync(...)`` call site in a production
+module must be usage-recorded **per call site**: a function enclosing the
+call must invoke ``record_agent_usage``. One documented escape hatch: a
+helper that directly ``return``s the run result (a "pass-through runner",
+e.g. ``notes._run_note_worker``) defers recording to its callers — every
+module-local call to such a helper is then itself checked under the same
+rule. Cross-module runner indirection is NOT tracked: keep the run and its
+``record_agent_usage`` wrap in the same module, or this guard goes blind.
+
+(The second invariant this guard used to enforce — ``_log_gemini_usage`` in
+the direct-Gemini helpers — died with ``services/gemini_service.py`` in
+#151b / ADR 0024: agents are the only LLM seam left to instrument.)
 """
 from __future__ import annotations
 
@@ -131,26 +132,4 @@ def test_every_agent_run_site_records_usage():
     assert not offenders, (
         "These agent-run call sites have no enclosing record_agent_usage call "
         f"(uninstrumented LLM spend): {offenders}"
-    )
-
-
-def test_gemini_helpers_log_usage():
-    src = (BACKEND / "services" / "gemini_service.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-
-    logged: dict[str, bool] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name in {
-            "call_gemini", "call_gemini_multiturn",
-        }:
-            logged[node.name] = any(
-                isinstance(c, ast.Call)
-                and isinstance(c.func, ast.Name)
-                and c.func.id == "_log_gemini_usage"
-                for c in ast.walk(node)
-            )
-
-    assert logged.get("call_gemini"), "call_gemini must call _log_gemini_usage"
-    assert logged.get("call_gemini_multiturn"), (
-        "call_gemini_multiturn must call _log_gemini_usage"
     )

@@ -109,10 +109,10 @@ class UnstubbedLLMEgress(RuntimeError):
 
 # Every google-genai call — unary, streaming, sync, async, plus the File API's
 # upload/download side channels — bottoms out in one of these BaseApiClient
-# methods. We patch the CLASS, not an instance: several modules build a
-# module-level `genai.Client` at import time (services/rag_service.py,
-# services/gemini_service.py, and pydantic-ai's GoogleProvider in
-# agents/_providers.py), so instance-level patching would miss whichever client
+# methods. We patch the CLASS, not an instance: clients are built in several
+# places (services/rag_service.py's module-level client, and the pydantic-ai
+# GoogleProviders that agents/_providers.py builds per event loop), so
+# instance-level patching would miss whichever client
 # was already constructed. Names are probed with hasattr so a google-genai bump
 # that drops a private helper degrades gracefully instead of erroring.
 _GENAI_EGRESS_METHODS = (
@@ -159,9 +159,8 @@ def _hermetic_llm_transport(request, monkeypatch):
             "unstubbed LLM egress: this test reached the google-genai transport "
             "(google.genai._api_client.BaseApiClient) and would have made a real, "
             "billable model call. Patch the service/agent seam the code path uses "
-            "(e.g. services.gemini_service.call_gemini, <agent>.run, "
-            "services.rag_service._client), or mark the test @pytest.mark.live_llm "
-            "if the live call is intentional."
+            "(e.g. <agent>.run, services.rag_service._client), or mark the "
+            "test @pytest.mark.live_llm if the live call is intentional."
         )
 
     # Lets tests assert the guard is installed without invoking it.

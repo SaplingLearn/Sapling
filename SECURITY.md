@@ -188,7 +188,7 @@ All Gemini callers decrypt before constructing a prompt. None of `decrypt_if_pre
 
 - **`routes/learn.py`** — student name (`get_user_name`), document summaries, and concept notes decrypted before `_make_system_prompt()` (`learn.py` ~lines 130, 133, 243, 286).
 - **`routes/quiz.py`** — student name decrypted before `quiz_context_update` and `quiz_generation` prompts (`quiz.py` ~lines 192, 198).
-- **`routes/study_guide.py`** — document summary and concept notes decrypted before `call_gemini_json` (`study_guide.py` ~lines 43, 49, 54).
+- **`routes/study_guide.py`** — document summary and concept notes decrypted before the study-guide agent's context block is assembled (`study_guide.py` ~lines 43, 49, 54).
 - **`routes/flashcards.py`** — same decrypt pattern before flashcard extraction (~lines 130, 133, 424, 428).
 - **`routes/documents.py`** — concept extension and graph updates decrypt summaries first (~lines 237, 240, 454, 458).
 
