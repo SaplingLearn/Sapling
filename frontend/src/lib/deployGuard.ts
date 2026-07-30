@@ -19,10 +19,12 @@ export const FRONTEND_ENVS = {
   production: {
     apiUrl: 'https://api.saplinglearn.com',
     cookieDomain: '.saplinglearn.com',
+    siteUrl: 'https://saplinglearn.com',
   },
   staging: {
     apiUrl: 'https://api.staging.saplinglearn.com',
     cookieDomain: '.staging.saplinglearn.com',
+    siteUrl: 'https://staging.saplinglearn.com',
   },
 } as const;
 
@@ -36,7 +38,7 @@ type EnvSource = Readonly<Record<string, string | undefined>>;
 /** Match a value to a known environment, or null (empty / non-canonical). */
 function classify(
   value: string | undefined,
-  field: 'apiUrl' | 'cookieDomain',
+  field: 'apiUrl' | 'cookieDomain' | 'siteUrl',
 ): FrontendEnv | null {
   const v = (value ?? '').trim().toLowerCase();
   if (!v) return null;
@@ -85,6 +87,25 @@ export function resolveFrontendEnv(env: EnvSource): ResolvedFrontendEnv {
 }
 
 /**
+ * The canonical public origin for metadata (metadataBase, sitemap, robots).
+ * ADR-0022 precedence, same as `resolveFrontendEnv`: when `DEPLOY_ENV` names
+ * a known environment it WINS unconditionally — an explicit var must never
+ * silently override the environment the build was deployed as.
+ * `NEXT_PUBLIC_SITE_URL` is the fallback for local/preview builds where
+ * `DEPLOY_ENV` is unset. Defaults to production so crawlers scraping an
+ * unconfigured build never index a non-canonical host.
+ */
+export function resolveSiteUrl(env: EnvSource): string {
+  const deployEnv = (env.DEPLOY_ENV ?? '').trim().toLowerCase();
+  if (deployEnv && deployEnv in FRONTEND_ENVS) {
+    return FRONTEND_ENVS[deployEnv as FrontendEnv].siteUrl;
+  }
+  const explicit = (env.NEXT_PUBLIC_SITE_URL ?? '').trim();
+  if (explicit) return explicit.replace(/\/+$/, '');
+  return FRONTEND_ENVS.production.siteUrl;
+}
+
+/**
  * Best-effort: which environment SHOULD serve this request host? Returns null
  * for hosts we don't recognise (preview `*.workers.dev`, localhost, custom
  * domains) — the guard must not judge those.
@@ -130,14 +151,19 @@ export function checkFrontendDeployEnv(env: EnvSource): string[] {
   const problems: string[] = [];
 
   const classified: Partial<
-    Record<'NEXT_PUBLIC_API_URL' | 'BACKEND_URL' | 'COOKIE_DOMAIN', FrontendEnv>
+    Record<
+      'NEXT_PUBLIC_API_URL' | 'BACKEND_URL' | 'COOKIE_DOMAIN' | 'NEXT_PUBLIC_SITE_URL',
+      FrontendEnv
+    >
   > = {};
   const api = classify(env.NEXT_PUBLIC_API_URL, 'apiUrl');
   const backend = classify(env.BACKEND_URL, 'apiUrl');
   const cookie = classify(env.COOKIE_DOMAIN, 'cookieDomain');
+  const site = classify(env.NEXT_PUBLIC_SITE_URL, 'siteUrl');
   if (api) classified.NEXT_PUBLIC_API_URL = api;
   if (backend) classified.BACKEND_URL = backend;
   if (cookie) classified.COOKIE_DOMAIN = cookie;
+  if (site) classified.NEXT_PUBLIC_SITE_URL = site;
 
   // 1. Consistency (always on, no config needed): every canonical value must
   //    name the SAME environment. Catches split-brain like a prod API URL with

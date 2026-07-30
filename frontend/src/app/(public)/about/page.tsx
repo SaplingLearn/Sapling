@@ -1,4 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "About",
+  description:
+    "The story behind Sapling: a student-built AI study partner from Boston University, recognized for reimagining how students learn through conversation and a living knowledge graph.",
+  alternates: { canonical: "/about" },
+};
 
 const FOOTER_LINKS = [
   { label: "Home", href: "/" },

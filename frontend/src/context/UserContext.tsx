@@ -22,7 +22,7 @@ interface UserContextValue {
   equippedCosmetics: EquippedCosmetics;
   featuredRole: Role | null;
   isAdmin: boolean;
-  setActiveUser: (id: string, name: string, avatar?: string) => void;
+  setActiveUser: (id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => void;
   confirmApproved: () => void;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -52,6 +52,20 @@ export const UserContext = createContext<UserContextValue>({
   refreshProfile: () => Promise.resolve(),
   setAvatarUrl: () => {},
 });
+
+// Mirror of middleware.ts PROTECTED (keep in sync; app/robots.ts mirrors it
+// too): the shell routes where a cleared session leaves no usable UI.
+const SHELL_PREFIXES = [
+  '/dashboard', '/learn', '/quiz', '/study', '/tree',
+  '/library', '/calendar', '/social',
+  '/settings', '/achievements', '/admin',
+  '/gradebook', '/course-planner', '/notetaker', '/profile',
+];
+
+// Pure + exported for tests (window.location is unstubbable under jsdom).
+export function shouldBounceToSignin(pathname: string): boolean {
+  return SHELL_PREFIXES.some(p => pathname.startsWith(p));
+}
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState('');
@@ -157,11 +171,47 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, []);
 
+  // Shared teardown for "this client's identity is no longer valid": local
+  // state plus the persisted localStorage copy. Used by signOut and by the
+  // #191 stale-identity reconciliation in fetchProfileData.
+  const clearStaleClientAuth = useCallback(() => {
+    setUserId('');
+    setUserName('');
+    setAvatarUrl('');
+    setIsAuthenticated(false);
+    setIsApproved(false);
+    setUsername(null);
+    setRoles([]);
+    setEquippedCosmetics({});
+    setFeaturedRole(null);
+    setIsAdmin(false);
+    localStorage.removeItem('sapling_user');
+  }, []);
+
   const fetchProfileData = useCallback(async (uid: string) => {
     if (!uid) return;
     try {
       const res = await fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(uid)}`, { credentials: 'include' });
-      if (!res.ok) return;
+      if (!res.ok) {
+        // #191: a definitive 401 (no live session) or 404 (user row gone —
+        // the stale-session family) means the identity this client holds is
+        // dead: clear it so isAuthenticated stops asserting a session the
+        // server won't honor. This effect already runs on every authed
+        // mount, so the stale-localStorage case self-heals with no extra
+        // request. Transient failures (5xx, network) fall through and keep
+        // the session — a server blip must not sign the user out.
+        if (res.status === 401 || res.status === 404) {
+          clearStaleClientAuth();
+          // On a shell route a cleared session has no usable UI left (every
+          // screen gates on userId) and the next server navigation would be
+          // bounced by the middleware anyway — bounce now, with the same
+          // greppable code the middleware uses.
+          if (typeof window !== 'undefined' && shouldBounceToSignin(window.location.pathname)) {
+            window.location.replace('/?error=session_expired');
+          }
+        }
+        return;
+      }
       const data = await res.json();
       setUsername(data.username ?? null);
       setRoles(data.roles ?? []);
@@ -192,7 +242,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       const fr = data.equipped_cosmetics?.featured_role ?? null;
       setFeaturedRole(fr);
     } catch {}
-  }, []);
+  }, [clearStaleClientAuth]);
 
   useEffect(() => {
     if (userReady && userId) fetchProfileData(userId);
@@ -200,33 +250,29 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
 
-  const setActiveUser = (id: string, name: string, avatar?: string) => {
+  const setActiveUser = (id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => {
     setUserId(id);
     setUserName(name);
     if (avatar) setAvatarUrl(avatar);
     setIsAuthenticated(true);
-    localStorage.setItem('sapling_user', JSON.stringify({ id, name, avatar: avatar || '' }));
+    // #191: persist only an identity confirmed against the live session.
+    // Callers pass { persist: false } when GET /api/auth/me could not
+    // confirm — the tab still works, and the next full load reconciles via
+    // the cookie fallback above instead of trusting a stale localStorage copy.
+    if (opts?.persist !== false) {
+      localStorage.setItem('sapling_user', JSON.stringify({ id, name, avatar: avatar || '' }));
+    }
   };
 
   const confirmApproved = () => setIsApproved(true);
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     try {
       await fetch('/api/auth/session', { method: 'DELETE' });
     } finally {
-      setUserId('');
-      setUserName('');
-      setAvatarUrl('');
-      setIsAuthenticated(false);
-      setIsApproved(false);
-      setUsername(null);
-      setRoles([]);
-      setEquippedCosmetics({});
-      setFeaturedRole(null);
-      setIsAdmin(false);
-      localStorage.removeItem('sapling_user');
+      clearStaleClientAuth();
     }
-  };
+  }, [clearStaleClientAuth]);
 
   const value = useMemo(
     () => ({
@@ -235,7 +281,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setActiveUser, confirmApproved, signOut, refreshProfile, setAvatarUrl,
     }),
     [userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved,
-     username, roles, equippedCosmetics, featuredRole, isAdmin, refreshProfile]
+     username, roles, equippedCosmetics, featuredRole, isAdmin, refreshProfile, signOut]
   );
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
