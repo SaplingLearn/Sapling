@@ -140,6 +140,9 @@
   "src/components/screens/Tree.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
+    },
+    "no-restricted-syntax": {
+      "count": 8
     }
   },
   "src/lib/api.test.ts": {

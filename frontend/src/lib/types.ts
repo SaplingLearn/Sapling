@@ -116,7 +116,12 @@ export interface RoomMember {
 }
 
 export interface RoomOverviewData {
-  room: { id: string; name: string; invite_code: string; created_by: string };
+  room: {
+    id: string; name: string; invite_code: string; created_by: string;
+    // #405: real ownership, distinct from the immutable creator record.
+    // Optional so rows predating the 0038 backfill still typecheck.
+    owner_id?: string | null;
+  };
   members: RoomMember[];
   ai_summary: string;
 }
@@ -554,4 +559,19 @@ export interface ErrorsPageData {
   // Refers to the bucket series' scan (the feed itself is paginated).
   truncated: boolean;
   series: UsageDayPoint[] | null;
+}
+
+// ── Public rooms (#405) ──────────────────────────────────────────────────────
+// The invite-less discovery payload; deliberately carries NO invite_code.
+export interface PublicRoom {
+  id: string;
+  name: string;
+  topic: string | null;
+  course: string | null;
+  owner_id: string;
+  created_by: string;
+  created_at: string | null;
+  updated_at: string | null;
+  is_public: true;
+  member_count: number;
 }

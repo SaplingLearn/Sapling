@@ -122,6 +122,15 @@ class UpdateCourseColorBody(BaseModel):
 class CreateRoomBody(BaseModel):
     user_id: str = "user_andres"
     room_name: str = "Study Room"
+    # #405 semantics: optional labeling + the public flag (false = invite-only).
+    topic: str | None = None
+    course: str | None = None
+    is_public: bool = False
+
+
+class PublicJoinBody(BaseModel):
+    """Body for the invite-less join of a public room (#405)."""
+    user_id: str
 
 
 class JoinRoomBody(BaseModel):

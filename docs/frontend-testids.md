@@ -183,6 +183,9 @@ route:
 | `graph-node-circle` | the main circle inside a 2D node group — the mark that encodes the mastery tier as `opacity` |
 | `graph-edge` | one 2D SVG edge `<line>` |
 | `graph-zoom-in` / `graph-zoom-out` / `graph-zoom-reset` | 2D zoom controls |
+| `graph-add-concept` | Tree toolbar: "＋ Add concept" opener (#330) — rendered only when a single course pill is selected (the "all" filter gives no course to attribute the node to) |
+| `graph-add-concept-input` | the concept-name `<input>` (Enter submits, Escape cancels) |
+| `graph-add-concept-submit` | the "Add" button — POSTs create-or-merge, toasts, reloads the graph |
 
 `graph-node-item` / `graph-node` carry the node id as a separate
 `data-node-id` attribute instead of a testid suffix (the repeated-items rule
@@ -206,6 +209,9 @@ never collide in the DOM.
 | `social-join-room` | sidebar "Join" (opens the invite-code input) |
 | `social-create-join-input` | shared create/join text input |
 | `social-create-join-submit` | "Go" |
+| `social-create-topic` / `social-create-course` | create-mode optional labeling inputs (#405) |
+| `social-create-public` | create-mode "Public" checkbox (#405) — public rooms are joinable without an invite |
+| `social-public-join-{roomId}` | "Join" on a discovered public room (stable domain id, #405) |
 | `social-room-item-{roomId}` | a room in the sidebar list (stable seeded/domain id) |
 | `social-room-name` | active room title in the header |
 | `social-invite-copy` | invite-code copy chip in the header |
@@ -350,6 +356,13 @@ coverage and regenerate with `npm run lint:baseline`.
 `src/components/screens/Learn.tsx` (the session-resume rows, #392) is in the
 `files` list with the same treatment: its 21 pre-existing untagged elements are
 baselined, so only NEW interactive elements there must carry a testid.
+
+`screens/Tree.tsx` (#330) gets the same treatment: its 8 pre-existing
+untagged elements — the search input, the five detail-panel actions
+(close / learn / quiz / delete / resume), and the two fullscreen toggles —
+are baselined in `eslint-suppressions.json`; only NEW interactive elements
+there must carry a testid (the `graph-add-concept*` trio entered tagged).
+Note the `graph-zoom-*` controls live in `KnowledgeGraph2D.tsx`, not here.
 
 The `gradebook` surface files (#139/#468) get the same treatment:
 `screens/Gradebook/Course.tsx`, `Landing.tsx`, `Gradebook/AssignmentList.tsx`

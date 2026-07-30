@@ -10,6 +10,7 @@ import type {
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
   UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
+  PublicRoom,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 
@@ -134,6 +135,21 @@ export const describeConcept = (userId: string, concept: string, courseLabel?: s
     `/api/graph/${userId}/concept-description`,
     { method: 'POST', body: JSON.stringify({ concept, course_label: courseLabel ?? null }) }
   );
+
+// Manual add-concept (#330). Returns the CANONICAL node — freshly created,
+// or the dedup survivor when the (case/whitespace-insensitive) name already
+// existed on this course — plus the merge flag the UI toasts on.
+export const addGraphNode = (
+  userId: string,
+  body: { concept_name: string; course_id: string; anchor_node_id?: string },
+) =>
+  fetchJSON<{
+    node: {
+      id: string; concept_name: string; course_id: string | null;
+      mastery_score: number; mastery_tier: string;
+    };
+    already_existed: boolean;
+  }>(`/api/graph/${userId}/nodes`, { method: 'POST', body: JSON.stringify(body) });
 
 export const deleteGraphNode = (userId: string, nodeId: string) =>
   fetchJSON<{ deleted: boolean }>(
@@ -512,11 +528,26 @@ export const exportToGoogleCalendar = (userId: string, assignmentIds: string[]) 
   });
 
 // Social
-export const createRoom = (userId: string, roomName: string) =>
+export const createRoom = (
+  userId: string,
+  roomName: string,
+  opts?: { topic?: string; course?: string; is_public?: boolean },
+) =>
   fetchJSON<{ room_id: string; invite_code: string }>('/api/social/rooms/create', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, room_name: roomName }),
+    body: JSON.stringify({ user_id: userId, room_name: roomName, ...opts }),
   });
+
+// #405 public rooms: is_public=true rooms are listed (no invite_code in the
+// payload, by construction) and joinable without an invite.
+export const listPublicRooms = (userId: string) =>
+  fetchJSON<{ rooms: PublicRoom[] }>(`/api/social/public-rooms?user_id=${encodeURIComponent(userId)}`);
+
+export const joinPublicRoom = (userId: string, roomId: string) =>
+  fetchJSON<{ joined: boolean; room_id: string }>(
+    `/api/social/public-rooms/${encodeURIComponent(roomId)}/join`,
+    { method: 'POST', body: JSON.stringify({ user_id: userId }) },
+  );
 
 export const joinRoom = (userId: string, inviteCode: string) =>
   fetchJSON<{ room: any }>('/api/social/rooms/join', {

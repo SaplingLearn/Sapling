@@ -1,6 +1,7 @@
 import uuid
 import random
 import string
+from datetime import datetime, timezone
 from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -10,7 +11,7 @@ from agents.deps import SaplingDeps
 from agents.social_summary import social_summary_agent
 from agents.usage import record_agent_usage
 from db.connection import table
-from models import CreateRoomBody, JoinRoomBody, MatchBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
+from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
 from services.auth_guard import require_self, get_session_user_id
 from services.encryption import encrypt_if_present, decrypt_if_present
 from services.profiles import get_display_name, get_display_names
@@ -23,6 +24,16 @@ from services.social_cache_service import get_cached_summary, save_summary, inva
 router = APIRouter()
 
 
+def _touch_room(room_id: str) -> None:
+    """Bump rooms.updated_at on membership changes (#405 gave it a writer;
+    message traffic is deliberately left alone — the 0033 realtime publication
+    owns that flow)."""
+    table("rooms").update(
+        {"updated_at": datetime.now(timezone.utc).isoformat()},
+        {"id": f"eq.{room_id}"},
+    )
+
+
 @router.post("/rooms/create")
 def create_room(body: CreateRoomBody, request: Request):
     require_self(body.user_id, request)
@@ -33,10 +44,72 @@ def create_room(body: CreateRoomBody, request: Request):
         "name": body.room_name,
         "invite_code": invite_code,
         "created_by": body.user_id,
+        # #405 semantics: owner_id is REAL ownership (transferable later),
+        # seeded to the creator; is_public gates the invite-less public join.
+        "owner_id": body.user_id,
+        "topic": body.topic,
+        "course": body.course,
+        "is_public": body.is_public,
     })
     table("room_members").insert({"room_id": room_id, "user_id": body.user_id})
     invalidate_summary(room_id)
     return {"room_id": room_id, "invite_code": invite_code}
+
+
+@router.get("/public-rooms")
+def list_public_rooms(request: Request, user_id: str = Query(...)):
+    """Public rooms (#405): is_public=true rooms, joinable without an invite.
+    The select never includes invite_code, so the public listing cannot leak
+    the private join path."""
+    require_self(user_id, request)
+    rooms = table("rooms").select(
+        "id,name,topic,course,owner_id,created_by,created_at,updated_at,is_public",
+        filters={"is_public": "eq.true"},
+    ) or []
+    out = []
+    for room in rooms:
+        members = table("room_members").select(
+            "user_id", filters={"room_id": f"eq.{room['id']}"},
+        ) or []
+        # Explicit projection (never a row spread): the public payload cannot
+        # leak invite_code even if the row carries it.
+        out.append({
+            "id": room["id"],
+            "name": room.get("name"),
+            "topic": room.get("topic"),
+            "course": room.get("course"),
+            "owner_id": room.get("owner_id"),
+            "created_by": room.get("created_by"),
+            "created_at": room.get("created_at"),
+            "updated_at": room.get("updated_at"),
+            "is_public": True,
+            "member_count": len(members),
+        })
+    return {"rooms": out}
+
+
+@router.post("/public-rooms/{room_id}/join")
+def join_public_room(room_id: str, body: PublicJoinBody, request: Request):
+    require_self(body.user_id, request)
+    rooms = table("rooms").select("id,is_public", filters={"id": f"eq.{room_id}"})
+    if not rooms:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if not rooms[0].get("is_public"):
+        raise HTTPException(status_code=403, detail="This room is invite-only")
+    existing = table("room_members").select(
+        "room_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"},
+    )
+    if not existing:
+        # UPSERT, not insert: the pre-read is only a "did we actually add"
+        # signal, so a double-click racing itself must no-op on the
+        # room_members PK rather than surface a raw 500 (PR #485 review;
+        # same shape as #464's check-then-act finding).
+        table("room_members").upsert(
+            {"room_id": room_id, "user_id": body.user_id}, on_conflict="room_id,user_id",
+        )
+        _touch_room(room_id)
+        invalidate_summary(room_id)
+    return {"joined": True, "room_id": room_id}
 
 
 @router.post("/rooms/join")
@@ -55,7 +128,10 @@ def join_room(body: JoinRoomBody, request: Request):
         filters={"room_id": f"eq.{room['id']}", "user_id": f"eq.{body.user_id}"},
     )
     if not existing:
-        table("room_members").insert({"room_id": room["id"], "user_id": body.user_id})
+        table("room_members").upsert(
+            {"room_id": room["id"], "user_id": body.user_id}, on_conflict="room_id,user_id",
+        )
+        _touch_room(room["id"])
         invalidate_summary(room["id"])
 
     members = table("room_members").select("user_id", filters={"room_id": f"eq.{room['id']}"})
@@ -262,6 +338,7 @@ def school_match(body: MatchBody, request: Request):
 def leave_room(room_id: str, body: LeaveRoomBody, request: Request):
     require_self(body.user_id, request)
     table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"})
+    _touch_room(room_id)
     invalidate_summary(room_id)
     return {"left": True}
 
@@ -275,9 +352,12 @@ def kick_member(room_id: str, member_id: str, request: Request, requester_id: st
     )
     if not room_rows:
         raise HTTPException(status_code=404, detail="Room not found")
-    if room_rows[0]["created_by"] != requester_id:
-        raise HTTPException(status_code=403, detail="Only the room leader can kick members")
+    # #405: authorization keys on owner_id (real, transferable ownership) —
+    # created_by stays the immutable creator record and no longer gates.
+    if room_rows[0]["owner_id"] != requester_id:
+        raise HTTPException(status_code=403, detail="Only the room owner can kick members")
     table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{member_id}"})
+    _touch_room(room_id)
     invalidate_summary(room_id)
     return {"kicked": True}
 

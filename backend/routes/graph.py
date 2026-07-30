@@ -10,7 +10,7 @@ from services.auth_guard import require_self
 from services.graph_service import (
     get_graph, get_recommendations,
     get_courses, add_course, delete_course, update_course_color,
-    delete_node, update_node_color,
+    add_node, delete_node, update_node_color,
 )
 from services.request_context import current_request_id
 from agents import WORKER_LIMITS
@@ -87,6 +87,34 @@ def remove_course(user_id: str, course_id: str, request: Request):
 
 
 # ── Node endpoints ───────────────────────────────────────────────────────────
+
+class AddNodeBody(BaseModel):
+    """Body for manually adding a single concept node (#330).
+
+    ``course_id`` is required as a PRODUCT rule, not a storage one: a manual
+    concept always belongs to a course, and the graph is course-scoped
+    everywhere else. (The 0023 constraint is UNIQUE NULLS NOT DISTINCT, so a
+    courseless node would in fact collide with any other courseless node of
+    the same name rather than duplicate — a confusing merge either way.)
+    ``anchor_node_id`` optionally links the new node to an existing one (the
+    client defaults it to the focused concept/root).
+    """
+    concept_name: str
+    course_id: str
+    anchor_node_id: Optional[str] = None
+
+
+@router.post("/{user_id}/nodes")
+def create_node(user_id: str, body: AddNodeBody, request: Request):
+    require_self(user_id, request)
+    if not body.concept_name.strip():
+        raise HTTPException(status_code=422, detail="concept_name must be non-empty")
+    if not body.course_id.strip():
+        raise HTTPException(status_code=422, detail="course_id is required")
+    return add_node(
+        user_id, body.concept_name, body.course_id, anchor_node_id=body.anchor_node_id,
+    )
+
 
 @router.delete("/{user_id}/nodes/{node_id}")
 def remove_node(user_id: str, node_id: str, request: Request):
