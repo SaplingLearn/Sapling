@@ -124,7 +124,7 @@
       "count": 2
     },
     "no-restricted-syntax": {
-      "count": 20
+      "count": 17
     }
   },
   "src/components/screens/Library.tsx": {
