@@ -689,16 +689,25 @@ export interface GenerateFlashcardsResponse {
   context_used?: { documents_found: number; weak_concepts_found: number };
 }
 
-export const generateFlashcards = (userId: string, topic: string, count = 5) =>
+// `semester` (term label, #141) grounds generation in that term's course
+// documents; omitted = current term. JSON.stringify drops it when unset.
+export const generateFlashcards = (userId: string, topic: string, count = 5, semester?: string) =>
   fetchJSON<GenerateFlashcardsResponse>('/api/flashcards/generate', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, topic, count }),
+    body: JSON.stringify({ user_id: userId, topic, count, semester }),
   });
 
-export const getFlashcards = (userId: string, topic?: string) =>
-  fetchJSON<{ flashcards: any[] }>(
-    `/api/flashcards/user/${userId}${topic ? `?topic=${encodeURIComponent(topic)}` : ''}`
+// `semester` scopes the list to that term's offerings (term-less cards stay
+// visible); ""/undefined = All semesters, the unscoped default (#141).
+export const getFlashcards = (userId: string, topic?: string, semester?: string) => {
+  const params = new URLSearchParams();
+  if (topic) params.set('topic', topic);
+  if (semester) params.set('semester', semester);
+  const qs = params.toString();
+  return fetchJSON<{ flashcards: any[] }>(
+    `/api/flashcards/user/${userId}${qs ? `?${qs}` : ''}`
   );
+};
 
 export const rateFlashcard = (userId: string, cardId: string, rating: number) =>
   fetchJSON<{ ok: boolean }>('/api/flashcards/rate', {
@@ -802,22 +811,27 @@ export interface StudyGuideCacheEntry {
   generated_at: string;
 }
 
-export const getStudyGuideExams = (userId: string, courseId: string) =>
+// The study-guide reads take an optional `semester` (term label, #141): the
+// guide keys on that term's offering instead of always the current term's.
+// Omitted/"" = the unchanged current-term resolution.
+export const getStudyGuideExams = (userId: string, courseId: string, semester?: string) =>
   fetchJSON<{ exams: StudyGuideExam[] }>(
-    `/api/study-guide/${encodeURIComponent(userId)}/exams?course_id=${encodeURIComponent(courseId)}`,
+    `/api/study-guide/${encodeURIComponent(userId)}/exams?course_id=${encodeURIComponent(courseId)}` +
+      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
   );
 
-export const getStudyGuide = (userId: string, courseId: string, examId: string) =>
+export const getStudyGuide = (userId: string, courseId: string, examId: string, semester?: string) =>
   fetchJSON<{ guide: StudyGuideContent; generated_at: string; cached: boolean }>(
-    `/api/study-guide/${encodeURIComponent(userId)}/guide?course_id=${encodeURIComponent(courseId)}&exam_id=${encodeURIComponent(examId)}`,
+    `/api/study-guide/${encodeURIComponent(userId)}/guide?course_id=${encodeURIComponent(courseId)}&exam_id=${encodeURIComponent(examId)}` +
+      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
   );
 
-export const regenerateStudyGuide = (userId: string, courseId: string, examId: string) =>
+export const regenerateStudyGuide = (userId: string, courseId: string, examId: string, semester?: string) =>
   fetchJSON<{ success: boolean; guide: StudyGuideContent; generated_at: string }>(
     '/api/study-guide/regenerate',
     {
       method: 'POST',
-      body: JSON.stringify({ user_id: userId, course_id: courseId, exam_id: examId }),
+      body: JSON.stringify({ user_id: userId, course_id: courseId, exam_id: examId, semester }),
     },
   );
 

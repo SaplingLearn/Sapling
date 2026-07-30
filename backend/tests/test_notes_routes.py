@@ -100,6 +100,47 @@ class TestListNotes:
         assert note["course_name"] == "Intro Biology"
         oc.assert_called_once_with("off1")
 
+    # ── semester scoping (#141) — course-filtered read only ──────────────────
+
+    def test_course_filter_with_semester_resolves_strictly(self, client):
+        async def fake_list(user_id, offering_id=None):
+            assert offering_id == "off-f25"
+            return []
+        with (
+            patch("routes.notes.term_id_for_label", return_value="term-f25") as tl,
+            patch("routes.notes.resolve_offering", return_value="off-f25") as ro,
+            patch("routes.notes.list_notes", side_effect=fake_list),
+        ):
+            r = client.get("/api/notes/user/u1?course_id=c2&semester=Fall+2025")
+        assert r.status_code == 200
+        tl.assert_called_once_with("Fall 2025")
+        ro.assert_called_once_with("c2", "term-f25", fallback=False)
+
+    def test_semester_with_no_offering_is_empty_not_current_term(self, client):
+        # The term exists but the course has no offering in it: the route must
+        # answer with the empty shape, never silently resolve another term.
+        with (
+            patch("routes.notes.term_id_for_label", return_value="term-su26"),
+            patch("routes.notes.resolve_offering", return_value=None),
+            patch("routes.notes.list_notes") as ln,
+        ):
+            r = client.get("/api/notes/user/u1?course_id=c2&semester=Summer+2026")
+        assert r.status_code == 200
+        assert r.json() == {"notes": []}
+        ln.assert_not_called()
+
+    def test_unknown_semester_label_is_empty_not_500(self, client):
+        with (
+            patch("routes.notes.term_id_for_label", return_value=None),
+            patch("routes.notes.resolve_offering") as ro,
+            patch("routes.notes.list_notes") as ln,
+        ):
+            r = client.get("/api/notes/user/u1?course_id=c2&semester=Nope")
+        assert r.status_code == 200
+        assert r.json() == {"notes": []}
+        ro.assert_not_called()
+        ln.assert_not_called()
+
 
 class TestCreateNote:
     def test_creates_with_required_fields(self, client):

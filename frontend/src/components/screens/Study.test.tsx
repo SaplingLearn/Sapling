@@ -139,6 +139,7 @@ describe("Study — study guide that genuinely fails to build", () => {
 
     expect(mockedGuide).toHaveBeenCalledTimes(2);
     // Retries the exam that failed, not whatever the selects currently hold.
-    expect(mockedGuide).toHaveBeenLastCalledWith("u1", "c1", "exam-deleted");
+    // (4th arg: the active semester — undefined here, All semesters, #141.)
+    expect(mockedGuide).toHaveBeenLastCalledWith("u1", "c1", "exam-deleted", undefined);
   });
 });

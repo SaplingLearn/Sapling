@@ -95,6 +95,7 @@ def resolve_offering(
     term_id: str | None = None,
     *,
     create: bool = False,
+    fallback: bool = True,
 ) -> str | None:
     """Return the offering id for (course, term).
 
@@ -104,7 +105,11 @@ def resolve_offering(
       Race-safe: losing a concurrent create to the partial unique index
       (migration 0036) re-selects and returns the winner's row instead of
       surfacing the conflict;
-    - ``create=False`` falls back to any existing offering of the course.
+    - ``create=False`` falls back to any existing offering of the course —
+      unless ``fallback=False`` (#141): a caller that explicitly targeted a
+      term (the study-tool semester scoping) gets None back rather than a
+      silent resolution to some OTHER term's offering, and degrades to its
+      own empty/404 behavior.
     Returns None only when the course has no offering and we can't/shouldn't make one.
     """
     if not course_id:
@@ -145,6 +150,9 @@ def resolve_offering(
             if rows:
                 return rows[0]["id"]
             raise
+
+    if not fallback:
+        return None
 
     # No offering in the target term and not creating — fall back to any offering
     # of this course so reads still resolve to something sensible.

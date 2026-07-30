@@ -154,6 +154,28 @@ def test_resolve_offering_no_create_falls_back_to_any_offering():
         assert ac.resolve_offering("course-1", create=False) == "off-legacy"
 
 
+def test_resolve_offering_fallback_false_returns_none_on_term_miss():
+    """#141: an explicitly targeted term with no offering must NOT silently
+    resolve to another term's offering. fallback=False returns None so the
+    caller degrades to its own empty/404 behavior instead."""
+    factory = _factory(
+        {"terms": [{"id": "t1", "sort_key": 1}]},
+        # The any-offering row exists, proving the fallback would have hit it.
+        select_seqs={"course_offerings": [[], [{"id": "off-legacy"}]]},
+    )
+    with patch.object(ac, "table", side_effect=factory):
+        assert ac.resolve_offering("course-1", term_id="t1", fallback=False) is None
+
+
+def test_resolve_offering_fallback_false_still_returns_term_match():
+    factory = _factory(
+        {"terms": [{"id": "t1", "sort_key": 1}],
+         "course_offerings": [{"id": "off-t1"}]},
+    )
+    with patch.object(ac, "table", side_effect=factory):
+        assert ac.resolve_offering("course-1", term_id="t1", fallback=False) == "off-t1"
+
+
 # ── user_offering_ids_for_course ────────────────────────────────────────────
 
 def test_user_offering_ids_for_course_intersects():

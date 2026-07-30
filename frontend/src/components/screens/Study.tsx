@@ -77,7 +77,7 @@ export function Study() {
     searchParams.get("mode") === "cards" ? "cards" : "guide",
   );
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
-  const [activeSemester] = useActiveSemester();
+  const [activeSemester, , semesterHydrated] = useActiveSemester();
 
   React.useEffect(() => {
     if (!userReady || !userId) return;
@@ -158,9 +158,19 @@ export function Study() {
           style={{ display: "flex", flex: 1, minHeight: 0 }}
         >
           {mode === "guide" ? (
-            <GuideMode courses={scopedCourses} isMobile={isMobile} />
+            <GuideMode
+              courses={scopedCourses}
+              isMobile={isMobile}
+              semester={activeSemester}
+              semesterReady={semesterHydrated}
+            />
           ) : (
-            <FlashcardsMode courses={scopedCourses} isMobile={isMobile} />
+            <FlashcardsMode
+              courses={scopedCourses}
+              isMobile={isMobile}
+              semester={activeSemester}
+              semesterReady={semesterHydrated}
+            />
           )}
         </motion.div>
       </AnimatePresence>
@@ -170,7 +180,20 @@ export function Study() {
 
 // ── Study Guide mode ─────────────────────────────────────────────────────────
 
-function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile: boolean }) {
+function GuideMode({
+  courses,
+  isMobile,
+  semester,
+  semesterReady,
+}: {
+  courses: EnrolledCourse[];
+  isMobile: boolean;
+  // The active semester ("" = All semesters → unscoped fetches, #141) and its
+  // hydration flag — fetches wait for it so a stored term never produces an
+  // unscoped-then-scoped double fetch (the Dashboard pattern).
+  semester: string;
+  semesterReady: boolean;
+}) {
   const toast = useToast();
   const { userId } = useUser();
   const [courseId, setCourseId] = React.useState<string>("");
@@ -202,23 +225,23 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
     setExams([]);
     setGuide(null);
     setGuideProblem(null);
-    if (!courseId || !userId) return;
+    if (!courseId || !userId || !semesterReady) return;
     setLoadingExams(true);
-    getStudyGuideExams(userId, courseId)
+    getStudyGuideExams(userId, courseId, semester || undefined)
       .then(r => setExams(r.exams || []))
       .catch(err => {
         console.error("study exams load failed", err);
         toast.error(humanizeError(err, "Couldn't load the exams for this course."));
       })
       .finally(() => setLoadingExams(false));
-  }, [courseId, userId, toast]);
+  }, [courseId, userId, toast, semester, semesterReady]);
 
   const loadGuide = React.useCallback(async (cid: string, eid: string) => {
     if (!userId) return;
     setLoadingGuide(true);
     setGuideProblem(null);
     try {
-      const r = await getStudyGuide(userId, cid, eid);
+      const r = await getStudyGuide(userId, cid, eid, semester || undefined);
       setGuide(r.guide);
       setGeneratedAt(r.generated_at);
       setCached(r.cached);
@@ -236,7 +259,7 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
     } finally {
       setLoadingGuide(false);
     }
-  }, [userId, toast, loadRecent]);
+  }, [userId, toast, loadRecent, semester]);
 
   React.useEffect(() => {
     if (courseId && examId) loadGuide(courseId, examId);
@@ -254,7 +277,8 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
     setRegenerating(true);
     setGuideProblem(null);
     try {
-      const r = await regenerateStudyGuide(userId, courseId, examId);
+      // Regenerates the SELECTED term's guide — same offering the reads key on.
+      const r = await regenerateStudyGuide(userId, courseId, examId, semester || undefined);
       setGuide(r.guide);
       setGeneratedAt(r.generated_at);
       setCached(false);
@@ -463,7 +487,19 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
 
 // ── Flashcards mode ──────────────────────────────────────────────────────────
 
-function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile: boolean }) {
+function FlashcardsMode({
+  courses,
+  isMobile,
+  semester,
+  semesterReady,
+}: {
+  courses: EnrolledCourse[];
+  isMobile: boolean;
+  // See GuideMode: "" = All semesters (unscoped); fetches gate on
+  // semesterReady so a stored term never double-fetches (#141).
+  semester: string;
+  semesterReady: boolean;
+}) {
   const toast = useToast();
   const { userId } = useUser();
   const [cards, setCards] = React.useState<RawCard[]>([]);
@@ -488,7 +524,7 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
     if (!userId) return;
     setLoading(true);
     try {
-      const res = await getFlashcards(userId);
+      const res = await getFlashcards(userId, undefined, semester || undefined);
       setCards(res.flashcards || []);
       setIdx(0);
       setFlipped(false);
@@ -497,9 +533,11 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, semester]);
 
-  React.useEffect(() => { load(); }, [load]);
+  React.useEffect(() => {
+    if (semesterReady) load();
+  }, [load, semesterReady]);
 
   const topics = React.useMemo(() => {
     const set = new Set<string>();
@@ -574,7 +612,8 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
     setGenerating(true);
     setDocsUsed(null);
     try {
-      const r = await generateFlashcards(userId, topic, 5);
+      // Term-scoped generation context: the selected term's course documents.
+      const r = await generateFlashcards(userId, topic, 5, semester || undefined);
       setDocsUsed(r.context_used?.documents_found ?? 0);
       await load();
       toast.success(`Added ${r.flashcards.length} new card${r.flashcards.length === 1 ? "" : "s"}.`);
