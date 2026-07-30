@@ -1,0 +1,17 @@
+{
+  "text": "That's a great start! You're right that a closure is a function that uses variables.\n\nWhat makes it special is that a closure *remembers* the variables from the environment where it was created, even after that environment is gone.\n\nHere's a quick example:\n```python\ndef outer_function(text):\n  # This is the \"enclosing environment\"\n\n  def inner_function():\n    # inner_function can still access 'text'\n    print(text)\n\n  return inner_function\n\n# We call the outer function, and it returns the inner one\nmy_closure = outer_function(\"Hello, world!\")\n\n# Now we call the closure\nmy_closure()\n# Expected output: Hello, world!\n```\n\nIn that example, `outer_function` finishes running and its `text` variable *should* be gone. But `my_closure` still has access to it.\n\nWhy do you think `my_closure` can still print the `text` variable?",
+  "tool_calls": [
+    {
+      "args": {
+        "updates": [
+          {
+            "concept_name": "Closures",
+            "mastery_delta": 0.05,
+            "reason": "Started explaining the concept."
+          }
+        ]
+      },
+      "tool_name": "update_mastery_tool"
+    }
+  ]
+}

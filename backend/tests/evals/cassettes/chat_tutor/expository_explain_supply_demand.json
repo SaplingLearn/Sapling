@@ -1,0 +1,17 @@
+{
+  "text": "Of course. Let's break down the relationship between supply, demand, and price.\n\n### Overview\n\nIn a market, the price of a good is determined by the interaction of two key forces: **supply**, which is how much of the good is available, and **demand**, which is how much of it consumers want. The market settles on a price that balances these two forces, a point called **equilibrium**.\n\n### Detailed Explanation\n\n1.  **Demand:** This refers to the quantity of a product consumers are willing and able to buy at various prices. The **Law of Demand** states that if the price of a good increases, the quantity demanded decreases, and vice-versa. People tend to buy less of something when it's more expensive.\n\n2.  **Supply:** This refers to the quantity of a product that producers are willing and able to sell at various prices. The **Law of Supply** states that if the price of a good increases, the quantity supplied also increases. Producers are more motivated to make and sell a product when they can get a higher price for it.\n\n3.  **Equilibrium:** The point where the supply and demand curves intersect is the **equilibrium price**. At this price, the quantity of the good that consumers want to buy is exactly equal to the quantity producers want to sell.\n\n    *   **Surplus:** If the price is set too high, producers will supply more than consumers are willing to buy. This creates a surplus, which pressures producers to lower their prices to sell their excess inventory.\n    *   **Shortage:** If the price is set too low, consumers will want to buy more than producers are willing to sell. This creates a shortage, which allows producers to raise their prices.\n\n### Example: The Coffee Market\n\nLet's imagine the market for a cup of coffee.\n\n*   If a cup costs **$1**, demand would be very high, but coffee shops would be unwilling to produce much, leading to a **shortage**.\n*   If a cup costs **$10**, coffee shops would love to sell as much as possible, but very few people would buy it, leading to a **surplus**.\n\nThe market might find its equilibrium at **$3.50**. At this price, the number of cups people are willing to buy matches the number of cups coffee shops are willing to sell.\n\nThis relationship is often shown with a simple graph:\n```plot\n{\n  \"data\": [\n    {\n      \"x\": [0, 100],\n      \"y\": [10, 0],\n      \"name\": \"Demand\",\n      \"type\": \"scatter\",\n      \"mode\": \"lines\"\n    },\n    {\n      \"x\": [0, 100],\n      \"y\": [0, 10],\n      \"name\": \"Supply\",\n      \"type\": \"scatter\",\n      \"mode\": \"lines\"\n    },\n    {\n      \"x\": [50],\n      \"y\": [5],\n      \"name\": \"Equilibrium\",\n      \"type\": \"scatter\",\n      \"mode\": \"markers\",\n      \"marker\": {\"size\": 10}\n    }\n  ],\n  \"layout\": {\n    \"xaxis\": {\"title\": \"Quantity\"},\n    \"yaxis\": {\"title\": \"Price ($)\"},\n    \"title\": \"Supply and Demand\",\n    \"annotations\": [\n      {\n        \"x\": 50,\n        \"y\": 5,\n        \"xref\": \"x\",\n        \"yref\": \"y\",\n        \"text\": \"Equilibrium\",\n        \"showarrow\": true,\n        \"arrowhead\": 7,\n        \"ax\": 0,\n        \"ay\": -40\n      }\n    ]\n  }\n}\n```",
+  "tool_calls": [
+    {
+      "args": {
+        "updates": [
+          {
+            "concept_name": "Supply And Demand",
+            "mastery_delta": 0.1,
+            "reason": "Asked for explanation."
+          }
+        ]
+      },
+      "tool_name": "update_mastery_tool"
+    }
+  ]
+}

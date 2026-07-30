@@ -84,9 +84,228 @@ async def read_concepts_for_user(
 
 async def read_concepts_for_user_tool(
     ctx: RunContext[SaplingDeps],
+    limit: int = 25,
 ) -> list[ConceptMastery]:
-    """Pydantic AI tool wrapper. Reads from ctx.deps."""
-    return await read_concepts_for_user(ctx.deps.user_id, ctx.deps.course_id)
+    """List the student's tracked concepts, weakest first. Each entry
+    carries the mastery score (0-1) and when the concept was last
+    reviewed (last_reviewed_at) — use this for review-recency questions
+    the GRAPH CONTEXT block can't answer.
+
+    The LLM may choose `limit` (how many concepts to see, capped here on
+    the wrapper only — the pure function stays uncapped for route/quiz
+    callers). user_id/course_id come from deps, never the model. Fetches
+    through the retrieval seam (ADR 0023).
+    """
+    from agents.tools.retrieval import resolve_retrieval
+
+    rows = await resolve_retrieval(ctx.deps).concept_mastery(
+        ctx.deps.user_id, ctx.deps.course_id
+    )
+    n = max(0, int(limit))
+    return rows[:n]
+
+
+# ── read_graph_neighborhood (#149) ────────────────────────────────────────
+
+
+class ConceptNode(BaseModel):
+    """One concept in the student's course graph, agent-facing shape.
+
+    Names only — row ids never cross the tool boundary (the LLM has no
+    business echoing UUIDs, and every write path resolves by name)."""
+
+    concept_name: str
+    mastery: float = Field(ge=0.0, le=1.0)
+    mastery_tier: str
+    last_reviewed_at: str | None = None
+
+
+class ConceptEdge(BaseModel):
+    """A relationship between two concepts, by NAME (never node ids)."""
+
+    source: str
+    target: str
+    relationship_type: str = "related"
+    strength: float | None = None
+
+
+class GraphNeighborhood(BaseModel):
+    """A depth-1 subgraph around the requested seed concepts."""
+
+    concepts: list[ConceptNode]
+    edges: list[ConceptEdge]
+    truncated: bool = False
+
+
+async def read_graph_neighborhood(
+    user_id: str,
+    course_id: str | None,
+    concepts: list[str],
+    *,
+    limit: int = 20,
+) -> GraphNeighborhood:
+    """Return the depth-1 neighborhood of `concepts` in the user's course
+    graph: the seed concepts that exist (matched via the same
+    case/whitespace-insensitive normalization `apply_graph_update` dedups
+    on), every concept one edge away, and the edges among them — all by
+    concept NAME. Row ids are resolved internally and never returned.
+
+    Course scoping is strict: nodes are read with the course filter, and
+    since `graph_edges` carries no course_id, edges are kept only when
+    BOTH endpoints resolve to a course-scoped node — an edge into another
+    course's concept is dropped rather than leaking its name.
+
+    `limit` caps the total concepts returned (seeds first, then
+    neighbors, deterministic order); `truncated=True` signals the cap
+    bit. Degrades to an empty neighborhood on any DB error — the tutor
+    can always answer without the graph; raising would kill the turn.
+    """
+    # Local import: graph_service imports config at module load; keep this
+    # module's import surface unchanged for non-neighborhood callers.
+    from services.graph_service import _normalize_concept
+
+    def _fetch() -> GraphNeighborhood:
+        empty = GraphNeighborhood(concepts=[], edges=[], truncated=False)
+        try:
+            node_filters = {"user_id": f"eq.{user_id}"}
+            if course_id:
+                node_filters["course_id"] = f"eq.{course_id}"
+            nodes = (
+                table("graph_nodes").select(
+                    "id,concept_name,mastery_score,mastery_tier,last_studied_at",
+                    filters=node_filters,
+                )
+                or []
+            )
+
+            by_id: dict[str, dict[str, Any]] = {}
+            by_norm: dict[str, dict[str, Any]] = {}
+            for n in nodes:
+                name = n.get("concept_name") or ""
+                node_id = n.get("id")
+                if not name or not node_id:
+                    continue
+                by_id[node_id] = n
+                by_norm[_normalize_concept(name)] = n
+
+            seed_ids: list[str] = []
+            seen_ids: set[str] = set()
+            for raw in concepts:
+                row = by_norm.get(_normalize_concept(raw or ""))
+                if row and row["id"] not in seen_ids:
+                    seed_ids.append(row["id"])
+                    seen_ids.add(row["id"])
+            if not seed_ids:
+                return empty
+
+            # Depth-1 edges touching any seed. PostgREST has no OR across
+            # two columns in this client's filter dict (one key per
+            # column), so: two in.() reads, merged + deduped.
+            ids_csv = ",".join(seed_ids)
+            edge_cols = "source_node_id,target_node_id,relationship_type,strength"
+            edge_rows: list[dict[str, Any]] = []
+            for col in ("source_node_id", "target_node_id"):
+                edge_rows.extend(
+                    table("graph_edges").select(
+                        edge_cols,
+                        filters={
+                            "user_id": f"eq.{user_id}",
+                            col: f"in.({ids_csv})",
+                        },
+                    )
+                    or []
+                )
+
+            # Dedup (an edge between two seeds comes back from both reads)
+            # and drop any edge whose endpoint is outside the course-scoped
+            # node map — that endpoint belongs to another course (or is
+            # dangling) and must not leak.
+            kept_edges: list[dict[str, Any]] = []
+            seen_edges: set[tuple] = set()
+            for e in edge_rows:
+                src, tgt = e.get("source_node_id"), e.get("target_node_id")
+                if src not in by_id or tgt not in by_id:
+                    continue
+                key = (src, tgt, e.get("relationship_type") or "related")
+                if key in seen_edges:
+                    continue
+                seen_edges.add(key)
+                kept_edges.append(e)
+
+            # Selection: seeds first, then neighbors in edge order.
+            ordered_ids: list[str] = list(seed_ids)
+            ordered_set = set(seed_ids)
+            for e in kept_edges:
+                for nid in (e["source_node_id"], e["target_node_id"]):
+                    if nid not in ordered_set:
+                        ordered_ids.append(nid)
+                        ordered_set.add(nid)
+
+            cap = max(0, int(limit))
+            truncated = len(ordered_ids) > cap
+            kept_ids = ordered_ids[:cap]
+            kept_id_set = set(kept_ids)
+
+            def _clamp(v: Any) -> float:
+                try:
+                    return max(0.0, min(1.0, float(v or 0.0)))
+                except (TypeError, ValueError):
+                    return 0.0
+
+            out_concepts = [
+                ConceptNode(
+                    concept_name=by_id[nid].get("concept_name") or "",
+                    mastery=_clamp(by_id[nid].get("mastery_score")),
+                    mastery_tier=by_id[nid].get("mastery_tier") or "unexplored",
+                    last_reviewed_at=by_id[nid].get("last_studied_at"),
+                )
+                for nid in kept_ids
+            ]
+            out_edges = [
+                ConceptEdge(
+                    source=by_id[e["source_node_id"]]["concept_name"],
+                    target=by_id[e["target_node_id"]]["concept_name"],
+                    relationship_type=e.get("relationship_type") or "related",
+                    strength=e.get("strength"),
+                )
+                for e in kept_edges
+                if e["source_node_id"] in kept_id_set
+                and e["target_node_id"] in kept_id_set
+            ]
+            return GraphNeighborhood(
+                concepts=out_concepts, edges=out_edges, truncated=truncated
+            )
+        except Exception:
+            logger.exception(
+                "read_graph_neighborhood failed for user=%s course=%s",
+                user_id,
+                course_id,
+            )
+            return empty
+
+    return await asyncio.to_thread(_fetch)
+
+
+async def read_graph_neighborhood_tool(
+    ctx: RunContext[SaplingDeps],
+    concepts: list[str],
+    limit: int = 20,
+) -> GraphNeighborhood:
+    """Expand the student's knowledge graph around the named concepts:
+    each matched concept plus everything one relationship away, with
+    mastery, tier, last_reviewed_at, and the connecting edges
+    (prerequisite / builds_on / related).
+
+    The LLM supplies only concept NAMES (and optionally `limit`);
+    user_id/course_id come from deps so the model can never aim the read
+    at another student or course. Fetches through the retrieval seam
+    (ADR 0023).
+    """
+    from agents.tools.retrieval import resolve_retrieval
+
+    return await resolve_retrieval(ctx.deps).graph_neighborhood(
+        ctx.deps.user_id, ctx.deps.course_id, concepts, limit=limit
+    )
 
 
 # ── read_misconceptions_for_course ────────────────────────────────────────

@@ -332,8 +332,10 @@ class TestGraphUpdatesAccumulation:
 class TestOrchestratorLimitsWired:
     def test_learn_chat_via_agent_passes_usage_limits(self):
         """_chat_via_agent must include usage_limits in the kwargs it passes
-        to agent.run() — not silently omit it."""
-        from agents import ORCHESTRATOR_LIMITS
+        to agent.run() — not silently omit it. #149: the tutor now runs
+        under its own TUTOR_LIMITS (7-tool surface needs more request/tool
+        headroom), not the generic ORCHESTRATOR_LIMITS."""
+        from agents import TUTOR_LIMITS
 
         mock_agent = MagicMock()
         run_result = MagicMock()
@@ -364,9 +366,9 @@ class TestOrchestratorLimitsWired:
 
         call_kwargs = mock_agent.run.call_args.kwargs
         assert "usage_limits" in call_kwargs, (
-            "usage_limits not passed to agent.run() — ORCHESTRATOR_LIMITS is dead code"
+            "usage_limits not passed to agent.run() — TUTOR_LIMITS is dead code"
         )
-        assert call_kwargs["usage_limits"] is ORCHESTRATOR_LIMITS
+        assert call_kwargs["usage_limits"] is TUTOR_LIMITS
 
     def test_quiz_via_agent_passes_usage_limits(self):
         """_quiz_via_agent must also pass usage_limits to quiz_agent.run()."""

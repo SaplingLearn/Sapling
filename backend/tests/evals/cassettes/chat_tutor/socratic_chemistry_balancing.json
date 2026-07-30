@@ -1,0 +1,20 @@
+{
+  "text": "Great question! It's a multi-step process, but totally manageable.\n\nLet's start with the basics. In a redox reaction, electrons are transferred between atoms, causing their \"oxidation states\" to change.\n\nHave you heard of oxidation states before? What do they represent?",
+  "tool_calls": [
+    {
+      "args": {
+        "query": "balancing redox equations"
+      },
+      "tool_name": "search_course_materials"
+    },
+    {
+      "args": {
+        "concepts": [
+          "Redox Reactions",
+          "Oxidation States"
+        ]
+      },
+      "tool_name": "apply_graph_update_tool"
+    }
+  ]
+}

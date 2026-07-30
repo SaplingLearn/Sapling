@@ -57,8 +57,12 @@ production surfaces a miss (see each dataset's module docstring).
 ## Coverage
 
 Offline (in `run_all.py` + CI): `document_classification`, `document_summary`,
-`concept_extraction`, `syllabus_extraction`, `quiz_generation` — 80 cassettes.
+`concept_extraction`, `syllabus_extraction`, `quiz_generation`, and
+`chat_tutor` — 96 cassettes.
 
-Excluded: `chat_tutor`. Its retrieval tool reads a live Supabase, so it can't
-run offline against cassettes; it belongs with the graph-grounded tutor work
-(#149).
+`chat_tutor` records against the committed fixture course
+(`fixtures/tutor_course.json`) through the TutorRetrieval seam
+(`_retrieval_fixture.py`, ADR 0023), so even record/live runs never touch
+Supabase. Its cassettes also freeze the model's *tool calls*, which the
+graph-grounding evaluators (GraphToolUsed / MasteryUpdateEmitted /
+GroundedConcept) score in replay.
