@@ -29,10 +29,20 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true }),
 }));
 
+// TranscriptModal (rendered by the landing, #139) pulls useToast; a stable
+// stub keeps it from throwing outside a provider (same as Landing.test.tsx).
+const toastApi = {
+  error: vi.fn(), success: vi.fn(), info: vi.fn(), warn: vi.fn(), show: vi.fn(), dismiss: vi.fn(),
+};
+vi.mock("@/components/ToastProvider", () => ({
+  useToast: () => toastApi,
+}));
+
 vi.mock("@/lib/api", () => ({
   getCourses: vi.fn(),
   getGradebookSummary: vi.fn(),
   getSemesters: vi.fn(),
+  getGpa: vi.fn(),
 }));
 
 // Presentational children — stubbed so the test only exercises the landing's
@@ -92,7 +102,7 @@ const pressedChip = () =>
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  mockedGetSummary.mockResolvedValue({ courses: [] });
+  mockedGetSummary.mockResolvedValue({ courses: [], gpa: null, semester: "" });
   mockedGetSemesters.mockResolvedValue({ semesters: SEMESTERS });
   mockedGetCourses.mockResolvedValue({
     courses: [course("bio", "Fall 2025"), course("psy", "Spring 2026")],
