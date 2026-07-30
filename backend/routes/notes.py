@@ -19,6 +19,7 @@ from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
+from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
 from services.notes_service import (
@@ -170,6 +171,18 @@ async def create(body: CreateNoteBody, request: Request):
     # Same F4 enrichment as the read paths so a freshly created note carries its
     # abstract course_id + labels (else it shows "Unknown course" until reload).
     note.update(_course_meta(note.get("offering_id") or offering_id, {}))
+    # #117: ids + a boolean only — never the (encrypted-at-rest) title/body.
+    events_service.log_event(
+        "note.created",
+        category="usage",
+        user_id=body.user_id,
+        payload={
+            "note_id": note.get("id"),
+            "course_id": body.course_id,
+            "offering_id": offering_id,
+            "has_body": bool(body.body),
+        },
+    )
     return note
 
 

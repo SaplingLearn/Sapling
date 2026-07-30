@@ -17,6 +17,7 @@ from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from db.connection import table
+from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
@@ -446,6 +447,19 @@ def _consume_pending(session_id: str, user_id: str) -> None:
         session_data["offering_id"] = pending["offering_id"]
 
     table("sessions").insert(session_data)
+    # #117: session.started once the lazy session row actually materializes.
+    # The topic is free text -> content= (fingerprint only), never payload.
+    events_service.log_event(
+        "session.started",
+        category="usage",
+        user_id=user_id,
+        payload={
+            "session_id": session_id,
+            "mode": pending["mode"],
+            "offering_id": pending.get("offering_id"),
+        },
+        content=pending["topic"],
+    )
     save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
 
 
@@ -791,6 +805,17 @@ async def chat(body: ChatBody, request: Request):
     graph_update = response.get("graph_update") or None
     save_message(body.session_id, "assistant", response["reply"], graph_update)
 
+    # #117: one chat.message_sent per persisted agent turn. The message text
+    # is fingerprinted via content= — it never enters a payload.
+    events_service.log_event(
+        "chat.message_sent",
+        category="usage",
+        user_id=body.user_id,
+        request_id=request_id,
+        payload={"mode": body.mode, "session_id": body.session_id},
+        content=body.message,
+    )
+
     return response
 
 
@@ -840,6 +865,18 @@ async def chat_stream(body: ChatBody, request: Request):
         # persists nothing. Encryption happens inside save_message.
         save_message(body.session_id, "user", body.message)
         save_message(body.session_id, "assistant", reply, graph_update or None)
+        # #117: same event as the JSON route, from the on_complete hook so a
+        # disconnected mid-generation turn emits nothing. request_id is
+        # explicit — this runs inside the SSE generator, outside the request
+        # contextvar scope.
+        events_service.log_event(
+            "chat.message_sent",
+            category="usage",
+            user_id=body.user_id,
+            request_id=request_id,
+            payload={"mode": body.mode, "session_id": body.session_id},
+            content=body.message,
+        )
         return {}
 
     async def _legacy() -> dict:
@@ -1047,6 +1084,21 @@ def end_session(body: EndSessionBody, request: Request):
         "time_spent_minutes": elapsed_minutes,
         "recommended_next": [],
     }
+
+    # #117: session.ended for real (materialized) sessions only — the pending
+    # early-return above emits nothing. concepts_covered is a COUNT; the
+    # concept names never enter the payload. No timestamps in payload either
+    # (created_at is a DB default).
+    events_service.log_event(
+        "session.ended",
+        category="usage",
+        user_id=body.user_id,
+        payload={
+            "session_id": body.session_id,
+            "time_spent_minutes": elapsed_minutes,
+            "concepts_covered": len(concepts_covered),
+        },
+    )
 
     table("sessions").update(
         {"summary_json": encrypt_json(summary)},
