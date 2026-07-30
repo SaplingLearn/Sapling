@@ -1157,6 +1157,11 @@ class TestUploadIdempotency:
         proc.assert_not_called()
 
     def test_streaming_replay_emits_done_without_reprocessing(self):
+        """#154/#132: a crash after the streaming `result` event (or any
+        client retry with the same X-Request-ID) must leave exactly ONE
+        consistent document -- the idempotent-replay short-circuit returns
+        the already-persisted row without re-running any agent AND without
+        writing a second `documents` row."""
         existing = {
             "id": "doc-existing-stream",
             "user_id": "u1",
@@ -1185,6 +1190,9 @@ class TestUploadIdempotency:
             ) as r:
                 assert r.status_code == 200
                 body = r.read()
+            # Zero new writes on replay: the idempotency short-circuit
+            # returns before _persist_document (or any other insert) runs.
+            t.return_value.insert.assert_not_called()
         # Orchestrator's classifier must not have been called on the replay.
         cls_run.assert_not_called()
         events = _parse_sse_stream(body)

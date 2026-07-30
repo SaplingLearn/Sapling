@@ -1,8 +1,134 @@
-# 0011: Durable execution via DBOS (partial: optional shim shipped)
+# 0011: Durable execution via DBOS (shipped + validated, default off)
 
-- Status: partial (optional shim shipped, default off)
+- Status: accepted (shipped + validated, default off)
 - Date: 2026-05-04
 - Supersedes: none
+
+## Update (2026-07-30, #154)
+
+Closed every gap the 2026-05-04 update below left open (its own text noted
+"the parts that haven't shipped: test coverage, real production
+validation, monitoring of resume behavior" — this update ships all three).
+
+1. **Entrypoint wiring was missing.** `backend/services/durable.py`'s
+   decorators could go real (`DBOS_ENABLED=true` + `dbos` importable) with
+   no `DBOS` instance ever constructed or `.launch()`ed anywhere in
+   `main.py` — durability looked wired from the decorators alone but did
+   nothing at call time. Fixed: `backend/main.py`'s `_lifespan` now calls
+   `services.durable.init_dbos()` right after the #174 secrets validation
+   and before `yield`, and `shutdown_dbos()` in the shutdown path.
+2. **The `DBOS_DATABASE_URL` precondition is now enforced, not just
+   documented.** `is_durable()` requires ALL THREE of `DBOS_ENABLED=true`,
+   `dbos` importable, AND `DBOS_DATABASE_URL` non-empty. The flag-on-but-
+   no-URL case now degrades to passthrough with a logged warning instead of
+   silently doing nothing (the code previously didn't check the URL at
+   all, despite the module docstring claiming it did).
+3. **`backend/requirements-durable.txt` now exists** (`dbos>=2.28,<3`,
+   pinned to the version this update's verification ran against). Never
+   added to `requirements.txt`/`requirements.lock` — durability stays
+   opt-in and the hermetic suite runs with `dbos` NOT installed.
+4. **Test coverage, previously zero, now covers both modes and resume:**
+   - `backend/tests/test_durable_shim.py` — hermetic, runs WITHOUT `dbos`
+     installed. Reloads the shim under every precondition combination
+     (flag off, flag on + import failure, flag on + no URL, flag on +
+     working stub, stub whose `launch()` raises) and asserts passthrough
+     byte-compatibility (return values, args/kwargs, exceptions) plus the
+     fail-loud contract.
+   - `backend/tests/test_dbos_resume.py` — opt-in
+     (`RUN_DBOS_RESUME=1`, skipped otherwise; also skips if `dbos` isn't
+     installed). A real subprocess crash/resume proof against a live
+     Postgres: `test_shim_resume_minimal_workflow` crashes a 2-step
+     workflow mid-step-2 (`os._exit(42)`), resumes it in a fresh process,
+     and asserts the already-checkpointed step did NOT re-run while the
+     crashed step ran to completion exactly once.
+     `test_pipeline_identical_with_dbos_on` runs
+     `agents.document.process_document` for real under DBOS
+     (`SAPLING_MODEL_MODE=function`) and asserts its output matches the
+     function-mode constants byte-for-byte — proof that wrapping the
+     pipeline in `@durable_workflow`/`@durable_step` changes durability,
+     not behavior. Both tests were run against a real `dbos==2.28.0` +
+     a throwaway Postgres during this update and passed; see the file
+     docstrings for exactly what each does and does not prove.
+5. **Activation procedure, corrected against the installed
+   `dbos==2.28.0`** (verified directly against the package source in a
+   scratch venv; see `backend/services/durable.py::init_dbos`'s docstring
+   for the file/line citations):
+
+   a. `pip install -r backend/requirements-durable.txt`.
+   b. Provision a reachable Postgres for DBOS's own system database (the
+      SAME Postgres instance Supabase/`SUPABASE_DB_URL` uses is fine — DBOS
+      creates its own `dbos` schema there; see "System schema" below).
+   c. Set `DBOS_ENABLED=true` and `DBOS_DATABASE_URL=postgres://...`.
+   d. Restart the FastAPI workers. `init_dbos()` runs in `_lifespan`;
+      ANY failure constructing/launching DBOS makes the app FAIL TO START
+      (same fail-loud posture as #174's `validate_config()`) rather than
+      boot into a silently non-durable state.
+   e. ~~Run DBOS migrations (`dbos migrate`)~~ — **this step from the
+      2026-05-04 procedure below is STALE and is corrected here**:
+      `DBOS.launch()` runs the system-database migrations ITSELF
+      (verified in `dbos/_dbos.py::DBOS._launch`, which calls
+      `self._sys_db.run_migrations()` before anything else happens). No
+      separate `dbos migrate` step is needed for Sapling's setup, where the
+      app's DB role has ordinary DDL rights. (`dbos.run_dbos_database_
+      migrations()` exists as a standalone helper for the case where it
+      doesn't — not exercised here.)
+   f. Confirm activation: `services.durable.is_durable()` returns `True`;
+      `init_dbos()` logs `"durable execution ACTIVE (DBOS launched)"` at
+      startup (or `"durable execution off — passthrough decorators"` in the
+      default, off, mode) — both plain `logger.info` calls, so both are
+      captured by #119's Logfire app-logging instrumentation with no
+      further wiring.
+
+**Resume monitoring.** Beyond the startup INFO log above, `DBOS.launch()`
+logs its own recovery activity (`"Recovering N workflows from application
+version ..."` / `"No workflows to recover..."`) through the same app-
+logging path, so Logfire has it automatically. For a direct look, DBOS's
+system database is its own schema (defaults to `dbos`, confirmed from the
+installed package's migration DDL in `dbos/_migration.py`) with a
+`workflow_status` table (`workflow_uuid`, `status`, `name`, `executor_id`,
+`recovery_attempts`, `created_at`/`updated_at` as epoch-ms bigints, …). A
+sample query to list resumed/pending workflows:
+
+```sql
+select workflow_uuid, name, status, executor_id, recovery_attempts,
+       to_timestamp(created_at / 1000.0) as created_at,
+       to_timestamp(updated_at / 1000.0) as updated_at
+from dbos.workflow_status
+where status in ('PENDING', 'ENQUEUED')
+   or recovery_attempts > 0
+order by created_at desc;
+```
+
+`dbos.*` is entirely DBOS-managed — created and migrated by
+`DBOS.launch()` itself — and is deliberately OUTSIDE
+`backend/db/migrations/`; it is not a Sapling schema, and `python -m
+db.migrate` never touches it.
+
+**Streaming-route asymmetry, reaffirmed.** Still intentional (unchanged
+from the 2026-05-04 text below): the streaming `POST /api/documents/upload`
+route stays non-durable, with X-Request-ID replay as its crash semantic.
+That semantic is now more tightly pinned than when this ADR was first
+written: PR #464 closed the "#132 remainder" — one `result` SSE event per
+streamed upload, ever, with post-result persistence failures always
+terminating in `error:failed` + `status:done` rather than a legacy-fallback
+second run (routes/documents.py's post-roll comment block, "#154 builds on
+this structure — keep persistence in the post-roll, after the result
+event"). `tests/test_documents_routes.py::TestUploadIdempotency::
+test_streaming_replay_emits_done_without_reprocessing` now asserts (not
+just implies) BOTH halves of the #132/#154 acceptance criterion — a crash
+after the `result` event leaves exactly one consistent document — directly:
+zero agent invocations (`classifier_agent.run` unmocked-but-spied,
+`assert_not_called()`) and zero new `documents` inserts
+(`t.return_value.insert.assert_not_called()`) on an X-Request-ID replay.
+
+**Still deferred, unchanged:** production incident-driven validation (this
+ADR's original "when to revisit" trigger #1 — a real lost mid-flight
+upload — hasn't happened, so `DBOS_ENABLED` stays off in every deployed
+environment); DBOS Conductor / multi-executor recovery (Sapling runs a
+single executor, `executor_id="local"`, so cross-executor recovery
+semantics are unexercised by the resume test above); and coexistence with
+ADR 0010's two-phase upload if that ever ships (still an open sequencing
+question — see that section, unchanged, further down).
 
 ## Update (2026-05-04)
 
