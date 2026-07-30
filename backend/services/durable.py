@@ -7,8 +7,18 @@ When ALL of the following hold:
     installed separately from requirements.txt/requirements.lock)
   - DBOS_DATABASE_URL is a non-empty Postgres connection string
 
-this module exposes real DBOS workflow + step decorators so an in-flight
-upload can survive a worker crash and resume from the last checkpoint.
+this module exposes real DBOS workflow + step decorators, and
+`workflow_id()` (below) lets a caller pin an invocation to a specific DBOS
+workflow id. The product-level crash semantic this enables: a CLIENT RETRY
+of the same logical operation (same idempotency key, e.g. `/upload/sync`'s
+`X-Request-ID`) attaches to the SAME workflow instead of starting a new
+one, resuming at the last completed step instead of re-running every
+agent call. Nothing resumes for the ORIGINAL caller — their HTTP
+connection is already gone once the worker crashes — but DBOS's own
+background auto-recovery (`init_dbos()` -> `DBOS.launch()`, see below)
+independently completes an abandoned in-flight workflow even without a
+retry, and a later same-id retry receives THAT recorded result instead of
+re-running the pipeline.
 
 When any precondition fails (the default state in this repo — the flag is
 off), the decorators degrade to identity passthroughs that don't add
@@ -39,18 +49,31 @@ capture (below) and DBOS() construction (in init_dbos) are already two
 separate steps rather than one makes that migration a local change, not a
 redesign.
 
-Fail-loud contract for init_dbos(): if the operator has explicitly set
-DBOS_ENABLED=true and anything raises while constructing/launching DBOS, we
-RAISE rather than silently falling back to passthrough — same posture as
-#174's validate_config() in the lifespan. A silent no-op would betray an
-explicit opt-in: routes would look durable (X-Request-ID idempotency, the
-`@workflow`/`@step` decorations are present in the source) while silently
-running with zero crash-resume, and nobody would know until the next
-incident.
+Fail-loud contract for init_dbos(): an explicit DBOS_ENABLED=true opt-in
+must not degrade silently. The failure mode that matters most: if a
+precondition above (import, DBOS_DATABASE_URL) already failed, the
+decorators are ALREADY identity passthroughs by the time init_dbos() runs
+(this module logged one WARNING at import time, nothing more) —
+`@workflow`/`@step` code then runs and SUCCEEDS with zero durability, no
+further signal, on routes that look durable in the source (X-Request-ID
+idempotency, the decorations are present). init_dbos() now RAISES in that
+case too, not just on a construct/launch failure — same posture as #174's
+validate_config(). See init_dbos()'s own docstring for exactly which raises
+when.
+
+(This is a DIFFERENT failure mode from decorators going real with `DBOS()`
+never constructed anywhere — that already fails LOUD on its own:
+dbos/_core.py's `workflow_wrapper` raises `DBOSException("... invoked
+before DBOS initialized")` on every such call, deterministically, verified
+against dbos==2.28.0 at `dbos/_core.py:1369-1372`. That was the actual
+state of every decorated call before #154 shipped this file's init_dbos()
+— a deterministic exception (a 502 via routes/documents.py's exception
+handling) on every call, not a silent no-op. See ADR 0011's #154 update.)
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from functools import wraps
@@ -66,13 +89,18 @@ _DATABASE_URL = os.getenv("DBOS_DATABASE_URL", "").strip()
 _HAS_DBOS = False
 _dbos_workflow = None
 _dbos_step = None
+# Set when `dbos` fails to import with DBOS_ENABLED=true. init_dbos() cites
+# this in its RuntimeError so an operator sees WHY activation failed, not
+# just THAT it did (Finding B / #154 review round).
+_IMPORT_ERROR: str | None = None
 
 if _ENABLED:
     if not _DATABASE_URL:
         logger.warning(
             "DBOS_ENABLED=true but DBOS_DATABASE_URL is not set. Durable "
             "decorators will degrade to passthroughs until a database URL "
-            "is provided (see docs/decisions/0011-durable-execution-dbos.md)."
+            "is provided (see docs/decisions/0011-durable-execution-dbos.md). "
+            "init_dbos() will raise at startup until this is fixed."
         )
     else:
         try:
@@ -87,9 +115,11 @@ if _ENABLED:
             _dbos_step = DBOS.step
             _HAS_DBOS = True
         except Exception as e:  # ImportError or anything else at import
+            _IMPORT_ERROR = str(e)
             logger.warning(
                 "DBOS_ENABLED=true but DBOS could not be imported (%s). "
-                "Durable decorators will degrade to passthroughs.",
+                "Durable decorators will degrade to passthroughs. "
+                "init_dbos() will raise at startup until this is fixed.",
                 e,
             )
 
@@ -131,14 +161,84 @@ def step(fn: F) -> F:
     return passthrough  # type: ignore[return-value]
 
 
+def workflow_id(wfid: str) -> "contextlib.AbstractContextManager[None]":
+    """Pin `wfid` as the DBOS workflow id for the next workflow invocation
+    started inside this `with` block (only the FIRST one started inside
+    the block gets it — see `SetWorkflowID`'s own docstring).
+
+    Why this matters: a caller that re-enters this context with the SAME
+    `wfid` (e.g. a client retry presenting the same idempotency key)
+    attaches to the SAME workflow row instead of starting a new one, and
+    does not re-execute already-checkpointed `@step` calls inside it.
+    Verified against the installed dbos==2.28.0:
+
+      - `from dbos import SetWorkflowID` — re-exported at the top of
+        `dbos/__init__.py` (`dbos/__init__.py:8`), defined at
+        `dbos/_context.py:454`. A plain SYNC context manager (`__enter__`/
+        `__exit__`, no `async with` needed): `__enter__` sets
+        `ctx.id_assigned_for_next_workflow = wfid` on the ambient
+        DBOSContext (`dbos/_context.py:471-485`), which
+        `workflow_wrapper` (`dbos/_core.py`) reads when starting the next
+        `@workflow`-decorated call.
+      - Same-id reattach: `workflow_wrapper` inserts/updates the workflow's
+        row keyed on `workflow_uuid` via an upsert
+        (`dbos/_sys_db.py::_insert_workflow_status`, `dbos/_sys_db.py:718`,
+        ON CONFLICT DO UPDATE). A plain (non-recovery, non-dequeue) call
+        whose `workflow_uuid` already has a row does NOT re-run the
+        workflow body — `should_execute` stays True only for the original
+        inserting call (or a recovery/dequeue request); every other direct
+        call instead gets `_deferred_workflow_result`, which awaits the
+        existing workflow's recorded result (`dbos/_core.py:1452-1459`;
+        the owner-mismatch check is `dbos/_sys_db.py:875-880`). This holds
+        for BOTH a completed (SUCCESS) row — the recorded output returns
+        immediately, no re-execution — and a still-PENDING one, which
+        blocks until SOME execution finishes it (typically
+        `DBOS.launch()`'s own background auto-recovery of PENDING rows for
+        this executor — see `init_dbos()`) and records a result. Either
+        way, already-checkpointed `@step` calls inside are never re-run.
+
+    No-op (`contextlib.nullcontext()`) when `is_durable()` is False, so
+    callers don't need to branch on the flag themselves.
+    """
+    if is_durable():
+        from dbos import SetWorkflowID  # dbos/_context.py:454; dbos/__init__.py:8
+
+        return SetWorkflowID(wfid)
+    return contextlib.nullcontext()
+
+
 def init_dbos() -> bool:
     """Construct and launch the DBOS runtime, once, from main.py's
     `_lifespan` (after the #174 secrets validation, before `yield`).
 
-    No-op returning False when `is_durable()` is False (the default —
-    DBOS_ENABLED unset, `dbos` not importable, or DBOS_DATABASE_URL
-    missing). Logs one INFO line either way so the active mode is visible
-    in app logs (and, since #119, in Logfire).
+    Three outcomes:
+
+    - DBOS_ENABLED unset/false (the default): no-op, returns False. Logs
+      one INFO line. `@workflow`/`@step` stay identity passthroughs.
+    - DBOS_ENABLED=true but `is_durable()` is False — a precondition
+      failed at import time (`dbos` not importable, or DBOS_DATABASE_URL
+      missing; this module already logged one WARNING and degraded the
+      decorators to passthrough): RAISES `RuntimeError` naming exactly
+      which precondition failed. Without this, an explicit opt-in would
+      silently run with zero durability — routes look durable in the
+      source (the `@workflow`/`@step` decorations are present) while every
+      request quietly loses crash-resume, with no signal beyond the one
+      WARNING line at boot. Same posture as #174's validate_config().
+    - DBOS_ENABLED=true and `is_durable()` is True: constructs `DBOS` and
+      calls `DBOS.launch()` (below). ANY exception here is logged and
+      RE-RAISED too — same fail-loud posture, for the same reason.
+
+    (Both RAISE paths above are silent-degradation guards new in this
+    update. Neither is the same failure mode as a `@workflow`/`@step`
+    call reaching a registry whose `DBOS()` was never constructed at all
+    — that already fails loud on its own: dbos/_core.py's
+    `workflow_wrapper` raises `DBOSException("... invoked before DBOS
+    initialized")` (`dbos/_core.py:1369-1372`, verified against
+    dbos==2.28.0) the instant such a call is made, surfaced as a 502 via
+    routes/documents.py's exception handling. That was the actual state of
+    every decorated call before #154 shipped this function — a
+    deterministic exception on every call, not a no-op; see ADR 0011's
+    #154 update.)
 
     When durable, this is the ONE place the `DBOS` singleton is
     constructed and `DBOS.launch()` is called:
@@ -149,10 +249,12 @@ def init_dbos() -> bool:
         `DBOSInitializationError` without it). We set `system_database_url`
         to DBOS_DATABASE_URL — that is the checkpoint store our
         `@workflow`/`@step` decorators read/write. We deliberately do NOT
-        set the (deprecated) `database_url` / `application_database_url`
-        keys: those provision a SEPARATE "application database" used only
-        by `@DBOS.transaction`-decorated functions, which Sapling doesn't
-        use (`dbos/_dbos_config.py::get_system_database_url` reads
+        set `database_url` (DEPRECATED — of the two, that is the ONLY one
+        `DBOSConfig`'s own docstring marks that way) or
+        `application_database_url` (current, NOT deprecated, but
+        provisions a SEPARATE "application database" used only by
+        `@DBOS.transaction`-decorated functions, which Sapling doesn't
+        use): `dbos/_dbos_config.py::get_system_database_url` reads
         `system_database_url` first and only falls back to deriving a
         sys-db name from `database_url` when `system_database_url` is
         absent — so passing ours directly is both sufficient and the
@@ -172,16 +274,34 @@ def init_dbos() -> bool:
         happy path. See tests/test_dbos_resume.py for a crash/resume proof
         against a real Postgres.
 
-    Fail-loud: ANY exception while constructing/launching is logged and
-    RE-RAISED. The operator explicitly set DBOS_ENABLED=true; a caught-and-
-    ignored failure here would leave `@workflow`/`@step` decorated code
-    running un-launched (undefined behavior per agents/document.py's
-    docstring) with no signal until something breaks downstream. Same
-    posture as #174's validate_config().
+    ANY exception while constructing/launching (below) is logged and
+    RE-RAISED — the second of the two RAISE paths described above.
     """
-    if not is_durable():
+    if not _ENABLED:
         logger.info("durable execution off — passthrough decorators")
         return False
+
+    if not is_durable():
+        # DBOS_ENABLED=true but a precondition already failed at import
+        # time (see the module-level check above) — name exactly which one,
+        # rather than degrading to the flag-off no-op. Fixes the silent-
+        # degrade gap: previously this returned False here too, so an
+        # explicit opt-in with a typo'd/missing DBOS_DATABASE_URL (or an
+        # uninstalled `dbos`) would boot and serve requests looking durable
+        # in the source while running with zero durability.
+        if not _DATABASE_URL:
+            raise RuntimeError(
+                "DBOS_ENABLED=true but DBOS_DATABASE_URL is not set. Set "
+                "DBOS_DATABASE_URL to a Postgres connection string, or "
+                "unset DBOS_ENABLED to run without durability (see "
+                "docs/decisions/0011-durable-execution-dbos.md)."
+            )
+        raise RuntimeError(
+            f"DBOS_ENABLED=true but the `dbos` package could not be "
+            f"imported ({_IMPORT_ERROR}). Install "
+            f"backend/requirements-durable.txt, or unset DBOS_ENABLED to "
+            f"run without durability."
+        )
 
     try:
         from dbos import DBOS, DBOSConfig  # type: ignore[import-not-found]

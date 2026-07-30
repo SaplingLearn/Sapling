@@ -210,15 +210,23 @@ def test_shutdown_dbos_noop_when_flag_off(durable_module):
 
 # ── DBOS_ENABLED=true but `dbos` fails to import ────────────────────────────
 
-def test_enabled_but_dbos_import_fails_warns_and_degrades(durable_module, caplog):
+def test_enabled_but_dbos_import_fails_warns_then_init_dbos_raises(durable_module, caplog):
     os.environ["DBOS_ENABLED"] = "true"
     os.environ["DBOS_DATABASE_URL"] = "postgresql://x/y"
     _install_broken_dbos()
     with caplog.at_level(logging.WARNING, logger="services.durable"):
         d = importlib.reload(durable_module)
+    # Import-time behavior is unchanged: warn + degrade decorators to
+    # passthrough (an import-time raise would take the whole app down
+    # before validate_config() runs — see the module docstring).
     assert d.is_durable() is False
     assert any("could not be imported" in r.message for r in caplog.records)
-    assert d.init_dbos() is False
+
+    # init_dbos() behavior changed (#154 review round, Finding B): this
+    # precondition failure now fails loud at startup instead of returning
+    # False and silently serving requests with zero durability.
+    with pytest.raises(RuntimeError, match="could not be imported"):
+        d.init_dbos()
 
 
 # ── DBOS_ENABLED=true + working stub + DBOS_DATABASE_URL set: real mode ────
@@ -259,15 +267,20 @@ def test_enabled_with_working_stub_and_url_activates_durable(durable_module):
 
 # ── DBOS_ENABLED=true + working stub but NO DBOS_DATABASE_URL ───────────────
 
-def test_enabled_without_database_url_warns_and_degrades(durable_module, caplog):
+def test_enabled_without_database_url_warns_then_init_dbos_raises(durable_module, caplog):
     os.environ["DBOS_ENABLED"] = "true"
     os.environ.pop("DBOS_DATABASE_URL", None)
     _install_stub_dbos()
     with caplog.at_level(logging.WARNING, logger="services.durable"):
         d = importlib.reload(durable_module)
+    # Import-time behavior is unchanged: warn + degrade to passthrough.
     assert d.is_durable() is False
     assert any("DBOS_DATABASE_URL" in r.message for r in caplog.records)
-    assert d.init_dbos() is False
+
+    # init_dbos() behavior changed (#154 review round, Finding B): raises
+    # instead of returning False, naming the missing precondition.
+    with pytest.raises(RuntimeError, match="DBOS_DATABASE_URL"):
+        d.init_dbos()
 
 
 # ── DBOS_ENABLED=true + stub whose launch() raises: fail-loud contract ─────

@@ -13,16 +13,30 @@ validation, monitoring of resume behavior" — this update ships all three).
 1. **Entrypoint wiring was missing.** `backend/services/durable.py`'s
    decorators could go real (`DBOS_ENABLED=true` + `dbos` importable) with
    no `DBOS` instance ever constructed or `.launch()`ed anywhere in
-   `main.py` — durability looked wired from the decorators alone but did
-   nothing at call time. Fixed: `backend/main.py`'s `_lifespan` now calls
+   `main.py`. This was NOT a silent no-op, though it looked like one from
+   the decorators alone: `dbos/_core.py::workflow_wrapper` raises
+   `DBOSException("... invoked before DBOS initialized")` whenever the
+   registry's `DBOS` instance is `None` (verified against dbos==2.28.0,
+   `dbos/_core.py:1369-1372`), so every decorated call failed loudly — a
+   502 via routes/documents.py's exception handling, not durability that
+   quietly did nothing. Fixed: `backend/main.py`'s `_lifespan` now calls
    `services.durable.init_dbos()` right after the #174 secrets validation
    and before `yield`, and `shutdown_dbos()` in the shutdown path.
 2. **The `DBOS_DATABASE_URL` precondition is now enforced, not just
    documented.** `is_durable()` requires ALL THREE of `DBOS_ENABLED=true`,
-   `dbos` importable, AND `DBOS_DATABASE_URL` non-empty. The flag-on-but-
-   no-URL case now degrades to passthrough with a logged warning instead of
-   silently doing nothing (the code previously didn't check the URL at
-   all, despite the module docstring claiming it did).
+   `dbos` importable, AND `DBOS_DATABASE_URL` non-empty (the code
+   previously didn't check the URL at all, despite the module docstring
+   claiming it did). At IMPORT time, a flag-on-but-no-URL (or flag-on-but-
+   unimportable-`dbos`) process still degrades the decorators to
+   passthrough with a logged WARNING — an import-time raise would take the
+   whole app down before validate_config() runs (see the module
+   docstring). But `services.durable.init_dbos()`, called from the
+   lifespan, now RAISES `RuntimeError` for either precondition failure
+   instead of returning `False` — a follow-up fix (this update's review
+   round) closing the actual silent-degrade gap: an explicit
+   `DBOS_ENABLED=true` was otherwise still able to boot and serve requests
+   that looked durable in the source while running with zero durability,
+   with nothing beyond that one boot-time WARNING line to notice it by.
 3. **`backend/requirements-durable.txt` now exists** (`dbos>=2.28,<3`,
    pinned to the version this update's verification ran against). Never
    added to `requirements.txt`/`requirements.lock` — durability stays
@@ -46,9 +60,19 @@ validation, monitoring of resume behavior" — this update ships all three).
      (`SAPLING_MODEL_MODE=function`) and asserts its output matches the
      function-mode constants byte-for-byte — proof that wrapping the
      pipeline in `@durable_workflow`/`@durable_step` changes durability,
-     not behavior. Both tests were run against a real `dbos==2.28.0` +
-     a throwaway Postgres during this update and passed; see the file
-     docstrings for exactly what each does and does not prove.
+     not behavior. `test_pipeline_crash_resume_via_workflow_id` is the
+     REAL-pipeline resume proof the other two don't cover (see point 6
+     below): it crashes `process_document` mid-pipeline via a scripted
+     function-mode handler, then re-invokes it in a second process wrapped
+     in the SAME `services.durable.workflow_id(...)`, and asserts the
+     already-checkpointed classify step ran exactly once total across both
+     processes. The first two subprocess tests were run against a real
+     `dbos==2.28.0` + a throwaway Postgres during the original #154 update
+     and passed; the third was added in this update's review round and is
+     verified by source-reading only here (see its own docstring for the
+     dbos facts cited) — it needs the same live-Postgres run to confirm.
+     See each file's docstrings for exactly what it does and does not
+     prove.
 5. **Activation procedure, corrected against the installed
    `dbos==2.28.0`** (verified directly against the package source in a
    scratch venv; see `backend/services/durable.py::init_dbos`'s docstring
@@ -78,6 +102,54 @@ validation, monitoring of resume behavior" — this update ships all three).
       default, off, mode) — both plain `logger.info` calls, so both are
       captured by #119's Logfire app-logging instrumentation with no
       further wiring.
+6. **`workflow_id` wiring — the review-round fix that makes resume real for
+   the product, not just the mechanism.** Everything above (entrypoint,
+   migrations, background recovery) made DBOS's crash/resume machinery
+   reachable, but nothing tied a specific upload attempt's workflow to a
+   RETRY of that same attempt — every invocation of `process_document` got
+   an auto-generated workflow id, so a client retry (same `X-Request-ID`)
+   started an unrelated new workflow and gained nothing from whatever the
+   crashed attempt had already checkpointed. Fixed:
+   - `services.durable.workflow_id(wfid)` — a context manager, `SetWorkflowID(wfid)`
+     when durable else `contextlib.nullcontext()` — pins the DBOS workflow
+     id for the invocation started inside it (see its own docstring for the
+     dbos==2.28.0 facts verified: `SetWorkflowID`'s import path and
+     same-id-reattach semantics for both PENDING and SUCCESS rows).
+   - `routes/documents.py`'s `/upload/sync` wraps its `process_document`
+     call in `workflow_id(f"doc:{user_id}:{request_id}")` — scoped to
+     `user_id` + `request_id`, not `request_id` alone, because
+     `X-Request-ID` is client-supplied and an unscoped id would let one
+     user's replay attach to another user's workflow.
+   - `agents/document.py`'s graph merge is now its own durable step
+     (`_step_apply_graph`), not a bare call inside `process_document` — so
+     a resumed workflow doesn't repeat the merge either.
+
+   **The corrected product-level crash semantic** (replacing any earlier
+   text in this module/ADR implying an in-flight upload transparently
+   survives a crash on its own): nothing resumes for the ORIGINAL caller —
+   their HTTP connection to the crashed worker is already gone. What
+   changed is what a CLIENT RETRY (same `X-Request-ID`) gets: the route's
+   existing idempotency cache (`_existing_doc_by_request_id`, ADR 0009)
+   still serves an already-PERSISTED document instantly; for an upload that
+   crashed before persistence, the retry now ATTACHES to the SAME DBOS
+   workflow instead of starting a fresh one, and DBOS resumes it at the
+   last completed step rather than re-running every agent call. If no
+   retry ever arrives, `DBOS.launch()`'s background auto-recovery (point 5
+   above) still completes the abandoned workflow on its own — a LATER
+   same-id retry then receives that already-recorded result.
+
+   **Picklability constraint, newly load-bearing.** DBOS's default
+   serializer records workflow inputs with `pickle`
+   (`dbos/_serialization.py::DefaultSerializer.serialize`) — so every
+   argument to a `@durable_workflow`/`@durable_step` call must stay
+   picklable once DBOS is on. `process_document(text, deps)` passes a
+   `SaplingDeps` built with `supabase=None` and otherwise plain
+   str/None/list fields (`routes/documents.py`'s `/upload/sync` handler) —
+   that is precisely what keeps it recordable today. A future field on
+   `SaplingDeps` (or a new argument to a `_step_*`) that holds something
+   unpicklable (a live client, a lock, a generator) would break ONLY the
+   flag-on path, silently, at call time — worth remembering before adding
+   fields to deps used on this path.
 
 **Resume monitoring.** Beyond the startup INFO log above, `DBOS.launch()`
 logs its own recovery activity (`"Recovering N workflows from application

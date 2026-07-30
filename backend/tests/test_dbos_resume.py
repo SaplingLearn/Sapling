@@ -285,3 +285,241 @@ def test_pipeline_identical_with_dbos_on(tmp_path):
     assert payload["category"] == E2E_DOC_CATEGORY
     assert payload["abstract"] == E2E_DOC_ABSTRACT
     assert payload["concepts"] == sorted(name for name, _desc, _imp in E2E_DOC_CONCEPTS)
+
+
+# -- 3. Real pipeline: crash mid-flight, retry with the SAME workflow_id,   --
+#    and prove DBOS resumes rather than re-runs (the toy-workflow gap) -----
+#
+# Sections 1 and 2 above prove two separate things in isolation: a raw DBOS
+# workflow resumes correctly (1), and process_document runs for real under
+# DBOS with unchanged output (2). Neither proves the actual PRODUCT
+# behavior: that a client retry of a crashed upload (the same
+# X-Request-ID, per routes/documents.py's `/upload/sync`) attaches to the
+# SAME workflow and skips already-completed steps, rather than starting an
+# unrelated new workflow that re-runs everything. This test is that proof,
+# using services.durable.workflow_id(...) the same way the route does
+# (`/upload/sync` wraps process_document in
+# `workflow_id(f"doc:{user_id}:{request_id}")`).
+#
+# Phase 1 ("crash"): a TEST-LOCAL SAPLING_FUNCTION_HANDLERS module scripts
+# the classifier/summary/concepts tasks process_document reaches (no
+# syllabus -- the classifier handler always answers non-syllabus). The
+# classify handler appends a line to a counter file on every invocation.
+# The summary handler simulates a worker crash: on the very first call
+# ever (a marker file doesn't exist yet), it creates the marker and calls
+# os._exit(42) BEFORE returning -- exactly like section 1's step2, this
+# skips checkpointing that step, leaving the workflow row PENDING.
+# Classification completes and checkpoints BEFORE summary/concepts even
+# start (agents.document._run_workers awaits it first), so it must NOT
+# re-run in phase 2.
+#
+# Phase 2 ("resume"): a fresh process, same workflow id, same handlers
+# module (the marker file now exists, so summary succeeds this time).
+# `durable.init_dbos()`'s own launch-time auto-recovery picks up the
+# still-PENDING workflow from phase 1 and resumes it on a background
+# thread; this phase's own `process_document(...)` call (wrapped in the
+# SAME `workflow_id(...)`) does NOT re-run the body itself -- a plain
+# re-invocation of an existing workflow_uuid attaches to it instead of
+# restarting it (see workflow_id()'s docstring in services/durable.py) --
+# it waits for and returns whichever execution (the background recovery)
+# actually finishes the workflow. The assertion that matters doesn't
+# depend on that internal detail: the classify counter file has EXACTLY
+# ONE line after both phases combined.
+
+_PIPELINE_RESUME_HANDLERS_MODULE = r"""
+# Test-local SAPLING_FUNCTION_HANDLERS module for
+# test_pipeline_crash_resume_via_workflow_id (tests/test_dbos_resume.py).
+# Registers handlers for the three document-pipeline tasks process_document
+# reaches when classification is a non-syllabus category (classifier,
+# summary, concepts -- syllabus never runs). Shapes mirror
+# agents/function_handlers_e2e.py's document-pipeline handlers.
+
+import os
+
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+from agents._providers import register_function_handler
+
+_CLASSIFY_COUNTER = os.environ["DBOS_RESUME_CLASSIFY_COUNTER"]
+_SUMMARY_MARKER = os.environ["DBOS_RESUME_SUMMARY_MARKER"]
+
+
+def _structured(args):
+    def handler(messages, info):
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)]
+        )
+
+    return handler
+
+
+def _classify_handler(messages, info):
+    # Appended to on EVERY invocation -- the test asserts this file has
+    # exactly one line at the end, proving the already-checkpointed
+    # classify step was NOT re-run on the phase-2 retry.
+    with open(_CLASSIFY_COUNTER, "a") as f:
+        print("x", file=f)
+    return _structured({
+        "category": "lecture_notes",
+        "is_syllabus": False,
+        "confidence": 0.95,
+        "rationale": "dbos resume-test fixture classification.",
+    })(messages, info)
+
+
+def _summary_handler(messages, info):
+    # Simulates a worker crash mid-pipeline: on the FIRST invocation ever
+    # (marker file absent), write the marker and hard-exit before
+    # returning -- os._exit skips checkpointing this step's result,
+    # leaving the workflow row PENDING. On any later invocation (phase 2's
+    # resumed run), the marker exists, so this returns normally.
+    if not os.path.exists(_SUMMARY_MARKER):
+        open(_SUMMARY_MARKER, "w").close()
+        os._exit(42)
+    return _structured({
+        "headline": "DBOS resume-test headline.",
+        "abstract": "DBOS resume-test abstract for the pipeline crash/resume proof.",
+        "key_points": [
+            "Resume point one.",
+            "Resume point two.",
+            "Resume point three.",
+        ],
+    })(messages, info)
+
+
+register_function_handler("classifier", _classify_handler)
+register_function_handler("summary", _summary_handler)
+register_function_handler(
+    "concepts",
+    _structured({
+        "concepts": [
+            {
+                "name": "Resume Concept",
+                "description": "dbos resume-test fixture concept.",
+                "importance": 0.5,
+            },
+        ],
+    }),
+)
+"""
+
+
+_PIPELINE_RESUME_HELPER = r"""
+import asyncio
+import json
+import sys
+from unittest.mock import AsyncMock
+
+import services.durable as durable
+
+assert durable.is_durable(), "DBOS_ENABLED=true but the shim did not activate"
+
+import agents.document as document_module
+from agents.deps import SaplingDeps
+
+workflow_id = sys.argv[1]
+graph_counter = sys.argv[2]
+
+
+async def _fake_apply_concepts_to_graph(user_id, course_id, concept_names):
+    # File-backed, not just an AsyncMock call count: this test spans TWO
+    # separate subprocesses, and an in-memory mock count would not survive
+    # across them.
+    with open(graph_counter, "a") as f:
+        print("x", file=f)
+    return 0
+
+
+# The one real-Supabase side effect inside process_document -- stubbed the
+# same way test_pipeline_identical_with_dbos_on above does, but with a
+# file-backed side_effect (see _fake_apply_concepts_to_graph) instead of
+# just an AsyncMock call count.
+document_module.apply_concepts_to_graph = AsyncMock(
+    side_effect=_fake_apply_concepts_to_graph
+)
+
+durable.init_dbos()
+
+deps = SaplingDeps(
+    user_id="dbos-resume-pipeline-user",
+    course_id="dbos-resume-pipeline-course",
+    supabase=None,
+    request_id="dbos-resume-pipeline",
+)
+
+with durable.workflow_id(workflow_id):
+    result = asyncio.run(document_module.process_document(
+        "Deterministic fixture text for the DBOS pipeline crash/resume test.",
+        deps,
+    ))
+
+print("RESULT_JSON:" + json.dumps({
+    "category": result.classification.category,
+    "graph_updated": result.graph_updated,
+}))
+"""
+
+
+def test_pipeline_crash_resume_via_workflow_id(tmp_path):
+    """The real-pipeline resume proof via `workflow_id` -- the gap sections
+    1 and 2 above leave open (see the module comment above section 1).
+
+    Phase 1 crashes process_document mid-pipeline (inside the summary
+    step) via a scripted function-mode handler, inside
+    `durable.workflow_id(wfid)`. Phase 2 re-invokes process_document with
+    the SAME wfid and the same handlers module (the crash marker now
+    exists, so summary succeeds). The proof: the classify counter file has
+    EXACTLY ONE line after both phases -- the classify step, already
+    checkpointed before the crash, was not re-run on the phase-2 retry,
+    which is the resume-at-last-completed-step contract on the REAL
+    upload pipeline (not a toy workflow).
+    """
+    handlers_module = tmp_path / "dbos_resume_pipeline_handlers.py"
+    handlers_module.write_text(_PIPELINE_RESUME_HANDLERS_MODULE)
+
+    script = tmp_path / "pipeline_resume_helper.py"
+    script.write_text(_PIPELINE_RESUME_HELPER)
+
+    workflow_id = "pipeline-resume-" + str(uuid.uuid4())
+    classify_counter = tmp_path / "classify_counter.txt"
+    summary_marker = tmp_path / "summary_marker.txt"
+    graph_counter = tmp_path / "graph_counter.txt"
+
+    env = _subprocess_env(
+        SAPLING_MODEL_MODE="function",
+        SAPLING_FUNCTION_HANDLERS="dbos_resume_pipeline_handlers",
+        PYTHONPATH=str(tmp_path) + os.pathsep + ".",
+        DBOS_RESUME_CLASSIFY_COUNTER=str(classify_counter),
+        DBOS_RESUME_SUMMARY_MARKER=str(summary_marker),
+    )
+    args = (workflow_id, str(graph_counter))
+
+    crash = _run_helper(script, *args, env=env)
+    assert crash.returncode == 42, (
+        "expected the crash phase to os._exit(42); stdout=" + repr(crash.stdout)
+        + " stderr=" + repr(crash.stderr)
+    )
+
+    resume = _run_helper(script, *args, env=env)
+    assert resume.returncode == 0, (
+        "expected the resume phase to complete cleanly; stdout=" + repr(resume.stdout)
+        + " stderr=" + repr(resume.stderr)
+    )
+
+    # The resume-at-last-completed-step contract on the REAL pipeline:
+    # classify ran exactly once (during the crash phase) -- DBOS must NOT
+    # re-run an already-checkpointed step on the phase-2 same-id retry.
+    assert classify_counter.read_text().splitlines() == ["x"]
+
+    # The _step_apply_graph checkpoint claim: the graph merge runs exactly
+    # once total, on whichever execution actually completes the workflow
+    # (phase 1 crashes before reaching it). File-backed so the count is
+    # correct across the two subprocesses.
+    assert graph_counter.read_text().splitlines() == ["x"]
+
+    [result_line] = [
+        line for line in resume.stdout.splitlines() if line.startswith("RESULT_JSON:")
+    ]
+    payload = json.loads(result_line[len("RESULT_JSON:"):])
+    assert payload["category"] == "lecture_notes"
+    assert payload["graph_updated"] is False  # _fake_apply_concepts_to_graph returns 0
