@@ -15,6 +15,8 @@ import {
   getUserRooms,
   createRoom,
   joinRoom,
+  listPublicRooms,
+  joinPublicRoom,
   getRoomMessages,
   sendRoomMessage,
   toggleRoomReaction,
@@ -28,10 +30,15 @@ import {
   getStudents,
   type StudentRow,
 } from "@/lib/api";
-import type { RoomMessageRow, RoomOverviewData } from "@/lib/types";
+import type { PublicRoom, RoomMessageRow, RoomOverviewData } from "@/lib/types";
 
 type Tab = "overview" | "chat" | "match" | "activity" | "directory";
-type Room = { id: string; name: string; invite_code: string; member_count: number; created_by?: string };
+type Room = {
+  id: string; name: string; invite_code: string; member_count: number;
+  created_by?: string;
+  // #405 columns (populated on create; older rows may carry nulls)
+  topic?: string | null; course?: string | null; is_public?: boolean | null;
+};
 
 const EMOJI_50 = [
   "👍","🎉","❤️","🔥","🙌","💯","😂","😊","🤔","😮",
@@ -97,15 +104,32 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
   const toast = useToast();
   const [mode, setMode] = React.useState<"idle" | "create" | "join">("idle");
   const [value, setValue] = React.useState("");
+  // #405 create-form fields: optional labeling + the public flag
+  // (false = invite-only; true = listed and joinable without an invite).
+  const [topic, setTopic] = React.useState("");
+  const [course, setCourse] = React.useState("");
+  const [isPublic, setIsPublic] = React.useState(false);
+
+  const reset = () => {
+    setMode("idle");
+    setValue("");
+    setTopic("");
+    setCourse("");
+    setIsPublic(false);
+  };
 
   const submit = async () => {
     if (!value.trim() || !userId) return;
     try {
-      if (mode === "create") await createRoom(userId, value.trim());
-      else if (mode === "join") await joinRoom(userId, value.trim());
+      if (mode === "create") {
+        await createRoom(userId, value.trim(), {
+          topic: topic.trim() || undefined,
+          course: course.trim() || undefined,
+          is_public: isPublic,
+        });
+      } else if (mode === "join") await joinRoom(userId, value.trim());
       toast.success(mode === "create" ? "Room created" : "Joined room");
-      setMode("idle");
-      setValue("");
+      reset();
       onDone();
     } catch (err) {
       toast.error(String(err));
@@ -123,22 +147,114 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
     );
   }
 
+  const inputStyle: React.CSSProperties = {
+    flex: 1, padding: "6px 10px",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
+    fontSize: 12, background: "var(--bg-panel)",
+  };
+
   return (
-    <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-      <input
-        data-testid="social-create-join-input"
-        autoFocus
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") setMode("idle"); }}
-        placeholder={mode === "create" ? "Room name" : "Invite code"}
-        style={{
-          flex: 1, padding: "6px 10px",
-          border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-          fontSize: 12, background: "var(--bg-panel)",
-        }}
-      />
-      <button data-testid="social-create-join-submit" className="btn btn--sm btn--primary" onClick={submit}>Go</button>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          data-testid="social-create-join-input"
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") reset(); }}
+          placeholder={mode === "create" ? "Room name" : "Invite code"}
+          style={inputStyle}
+        />
+        <button data-testid="social-create-join-submit" className="btn btn--sm btn--primary" onClick={submit}>Go</button>
+      </div>
+      {mode === "create" && (
+        <>
+          <input
+            data-testid="social-create-topic"
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder="Topic (optional)"
+            style={inputStyle}
+          />
+          <input
+            data-testid="social-create-course"
+            value={course}
+            onChange={(e) => setCourse(e.target.value)}
+            placeholder="Course (optional)"
+            style={inputStyle}
+          />
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-dim)" }}>
+            <input
+              data-testid="social-create-public"
+              type="checkbox"
+              checked={isPublic}
+              onChange={(e) => setIsPublic(e.target.checked)}
+            />
+            Public — anyone can find and join without an invite
+          </label>
+        </>
+      )}
+    </div>
+  );
+}
+
+function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoined: () => void }) {
+  const { userId } = useUser();
+  const toast = useToast();
+  const [rooms, setRooms] = React.useState<PublicRoom[]>([]);
+
+  const refresh = React.useCallback(async () => {
+    if (!userId) return;
+    try {
+      setRooms((await listPublicRooms(userId)).rooms);
+    } catch {
+      // Discovery is best-effort; the rooms list itself stays authoritative.
+    }
+  }, [userId]);
+
+  React.useEffect(() => { refresh(); }, [refresh]);
+
+  const discoverable = rooms.filter((r) => !excludeIds.includes(r.id));
+  if (discoverable.length === 0) return null;
+
+  const join = async (roomId: string) => {
+    if (!userId) return;
+    try {
+      await joinPublicRoom(userId, roomId);
+      toast.success("Joined room");
+      onJoined();
+    } catch (err) {
+      toast.error(String(err));
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div className="label-micro" style={{ marginBottom: 6 }}>Public rooms</div>
+      {discoverable.map((r) => (
+        <div
+          key={r.id}
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "8px 10px", marginBottom: 4,
+            border: "1px solid var(--border)", borderRadius: "var(--r-md)",
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              {r.topic ? `${r.topic} · ` : ""}{r.member_count} member{r.member_count === 1 ? "" : "s"}
+            </div>
+          </div>
+          <button
+            data-testid={`social-public-join-${r.id}`}
+            className="btn btn--sm"
+            onClick={() => join(r.id)}
+          >
+            Join
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1116,10 +1232,16 @@ export function Social() {
                 marginBottom: 4, display: "flex", flexDirection: "column", gap: 2,
               }}
             >
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.member_count} members</div>
+              <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                {r.name}
+                {r.is_public && <span className="chip" style={{ fontSize: 10 }}>Public</span>}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                {r.topic ? `${r.topic} · ` : ""}{r.member_count} members
+              </div>
             </button>
           ))}
+          {!loading && <PublicRoomsList excludeIds={rooms.map((r) => r.id)} onJoined={load} />}
         </div>
       </aside>
     </FullHeightScreen>

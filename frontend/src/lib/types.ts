@@ -555,3 +555,18 @@ export interface ErrorsPageData {
   truncated: boolean;
   series: UsageDayPoint[] | null;
 }
+
+// ── Public rooms (#405) ──────────────────────────────────────────────────────
+// The invite-less discovery payload; deliberately carries NO invite_code.
+export interface PublicRoom {
+  id: string;
+  name: string;
+  topic: string | null;
+  course: string | null;
+  owner_id: string;
+  created_by: string;
+  created_at: string | null;
+  updated_at: string | null;
+  is_public: true;
+  member_count: number;
+}
