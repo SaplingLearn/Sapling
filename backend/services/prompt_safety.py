@@ -45,6 +45,13 @@ _DELIMITER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Invisible/zero-width characters that could be threaded through a forged
+# delimiter to dodge the regex while staying visually identical to the real
+# marker (PR #471 review: "[E\u200bND UNTRUSTED CONTENT]" slipped through —
+# \s does not match Unicode format characters). They carry no legitimate
+# meaning in student text, so they are stripped outright before matching.
+_ZERO_WIDTH_RE = re.compile("[\u200b\u200c\u200d\u2060\ufeff]")
+
 
 def neutralize_delimiters(text: str) -> str:
     """Defang embedded copies of the envelope delimiters in ``text``.
@@ -52,11 +59,14 @@ def neutralize_delimiters(text: str) -> str:
     ``[END UNTRUSTED CONTENT]`` inside student content becomes
     ``[(blocked)END UNTRUSTED CONTENT]`` — visibly intact for the model to
     read as data, but no longer a byte-match for the real delimiter.
-    Idempotent: already-neutralized text carries ``[(blocked)...`` which no
-    longer matches the pattern.
+    Zero-width/invisible characters are stripped first so a visually
+    identical forgery can't dodge the pattern. Idempotent:
+    already-neutralized text carries ``[(blocked)...`` which no longer
+    matches the pattern.
     """
     if not text:
         return text
+    text = _ZERO_WIDTH_RE.sub("", text)
     return _DELIMITER_RE.sub(r"[(blocked)\1\2", text)
 
 
@@ -92,7 +102,11 @@ def untrusted_envelope_overhead(source: str = "") -> int:
     return len(wrap_untrusted("x", source)) - 1
 
 
-# System-prompt paragraph for every agent whose prompt or tools carry
+# System-prompt paragraph for agents whose prompt or tools carry
+# untrusted content (chat_tutor's three modes, note_chat, quiz; the
+# tool-less note workers carry their own one-line data-not-instructions
+# guards instead — deliberate, see test_note_worker_prompts). Shared so
+# the wording can't drift per-agent. Original line continues:
 # untrusted content. The legacy tutor preamble embeds it via the
 # {untrusted_content_policy} slot in prompts/preamble.txt; Pydantic AI
 # agents concatenate it into their system prompts directly.

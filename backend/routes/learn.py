@@ -314,7 +314,14 @@ def build_system_prompt(
 
     preamble = PREAMBLE_TEMPLATE.replace("{student_name}", student_name)
     preamble = preamble.replace("{graph_json}", graph_json)
-    preamble = preamble.replace("{last_session_summary}", last_summary or "None")
+    # #150 (PR #471 review FYI): the prior-session summary is LLM-generated
+    # text of student content — same untrusted class as the quiz digest.
+    preamble = preamble.replace(
+        "{last_session_summary}",
+        wrap_untrusted(last_summary, source="previous session summary")
+        if last_summary
+        else "None",
+    )
     # #150: the untrusted-content policy paragraph lives once in
     # prompt_safety and fills the template slot here, so the legacy and
     # agent prompts state the same rules.

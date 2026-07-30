@@ -367,11 +367,22 @@ async def read_session_history_tool(
     """
     from agents.tools.retrieval import resolve_retrieval
 
+    from services.prompt_safety import neutralize_delimiters
+
     if not ctx.deps.session_id:
         return []
-    return await resolve_retrieval(ctx.deps).session_history(
+    rows = await resolve_retrieval(ctx.deps).session_history(
         ctx.deps.session_id, last_n
     )
+    # #150 (PR #471 review): past USER turns are replayed verbatim — a
+    # student can plant a literal envelope delimiter in one turn and have
+    # this tool hand it back as a REAL byte-match later. Neutralize; the
+    # guard preamble covers the rest (a full envelope here would be
+    # theater while message_history itself carries the same text).
+    return [
+        m.model_copy(update={"content": neutralize_delimiters(m.content)})
+        for m in rows
+    ]
 
 
 # read_user_progress

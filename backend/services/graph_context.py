@@ -21,7 +21,9 @@ Serialization: one line per concept —
 
     - Derivatives (0.42, learning) → related: Limits, Chain Rule
 
-No ids, no mastery-event history, hard character budget (~1.5k). Names are
+No ids, no mastery-event history, hard character budget (~1.5k for the
+content; the #150 untrusted-content envelope adds its fixed overhead on
+top — see untrusted_envelope_overhead). Names are
 verbatim so the model can echo the EXACT concept_name strings the graph
 tools expect.
 """
