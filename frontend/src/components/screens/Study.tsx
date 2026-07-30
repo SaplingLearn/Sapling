@@ -24,7 +24,7 @@ const MarkdownChat = dynamic(
 import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { humanizeError, isNotFound } from "@/lib/errorMessage";
+import { extractErrorDetail, humanizeError, isNotFound } from "@/lib/errorMessage";
 import { useUser } from "@/context/UserContext";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import {
@@ -47,14 +47,17 @@ import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
 
 type Mode = "guide" | "cards";
 
-// A guide load fails two ways that deserve different UI: the exam is gone
-// (normal — a deleted assignment, or a stale "recent guides" entry), or the
-// generation itself broke. Only the second is worth a red toast, and it carries
-// the ids it was built from because opening a recent guide clears the exam
-// selection — the selects are not a reliable retry target.
+// A guide load fails two ways that deserve different UI: the guide's target
+// isn't there (normal — a deleted exam, a stale "recent guides" entry, or a
+// term with no offering of the course, #475 F4; `message` carries the server's
+// sentence when it isn't the exam-deleted one), or the generation itself
+// broke. Only the second is worth a red toast, and it carries the ids + term
+// it was built from because opening a recent guide clears the exam selection —
+// the selects are not a reliable retry target. `semester` is the term the
+// failed load resolved with ("" = unscoped), so retry replays it exactly.
 type GuideProblem =
-  | { kind: "missing" }
-  | { kind: "failed"; message: string; courseId: string; examId: string };
+  | { kind: "missing"; message?: string }
+  | { kind: "failed"; message: string; courseId: string; examId: string; semester: string };
 
 type RawCard = {
   id: string;
@@ -77,7 +80,7 @@ export function Study() {
     searchParams.get("mode") === "cards" ? "cards" : "guide",
   );
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
-  const [activeSemester] = useActiveSemester();
+  const [activeSemester, , semesterHydrated] = useActiveSemester();
 
   React.useEffect(() => {
     if (!userReady || !userId) return;
@@ -158,9 +161,19 @@ export function Study() {
           style={{ display: "flex", flex: 1, minHeight: 0 }}
         >
           {mode === "guide" ? (
-            <GuideMode courses={scopedCourses} isMobile={isMobile} />
+            <GuideMode
+              courses={scopedCourses}
+              isMobile={isMobile}
+              semester={activeSemester}
+              semesterReady={semesterHydrated}
+            />
           ) : (
-            <FlashcardsMode courses={scopedCourses} isMobile={isMobile} />
+            <FlashcardsMode
+              courses={scopedCourses}
+              isMobile={isMobile}
+              semester={activeSemester}
+              semesterReady={semesterHydrated}
+            />
           )}
         </motion.div>
       </AnimatePresence>
@@ -170,7 +183,20 @@ export function Study() {
 
 // ── Study Guide mode ─────────────────────────────────────────────────────────
 
-function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile: boolean }) {
+function GuideMode({
+  courses,
+  isMobile,
+  semester,
+  semesterReady,
+}: {
+  courses: EnrolledCourse[];
+  isMobile: boolean;
+  // The active semester ("" = All semesters → unscoped fetches, #141) and its
+  // hydration flag — fetches wait for it so a stored term never produces an
+  // unscoped-then-scoped double fetch (the Dashboard pattern).
+  semester: string;
+  semesterReady: boolean;
+}) {
   const toast = useToast();
   const { userId } = useUser();
   const [courseId, setCourseId] = React.useState<string>("");
@@ -202,23 +228,32 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
     setExams([]);
     setGuide(null);
     setGuideProblem(null);
-    if (!courseId || !userId) return;
+    if (!courseId || !userId || !semesterReady) return;
     setLoadingExams(true);
-    getStudyGuideExams(userId, courseId)
+    getStudyGuideExams(userId, courseId, semester || undefined)
       .then(r => setExams(r.exams || []))
       .catch(err => {
         console.error("study exams load failed", err);
         toast.error(humanizeError(err, "Couldn't load the exams for this course."));
       })
       .finally(() => setLoadingExams(false));
-  }, [courseId, userId, toast]);
+  }, [courseId, userId, toast, semester, semesterReady]);
 
-  const loadGuide = React.useCallback(async (cid: string, eid: string) => {
+  // A pending recent-open's OWN term (#475 F1), consumed by exactly one load:
+  // null = no pending recent open; "" = the entry has no term label, open
+  // explicitly unscoped.
+  const recentTermRef = React.useRef<string | null>(null);
+
+  const loadGuide = React.useCallback(async (cid: string, eid: string, termOverride?: string) => {
     if (!userId) return;
+    // termOverride pins the term for THIS load ("" = explicitly unscoped):
+    // recent entries open as their own term (#475 F1) and retries replay the
+    // term that failed. Without it, the active selector applies.
+    const term = termOverride !== undefined ? (termOverride || undefined) : (semester || undefined);
     setLoadingGuide(true);
     setGuideProblem(null);
     try {
-      const r = await getStudyGuide(userId, cid, eid);
+      const r = await getStudyGuide(userId, cid, eid, term);
       setGuide(r.guide);
       setGeneratedAt(r.generated_at);
       setCached(r.cached);
@@ -227,22 +262,42 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
       console.error("study guide load failed", err);
       setGuide(null);
       if (isNotFound(err)) {
-        setGuideProblem({ kind: "missing" });
+        // #475 F4: not every 404 means "exam deleted" — strict semester
+        // resolution 404s when the course has no offering in the requested
+        // term. Surface the server's sentence unless it IS the exam-deleted
+        // one (or is absent).
+        const { detail } = extractErrorDetail(err);
+        setGuideProblem(
+          !detail || detail.startsWith("Exam not found")
+            ? { kind: "missing" }
+            : { kind: "missing", message: detail },
+        );
       } else {
         const message = humanizeError(err, "Couldn't build that study guide.");
-        setGuideProblem({ kind: "failed", message, courseId: cid, examId: eid });
+        setGuideProblem({ kind: "failed", message, courseId: cid, examId: eid, semester: term ?? "" });
         toast.error(message);
       }
     } finally {
       setLoadingGuide(false);
     }
-  }, [userId, toast, loadRecent]);
+  }, [userId, toast, loadRecent, semester]);
 
   React.useEffect(() => {
-    if (courseId && examId) loadGuide(courseId, examId);
+    if (courseId && examId) {
+      // Consume a pending recent-open term so ONLY this load is pinned to the
+      // entry's own term; later picker-driven loads follow the selector.
+      const recentTerm = recentTermRef.current;
+      recentTermRef.current = null;
+      loadGuide(courseId, examId, recentTerm ?? undefined);
+    }
   }, [courseId, examId, loadGuide]);
 
   const openRecent = (entry: StudyGuideCacheEntry) => {
+    // #475 F1: the entry's guide row keys on ITS offering/term, which need
+    // not match the active selector — a Spring guide in the rail must open as
+    // Spring, or the strict resolver cache-misses under the active term and
+    // silently generates (and persists) a mismatched row.
+    recentTermRef.current = entry.semester ?? "";
     setCourseId(entry.course_id);
     setExamId(entry.exam_id);
   };
@@ -254,7 +309,8 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
     setRegenerating(true);
     setGuideProblem(null);
     try {
-      const r = await regenerateStudyGuide(userId, courseId, examId);
+      // Regenerates the SELECTED term's guide — same offering the reads key on.
+      const r = await regenerateStudyGuide(userId, courseId, examId, semester || undefined);
       setGuide(r.guide);
       setGeneratedAt(r.generated_at);
       setCached(false);
@@ -360,10 +416,16 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
           <EmptyHint title="Choose an exam" body="The guide will be generated from your course material the first time." />
         )}
         {!loadingGuide && !regenerating && guideProblem?.kind === "missing" && (
-          <EmptyHint
-            title="That exam isn't around anymore"
-            body="It was probably deleted. Pick another exam above, or add one on the Calendar page to build a guide for it."
-          />
+          guideProblem.message ? (
+            // #475 F4: the server said something more specific than "exam
+            // deleted" (e.g. no offering in the requested term) — show it.
+            <EmptyHint title="That guide isn't available" body={guideProblem.message} />
+          ) : (
+            <EmptyHint
+              title="That exam isn't around anymore"
+              body="It was probably deleted. Pick another exam above, or add one on the Calendar page to build a guide for it."
+            />
+          )
         )}
         {!loadingGuide && !regenerating && guideProblem?.kind === "failed" && (
           <EmptyHint
@@ -372,7 +434,10 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
             action={
               <button
                 className="btn btn--sm btn--primary"
-                onClick={() => loadGuide(guideProblem.courseId, guideProblem.examId)}
+                // Replays the exact load that failed — ids AND term (#475 F1).
+                onClick={() =>
+                  loadGuide(guideProblem.courseId, guideProblem.examId, guideProblem.semester)
+                }
                 disabled={loadingGuide}
               >
                 Try again
@@ -463,7 +528,19 @@ function GuideMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile:
 
 // ── Flashcards mode ──────────────────────────────────────────────────────────
 
-function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMobile: boolean }) {
+function FlashcardsMode({
+  courses,
+  isMobile,
+  semester,
+  semesterReady,
+}: {
+  courses: EnrolledCourse[];
+  isMobile: boolean;
+  // See GuideMode: "" = All semesters (unscoped); fetches gate on
+  // semesterReady so a stored term never double-fetches (#141).
+  semester: string;
+  semesterReady: boolean;
+}) {
   const toast = useToast();
   const { userId } = useUser();
   const [cards, setCards] = React.useState<RawCard[]>([]);
@@ -488,7 +565,7 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
     if (!userId) return;
     setLoading(true);
     try {
-      const res = await getFlashcards(userId);
+      const res = await getFlashcards(userId, undefined, semester || undefined);
       setCards(res.flashcards || []);
       setIdx(0);
       setFlipped(false);
@@ -497,9 +574,11 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, semester]);
 
-  React.useEffect(() => { load(); }, [load]);
+  React.useEffect(() => {
+    if (semesterReady) load();
+  }, [load, semesterReady]);
 
   const topics = React.useMemo(() => {
     const set = new Set<string>();
@@ -574,7 +653,8 @@ function FlashcardsMode({ courses, isMobile }: { courses: EnrolledCourse[]; isMo
     setGenerating(true);
     setDocsUsed(null);
     try {
-      const r = await generateFlashcards(userId, topic, 5);
+      // Term-scoped generation context: the selected term's course documents.
+      const r = await generateFlashcards(userId, topic, 5, semester || undefined);
       setDocsUsed(r.context_used?.documents_found ?? 0);
       await load();
       toast.success(`Added ${r.flashcards.length} new card${r.flashcards.length === 1 ? "" : "s"}.`);

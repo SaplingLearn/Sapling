@@ -17,6 +17,8 @@ from db.connection import table
 from services.academics import (
     offering_course_id,
     resolve_offering,
+    term_for_offering,
+    term_id_for_label,
     user_enrollment_ids,
     user_offering_ids_for_course,
 )
@@ -29,7 +31,26 @@ from services.request_context import current_request_id
 router = APIRouter()
 
 
-def _course_enrollment_ids(user_id: str, course_id: str) -> list[str]:
+def _offering_for(course_id: str, semester: str | None) -> str | None:
+    """course → offering, term-aware (#141).
+
+    No ``semester`` → the existing current-term resolution (with the
+    any-offering fallback), byte-for-byte unchanged. An explicit ``semester``
+    (term label) → STRICT (course, term) lookup: an unknown label or a term
+    with no offering of the course returns None — never another term's
+    offering — so callers degrade to their empty/404 behavior.
+    """
+    if not semester:
+        return resolve_offering(course_id)
+    term_id = term_id_for_label(semester)
+    if not term_id:
+        return None
+    return resolve_offering(course_id, term_id, fallback=False)
+
+
+def _course_enrollment_ids(
+    user_id: str, course_id: str, semester: str | None = None
+) -> list[str]:
     """The user's enrollment ids for the given abstract ``course_id``.
 
     The ``assignments`` table is enrollment-keyed (the gradebook table has no
@@ -37,8 +58,19 @@ def _course_enrollment_ids(user_id: str, course_id: str) -> list[str]:
     boundary speaks the abstract course id, so we resolve
     course → the user's offering(s) of it → their enrollment rows, mirroring
     routes/calendar.py::_read_assignments.
+
+    With a ``semester`` (#141) only the offerings in that term survive; an
+    unknown label yields no enrollments (empty result, never a fallback).
     """
     course_offerings = set(user_offering_ids_for_course(user_id, course_id))
+    if semester:
+        term_id = term_id_for_label(semester)
+        if not term_id:
+            return []
+        course_offerings = {
+            o for o in course_offerings
+            if (term_for_offering(o) or {}).get("id") == term_id
+        }
     if not course_offerings:
         return []
     return [
@@ -56,9 +88,15 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
     the caller resolves the abstract course id to an offering first.
     """
     # 1. Fetch exam info. Assignments key on enrollment_id (no user_id/course_id
-    #    column); scope to the user's own enrollments so one user can't generate a
-    #    guide off another's exam.
-    enrollment_ids = [e["id"] for e in user_enrollment_ids(user_id)]
+    #    column); scope to the user's enrollment in THE RESOLVED OFFERING
+    #    (#475 F3, the #462 CodeRabbit fix) — not all of their enrollments, or
+    #    a multi-term user could generate (and persist) a guide keyed on one
+    #    term's offering from another term's exam.
+    enrollment_ids = [
+        e["id"]
+        for e in user_enrollment_ids(user_id)
+        if e.get("offering_id") == offering_id
+    ]
     exams = (
         table("assignments").select(
             "id,enrollment_id,title,due_date,assignment_type",
@@ -178,20 +216,26 @@ def get_cached_guides(user_id: str, request: Request):
     # ETag from the guides' (id, generated_at) — regenerate replaces rows with a
     # fresh id + timestamp, so this captures add/remove/regenerate. A matching
     # If-None-Match returns 304 and skips the per-offering course enrichment below.
-    etag = make_etag("guides", user_id, *sorted(f"{g['id']}:{g.get('generated_at')}" for g in guides))
+    # "guides.v2": the shape gained per-entry `semester` (#475 F1); the version
+    # bump revalidates bodies cached under the old shape.
+    etag = make_etag("guides.v2", user_id, *sorted(f"{g['id']}:{g.get('generated_at')}" for g in guides))
     not_modified = conditional(request, etag)
     if not_modified is not None:
         return not_modified
 
     # Each guide keys on an offering; the frontend speaks abstract course ids.
-    # Map each offering → its abstract course id, then enrich with course_name.
+    # Map each offering → its abstract course id + its term label (#475 F1: the
+    # client opens a recent entry AS ITS OWN TERM, so each entry says which term
+    # that is). Offering ids are deduped here; term_for_offering is lru-cached.
     offering_to_course: dict[str, str | None] = {}
+    offering_terms: dict[str, str | None] = {}
     course_map: dict[str, str] = {}
     for g in guides:
         off_id = g.get("offering_id")
         if off_id and off_id not in offering_to_course:
             cid = offering_course_id(off_id)
             offering_to_course[off_id] = cid
+            offering_terms[off_id] = (term_for_offering(off_id) or {}).get("label")
             if cid and cid not in course_map:
                 rows = table("courses").select(
                     "id,course_name", filters={"id": f"eq.{cid}"}, limit=1
@@ -211,6 +255,8 @@ def get_cached_guides(user_id: str, request: Request):
             "exam_title": content.get("exam", ""),
             "overview": content.get("overview", ""),
             "generated_at": g["generated_at"],
+            # The entry's OWN term label (null when the offering has no term).
+            "semester": offering_terms.get(g.get("offering_id")),
         })
     return cached_json({"guides": result}, etag)
 
@@ -226,9 +272,14 @@ def get_courses(user_id: str, request: Request):
 
 
 @router.get("/{user_id}/exams")
-def get_exams(user_id: str, request: Request, course_id: str = Query(...)):
+def get_exams(
+    user_id: str,
+    request: Request,
+    course_id: str = Query(...),
+    semester: str | None = Query(None),
+):
     require_self(user_id, request)
-    enrollment_ids = _course_enrollment_ids(user_id, course_id)
+    enrollment_ids = _course_enrollment_ids(user_id, course_id, semester)
     if not enrollment_ids:
         return {"exams": []}
     all_assignments = table("assignments").select(
@@ -254,11 +305,20 @@ def get_guide(
     request: Request,
     course_id: str = Query(...),
     exam_id: str = Query(...),
+    semester: str | None = Query(None),
 ):
     require_self(user_id, request)
     # The query param is the abstract course id; study guides key on the
-    # offering. Resolve to the current-term offering for cache + generation.
-    offering_id = resolve_offering(course_id)
+    # offering. Without `semester` that's the current-term offering; with one,
+    # the SELECTED term's (#141) — and a term with no offering is a 404, so a
+    # guide is never generated for (or cached against) an offering that isn't
+    # there.
+    offering_id = _offering_for(course_id, semester)
+    if semester and offering_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No offering of this course in that semester.",
+        )
     cached = table("study_guides").select(
         "id,user_id,offering_id,exam_id,content,generated_at",
         filters={
@@ -281,11 +341,19 @@ def regenerate_guide(request: Request, body: dict = Body(...)):
     user_id = body.get("user_id")
     course_id = body.get("course_id")
     exam_id = body.get("exam_id")
+    # Optional term label (#141): regenerating replaces the SELECTED term's
+    # guide, keyed on that term's offering.
+    semester = body.get("semester")
     if not user_id or not course_id or not exam_id:
         raise HTTPException(status_code=400, detail="user_id, course_id, and exam_id are required.")
     require_self(user_id, request)
 
-    offering_id = resolve_offering(course_id)
+    offering_id = _offering_for(course_id, semester)
+    if semester and offering_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No offering of this course in that semester.",
+        )
     table("study_guides").delete(
         filters={
             "user_id": f"eq.{user_id}",

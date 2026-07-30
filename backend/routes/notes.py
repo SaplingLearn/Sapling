@@ -20,7 +20,7 @@ from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
 from services import events_service
-from services.academics import offering_course_id, resolve_offering
+from services.academics import offering_course_id, resolve_offering, term_id_for_label
 from services.auth_guard import get_session_user_id, require_self
 from services.notes_service import (
     create_note,
@@ -129,12 +129,35 @@ async def list_user_notes(
     user_id: str,
     request: Request,
     course_id: str | None = None,
+    semester: str | None = None,
 ):
     require_self(user_id, request)
     # The API speaks abstract course ids; notes key on the offering. Resolve
-    # the (current-term) offering for the requested course before filtering.
-    offering_id = resolve_offering(course_id) if course_id else None
-    notes = await list_notes(user_id=user_id, offering_id=offering_id)
+    # the (current-term) offering for the requested course before filtering —
+    # or, with a `semester` (term label, #141), STRICTLY that term's offering:
+    # an unknown label or a term with no offering of the course answers with
+    # the empty shape, never a silent fall-back to another term. `semester`
+    # without `course_id` is ignored (this is the course-filtered read; the
+    # notetaker UI itself carries no semester context — the param exists for
+    # API completeness).
+    offering_id = None
+    semester_missed = False
+    if course_id:
+        if semester:
+            term_id = term_id_for_label(semester)
+            offering_id = (
+                resolve_offering(course_id, term_id, fallback=False)
+                if term_id
+                else None
+            )
+            semester_missed = offering_id is None
+        else:
+            offering_id = resolve_offering(course_id)
+    notes = (
+        []
+        if semester_missed
+        else await list_notes(user_id=user_id, offering_id=offering_id)
+    )
     # Attach the abstract course id + labels resolved from each note's offering.
     # The notetaker UI keys on course_id; without it every note shows "Unknown
     # course" (finding F4). Shared per-request memo so notes in the same course
@@ -160,6 +183,8 @@ async def create(body: CreateNoteBody, request: Request):
     require_self(body.user_id, request)
     # Abstract course id from the client → the current-term offering the note
     # is stored against (create=True so a fresh note lands in the real term).
+    # CREATE path: deliberately NOT semester-scoped (#141) — new content
+    # belongs to the current term by design.
     offering_id = resolve_offering(body.course_id, create=True)
     note = await create_note(
         user_id=body.user_id,
@@ -209,7 +234,9 @@ async def patch(note_id: str, body: UpdateNoteBody, request: Request):
     if body.tags is not None:
         patch_dict["tags"] = body.tags
     if body.course_id is not None:
-        # Re-home the note onto the offering for the new abstract course.
+        # RE-HOME path: moving a note onto another abstract course files it
+        # under that course's CURRENT-term offering — deliberately not
+        # semester-scoped (#141), like the create path above.
         patch_dict["offering_id"] = resolve_offering(body.course_id, create=True)
     if not patch_dict:
         raise HTTPException(status_code=400, detail="No fields to update.")

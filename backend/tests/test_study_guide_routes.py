@@ -128,14 +128,19 @@ class TestGetCourses:
 # ── GET /api/study-guide/{user_id}/cached ────────────────────────────────────
 
 class TestGetCachedGuides:
-    def test_enriches_with_course_name(self):
+    def test_enriches_with_course_name_and_term(self):
         # Guides key on the offering (0025); the response exposes the abstract
-        # course id (resolved via offering_course_id) and its course name.
-        guides = [{
-            "id": "g1", "offering_id": "off1", "exam_id": "e1",
-            "generated_at": "2026-04-01T00:00:00Z",
-            "content": {"exam": "Midterm", "overview": "Covers ch1-5"},
-        }]
+        # course id (resolved via offering_course_id), its course name, and —
+        # #475 F1 — the entry's OWN term label, so the client can open a recent
+        # guide as its own term instead of the active selector's.
+        guides = [
+            {"id": "g1", "offering_id": "off1", "exam_id": "e1",
+             "generated_at": "2026-04-01T00:00:00Z",
+             "content": {"exam": "Midterm", "overview": "Covers ch1-5"}},
+            {"id": "g2", "offering_id": "off-untermed", "exam_id": "e2",
+             "generated_at": "2026-03-01T00:00:00Z",
+             "content": {"exam": "Final", "overview": ""}},
+        ]
 
         def table_side_effect(name):
             m = MagicMock()
@@ -147,8 +152,11 @@ class TestGetCachedGuides:
                 m.select.return_value = []
             return m
 
+        terms = {"off1": {"id": "term-f25", "label": "Fall 2025"}}
         with patch("routes.study_guide.table", side_effect=table_side_effect), \
-             patch("routes.study_guide.offering_course_id", return_value="c1"):
+             patch("routes.study_guide.offering_course_id", return_value="c1"), \
+             patch("routes.study_guide.term_for_offering",
+                   side_effect=lambda o: terms.get(o)):
             r = client.get(f"/api/study-guide/{USER_ID}/cached")
 
         assert r.status_code == 200
@@ -157,6 +165,9 @@ class TestGetCachedGuides:
         assert out["course_name"] == "Calc II"
         assert out["exam_title"] == "Midterm"
         assert out["overview"] == "Covers ch1-5"
+        assert out["semester"] == "Fall 2025"
+        # An offering with no term joined degrades to null, never a KeyError.
+        assert r.json()["guides"][1]["semester"] is None
 
     def test_empty_when_no_guides(self):
         with patch("routes.study_guide.table") as t:
@@ -227,6 +238,50 @@ class TestGetGuide:
         assert captured["row"]["offering_id"] == "off1"
         assert "course_id" not in captured["row"]
 
+    def test_exam_must_belong_to_the_resolved_offering(self):
+        """#475 F3 (the #462 CodeRabbit fix): the exam lookup is scoped to the
+        RESOLVED offering's enrollment, not all of the user's enrollments — a
+        two-term user generating against offering A with an exam that belongs
+        to offering B gets a 404, and nothing is persisted."""
+        inserted = {"n": 0}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "study_guides":
+                m.select.return_value = []  # no cache → would generate
+
+                def _insert(row):
+                    inserted["n"] += 1
+                    return [{}]
+                m.insert.side_effect = _insert
+            elif name == "assignments":
+                def _select(cols, filters=None, order=None, limit=None):
+                    # The exam belongs to enr-b; it is only visible when enr-b
+                    # is inside the enrollment_id filter.
+                    if "enr-b" in (filters or {}).get("enrollment_id", ""):
+                        return [{"id": EXAM_ID, "enrollment_id": "enr-b",
+                                 "title": "Final", "due_date": "2026-05-01"}]
+                    return []
+                m.select.side_effect = _select
+            else:
+                m.select.return_value = []
+            return m
+
+        agent_run = _agent_run_returning({"exam": "Final", "topics": []})
+        with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[
+                 {"id": "enr-a", "offering_id": "off-a"},
+                 {"id": "enr-b", "offering_id": "off-b"},
+             ]), \
+             patch("routes.study_guide.resolve_offering", return_value="off-a"), \
+             patch("routes.study_guide.study_guide_agent.run", new=agent_run):
+            r = client.get(
+                f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}"
+            )
+        assert r.status_code == 404
+        agent_run.assert_not_called()
+        assert inserted["n"] == 0
+
     def test_unknown_exam_returns_404(self):
         def table_side_effect(name):
             m = MagicMock()
@@ -291,6 +346,170 @@ class TestRegenerateGuide:
     def test_missing_fields_returns_400(self):
         r = client.post("/api/study-guide/regenerate", json={"user_id": USER_ID})
         assert r.status_code == 400
+
+
+# ── semester scoping (#141) ──────────────────────────────────────────────────
+#
+# The Study screen's semester selector scopes the course-scoped reads. An
+# explicit `semester` (term LABEL) resolves STRICTLY — an unknown label or a
+# term with no offering of the course degrades to the route's empty/404
+# behavior, never a silent fall-back to the current (or any other) term.
+
+class TestSemesterScoping:
+    def test_guide_resolves_the_requested_term_strictly(self):
+        cached_row = {
+            "id": "g1", "user_id": USER_ID, "offering_id": "off-f25",
+            "exam_id": EXAM_ID, "generated_at": "2026-04-01T00:00:00Z",
+            "content": {"exam": "Midterm", "topics": []},
+        }
+        captured = {}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "study_guides":
+                def _select(cols, filters=None, order=None, limit=None):
+                    captured["filters"] = filters or {}
+                    return [cached_row]
+                m.select.side_effect = _select
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.term_id_for_label", return_value="term-f25") as tl, \
+             patch("routes.study_guide.resolve_offering", return_value="off-f25") as ro:
+            r = client.get(
+                f"/api/study-guide/{USER_ID}/guide"
+                f"?course_id={COURSE_ID}&exam_id={EXAM_ID}&semester=Fall+2025"
+            )
+        assert r.status_code == 200
+        assert r.json()["cached"] is True
+        tl.assert_called_once_with("Fall 2025")
+        ro.assert_called_once_with(COURSE_ID, "term-f25", fallback=False)
+        assert captured["filters"]["offering_id"] == "eq.off-f25"
+
+    def test_guide_404s_when_the_term_has_no_offering(self):
+        agent_run = _agent_run_returning({"exam": "X", "topics": []})
+        with patch("routes.study_guide.table"), \
+             patch("routes.study_guide.term_id_for_label", return_value="term-su26"), \
+             patch("routes.study_guide.resolve_offering", return_value=None), \
+             patch("routes.study_guide.study_guide_agent.run", new=agent_run):
+            r = client.get(
+                f"/api/study-guide/{USER_ID}/guide"
+                f"?course_id={COURSE_ID}&exam_id={EXAM_ID}&semester=Summer+2026"
+            )
+        assert r.status_code == 404
+        # Never generate a guide for an offering that doesn't exist.
+        agent_run.assert_not_called()
+
+    def test_guide_404s_on_an_unknown_semester_label(self):
+        with patch("routes.study_guide.term_id_for_label", return_value=None), \
+             patch("routes.study_guide.resolve_offering") as ro:
+            r = client.get(
+                f"/api/study-guide/{USER_ID}/guide"
+                f"?course_id={COURSE_ID}&exam_id={EXAM_ID}&semester=Nonsense"
+            )
+        assert r.status_code == 404
+        ro.assert_not_called()
+
+    def test_regenerate_keys_on_the_requested_terms_offering(self):
+        fresh_content = {"exam": "Midterm", "topics": []}
+        captured = {}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "study_guides":
+                m.select.return_value = []
+                m.insert.return_value = [{}]
+                def _delete(filters=None):
+                    captured["delete_filters"] = filters or {}
+                    return []
+                m.delete.side_effect = _delete
+            elif name == "assignments":
+                m.select.return_value = [{"title": "Midterm", "due_date": "2026-04-01"}]
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[{"id": "enr1", "offering_id": "off-f25"}]), \
+             patch("routes.study_guide.term_id_for_label", return_value="term-f25"), \
+             patch("routes.study_guide.resolve_offering", return_value="off-f25") as ro, \
+             patch("routes.study_guide.study_guide_agent.run", new=_agent_run_returning(fresh_content)):
+            r = client.post(
+                "/api/study-guide/regenerate",
+                json={"user_id": USER_ID, "course_id": COURSE_ID,
+                      "exam_id": EXAM_ID, "semester": "Fall 2025"},
+            )
+        assert r.status_code == 200
+        ro.assert_called_once_with(COURSE_ID, "term-f25", fallback=False)
+        assert captured["delete_filters"]["offering_id"] == "eq.off-f25"
+
+    def test_regenerate_404s_when_the_term_has_no_offering(self):
+        deleted = {"n": 0}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            m.select.return_value = []
+            def _delete(filters=None):
+                deleted["n"] += 1
+                return []
+            m.delete.side_effect = _delete
+            return m
+
+        with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.term_id_for_label", return_value="term-su26"), \
+             patch("routes.study_guide.resolve_offering", return_value=None):
+            r = client.post(
+                "/api/study-guide/regenerate",
+                json={"user_id": USER_ID, "course_id": COURSE_ID,
+                      "exam_id": EXAM_ID, "semester": "Summer 2026"},
+            )
+        assert r.status_code == 404
+        assert deleted["n"] == 0  # nothing torn down for a term that isn't there
+
+    def test_exams_scoped_to_the_semesters_enrollment(self):
+        captured = {}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "assignments":
+                def _select(cols, filters=None, order=None, limit=None):
+                    captured["filters"] = filters or {}
+                    return [{"id": "a1", "title": "Fall Final Exam",
+                             "due_date": "2025-12-10", "assignment_type": "exam"}]
+                m.select.side_effect = _select
+            else:
+                m.select.return_value = []
+            return m
+
+        terms = {"off-f25": {"id": "term-f25"}, "off-s26": {"id": "term-s26"}}
+        with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.user_offering_ids_for_course", return_value=["off-f25", "off-s26"]), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[
+                 {"id": "enr-f25", "offering_id": "off-f25"},
+                 {"id": "enr-s26", "offering_id": "off-s26"},
+             ]), \
+             patch("routes.study_guide.term_id_for_label", return_value="term-f25"), \
+             patch("routes.study_guide.term_for_offering", side_effect=lambda o: terms.get(o)):
+            r = client.get(
+                f"/api/study-guide/{USER_ID}/exams?course_id={COURSE_ID}&semester=Fall+2025"
+            )
+        assert r.status_code == 200
+        # Only the fall enrollment feeds the assignments query.
+        assert captured["filters"] == {"enrollment_id": "in.(enr-f25)"}
+        assert [e["title"] for e in r.json()["exams"]] == ["Fall Final Exam"]
+
+    def test_exams_empty_on_an_unknown_semester_label(self):
+        with patch("routes.study_guide.table") as t, \
+             patch("routes.study_guide.user_offering_ids_for_course", return_value=["off-f25"]), \
+             patch("routes.study_guide.term_id_for_label", return_value=None):
+            t.return_value.select.return_value = []
+            r = client.get(
+                f"/api/study-guide/{USER_ID}/exams?course_id={COURSE_ID}&semester=Nope"
+            )
+        assert r.status_code == 200
+        assert r.json() == {"exams": []}
 
 
 # ── agent-failure handling ───────────────────────────────────────────────────

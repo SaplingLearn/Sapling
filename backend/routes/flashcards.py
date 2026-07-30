@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from db.connection import table
-from services.academics import resolve_offering
+from services.academics import resolve_offering, term_id_for_label
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
 from services.encryption import decrypt_if_present, decrypt_json
@@ -39,6 +39,9 @@ class GenerateFlashcardsBody(BaseModel):
     topic: str
     count: int = 5
     session_id: str | None = None
+    # Optional term label (#141): grounds generation in the SELECTED term's
+    # course documents instead of always the current term's.
+    semester: str | None = None
 
 
 class FlashcardRatingBody(BaseModel):
@@ -106,28 +109,51 @@ def _get_session_summary(session_id: str) -> str:
         return ""
 
 
-def _get_course_documents(user_id: str, course_name: str) -> list[dict]:
+def _get_course_documents(
+    user_id: str, course_name: str, semester: str | None = None
+) -> list[dict]:
     """
-    Return all library documents for the user that belong to the course
-    matching `course_name`. Falls back to all user documents if no course match.
+    Return the library documents grounding generation for `course_name`.
 
     Documents key on the offering (0025): match the abstract course by name,
-    resolve it to the current-term offering, then read documents by offering.
+    resolve it to the current-term offering — or, with a ``semester`` (#141),
+    STRICTLY to that term's offering — then read documents by offering.
+
+    Fallback rules (#475 F2): with a ``semester``, a term with no offering of
+    the course AND a course-name miss both contribute NO documents — an
+    explicit term gives the all-docs fallback nothing to anchor to. Without a
+    ``semester``, a course-name miss keeps the pre-existing fallback to all of
+    the user's documents, byte-identical.
     """
     try:
         course_rows = table("courses").select(
             "id", filters={"user_id": f"eq.{user_id}", "course_name": f"eq.{course_name}"}, limit=1
         )
         if course_rows:
-            offering_id = resolve_offering(course_rows[0]["id"])
-            docs = table("documents").select(
-                "file_name,category,summary,concept_notes",
-                filters={
-                    "user_id": f"eq.{user_id}",
-                    "offering_id": f"eq.{offering_id}",
-                    "deleted_at": "is.null",
-                },
-            )
+            if semester:
+                term_id = term_id_for_label(semester)
+                offering_id = (
+                    resolve_offering(course_rows[0]["id"], term_id, fallback=False)
+                    if term_id
+                    else None
+                )
+            else:
+                offering_id = resolve_offering(course_rows[0]["id"])
+            if offering_id is None:
+                docs = []
+            else:
+                docs = table("documents").select(
+                    "file_name,category,summary,concept_notes",
+                    filters={
+                        "user_id": f"eq.{user_id}",
+                        "offering_id": f"eq.{offering_id}",
+                        "deleted_at": "is.null",
+                    },
+                )
+        elif semester:
+            # Course-name miss + explicit term: nothing to scope the fallback
+            # to — no documents (#475 F2).
+            docs = []
         else:
             docs = table("documents").select(
                 "file_name,category,summary,concept_notes",
@@ -185,8 +211,9 @@ def generate(body: GenerateFlashcardsBody, request: Request):
     if body.session_id:
         context = _get_session_summary(body.session_id)
 
-    # 2. Library documents for this course
-    documents = _get_course_documents(body.user_id, body.topic)
+    # 2. Library documents for this course (term-scoped when a semester is
+    #    selected, #141)
+    documents = _get_course_documents(body.user_id, body.topic, semester=body.semester)
 
     # 3. Concepts the student is weak on
     weak_concepts = _get_weak_concepts(body.user_id, body.topic)
@@ -244,7 +271,12 @@ def generate(body: GenerateFlashcardsBody, request: Request):
 
 
 @router.get("/user/{user_id}")
-def get_flashcards(user_id: str, request: Request, topic: str | None = None):
+def get_flashcards(
+    user_id: str,
+    request: Request,
+    topic: str | None = None,
+    semester: str | None = None,
+):
     require_self(user_id, request)
 
     if not user_id:
@@ -258,8 +290,26 @@ def get_flashcards(user_id: str, request: Request, topic: str | None = None):
         rows = table("flashcards").select(
             "id,user_id,topic,offering_id,front,back,times_reviewed,last_rating,last_reviewed_at,created_at",
             filters=filters, order="created_at.desc"
-        )
-        return {"flashcards": rows or []}
+        ) or []
+        if semester:
+            # Term scoping (#141). This route is user-wide (no course id), so
+            # the filter works on the cards' offering: cards from the selected
+            # term stay, other terms' cards are hidden, and term-LESS cards
+            # (offering_id NULL — e.g. AI-generated) stay visible under any
+            # selection so picking a term never strands them. An unknown label
+            # degrades to term-less cards only — never a 500.
+            term_id = term_id_for_label(semester)
+            allowed: set[str] = set()
+            if term_id:
+                offs = table("course_offerings").select(
+                    "id", filters={"term_id": f"eq.{term_id}"}
+                ) or []
+                allowed = {o["id"] for o in offs if o.get("id")}
+            rows = [
+                r for r in rows
+                if r.get("offering_id") is None or r["offering_id"] in allowed
+            ]
+        return {"flashcards": rows}
     except Exception as e:
         err_str = str(e).lower()
         if "not found" in err_str or "does not exist" in err_str or "42p01" in err_str:
@@ -326,6 +376,8 @@ def import_commit(body: ImportCommitBody, request: Request):
 
     # The body carries an abstract course id (optional); flashcards key on the
     # offering. Resolve it (None stays None — flashcards.offering_id is nullable).
+    # CREATE path: imported cards land on the CURRENT term's offering by design
+    # (#141 scopes the reads only; new content belongs to the term it's made in).
     offering_id = resolve_offering(body.course_id) if body.course_id else None
 
     cards = [{"front": c.front, "back": c.back} for c in body.cards]
