@@ -425,3 +425,43 @@ def test_action_route_uses_compact_graph_context():
         )
     assert resp.status_code == 200
     _assert_compact(captured["graph_json"])
+
+
+def test_stream_route_saves_raw_body_message():
+    """PR #469 review: the STREAMING route's _persist closure must also save
+    the raw body.message — never the assembled catalog/RAG/graph prefix. The
+    JSON-route twin is test_chat_route_saves_raw_body_message above; this one
+    drives /chat/stream with the REAL _prepare_chat_run (so the assembled
+    message genuinely differs from body.message) and a fake stream that
+    invokes on_complete the way stream_agent_turn does on success."""
+    saved: list[tuple] = []
+
+    async def fake_stream(**kwargs):
+        from services.agent_events import SaplingEvent
+        kwargs["on_complete"]("a reply", {}, [])
+        yield SaplingEvent(type="done", step="reply", message="Complete.",
+                           data={"reply": "a reply", "graph_update": {}, "mastery_changes": []})
+
+    with (
+        patch("routes.learn.stream_agent_turn", fake_stream),
+        patch("routes.learn.save_message", side_effect=lambda *a, **k: saved.append(a)),
+        patch("routes.learn._consume_pending"),
+        patch("routes.learn._get_session_offering_id", return_value=""),
+        patch("routes.learn._load_message_history", return_value=[]),
+        patch("routes.learn.events_service"),
+    ):
+        resp = client.post(
+            "/api/learn/chat/stream",
+            json={
+                "user_id": "u1",
+                "session_id": "s-raw-stream",
+                "message": "What is the chain rule?",
+                "mode": "socratic",
+            },
+        )
+    assert resp.status_code == 200
+    user_rows = [s for s in saved if s[1] == "user"]
+    assert user_rows == [("s-raw-stream", "user", "What is the chain rule?")], (
+        "the persisted user row must be the raw body.message — "
+        "never the assembled catalog/RAG/graph prefix"
+    )

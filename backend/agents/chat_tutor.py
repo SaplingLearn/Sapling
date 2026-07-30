@@ -117,7 +117,7 @@ _PROMPT_HASHES: dict[TutorMode, str] = {
 # the frontend renders via MarkdownChat. No structured output here; that
 # is reserved for routes that grade or extract.
 
-# All five tools are registered on every mode. The system prompt steers
+# All seven tools are registered on every mode. The system prompt steers
 # WHEN to call them; the surface stays uniform so a Pro-tier model can
 # decide for itself which lookups are worth the round trip.
 
