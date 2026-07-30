@@ -283,6 +283,7 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-range-from` / `-to` | the custom date inputs (UTC day start/end) |
 | `admin-analytics-cost-group-feature` / `-user` / `-model` | the LLM-cost group-by toggle (drives the `group_by` query) |
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
+| `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
 
 ### `library`
 

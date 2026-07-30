@@ -48,6 +48,21 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/api", () => api);
 
+// Charts are lazy-loaded via next/dynamic in the screen; render them
+// synchronously in tests (house passthrough precedent).
+vi.mock("next/dynamic", () => ({
+  default: (loader: () => Promise<unknown>) => {
+    let Comp: React.ComponentType<Record<string, unknown>> | null = null;
+    loader().then((m) => { Comp = (m as { default?: never } & Record<string, never>) as never; });
+    return function DynamicPassthrough(props: Record<string, unknown>) {
+      const [, force] = React.useReducer((x: number) => x + 1, 0);
+      React.useEffect(() => { if (!Comp) { loader().then((m) => { Comp = m as never; force(); }); } }, []);
+      const C = Comp as React.ComponentType<Record<string, unknown>> | null;
+      return C ? <C {...props} /> : null;
+    };
+  },
+}));
+
 import { AdminAnalytics } from "./AdminAnalytics";
 
 const RANGE = { from: "2026-06-30T12:00:00.000Z", to: "2026-07-30T12:00:00.000Z" };
@@ -58,14 +73,20 @@ const summaryFixture = {
   distinct_active_users: 7,
   by_event_type: [{ event_type: "note.created", count: 20 }],
   truncated: false,
-  series: null,
+  series: [
+    { date: "2026-07-10", count: 12 },
+    { date: "2026-07-12", count: 30 },
+  ],
 };
 const byUserFixture = {
   range: RANGE,
-  total_users: 1,
+  total_users: 2,
   limit: 50,
   offset: 0,
-  users: [{ user_id: "u-alpha", event_count: 5, by_category: { usage: 5 }, llm_cost_usd: 1.23, total_tokens: 456 }],
+  users: [
+    { user_id: "u-alpha", event_count: 5, by_category: { usage: 5 }, llm_cost_usd: 1.23, total_tokens: 456 },
+    { user_id: "u-beta", event_count: 9, by_category: { usage: 9 }, llm_cost_usd: 0.5, total_tokens: 100 },
+  ],
   truncated: false,
 };
 const costFixture = {
@@ -74,7 +95,7 @@ const costFixture = {
   rows: [{ key: "quiz", calls: 3, prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost_usd: 0.5 }],
   totals: { calls: 3, prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost_usd: 0.5 },
   truncated: true,
-  series: null,
+  series: [{ date: "2026-07-10", calls: 3, total_tokens: 15, cost_usd: 0.5 }],
 };
 const errorsFixture = {
   range: RANGE,
@@ -86,7 +107,7 @@ const errorsFixture = {
     user_id: "u-alpha", path: "/api/quiz", method: "POST", status_code: 500, duration_ms: 12.3,
   }],
   truncated: false,
-  series: null,
+  series: [{ date: "2026-07-15", count: 1 }],
 };
 
 function primeHappyPath() {
@@ -115,10 +136,11 @@ describe("AdminAnalytics", () => {
     primeHappyPath();
     render(<AdminAnalytics />);
     await waitFor(() => {
-      expect(screen.getByText("42")).toBeTruthy(); // total events
-      expect(screen.getByText("note.created")).toBeTruthy();
+      expect(screen.getByText("42")).toBeTruthy(); // total events stat
+      // Chart labels + table fallbacks both carry these — multiple matches are expected.
+      expect(screen.getAllByText("note.created").length).toBeGreaterThanOrEqual(1);
       expect(screen.getByText("u-alpha")).toBeTruthy();
-      expect(screen.getByText("quiz")).toBeTruthy();
+      expect(screen.getAllByText("quiz").length).toBeGreaterThanOrEqual(1);
       expect(screen.getByText("error.5xx")).toBeTruthy();
     });
   });
@@ -152,7 +174,7 @@ describe("AdminAnalytics", () => {
   it("surfaces the truncation badge when an aggregation was capped", async () => {
     primeHappyPath();
     render(<AdminAnalytics />);
-    await screen.findByText("quiz");
+    await screen.findAllByText("quiz");
     expect(screen.getByText(/truncated/i)).toBeTruthy();
   });
 
@@ -197,5 +219,46 @@ describe("AdminAnalytics", () => {
       expect(last.from).toBe("2099-09-01T00:00:00.000Z");
       expect(last.to >= last.from).toBe(true);
     });
+  });
+
+  it("requests day bucketing for the trend panels (#122)", async () => {
+    primeHappyPath();
+    render(<AdminAnalytics />);
+    await screen.findByText("42");
+    expect(api.adminUsageSummary.mock.calls.at(-1)![0].bucket).toBe("day");
+    expect(api.adminLlmCost.mock.calls.at(-1)![0].bucket).toBe("day");
+    expect(api.adminErrors.mock.calls.at(-1)![0].bucket).toBe("day");
+    expect(api.adminUsageByUser.mock.calls.at(-1)![0].bucket).toBeUndefined();
+  });
+
+  it("renders the trend charts and the event-type bars from the series (#122)", async () => {
+    primeHappyPath();
+    render(<AdminAnalytics />);
+    await screen.findByText("42");
+    expect(await screen.findByRole("img", { name: "Events per day" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Cost per day" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Errors per day" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Top event types" })).toBeTruthy();
+  });
+
+  it("keeps a table fallback behind each chart panel (#122 a11y)", async () => {
+    primeHappyPath();
+    render(<AdminAnalytics />);
+    await screen.findByText("42");
+    // The raw tables from #121 survive as expandable data views.
+    expect(screen.getAllByText("View data").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("sorts the users table by a clicked column (#122)", async () => {
+    primeHappyPath();
+    render(<AdminAnalytics />);
+    await screen.findByText("u-alpha");
+    const order = () => {
+      const cells = screen.getAllByText(/^u-(alpha|beta)$/).map((el) => el.textContent);
+      return cells;
+    };
+    expect(order()).toEqual(["u-alpha", "u-beta"]); // server order (cost desc)
+    fireEvent.click(screen.getByTestId("admin-analytics-users-sort-events"));
+    await waitFor(() => expect(order()).toEqual(["u-beta", "u-alpha"])); // events desc
   });
 });
