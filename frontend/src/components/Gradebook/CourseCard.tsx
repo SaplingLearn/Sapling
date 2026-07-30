@@ -108,9 +108,13 @@ interface CourseCardProps {
   course: GradebookCourseSummary;
   variant: "hero" | "default";
   courseColor: string;
+  // The landing's selected term. Carried on the link so a course enrolled in
+  // several terms opens THIS term's enrollment — without it the backend
+  // resolves the current term and an archived enrollment 404s (#139).
+  semester?: string;
 }
 
-export function CourseCard({ course, variant, courseColor }: CourseCardProps) {
+export function CourseCard({ course, variant, courseColor, semester }: CourseCardProps) {
   const isHero = variant === "hero";
   // Single canonical "no grades yet" signal. percent === null is the
   // upstream source of truth; letter follows it.
@@ -118,7 +122,9 @@ export function CourseCard({ course, variant, courseColor }: CourseCardProps) {
 
   return (
     <Link
-      href={`/gradebook/${encodeURIComponent(course.course_id)}`}
+      href={`/gradebook/${encodeURIComponent(course.course_id)}${
+        semester ? `?semester=${encodeURIComponent(semester)}` : ""
+      }`}
       className="course-card"
       style={{
         gridColumn: isHero ? "span 2" : undefined,

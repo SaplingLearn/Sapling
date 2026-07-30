@@ -209,6 +209,17 @@ export function GradebookCourseScreen({ courseId }: Props) {
   const [loading, setLoading] = React.useState(true);
   const [fetchError, setFetchError] = React.useState<string | null>(null);
 
+  // /gradebook/<id>?semester=<label> — the landing's cards carry the selected
+  // term so a course enrolled in several terms resolves to that term's
+  // enrollment instead of 404ing off the current one (#139). Read straight
+  // off location like Landing.tsx does: useSearchParams() would need a
+  // Suspense boundary in the route shell, which this component doesn't own.
+  const [requestedSemester] = React.useState(() =>
+    typeof window === "undefined"
+      ? ""
+      : new URLSearchParams(window.location.search).get("semester") ?? "",
+  );
+
   const skeletonCount = React.useMemo<number>(() => {
     if (typeof window === "undefined") return 4;
     const n = window.sessionStorage.getItem(`gb-cats-${courseId}`);
@@ -244,14 +255,18 @@ export function GradebookCourseScreen({ courseId }: Props) {
     if (!userId) return;
     setFetchError(null);
     try {
-      const fresh = await getGradebookCourse(userId, courseId);
+      const fresh = await getGradebookCourse(
+        userId,
+        courseId,
+        requestedSemester || undefined,
+      );
       setData(fresh);
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : "Unknown error";
       setFetchError(errMsg);
       toast.error(`Couldn't load course: ${errMsg}`);
     }
-  }, [userId, courseId, toast]);
+  }, [userId, courseId, requestedSemester, toast]);
 
   const loadInitial = React.useCallback(async () => {
     setLoading(true);

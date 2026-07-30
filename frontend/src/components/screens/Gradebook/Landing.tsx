@@ -14,6 +14,7 @@ import { courseTermLabels, currentTerm } from "@/lib/semesters";
 import { now } from "@/lib/testMode";
 import type { GradebookCourseSummary } from "@/lib/types";
 import { SyllabusUploadFlow } from "@/components/Gradebook/SyllabusUploadFlow";
+import { TranscriptModal } from "@/components/Gradebook/TranscriptModal";
 import { Button } from "@/components/ui";
 
 const SAMPLE_SEMESTERS = ["Spring 2026", "Fall 2025"];
@@ -100,10 +101,12 @@ export function GradebookLanding() {
   const [semesters, setSemesters] = React.useState<string[]>([]);
   const [selected, setSelected] = React.useState<string>("");
   const [courses, setCourses] = React.useState<GradebookCourseSummary[]>([]);
+  const [termGpa, setTermGpa] = React.useState<number | null>(null);
   const [colorMap, setColorMap] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
   const [termsReady, setTermsReady] = React.useState(false);
   const [uploadOpen, setUploadOpen] = React.useState(false);
+  const [transcriptOpen, setTranscriptOpen] = React.useState(false);
 
   // /gradebook?semester=<label> is how the dashboard archive deep-links into a
   // past term. Read straight off location because useSearchParams() would need
@@ -157,11 +160,13 @@ export function GradebookLanding() {
     if (!termsReady) return;
     if (!selected) {
       setCourses([]);
+      setTermGpa(null);
       setLoading(false);
       return;
     }
     if (!userId) {
       setCourses(SAMPLE_COURSES[selected] ?? []);
+      setTermGpa(null);
       setLoading(false);
       return;
     }
@@ -169,9 +174,11 @@ export function GradebookLanding() {
     getGradebookSummary(userId, selected)
       .then((res) => {
         setCourses(res.courses.length ? res.courses : []);
+        setTermGpa(res.gpa ?? null);
       })
       .catch(() => {
         setCourses([]);
+        setTermGpa(null);
       })
       .finally(() => setLoading(false));
   }, [userId, selected, termsReady]);
@@ -237,11 +244,51 @@ export function GradebookLanding() {
       >
         <AmbientOrbs />
         <div style={{ position: "relative", zIndex: 1 }}>
-        <SemesterChips
-          semesters={semesters}
-          selected={selected}
-          onSelect={setSelected}
-        />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 16,
+            flexWrap: "wrap",
+          }}
+        >
+          <SemesterChips
+            semesters={semesters}
+            selected={selected}
+            onSelect={setSelected}
+          />
+          {userId && (
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              {termGpa !== null && (
+                <span
+                  data-testid="gradebook-term-gpa"
+                  className="mono"
+                  title="Credit-weighted GPA for this semester"
+                  style={{
+                    fontSize: 12,
+                    letterSpacing: "0.02em",
+                    color: "var(--text-dim)",
+                  }}
+                >
+                  Term GPA{" "}
+                  <strong style={{ color: "var(--text)", fontWeight: 600 }}>
+                    {termGpa.toFixed(2)}
+                  </strong>
+                </span>
+              )}
+              <button
+                type="button"
+                data-testid="gradebook-transcript-open"
+                className="btn"
+                onClick={() => setTranscriptOpen(true)}
+                style={{ padding: "5px 14px", fontSize: 12 }}
+              >
+                Transcript
+              </button>
+            </div>
+          )}
+        </div>
         {loading ? (
           <LoadingSkeleton />
         ) : courses.length === 0 ? (
@@ -264,6 +311,7 @@ export function GradebookLanding() {
                 course={c}
                 variant="default"
                 courseColor={colorMap[c.course_id] || "var(--accent)"}
+                semester={selected}
               />
             ))}
           </div>
@@ -272,11 +320,18 @@ export function GradebookLanding() {
       </main>
 
       {userId && (
-        <SyllabusUploadFlow
-          open={uploadOpen}
-          userId={userId}
-          onClose={() => setUploadOpen(false)}
-        />
+        <>
+          <SyllabusUploadFlow
+            open={uploadOpen}
+            userId={userId}
+            onClose={() => setUploadOpen(false)}
+          />
+          <TranscriptModal
+            open={transcriptOpen}
+            userId={userId}
+            onClose={() => setTranscriptOpen(false)}
+          />
+        </>
       )}
     </>
   );

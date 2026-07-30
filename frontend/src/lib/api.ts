@@ -3,6 +3,7 @@ import type {
   UserProfile, UserSettings, UserRole, UserAchievement, Achievement,
   UserCosmetic, CosmeticType, Role, Cosmetic, RarityTier, AchievementCategory,
   GradebookSummary, GradebookCourse, GradeCategory, GradedAssignment, LetterScaleTier,
+  GpaReport,
   ExtractedSyllabusCategory,
   AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
   Note, LinkedConcept,
@@ -1180,9 +1181,21 @@ export const getGradebookSummary = (userId: string, semester: string) =>
     `/api/gradebook/summary?user_id=${encodeURIComponent(userId)}&semester=${encodeURIComponent(semester)}`,
   );
 
-export const getGradebookCourse = (userId: string, courseId: string) =>
+// `semester` pins which enrollment of the course to load (a course can be
+// taken in several terms, #139); omitted = the backend resolves the current
+// term with its single-offering fallback.
+export const getGradebookCourse = (userId: string, courseId: string, semester?: string) =>
   fetchJSON<GradebookCourse>(
-    `/api/gradebook/courses/${encodeURIComponent(courseId)}?user_id=${encodeURIComponent(userId)}`,
+    `/api/gradebook/courses/${encodeURIComponent(courseId)}?user_id=${encodeURIComponent(userId)}` +
+      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
+  );
+
+// Credit-weighted GPA. Without `semester`: the cumulative/transcript report
+// across all terms (scope "cumulative"); with it: that one term.
+export const getGpa = (userId: string, semester?: string) =>
+  fetchJSON<GpaReport>(
+    `/api/gradebook/gpa?user_id=${encodeURIComponent(userId)}` +
+      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
   );
 
 export const createCategory = (

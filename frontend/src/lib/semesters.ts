@@ -80,6 +80,17 @@ function compareLabels(a: string, b: string, index: Map<string, number>): number
   return a.localeCompare(b);
 }
 
+const NO_SEMESTER_INDEX: Map<string, number> = new Map();
+
+/**
+ * Most-recent-first comparator for bare term labels, for callers that have no
+ * `/api/semesters` rows to key on (e.g. the transcript's per-semester groups).
+ * Label-derived ranks only; unrankable labels sort to the end.
+ */
+export function compareTermLabels(a: string, b: string): number {
+  return compareLabels(a, b, NO_SEMESTER_INDEX);
+}
+
 /**
  * Distinct term labels off a course list, most recent first — the semester
  * chips on the gradebook landing. Courses with no term contribute nothing;
