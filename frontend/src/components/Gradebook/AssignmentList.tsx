@@ -172,6 +172,7 @@ export function AssignmentList({
           )}
           <button
             type="button"
+            data-testid="gradebook-add-assignment"
             onClick={onAdd}
             className="btn btn--primary"
             style={{ padding: "8px 14px", fontSize: 13 }}

@@ -310,6 +310,29 @@ export interface GradebookCourseSummary {
 
 export interface GradebookSummary {
   courses: GradebookCourseSummary[];
+  // Credit-weighted GPA for the requested term; null until something is graded.
+  gpa: number | null;
+  semester: string;
+}
+
+// One enrollment row of GET /api/gradebook/gpa. `grade_points` is null while
+// the course has no graded percent yet (rendered as in-progress, excluded
+// from GPA math); `credits` is null when the offering doesn't declare any.
+export interface GpaCourseRow {
+  course_id: string;
+  course_code: string;
+  semester: string;
+  credits: number | null;
+  percent: number | null;
+  letter: string | null;
+  grade_points: number | null;
+}
+
+export interface GpaReport {
+  gpa: number | null;
+  courses: GpaCourseRow[];
+  semester: string | null;
+  scope: "semester" | "cumulative";
 }
 
 export interface GradebookCourse {

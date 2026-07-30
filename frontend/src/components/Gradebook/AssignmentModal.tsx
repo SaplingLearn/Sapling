@@ -95,6 +95,7 @@ export function AssignmentModal({
           Title <span style={{ color: "var(--err)" }}>*</span>
           <input
             ref={titleRef}
+            data-testid="gradebook-assignment-title"
             value={draft.title}
             onChange={(e) => setDraft({ ...draft, title: e.target.value })}
             onBlur={() => setTitleTouched(true)}
@@ -334,6 +335,7 @@ export function AssignmentModal({
           <Button
             variant="primary"
             size="sm"
+            data-testid="gradebook-assignment-save"
             disabled={!valid || saving}
             onClick={async () => {
               setSaving(true);

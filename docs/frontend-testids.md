@@ -77,6 +77,7 @@ renders the element.
 | Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
 | Library | `library` | `frontend/src/components/screens/Library.tsx` (the `/library` document screen — upload trigger, document cards/rows, filters, detail panel) |
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
+| Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -248,6 +249,24 @@ distinguishable from a genuinely empty calendar).
 | `calendar-load-error` | the load-failure banner (`role="alert"`) rendered instead of the calendar views when the initial assignments/courses fetch fails |
 | `calendar-load-retry` | the banner's "Try again" button — re-runs the load through the skeleton state |
 
+### `gradebook`
+
+Added with the #139 term-switcher/transcript journey. The landing's semester
+chips and the course cards stay untagged on purpose: chips are `Toggle`
+buttons selected by role/name (the term label is seeded DATA, not copy —
+same posture as the Courses & Semesters hub tabs), and the cards are links
+inside the `role="grid"` "Courses" grid.
+
+| testid | element |
+| --- | --- |
+| `gradebook-term-gpa` | landing: the selected term's credit-weighted GPA next to the chips (absent while the term has no graded work) |
+| `gradebook-transcript-open` | landing: "Transcript" button opening the transcript modal |
+| `gradebook-transcript-gpa` | transcript modal: the cumulative GPA value |
+| `gradebook-transcript-retry` | transcript modal: inline "Try again" after a failed load (#463 catch+toast pattern) |
+| `gradebook-add-assignment` | course page: "+ Add Assignment" (`AssignmentList.tsx`) — opens the assignment modal |
+| `gradebook-assignment-title` | assignment modal: the required title `<input>` |
+| `gradebook-assignment-save` | assignment modal: the Save button |
+
 ### `library`
 
 Added with the upload → SSE → library journey (#387).
@@ -313,6 +332,12 @@ coverage and regenerate with `npm run lint:baseline`.
 `src/components/screens/Learn.tsx` (the session-resume rows, #392) is in the
 `files` list with the same treatment: its 21 pre-existing untagged elements are
 baselined, so only NEW interactive elements there must carry a testid.
+
+The `gradebook` surface files (#139/#468) get the same treatment:
+`screens/Gradebook/Course.tsx`, `Landing.tsx`, `Gradebook/AssignmentList.tsx`
+and `Gradebook/AssignmentModal.tsx` carry pre-existing untagged
+buttons/inputs that are baselined in `eslint-suppressions.json`; only NEW
+interactive elements there must carry a testid.
 
 ### Adding a surface
 

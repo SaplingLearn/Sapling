@@ -9,7 +9,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GradebookCourseSummary } from "@/lib/types";
 
@@ -19,10 +19,28 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => mockUser,
 }));
 
+// TranscriptModal (rendered by the landing, #139) toasts its load failures;
+// the landing itself never toasts. No test here asserts on toasts — the modal
+// has its own suite — so a bare stub keeps useToast from throwing. Stable
+// object, like the real memoized provider: the modal's fetch effect keys on
+// toast identity.
+const toastApi = vi.hoisted(() => ({
+  show: () => {},
+  dismiss: () => {},
+  success: () => {},
+  error: () => {},
+  info: () => {},
+  warn: () => {},
+}));
+vi.mock("@/components/ToastProvider", () => ({
+  useToast: () => toastApi,
+}));
+
 vi.mock("@/lib/api", () => ({
   getCourses: vi.fn(),
   getGradebookSummary: vi.fn(),
   getSemesters: vi.fn(),
+  getGpa: vi.fn(),
 }));
 
 // Presentational children — stubbed so the test only exercises the landing's
@@ -33,21 +51,24 @@ vi.mock("@/components/Gradebook/AmbientOrbs", () => ({
 vi.mock("@/components/Gradebook/SyllabusUploadFlow", () => ({
   SyllabusUploadFlow: () => null,
 }));
-vi.mock("@/components/Gradebook/CourseCard", () => ({
-  CourseCard: ({ course }: { course: GradebookCourseSummary }) => (
-    <a href="#">{course.course_name}</a>
+// The REAL CourseCard renders (its term-aware href is under test, #139);
+// only next/link is stubbed down to a plain anchor.
+vi.mock("next/link", () => ({
+  default: ({ href, children, ...rest }: { href: string; children?: React.ReactNode }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
   ),
-  COURSE_CARD_GRID_GAP: 24,
-  COURSE_CARD_HEIGHT: 244,
 }));
 
 import { GradebookLanding } from "./Landing";
-import { getCourses, getGradebookSummary, getSemesters } from "@/lib/api";
+import { getCourses, getGradebookSummary, getSemesters, getGpa } from "@/lib/api";
 import type { Semester } from "@/lib/api";
 
 const mockedGetCourses = vi.mocked(getCourses);
 const mockedGetSummary = vi.mocked(getGradebookSummary);
 const mockedGetSemesters = vi.mocked(getSemesters);
+const mockedGetGpa = vi.mocked(getGpa);
 
 const SEMESTERS: Semester[] = [
   { id: "spring-2025", term: "Spring", year: 2025, label: "Spring 2025", start_date: "2025-01-05", end_date: "2025-05-17", sort_key: 20251 },
@@ -70,6 +91,19 @@ function course(course_id: string, term: string): EnrolledCourse {
   };
 }
 
+function summaryCourse(course_id: string, semester: string): GradebookCourseSummary {
+  return {
+    course_id,
+    course_code: course_id.toUpperCase(),
+    course_name: course_id,
+    semester,
+    percent: 90,
+    letter: "A-",
+    graded_count: 3,
+    total_count: 5,
+  };
+}
+
 // The chips are the only aria-pressed controls on the page, so this reads
 // the rendered semester list — and its order — without depending on styling.
 const chipLabels = () =>
@@ -80,8 +114,9 @@ const chipLabels = () =>
 
 beforeEach(() => {
   mockUser.userId = "u1";
-  mockedGetSummary.mockResolvedValue({ courses: [] });
+  mockedGetSummary.mockResolvedValue({ courses: [], gpa: null, semester: "" });
   mockedGetSemesters.mockResolvedValue({ semesters: SEMESTERS });
+  mockedGetGpa.mockResolvedValue({ gpa: null, courses: [], semester: null, scope: "cumulative" });
 });
 
 afterEach(() => {
@@ -202,5 +237,63 @@ describe("GradebookLanding semester chips", () => {
     await screen.findByRole("button", { name: "Spring 2026" });
     expect(chipLabels()).toEqual(["Spring 2026", "Fall 2025"]);
     expect(mockedGetCourses).not.toHaveBeenCalled();
+  });
+});
+
+describe("GradebookLanding term GPA + term-aware card links (#139)", () => {
+  it("surfaces the summary's term GPA next to the chips", async () => {
+    mockedGetCourses.mockResolvedValue({ courses: [course("bio", "Fall 2024")] });
+    mockedGetSummary.mockResolvedValue({
+      courses: [summaryCourse("bio", "Fall 2024")],
+      gpa: 3.7,
+      semester: "Fall 2024",
+    });
+
+    render(<GradebookLanding />);
+
+    const gpa = await screen.findByTestId("gradebook-term-gpa");
+    expect(gpa.textContent).toContain("3.70");
+  });
+
+  it("hides the term GPA when the summary has none", async () => {
+    mockedGetCourses.mockResolvedValue({ courses: [course("bio", "Fall 2024")] });
+    mockedGetSummary.mockResolvedValue({
+      courses: [summaryCourse("bio", "Fall 2024")],
+      gpa: null,
+      semester: "Fall 2024",
+    });
+
+    render(<GradebookLanding />);
+
+    await screen.findByRole("button", { name: "Fall 2024" });
+    await waitFor(() => expect(mockedGetSummary).toHaveBeenCalled());
+    expect(screen.queryByTestId("gradebook-term-gpa")).toBeNull();
+  });
+
+  it("carries the selected term on each course card link", async () => {
+    // The #139 bug: the card link dropped the term, so a course enrolled in
+    // two semesters always resolved to the CURRENT term's enrollment and the
+    // archived one 404'd. The href must pin the selected chip's term.
+    mockedGetCourses.mockResolvedValue({ courses: [course("bio", "Fall 2024")] });
+    mockedGetSummary.mockResolvedValue({
+      courses: [summaryCourse("bio", "Fall 2024")],
+      gpa: null,
+      semester: "Fall 2024",
+    });
+
+    render(<GradebookLanding />);
+
+    const card = await screen.findByRole("link", { name: /bio/i });
+    expect(card.getAttribute("href")).toBe("/gradebook/bio?semester=Fall%202024");
+  });
+
+  it("opens the transcript modal from the Transcript button", async () => {
+    mockedGetCourses.mockResolvedValue({ courses: [course("bio", "Fall 2024")] });
+
+    render(<GradebookLanding />);
+
+    const open = await screen.findByTestId("gradebook-transcript-open");
+    fireEvent.click(open);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 });
