@@ -887,3 +887,71 @@ def test_unhandled_exception_emits_exactly_one_error_5xx(sink):
     assert isinstance(ev["payload"]["duration_ms"], (int, float))
     assert ev["payload"]["route"] == "/crash"
     assert ev["request_id"]
+
+
+def test_legacy_chat_fallback_still_emits_chat_message_sent(sink):
+    """PR #465 review (F1): a turn served by _legacy_chat (agent guardrails
+    tripped / unexpected agent failure) is a fully persisted turn and must
+    count — both routes' fallback branches exit before the main-path
+    emissions, so the emission inside _legacy_chat is the only shot (and is
+    exactly-once: the main path never runs _legacy_chat on success)."""
+    import routes.learn as learn_routes
+
+    with (
+        patch.object(learn_routes, "_chat_via_agent", side_effect=RuntimeError("agent down")),
+        patch.object(learn_routes, "_consume_pending"),
+        patch.object(learn_routes, "_get_session_offering_id", return_value="off-1"),
+        patch.object(learn_routes, "offering_course_id", return_value="course-1"),
+        patch.object(learn_routes, "_load_message_history", return_value=[]),
+        patch.object(learn_routes, "save_message"),
+        patch.object(learn_routes, "get_user_name", return_value="Student"),
+        patch.object(learn_routes, "get_graph", return_value={"nodes": [], "edges": []}),
+        patch.object(learn_routes, "get_conversation_history", return_value=[{}]),
+        patch.object(learn_routes, "_get_course_documents", return_value=[]),
+        patch.object(learn_routes, "resolve_offering", return_value="off-1"),
+        patch.object(learn_routes, "call_gemini_multiturn", return_value="a legacy reply"),
+        patch.object(learn_routes, "extract_graph_update", return_value=("a legacy reply", {})),
+        patch.object(learn_routes, "apply_graph_update", return_value=[]),
+    ):
+        client = TestClient(app)
+        r = client.post("/api/learn/chat", json={
+            "session_id": "sess-legacy",
+            "user_id": "user_andres",
+            "message": "SECRET fallback message",
+            "mode": "socratic",
+        })
+    assert r.status_code == 200
+
+    events = _of_type(sink, "chat.message_sent")
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["payload"]["session_id"] == "sess-legacy"
+    assert ev["content_fp"]
+    assert "SECRET fallback message" not in str(ev)
+
+
+def test_idempotent_upload_replay_emits_no_second_document_upload(sink):
+    """PR #465 review (F3): an X-Request-ID replay short-circuits to the
+    persisted document and must NOT count as a second upload attempt — the
+    emission sits below the idempotency check on both routes."""
+    import routes.documents as documents_routes
+
+    with (
+        patch.object(documents_routes, "_validate_user", return_value=None),
+        patch.object(
+            documents_routes, "_existing_doc_by_request_id",
+            return_value={"id": "doc-1", "file_name": "a.pdf"},
+        ),
+        patch.object(documents_routes, "extract_text_from_file", return_value="text " * 40),
+        patch.object(documents_routes, "resolve_offering", return_value="off-1"),
+    ):
+        r = client.post(
+            "/api/documents/upload/sync",
+            headers={"X-Request-ID": "11111111-1111-1111-1111-111111111111"},
+            files={"file": ("a.pdf", b"%PDF-1.4 minimal", "application/pdf")},
+            data={"user_id": "user_andres", "course_id": "course-1"},
+        )
+    assert r.status_code == 200
+
+    uploads = _of_type(sink, "document.upload")
+    assert uploads == []

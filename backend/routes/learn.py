@@ -745,6 +745,21 @@ async def _legacy_chat(body: ChatBody, request: Request) -> dict:
     save_message(body.session_id, "assistant", reply, graph_update)
     mastery_changes = apply_graph_update(body.user_id, graph_update, course_id=course_id)
 
+    # #117 (PR #465 review): fallback turns are fully persisted turns and must
+    # count — mirroring the documents D6 treatment of the legacy pipeline.
+    # Emitting HERE is exactly-once for both routes: their fallback branches
+    # return/short-circuit before the main-path emissions. request_id comes
+    # off request.state (stamped by RequestIDMiddleware) — reliable even when
+    # this runs inside the SSE generator, where the contextvar is unreliable.
+    events_service.log_event(
+        "chat.message_sent",
+        category="usage",
+        user_id=body.user_id,
+        request_id=getattr(request.state, "request_id", None),
+        payload={"mode": body.mode, "session_id": body.session_id},
+        content=body.message,
+    )
+
     return {"reply": reply, "graph_update": graph_update, "mastery_changes": mastery_changes}
 
 

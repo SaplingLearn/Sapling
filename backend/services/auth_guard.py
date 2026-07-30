@@ -17,9 +17,15 @@ from services.session_tokens import SESSION_COOKIE_NAME
 
 # #117 note: the 401 paths in _decode_session/get_session_user_id are
 # deliberately NOT instrumented — RequestIDMiddleware already records every
-# 4xx response as an error.4xx event, and a second emission here would
-# double-count auth failures in /usage/summary. Only the 403 *decisions*
-# below (an authenticated user denied a resource) are audit events.
+# 4xx response as an error.4xx event, and a 401 carries no information the
+# middleware row doesn't already have. The 403 *decisions* below are
+# different: they DO emit auth.permission_denied (category=audit) IN
+# ADDITION to the middleware's error.4xx for the same request — deliberate,
+# not a double-count bug (PR #465 review): the audit event carries the
+# denial `reason` and the authenticated actor, which the HTTP-level error
+# row cannot know. The two land in different categories and serve different
+# rollups (audit trail vs. error dashboard); consumers counting "requests
+# that failed" should use error.*, and "denial decisions" auth.permission_denied.
 
 
 def _decode_session(request: Request) -> dict:

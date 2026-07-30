@@ -738,8 +738,19 @@ async def upload_document_sync(
         or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
     )
 
-    # #117: one document.upload per accepted upload attempt (validation
-    # passed). Counts only — the extracted text itself never enters a payload.
+    # Idempotency: if the client retries with the same X-Request-ID,
+    # short-circuit to the previously persisted document instead of
+    # re-running the orchestrator.
+    existing = _existing_doc_by_request_id(user_id, request_id)
+    if existing:
+        response = dict(existing)
+        response.setdefault("categories", [])
+        return response
+
+    # #117: one document.upload per accepted upload attempt — AFTER the
+    # idempotency short-circuit (PR #465 review), so an X-Request-ID retry of
+    # an already-persisted upload doesn't inflate the count. Counts only —
+    # the extracted text itself never enters a payload.
     events_service.log_event(
         "document.upload",
         category="usage",
@@ -751,15 +762,6 @@ async def upload_document_sync(
             "char_count": len(extracted_text),
         },
     )
-
-    # Idempotency: if the client retries with the same X-Request-ID,
-    # short-circuit to the previously persisted document instead of
-    # re-running the orchestrator.
-    existing = _existing_doc_by_request_id(user_id, request_id)
-    if existing:
-        response = dict(existing)
-        response.setdefault("categories", [])
-        return response
 
     deps = SaplingDeps(
         user_id=user_id,
@@ -880,22 +882,6 @@ async def upload_document(
         else _extract_text_or_422(file_bytes, filename, file.content_type or "")
     )
 
-    # #117: one document.upload per accepted upload attempt (validation
-    # passed), mirroring the sync route. char_count is unknown (None) when
-    # OCR_ASYNC_ENABLED defers extraction into the stream — document.processed
-    # carries the real count once extraction has run.
-    events_service.log_event(
-        "document.upload",
-        category="usage",
-        user_id=user_id,
-        request_id=request_id,
-        payload={
-            "course_id": course_id,
-            "offering_id": offering_id,
-            "char_count": len(extracted_text) if extracted_text is not None else None,
-        },
-    )
-
     async def event_stream():
         nonlocal extracted_text
         try:
@@ -920,6 +906,23 @@ async def upload_document(
                     data={"document_id": existing.get("id"), "request_id": request_id},
                 ))
                 return
+
+            # #117: one document.upload per accepted upload attempt — AFTER
+            # the idempotent-replay short-circuit (PR #465 review), so an
+            # X-Request-ID retry doesn't inflate the count. char_count is
+            # unknown (None) when OCR_ASYNC_ENABLED defers extraction below —
+            # document.processed carries the real count once extraction ran.
+            events_service.log_event(
+                "document.upload",
+                category="usage",
+                user_id=user_id,
+                request_id=request_id,
+                payload={
+                    "course_id": course_id,
+                    "offering_id": offering_id,
+                    "char_count": len(extracted_text) if extracted_text is not None else None,
+                },
+            )
 
             # ── Phase 0: text extraction (when OCR_ASYNC_ENABLED) ─────────────
             # Failures here can NOT fall through to the legacy fallback —
