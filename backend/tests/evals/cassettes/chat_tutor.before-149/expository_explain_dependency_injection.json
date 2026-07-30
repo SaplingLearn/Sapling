@@ -1,0 +1,15 @@
+{
+  "text": "Okay, I've added those concepts to your knowledge graph. Let me know if you have more questions",
+  "tool_calls": [
+    {
+      "args": {
+        "concepts": [
+          "Dependency Injection",
+          "Inversion of Control",
+          "Decoupling"
+        ]
+      },
+      "tool_name": "apply_graph_update_tool"
+    }
+  ]
+}

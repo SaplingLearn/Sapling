@@ -1,0 +1,23 @@
+{
+  "text": "Of course.\n\nKantian ethics, developed by philosopher Immanuel Kant, is a **deontological** theory. This means it judges the morality of an action based on rules or duties, rather than the action's consequences.\n\n### The Good Will and Duty\n\nThe core of Kant's ethics is the \"good will.\" He argued that the only thing that is good without qualification is a good will. A good will is one that acts **from duty**, not merely *in accordance with* duty.\n\n*   **Acting from duty:** You do the right thing because it's the right thing to do. (This has moral worth.)\n*   **Acting in accordance with duty:** You do the right thing for another reason, like self-interest or because it makes you feel good. (This has no real moral worth.)\n\nFor example, a shopkeeper who gives correct change because they believe it is their moral duty is acting from duty. A shopkeeper who gives correct change because they fear a bad reputation is only acting in accordance with duty.\n\n### The Categorical Imperative\n\nThe central rule in Kantian ethics is the **Categorical Imperative**. It's a command (an imperative) that applies to all rational beings, regardless of their desires (it's categorical). Kant formulated it in a few ways.\n\n1.  **The Formula of Universal Law:** \"Act only according to that maxim whereby you can at the same time will that it should become a universal law.\"\n    *   A **maxim** is the personal rule you follow when you act.\n    *   This formulation asks you to consider: \"What if everyone acted on the same maxim I am using?\" If this would result in a logical contradiction or a world no rational person would want, then the act is immoral.\n\n2.  **The Formula of Humanity:** \"Act in such a way that you treat humanity, whether in your own person or in the person of any other, never merely as a means to an end, but always at the same time as an end.\"\n    *   This means you should not use people as mere tools to achieve your own goals. You must respect them as rational beings with their own goals and autonomy.\n\n### Worked Example: Making a False Promise\n\nLet's test the act of making a false promise (e.g., borrowing money you know you can't pay back) using the Categorical Imperative.\n\n*   **Maxim:** \"When I need money, I will make a false promise to borrow it.\"\n*   **Test with Universal Law:** Could this be a universal law? If everyone made false promises whenever they needed money, the institution of promising would collapse. No one would trust any promise. The maxim becomes self-defeating. Therefore, it is immoral.\n*   **Test with the Humanity Formula:** Are you treating the person you're lying to as a mere means? Yes. You are using them as a source of money and denying them the ability to make an informed, rational choice. This is a violation of their humanity and is therefore immoral.\n\nIn short, Kantian ethics proposes a system of absolute moral rules based on reason and the intrinsic worth of rational beings, not on the outcomes of our actions.",
+  "tool_calls": [
+    {
+      "args": {
+        "query": "Kantian ethics"
+      },
+      "tool_name": "search_course_materials"
+    },
+    {
+      "args": {
+        "concepts": [
+          "Kantian Ethics",
+          "Deontology",
+          "Categorical Imperative",
+          "Universalizability Principle",
+          "Humanity Principle"
+        ]
+      },
+      "tool_name": "apply_graph_update_tool"
+    }
+  ]
+}

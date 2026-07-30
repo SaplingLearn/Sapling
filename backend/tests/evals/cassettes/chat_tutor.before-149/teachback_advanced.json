@@ -1,0 +1,17 @@
+{
+  "text": "You've got the core idea right! The Pumping Lemma is indeed a tool to prove a language is *not* regular by splitting a string and repeating a section.\n\nWhat's correct:\n*   **Purpose:** To prove a language is not regular.\n*   **Mechanism:** Splitting a string `s` into three parts (`xyz`) and repeating the middle part (`y`).\n\nA key detail to add is that this is a proof by **contradiction**. We assume the language *is* regular, and then use the lemma to show that this assumption leads to an absurdity.\n\nFor a regular language, the lemma guarantees that any sufficiently long string `s` can be split `s = xyz` (with certain rules) such that `xy^iz` is *always* in the language for any `i \u2265 0`.\n\nTo prove a language is *not* regular, we have to find one specific string where no matter how you make the `xyz` split, pumping `y` results in a string that's *not* in the language.\n\nThe split `s = xyz` must also follow two rules you didn't mention:\n1.  `|xy| \u2264 p`\n2.  `|y| > 0`\n\nWhy do you think the second condition, `|y| > 0`, is essential for the proof to work?",
+  "tool_calls": [
+    {
+      "args": {
+        "updates": [
+          {
+            "concept_name": "Pumping Lemma for Regular Languages",
+            "mastery_delta": -0.1,
+            "reason": "Identified the main idea but missed the proof-by-contradiction structure and key constraints."
+          }
+        ]
+      },
+      "tool_name": "update_mastery_tool"
+    }
+  ]
+}

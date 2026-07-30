@@ -1,0 +1,16 @@
+{
+  "text": "Of course. The price of a good in a market is determined by the interaction of supply and demand.\n\n### Overview\n\n*   **Supply:** How much of a product sellers are willing to offer at a given price.\n*   **Demand:** How much of a product buyers are willing to purchase at a given price.\n\nThe point where these two forces meet is called the **equilibrium price**. This is the price at which the quantity of a good that buyers want to buy is exactly equal to the quantity that sellers want to sell.\n\n### Detailed Explanation\n\n1.  **The Law of Demand:** As the price of a good decreases, the quantity demanded by consumers increases. Think about it: if coffee is cheaper, you're likely to buy more of it. This relationship creates a downward-sloping demand curve.\n\n2.  **The Law of Supply:** As the price of a good increases, the quantity supplied by producers increases. If a coffee shop can sell a latte for a higher price, they are motivated to produce more lattes. This creates an upward-sloping supply curve.\n\n3.  **Finding Equilibrium:** The market price is found where the supply and demand curves intersect.\n    *   If the price is too high, there's a **surplus**. Sellers are trying to sell more than buyers want to buy. To get rid of their excess inventory, sellers will lower their prices.\n    *   If the price is too low, there's a **shortage**. Buyers want to buy more than sellers are offering. This high demand allows sellers to raise their prices.\n\nThis constant push and pull between buyers and sellers naturally moves the price toward the equilibrium point.\n\n### Example: The Market for Coffee\n\nLet's say the equilibrium price for a cup of coffee is $3.\n\n*   **Scenario 1: Price is $4 (Surplus)**\n    *   At $4, coffee shops are willing to supply 100 cups of coffee.\n    *   But at that price, customers are only willing to demand 60 cups.\n    *   There is a surplus of 40 cups. Coffee shops will lower the price to sell the extra coffee.\n\n*   **Scenario 2: Price is $2 (Shortage)**\n    *   At $2, customers demand 120 cups of coffee.\n    *   But at this low price, coffee shops are only willing to supply 50 cups.\n    *   There is a shortage of 70 cups. Seeing the high demand, shops can raise their prices.\n\nThe price will naturally settle at **$3**, where the quantity supplied equals the quantity demanded.\n\nHere is a visual representation of market equilibrium:\n```mermaid\nxychart\n    title \"Market for Coffee\"\n    x-title \"Quantity\"\n    y-title \"Price\"\n    line \"Demand\" [\n        {\"x\": 20, \"y\": 5},\n        {\"x\": 40, \"y\": 4},\n        {\"x\": 60, \"y\": 3},\n        {\"x\": 80, \"y\": 2},\n        {\"x\": 100, \"y\": 1}\n    ]\n    line \"Supply\" [\n        {\"x\": 20, \"y\": 1},\n        {\"x\": 40, \"y\": 2},\n        {\"x\": 60, \"y\": 3},\n        {\"x\": 80, \"y\": 4},\n        {\"x\": 100, \"y\": 5}\n    ]\n```\nThe point where the \"Supply\" and \"Demand\" lines cross is the equilibrium point, which sets the market price and quantity.",
+  "tool_calls": [
+    {
+      "args": {
+        "concepts": [
+          "Supply and Demand",
+          "Market Equilibrium",
+          "Supply",
+          "Demand"
+        ]
+      },
+      "tool_name": "apply_graph_update_tool"
+    }
+  ]
+}
