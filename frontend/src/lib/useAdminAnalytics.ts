@@ -7,8 +7,8 @@
  * House data-fetching pattern (no SWR/React Query in this repo): a stable
  * useCallback fetcher + a useEffect that re-runs when it changes, exposing
  * { data, loading, error, reload }. Errors are humanized once here so every
- * panel renders the same message shape. The default range clock routes
- * through lib/testMode's now() so the E2E stack sees a frozen window.
+ * panel renders the same message shape. The default range clock is the REAL
+ * clock (see presetRange's docstring for why it skips testMode's now()).
  */
 
 import React from "react";
@@ -19,7 +19,6 @@ import {
   adminUsageSummary,
 } from "./api";
 import { humanizeError } from "./errorMessage";
-import { now } from "./testMode";
 import type {
   AnalyticsBucket,
   ErrorsPageData,
@@ -34,9 +33,13 @@ export interface AnalyticsRangeValue {
   to: string;
 }
 
-/** Last-`days` window ending at `nowMs` (defaults to the testMode-aware
- * clock), as the ISO strings the analytics endpoints take. */
-export function presetRange(days: number, nowMs: number = now()): AnalyticsRangeValue {
+/** Last-`days` window ending at `nowMs`, as the ISO strings the analytics
+ * endpoints take. Defaults to the REAL clock even under
+ * NEXT_PUBLIC_TEST_MODE — a #426-family skip-list entry: these are QUERY
+ * BOUNDS over rows the backend stamps with its real clock, and the frozen
+ * testMode instant pointed the e2e dashboard at an empty March window
+ * (admin-analytics.spec.ts). Deterministic tests pass nowMs explicitly. */
+export function presetRange(days: number, nowMs: number = Date.now()): AnalyticsRangeValue {
   return {
     from: new Date(nowMs - days * 86_400_000).toISOString(),
     to: new Date(nowMs).toISOString(),
