@@ -676,7 +676,18 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                           // does not shift the transcript. Safari has no scroll
                           // anchoring to hide it, which is why this matters.
                           ...(m.image_width && m.image_height
-                            ? { aspectRatio: `${m.image_width} / ${m.image_height}`, height: "auto" }
+                            ? {
+                                aspectRatio: `${m.image_width} / ${m.image_height}`,
+                                height: "auto",
+                                // Belt and braces against dimensions that do
+                                // not match the bytes: the server bounds them,
+                                // but a merely WRONG pair would otherwise
+                                // stretch the image instead of letterboxing.
+                                objectFit: "contain" as const,
+                                // maxWidth alone cannot cap a very tall image
+                                // once the ratio drives the height.
+                                maxHeight: 320,
+                              }
                             : {}),
                         }}
                       />

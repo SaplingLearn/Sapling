@@ -192,3 +192,31 @@ class TestGetRoomMessages:
 
         assert r.status_code == 200
         assert captured["limit"] == 2  # floored to 1, +1 probe row
+
+
+class TestImageDimensionBounds:
+    """#315: image_width/image_height are client-supplied and the transcript
+    renders them straight into an aspect-ratio, so an absurd pair is a layout
+    weapon against every member of the room — not just a bad row for its
+    author. The request model must reject them before they reach the DB.
+    """
+
+    def _post(self, **extra):
+        body = {"user_id": "u1", "user_name": "Alice", "image_url": "https://x/i.png"}
+        body.update(extra)
+        return client.post(f"/api/social/rooms/{ROOM_ID}/messages", json=body)
+
+    def test_rejects_absurd_height(self):
+        # Inside Postgres INTEGER range, so nothing downstream would object:
+        # a 1x2000000000 ratio renders a ~2-billion-pixel-tall bubble.
+        assert self._post(image_width=1, image_height=2_000_000_000).status_code == 422
+
+    def test_rejects_non_positive(self):
+        assert self._post(image_width=0, image_height=100).status_code == 422
+        assert self._post(image_width=-5, image_height=100).status_code == 422
+
+    def test_accepts_omitted_dimensions(self):
+        # Older clients send neither; the UI falls back to unreserved layout.
+        # 422 would mean the optionality regressed. Anything else (including
+        # auth/membership rejections) means validation let it through.
+        assert self._post().status_code != 422

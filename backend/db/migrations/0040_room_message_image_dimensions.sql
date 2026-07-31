@@ -20,3 +20,25 @@
 ALTER TABLE room_messages
     ADD COLUMN IF NOT EXISTS image_width  INTEGER,
     ADD COLUMN IF NOT EXISTS image_height INTEGER;
+
+-- Bounds at the database too, not only in the request model. These values are
+-- client-supplied and the client renders them as an aspect-ratio, so an
+-- absurd pair is a layout weapon against every member of the room rather than
+-- a bad row for its author. Matches the CHECK convention 0021 established for
+-- client-supplied numerics.
+--
+-- NOT VALID so the constraint applies to new writes without scanning existing
+-- rows: every pre-existing row has NULL in both columns anyway, and NULL
+-- passes a CHECK regardless.
+DO $$
+BEGIN
+    ALTER TABLE room_messages
+        ADD CONSTRAINT room_messages_image_dims_sane
+        CHECK (
+            (image_width  IS NULL OR (image_width  > 0 AND image_width  <= 20000))
+            AND
+            (image_height IS NULL OR (image_height > 0 AND image_height <= 20000))
+        ) NOT VALID;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;  -- already present; nothing to do
+END $$;
