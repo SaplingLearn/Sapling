@@ -150,11 +150,10 @@ describe("Study flashcards fetch respects the active semester", () => {
 });
 
 describe("Study guide path threads the right term", () => {
-  // Regenerate isn't drivable from the recent-guides rail: openRecent SETS
-  // examId, but the courseId-keyed exams effect races it and clears the exam
-  // selection (the emergent behavior tracked as #476), which leaves the
-  // Regenerate button disabled. Its one-line `semester || undefined`
-  // threading matches the read calls asserted below.
+  // Regenerate is driven from the rail in Study.recentGuides.test.tsx — it
+  // became reachable there once #476 stopped the courseId-keyed effect from
+  // clearing the exam openRecent had set. These cases stay on the READ path;
+  // regenerate's own term threading is asserted with that fix.
   it("opens a recent guide AS ITS OWN TERM, not the active selector's (#475 F1)", async () => {
     // Active selector says Fall 2025; the rail entry is a Spring 2026 guide.
     // Loading it under the active term would cache-miss on the (offering,
