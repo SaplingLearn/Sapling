@@ -8,11 +8,27 @@ Visual system: warm paper neutrals, botanical forest-green accent, serif (Spectr
 
 ```bash
 cd frontend
-npm install          # Node >= 20.9, npm >= 10.9
+npm install          # Node >= 20.9, npm >= 10.9 <11 — enforced, see below
 npm run dev          # http://localhost:3000
 ```
 
 Backend `/api/*` calls are rewritten to `http://localhost:5000` by default (override via `BACKEND_URL`). For the real local backend stack, see `docs/local-supabase.md`.
+
+### If your npm is 11 or newer
+
+`.npmrc` sets `engine-strict=true` against a `npm >=10.9.0 <11` pin, and that blocks **`npm ci` as well as `npm install`** — verified on npm 12.0.1 (exit 1, `EBADENGINE`). The failure mode is quiet: `node_modules` stays empty, so `npm run lint` / `npm run typecheck` stop being a real gate rather than reporting an error. Either install the pinned npm:
+
+```bash
+npm install -g npm@10.9.2      # what CI does before `npm ci`
+```
+
+or unblock the read path only:
+
+```bash
+npm_config_engine_strict=false npm ci    # restores node_modules + the lint gate
+```
+
+**Never pair that bypass with `npm install` and commit the regenerated `package-lock.json`.** Cloudflare Workers Builds runs `npm ci` on npm 10.9.2 and rejects an off-pin lockfile with `Missing X from lock file`, breaking the deploy — that is the entire reason the pin exists. See `frontend/.npmrc` for the full rationale and the relax-plan for when CF upgrades its runner.
 
 ## Build & deploy
 
