@@ -56,7 +56,7 @@ adopted as the curve.
 | Fruit-Bearing | 45–50 | 10,000 | 2,000 |
 | Old Growth | 50+ | — | terminal |
 
-Reaching level 50 costs **29,800 XP**. `xp_for_level(n)` is the containing band's
+Reaching level 50 costs **30,000 XP**. `xp_for_level(n)` is the containing band's
 `xp_to_complete / 5`; Bare Soil spans four levels and is treated as `200 / 4`.
 
 **Streak freezes.** The stat row renders "23 days · 2 freezes", but no freeze
