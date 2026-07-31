@@ -34,6 +34,11 @@ from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
+from services.document_dedup import (
+    chunks_already_exist,
+    file_sha256,
+    find_duplicate,
+)
 from services.extraction_service import extract_text_from_file
 from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
@@ -394,6 +399,7 @@ def _persist_document(
     request_id: str | None = None,
     course_id: str | None = None,
     char_count: int | None = None,
+    file_hash: str | None = None,
 ) -> tuple[str, dict]:
     """Insert a documents row from an orchestrator result.
 
@@ -403,7 +409,10 @@ def _persist_document(
     returned row carries the plaintext shape so callers can pass it
     straight back to the client without an extra decrypt step.
     ``request_id`` (when provided) is stored verbatim for idempotent
-    replay detection. ``course_id``/``char_count`` only feed the
+    replay detection. ``file_hash`` is the SHA-256 of the uploaded bytes; it
+    is what lets the NEXT upload of this file skip OCR and re-indexing, so a
+    row written without it is invisible to file-level dedup.
+    ``course_id``/``char_count`` only feed the
     document.processed observability event (#117); they are not persisted
     on the row. Returns (document_id, full_row).
     """
@@ -426,13 +435,18 @@ def _persist_document(
     }
     if request_id:
         row["request_id"] = request_id
+    if file_hash:
+        row["file_sha256"] = file_hash
     try:
         inserted = table("documents").insert(row)
     except Exception:
-        # Schema may not yet have the request_id column; retry without it
-        # so deployments can ship the code before the migration runs.
-        if "request_id" in row:
+        # Schema may not yet have the request_id / file_sha256 columns; retry
+        # without them so deployments can ship the code before the migration
+        # runs. Drop both in one retry — the insert already failed once, and a
+        # per-column ladder would cost an extra round-trip per missing column.
+        if "request_id" in row or "file_sha256" in row:
             row.pop("request_id", None)
+            row.pop("file_sha256", None)
             inserted = table("documents").insert(row)
         else:
             raise
@@ -553,7 +567,22 @@ async def upload_document_sync(
             ),
         )
 
-    extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
+    # File-level dedup: the same deck arrives from many students under many
+    # filenames. The fingerprint covers the bytes only, so a rename still
+    # matches. A twin means the text is already stored — skip OCR, the slowest
+    # step on this path. The lookup is global because extraction is a pure
+    # function of the bytes; whether the shared CHUNKS can be reused is a
+    # course-scoped question, answered on the streaming route which indexes.
+    file_hash = file_sha256(file_bytes)
+    twin = find_duplicate(file_hash)
+    if twin:
+        logger.info(
+            "Duplicate upload '%s' matches document %s — reusing extracted text",
+            filename, twin.get("id"),
+        )
+        extracted_text = twin["extracted_text"]
+    else:
+        extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
 
     # The upload form sends the ABSTRACT course id; documents key on the
     # OFFERING. Resolve to the current-term offering once (create=True so a
@@ -641,6 +670,7 @@ async def upload_document_sync(
         _persist_document, user_id=user_id, offering_id=offering_id,
         filename=filename, result=result, request_id=request_id,
         course_id=course_id, char_count=len(extracted_text),
+        file_hash=file_hash,
     )
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
@@ -710,9 +740,23 @@ async def upload_document(
     # progress:extracting_text event while OCR runs in a thread. Default
     # behavior is unchanged (synchronous extraction before stream opens)
     # so existing tests and clients keep working.
+    # File-level dedup (see the /upload/sync twin of this block). A hit here
+    # means the text is already stored, so extraction is skipped on BOTH OCR
+    # strategies: setting extracted_text non-None also short-circuits the
+    # async `if extracted_text is None:` phase below.
+    file_hash = file_sha256(file_bytes)
+    twin = find_duplicate(file_hash)
+    if twin:
+        logger.info(
+            "Duplicate upload '%s' matches document %s — reusing extracted text",
+            filename, twin.get("id"),
+        )
     extracted_text: str | None = (
-        None if OCR_ASYNC_ENABLED
-        else _extract_text_or_422(file_bytes, filename, file.content_type or "")
+        twin["extracted_text"] if twin
+        else (
+            None if OCR_ASYNC_ENABLED
+            else _extract_text_or_422(file_bytes, filename, file.content_type or "")
+        )
     )
 
     async def event_stream():
@@ -965,18 +1009,33 @@ async def upload_document(
                 request_id=request_id,
                 course_id=course_id,
                 char_count=len(extracted_text) if extracted_text is not None else None,
+                file_hash=file_hash,
             )
 
             # BackgroundTasks runs after response close — useless for SSE since
             # the stream IS the response. _spawn_post_roll uses create_task
             # but attaches a done-callback so exceptions land in the log
             # instead of disappearing.
-            _spawn_post_roll(
+            post_roll: list[tuple] = [
                 ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 ("update_course_context", update_course_context, course_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
-                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
-            )
+            ]
+            # The shared corpus is deduplicated by content, so a file already
+            # indexed for THIS course would re-embed every chunk only to upsert
+            # it onto the rows that already exist. Skip the work entirely.
+            # A twin from another course still indexes: chunk ids are
+            # course-scoped, so its chunks do not serve this course.
+            if chunks_already_exist(twin, offering_id):
+                logger.info(
+                    "Chunks for '%s' already indexed under offering %s — skipping re-index",
+                    filename, offering_id,
+                )
+            else:
+                post_roll.append(
+                    ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
+                )
+            _spawn_post_roll(*post_roll)
         except Exception:
             logger.exception(
                 "Post-result persistence failed for '%s' — result already "

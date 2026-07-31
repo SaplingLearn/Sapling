@@ -1323,3 +1323,90 @@ class TestEmptyExtractionGuard:
             r = _make_upload()
 
         assert r.status_code == 200
+
+
+# ── File-level duplicate detection ───────────────────────────────────────────
+
+class TestUploadFileLevelDedup:
+    """The same lecture deck arrives from many students under many filenames.
+    A fingerprint of the raw bytes catches it before OCR runs, so the
+    expensive work is paid once per file rather than once per uploader."""
+
+    _TWIN = {
+        "id": "doc-original",
+        "offering_id": "off-original",
+        "category": "slides",
+        "extracted_text": "photosynthesis converts light into sugar",
+        "summary": "A deck on photosynthesis.",
+        "concept_notes": [{"name": "Photosynthesis", "description": "d"}],
+    }
+
+    def test_duplicate_file_skips_text_extraction(self):
+        """OCR is the slowest step on the upload path. A byte-identical file
+        already has its text stored, so extraction must not run again -- even
+        though this upload arrived under a different filename."""
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file") as extract,
+            patch("routes.documents.find_duplicate", return_value=self._TWIN),
+            patch(
+                "routes.documents.process_document",
+                return_value=_make_orchestrator_result(category="slides"),
+            ),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d1", "file_name": "renamed.pdf"}]
+            r = _make_upload(filename="renamed.pdf")
+
+        assert r.status_code == 200
+        extract.assert_not_called()
+
+    def test_new_file_still_runs_text_extraction(self):
+        """Guard against the skip firing when there is no twin -- otherwise a
+        first upload would be indexed with no text at all."""
+        with (
+            _mock_validate_user(),
+            patch(
+                "routes.documents.extract_text_from_file",
+                return_value=_doc_text("fresh text"),
+            ) as extract,
+            patch("routes.documents.find_duplicate", return_value=None),
+            patch(
+                "routes.documents.process_document",
+                return_value=_make_orchestrator_result(category="slides"),
+            ),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d2", "file_name": "new.pdf"}]
+            r = _make_upload(filename="new.pdf")
+
+        assert r.status_code == 200
+        extract.assert_called_once()
+
+    def test_persists_the_file_fingerprint_on_the_new_row(self):
+        """Without the fingerprint on the row, the NEXT upload of this file
+        has nothing to match against and the dedup never starts working."""
+        from services.document_dedup import file_sha256
+
+        content = b"%PDF-1.4 unique bytes for this test"
+        with (
+            _mock_validate_user(),
+            patch(
+                "routes.documents.extract_text_from_file",
+                return_value=_doc_text("fresh text"),
+            ),
+            patch("routes.documents.find_duplicate", return_value=None),
+            patch(
+                "routes.documents.process_document",
+                return_value=_make_orchestrator_result(category="slides"),
+            ),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d3", "file_name": "x.pdf"}]
+            _make_upload(content=content)
+            inserted = t.return_value.insert.call_args[0][0]
+
+        assert inserted["file_sha256"] == file_sha256(content)
