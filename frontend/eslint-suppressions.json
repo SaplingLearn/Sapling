@@ -6,7 +6,7 @@
     "prefer-const": {
       "count": 2
     },
-    "react-hooks/immutability": {
+    "react-hooks/set-state-in-effect": {
       "count": 1
     }
   },
