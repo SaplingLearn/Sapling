@@ -24,9 +24,14 @@ export const USER_ACTIVE = "rich-user-active";
 export const USER_SECOND = "rich-user-second";
 
 /** The seeded user who has NOT completed onboarding (db/seed_local_rich.py:
- * onboarding_completed=False, is_approved=True). Approved so the middleware
- * lets them past the pending gate, un-onboarded so they land on /onboarding —
- * the only seeded user who can exercise the first-run funnel. */
+ * onboarding_completed=False, is_approved=True) — the state a real student is
+ * in the first time they reach the funnel.
+ *
+ * Note /onboarding is NOT in middleware.ts's PROTECTED list or its matcher,
+ * and Onboarding.tsx only redirects when unauthenticated — so the route
+ * renders for any signed-in user regardless of approval or onboarding state.
+ * This user is chosen because it is the realistic one, not because the route
+ * gates on it. */
 export const USER_NEW = "rich-user-new";
 
 async function isUp(url: string): Promise<boolean> {

@@ -114,10 +114,15 @@ route:
 | `onboarding-continue` | primary advance button ("Continue" / "Enter Sapling →") |
 | `onboarding-back` | "Back" (absent on step 0) |
 | `onboarding-close` | "×" close/exit control |
-| `onboarding-input` | the shared `TextInput` used by every step |
-| `onboarding-chip-add` / `onboarding-chip-remove` | majors/minors chip editor |
-| `onboarding-course-result` / `onboarding-course-remove` | course search result and selected-course chip |
-| `onboarding-learning-style` | learning-style radio option |
+| `onboarding-input` | the shared `TextInput` default; every simultaneous instance overrides it (below) |
+| `onboarding-first-name` / `onboarding-last-name` | the two name fields — they render side by side |
+| `onboarding-school` | school field (disabled; BU-only today) |
+| `onboarding-chip-input-${field}` / `onboarding-chip-add-${field}` | majors/minors editor — `field` is `majors` or `minors`, since both render at once |
+| `onboarding-chip-remove-${field}-${value}` | one chip's remove control |
+| `onboarding-course-search` | course search field |
+| `onboarding-course-result-${course.id}` | one course search result |
+| `onboarding-course-remove-${course_code}` | one selected-course chip's remove control |
+| `onboarding-learning-style-${style.id}` | one learning-style radio option (5 render at once) |
 
 ### `upload-modal`
 

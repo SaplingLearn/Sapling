@@ -177,7 +177,7 @@ export function Onboarding() {
         style={{
           position: "relative",
           width: "min(560px, 100%)",
-          padding: "var(--pad-xl)",
+          padding: "var(--pad-xl) var(--pad-lg)",
         }}
       >
         <button
@@ -313,11 +313,11 @@ function StepName({ firstName, lastName, onFirst, onLast }: {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div>
           <FieldLabel>First name</FieldLabel>
-          <TextInput value={firstName} onChange={e => onFirst(e.target.value)} placeholder="Jose" autoFocus />
+          <TextInput data-testid="onboarding-first-name" value={firstName} onChange={e => onFirst(e.target.value)} placeholder="Jose" autoFocus />
         </div>
         <div>
           <FieldLabel>Last name</FieldLabel>
-          <TextInput value={lastName} onChange={e => onLast(e.target.value)} placeholder="Cruz" />
+          <TextInput data-testid="onboarding-last-name" value={lastName} onChange={e => onLast(e.target.value)} placeholder="Cruz" />
         </div>
       </div>
     </div>
@@ -333,7 +333,7 @@ function StepSchool({ school, year, onSchool, onYear }: {
       <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>Where are you studying?</div>
       <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>Sapling is currently limited to Boston University.</div>
       <FieldLabel>School</FieldLabel>
-      <TextInput value={school} onChange={e => onSchool(e.target.value)} disabled style={{ marginBottom: 16 }} />
+      <TextInput data-testid="onboarding-school" value={school} onChange={e => onSchool(e.target.value)} disabled style={{ marginBottom: 16 }} />
       <FieldLabel>Year</FieldLabel>
       <CustomSelect<string>
         value={year}
@@ -355,16 +355,18 @@ function StepAcademics({ majors, minors, onMajors, onMinors }: {
       <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>Your academic focus</div>
       <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>Add at least one major. Minors are optional.</div>
       <FieldLabel>Majors</FieldLabel>
-      <TagInput values={majors} onChange={onMajors} placeholder="e.g. Computer Science" />
+      <TagInput field="majors" values={majors} onChange={onMajors} placeholder="e.g. Computer Science" />
       <div style={{ height: 14 }} />
       <FieldLabel>Minors</FieldLabel>
-      <TagInput values={minors} onChange={onMinors} placeholder="e.g. Philosophy" />
+      <TagInput field="minors" values={minors} onChange={onMinors} placeholder="e.g. Philosophy" />
     </div>
   );
 }
 
-function TagInput({ values, onChange, placeholder }: {
+function TagInput({ values, onChange, placeholder, field }: {
   values: string[]; onChange: (v: string[]) => void; placeholder?: string;
+  /** Disambiguates testids — two TagInputs render simultaneously. */
+  field: string;
 }) {
   const [draft, setDraft] = useState("");
   const add = () => {
@@ -384,7 +386,7 @@ function TagInput({ values, onChange, placeholder }: {
             style={{ textTransform: "none", fontFamily: "var(--font-sans)", background: "var(--accent-soft)", color: "var(--accent)", borderColor: "var(--accent-border)" }}
           >
             {v}
-            <button data-testid="onboarding-chip-remove" onClick={() => remove(v)} aria-label={`Remove ${v}`} style={{ color: "inherit", fontSize: "var(--fs-md)", lineHeight: 1, marginLeft: 2 }}>
+            <button data-testid={`onboarding-chip-remove-${field}-${v}`} onClick={() => remove(v)} aria-label={`Remove ${v}`} style={{ color: "inherit", fontSize: "var(--fs-md)", lineHeight: 1, marginLeft: 2 }}>
               ×
             </button>
           </span>
@@ -392,6 +394,7 @@ function TagInput({ values, onChange, placeholder }: {
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <TextInput
+          data-testid={`onboarding-chip-input-${field}`}
           value={draft}
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => {
@@ -402,7 +405,7 @@ function TagInput({ values, onChange, placeholder }: {
           }}
           placeholder={placeholder}
         />
-        <button data-testid="onboarding-chip-add" className="btn" onClick={add} disabled={!draft.trim()}>Add</button>
+        <button data-testid={`onboarding-chip-add-${field}`} className="btn" onClick={add} disabled={!draft.trim()}>Add</button>
       </div>
     </div>
   );
@@ -451,6 +454,7 @@ function StepCourses({ selectedIds, selectedCache, onSelect }: {
         Pick a few courses to seed your knowledge tree. You can always add more later.
       </div>
       <TextInput
+        data-testid="onboarding-course-search"
         value={query}
         onChange={e => setQuery(e.target.value)}
         placeholder="Search by code or name (e.g. CS 131)"
@@ -465,21 +469,21 @@ function StepCourses({ selectedIds, selectedCache, onSelect }: {
               style={{ textTransform: "none", fontFamily: "var(--font-sans)", background: "var(--accent-soft)", color: "var(--accent)", borderColor: "var(--accent-border)" }}
             >
               {c.course_code}
-              <button data-testid="onboarding-course-remove" onClick={() => toggle(c)} aria-label={`Remove ${c.course_code}`} style={{ color: "inherit", fontSize: "var(--fs-md)", lineHeight: 1, marginLeft: 2 }}>×</button>
+              <button data-testid={`onboarding-course-remove-${c.course_code}`} onClick={() => toggle(c)} aria-label={`Remove ${c.course_code}`} style={{ color: "inherit", fontSize: "var(--fs-md)", lineHeight: 1, marginLeft: 2 }}>×</button>
             </span>
           ))}
         </div>
       )}
       <div style={{ marginTop: 14, maxHeight: 260, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
-        {loading && <div style={{ padding: "var(--pad-md)", fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>Searching…</div>}
+        {loading && <div style={{ padding: "var(--pad-md) var(--pad-sm)", fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>Searching…</div>}
         {!loading && results.length === 0 && (
-          <div style={{ padding: "var(--pad-md)", fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>No courses match.</div>
+          <div style={{ padding: "var(--pad-md) var(--pad-sm)", fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>No courses match.</div>
         )}
         {!loading && results.map(c => {
           const selected = selectedIds.includes(c.id) || cacheMap.has(c.id);
           return (
             <button
-              data-testid="onboarding-course-result"
+              data-testid={`onboarding-course-result-${c.id}`}
               key={c.id}
               onClick={() => toggle(c)}
               style={{
@@ -524,7 +528,7 @@ function StepLearningStyle({ value, onChange }: {
           const selected = value === s.id;
           return (
             <button
-              data-testid="onboarding-learning-style"
+              data-testid={`onboarding-learning-style-${s.id}`}
               key={s.id}
               role="radio"
               aria-checked={selected}

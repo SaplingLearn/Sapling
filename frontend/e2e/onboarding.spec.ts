@@ -15,9 +15,11 @@
  * mounts for an un-onboarded user, the nav affordances behave, and the token
  * conversion did not leave the layout collapsed.
  *
- * Signs in as USER_NEW rather than the default USER_ACTIVE: it is the only
- * seeded user with onboarding_completed=False, so it is the only one the
- * funnel renders for at all.
+ * Signs in as USER_NEW rather than the default USER_ACTIVE because it is the
+ * realistic state — onboarding_completed=False. It is NOT a gate: /onboarding
+ * sits outside middleware.ts's matcher and Onboarding.tsx only redirects when
+ * unauthenticated, so the route would render for any signed-in user. What the
+ * seed choice buys is a funnel showing its real first-run content.
  */
 import { expect, test } from "./support/fixtures";
 import { mintStorageState } from "./support/session";
