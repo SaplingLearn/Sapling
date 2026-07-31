@@ -191,8 +191,17 @@ def test_duplicate_chunks_within_one_document_are_deduped(mock_client):
 
 
 @patch("services.rag_service._embed_documents_batch")
-def test_index_document_chunks_handles_embedding_failure(mock_embed):
-    """Test that embedding failures are caught and records are still upserted with embedding=None."""
+def test_index_document_chunks_drops_chunks_whose_embedding_failed(mock_embed):
+    """A total embedding failure must persist NOTHING and report 0 (#482).
+
+    This test previously asserted the opposite — that the rows were upserted
+    with `embedding=None` and the call reported the full chunk count. That was
+    pinning a bug, not a contract: `match_course_chunks` ranks by vector
+    distance, so a NULL-embedding row can never be returned by retrieval. Those
+    rows were unreachable dead weight that still counted toward the "indexed N
+    chunks" the caller logs, which is exactly how a total embedding outage read
+    as a complete success.
+    """
     mock_embed.side_effect = Exception("API error")
     with patch("services.rag_service.table") as mock_table:
         mock_table.return_value.upsert.return_value = []
@@ -205,16 +214,33 @@ def test_index_document_chunks_handles_embedding_failure(mock_embed):
             chunks=["chunk one", "chunk two", "chunk three"],
         )
 
-        # Function completes without raising an exception
-        assert count == 3
+        # Still no exception — indexing stays best-effort, as before.
+        assert count == 0
+        # …but nothing unretrievable is written.
+        mock_table.return_value.upsert.assert_not_called()
 
-        # Records were still upserted
-        mock_table.return_value.upsert.assert_called_once()
-        upsert_records = mock_table.return_value.upsert.call_args[0][0]
 
-        # All records have embedding=None since embedding failed
-        assert all(rec["embedding"] is None for rec in upsert_records)
-        assert len(upsert_records) == 3
+@patch("services.rag_service._embed_documents_batch")
+def test_index_document_chunks_keeps_the_chunks_that_did_embed(mock_embed):
+    """A PARTIAL failure keeps the good chunks and drops only the bad ones."""
+    # Batch size is 50, so five chunks arrive as one batch; return a short
+    # vector list so zip() leaves the tail without an embedding.
+    mock_embed.return_value = [[0.1] * 768, [0.2] * 768]
+    with patch("services.rag_service.table") as mock_table:
+        mock_table.return_value.upsert.return_value = []
+        from services.rag_service import index_document_chunks
+
+        count = index_document_chunks(
+            course_code="CAS CS 330",
+            doc_id="doc-partial",
+            uploader_id="user-xyz",
+            chunks=["one", "two", "three", "four", "five"],
+        )
+
+        assert count == 2
+        upserted = mock_table.return_value.upsert.call_args[0][0]
+        assert len(upserted) == 2
+        assert all(rec["embedding"] is not None for rec in upserted)
 
 
 # ── #439: below-seam RAG embed calls must gate on SAPLING_MODEL_MODE ───────
@@ -290,9 +316,14 @@ def test_retrieve_chunks_never_reaches_transport_in_function_mode(monkeypatch, c
 
 def test_index_document_chunks_never_reaches_transport_in_function_mode(monkeypatch, capsys):
     """Same proof as above for the batch/document embed path used by document
-    upload indexing — the deterministic no-op is count-with-embedding=None,
-    same shape as test_index_document_chunks_handles_embedding_failure, but
-    now reached by the mode gate rather than a real API error."""
+    upload indexing: the mode gate stops it before google-genai's transport.
+
+    The deterministic no-op is now "write nothing, report 0". It used to be
+    "write rows with embedding=None and report the full count" — but in
+    function mode no embedding can be produced, so those rows were dead on
+    arrival: unretrievable by construction, and flagged by the `ragstore`
+    oracle. What this test guards is the absence of egress, which is unchanged.
+    """
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     from services.rag_service import index_document_chunks
 
@@ -305,9 +336,8 @@ def test_index_document_chunks_never_reaches_transport_in_function_mode(monkeypa
             chunks=["chunk one", "chunk two"],
         )
 
-    assert count == 2
-    upsert_records = mock_table.return_value.upsert.call_args[0][0]
-    assert all(rec["embedding"] is None for rec in upsert_records)
+    assert count == 0
+    mock_table.return_value.upsert.assert_not_called()
     captured = capsys.readouterr()
     assert "unstubbed LLM egress" not in captured.out
     assert "SAPLING_MODEL_MODE" in captured.out

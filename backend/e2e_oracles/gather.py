@@ -283,3 +283,75 @@ def run_logscan(args: argparse.Namespace) -> tuple[list[Finding], int]:
             )
         ], 0
     return scan_file(log_path)
+
+
+def run_ragstore(args: argparse.Namespace) -> tuple[list[Finding], int]:
+    """`ragstore`: the RAG vector store exists and is queryable (#481).
+
+    The failure this exists to catch is SILENT. `course_chunks`, the
+    `match_course_chunks` RPC and the `vector` extension lived only as
+    dashboard DDL, in no migration — so a database replayed purely from
+    `python -m db.migrate` had RAG dead end to end while every suite stayed
+    green: `retrieve_chunks` swallows the RPC failure into `[]`,
+    `_get_catalog_chunk` degrades to `""`, and indexing failures vanish into
+    a fire-and-forget log line. The tutor just answers ungrounded.
+
+    So this asserts the store's EXISTENCE, not its contents — an empty
+    course_chunks is normal on a fresh stack; a missing one is the bug.
+    """
+    conn = _db_conn()
+    findings: list[Finding] = []
+
+    ext = conn.execute("SELECT 1 FROM pg_extension WHERE extname = 'vector'").fetchone()
+    if not ext:
+        findings.append(
+            Finding(
+                oracle="ragstore",
+                summary="pgvector extension is not installed — RAG cannot store or query embeddings",
+                evidence={"expected": "CREATE EXTENSION vector (migration 0039)"},
+            )
+        )
+
+    tbl = conn.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = 'course_chunks'"
+    ).fetchone()
+    if not tbl:
+        findings.append(
+            Finding(
+                oracle="ragstore",
+                summary="course_chunks table is missing — retrieval degrades to [] with no error",
+                evidence={"expected": "migration 0039 creates it"},
+            )
+        )
+
+    fn = conn.execute(
+        "SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+        "WHERE p.proname = 'match_course_chunks'"
+    ).fetchone()
+    if not fn:
+        findings.append(
+            Finding(
+                oracle="ragstore",
+                summary="match_course_chunks RPC is missing — every retrieval silently returns []",
+                evidence={"expected": "migration 0039 creates it"},
+            )
+        )
+
+    # Rows whose embedding never landed are retrievable by nothing: the RPC
+    # orders by distance and skips NULLs, so they are dead weight that still
+    # counts as "indexed" to the caller (#482).
+    if tbl:
+        dead = conn.execute(
+            "SELECT count(*) AS n FROM course_chunks WHERE embedding IS NULL"
+        ).fetchone()
+        if dead and dead["n"]:
+            findings.append(
+                Finding(
+                    oracle="ragstore",
+                    summary=f"{dead['n']} course_chunks row(s) have a NULL embedding — indexed but unretrievable",
+                    evidence={"null_embedding_rows": dead["n"]},
+                )
+            )
+
+    return findings, 0

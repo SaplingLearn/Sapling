@@ -210,8 +210,24 @@ def index_document_chunks(
         except Exception as e:
             print(f"[RAG] embed failed for doc {doc_id} batch {i}: {e}")
 
-    table("course_chunks").upsert(records, on_conflict="id")
-    return len(records)
+    # Never persist a chunk whose embedding didn't land. match_course_chunks
+    # ranks by vector distance, so a NULL-embedding row can never be returned
+    # by retrieval — it is dead weight that nonetheless counted toward the
+    # "indexed N chunks" the caller logs, which is how a partial embedding
+    # failure used to read as a complete success (#482).
+    embedded = [r for r in records if r["embedding"] is not None]
+    dropped = len(records) - len(embedded)
+    if dropped:
+        print(
+            f"[RAG] doc {doc_id}: dropped {dropped}/{len(records)} chunk(s) "
+            f"with no embedding — they would be unretrievable"
+        )
+
+    if not embedded:
+        return 0
+
+    table("course_chunks").upsert(embedded, on_conflict="id")
+    return len(embedded)
 
 
 def format_rag_context(chunks: list[dict]) -> str:
