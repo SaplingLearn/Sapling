@@ -168,7 +168,7 @@ export function TopNav() {
       <Link href="/dashboard" style={{ display: "flex", alignItems: "center", gap: "2px", textDecoration: "none" }}>
         <img
           src="/sapling-icon.svg"
-          alt="Sapling"
+          alt="Sapling" width={32} height={32}
           style={{
             width: "32px",
             height: "32px",

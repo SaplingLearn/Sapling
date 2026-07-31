@@ -40,6 +40,45 @@ const PALETTE = [
   "#b8c9a6", // pale sage-adjacent (barely, for continuity)
 ];
 
+/** The painted radius of an orb — fixed for its lifetime (r and z never change). */
+function orbRadius(orb: Orb) {
+  return orb.r * (0.7 + orb.z * 0.6);
+}
+
+/** ~30fps. Ambient drift does not need a frame the eye can't distinguish. */
+const FRAME_MS = 1000 / 30;
+
+/**
+ * Pre-render one orb's radial gradient into its own offscreen canvas.
+ *
+ * Everything the gradient depends on — colour, radius, depth-derived alpha —
+ * is fixed when the orb is created; only x/y move. Baking once turns the
+ * per-frame cost from "build 14 gradients and fill 14 arcs" into "blit 14
+ * bitmaps", which is the whole point: this backdrop is mounted app-wide, in
+ * both ShellFrame layouts, behind every screen.
+ */
+function bakeOrb(orb: Orb, dpr: number): HTMLCanvasElement {
+  const rad = orbRadius(orb);
+  const alpha = 0.035 + orb.z * 0.07;
+  const size = Math.max(1, Math.ceil(rad * 2 * dpr));
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const cx = c.getContext("2d");
+  if (cx) {
+    cx.scale(dpr, dpr);
+    const grad = cx.createRadialGradient(rad, rad, 0, rad, rad, rad);
+    grad.addColorStop(0, hexToRgba(orb.color, alpha));
+    grad.addColorStop(0.55, hexToRgba(orb.color, alpha * 0.45));
+    grad.addColorStop(1, hexToRgba(orb.color, 0));
+    cx.fillStyle = grad;
+    cx.beginPath();
+    cx.arc(rad, rad, rad, 0, Math.PI * 2);
+    cx.fill();
+  }
+  return c;
+}
+
 function makeOrbs(width: number, height: number): Orb[] {
   const count = 14;
   const orbs: Orb[] = [];
@@ -64,6 +103,10 @@ export function AtmosphericBackdrop() {
   const orbsRef = React.useRef<Orb[]>([]);
   const sizeRef = React.useRef<{ w: number; h: number; dpr: number }>({ w: 0, h: 0, dpr: 1 });
   const reducedMotionRef = React.useRef<boolean>(false);
+  /** One pre-rendered gradient bitmap per orb; see bakeOrb. */
+  const spritesRef = React.useRef<HTMLCanvasElement[]>([]);
+  const spriteDprRef = React.useRef<number>(0);
+  const lastPaintRef = React.useRef<number>(0);
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
@@ -89,33 +132,42 @@ export function AtmosphericBackdrop() {
       canvas.style.height = `${h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (orbsRef.current.length === 0) orbsRef.current = makeOrbs(w, h);
+      // Bake once, and again only if the device pixel ratio actually changes
+      // (dragging the window to a different-density display). Orb radii do
+      // not depend on viewport size, so a plain resize reuses the sprites.
+      if (spritesRef.current.length !== orbsRef.current.length || spriteDprRef.current !== dpr) {
+        spritesRef.current = orbsRef.current.map((orb) => bakeOrb(orb, dpr));
+        spriteDprRef.current = dpr;
+      }
     };
     resize();
     window.addEventListener("resize", resize);
 
     const paint = (t: number) => {
+      // Ambient drift at 60fps buys nothing — these orbs move well under a
+      // pixel per frame. Halving the rate halves the whole cost of the
+      // backdrop, app-wide. `t === 0` is the reduced-motion still frame,
+      // which must always paint.
+      if (t && t - lastPaintRef.current < FRAME_MS) {
+        rafRef.current = requestAnimationFrame(paint);
+        return;
+      }
+      lastPaintRef.current = t;
+
       const { w, h } = sizeRef.current;
       ctx.clearRect(0, 0, w, h);
 
       // The pale-green background tint preserved — the backdrop must NOT
       // paint a big opaque fill; the page's own --bg shows through.
-      for (const orb of orbsRef.current) {
-        const x = orb.x;
-        const y = orb.y;
-        const rad = orb.r * (0.7 + orb.z * 0.6);
-        // Peak opacity 0.10 on the closest orbs; falls off with depth.
-        const alpha = 0.035 + orb.z * 0.07;
-
-        const grad = ctx.createRadialGradient(x, y, 0, x, y, rad);
-        grad.addColorStop(0, hexToRgba(orb.color, alpha));
-        grad.addColorStop(0.55, hexToRgba(orb.color, alpha * 0.45));
-        grad.addColorStop(1, hexToRgba(orb.color, 0));
-
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(x, y, rad, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      const sprites = spritesRef.current;
+      orbsRef.current.forEach((orb, i) => {
+        const sprite = sprites[i];
+        if (!sprite) return;
+        const rad = orbRadius(orb);
+        // Peak opacity 0.10 on the closest orbs; falls off with depth — both
+        // already baked into the sprite.
+        ctx.drawImage(sprite, orb.x - rad, orb.y - rad, rad * 2, rad * 2);
+      });
 
       if (reducedMotionRef.current) return;
 

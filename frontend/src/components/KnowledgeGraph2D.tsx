@@ -137,6 +137,8 @@ function KnowledgeGraph2DImpl({
   const simLinksRef = React.useRef<SimLink[]>([]);
 
   const [, forceRerender] = React.useReducer((x) => x + 1, 0);
+  /** Pending coalesced tick render (see the simulation's "tick" handler). */
+  const tickRafRef = React.useRef<number | null>(null);
   const [hovered, setHovered] = React.useState<GraphNode | null>(null);
   const [tooltipPos, setTooltipPos] = React.useState({ x: 0, y: 0 });
   const [view, setView] = React.useState({ tx: 0, ty: 0, scale: 1 });
@@ -173,8 +175,11 @@ function KnowledgeGraph2DImpl({
       } as SimNode;
     });
 
+    // Set membership rather than two linear scans per edge — same O(E x N)
+    // shape as the render-time lookup below, just on the data-prep side.
+    const nextNodeIds = new Set(nextNodes.map((n) => n.id));
     const nextLinks: SimLink[] = edges
-      .filter((e) => nextNodes.some((n) => n.id === e.source) && nextNodes.some((n) => n.id === e.target))
+      .filter((e) => nextNodeIds.has(e.source) && nextNodeIds.has(e.target))
       .map((e) => ({ source: e.source, target: e.target, strength: e.strength }));
 
     simNodesRef.current = nextNodes;
@@ -182,7 +187,21 @@ function KnowledgeGraph2DImpl({
 
     if (!simRef.current) {
       simRef.current = forceSimulation<SimNode>(nextNodes).on("tick", () => {
-        forceRerender();
+        // Coalesce ticks into at most ONE React render per animation frame.
+        // d3's internal timer can fire more than once per frame under load,
+        // and each render reconciles the whole SVG — every node group, every
+        // edge line. Extra renders inside one frame are invisible by
+        // definition: the browser only paints once.
+        //
+        // This deliberately does not touch the reduced-motion / test-mode
+        // path below: `simulation.tick()` does not dispatch "tick" events
+        // (only the internal timer does), so the synchronous settle still
+        // renders exactly once, synchronously, and stays deterministic.
+        if (tickRafRef.current != null) return;
+        tickRafRef.current = requestAnimationFrame(() => {
+          tickRafRef.current = null;
+          forceRerender();
+        });
       });
     } else {
       simRef.current.nodes(nextNodes);
@@ -229,6 +248,12 @@ function KnowledgeGraph2DImpl({
     return () => {
       simRef.current?.stop();
       simRef.current = null;
+      // Drop any tick render still queued for the next frame, so it can't
+      // fire against an unmounted tree.
+      if (tickRafRef.current != null) {
+        cancelAnimationFrame(tickRafRef.current);
+        tickRafRef.current = null;
+      }
     };
   }, []);
 
@@ -344,7 +369,12 @@ function KnowledgeGraph2DImpl({
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
-    setTooltipPos({ x: e.clientX, y: e.clientY });
+    // Only while a tooltip is actually showing. This used to run
+    // unconditionally on every pointer move across the whole SVG, so simply
+    // moving the mouse over empty canvas re-rendered the entire graph — for a
+    // value nothing reads unless `hovered` is set (see the tooltip below).
+    // Entering a node seeds the position, so the first frame is placed right.
+    if (hovered) setTooltipPos({ x: e.clientX, y: e.clientY });
     const drag = dragRef.current;
     if (!drag || e.pointerId !== drag.pointerId) return;
     movedRef.current = true;
@@ -410,6 +440,18 @@ function KnowledgeGraph2DImpl({
 
   const simNodes = simNodesRef.current;
   const simLinks = simLinksRef.current;
+  // Built once per render and shared by every edge below. d3-force mutates
+  // link endpoints from ids into node references once the simulation runs,
+  // so this only gets consulted before that swap — but that is exactly the
+  // first, busiest frames.
+  // One O(N) pass per render, shared by every edge below — versus the O(E x N)
+  // the per-edge `.find()` cost. Deliberately NOT memoised: `simNodes` is a
+  // ref's array, and feeding a ref-derived value into a hook's dependency list
+  // is exactly what the "no refs during render" rule forbids. The build is
+  // cheap enough that caching it would trade a real lint violation for a
+  // saving nobody can measure.
+  const nodeById = new Map<string, SimNode>();
+  for (const n of simNodes) nodeById.set(n.id, n);
 
   return (
     <div style={{ position: "relative", width, height, overflow: "hidden", background: "transparent" }}>
@@ -440,8 +482,12 @@ function KnowledgeGraph2DImpl({
           {/* Edges */}
           <g>
             {simLinks.map((l, i) => {
-              const s = typeof l.source === "object" ? (l.source as SimNode) : simNodes.find((n) => n.id === l.source);
-              const t = typeof l.target === "object" ? (l.target as SimNode) : simNodes.find((n) => n.id === l.target);
+              // Map lookup, not a linear scan: this runs for every edge on
+              // every render, and the render happens on every settled frame
+              // of the simulation — so a `.find()` here was O(edges x nodes)
+              // per frame.
+              const s = typeof l.source === "object" ? (l.source as SimNode) : nodeById.get(l.source as string);
+              const t = typeof l.target === "object" ? (l.target as SimNode) : nodeById.get(l.target as string);
               if (!s || !t || s.x == null || t.x == null) return null;
               const op = variant === "constellation" ? 0.35 : 0.2;
               return (
@@ -478,7 +524,13 @@ function KnowledgeGraph2DImpl({
                   data-node-id={n.id}
                   style={{ cursor: "grab" }}
                   onPointerDown={(ev) => onNodePointerDown(ev, n)}
-                  onPointerEnter={() => setHovered(n)}
+                  onPointerEnter={(ev) => {
+                    setHovered(n);
+                    // Seed the position here: onPointerMove only tracks while
+                    // something is hovered, so without this the tooltip would
+                    // show at the previous hover's coordinates for one frame.
+                    setTooltipPos({ x: ev.clientX, y: ev.clientY });
+                  }}
                   onPointerLeave={() => setHovered((h) => (h?.id === n.id ? null : h))}
                   onClick={(ev) => {
                     ev.stopPropagation();

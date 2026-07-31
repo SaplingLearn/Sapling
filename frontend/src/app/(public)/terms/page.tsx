@@ -111,7 +111,7 @@ export default function TermsPage() {
           >
             <img
               src="/sapling-icon.svg"
-              alt="Sapling"
+              alt="Sapling" width={26} height={26}
               style={{ width: 26, height: 26, flexShrink: 0, position: "relative", top: -2 }}
             />
             <span
@@ -252,7 +252,7 @@ export default function TermsPage() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 20, height: 20 }} />
+            <img src="/sapling-icon.svg" alt="Sapling" width={20} height={20} style={{ width: 20, height: 20 }} />
             <span style={{ fontSize: 14, color: "var(--text-muted)" }}>Sapling · © 2026</span>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 24 }}>

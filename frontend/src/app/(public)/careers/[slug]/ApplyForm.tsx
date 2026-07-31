@@ -144,7 +144,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
           >
             <img
               src="/sapling-icon.svg"
-              alt="Sapling"
+              alt="Sapling" width={24} height={24}
               style={{ width: 24, height: 24, position: 'relative', top: -1 }}
             />
             <span className="h-serif" style={{ fontSize: 20, color: 'var(--text)' }}>
@@ -533,7 +533,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 20, height: 20 }} />
+            <img src="/sapling-icon.svg" alt="Sapling" width={20} height={20} style={{ width: 20, height: 20 }} />
             <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>Sapling · © 2026</span>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>

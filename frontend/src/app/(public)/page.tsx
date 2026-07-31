@@ -1,18 +1,29 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { useScrollLock } from '@/lib/useScrollLock';
 import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } from 'lucide-react';
-import HowItWorks from '@/components/HowItWorks';
 import SignInModal from '@/components/SignInModal';
 import { HeroCard } from '@/components/HeroCard';
+import { linkPairs } from '@/lib/linkPairs';
 import { BRAND_FOREST } from '@/lib/brand';
 import { Button } from "@/components/ui";
 import { IS_TEST_MODE, random, now } from '@/lib/testMode';
 
+// Code-split: HowItWorks is ~54 motion.* elements and the landing page's only
+// framer-motion consumer, so importing it eagerly put the whole library on the
+// critical path for a section that lives well below the fold.
+// Deliberately NOT `ssr: false` — the markup still server-renders, so the
+// section stays in the HTML for crawlers; only its JS moves to its own chunk.
+const HowItWorks = dynamic(() => import('@/components/HowItWorks'));
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+
+/** Hero canvas: a node links to another within this many px, scaled by depth. */
+const LINK_REACH = 70;
 
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!<>-_\\/[]{}=+*^?#_";
 
@@ -219,17 +230,19 @@ export default function LandingPage() {
 
       ctx.globalCompositeOperation = 'source-over';
       ctx.lineWidth = 0.5;
-      for (let i = 0; i < proj.length; i++) {
-        for (let j = i + 1; j < proj.length; j++) {
-          const p1 = proj[i], p2 = proj[j];
-          const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-          if (d < 70 * p1.sc) {
-            const a = (1 - d / (70 * p1.sc)) * 0.15 * Math.min(1, p1.sc);
-            if (a > 0.002) {
-              ctx.strokeStyle = `rgba(156,163,175,${a})`;
-              ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-            }
-          }
+
+      // Link pass. This was an uncapped double loop measuring all ~25k pairs
+      // of the 226 projected nodes every frame, to draw the few dozen that
+      // actually qualify. `linkPairs` bins them spatially and emits exactly
+      // the same pairs in the same order — proved against the all-pairs
+      // version in linkPairs.test.ts, order included, because these strokes
+      // are translucent and overlapping.
+      for (const { i, j, d } of linkPairs(proj, LINK_REACH)) {
+        const p1 = proj[i], p2 = proj[j];
+        const a = (1 - d / (LINK_REACH * p1.sc)) * 0.15 * Math.min(1, p1.sc);
+        if (a > 0.002) {
+          ctx.strokeStyle = `rgba(156,163,175,${a})`;
+          ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
         }
       }
 
@@ -510,7 +523,7 @@ export default function LandingPage() {
       >
         <div className="max-w-[88%] mx-auto flex items-center justify-between w-full">
           <button type="button" aria-label="Sapling — scroll to top" className="flex items-center cursor-pointer group" style={{ gap: '4px' }} onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            <img src="/sapling-icon.svg" alt="" style={{ width: '26px', height: '26px', flexShrink: 0, position: 'relative', top: '-2px' }} />
+            <img src="/sapling-icon.svg" alt="" width={26} height={26} style={{ width: '26px', height: '26px', flexShrink: 0, position: 'relative', top: '-2px' }} />
             <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: 'var(--brand-forest)', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Sapling</span>
           </button>
           <div className="flex items-center">
@@ -726,7 +739,7 @@ export default function LandingPage() {
         <footer className="landing-section border-t border-white/35 py-12 px-8 relative z-10">
           <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
             <div className="flex items-center gap-2">
-              <img src="/sapling-icon.svg" alt="Sapling" style={{ width: '20px', height: '20px' }} />
+              <img src="/sapling-icon.svg" alt="Sapling" width={20} height={20} style={{ width: '20px', height: '20px' }} />
               <span className="text-sm font-light tracking-wide text-[var(--text-dim)]">Sapling · © 2026</span>
             </div>
             <div className="flex flex-wrap justify-center gap-6">
@@ -809,7 +822,7 @@ export default function LandingPage() {
               display: 'flex', flexDirection: 'column', gap: 22,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 22, height: 22 }} />
+                <img src="/sapling-icon.svg" alt="Sapling" width={22} height={22} style={{ width: 22, height: 22 }} />
                 <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 17, color: 'var(--brand-forest)', letterSpacing: '-0.02em' }}>Sapling</span>
               </div>
               <div>

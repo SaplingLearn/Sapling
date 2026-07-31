@@ -195,7 +195,7 @@ export function ReportIssueFlow({ open, onClose }: ReportIssueFlowProps) {
                 border: "1px solid var(--border)",
               }}
             >
-              <img src={s.preview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              <img src={s.preview} alt="" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               <button
                 onClick={() => removeScreenshot(i)}
                 aria-label="Remove screenshot"
