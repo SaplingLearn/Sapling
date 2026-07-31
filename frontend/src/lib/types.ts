@@ -132,6 +132,9 @@ export interface RoomMessageRow {
   user_name: string;
   text: string | null;
   image_url: string | null;
+  /** Intrinsic size of image_url; null on messages sent before #315. */
+  image_width?: number | null;
+  image_height?: number | null;
   created_at: string;
   reply_to_id: string | null;
   is_deleted: boolean;

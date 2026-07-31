@@ -151,6 +151,18 @@ class SendMessageBody(BaseModel):
     user_name: str
     text: Optional[str] = None
     image_url: Optional[str] = None
+    # Intrinsic pixel size of image_url, measured client-side at upload (#315).
+    # Optional: older clients omit them and the UI falls back to unreserved
+    # layout, exactly as before.
+    #
+    # BOUNDED, because these are client-supplied and the transcript renders
+    # them as an aspect-ratio directly. Unbounded, any room member could post
+    # width=1/height=2000000000 — inside Postgres INTEGER range, so it inserts
+    # cleanly — and blow out that room's transcript for everyone, with no edit
+    # path to recover. 20000 is comfortably past any real image (8K is 7680)
+    # while keeping the ratio sane.
+    image_width: Optional[int] = Field(default=None, gt=0, le=20000)
+    image_height: Optional[int] = Field(default=None, gt=0, le=20000)
     reply_to_id: Optional[str] = None
 
 
