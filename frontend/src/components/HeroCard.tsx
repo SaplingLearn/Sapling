@@ -14,6 +14,10 @@ import React from "react";
  * at four of them — three shadow alphas, two radii, one missing inset. The
  * point of the component is that there is now one place for it to drift.
  *
+ * The shadow's base colour is the one value that had NOT drifted (every site
+ * used slate `rgba(15,23,42)`); adopting the token deliberately re-tints it
+ * to the warm `--sap-900` the app's other shadows use. See globals.css.
+ *
  * For a panel nested INSIDE a hero card, use the `.hero-surface` class
  * directly: it applies the gradient without restating the parent's border,
  * radius or shadow.

@@ -219,6 +219,14 @@ body { font-size: 14px; line-height: 1.5; }
    --surface-hero / --surface-hero-shadow tokens sat further down this file
    with zero consumers. These two classes are the only consumers now.
 
+   One value here is a correction rather than a de-drift, and is worth naming:
+   the shadow's base COLOUR was consistent across all five sites at
+   rgba(15,23,42) — Tailwind slate-900, which nothing else in this app uses.
+   The token is rgba(19,38,16) = --sap-900, the same base as --shadow-sm/md/lg.
+   So adopting it re-tints these shadows from cool slate to the warm green the
+   rest of the surface language already casts. Deliberate; the token had no
+   consumers, so this is the first time that value renders. */
+
    `.hero-surface` is the gradient ALONE — for panels nested inside a
    `.card--hero`, which must not restate its border, radius or shadow.
    `.card--hero` is the full surface, and is used together with `.card`
