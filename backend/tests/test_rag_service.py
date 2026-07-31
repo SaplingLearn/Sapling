@@ -392,7 +392,14 @@ def test_document_chunk_ids_never_collide_with_catalog_ids():
 
 @patch("services.rag_service.log_event")
 @patch("services.rag_service._client")
-def test_retrieve_chunks_failure_is_logged_and_counted(mock_client, mock_log_event, caplog):
+def test_retrieve_chunks_failure_is_logged_and_counted(
+    mock_client, mock_log_event, caplog, monkeypatch
+):
+    # Pin real mode explicitly. _require_real_mode() runs BEFORE the mocked
+    # client is reached, so with SAPLING_MODEL_MODE=function exported — which
+    # the E2E workflow tells you to export — this would take the
+    # _EmbeddingDisabled branch and pass vacuously on an unrelated code path.
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
     mock_client.models.embed_content.side_effect = Exception("embed timeout")
     from services.rag_service import retrieve_chunks
 

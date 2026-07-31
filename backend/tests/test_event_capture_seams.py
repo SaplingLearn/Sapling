@@ -96,6 +96,8 @@ def test_event_taxonomy_is_pinned_to_twelve_names():
         "note.created",
         "session.started",
         "session.ended",
+        "rag.retrieval_failed",
+        "rag.chunks_dropped",
     })
 
 
