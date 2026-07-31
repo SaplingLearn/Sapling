@@ -88,10 +88,18 @@ test("tutor turn renders a reply and persists encrypted to messages", async ({
     )) as { role: string; content: string }[];
 
   // Exactly the seeded baseline plus this turn's user + assistant rows.
+  // The rows are captured INSIDE the predicate (the events.spec.ts shape), so
+  // the count assertion and the content assertions below are the same read.
+  // Re-querying after the poll would decouple them: a duplicate-persistence
+  // regression could land a row in the gap and still slice two valid-looking
+  // rows off the end, which is precisely what this journey exists to catch.
+  let rows: { role: string; content: string }[] = [];
   await expect
-    .poll(async () => (await readTurnRows()).length, { timeout: 5_000 })
+    .poll(async () => {
+      rows = await readTurnRows();
+      return rows.length;
+    }, { timeout: 5_000 })
     .toBe(SEEDED_MESSAGE_COUNT + 2);
-  const rows = await readTurnRows();
   const [userRow, assistantRow] = rows.slice(-2);
   expect(userRow.role).toBe("user");
   expect(assistantRow.role).toBe("assistant");
