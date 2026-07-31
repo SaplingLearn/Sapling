@@ -12,10 +12,16 @@ Each is its own plan / PR. Severity tags map to `docs/frontend-rhythm-audit.md`.
 
 ## Component re-skins (the visible "feels different" fixes)
 
-- [ ] **[P0-B] Beta CTA button species.** Replace the rounded-full pill + infinite `beta-glow`
+- [x] **[P0-B] Beta CTA button species.** Replace the rounded-full pill + infinite `beta-glow`
       animation with the app button language (rectangular, `--r-sm`, solid `--brand-forest`).
       Convert the perpetual glow into a single finite entrance using `--brand-glow`.
       Files: `app/(public)/page.tsx`, `globals.css` (`.beta-glow-btn`).
+      ✅ **Done (verified 2026-07-30):** landed with the #291 motion work and the beta-pill
+      removal (#287). `beta-glow` / `.beta-glow-btn` no longer exist anywhere in `frontend/src`,
+      and the landing CTAs are the shared `<Button variant="primary" size="xl">`
+      (`.btn .btn--primary .btn--xl`) — app button language, no motion. The glow was **deleted
+      outright rather than converted** to a `--brand-glow` entrance, which satisfies the intent
+      (no perpetual motion, one button species); `--brand-glow` consequently has no consumers.
 - [ ] **[P1-E] Extract one hero-card primitive from `--surface-hero`.** Replace the duplicated
       inline 24px warm-gradient box in the beta modal (`app/(public)/page.tsx`) and
       `components/SignInModal.tsx` with a single shared component backed by `--surface-hero` /
