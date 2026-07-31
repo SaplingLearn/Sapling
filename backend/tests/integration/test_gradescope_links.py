@@ -124,6 +124,123 @@ def test_relinking_replaces_rather_than_duplicating(authed_client, db_conn):
     assert [r["gradescope_course_id"] for r in rows] == ["gs-second"]
 
 
+def test_a_link_on_another_terms_enrollment_is_still_found_and_removed(
+    authed_client, db_conn
+):
+    """The retake case, and the one the review caught.
+
+    `enrollment_id_for` re-derives a single enrollment from the CURRENT term on
+    every call. The seeded user holds CS101 in both fall-2025 and spring-2026,
+    so a link attached to the enrollment the heuristic does NOT pick used to be
+    invisible to every write path: re-linking created a second row, delete
+    removed nothing while answering ok:true, and sync 400'd "no link" for a
+    course `GET /links` was still listing.
+
+    Written directly against the non-preferred enrollment so the fixture is the
+    hostile case, not whichever one the resolver happens to like.
+    """
+    with db_conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT e.id
+              FROM enrollments e
+              JOIN course_offerings o ON o.id = e.offering_id
+             WHERE e.user_id = %s AND o.course_id = %s
+             ORDER BY e.id
+            """,
+            (USER_ACTIVE, COURSE_CS),
+        )
+        enrollments = [r["id"] for r in cur.fetchall()]
+    if len(enrollments) < 2:
+        pytest.skip("seed has only one CS101 enrollment; nothing to disambiguate")
+
+    # Attach the link to the enrollment the resolver will NOT choose.
+    from services.academics import enrollment_id_for
+
+    preferred = enrollment_id_for(USER_ACTIVE, COURSE_CS)
+    other = next(e for e in enrollments if e != preferred)
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO gradescope_course_links (id, enrollment_id, gradescope_course_id) "
+            "VALUES (%s, %s, %s)",
+            ("gsl-other-term", other, "gs-other-term"),
+        )
+
+    # It is visible...
+    listed = authed_client.get("/api/gradescope/links", params={"user_id": USER_ACTIVE})
+    assert any(
+        link["gradescope_course_id"] == "gs-other-term"
+        for link in listed.json()["links"]
+    ), "a link on another term's enrollment should still be listed"
+
+    # ...and DELETE actually removes it, rather than reporting success on a
+    # no-op against the term-preferred enrollment.
+    removed = authed_client.delete(
+        f"/api/gradescope/link/{COURSE_CS}", params={"user_id": USER_ACTIVE}
+    )
+    assert removed.status_code == 200, removed.text
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM gradescope_course_links WHERE gradescope_course_id = %s",
+            ("gs-other-term",),
+        )
+        assert cur.fetchone()["count"] == 0, "delete reported ok but removed nothing"
+
+
+def test_relinking_after_a_term_rollover_leaves_exactly_one_link(
+    authed_client, db_conn
+):
+    """Re-linking must not leave the previous term's row behind — the course
+    would then carry two links, which the UI has no way to reconcile."""
+    with db_conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT e.id FROM enrollments e
+              JOIN course_offerings o ON o.id = e.offering_id
+             WHERE e.user_id = %s AND o.course_id = %s
+            """,
+            (USER_ACTIVE, COURSE_CS),
+        )
+        enrollments = [r["id"] for r in cur.fetchall()]
+    if len(enrollments) < 2:
+        pytest.skip("seed has only one CS101 enrollment; nothing to disambiguate")
+
+    from services.academics import enrollment_id_for
+
+    other = next(e for e in enrollments if e != enrollment_id_for(USER_ACTIVE, COURSE_CS))
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO gradescope_course_links (id, enrollment_id, gradescope_course_id) "
+            "VALUES (%s, %s, %s)",
+            ("gsl-stale", other, "gs-stale"),
+        )
+
+    r = authed_client.post(
+        "/api/gradescope/link",
+        json={
+            "user_id": USER_ACTIVE,
+            "sapling_course_id": COURSE_CS,
+            "gradescope_course_id": "gs-fresh",
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT l.gradescope_course_id
+              FROM gradescope_course_links l
+              JOIN enrollments e ON e.id = l.enrollment_id
+              JOIN course_offerings o ON o.id = e.offering_id
+             WHERE e.user_id = %s AND o.course_id = %s
+            """,
+            (USER_ACTIVE, COURSE_CS),
+        )
+        rows = [r["gradescope_course_id"] for r in cur.fetchall()]
+    assert rows == ["gs-fresh"], f"expected exactly one link, got {rows}"
+
+
 def test_linking_a_course_the_user_is_not_enrolled_in_404s(authed_client):
     """The IDOR guard that used to read `user_courses`."""
     r = authed_client.post(
