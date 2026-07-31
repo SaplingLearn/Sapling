@@ -291,7 +291,7 @@ def test_embed_documents_batch_does_not_construct_client_outside_real_mode(monke
     assert rag._client is None
 
 
-def test_retrieve_chunks_never_reaches_transport_in_function_mode(monkeypatch, capsys):
+def test_retrieve_chunks_never_reaches_transport_in_function_mode(monkeypatch, caplog):
     """Pre-#439, retrieve_chunks ignored SAPLING_MODEL_MODE entirely and always
     called through to the real cached client — only the suite's autouse
     `_hermetic_llm_transport` guard (#379) accidentally caught the resulting
@@ -300,21 +300,32 @@ def test_retrieve_chunks_never_reaches_transport_in_function_mode(monkeypatch, c
     gate raises before ever reaching google-genai's transport, so that
     message must never appear — the swallowed message names
     SAPLING_MODEL_MODE instead.
+
+    That message moved from stdout to the logger in #482, and to INFO rather
+    than WARNING: the seam firing is by design on every function-mode run, so
+    it must not read as a failure or spend an error event.
     """
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     from services.rag_service import retrieve_chunks
 
-    with patch("services.rag_service.rpc") as mock_rpc:
+    with (
+        patch("services.rag_service.rpc") as mock_rpc,
+        patch("services.rag_service.log_event") as mock_log_event,
+        caplog.at_level("INFO", logger="services.rag_service"),
+    ):
         result = retrieve_chunks("dynamic programming", course_id="CAS CS 330")
 
     assert result == []
     mock_rpc.assert_not_called()
-    captured = capsys.readouterr()
-    assert "unstubbed LLM egress" not in captured.out
-    assert "SAPLING_MODEL_MODE" in captured.out
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("unstubbed LLM egress" in m for m in messages)
+    assert any("SAPLING_MODEL_MODE" in m for m in messages), messages
+    # The deliberate seam degrade is not an error — no event, no WARNING.
+    mock_log_event.assert_not_called()
+    assert not any(r.levelname == "WARNING" for r in caplog.records)
 
 
-def test_index_document_chunks_never_reaches_transport_in_function_mode(monkeypatch, capsys):
+def test_index_document_chunks_never_reaches_transport_in_function_mode(monkeypatch, caplog):
     """Same proof as above for the batch/document embed path used by document
     upload indexing: the mode gate stops it before google-genai's transport.
 
@@ -323,11 +334,19 @@ def test_index_document_chunks_never_reaches_transport_in_function_mode(monkeypa
     function mode no embedding can be produced, so those rows were dead on
     arrival: unretrievable by construction, and flagged by the `ragstore`
     oracle. What this test guards is the absence of egress, which is unchanged.
+
+    Per #482 the message is on the logger now, at INFO — dropping every chunk
+    is the DESIGNED function-mode outcome, so it must not raise the
+    rag.chunks_dropped error event that a real embedding failure does.
     """
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     from services.rag_service import index_document_chunks
 
-    with patch("services.rag_service.table") as mock_table:
+    with (
+        patch("services.rag_service.table") as mock_table,
+        patch("services.rag_service.log_event") as mock_log_event,
+        caplog.at_level("INFO", logger="services.rag_service"),
+    ):
         mock_table.return_value.upsert.return_value = []
         count = index_document_chunks(
             course_code="CAS CS 330",
@@ -338,9 +357,11 @@ def test_index_document_chunks_never_reaches_transport_in_function_mode(monkeypa
 
     assert count == 0
     mock_table.return_value.upsert.assert_not_called()
-    captured = capsys.readouterr()
-    assert "unstubbed LLM egress" not in captured.out
-    assert "SAPLING_MODEL_MODE" in captured.out
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("unstubbed LLM egress" in m for m in messages)
+    assert any("SAPLING_MODEL_MODE" in m for m in messages), messages
+    mock_log_event.assert_not_called()
+    assert not any(r.levelname == "WARNING" for r in caplog.records)
 
 
 def test_document_chunk_ids_never_collide_with_catalog_ids():
@@ -356,3 +377,68 @@ def test_document_chunk_ids_never_collide_with_catalog_ids():
     assert document_chunk_id(course, text) != catalog_chunk_id(course, text)
     # Still content-addressed within the document keyspace.
     assert document_chunk_id(course, text) == document_chunk_id(course, text)
+
+
+# ── #482: RAG failures must reach the app-logging path, not stdout ──────────
+#
+# retrieve_chunks degrades to [] on ANY failure, and [] is also what "nothing
+# relevant matched" looks like. So an ungrounded tutor/quiz turn was
+# indistinguishable from a grounded one at every layer above — the only trace
+# was a bare `print`, which the app's logging never sees and no rollup can
+# count. These pin the degrade as OBSERVABLE; the degrade itself (returning [])
+# is pinned by test_retrieve_chunks_returns_empty_on_embedding_failure above
+# and deliberately unchanged.
+
+
+@patch("services.rag_service.log_event")
+@patch("services.rag_service._client")
+def test_retrieve_chunks_failure_is_logged_and_counted(
+    mock_client, mock_log_event, caplog, monkeypatch
+):
+    # Pin real mode explicitly. _require_real_mode() runs BEFORE the mocked
+    # client is reached, so with SAPLING_MODEL_MODE=function exported — which
+    # the E2E workflow tells you to export — this would take the
+    # _EmbeddingDisabled branch and pass vacuously on an unrelated code path.
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
+    mock_client.models.embed_content.side_effect = Exception("embed timeout")
+    from services.rag_service import retrieve_chunks
+
+    with caplog.at_level("WARNING", logger="services.rag_service"):
+        assert retrieve_chunks("dynamic programming", course_id="CAS CS 330") == []
+
+    assert any(
+        r.levelname == "WARNING" and "retrieve_chunks failed" in r.getMessage()
+        for r in caplog.records
+    ), f"expected a WARNING on the app-logging path, got {[r.getMessage() for r in caplog.records]}"
+
+    mock_log_event.assert_called_once()
+    event_type = mock_log_event.call_args.args[0]
+    assert event_type == "rag.retrieval_failed"
+    assert mock_log_event.call_args.kwargs["category"] == "error"
+
+
+@patch("services.rag_service.log_event")
+@patch("services.rag_service.table")
+@patch("services.rag_service._embed_documents_batch")
+def test_dropped_chunks_are_logged_and_counted(
+    mock_embed, mock_table, mock_log_event, caplog
+):
+    """A failed embed batch drops those chunks rather than persisting
+    unretrievable NULL-embedding rows. That drop is silent data loss behind a
+    successful-looking upload, so it has to be countable too."""
+    mock_embed.side_effect = Exception("embedding backend down")
+    from services.rag_service import index_document_chunks
+
+    with caplog.at_level("WARNING", logger="services.rag_service"):
+        count = index_document_chunks("CAS CS 330", "doc-1", "user-1", ["alpha", "beta"])
+
+    # Nothing embedded => nothing persisted, and the caller is told zero.
+    assert count == 0
+    mock_table.return_value.upsert.assert_not_called()
+    assert any("dropped" in r.getMessage() for r in caplog.records), (
+        f"expected a WARNING naming the dropped chunks, got "
+        f"{[r.getMessage() for r in caplog.records]}"
+    )
+    assert any(
+        c.args and c.args[0] == "rag.chunks_dropped" for c in mock_log_event.call_args_list
+    ), "expected a rag.chunks_dropped event"

@@ -42,7 +42,17 @@ chat.message_sent             usage     mode, session_id (+ content=message -> f
 note.created                  usage     note_id, course_id, offering_id, has_body
 session.started               usage     session_id, mode, offering_id (+ content=topic -> fingerprint)
 session.ended                 usage     session_id, time_spent_minutes, concepts_covered
+rag.retrieval_failed          error     course_id, error_type
+rag.chunks_dropped            error     doc_id, dropped, total
 ============================  ========  =====================================================
+
+Note on the two ``rag.*`` rows (#482): they are ``category="error"``, but
+``/api/admin/analytics/errors`` filters on ``event_type like error.*`` and
+projects an HTTP shape (path / method / status_code / duration_ms), so these
+surface through ``/usage/summary``'s ``by_event_type`` breakdown instead of
+that feed. Renaming them into ``error.*`` would put null-path rows in an
+HTTP-request table; giving the feed a shape-agnostic projection is the real
+fix and is deliberately not done here.
 """
 
 from __future__ import annotations
@@ -76,6 +86,8 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "note.created",
     "session.started",
     "session.ended",
+    "rag.retrieval_failed",
+    "rag.chunks_dropped",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink
