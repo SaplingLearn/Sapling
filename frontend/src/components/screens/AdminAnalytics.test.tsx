@@ -283,6 +283,30 @@ describe("AdminAnalytics", () => {
     expect(within(errRow).getByText("25%")).toBeTruthy();
   });
 
+  it("withholds the error rate when the summary payload belongs to a different range", async () => {
+    // The hooks keep their last payload during a range-change reload, so the
+    // errors panel can briefly see a summary from the OLD range. The rate
+    // must show its waiting state, not an all-0% line fabricated from
+    // zero-filled stale days (#491 review).
+    primeHappyPath();
+    api.adminUsageSummary.mockResolvedValue({
+      ...summaryFixture,
+      range: { from: "2026-05-01T00:00:00.000Z", to: "2026-05-31T00:00:00.000Z" },
+    });
+    render(<AdminAnalytics />);
+    await screen.findByText("error.5xx");
+    expect(screen.getByText(/appears once the usage events-per-day series loads/i)).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Error rate per day" })).toBeNull();
+    // The errors day table shows the absolute count but no fabricated 0% rate.
+    const errPanel = within(
+      screen.getByRole("heading", { name: "Errors" }).closest("section") as HTMLElement,
+    );
+    for (const cell of errPanel.getAllByText("2026-07-15")) {
+      const row = cell.closest("tr");
+      if (row) expect(within(row).queryByText("0%")).toBeNull();
+    }
+  });
+
   it("sorts the users table by a clicked column (#122)", async () => {
     primeHappyPath();
     render(<AdminAnalytics />);

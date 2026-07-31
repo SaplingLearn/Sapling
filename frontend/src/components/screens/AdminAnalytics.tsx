@@ -62,7 +62,9 @@ const tdNum: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumer
 // Panel tables keep a minWidth so columns stay readable; this wrapper lets
 // narrow viewports scroll the table instead of overflowing the page.
 const scrollX: React.CSSProperties = { overflowX: "auto" };
-const formatPct = (v: number) => `${Number(v.toFixed(1))}%`;
+// Tiny nonzero rates floor at "<0.1%" so the tooltip/table never reads as
+// "no errors" when errors exist.
+const formatPct = (v: number) => (v > 0 && v < 0.1 ? "<0.1%" : `${Number(v.toFixed(1))}%`);
 
 function TruncatedBadge() {
   // Copy stays meaning-neutral: on the aggregation panels `truncated` means
@@ -480,14 +482,23 @@ function AnalyticsBody() {
             // The rate denominator joins ACROSS panels: the usage summary's
             // events/day series. Both series zero-fill over THIS panel's
             // range so errorRateSeries joins on an aligned date domain (days
-            // with zero events report 0%, never NaN/Infinity).
-            const eventPoints = summary.data?.series?.length
-              ? zeroFillDays(
-                  summary.data.series.map((p) => ({ date: p.date, value: p.count })),
-                  d.range.from,
-                  d.range.to,
-                )
-              : [];
+            // with zero events report 0%, never NaN/Infinity). The summary
+            // hook keeps its LAST payload while a range change reloads, so
+            // guard on day-key range agreement — a stale series zero-filled
+            // against the new range would fabricate an all-0% rate line.
+            const summaryRange = summary.data?.range;
+            const rangesAgree =
+              !!summaryRange &&
+              summaryRange.from.slice(0, 10) === d.range.from.slice(0, 10) &&
+              summaryRange.to.slice(0, 10) === d.range.to.slice(0, 10);
+            const eventPoints =
+              rangesAgree && summary.data?.series?.length
+                ? zeroFillDays(
+                    summary.data.series.map((p) => ({ date: p.date, value: p.count })),
+                    d.range.from,
+                    d.range.to,
+                  )
+                : [];
             const ratePoints = errorRateSeries(errorPoints, eventPoints);
             return (
             <>
@@ -499,17 +510,22 @@ function AnalyticsBody() {
               />
               <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Error rate</h3>
               {ratePoints.length ? (
-                <DayLineChart
-                  points={ratePoints}
-                  color="var(--err, #a83a3a)"
-                  ariaLabel="Error rate per day"
-                  format={formatPct}
-                />
+                <>
+                  {/* A truncated summary scan undercounts the denominator, so
+                      the rate can overshoot — surface it on THIS chart. */}
+                  {summary.data?.truncated && <TruncatedBadge />}
+                  <DayLineChart
+                    points={ratePoints}
+                    color="var(--err, #a83a3a)"
+                    ariaLabel="Error rate per day"
+                    format={formatPct}
+                  />
+                </>
               ) : (
                 <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
                   {summary.error
                     ? "Couldn't load the events-per-day series, so the error rate can't be computed."
-                    : summary.data
+                    : summary.data && rangesAgree
                       ? "No events in this range."
                       : "Error rate appears once the usage events-per-day series loads."}
                 </div>
