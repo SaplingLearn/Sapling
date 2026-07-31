@@ -3,6 +3,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { TopBar } from "@/components/TopBar";
+import { FullHeightScreen } from "@/components/FullHeightScreen";
 import { useUser } from "@/context/UserContext";
 import { useToast } from "@/components/ToastProvider";
 import {
@@ -515,7 +516,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
   if (!userReady || !userId) return null;
 
   return (
-    <>
+    <FullHeightScreen>
       <AmbientOrbs />
       <TopBar
         breadcrumb={
@@ -578,7 +579,9 @@ export function GradebookCourseScreen({ courseId }: Props) {
         style={{
           padding: "var(--pad-xl)",
           position: "relative",
-          minHeight: "calc(100vh - var(--row-h))",
+          // See Gradebook/Landing.tsx — same `calc(100vh - var(--row-h))`
+          // density-token-as-nav-height mistake, same flex fix (#341).
+          flex: "1 0 auto",
         }}
       >
         <div
@@ -729,7 +732,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
           />
         </>
       )}
-    </>
+    </FullHeightScreen>
   );
 }
 

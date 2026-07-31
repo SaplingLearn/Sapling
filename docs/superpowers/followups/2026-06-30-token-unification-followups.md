@@ -22,10 +22,18 @@ Each is its own plan / PR. Severity tags map to `docs/frontend-rhythm-audit.md`.
       (`.btn .btn--primary .btn--xl`) — app button language, no motion. The glow was **deleted
       outright rather than converted** to a `--brand-glow` entrance, which satisfies the intent
       (no perpetual motion, one button species); `--brand-glow` consequently has no consumers.
-- [ ] **[P1-E] Extract one hero-card primitive from `--surface-hero`.** Replace the duplicated
+- [x] **[P1-E] Extract one hero-card primitive from `--surface-hero`.** Replace the duplicated
       inline 24px warm-gradient box in the beta modal (`app/(public)/page.tsx`) and
       `components/SignInModal.tsx` with a single shared component backed by `--surface-hero` /
       `--surface-hero-shadow`.
+      ✅ **Done (verified 2026-07-30):** landed with #288. `.card--hero` (a named variant of
+      `.card`) plus `.hero-surface` (the gradient alone, for panels nested inside a hero card)
+      now consume both tokens, and a thin `<HeroCard>` wrapper owns the pair. All five literal
+      sites are converted — four in `app/(public)/page.tsx`, one in `components/SignInModal.tsx`
+      — and `HeroCard.test.tsx` fails if a literal copy of the gradient reappears anywhere in
+      `frontend/src`. The literal fallbacks (`var(--surface-hero, …)`) exist because the tokens
+      are scoped to `.public-surface, .landing-page`; every consumer is inside that subtree
+      today, so they are defensive rather than load-bearing.
 - [ ] **[P1-C] Re-home onboarding** (`components/screens/Onboarding.tsx`) into the app's
       layout/spacing/type — `--pad-*` spacing, the shell type scale — instead of a centered
       card floating in a radial-gradient void.

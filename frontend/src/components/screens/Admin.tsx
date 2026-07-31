@@ -936,7 +936,7 @@ function CosmeticsTab() {
               />
             </div>
             {form.asset_url && (
-              <img src={form.asset_url} alt="" loading="lazy" style={{ maxHeight: 56, marginTop: 6, borderRadius: "var(--r-sm)", border: "1px solid var(--border)" }} />
+              <img src={form.asset_url} alt="" loading="lazy" decoding="async" style={{ maxHeight: 56, marginTop: 6, borderRadius: "var(--r-sm)", border: "1px solid var(--border)" }} />
             )}
           </LabeledField>
         )}
@@ -983,7 +983,7 @@ function CosmeticsTab() {
               <CatalogRow
                 key={c.id}
                 left={c.asset_url ? (
-                  <img src={c.asset_url} alt="" width={28} height={28} loading="lazy" style={{ width: 28, height: 28, borderRadius: "var(--r-sm)", objectFit: "cover", border: "1px solid var(--border)" }} />
+                  <img src={c.asset_url} alt="" width={28} height={28} loading="lazy" decoding="async" style={{ width: 28, height: 28, borderRadius: "var(--r-sm)", objectFit: "cover", border: "1px solid var(--border)" }} />
                 ) : c.css_value ? (
                   <span style={{ padding: "2px 6px", fontSize: 10, borderRadius: "var(--r-sm)", background: c.css_value, color: "#fff", border: "1px solid var(--border)" }}>
                     sample

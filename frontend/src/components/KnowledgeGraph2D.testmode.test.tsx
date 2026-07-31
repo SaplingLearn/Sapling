@@ -51,17 +51,25 @@ const EDGES: GraphEdge[] = [
   { source: "a", target: "d", strength: 0.7 },
 ];
 
-/** Every rendered circle + edge coordinate, as attribute strings. */
+/**
+ * Every rendered node position + edge coordinate, as attribute strings.
+ * Node positions live on the group's `transform` (#111 moved the per-tick
+ * writes off React: children sit at relative cx/cy 0 and the group carries
+ * the translate); circle radii are kept so size regressions still surface.
+ */
 function snapshot(container: HTMLElement): string[] {
   const svg = container.querySelector("svg");
   expect(svg).not.toBeNull();
+  const groups = Array.from(svg!.querySelectorAll('[data-testid="graph-node"]')).map(
+    (g) => `n:${g.getAttribute("transform")}`,
+  );
   const circles = Array.from(svg!.querySelectorAll("circle")).map(
     (c) => `c:${c.getAttribute("cx")},${c.getAttribute("cy")},${c.getAttribute("r")}`,
   );
   const lines = Array.from(svg!.querySelectorAll("line")).map(
     (l) => `l:${l.getAttribute("x1")},${l.getAttribute("y1")},${l.getAttribute("x2")},${l.getAttribute("y2")}`,
   );
-  return [...circles, ...lines];
+  return [...groups, ...circles, ...lines];
 }
 
 describe("KnowledgeGraph2D — test-mode determinism", () => {
@@ -72,6 +80,7 @@ describe("KnowledgeGraph2D — test-mode determinism", () => {
     const snap1 = snapshot(first.container);
     // The simulation must have actually laid out and rendered content.
     expect(snap1.length).toBeGreaterThan(0);
+    expect(snap1.some((s) => s.startsWith("n:"))).toBe(true);
     expect(snap1.some((s) => s.startsWith("l:"))).toBe(true);
     for (const s of snap1) {
       expect(s).not.toMatch(/NaN|null|undefined/);
@@ -92,8 +101,8 @@ describe("KnowledgeGraph2D — test-mode determinism", () => {
       <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={600} height={480} />,
     );
     const centers = new Set(
-      Array.from(container.querySelectorAll("circle")).map(
-        (c) => `${c.getAttribute("cx")},${c.getAttribute("cy")}`,
+      Array.from(container.querySelectorAll('[data-testid="graph-node"]')).map(
+        (g) => g.getAttribute("transform"),
       ),
     );
     // 5 nodes must occupy at least 5 distinct positions once settled.

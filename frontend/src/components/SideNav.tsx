@@ -111,6 +111,9 @@ export function SideNav() {
         <img
           src="/sapling-icon.svg"
           alt="Sapling"
+          width={32}
+          height={32}
+          decoding="async"
           style={{
             width: 32,
             height: 32,

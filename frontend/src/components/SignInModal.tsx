@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
+import { HeroCard } from "@/components/HeroCard";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
@@ -217,17 +218,13 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       style={{ background: "rgba(12,18,26,0.55)" }}
       onClick={close}
     >
-      <div
+      <HeroCard
         ref={panelRef}
         tabIndex={-1}
         className={`relative w-full ${closing ? "modal-card-out" : "modal-card-in"}`}
         style={{
           maxWidth: 440,
-          background: "linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)",
-          borderRadius: 24,
           padding: "44px 44px 36px",
-          border: "1px solid rgba(255,255,255,0.7)",
-          boxShadow: "0 20px 60px rgba(15,23,42,0.18), inset 0 0 0 1px rgba(255,255,255,0.5)",
         }}
         onClick={e => e.stopPropagation()}
         role="dialog"
@@ -346,7 +343,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           {" "}and{" "}
           <a href="/privacy" style={{ color: "var(--brand-forest)", textDecoration: "underline" }}>privacy policy</a>.
         </p>
-      </div>
+      </HeroCard>
     </div>
   );
 }
