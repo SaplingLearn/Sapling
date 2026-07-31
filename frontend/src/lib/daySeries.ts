@@ -36,3 +36,26 @@ export function zeroFillDays(
   }
   return out;
 }
+
+/** Per-day error rate as a PERCENTAGE (0–100): error count ÷ total events,
+ * joined by date over the events (denominator) series. Days with zero events
+ * report 0 — never NaN/Infinity. Feed both series through zeroFillDays over
+ * the SAME range first so the date domains line up. */
+export function errorRateSeries(
+  errorPoints: DayPointValue[],
+  eventPoints: DayPointValue[],
+): DayPointValue[] {
+  const errByDate = new Map(errorPoints.map((p) => [p.date, p.value]));
+  return eventPoints.map((p) => ({
+    date: p.date,
+    value: p.value > 0 ? ((errByDate.get(p.date) ?? 0) / p.value) * 100 : 0,
+  }));
+}
+
+/** Compact count for chart axes ("950", "1.5k", "2.5M") — the narrow y-axis
+ * gutter can't fit raw token totals; table fallbacks keep the exact values. */
+export function formatCompactCount(v: number): string {
+  if (v >= 1_000_000) return `${Number((v / 1_000_000).toFixed(1))}M`;
+  if (v >= 1_000) return `${Number((v / 1_000).toFixed(1))}k`;
+  return String(v);
+}

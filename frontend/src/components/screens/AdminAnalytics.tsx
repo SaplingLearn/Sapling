@@ -5,8 +5,11 @@
  * /api/admin/analytics (usage summary, per-user rollup, LLM cost, errors).
  * One date range drives every panel; each panel owns its loading/error/empty
  * state so a single failed query never blanks the page. Charts render from
- * the ?bucket=day series via the lazy-loaded AnalyticsCharts primitives,
- * with the #121 raw tables kept as per-panel "View data" fallbacks.
+ * the ?bucket=day series via the lazy-loaded AnalyticsCharts primitives —
+ * cost AND tokens over time, absolute errors plus the error RATE (errors ÷
+ * events, joined across panels) — with the #121 raw tables kept as per-panel
+ * "View data" fallbacks and every day-series chart mirrored by its own
+ * "View data" table (the hover tooltip alone has no keyboard path).
  */
 
 import React from "react";
@@ -14,7 +17,7 @@ import dynamic from "next/dynamic";
 import { TopBar } from "../TopBar";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
-import { zeroFillDays } from "@/lib/daySeries";
+import { errorRateSeries, formatCompactCount, zeroFillDays, type DayPointValue } from "@/lib/daySeries";
 
 // Chart components load lazily (the #122 bundle-discipline checkbox). The
 // pure helper imports statically from lib/daySeries — its own JSX-free
@@ -38,7 +41,7 @@ import {
   type AnalyticsQuery,
   type AnalyticsRangeValue,
 } from "@/lib/useAdminAnalytics";
-import type { LlmCostGroupBy } from "@/lib/types";
+import type { CostDayPoint, LlmCostGroupBy } from "@/lib/types";
 
 const PRESETS = [
   { days: 7, label: "7d" },
@@ -56,6 +59,10 @@ const td: React.CSSProperties = {
   fontSize: 13, padding: "6px 8px", borderTop: "1px solid var(--border)",
 };
 const tdNum: React.CSSProperties = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+// Panel tables keep a minWidth so columns stay readable; this wrapper lets
+// narrow viewports scroll the table instead of overflowing the page.
+const scrollX: React.CSSProperties = { overflowX: "auto" };
+const formatPct = (v: number) => `${Number(v.toFixed(1))}%`;
 
 function TruncatedBadge() {
   // Copy stays meaning-neutral: on the aggregation panels `truncated` means
@@ -74,6 +81,51 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
       <div className="label-micro">{label}</div>
       <div style={{ fontSize: 24, fontWeight: 600 }}>{value}</div>
     </div>
+  );
+}
+
+/** "View data" table twin for the day-series charts (#122 a11y): the chart
+ * tooltip is pointer-hover only, so every plotted day/value pair also needs a
+ * keyboard/screen-reader path. Rows follow the first non-empty series' dates
+ * (callers zero-fill every series over the same range, so domains align);
+ * a column with no value for a date renders an em dash. */
+function DaySeriesTable({ columns }: {
+  columns: { label: string; points: DayPointValue[]; format?: (v: number) => string }[];
+}) {
+  const dates = columns.find((c) => c.points.length)?.points.map((p) => p.date) ?? [];
+  if (dates.length === 0) return null;
+  const byDate = columns.map((c) => new Map(c.points.map((p) => [p.date, p.value])));
+  return (
+    <details style={{ marginTop: 12 }}>
+      <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data</summary>
+      <div style={scrollX}>
+        <table style={{ borderCollapse: "collapse", minWidth: 280, marginTop: 8 }}>
+          <thead>
+            <tr>
+              <th style={th}>Date</th>
+              {columns.map((c) => (
+                <th key={c.label} style={{ ...th, textAlign: "right" }}>{c.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {dates.map((date) => (
+              <tr key={date}>
+                <td style={td}>{date}</td>
+                {columns.map((c, i) => {
+                  const value = byDate[i].get(date);
+                  return (
+                    <td key={c.label} style={tdNum}>
+                      {value == null ? "—" : (c.format ?? String)(value)}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
   );
 }
 
@@ -214,40 +266,46 @@ function AnalyticsBody() {
         </div>
 
         <Panel title="Usage" query={summary} testid="admin-analytics-usage">
-          {(d) => (
-            <>
-              {d.truncated && <TruncatedBadge />}
-              <DayLineChart
-                points={d.series?.length
-                  ? zeroFillDays(d.series.map((p) => ({ date: p.date, value: p.count })), d.range.from, d.range.to)
-                  : []}
-                color="var(--brand-forest, #1B6C42)"
-                fillColor="var(--sap-100, #e0ecd8)"
-                ariaLabel="Events per day"
-              />
-              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Top event types</h3>
-              <CategoryBars
-                rows={d.by_event_type.slice(0, 8).map((r) => ({ label: r.event_type, value: r.count }))}
-                ariaLabel="Top event types"
-              />
-              <details style={{ marginTop: 12 }}>
-                <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data</summary>
-                <table style={{ borderCollapse: "collapse", minWidth: 360, marginTop: 8 }}>
-                  <thead>
-                    <tr><th style={th}>Event type</th><th style={{ ...th, textAlign: "right" }}>Count</th></tr>
-                  </thead>
-                  <tbody>
-                    {d.by_event_type.map((row) => (
-                      <tr key={row.event_type}>
-                        <td style={td}>{row.event_type}</td>
-                        <td style={tdNum}>{row.count}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </details>
-            </>
-          )}
+          {(d) => {
+            const eventPoints = d.series?.length
+              ? zeroFillDays(d.series.map((p) => ({ date: p.date, value: p.count })), d.range.from, d.range.to)
+              : [];
+            return (
+              <>
+                {d.truncated && <TruncatedBadge />}
+                <DayLineChart
+                  points={eventPoints}
+                  color="var(--brand-forest, #1B6C42)"
+                  fillColor="var(--sap-100, #e0ecd8)"
+                  ariaLabel="Events per day"
+                />
+                <DaySeriesTable columns={[{ label: "Events", points: eventPoints }]} />
+                <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Top event types</h3>
+                <CategoryBars
+                  rows={d.by_event_type.slice(0, 8).map((r) => ({ label: r.event_type, value: r.count }))}
+                  ariaLabel="Top event types"
+                />
+                <details style={{ marginTop: 12 }}>
+                  <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data</summary>
+                  <div style={scrollX}>
+                    <table style={{ borderCollapse: "collapse", minWidth: 360, marginTop: 8 }}>
+                      <thead>
+                        <tr><th style={th}>Event type</th><th style={{ ...th, textAlign: "right" }}>Count</th></tr>
+                      </thead>
+                      <tbody>
+                        {d.by_event_type.map((row) => (
+                          <tr key={row.event_type}>
+                            <td style={td}>{row.event_type}</td>
+                            <td style={tdNum}>{row.count}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              </>
+            );
+          }}
         </Panel>
 
         <Panel title="Top users" query={byUser} testid="admin-analytics-users">
@@ -281,26 +339,28 @@ function AnalyticsBody() {
                 {d.users.length === 0 ? (
                   <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No user activity in this range.</div>
                 ) : (
-                  <table style={{ borderCollapse: "collapse", minWidth: 520 }}>
-                    <thead>
-                      <tr>
-                        <th style={th}>User</th>
-                        <th style={{ ...th, textAlign: "right" }}>{sortBtn("events", "Events")}</th>
-                        <th style={{ ...th, textAlign: "right" }}>{sortBtn("cost", "LLM cost")}</th>
-                        <th style={{ ...th, textAlign: "right" }}>{sortBtn("tokens", "Tokens")}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {users.map((u) => (
-                        <tr key={u.user_id}>
-                          <td style={{ ...td, fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{u.user_id}</td>
-                          <td style={tdNum}>{u.event_count}</td>
-                          <td style={tdNum}>${u.llm_cost_usd.toFixed(4)}</td>
-                          <td style={tdNum}>{u.total_tokens}</td>
+                  <div style={scrollX}>
+                    <table style={{ borderCollapse: "collapse", minWidth: 520 }}>
+                      <thead>
+                        <tr>
+                          <th style={th}>User</th>
+                          <th style={{ ...th, textAlign: "right" }}>{sortBtn("events", "Events")}</th>
+                          <th style={{ ...th, textAlign: "right" }}>{sortBtn("cost", "LLM cost")}</th>
+                          <th style={{ ...th, textAlign: "right" }}>{sortBtn("tokens", "Tokens")}</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {users.map((u) => (
+                          <tr key={u.user_id}>
+                            <td style={{ ...td, fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{u.user_id}</td>
+                            <td style={tdNum}>{u.event_count}</td>
+                            <td style={tdNum}>${u.llm_cost_usd.toFixed(4)}</td>
+                            <td style={tdNum}>{u.total_tokens}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </>
             );
@@ -308,7 +368,18 @@ function AnalyticsBody() {
         </Panel>
 
         <Panel title="LLM cost" query={cost} testid="admin-analytics-cost">
-          {(d) => (
+          {(d) => {
+            // One CostDayPoint series carries all three per-day metrics;
+            // zero-fill each projection over the same range so the cost and
+            // tokens charts (and the day table) share one date domain.
+            const dayMetric = (pick: (p: CostDayPoint) => number) =>
+              d.series?.length
+                ? zeroFillDays(d.series.map((p) => ({ date: p.date, value: pick(p) })), d.range.from, d.range.to)
+                : [];
+            const costPoints = dayMetric((p) => p.cost_usd);
+            const tokenPoints = dayMetric((p) => p.total_tokens);
+            const callPoints = dayMetric((p) => p.calls);
+            return (
             <>
               <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12 }}>
                 <span className="label-micro">Group by</span>
@@ -326,13 +397,26 @@ function AnalyticsBody() {
                 {d.truncated && <TruncatedBadge />}
               </div>
               <DayLineChart
-                points={d.series?.length
-                  ? zeroFillDays(d.series.map((p) => ({ date: p.date, value: p.cost_usd })), d.range.from, d.range.to)
-                  : []}
+                points={costPoints}
                 color="var(--brand-forest, #1B6C42)"
                 fillColor="var(--sap-100, #e0ecd8)"
                 ariaLabel="Cost per day"
                 format={(v) => `$${v.toFixed(2)}`}
+              />
+              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Tokens per day</h3>
+              <DayLineChart
+                points={tokenPoints}
+                color="var(--brand-forest, #1B6C42)"
+                fillColor="var(--sap-100, #e0ecd8)"
+                ariaLabel="Tokens per day"
+                format={formatCompactCount}
+              />
+              <DaySeriesTable
+                columns={[
+                  { label: "Calls", points: callPoints },
+                  { label: "Tokens", points: tokenPoints },
+                  { label: "Cost", points: costPoints, format: (v) => `$${v.toFixed(2)}` },
+                ]}
               />
               <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Cost by {d.group_by}</h3>
               <CategoryBars
@@ -342,85 +426,124 @@ function AnalyticsBody() {
               />
               <details style={{ marginTop: 12 }}>
                 <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data</summary>
-                <table style={{ borderCollapse: "collapse", minWidth: 560, marginTop: 8 }}>
-                  <thead>
-                    <tr>
-                      <th style={th}>{d.group_by}</th>
-                      <th style={{ ...th, textAlign: "right" }}>Calls</th>
-                      <th style={{ ...th, textAlign: "right" }}>Prompt</th>
-                      <th style={{ ...th, textAlign: "right" }}>Completion</th>
-                      <th style={{ ...th, textAlign: "right" }}>Tokens</th>
-                      <th style={{ ...th, textAlign: "right" }}>Cost</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {d.rows.map((row) => (
-                      <tr key={row.key}>
-                        <td style={td}>{row.key || "(none)"}</td>
-                        <td style={tdNum}>{row.calls}</td>
-                        <td style={tdNum}>{row.prompt_tokens}</td>
-                        <td style={tdNum}>{row.completion_tokens}</td>
-                        <td style={tdNum}>{row.total_tokens}</td>
-                        <td style={tdNum}>${row.cost_usd.toFixed(4)}</td>
+                <div style={scrollX}>
+                  <table style={{ borderCollapse: "collapse", minWidth: 560, marginTop: 8 }}>
+                    <thead>
+                      <tr>
+                        <th style={th}>{d.group_by}</th>
+                        <th style={{ ...th, textAlign: "right" }}>Calls</th>
+                        <th style={{ ...th, textAlign: "right" }}>Prompt</th>
+                        <th style={{ ...th, textAlign: "right" }}>Completion</th>
+                        <th style={{ ...th, textAlign: "right" }}>Tokens</th>
+                        <th style={{ ...th, textAlign: "right" }}>Cost</th>
                       </tr>
-                    ))}
-                    <tr>
-                      <td style={{ ...td, fontWeight: 600 }}>Total</td>
-                      <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.calls}</td>
-                      <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.prompt_tokens}</td>
-                      <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.completion_tokens}</td>
-                      <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.total_tokens}</td>
-                      <td style={{ ...tdNum, fontWeight: 600 }}>${d.totals.cost_usd.toFixed(4)}</td>
-                    </tr>
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {d.rows.map((row) => (
+                        <tr key={row.key}>
+                          <td style={td}>{row.key || "(none)"}</td>
+                          <td style={tdNum}>{row.calls}</td>
+                          <td style={tdNum}>{row.prompt_tokens}</td>
+                          <td style={tdNum}>{row.completion_tokens}</td>
+                          <td style={tdNum}>{row.total_tokens}</td>
+                          <td style={tdNum}>${row.cost_usd.toFixed(4)}</td>
+                        </tr>
+                      ))}
+                      <tr>
+                        <td style={{ ...td, fontWeight: 600 }}>Total</td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.calls}</td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.prompt_tokens}</td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.completion_tokens}</td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}>{d.totals.total_tokens}</td>
+                        <td style={{ ...tdNum, fontWeight: 600 }}>${d.totals.cost_usd.toFixed(4)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </details>
             </>
-          )}
+            );
+          }}
         </Panel>
 
         <Panel title="Errors" query={errs} testid="admin-analytics-errors">
-          {(d) => (
+          {(d) => {
+            const errorPoints = d.series?.length
+              ? zeroFillDays(d.series.map((p) => ({ date: p.date, value: p.count })), d.range.from, d.range.to)
+              : [];
+            // The rate denominator joins ACROSS panels: the usage summary's
+            // events/day series. Both series zero-fill over THIS panel's
+            // range so errorRateSeries joins on an aligned date domain (days
+            // with zero events report 0%, never NaN/Infinity).
+            const eventPoints = summary.data?.series?.length
+              ? zeroFillDays(
+                  summary.data.series.map((p) => ({ date: p.date, value: p.count })),
+                  d.range.from,
+                  d.range.to,
+                )
+              : [];
+            const ratePoints = errorRateSeries(errorPoints, eventPoints);
+            return (
             <>
               {d.truncated && <TruncatedBadge />}
               <DayLineChart
-                points={d.series?.length
-                  ? zeroFillDays(d.series.map((p) => ({ date: p.date, value: p.count })), d.range.from, d.range.to)
-                  : []}
+                points={errorPoints}
                 color="var(--err, #a83a3a)"
                 ariaLabel="Errors per day"
+              />
+              <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Error rate</h3>
+              {ratePoints.length ? (
+                <DayLineChart
+                  points={ratePoints}
+                  color="var(--err, #a83a3a)"
+                  ariaLabel="Error rate per day"
+                  format={formatPct}
+                />
+              ) : (
+                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                  Error rate appears once the usage events-per-day series loads.
+                </div>
+              )}
+              <DaySeriesTable
+                columns={[
+                  { label: "Errors", points: errorPoints },
+                  { label: "Error rate", points: ratePoints, format: formatPct },
+                ]}
               />
               <div style={{ height: 12 }} />
               {d.errors.length === 0 ? (
                 <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No errors in this range. 🎉</div>
               ) : (
-                <table style={{ borderCollapse: "collapse", minWidth: 640 }}>
-                  <thead>
-                    <tr>
-                      <th style={th}>Time</th>
-                      <th style={th}>Type</th>
-                      <th style={th}>Method</th>
-                      <th style={th}>Path</th>
-                      <th style={{ ...th, textAlign: "right" }}>Status</th>
-                      <th style={{ ...th, textAlign: "right" }}>Duration</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {d.errors.map((e, i) => (
-                      <tr key={e.request_id ?? `${e.created_at}-${i}`}>
-                        <td style={{ ...td, whiteSpace: "nowrap" }}>{e.created_at ?? "—"}</td>
-                        <td style={td}>{e.event_type}</td>
-                        <td style={td}>{e.method ?? "—"}</td>
-                        <td style={{ ...td, fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{e.path ?? "—"}</td>
-                        <td style={tdNum}>{e.status_code ?? "—"}</td>
-                        <td style={tdNum}>{e.duration_ms != null ? `${e.duration_ms.toFixed(1)}ms` : "—"}</td>
+                <div style={scrollX}>
+                  <table style={{ borderCollapse: "collapse", minWidth: 640 }}>
+                    <thead>
+                      <tr>
+                        <th style={th}>Time</th>
+                        <th style={th}>Type</th>
+                        <th style={th}>Method</th>
+                        <th style={th}>Path</th>
+                        <th style={{ ...th, textAlign: "right" }}>Status</th>
+                        <th style={{ ...th, textAlign: "right" }}>Duration</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {d.errors.map((e, i) => (
+                        <tr key={e.request_id ?? `${e.created_at}-${i}`}>
+                          <td style={{ ...td, whiteSpace: "nowrap" }}>{e.created_at ?? "—"}</td>
+                          <td style={td}>{e.event_type}</td>
+                          <td style={td}>{e.method ?? "—"}</td>
+                          <td style={{ ...td, fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{e.path ?? "—"}</td>
+                          <td style={tdNum}>{e.status_code ?? "—"}</td>
+                          <td style={tdNum}>{e.duration_ms != null ? `${e.duration_ms.toFixed(1)}ms` : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </>
-          )}
+            );
+          }}
         </Panel>
       </div>
     </div>

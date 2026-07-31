@@ -14,7 +14,7 @@
 
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 const userState = vi.hoisted(() => ({ isAdmin: true, userReady: true, userId: "admin-1" }));
 vi.mock("@/context/UserContext", () => ({
@@ -76,6 +76,7 @@ const summaryFixture = {
   series: [
     { date: "2026-07-10", count: 12 },
     { date: "2026-07-12", count: 30 },
+    { date: "2026-07-15", count: 4 }, // rate denominator for the errors-panel day
   ],
 };
 const byUserFixture = {
@@ -237,16 +238,38 @@ describe("AdminAnalytics", () => {
     await screen.findByText("42");
     expect(await screen.findByRole("img", { name: "Events per day" })).toBeTruthy();
     expect(screen.getByRole("img", { name: "Cost per day" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Tokens per day" })).toBeTruthy();
     expect(screen.getByRole("img", { name: "Errors per day" })).toBeTruthy();
+    // Labeled as a RATE — errors ÷ events joined across panels.
+    expect(screen.getByRole("img", { name: "Error rate per day" })).toBeTruthy();
     expect(screen.getByRole("img", { name: "Top event types" })).toBeTruthy();
   });
 
-  it("keeps a table fallback behind each chart panel (#122 a11y)", async () => {
+  it("keeps table fallbacks behind every chart, day series included (#122 a11y)", async () => {
     primeHappyPath();
     render(<AdminAnalytics />);
     await screen.findByText("42");
-    // The raw tables from #121 survive as expandable data views.
-    expect(screen.getAllByText("View data").length).toBeGreaterThanOrEqual(2);
+    // The #121 category tables survive, and each day-series chart cluster now
+    // has a "View data" table twin (the hover tooltip has no keyboard path).
+    expect(screen.getAllByText("View data").length).toBeGreaterThanOrEqual(5);
+    const panel = (name: string) =>
+      within(screen.getByRole("heading", { name }).closest("section") as HTMLElement);
+    // Usage day table: the plotted 2026-07-10 value plus an explicit
+    // zero-filled gap day (2026-07-11 is absent from the sparse series).
+    const usageRow = panel("Usage").getByText("2026-07-10").closest("tr")!;
+    expect(within(usageRow).getByText("12")).toBeTruthy();
+    const gapRow = panel("Usage").getByText("2026-07-11").closest("tr")!;
+    expect(within(gapRow).getByText("0")).toBeTruthy();
+    // Cost day table mirrors CostDayPoint: calls, tokens, and formatted cost.
+    const costRow = panel("LLM cost").getByText("2026-07-10").closest("tr")!;
+    expect(within(costRow).getByText("3")).toBeTruthy();
+    expect(within(costRow).getByText("15")).toBeTruthy();
+    expect(within(costRow).getByText("$0.50")).toBeTruthy();
+    // Errors day table: the absolute count and the cross-panel rate
+    // (1 error ÷ 4 events on 2026-07-15).
+    const errRow = panel("Errors").getByText("2026-07-15").closest("tr")!;
+    expect(within(errRow).getByText("1")).toBeTruthy();
+    expect(within(errRow).getByText("25%")).toBeTruthy();
   });
 
   it("sorts the users table by a clicked column (#122)", async () => {

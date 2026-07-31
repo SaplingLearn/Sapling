@@ -12,6 +12,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import {
   CategoryBars,
   DayLineChart,
+  errorRateSeries,
+  formatCompactCount,
   linePoints,
   niceTicks,
   tooltipLeftPct,
@@ -40,6 +42,41 @@ describe("zeroFillDays", () => {
     const sparse = [{ date: "2020-01-01", value: 2 }];
     const out = zeroFillDays(sparse, "2020-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
     expect(out).toEqual(sparse);
+  });
+});
+
+describe("errorRateSeries", () => {
+  it("joins by date over the events domain and reports a percentage", () => {
+    const out = errorRateSeries(
+      [{ date: "2026-07-10", value: 1 }],
+      [
+        { date: "2026-07-10", value: 4 },
+        { date: "2026-07-11", value: 8 },
+      ],
+    );
+    expect(out).toEqual([
+      { date: "2026-07-10", value: 25 }, // 1 error / 4 events
+      { date: "2026-07-11", value: 0 },  // no errors that day
+    ]);
+  });
+
+  it("reports 0 for zero-event days — never NaN/Infinity", () => {
+    const out = errorRateSeries(
+      [{ date: "2026-07-10", value: 3 }],
+      [{ date: "2026-07-10", value: 0 }],
+    );
+    expect(out).toEqual([{ date: "2026-07-10", value: 0 }]);
+    expect(out.every((p) => Number.isFinite(p.value))).toBe(true);
+  });
+});
+
+describe("formatCompactCount", () => {
+  it("keeps small counts exact and compacts thousands/millions", () => {
+    expect(formatCompactCount(0)).toBe("0");
+    expect(formatCompactCount(950)).toBe("950");
+    expect(formatCompactCount(1500)).toBe("1.5k");
+    expect(formatCompactCount(20_000)).toBe("20k");
+    expect(formatCompactCount(2_500_000)).toBe("2.5M");
   });
 });
 
