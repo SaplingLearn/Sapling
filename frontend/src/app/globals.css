@@ -224,6 +224,28 @@ body { font-size: 14px; line-height: 1.5; }
 .fade-in { animation: fade-in var(--dur) var(--ease); }
 .slide-up { animation: slide-up var(--dur-slow) var(--ease); }
 .fade-up { animation: fade-in 0.5s var(--ease); animation-fill-mode: both; }
+
+/* Approval gate (#290) — the "you're in" beat.
+   The sapling draws itself once and the message steps in behind it; the
+   whole sequence settles by ~540ms. Finite by construction: every rule runs
+   a single pass, and `both` holds each step at its start frame so a delayed
+   element never flashes at its resting value first. Declared ABOVE the
+   .anim-d* utilities on purpose — these shorthands reset animation-delay, so
+   the delay utilities have to come later to win. The global
+   prefers-reduced-motion reset collapses the whole sequence. */
+@keyframes pending-draw  { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes pending-swell { from { opacity: 0; transform: scale(0.7); } to { opacity: 0.2; transform: none; } }
+.pending-card { animation: slide-up var(--dur-slow) var(--ease) both; }
+.pending-sprout-body {
+  transform-box: fill-box; transform-origin: 50% 100%;
+  animation: pending-swell 340ms var(--ease) 60ms both;
+}
+.pending-sprout-stem {
+  stroke-dasharray: 1;
+  animation: pending-draw 420ms var(--ease) 120ms both;
+}
+.pending-step { animation: fade-in var(--dur) var(--ease) both; }
+
 .anim-d0 { animation-delay:   0ms; }
 .anim-d1 { animation-delay:  80ms; }
 .anim-d2 { animation-delay: 160ms; }
