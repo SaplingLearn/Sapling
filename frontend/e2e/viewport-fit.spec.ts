@@ -41,7 +41,7 @@ const LAYOUTS = ["sidebar", "topnav"] as const;
 const SLACK = 1;
 
 /** Switch the client-only layout preference and reload into it. */
-async function useLayout(page: Page, layout: (typeof LAYOUTS)[number]) {
+async function switchLayout(page: Page, layout: (typeof LAYOUTS)[number]) {
   await page.evaluate(
     ([key, value]) => window.localStorage.setItem(key, value),
     [LAYOUT_KEY, layout] as const,
@@ -90,7 +90,7 @@ test("the knowledge-graph canvas fills the shell scrollport exactly, in both lay
   await expect(page.getByTestId("graph-container")).toBeVisible();
 
   for (const layout of LAYOUTS) {
-    await useLayout(page, layout);
+    await switchLayout(page, layout);
     await expect(page.getByTestId("graph-container")).toBeVisible();
 
     // The canvas size is ResizeObserver-driven and starts at a placeholder
@@ -127,7 +127,7 @@ test("the gradebook adds no height beyond what its content needs, in both layout
   await expect(grid).toBeVisible();
 
   for (const layout of LAYOUTS) {
-    await useLayout(page, layout);
+    await switchLayout(page, layout);
     await expect(grid).toBeVisible();
 
     // Deliberately NOT "the page must not scroll": at topnav the scrollport
