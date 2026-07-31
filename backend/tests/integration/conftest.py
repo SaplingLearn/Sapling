@@ -142,8 +142,29 @@ def _reseed_baseline() -> None:
 def _require_local_stack():
     if not _RUN:
         pytest.skip("integration suite: set RUN_INTEGRATION=1 (with the local stack up)")
+
+    # Re-assert the local env at RUN time, not only at conftest import.
+    # Collecting the whole tree (which `-m integration` does) imports
+    # tests/test_benchmark_quiz.py and tests/test_seed_quiz_fixture.py, which
+    # import scripts/benchmark_quiz.py and scripts/seed_quiz_fixture.py — both
+    # run `load_dotenv(".env.staging", override=True)` at MODULE IMPORT, after
+    # this conftest's own load. That clobbered SUPABASE_URL to staging for the
+    # rest of the session, so the check below skipped this entire lane and
+    # pytest exited 0. `RUN_INTEGRATION=1 pytest -m integration` — the
+    # documented invocation — was therefore a silent no-op, which is how the
+    # #265 column drift survived the one lane built to catch it.
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
+
     if not _is_local():
-        pytest.skip(f"integration suite: SUPABASE_URL is not local ({os.getenv('SUPABASE_URL')!r})")
+        # LOUD, never a skip. Same reasoning as _require_local_db_url below:
+        # a silent skip on a misconfigured environment reads as "safe" while
+        # actually testing nothing.
+        raise RuntimeError(
+            "integration suite: RUN_INTEGRATION=1 but SUPABASE_URL is not local "
+            f"({os.getenv('SUPABASE_URL')!r}). Refusing to skip silently — the "
+            "lane would report green having run nothing."
+        )
     # Ensure the rich dataset is present (idempotent, additive).
     _reseed_baseline()
     yield
