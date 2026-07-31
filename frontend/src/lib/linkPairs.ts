@@ -54,16 +54,24 @@ export function linkPairs(points: ProjectedPoint[], reach: number): LinkPair[] {
   if (maxR <= 0) return out;
   const cell = maxR;
 
-  // Grid coords stay far inside +/-1024 for any plausible viewport, so they
-  // pack into a single integer key with no collisions.
-  const key = (gx: number, gy: number) => ((gx + 1024) << 12) | (gy + 1024);
-
-  const grid = new Map<number, number[]>();
+  // Column-of-rows rather than one packed integer key. A packed key needs a
+  // bound on the grid coordinates to stay collision-free, and this is an
+  // exported general-purpose helper — a caller with a small `reach` or a wide
+  // coordinate space would silently blow that bound and get two different
+  // cells hashing together, which shows up as DUPLICATED pairs (the same
+  // bucket visited twice in one 3x3 scan). Nesting has no such precondition.
+  const grid = new Map<number, Map<number, number[]>>();
   for (let i = 0; i < points.length; i++) {
-    const k = key(Math.floor(points[i].x / cell), Math.floor(points[i].y / cell));
-    const bucket = grid.get(k);
+    const gx = Math.floor(points[i].x / cell);
+    const gy = Math.floor(points[i].y / cell);
+    let column = grid.get(gx);
+    if (!column) {
+      column = new Map<number, number[]>();
+      grid.set(gx, column);
+    }
+    const bucket = column.get(gy);
     if (bucket) bucket.push(i);
-    else grid.set(k, [i]);
+    else column.set(gy, [i]);
   }
 
   const candidates: number[] = [];
@@ -75,8 +83,10 @@ export function linkPairs(points: ProjectedPoint[], reach: number): LinkPair[] {
 
     candidates.length = 0;
     for (let ox = -1; ox <= 1; ox++) {
+      const column = grid.get(gx + ox);
+      if (!column) continue;
       for (let oy = -1; oy <= 1; oy++) {
-        const bucket = grid.get(key(gx + ox, gy + oy));
+        const bucket = column.get(gy + oy);
         if (!bucket) continue;
         for (const j of bucket) if (j > i) candidates.push(j);
       }

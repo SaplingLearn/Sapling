@@ -444,12 +444,14 @@ function KnowledgeGraph2DImpl({
   // link endpoints from ids into node references once the simulation runs,
   // so this only gets consulted before that swap — but that is exactly the
   // first, busiest frames.
-  // One O(N) pass per render, shared by every edge below — versus the O(E x N)
-  // the per-edge `.find()` cost. Deliberately NOT memoised: `simNodes` is a
-  // ref's array, and feeding a ref-derived value into a hook's dependency list
-  // is exactly what the "no refs during render" rule forbids. The build is
-  // cheap enough that caching it would trade a real lint violation for a
-  // saving nobody can measure.
+  // One O(N) pass per render, shared by every edge below, replacing the
+  // per-edge `.find()` that made edge rendering O(E x N) every frame.
+  //
+  // Not memoised, but not because memoising would cost anything at lint level
+  // — measured, `useMemo` here reports the same react-hooks/refs count. It is
+  // simply that `simNodes` is a ref's array mutated in place, so it is not a
+  // sound useMemo dependency: its identity would not change when its contents
+  // do. An unconditional 226-entry rebuild is both correct and cheap.
   const nodeById = new Map<string, SimNode>();
   for (const n of simNodes) nodeById.set(n.id, n);
 

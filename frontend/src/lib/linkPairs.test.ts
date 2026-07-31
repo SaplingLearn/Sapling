@@ -66,6 +66,25 @@ describe('linkPairs', () => {
     expect(linkPairs([points[1], points[0]], REACH)).toEqual([{ i: 0, j: 1, d: 50 }]);
   });
 
+  it('does not duplicate pairs when the grid spans a wide coordinate range', () => {
+    // Regression: the grid used to pack (gx, gy) into one integer assuming
+    // both stayed inside a bound. A small `reach` makes cells small, so the
+    // grid coordinates blow past it, two different cells collide, the same
+    // bucket gets visited twice in one 3x3 scan — and the pair is emitted
+    // TWICE. Found in review; this is the exact repro.
+    const points: ProjectedPoint[] = [
+      { x: 0, y: 0, sc: 1 },
+      { x: 0, y: 5000, sc: 1 },
+      { x: 0.5, y: 5000.4, sc: 1 },
+    ];
+    expect(linkPairs(points, 1)).toEqual(linkPairsNaive(points, 1));
+    expect(linkPairs(points, 1)).toHaveLength(1);
+
+    // And at a range no packed key could have survived at all.
+    const far = cloud(31, 120, 4_000_000).map((p) => ({ ...p, sc: 0.02 }));
+    expect(linkPairs(far, REACH)).toEqual(linkPairsNaive(far, REACH));
+  });
+
   it('degenerates safely', () => {
     expect(linkPairs([], REACH)).toEqual([]);
     expect(linkPairs([{ x: 0, y: 0, sc: 1 }], REACH)).toEqual([]);
