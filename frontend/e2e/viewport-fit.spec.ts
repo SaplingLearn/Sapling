@@ -68,6 +68,23 @@ async function measure(page: Page, testId: string) {
   }, testId);
 }
 
+/**
+ * Read `graph-container` until it stops moving, and hand back the reading
+ * that settled. Deliberately not `expect.poll`: the assertions need the
+ * settled VALUE, and re-measuring after a poll would reopen the window the
+ * poll just closed. Returns the last reading either way, so a timeout still
+ * fails on a real number rather than a bare "timed out".
+ */
+async function settledFit(page: Page, timeoutMs = 5_000) {
+  const started = Date.now();
+  let last = await measure(page, "graph-container");
+  while (last && Math.abs(last.overshoot) > SLACK && Date.now() - started < timeoutMs) {
+    await page.waitForTimeout(100);
+    last = await measure(page, "graph-container");
+  }
+  return last;
+}
+
 test("the knowledge-graph canvas fills the shell scrollport exactly, in both layouts (#341)", async ({ page }) => {
   await page.goto("/tree");
   await expect(page.getByTestId("graph-container")).toBeVisible();
@@ -77,41 +94,41 @@ test("the knowledge-graph canvas fills the shell scrollport exactly, in both lay
     await expect(page.getByTestId("graph-container")).toBeVisible();
 
     // The canvas size is ResizeObserver-driven and starts at a placeholder
-    // 900x600 (Tree.tsx's initial state), so poll until the measurement
-    // settles instead of trusting a single frame.
-    await expect
-      .poll(async () => Math.abs((await measure(page, "graph-container"))?.overshoot ?? NaN), {
-        timeout: 5_000,
-        message: `layout "${layout}": the graph canvas should settle flush with the scrollport's bottom edge`,
-      })
-      .toBeLessThanOrEqual(SLACK);
-
-    const fit = (await measure(page, "graph-container"))!;
+    // 900x600 (Tree.tsx's initial state), so wait for the measurement to
+    // settle instead of trusting a single frame. This returns the very
+    // reading that settled, and every assertion below runs on it —
+    // re-measuring afterwards would reopen the window the wait just closed.
+    const fit = await settledFit(page);
+    expect(fit, "app-shell and graph-container must both be present").not.toBeNull();
+    const settled = fit!;
     // Both directions on purpose. Overshoot was the shipped bug; undershoot
     // is what a future regression that breaks `flex: 1` would look like, and
     // a one-sided assertion would wave it through.
     expect(
-      fit.overshoot,
-      `layout "${layout}": canvas ${fit.elHeight}px vs scrollport ${fit.shellHeight}px — ` +
-        `${fit.overshoot > 0 ? "overshoots" : "leaves a gap of"} ${Math.abs(fit.overshoot)}px`,
+      settled.overshoot,
+      `layout "${layout}": canvas ${settled.elHeight}px vs scrollport ${settled.shellHeight}px — ` +
+        `${settled.overshoot > 0 ? "overshoots" : "leaves a gap of"} ${Math.abs(settled.overshoot)}px`,
     ).toBeGreaterThanOrEqual(-SLACK);
-    expect(fit.elHeight, `layout "${layout}": the canvas should have a real height`).toBeGreaterThan(0);
+    expect(settled.elHeight, `layout "${layout}": the canvas should have a real height`).toBeGreaterThan(0);
     expect(
-      fit.scrollOverflow,
-      `layout "${layout}": /tree fills the frame, so it should not scroll — scrolls by ${fit.scrollOverflow}px`,
+      settled.scrollOverflow,
+      `layout "${layout}": /tree fills the frame, so it should not scroll — scrolls by ${settled.scrollOverflow}px`,
     ).toBeLessThanOrEqual(SLACK);
   }
 });
 
 test("the gradebook adds no height beyond what its content needs, in both layouts (#341)", async ({ page }) => {
   await page.goto("/gradebook");
-  // Anchor on a registered testid, not copy: the transcript trigger is part
-  // of the landing's own chrome, so its presence means the screen is up.
-  await expect(page.getByTestId("gradebook-transcript-open")).toBeVisible();
+  // Wait for the LOADED grid, not just the chrome. The transcript trigger
+  // renders as soon as there is a user, while `loading` still swaps a
+  // six-card skeleton in for the real grid — measuring that transient state
+  // would make the assertion below depend on fetch timing.
+  const grid = page.getByRole("grid", { name: "Courses" });
+  await expect(grid).toBeVisible();
 
   for (const layout of LAYOUTS) {
     await useLayout(page, layout);
-    await expect(page.getByTestId("gradebook-transcript-open")).toBeVisible();
+    await expect(grid).toBeVisible();
 
     // Deliberately NOT "the page must not scroll": at topnav the scrollport
     // is 56px shorter, and the seeded gradebook's content genuinely needs
@@ -132,10 +149,15 @@ test("the gradebook adds no height beyond what its content needs, in both layout
       const cs = getComputedStyle(main);
       let bottom = m.top;
       for (const child of Array.from(main.children)) {
-        const pos = getComputedStyle(child).position;
+        const childStyle = getComputedStyle(child);
         // AmbientOrbs is position:fixed — decorative, and out of flow.
-        if (pos === "fixed" || pos === "absolute") continue;
-        bottom = Math.max(bottom, child.getBoundingClientRect().bottom);
+        if (childStyle.position === "fixed" || childStyle.position === "absolute") continue;
+        // A trailing margin-bottom adds to the parent's height without
+        // appearing in any child's bounding rect, so count it explicitly.
+        bottom = Math.max(
+          bottom,
+          child.getBoundingClientRect().bottom + parseFloat(childStyle.marginBottom || "0"),
+        );
       }
       return {
         mainHeight: Math.round(m.height),
