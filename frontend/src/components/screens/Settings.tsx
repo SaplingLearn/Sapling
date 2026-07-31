@@ -890,7 +890,10 @@ function CosmeticPreview({
           <img
             src={cosmetic.asset_url}
             alt=""
+            width={64}
+            height={64}
             loading="lazy"
+            decoding="async"
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", objectFit: "contain" }}
           />
         )}
@@ -900,7 +903,7 @@ function CosmeticPreview({
   if (cosmetic.type === "banner" && cosmetic.asset_url) {
     return (
       <div style={{ width: "100%", height: 48, borderRadius: "var(--r-sm)", overflow: "hidden", border: "1px solid var(--border)" }}>
-        <img src={cosmetic.asset_url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <img src={cosmetic.asset_url} alt="" width={180} height={48} loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       </div>
     );
   }

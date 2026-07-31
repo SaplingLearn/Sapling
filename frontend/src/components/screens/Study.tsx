@@ -2,13 +2,6 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import { AnimatePresence, motion, MotionGlobalConfig } from "framer-motion";
-import { IS_TEST_MODE } from "@/lib/testMode";
-
-// Deterministic DOM for browser tests (#383): framer-motion's own test
-// seam jumps every animation straight to its final keyframe. No-op in
-// production builds (flag inlined to false at build time).
-if (IS_TEST_MODE) MotionGlobalConfig.skipAnimations = true;
 import { TopBar } from "../TopBar";
 import { AIDisclaimerChip } from "../AIDisclaimerChip";
 import { Icon } from "../Icon";
@@ -20,6 +13,28 @@ import { CustomSelect } from "../CustomSelect";
 const MarkdownChat = dynamic(
   () => import("../MarkdownChat").then((m) => m.MarkdownChat),
   { ssr: false, loading: () => null },
+);
+
+// Lazy-load the framer-motion subtree the same way (#111) — the library is
+// only needed for the toggle highlight + mode crossfade, so it stays out of
+// Study's initial bundle. Fallbacks keep the resting visuals identical while
+// the chunk loads: an identically-styled static pill, and the same flex
+// wrapper minus the crossfade.
+const StudyToggleHighlight = dynamic(
+  () => import("./StudyMotion").then((m) => m.StudyToggleHighlight),
+  {
+    ssr: false,
+    loading: () => (
+      <span style={{ position: "absolute", inset: 0, background: "var(--accent-soft)", zIndex: -1 }} />
+    ),
+  },
+);
+const StudyModePanel = dynamic(
+  () => import("./StudyMotion").then((m) => m.StudyModePanel),
+  {
+    ssr: false,
+    loading: () => <div style={{ display: "flex", flex: 1, minHeight: 0 }} />,
+  },
 );
 import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
@@ -125,18 +140,7 @@ export function Study() {
               zIndex: 1,
             }}
           >
-            {mode === v && (
-              <motion.span
-                layoutId="study-toggle-active"
-                transition={{ type: "spring", stiffness: 380, damping: 32 }}
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  background: "var(--accent-soft)",
-                  zIndex: -1,
-                }}
-              />
-            )}
+            {mode === v && <StudyToggleHighlight />}
             {label}
           </button>
         ))}
@@ -151,32 +155,23 @@ export function Study() {
         subtitle={mode === "guide" ? undefined : "Spaced review with ratings and a 3D flip"}
         actions={actions}
       />
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.div
-          key={mode}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.22, ease: [0.2, 0.85, 0.35, 1] }}
-          style={{ display: "flex", flex: 1, minHeight: 0 }}
-        >
-          {mode === "guide" ? (
-            <GuideMode
-              courses={scopedCourses}
-              isMobile={isMobile}
-              semester={activeSemester}
-              semesterReady={semesterHydrated}
-            />
-          ) : (
-            <FlashcardsMode
-              courses={scopedCourses}
-              isMobile={isMobile}
-              semester={activeSemester}
-              semesterReady={semesterHydrated}
-            />
-          )}
-        </motion.div>
-      </AnimatePresence>
+      <StudyModePanel mode={mode}>
+        {mode === "guide" ? (
+          <GuideMode
+            courses={scopedCourses}
+            isMobile={isMobile}
+            semester={activeSemester}
+            semesterReady={semesterHydrated}
+          />
+        ) : (
+          <FlashcardsMode
+            courses={scopedCourses}
+            isMobile={isMobile}
+            semester={activeSemester}
+            semesterReady={semesterHydrated}
+          />
+        )}
+      </StudyModePanel>
     </div>
   );
 }

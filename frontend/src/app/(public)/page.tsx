@@ -1,15 +1,25 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { useScrollLock } from '@/lib/useScrollLock';
 import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } from 'lucide-react';
-import HowItWorks from '@/components/HowItWorks';
 import SignInModal from '@/components/SignInModal';
 import { BRAND_FOREST } from '@/lib/brand';
 import { Button } from "@/components/ui";
 import { IS_TEST_MODE, random, now } from '@/lib/testMode';
+
+// HowItWorks statically imports framer-motion, which a plain import would ride
+// into the landing chunk. Lazy-load it ssr:false (same split as ChatPanel's
+// MarkdownChat) so the motion stack ships as its own client chunk. The
+// placeholder mirrors the section's own 340vh scroll height so the layout
+// below doesn't shift while the chunk loads.
+const HowItWorks = dynamic(() => import('@/components/HowItWorks'), {
+  ssr: false,
+  loading: () => <section id="how-it-works" className="landing-section relative" style={{ height: '340vh' }} />,
+});
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
@@ -218,12 +228,26 @@ export default function LandingPage() {
 
       ctx.globalCompositeOperation = 'source-over';
       ctx.lineWidth = 0.5;
+      // The pair walk itself is unavoidable (links depend on projected
+      // positions, which change every frame), but almost every pair fails the
+      // distance test — so make failing cheap: hoist the per-node threshold
+      // out of the inner loop, reject on |dx|/|dy| before multiplying, and
+      // compare squared distances so the sqrt only runs for pairs that
+      // actually draw a link.
       for (let i = 0; i < proj.length; i++) {
+        const p1 = proj[i];
+        const maxD = 70 * p1.sc;
+        const maxD2 = maxD * maxD;
+        const aScale = 0.15 * Math.min(1, p1.sc);
         for (let j = i + 1; j < proj.length; j++) {
-          const p1 = proj[i], p2 = proj[j];
-          const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-          if (d < 70 * p1.sc) {
-            const a = (1 - d / (70 * p1.sc)) * 0.15 * Math.min(1, p1.sc);
+          const p2 = proj[j];
+          const dx = p1.x - p2.x;
+          if (dx > maxD || dx < -maxD) continue;
+          const dy = p1.y - p2.y;
+          if (dy > maxD || dy < -maxD) continue;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < maxD2) {
+            const a = (1 - Math.sqrt(d2) / maxD) * aScale;
             if (a > 0.002) {
               ctx.strokeStyle = `rgba(156,163,175,${a})`;
               ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();

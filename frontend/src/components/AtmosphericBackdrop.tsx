@@ -13,6 +13,10 @@
  *  - DPR-aware; redraws on window resize.
  *  - 14 orbs, each with a slow 2D drift + pseudo-depth via scale + opacity.
  *  - Opacity capped at 0.10; you feel them more than you see them.
+ *  - Each orb's radial gradient is pre-baked to an offscreen sprite (#111);
+ *    frames composite bitmaps via drawImage. Re-baked only on DPR change.
+ *  - The RAF loop is throttled to ~30fps (imperceptible on this slow drift)
+ *    and pauses entirely while the tab is hidden.
  *  - Honors prefers-reduced-motion: paints one still frame, never animates.
  *  - Palette is intentionally independent of the UI green so the brand's
  *    accent keeps its exclusive semantic meaning (growth/mastery).
@@ -27,7 +31,12 @@ type Orb = {
   r: number;
   color: string;
   phase: number;
+  // Pre-baked gradient sprite; re-baked only when the DPR changes (#111).
+  sprite?: HTMLCanvasElement;
 };
+
+// ~30fps frame budget — plenty for a slow ambient drift (#111).
+const FRAME_MS = 1000 / 30;
 
 // Warm, atmospheric palette — blues, purples, ambers, teals. Green is
 // reserved for UI branding, so it's intentionally absent here.
@@ -58,12 +67,38 @@ function makeOrbs(width: number, height: number): Orb[] {
   return orbs;
 }
 
+// Pre-bake one orb's radial gradient to an offscreen canvas so the animation
+// loop composites bitmaps with drawImage instead of re-creating full-viewport
+// gradients every frame (#111). Radius/alpha are fixed at orb creation, so
+// only a DPR change invalidates a sprite.
+function bakeSprite(orb: Orb, dpr: number): HTMLCanvasElement | undefined {
+  const rad = orb.r * (0.7 + orb.z * 0.6);
+  // Peak opacity 0.10 on the closest orbs; falls off with depth.
+  const alpha = 0.035 + orb.z * 0.07;
+  const size = Math.max(1, Math.ceil(rad * 2 * dpr));
+  const sprite = document.createElement("canvas");
+  sprite.width = size;
+  sprite.height = size;
+  const sctx = sprite.getContext("2d");
+  if (!sctx) return undefined;
+  const c = size / 2;
+  const grad = sctx.createRadialGradient(c, c, 0, c, c, rad * dpr);
+  grad.addColorStop(0, hexToRgba(orb.color, alpha));
+  grad.addColorStop(0.55, hexToRgba(orb.color, alpha * 0.45));
+  grad.addColorStop(1, hexToRgba(orb.color, 0));
+  sctx.fillStyle = grad;
+  sctx.fillRect(0, 0, size, size);
+  return sprite;
+}
+
 export function AtmosphericBackdrop() {
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const rafRef = React.useRef<number | null>(null);
   const orbsRef = React.useRef<Orb[]>([]);
   const sizeRef = React.useRef<{ w: number; h: number; dpr: number }>({ w: 0, h: 0, dpr: 1 });
   const reducedMotionRef = React.useRef<boolean>(false);
+  const bakedDprRef = React.useRef<number | null>(null);
+  const lastFrameRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
@@ -89,62 +124,95 @@ export function AtmosphericBackdrop() {
       canvas.style.height = `${h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (orbsRef.current.length === 0) orbsRef.current = makeOrbs(w, h);
+      // Orb sizes are fixed at creation, so a DPR change is the only thing
+      // that invalidates the pre-baked sprites.
+      if (bakedDprRef.current !== dpr) {
+        for (const orb of orbsRef.current) orb.sprite = bakeSprite(orb, dpr);
+        bakedDprRef.current = dpr;
+      }
     };
     resize();
     window.addEventListener("resize", resize);
 
-    const paint = (t: number) => {
+    const drawFrame = () => {
       const { w, h } = sizeRef.current;
       ctx.clearRect(0, 0, w, h);
 
       // The pale-green background tint preserved — the backdrop must NOT
-      // paint a big opaque fill; the page's own --bg shows through.
+      // paint a big opaque fill; the page's own --bg shows through. Each
+      // orb's gradient is pre-baked (see bakeSprite), so a frame is pure
+      // bitmap compositing.
       for (const orb of orbsRef.current) {
-        const x = orb.x;
-        const y = orb.y;
+        if (!orb.sprite) continue;
         const rad = orb.r * (0.7 + orb.z * 0.6);
-        // Peak opacity 0.10 on the closest orbs; falls off with depth.
-        const alpha = 0.035 + orb.z * 0.07;
-
-        const grad = ctx.createRadialGradient(x, y, 0, x, y, rad);
-        grad.addColorStop(0, hexToRgba(orb.color, alpha));
-        grad.addColorStop(0.55, hexToRgba(orb.color, alpha * 0.45));
-        grad.addColorStop(1, hexToRgba(orb.color, 0));
-
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(x, y, rad, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.drawImage(orb.sprite, orb.x - rad, orb.y - rad, rad * 2, rad * 2);
       }
+    };
 
-      if (reducedMotionRef.current) return;
-
-      // Slow drift. Wrap orbs that float past the edges (with a soft margin
-      // so they don't pop in — the gradient tail handles the fade).
+    // Slow drift, scaled by elapsed 60fps-equivalent frames so the ~30fps
+    // throttle keeps the same drift speed as the old per-frame step. Wrap
+    // orbs that float past the edges (with a soft margin so they don't pop
+    // in — the gradient tail handles the fade).
+    const step = (dtFrames: number) => {
+      const { w, h } = sizeRef.current;
       for (const orb of orbsRef.current) {
-        orb.phase += 0.0008;
-        orb.x += orb.vx + Math.cos(orb.phase) * 0.04;
-        orb.y += orb.vy + Math.sin(orb.phase * 0.8) * 0.03;
+        orb.phase += 0.0008 * dtFrames;
+        orb.x += (orb.vx + Math.cos(orb.phase) * 0.04) * dtFrames;
+        orb.y += (orb.vy + Math.sin(orb.phase * 0.8) * 0.03) * dtFrames;
         const m = orb.r;
         if (orb.x < -m) orb.x = w + m;
         else if (orb.x > w + m) orb.x = -m;
         if (orb.y < -m) orb.y = h + m;
         else if (orb.y > h + m) orb.y = -m;
       }
-
-      rafRef.current = requestAnimationFrame(paint);
     };
+
+    const tick = (t: number) => {
+      if (reducedMotionRef.current) {
+        // Paint one still frame only.
+        drawFrame();
+        rafRef.current = null;
+        return;
+      }
+      rafRef.current = requestAnimationFrame(tick);
+      const last = lastFrameRef.current;
+      // Throttle to ~30fps; the 1ms epsilon keeps 60Hz displays from
+      // slipping to every third frame on timestamp jitter.
+      if (last != null && t - last < FRAME_MS - 1) return;
+      // Clamp catch-up so a long RAF gap can't teleport the orbs.
+      const dtFrames = last == null ? 1 : Math.min((t - last) / (1000 / 60), 4);
+      lastFrameRef.current = t;
+      drawFrame();
+      step(dtFrames);
+    };
+
+    // Repainting a hidden tab is pure waste — pause the loop entirely and
+    // resume (without integrating the hidden gap into the drift) when the
+    // tab becomes visible again.
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (rafRef.current != null) {
+          cancelAnimationFrame(rafRef.current);
+          rafRef.current = null;
+        }
+      } else if (!reducedMotionRef.current && rafRef.current == null) {
+        lastFrameRef.current = null;
+        rafRef.current = requestAnimationFrame(tick);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
 
     if (reducedMotionRef.current) {
       // Paint one still frame only.
-      paint(0);
+      drawFrame();
     } else {
-      rafRef.current = requestAnimationFrame(paint);
+      rafRef.current = requestAnimationFrame(tick);
     }
 
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       window.removeEventListener("resize", resize);
+      document.removeEventListener("visibilitychange", onVisibility);
       mql?.removeEventListener?.("change", onReducedChange);
     };
   }, []);

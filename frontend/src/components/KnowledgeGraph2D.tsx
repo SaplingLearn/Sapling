@@ -138,10 +138,51 @@ function KnowledgeGraph2DImpl({
 
   const [, forceRerender] = React.useReducer((x) => x + 1, 0);
   const [hovered, setHovered] = React.useState<GraphNode | null>(null);
-  const [tooltipPos, setTooltipPos] = React.useState({ x: 0, y: 0 });
   const [view, setView] = React.useState({ tx: 0, ty: 0, scale: 1 });
   const dragRef = React.useRef<DragState>(null);
   const movedRef = React.useRef(false);
+
+  // Per-tick position updates bypass React entirely (#111): the tick handler
+  // writes node-group transforms and edge endpoints straight onto these DOM
+  // elements, so a simulation tick never re-renders the tree. React renders
+  // stay reserved for structural changes (nodes/edges added or removed,
+  // hover, selection, pan/zoom). Same idea for the tooltip: state only seeds
+  // its position when it (re)opens — while it's showing, pointer moves
+  // reposition it via direct style writes, so a bare pointer-move never
+  // calls setState.
+  const nodeElsRef = React.useRef(new Map<string, SVGGElement>());
+  const edgeElsRef = React.useRef(new Map<number, SVGLineElement>());
+  const tooltipRef = React.useRef<HTMLDivElement>(null);
+  const [tooltipPos, setTooltipPos] = React.useState({ x: 0, y: 0 });
+
+  // d3 mutates node x/y in place, so JSX renders (which read the same
+  // objects) and these direct writes always agree on the latest positions.
+  const applyPositions = React.useCallback(() => {
+    // Lazy id→node map: the link force replaces string endpoints with node
+    // objects on init, so this fallback almost never materialises.
+    let byId: Map<string, SimNode> | null = null;
+    const resolve = (end: string | SimNode): SimNode | undefined => {
+      if (typeof end === "object") return end;
+      if (!byId) byId = new Map(simNodesRef.current.map((n) => [n.id, n]));
+      return byId.get(end);
+    };
+    for (const n of simNodesRef.current) {
+      if (n.x == null || n.y == null) continue;
+      const el = nodeElsRef.current.get(n.id);
+      if (el) el.setAttribute("transform", `translate(${n.x}, ${n.y})`);
+    }
+    simLinksRef.current.forEach((l, i) => {
+      const el = edgeElsRef.current.get(i);
+      if (!el) return;
+      const s = resolve(l.source);
+      const t = resolve(l.target);
+      if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) return;
+      el.setAttribute("x1", String(s.x));
+      el.setAttribute("y1", String(s.y));
+      el.setAttribute("x2", String(t.x));
+      el.setAttribute("y2", String(t.y));
+    });
+  }, []);
 
   // Rebuild the simulation whenever the node/edge set fundamentally changes.
   // We diff by id so stable nodes keep their current x/y/vx/vy.
@@ -173,17 +214,16 @@ function KnowledgeGraph2DImpl({
       } as SimNode;
     });
 
+    const nextIds = new Set(nextNodes.map((n) => n.id));
     const nextLinks: SimLink[] = edges
-      .filter((e) => nextNodes.some((n) => n.id === e.source) && nextNodes.some((n) => n.id === e.target))
+      .filter((e) => nextIds.has(e.source) && nextIds.has(e.target))
       .map((e) => ({ source: e.source, target: e.target, strength: e.strength }));
 
     simNodesRef.current = nextNodes;
     simLinksRef.current = nextLinks;
 
     if (!simRef.current) {
-      simRef.current = forceSimulation<SimNode>(nextNodes).on("tick", () => {
-        forceRerender();
-      });
+      simRef.current = forceSimulation<SimNode>(nextNodes).on("tick", applyPositions);
     } else {
       simRef.current.nodes(nextNodes);
     }
@@ -214,10 +254,12 @@ function KnowledgeGraph2DImpl({
         && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
     if (reducedMotion) {
       sim.alpha(1).tick(200).alpha(0).stop();
-      forceRerender();
     } else {
       sim.alpha(0.9).restart();
     }
+    // One structural render mounts the node/edge elements at their current
+    // coordinates; from here on ticks write positions straight to the DOM.
+    forceRerender();
 
     return () => {
       // Simulation is kept across renders; only stop on full unmount below.
@@ -325,6 +367,9 @@ function KnowledgeGraph2DImpl({
     simRef.current?.alphaTarget(0.3).restart();
     n.fx = n.x;
     n.fy = n.y;
+    // dragRef/fx are refs — render once so the tooltip hides and the pinned
+    // stroke shows (ticks no longer re-render on our behalf).
+    forceRerender();
   };
 
   const onSvgPointerDown = (e: React.PointerEvent) => {
@@ -341,10 +386,17 @@ function KnowledgeGraph2DImpl({
       originTy: view.ty,
     };
     movedRef.current = false;
+    svg.style.cursor = "grabbing"; // direct write; restored on pointer-up
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
-    setTooltipPos({ x: e.clientX, y: e.clientY });
+    // Reposition the tooltip only while it's actually mounted, and via a
+    // direct style write — no setState on a bare pointer-move.
+    const tip = tooltipRef.current;
+    if (tip) {
+      tip.style.left = `${e.clientX + 14}px`;
+      tip.style.top = `${e.clientY + 14}px`;
+    }
     const drag = dragRef.current;
     if (!drag || e.pointerId !== drag.pointerId) return;
     movedRef.current = true;
@@ -384,6 +436,12 @@ function KnowledgeGraph2DImpl({
       }
       simRef.current?.alphaTarget(0);
     }
+    if (svgRef.current) svgRef.current.style.cursor = "grab";
+    // Restore tooltip/stroke now that dragRef cleared; reseed the tooltip
+    // position so it remounts under the release point, not where the hover
+    // started.
+    setTooltipPos({ x: e.clientX, y: e.clientY });
+    forceRerender();
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -410,6 +468,11 @@ function KnowledgeGraph2DImpl({
 
   const simNodes = simNodesRef.current;
   const simLinks = simLinksRef.current;
+  // O(1) endpoint resolution for edges whose source/target is still an id
+  // string (before the link force swaps in node objects) — replaces the old
+  // per-edge .find() over all nodes.
+  const nodeById = new Map<string, SimNode>();
+  for (const n of simNodes) nodeById.set(n.id, n);
 
   return (
     <div style={{ position: "relative", width, height, overflow: "hidden", background: "transparent" }}>
@@ -421,7 +484,7 @@ function KnowledgeGraph2DImpl({
         aria-label="Knowledge graph"
         style={{
           display: "block",
-          cursor: dragRef.current?.kind === "pan" ? "grabbing" : "grab",
+          cursor: "grab",
           touchAction: "none",
         }}
         onPointerDown={onSvgPointerDown}
@@ -440,13 +503,17 @@ function KnowledgeGraph2DImpl({
           {/* Edges */}
           <g>
             {simLinks.map((l, i) => {
-              const s = typeof l.source === "object" ? (l.source as SimNode) : simNodes.find((n) => n.id === l.source);
-              const t = typeof l.target === "object" ? (l.target as SimNode) : simNodes.find((n) => n.id === l.target);
+              const s = typeof l.source === "object" ? (l.source as SimNode) : nodeById.get(String(l.source));
+              const t = typeof l.target === "object" ? (l.target as SimNode) : nodeById.get(String(l.target));
               if (!s || !t || s.x == null || t.x == null) return null;
               const op = variant === "constellation" ? 0.35 : 0.2;
               return (
                 <line
                   key={i}
+                  ref={(el) => {
+                    if (el) edgeElsRef.current.set(i, el);
+                    else edgeElsRef.current.delete(i);
+                  }}
                   data-testid="graph-edge"
                   x1={s.x}
                   y1={s.y}
@@ -474,11 +541,21 @@ function KnowledgeGraph2DImpl({
               return (
                 <g
                   key={n.id}
+                  ref={(el) => {
+                    if (el) nodeElsRef.current.set(n.id, el);
+                    else nodeElsRef.current.delete(n.id);
+                  }}
                   data-testid="graph-node"
                   data-node-id={n.id}
+                  transform={`translate(${n.x}, ${n.y})`}
                   style={{ cursor: "grab" }}
                   onPointerDown={(ev) => onNodePointerDown(ev, n)}
-                  onPointerEnter={() => setHovered(n)}
+                  onPointerEnter={(ev) => {
+                    // Seed the tooltip position as it mounts so it opens
+                    // under the cursor, not at a stale spot.
+                    setTooltipPos({ x: ev.clientX, y: ev.clientY });
+                    setHovered(n);
+                  }}
                   onPointerLeave={() => setHovered((h) => (h?.id === n.id ? null : h))}
                   onClick={(ev) => {
                     ev.stopPropagation();
@@ -487,10 +564,10 @@ function KnowledgeGraph2DImpl({
                   }}
                 >
                   {variant === "organism" && (
-                    <circle cx={n.x} cy={n.y} r={r + 8} fill={color} opacity={0.15} filter="url(#soft)" />
+                    <circle cx={0} cy={0} r={r + 8} fill={color} opacity={0.15} filter="url(#soft)" />
                   )}
                   {isHl && (
-                    <circle cx={n.x} cy={n.y} r={r + 7} fill="none" stroke={color} strokeWidth={2} opacity={0.7}>
+                    <circle cx={0} cy={0} r={r + 7} fill="none" stroke={color} strokeWidth={2} opacity={0.7}>
                       <animate
                         attributeName="r"
                         values={`${r + 5};${r + 11};${r + 5}`}
@@ -505,8 +582,8 @@ function KnowledgeGraph2DImpl({
                     const partnerR = r + 4 + partner.mastery_score * 5;
                     return (
                       <circle
-                        cx={n.x}
-                        cy={n.y}
+                        cx={0}
+                        cy={0}
                         r={partnerR}
                         fill="none"
                         stroke={comparisonColor}
@@ -523,14 +600,14 @@ function KnowledgeGraph2DImpl({
                   })()}
                   {variant === "constellation" ? (
                     <>
-                      <circle data-testid="graph-node-circle" cx={n.x} cy={n.y} r={r * 0.7} fill={color} opacity={op} />
-                      <circle cx={n.x} cy={n.y} r={r * 1.6} fill="none" stroke={color} strokeWidth={0.5} opacity={op * 0.4} />
+                      <circle data-testid="graph-node-circle" cx={0} cy={0} r={r * 0.7} fill={color} opacity={op} />
+                      <circle cx={0} cy={0} r={r * 1.6} fill="none" stroke={color} strokeWidth={0.5} opacity={op * 0.4} />
                     </>
                   ) : (
                     <circle
                       data-testid="graph-node-circle"
-                      cx={n.x}
-                      cy={n.y}
+                      cx={0}
+                      cy={0}
                       r={r}
                       fill={color}
                       opacity={op}
@@ -541,8 +618,8 @@ function KnowledgeGraph2DImpl({
                   )}
                   {n.is_subject_root && (
                     <text
-                      x={n.x}
-                      y={n.y + r + 16}
+                      x={0}
+                      y={r + 16}
                       textAnchor="middle"
                       fontFamily="var(--font-display)"
                       fontSize={13}
@@ -555,8 +632,8 @@ function KnowledgeGraph2DImpl({
                   )}
                   {!n.is_subject_root && (
                     <text
-                      x={n.x}
-                      y={n.y + r + 13}
+                      x={0}
+                      y={r + 13}
                       textAnchor="middle"
                       fontFamily="var(--font-sans)"
                       fontSize={10.5}
@@ -628,6 +705,7 @@ function KnowledgeGraph2DImpl({
 
       {hovered && !dragRef.current && (
         <div
+          ref={tooltipRef}
           style={{
             position: "fixed",
             left: tooltipPos.x + 14,

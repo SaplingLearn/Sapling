@@ -169,6 +169,10 @@ export function TopNav() {
         <img
           src="/sapling-icon.svg"
           alt="Sapling"
+          width={32}
+          height={32}
+          loading="lazy"
+          decoding="async"
           style={{
             width: "32px",
             height: "32px",
