@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { TopBar } from "@/components/TopBar";
+import { FullHeightScreen } from "@/components/FullHeightScreen";
 import { SemesterChips } from "@/components/Gradebook/SemesterChips";
 import {
   CourseCard,
@@ -225,7 +226,7 @@ export function GradebookLanding() {
   if (!userReady) return null;
 
   return (
-    <>
+    <FullHeightScreen>
       <TopBar
         title="Grades"
         actions={
@@ -239,7 +240,11 @@ export function GradebookLanding() {
           padding: "var(--pad-xl)",
           position: "relative",
           overflow: "hidden",
-          minHeight: "calc(100vh - var(--row-h))",
+          // Fill whatever `<main>` has left below the TopBar, and keep growing
+          // when the content is taller. Was `calc(100vh - var(--row-h))`, which
+          // subtracted a DENSITY token (40/34/48px) as if it were a nav height
+          // — wrong in both shell layouts and at every density (#341).
+          flex: "1 0 auto",
         }}
       >
         <AmbientOrbs />
@@ -333,7 +338,7 @@ export function GradebookLanding() {
           />
         </>
       )}
-    </>
+    </FullHeightScreen>
   );
 }
 
