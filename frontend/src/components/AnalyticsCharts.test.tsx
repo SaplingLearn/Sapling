@@ -12,6 +12,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import {
   CategoryBars,
   DayLineChart,
+  errorRateSeries,
+  formatCompactCount,
   linePoints,
   niceTicks,
   tooltipLeftPct,
@@ -40,6 +42,60 @@ describe("zeroFillDays", () => {
     const sparse = [{ date: "2020-01-01", value: 2 }];
     const out = zeroFillDays(sparse, "2020-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z");
     expect(out).toEqual(sparse);
+  });
+});
+
+describe("errorRateSeries", () => {
+  it("joins by date over the events domain and reports a percentage", () => {
+    const out = errorRateSeries(
+      [{ date: "2026-07-10", value: 1 }],
+      [
+        { date: "2026-07-10", value: 4 },
+        { date: "2026-07-11", value: 8 },
+      ],
+    );
+    expect(out).toEqual([
+      { date: "2026-07-10", value: 25 }, // 1 error / 4 events
+      { date: "2026-07-11", value: 0 },  // no errors that day
+    ]);
+  });
+
+  it("reports 0 for zero-event days — never NaN/Infinity", () => {
+    const out = errorRateSeries(
+      [{ date: "2026-07-10", value: 3 }],
+      [{ date: "2026-07-10", value: 0 }],
+    );
+    expect(out).toEqual([{ date: "2026-07-10", value: 0 }]);
+    expect(out.every((p) => Number.isFinite(p.value))).toBe(true);
+  });
+
+  it("drops error dates absent from the events domain (documented contract)", () => {
+    // The events series drives the output domain; an error day outside it is
+    // silently dropped. Unreachable via the screen (both series zero-fill over
+    // the same range), but the helper is exported — pin the contract.
+    const out = errorRateSeries(
+      [{ date: "2026-07-09", value: 5 }],
+      [{ date: "2026-07-10", value: 10 }],
+    );
+    expect(out).toEqual([{ date: "2026-07-10", value: 0 }]);
+  });
+});
+
+describe("formatCompactCount", () => {
+  it("keeps small counts exact and compacts thousands/millions", () => {
+    expect(formatCompactCount(0)).toBe("0");
+    expect(formatCompactCount(950)).toBe("950");
+    expect(formatCompactCount(1500)).toBe("1.5k");
+    expect(formatCompactCount(20_000)).toBe("20k");
+    expect(formatCompactCount(2_500_000)).toBe("2.5M");
+  });
+
+  it("handles unit boundaries — never emits '1000k'", () => {
+    expect(formatCompactCount(999)).toBe("999");
+    expect(formatCompactCount(1000)).toBe("1k");
+    expect(formatCompactCount(999_949)).toBe("999.9k");
+    expect(formatCompactCount(999_950)).toBe("1M"); // rounds to 1000.0k → promoted
+    expect(formatCompactCount(1_000_000)).toBe("1M");
   });
 });
 

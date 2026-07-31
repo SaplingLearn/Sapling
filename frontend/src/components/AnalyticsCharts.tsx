@@ -19,11 +19,11 @@
  */
 
 import React from "react";
-import { type DayPointValue, zeroFillDays } from "@/lib/daySeries";
+import { type DayPointValue, errorRateSeries, formatCompactCount, zeroFillDays } from "@/lib/daySeries";
 
 // Re-exported so chart consumers/tests can keep a single import site; the
 // canonical home is lib/daySeries.ts (JSX-free — see its header for why).
-export { zeroFillDays, type DayPointValue };
+export { errorRateSeries, formatCompactCount, zeroFillDays, type DayPointValue };
 
 /** Uniform "nice"-stepped ticks from 0 covering max (used for the y grid). */
 export function niceTicks(max: number, count = 4): number[] {
