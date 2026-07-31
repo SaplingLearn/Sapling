@@ -68,6 +68,7 @@ renders the element.
 | --- | --- | --- |
 | Sign-in | `signin` | `frontend/src/components/marketing/SignInModal.tsx` (+ the trigger in `src/app/(public)/page.tsx`) |
 | Approval gate | `pending` | `frontend/src/app/pending/page.tsx` |
+| Onboarding | `onboarding` | `frontend/src/components/screens/Onboarding.tsx` (the first-run funnel, rendered bare outside `(shell)`) |
 | Upload modal | `upload-modal` | `frontend/src/components/DocumentUploadModal.tsx` |
 | Tutor | `tutor` | `frontend/src/components/chat/ChatPanel.tsx` (rendered by `screens/Learn.tsx`; + the session-resume rows in `src/components/screens/Learn.tsx` itself) |
 | Quiz | `quiz` | `frontend/src/components/QuizPanel.tsx` (rendered by `screens/Quiz.tsx`) |
@@ -109,6 +110,19 @@ route:
 | --- | --- |
 | `pending-gate` | approval-gate page root |
 | `pending-signout` | "Sign out" |
+| `onboarding-gate` | first-run onboarding page root |
+| `onboarding-continue` | primary advance button ("Continue" / "Enter Sapling →") |
+| `onboarding-back` | "Back" (absent on step 0) |
+| `onboarding-close` | "×" close/exit control |
+| `onboarding-input` | the shared `TextInput` default; every simultaneous instance overrides it (below) |
+| `onboarding-first-name` / `onboarding-last-name` | the two name fields — they render side by side |
+| `onboarding-school` | school field (disabled; BU-only today) |
+| `onboarding-chip-input-${field}` / `onboarding-chip-add-${field}` | majors/minors editor — `field` is `majors` or `minors`, since both render at once |
+| `onboarding-chip-remove-${field}-${value}` | one chip's remove control |
+| `onboarding-course-search` | course search field |
+| `onboarding-course-result-${course.id}` | one course search result |
+| `onboarding-course-remove-${course_code}` | one selected-course chip's remove control |
+| `onboarding-learning-style-${style.id}` | one learning-style radio option (5 render at once) |
 
 ### `upload-modal`
 
