@@ -47,6 +47,8 @@ function orbRadius(orb: Orb) {
 
 /** ~30fps. Ambient drift does not need a frame the eye can't distinguish. */
 const FRAME_MS = 1000 / 30;
+/** The cadence the drift constants were tuned at; used to keep speed identical. */
+const BASE_FRAME_MS = 1000 / 60;
 
 /**
  * Pre-render one orb's radial gradient into its own offscreen canvas.
@@ -152,6 +154,13 @@ export function AtmosphericBackdrop() {
         rafRef.current = requestAnimationFrame(paint);
         return;
       }
+      // Drift is advanced ONCE per painted frame, so halving the frame rate
+      // would otherwise halve the apparent speed — a visible change, which
+      // this is not allowed to be. Scale each step by how many 60fps frames
+      // actually elapsed. Clamped so a backgrounded tab (or the very first
+      // frame, when lastPaint is still 0) can't teleport the field on resume.
+      const elapsed = lastPaintRef.current ? t - lastPaintRef.current : BASE_FRAME_MS;
+      const step = Math.min(Math.max(elapsed / BASE_FRAME_MS, 0), 4);
       lastPaintRef.current = t;
 
       const { w, h } = sizeRef.current;
@@ -174,9 +183,9 @@ export function AtmosphericBackdrop() {
       // Slow drift. Wrap orbs that float past the edges (with a soft margin
       // so they don't pop in — the gradient tail handles the fade).
       for (const orb of orbsRef.current) {
-        orb.phase += 0.0008;
-        orb.x += orb.vx + Math.cos(orb.phase) * 0.04;
-        orb.y += orb.vy + Math.sin(orb.phase * 0.8) * 0.03;
+        orb.phase += 0.0008 * step;
+        orb.x += (orb.vx + Math.cos(orb.phase) * 0.04) * step;
+        orb.y += (orb.vy + Math.sin(orb.phase * 0.8) * 0.03) * step;
         const m = orb.r;
         if (orb.x < -m) orb.x = w + m;
         else if (orb.x > w + m) orb.x = -m;
