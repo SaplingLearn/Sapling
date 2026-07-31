@@ -53,7 +53,8 @@ describe('#290 approval gate', () => {
       (card as HTMLElement).style.padding,
       'the card must set its own padding',
     ).not.toBe('');
-    // The anchors must live INSIDE the new surface, not beside it.
+    // The sign-out control must live INSIDE the new surface, not beside it.
+    // (pending-gate is the page root, so it contains the card, not vice versa.)
     expect(card!.contains(screen.getByTestId('pending-signout'))).toBe(true);
   });
 

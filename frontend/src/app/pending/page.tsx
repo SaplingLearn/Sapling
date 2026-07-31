@@ -10,7 +10,7 @@ import { useUser } from '@/context/UserContext';
  * The beat matters here: sign-up ENDS on this screen, so it has to read as
  * "you're in, now wait" rather than a dead end. The sapling draws itself once
  * and the message steps in behind it (`.pending-*` in globals.css), settling
- * in ~540ms. One-shot CSS animation on purpose — the global
+ * in ~560ms. One-shot CSS animation on purpose — the global
  * prefers-reduced-motion reset collapses CSS animation automatically, where a
  * JS-driven entrance would have to re-implement that guard itself.
  */
@@ -64,14 +64,25 @@ export default function PendingPage() {
             fill="var(--accent)"
             opacity={0.2}
           />
-          {/* pathLength normalises the stroke to one unit, so the draw
-              keyframe can dash it without measuring. The three subpaths run
-              in order — stem, then each leaf vein — so it reads as the
-              sapling growing rather than a generic fade. */}
+          {/* pathLength normalises each stroke to one unit, so the draw
+              keyframe can dash it without measuring. Stem and veins are two
+              PATHS rather than subpaths of one: a dash pattern restarts its
+              phase at every `M`, so subpaths of a single path would all draw
+              simultaneously. Split and staggered, the stem leads and the
+              leaves follow — the sapling growing rather than a fade. */}
           <path
             className="pending-sprout-stem"
             pathLength={1}
-            d="M12 22 V 10 M12 13 Q 8 10 7 7 M12 14 Q 16 11 17 8"
+            d="M12 22 V 10"
+            stroke="var(--accent)"
+            strokeWidth={1.5}
+            fill="none"
+            strokeLinecap="round"
+          />
+          <path
+            className="pending-sprout-veins"
+            pathLength={1}
+            d="M12 13 Q 8 10 7 7 M12 14 Q 16 11 17 8"
             stroke="var(--accent)"
             strokeWidth={1.5}
             fill="none"
@@ -83,7 +94,7 @@ export default function PendingPage() {
           className="h-serif pending-step anim-d1"
           style={{ fontSize: 30, fontWeight: 500, marginBottom: 10 }}
         >
-          You&apos;re on the list
+          You&apos;re on the waitlist
         </h1>
         <p
           className="pending-step anim-d2"
@@ -95,7 +106,7 @@ export default function PendingPage() {
             maxWidth: 340,
           }}
         >
-          Your account is ready. We&apos;ll email you as soon as your access is approved.
+          We&apos;ll reach out when your access is approved.
         </p>
         <button
           data-testid="pending-signout"
