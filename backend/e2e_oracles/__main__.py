@@ -5,7 +5,7 @@ Invocation (from `backend/`):
     venv/bin/python -m e2e_oracles [--json] [--check NAME]... [--user ID] \\
         [--base-url URL] [--log PATH]
 
-Check names: `graph`, `counts`, `ciphertext`, `logscan`, `orphans` — default
+Check names: `graph`, `counts`, `ciphertext`, `logscan`, `orphans`, `ragstore` — default
 is all five, in that (sorted) order. `--check` may repeat to select a subset.
 
 Exit codes: 0 clean / 1 findings / 2 infra error — ANY `Finding(oracle=
@@ -44,6 +44,7 @@ CHECKS: dict[str, Callable[[argparse.Namespace], tuple[list[Finding], int]]] = {
     "ciphertext": lambda args: gather.run_ciphertext(args),
     "logscan": lambda args: gather.run_logscan(args),
     "orphans": lambda args: gather.run_orphans(args),
+    "ragstore": lambda args: gather.run_ragstore(args),
 }
 
 
