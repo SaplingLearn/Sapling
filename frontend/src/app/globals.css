@@ -225,7 +225,7 @@ body { font-size: 14px; line-height: 1.5; }
    The token is rgba(19,38,16) = --sap-900, the same base as --shadow-sm/md/lg.
    So adopting it re-tints these shadows from cool slate to the warm green the
    rest of the surface language already casts. Deliberate; the token had no
-   consumers, so this is the first time that value renders. */
+   consumers, so this is the first time that value renders.
 
    `.hero-surface` is the gradient ALONE — for panels nested inside a
    `.card--hero`, which must not restate its border, radius or shadow.
