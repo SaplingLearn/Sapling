@@ -226,6 +226,23 @@ describe("Study — selections that genuinely go stale still reset", () => {
     expect(screen.queryByRole("button", { name: /regenerate/i })).toBeNull();
   });
 
+  // CustomSelect.commit() fires onChange for the already-selected option too,
+  // so "switching course" has to mean the value actually CHANGED. The old
+  // effect-based reset got this for free (setCourseId(same) → React bails out,
+  // the effect never re-runs); moving the reset onto the event dropped that
+  // guard, and re-confirming your own course wiped the guide you were reading.
+  it("re-picking the course already selected leaves the loaded guide alone", async () => {
+    renderStudy();
+    await openRecentGuide();
+    await screen.findByRole("button", { name: /regenerate/i });
+
+    await userEvent.click(selectTriggers()[0]);
+    await userEvent.click(await screen.findByRole("option", { name: /CS101/ }));
+
+    expect(screen.getByRole("button", { name: /regenerate/i })).toBeEnabled();
+    expect(examTrigger()).toHaveTextContent("Midterm 1");
+  });
+
   it("switching term drops the selection instead of reloading it under the new term", async () => {
     window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Fall 2025");
     renderStudy();

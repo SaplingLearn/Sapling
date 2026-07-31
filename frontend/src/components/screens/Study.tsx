@@ -250,7 +250,13 @@ function GuideMode({
     setGuideProblem(null);
   };
 
+  // Guarded on an actual CHANGE. CustomSelect fires onChange for the
+  // already-selected option too, and the effect this reset came out of got that
+  // for free — setCourseId(same) bails out, so the effect never re-ran. On a
+  // plain handler it has to be explicit, or re-confirming the course you are
+  // already on wipes the guide you are reading.
   const selectCourse = (next: string) => {
+    if (next === courseId) return;
     setCourseId(next);
     clearSelection();
   };
@@ -267,6 +273,15 @@ function GuideMode({
     setScopedTerm(semester);
   }
 
+  // The OPTIONS follow the active selector, deliberately: #475 pins only the
+  // recent-open's own load to the entry's term, and later picker-driven loads
+  // go back to the selector — so listing the entry's term here would offer
+  // exams that the next load would then 404 on.
+  // Known edge that leaves: open a rail entry whose term ISN'T the active one
+  // and its exam is absent from this list, so CustomSelect falls back to the
+  // placeholder while the guide and Regenerate are live and correctly aimed at
+  // `loadedTerm`. Squaring that needs the screen to track "the term I'm
+  // viewing" as one thing across list + loads — a #475 change, not this one.
   React.useEffect(() => {
     setExams([]);
     if (!courseId || !userId || !semesterReady) return;
