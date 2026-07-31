@@ -37,6 +37,7 @@ type Orb = {
 
 // ~30fps frame budget — plenty for a slow ambient drift (#111).
 const FRAME_MS = 1000 / 30;
+const SPRITE_MAX_PX = 512;
 
 // Warm, atmospheric palette — blues, purples, ambers, teals. Green is
 // reserved for UI branding, so it's intentionally absent here.
@@ -75,14 +76,18 @@ function bakeSprite(orb: Orb, dpr: number): HTMLCanvasElement | undefined {
   const rad = orb.r * (0.7 + orb.z * 0.6);
   // Peak opacity 0.10 on the closest orbs; falls off with depth.
   const alpha = 0.035 + orb.z * 0.07;
-  const size = Math.max(1, Math.ceil(rad * 2 * dpr));
+  // Cap the sprite's backing resolution: at full device resolution the 14
+  // sprites cost ~100 MB of canvas memory at DPR 2 (#490 review). The
+  // gradients are soft, so drawImage upscaling from a capped sprite is
+  // visually indistinguishable at a fraction of the memory.
+  const size = Math.max(1, Math.min(Math.ceil(rad * 2 * dpr), SPRITE_MAX_PX));
   const sprite = document.createElement("canvas");
   sprite.width = size;
   sprite.height = size;
   const sctx = sprite.getContext("2d");
   if (!sctx) return undefined;
   const c = size / 2;
-  const grad = sctx.createRadialGradient(c, c, 0, c, c, rad * dpr);
+  const grad = sctx.createRadialGradient(c, c, 0, c, c, c);
   grad.addColorStop(0, hexToRgba(orb.color, alpha));
   grad.addColorStop(0.55, hexToRgba(orb.color, alpha * 0.45));
   grad.addColorStop(1, hexToRgba(orb.color, 0));
@@ -113,6 +118,21 @@ export function AtmosphericBackdrop() {
     const onReducedChange = () => { reducedMotionRef.current = IS_TEST_MODE || !!mql?.matches; };
     mql?.addEventListener?.("change", onReducedChange);
 
+    const drawFrame = () => {
+      const { w, h } = sizeRef.current;
+      ctx.clearRect(0, 0, w, h);
+
+      // The pale-green background tint preserved — the backdrop must NOT
+      // paint a big opaque fill; the page's own --bg shows through. Each
+      // orb's gradient is pre-baked (see bakeSprite), so a frame is pure
+      // bitmap compositing.
+      for (const orb of orbsRef.current) {
+        if (!orb.sprite) continue;
+        const rad = orb.r * (0.7 + orb.z * 0.6);
+        ctx.drawImage(orb.sprite, orb.x - rad, orb.y - rad, rad * 2, rad * 2);
+      }
+    };
+
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const w = window.innerWidth;
@@ -130,24 +150,12 @@ export function AtmosphericBackdrop() {
         for (const orb of orbsRef.current) orb.sprite = bakeSprite(orb, dpr);
         bakedDprRef.current = dpr;
       }
+      // Setting canvas.width cleared the backing store; when the loop is
+      // parked (reduced motion) nothing else repaints, so do it here.
+      if (reducedMotionRef.current) drawFrame();
     };
     resize();
     window.addEventListener("resize", resize);
-
-    const drawFrame = () => {
-      const { w, h } = sizeRef.current;
-      ctx.clearRect(0, 0, w, h);
-
-      // The pale-green background tint preserved — the backdrop must NOT
-      // paint a big opaque fill; the page's own --bg shows through. Each
-      // orb's gradient is pre-baked (see bakeSprite), so a frame is pure
-      // bitmap compositing.
-      for (const orb of orbsRef.current) {
-        if (!orb.sprite) continue;
-        const rad = orb.r * (0.7 + orb.z * 0.6);
-        ctx.drawImage(orb.sprite, orb.x - rad, orb.y - rad, rad * 2, rad * 2);
-      }
-    };
 
     // Slow drift, scaled by elapsed 60fps-equivalent frames so the ~30fps
     // throttle keeps the same drift speed as the old per-frame step. Wrap

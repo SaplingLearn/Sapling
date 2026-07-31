@@ -15,7 +15,9 @@ import { IS_TEST_MODE, random, now } from '@/lib/testMode';
 // into the landing chunk. Lazy-load it ssr:false (same split as ChatPanel's
 // MarkdownChat) so the motion stack ships as its own client chunk. The
 // placeholder mirrors the section's own 340vh scroll height so the layout
-// below doesn't shift while the chunk loads.
+// below doesn't shift while the chunk loads. Tradeoff: ssr:false drops this
+// section's marketing copy from the server HTML (JS-rendering crawlers still
+// see it); if that ever matters, hoist the headings into static markup.
 const HowItWorks = dynamic(() => import('@/components/HowItWorks'), {
   ssr: false,
   loading: () => <section id="how-it-works" className="landing-section relative" style={{ height: '340vh' }} />,

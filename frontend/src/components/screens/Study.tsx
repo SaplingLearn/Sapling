@@ -29,13 +29,26 @@ const StudyToggleHighlight = dynamic(
     ),
   },
 );
-const StudyModePanel = dynamic(
-  () => import("./StudyMotion").then((m) => m.StudyModePanel),
-  {
-    ssr: false,
-    loading: () => <div style={{ display: "flex", flex: 1, minHeight: 0 }} />,
-  },
-);
+// The mode transition wraps the pane CONTENT, so it must not depend on the
+// motion chunk (#490 review): a lazy wrapper either gates the panes behind
+// the chunk fetch (next/dynamic's fallback can't carry children) or remounts
+// them mid-session when the chunk lands, wiping state. A keyed CSS
+// enter-fade needs no chunk at all; the global reduced-motion reset covers
+// it. The render-phase state derivation mirrors the old AnimatePresence
+// initial={false} — no animation on first mount, only on mode switches.
+function StudyModePanel({ mode, children }: { mode: string; children: React.ReactNode }) {
+  const [seen, setSeen] = React.useState({ mode, animate: false });
+  if (seen.mode !== mode) setSeen({ mode, animate: true });
+  return (
+    <div
+      key={mode}
+      className={seen.animate ? "study-mode-enter" : undefined}
+      style={{ display: "flex", flex: 1, minHeight: 0 }}
+    >
+      {children}
+    </div>
+  );
+}
 import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
