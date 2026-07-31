@@ -580,10 +580,22 @@ export const getRoomMessages = (roomId: string, opts?: { before?: string; limit?
   );
 };
 
-export const sendRoomMessage = (roomId: string, userId: string, userName: string, text: string, imageUrl?: string, replyToId?: string) =>
+export const sendRoomMessage = (
+  roomId: string, userId: string, userName: string, text: string,
+  imageUrl?: string, replyToId?: string,
+  /** Intrinsic pixel size of imageUrl, so the transcript can reserve the box
+   *  before the lazily-loaded image arrives (#315). */
+  imageSize?: { width: number; height: number },
+) =>
   fetchJSON<{ message: any }>(`/api/social/rooms/${roomId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, user_name: userName, text: text || null, image_url: imageUrl || null, reply_to_id: replyToId || null }),
+    body: JSON.stringify({
+      user_id: userId, user_name: userName, text: text || null,
+      image_url: imageUrl || null,
+      image_width: imageSize?.width ?? null,
+      image_height: imageSize?.height ?? null,
+      reply_to_id: replyToId || null,
+    }),
   });
 
 export const toggleRoomReaction = (roomId: string, messageId: string, userId: string, emoji: string) =>

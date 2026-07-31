@@ -387,7 +387,7 @@ def get_room_messages(room_id: str, request: Request, before: str | None = None,
     # `limit`, an extra page exists. (Using `len(rows) == limit` reports a
     # phantom "load more" at exact page boundaries — issue #131.)
     rows = table("room_messages").select(
-        "id,room_id,user_id,user_name,text,image_url,reply_to_id,is_deleted,edited_at,created_at",
+        "id,room_id,user_id,user_name,text,image_url,image_width,image_height,reply_to_id,is_deleted,edited_at,created_at",
         filters=filters,
         order="created_at.desc",
         limit=limit + 1,
@@ -456,6 +456,8 @@ def send_room_message(room_id: str, body: SendMessageBody, request: Request):
         "user_name": body.user_name,
         "text": encrypt_if_present(body.text or None),
         "image_url": body.image_url or None,
+        "image_width": body.image_width or None,
+        "image_height": body.image_height or None,
         "reply_to_id": body.reply_to_id or None,
     })
 

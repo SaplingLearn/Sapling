@@ -270,6 +270,36 @@ function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoi
   );
 }
 
+/**
+ * Intrinsic pixel size of a picked image file, or null if it can't be read
+ * (#315).
+ *
+ * Measured from an object URL rather than after upload, so the dimensions
+ * travel with the message that creates it and history renders reserved from
+ * the first paint. Resolving null on error is deliberate: a message that
+ * cannot be measured should still send, it just renders unreserved like it
+ * did before.
+ */
+async function readImageSize(file: File): Promise<{ width: number; height: number } | undefined> {
+  if (typeof window === "undefined" || !file.type.startsWith("image/")) return undefined;
+  const url = URL.createObjectURL(file);
+  try {
+    return await new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () =>
+        resolve(
+          img.naturalWidth && img.naturalHeight
+            ? { width: img.naturalWidth, height: img.naturalHeight }
+            : undefined,
+        );
+      img.onerror = () => resolve(undefined);
+      img.src = url;
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 function RoomChat({ roomId, members }: { roomId: string; members: { user_id: string; name: string }[] }) {
   const { userId, userName } = useUser();
   const toast = useToast();
@@ -499,12 +529,16 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
       return;
     }
     try {
+      // Measure before upload so the transcript can reserve the exact box.
+      // Failure is non-fatal: without dimensions the attachment just renders
+      // unreserved, which is the pre-#315 behaviour.
+      const imageSize = await readImageSize(file);
       const path = `${roomId}/${userId}-${Date.now()}-${file.name}`;
       const up = await supa.storage.from("chat-images").upload(path, file);
       if (up.error) throw up.error;
       const pub = supa.storage.from("chat-images").getPublicUrl(path);
       const url: string = pub.data.publicUrl;
-      const res = await sendRoomMessage(roomId, userId, userName || "Me", "", url);
+      const res = await sendRoomMessage(roomId, userId, userName || "Me", "", url, undefined, imageSize);
       // Append from the POST response (own realtime echoes are skipped to avoid
       // duplicates), deduping by id in case the echo already landed.
       const saved = res?.message as RoomMessageRow | undefined;
@@ -624,7 +658,28 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                     }}
                   >
                     {m.image_url && (
-                      <img src={m.image_url} alt="attachment" loading="lazy" decoding="async" style={{ maxWidth: 260, borderRadius: "var(--r-sm)", marginBottom: m.text ? 6 : 0 }} />
+                      <img
+                        src={m.image_url}
+                        alt="attachment"
+                        loading="lazy"
+                        decoding="async"
+                        {...(m.image_width && m.image_height
+                          ? { width: m.image_width, height: m.image_height }
+                          : {})}
+                        style={{
+                          maxWidth: 260,
+                          borderRadius: "var(--r-sm)",
+                          marginBottom: m.text ? 6 : 0,
+                          // With intrinsic dimensions the browser reserves the
+                          // box from the aspect ratio before the lazily-loaded
+                          // bytes arrive, so scrolling back through history
+                          // does not shift the transcript. Safari has no scroll
+                          // anchoring to hide it, which is why this matters.
+                          ...(m.image_width && m.image_height
+                            ? { aspectRatio: `${m.image_width} / ${m.image_height}`, height: "auto" }
+                            : {}),
+                        }}
+                      />
                     )}
                     {renderText(m.text)}
                     {m.edited_at && <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 6 }}>(edited)</span>}

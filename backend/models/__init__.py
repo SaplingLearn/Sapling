@@ -151,6 +151,11 @@ class SendMessageBody(BaseModel):
     user_name: str
     text: Optional[str] = None
     image_url: Optional[str] = None
+    # Intrinsic pixel size of image_url, measured client-side at upload (#315).
+    # Optional: older clients omit them and the UI falls back to unreserved
+    # layout, exactly as before.
+    image_width: Optional[int] = None
+    image_height: Optional[int] = None
     reply_to_id: Optional[str] = None
 
 
