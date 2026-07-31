@@ -5,7 +5,7 @@ import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { MiniStat } from "../MiniStat";
-import { KnowledgeGraph } from "../KnowledgeGraph";
+import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { ManageCoursesModal } from "../ManageCoursesModal";
 import { DashboardSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";

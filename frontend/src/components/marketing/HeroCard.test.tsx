@@ -16,7 +16,8 @@ import { render, screen, cleanup } from '@testing-library/react';
 
 import { HeroCard } from './HeroCard';
 
-const SRC = path.resolve(__dirname, '..');
+// __dirname is components/marketing/, so src/ is two levels up.
+const SRC = path.resolve(__dirname, '../..');
 const GLOBALS = path.join(SRC, 'app/globals.css');
 
 /** The literal that used to be inlined at all five sites. */

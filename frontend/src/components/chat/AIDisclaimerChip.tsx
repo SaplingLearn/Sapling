@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { DisclaimerModal } from "./DisclaimerModal";
+import { DisclaimerModal } from "../DisclaimerModal";
 
 export function AIDisclaimerChip() {
   const [tooltipVisible, setTooltipVisible] = useState(false);

@@ -4,7 +4,7 @@ import React, { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
-import { AIDisclaimerChip } from "../AIDisclaimerChip";
+import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { QuizPanel } from "../QuizPanel";
 import { useUser } from "@/context/UserContext";

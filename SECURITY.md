@@ -10,7 +10,7 @@ The codebase is split into a FastAPI backend (`backend/`) and a Next.js frontend
 
 ### 1.1 Google OAuth 2.0 with PKCE
 
-**Files:** `backend/routes/auth.py`, `frontend/src/components/SignInModal.tsx`, `frontend/src/app/auth/callback/page.tsx`, `frontend/src/app/api/auth/session/route.ts`
+**Files:** `backend/routes/auth.py`, `frontend/src/components/marketing/SignInModal.tsx`, `frontend/src/app/auth/callback/page.tsx`, `frontend/src/app/api/auth/session/route.ts`
 
 Sign-in is a full-page redirect to `${API_URL}/api/auth/google`. The backend drives the OAuth flow and the frontend never touches Google directly.
 

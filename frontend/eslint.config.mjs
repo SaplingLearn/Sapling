@@ -52,14 +52,14 @@ const eslintConfig = [
   // the browser suite, add its owning file to `files` below.
   {
     files: [
-      "src/components/SignInModal.tsx",
+      "src/components/marketing/SignInModal.tsx",
       "src/app/pending/page.tsx",
       "src/components/DocumentUploadModal.tsx",
-      "src/components/ChatPanel.tsx",
+      "src/components/chat/ChatPanel.tsx",
       "src/components/QuizPanel.tsx",
-      "src/components/KnowledgeGraph.tsx",
-      "src/components/KnowledgeGraph2D.tsx",
-      "src/components/KnowledgeGraph3D.tsx",
+      "src/components/graph/KnowledgeGraph.tsx",
+      "src/components/graph/KnowledgeGraph2D.tsx",
+      "src/components/graph/KnowledgeGraph3D.tsx",
       "src/components/ShellFrame.tsx",
       "src/components/screens/Social.tsx",
       "src/components/screens/Dashboard.tsx",

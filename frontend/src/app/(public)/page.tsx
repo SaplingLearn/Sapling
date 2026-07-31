@@ -6,8 +6,8 @@ import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { useScrollLock } from '@/lib/useScrollLock';
 import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } from 'lucide-react';
-import SignInModal from '@/components/SignInModal';
-import { HeroCard } from '@/components/HeroCard';
+import SignInModal from '@/components/marketing/SignInModal';
+import { HeroCard } from '@/components/marketing/HeroCard';
 import { BRAND_FOREST } from '@/lib/brand';
 import { Button } from "@/components/ui";
 import { IS_TEST_MODE, random, now } from '@/lib/testMode';
@@ -18,7 +18,7 @@ import { IS_TEST_MODE, random, now } from '@/lib/testMode';
 // ssr:false would drop it from the HTML crawlers see — the one page where
 // that matters). The placeholder mirrors the section's own 340vh scroll
 // height so layout below doesn't shift during client-side chunk loads.
-const HowItWorks = dynamic(() => import('@/components/HowItWorks'), {
+const HowItWorks = dynamic(() => import('@/components/marketing/HowItWorks'), {
   loading: () => <section id="how-it-works" className="landing-section relative" style={{ height: '340vh' }} />,
 });
 

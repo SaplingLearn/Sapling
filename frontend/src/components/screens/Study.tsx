@@ -3,7 +3,7 @@ import React from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
-import { AIDisclaimerChip } from "../AIDisclaimerChip";
+import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { Icon } from "../Icon";
 import { FilterPills } from "@/components/ui";
 import { CustomSelect } from "../CustomSelect";
@@ -11,7 +11,7 @@ import { CustomSelect } from "../CustomSelect";
 // Lazy-load to keep mermaid/katex/highlight.js out of the OpenNext
 // server bundle. See ChatPanel.tsx for the rationale.
 const MarkdownChat = dynamic(
-  () => import("../MarkdownChat").then((m) => m.MarkdownChat),
+  () => import("../chat/MarkdownChat").then((m) => m.MarkdownChat),
   { ssr: false, loading: () => null },
 );
 
