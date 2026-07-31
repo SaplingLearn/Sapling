@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 
 import { readResumeParam, removeInterruptedTurn } from "./Learn";
-import type { ChatMsg } from "../ChatPanel";
+import type { ChatMsg } from "../chat/ChatPanel";
 
 describe("readResumeParam (#164)", () => {
   it("reads ?resume=", () => {

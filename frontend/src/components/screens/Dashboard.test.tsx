@@ -39,7 +39,7 @@ vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => false }));
 const layoutState = vi.hoisted(() => ({ pref: "topnav" }));
 vi.mock("@/lib/useLayoutPref", () => ({ useLayoutPref: () => [layoutState.pref, vi.fn()] }));
 
-vi.mock("../KnowledgeGraph", () => ({ KnowledgeGraph: () => null }));
+vi.mock("../graph/KnowledgeGraph", () => ({ KnowledgeGraph: () => null }));
 vi.mock("../ManageCoursesModal", () => ({ ManageCoursesModal: () => null }));
 vi.mock("../Skeleton", () => ({ DashboardSkeleton: () => null }));
 vi.mock("../MiniStat", () => ({ MiniStat: () => null }));

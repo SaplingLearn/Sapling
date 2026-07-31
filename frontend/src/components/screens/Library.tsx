@@ -12,7 +12,7 @@ import { LibraryGridSkeleton, LibraryListSkeleton } from "../Skeleton";
 // Lazy-load to keep mermaid/katex/highlight.js out of the OpenNext
 // server bundle. See ChatPanel.tsx for the rationale.
 const MarkdownChat = dynamic(
-  () => import("../MarkdownChat").then((m) => m.MarkdownChat),
+  () => import("../chat/MarkdownChat").then((m) => m.MarkdownChat),
   { ssr: false, loading: () => null },
 );
 import { useToast } from "../ToastProvider";

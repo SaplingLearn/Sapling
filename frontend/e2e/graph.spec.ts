@@ -63,7 +63,7 @@ function tierFor(score: number): Tier {
 /**
  * Mirror of KnowledgeGraph2D's `masteryOpacity` — how the 2D graph ENCODES
  * the mastery class on the `graph-node-circle` mark. Kept in lockstep with
- * frontend/src/components/KnowledgeGraph2D.tsx (a redesign that retunes
+ * frontend/src/components/graph/KnowledgeGraph2D.tsx (a redesign that retunes
  * these constants updates this table in the same PR).
  */
 const TIER_OPACITY: Record<Tier, number> = {

@@ -6,7 +6,7 @@ import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { Pill } from "../Pill";
 import { FilterPills } from "@/components/ui";
-import { KnowledgeGraph } from "../KnowledgeGraph";
+import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";

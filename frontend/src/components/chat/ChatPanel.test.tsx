@@ -17,7 +17,7 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
 import { ChatPanel, type ChatMsg } from "./ChatPanel";
 
-vi.mock("./Icon", () => ({ Icon: () => null }));
+vi.mock("../Icon", () => ({ Icon: () => null }));
 // MarkdownChat is lazy-loaded via next/dynamic (heavy markdown stack); render
 // plain text in its place so assertions see the message content synchronously.
 vi.mock("next/dynamic", () => ({
