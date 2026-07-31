@@ -72,15 +72,26 @@ test("tutor turn renders a reply and persists encrypted to messages", async ({
   await expect(log).toContainText(TUTOR_REPLY);
 
   // ── Raw-SQL readback: the turn persisted, encrypted (#397 posture) ───────
-  const rows = (await queryRaw(
-    `SELECT role, content FROM messages
-      WHERE session_id = $1
-      ORDER BY created_at ASC`,
-    [SESSION_ID],
-  )) as { role: string; content: string }[];
+  // Polled, not read once (#477). The server persists inside on_complete and
+  // only THEN yields `done` (services/chat_stream.py) — the write really does
+  // precede the end of the turn. But the composer renders the reply off the
+  // streamed TOKENS, so the two assertions above can both pass while `done`
+  // is still in flight: a rendered reply is not a persistence signal, the
+  // rows are. Bounded poll rather than a retry or a bare sleep, per the #388
+  // zero-flake policy.
+  const readTurnRows = async () =>
+    (await queryRaw(
+      `SELECT role, content FROM messages
+        WHERE session_id = $1
+        ORDER BY created_at ASC`,
+      [SESSION_ID],
+    )) as { role: string; content: string }[];
 
   // Exactly the seeded baseline plus this turn's user + assistant rows.
-  expect(rows).toHaveLength(SEEDED_MESSAGE_COUNT + 2);
+  await expect
+    .poll(async () => (await readTurnRows()).length, { timeout: 5_000 })
+    .toBe(SEEDED_MESSAGE_COUNT + 2);
+  const rows = await readTurnRows();
   const [userRow, assistantRow] = rows.slice(-2);
   expect(userRow.role).toBe("user");
   expect(assistantRow.role).toBe("assistant");
