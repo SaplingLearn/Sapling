@@ -139,6 +139,33 @@
   --pad-xl: 32px;
   --row-h: 40px;
 
+  /* Type scale (#289).
+     DERIVED, not invented: every step is a size the app already uses, counted
+     across screens/ and components/ — 13px is the true body size (107 uses),
+     12/11/10 carry chrome and micro-labels, 14-16 body copy, 18-26 headings,
+     30 is TopBar's screen title, 32 the display numeral on Dashboard.
+
+     Deliberately NOT density-aware, unlike --pad-*. Retuning the whole type
+     ramp with the density preference is a real product decision — it changes
+     how much text fits on every screen — and this scale's job right now is to
+     give one source of truth for sizes that are currently inline literals at
+     ~300 call sites. Making it density-aware later is additive; making it
+     density-aware now would ship a behaviour change disguised as a refactor.
+
+     Adopted by Onboarding first. The rest of the app keeps its inline sizes
+     until each screen is converted deliberately. */
+  --fs-2xs:  10px;
+  --fs-xs:   11px;
+  --fs-sm:   12px;
+  --fs-md:   13px;   /* body */
+  --fs-base: 14px;
+  --fs-lg:   16px;
+  --fs-xl:   18px;
+  --fs-2xl:  22px;
+  --fs-3xl:  26px;
+  --fs-4xl:  30px;   /* screen title — matches TopBar */
+  --fs-5xl:  32px;
+
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --dur-fast: 140ms;
   --dur: 220ms;

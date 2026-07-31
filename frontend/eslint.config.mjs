@@ -54,6 +54,7 @@ const eslintConfig = [
     files: [
       "src/components/marketing/SignInModal.tsx",
       "src/app/pending/page.tsx",
+      "src/components/screens/Onboarding.tsx",
       "src/components/DocumentUploadModal.tsx",
       "src/components/chat/ChatPanel.tsx",
       "src/components/QuizPanel.tsx",

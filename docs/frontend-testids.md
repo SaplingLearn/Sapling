@@ -68,6 +68,7 @@ renders the element.
 | --- | --- | --- |
 | Sign-in | `signin` | `frontend/src/components/marketing/SignInModal.tsx` (+ the trigger in `src/app/(public)/page.tsx`) |
 | Approval gate | `pending` | `frontend/src/app/pending/page.tsx` |
+| Onboarding | `onboarding` | `frontend/src/components/screens/Onboarding.tsx` (the first-run funnel, rendered bare outside `(shell)`) |
 | Upload modal | `upload-modal` | `frontend/src/components/DocumentUploadModal.tsx` |
 | Tutor | `tutor` | `frontend/src/components/chat/ChatPanel.tsx` (rendered by `screens/Learn.tsx`; + the session-resume rows in `src/components/screens/Learn.tsx` itself) |
 | Quiz | `quiz` | `frontend/src/components/QuizPanel.tsx` (rendered by `screens/Quiz.tsx`) |
@@ -109,6 +110,14 @@ route:
 | --- | --- |
 | `pending-gate` | approval-gate page root |
 | `pending-signout` | "Sign out" |
+| `onboarding-gate` | first-run onboarding page root |
+| `onboarding-continue` | primary advance button ("Continue" / "Enter Sapling →") |
+| `onboarding-back` | "Back" (absent on step 0) |
+| `onboarding-close` | "×" close/exit control |
+| `onboarding-input` | the shared `TextInput` used by every step |
+| `onboarding-chip-add` / `onboarding-chip-remove` | majors/minors chip editor |
+| `onboarding-course-result` / `onboarding-course-remove` | course search result and selected-course chip |
+| `onboarding-learning-style` | learning-style radio option |
 
 ### `upload-modal`
 

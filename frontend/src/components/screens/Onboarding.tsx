@@ -162,13 +162,14 @@ export function Onboarding() {
 
   return (
     <div
+      data-testid="onboarding-gate"
       style={{
-        minHeight: "100vh",
+        minHeight: "100dvh",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "radial-gradient(ellipse at top, var(--accent-soft) 0%, var(--bg) 60%)",
-        padding: "40px 20px",
+        background: "var(--bg)",
+        padding: "var(--pad-xl) var(--pad-lg)",
       }}
     >
       <div
@@ -176,10 +177,11 @@ export function Onboarding() {
         style={{
           position: "relative",
           width: "min(560px, 100%)",
-          padding: "40px 36px",
+          padding: "var(--pad-xl)",
         }}
       >
         <button
+          data-testid="onboarding-close"
           className="btn btn--ghost btn--sm"
           aria-label="Close onboarding"
           onClick={close}
@@ -244,11 +246,12 @@ export function Onboarding() {
 
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 32 }}>
           {draft.step > 0 && (
-            <button className="btn" onClick={back} disabled={submitting}>
+            <button data-testid="onboarding-back" className="btn" onClick={back} disabled={submitting}>
               Back
             </button>
           )}
           <button
+            data-testid="onboarding-continue"
             className="btn btn--primary"
             disabled={!canContinue || submitting}
             onClick={draft.step === STEP_COUNT - 1 ? finish : next}
@@ -265,10 +268,10 @@ export function Onboarding() {
 function StepWelcome() {
   return (
     <div style={{ textAlign: "center" }}>
-      <div className="h-serif" style={{ fontSize: 32, fontWeight: 500, marginBottom: 10 }}>
+      <div className="h-serif" style={{ fontSize: "var(--fs-5xl)", fontWeight: 500, marginBottom: 10 }}>
         Welcome to Sapling
       </div>
-      <div style={{ fontSize: 14, color: "var(--text-dim)", lineHeight: 1.55, maxWidth: 440, margin: "0 auto" }}>
+      <div style={{ fontSize: "var(--fs-base)", color: "var(--text-dim)", lineHeight: 1.55, maxWidth: 440, margin: "0 auto" }}>
         Let&apos;s set up your learning space. A few quick questions so the AI tutor can meet you where you are.
       </div>
     </div>
@@ -283,11 +286,12 @@ function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   const { style, ...rest } = props;
   return (
     <input
+      data-testid="onboarding-input"
       {...rest}
       style={{
         width: "100%",
-        padding: "10px 12px",
-        fontSize: 14,
+        padding: "var(--pad-sm) var(--pad-md)",
+        fontSize: "var(--fs-base)",
         border: "1px solid var(--border)",
         borderRadius: "var(--r-sm)",
         background: "var(--bg-input)",
@@ -304,8 +308,8 @@ function StepName({ firstName, lastName, onFirst, onLast }: {
 }) {
   return (
     <div>
-      <div className="h-serif" style={{ fontSize: 26, fontWeight: 500, marginBottom: 6 }}>What should we call you?</div>
-      <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 18 }}>This is the name shown to study partners.</div>
+      <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>What should we call you?</div>
+      <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>This is the name shown to study partners.</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div>
           <FieldLabel>First name</FieldLabel>
@@ -326,8 +330,8 @@ function StepSchool({ school, year, onSchool, onYear }: {
 }) {
   return (
     <div>
-      <div className="h-serif" style={{ fontSize: 26, fontWeight: 500, marginBottom: 6 }}>Where are you studying?</div>
-      <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 18 }}>Sapling is currently limited to Boston University.</div>
+      <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>Where are you studying?</div>
+      <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>Sapling is currently limited to Boston University.</div>
       <FieldLabel>School</FieldLabel>
       <TextInput value={school} onChange={e => onSchool(e.target.value)} disabled style={{ marginBottom: 16 }} />
       <FieldLabel>Year</FieldLabel>
@@ -348,8 +352,8 @@ function StepAcademics({ majors, minors, onMajors, onMinors }: {
 }) {
   return (
     <div>
-      <div className="h-serif" style={{ fontSize: 26, fontWeight: 500, marginBottom: 6 }}>Your academic focus</div>
-      <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 18 }}>Add at least one major. Minors are optional.</div>
+      <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>Your academic focus</div>
+      <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>Add at least one major. Minors are optional.</div>
       <FieldLabel>Majors</FieldLabel>
       <TagInput values={majors} onChange={onMajors} placeholder="e.g. Computer Science" />
       <div style={{ height: 14 }} />
@@ -380,7 +384,7 @@ function TagInput({ values, onChange, placeholder }: {
             style={{ textTransform: "none", fontFamily: "var(--font-sans)", background: "var(--accent-soft)", color: "var(--accent)", borderColor: "var(--accent-border)" }}
           >
             {v}
-            <button onClick={() => remove(v)} aria-label={`Remove ${v}`} style={{ color: "inherit", fontSize: 13, lineHeight: 1, marginLeft: 2 }}>
+            <button data-testid="onboarding-chip-remove" onClick={() => remove(v)} aria-label={`Remove ${v}`} style={{ color: "inherit", fontSize: "var(--fs-md)", lineHeight: 1, marginLeft: 2 }}>
               ×
             </button>
           </span>
@@ -398,7 +402,7 @@ function TagInput({ values, onChange, placeholder }: {
           }}
           placeholder={placeholder}
         />
-        <button className="btn" onClick={add} disabled={!draft.trim()}>Add</button>
+        <button data-testid="onboarding-chip-add" className="btn" onClick={add} disabled={!draft.trim()}>Add</button>
       </div>
     </div>
   );
@@ -442,8 +446,8 @@ function StepCourses({ selectedIds, selectedCache, onSelect }: {
 
   return (
     <div>
-      <div className="h-serif" style={{ fontSize: 26, fontWeight: 500, marginBottom: 6 }}>What are you studying?</div>
-      <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 18 }}>
+      <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>What are you studying?</div>
+      <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>
         Pick a few courses to seed your knowledge tree. You can always add more later.
       </div>
       <TextInput
@@ -461,26 +465,27 @@ function StepCourses({ selectedIds, selectedCache, onSelect }: {
               style={{ textTransform: "none", fontFamily: "var(--font-sans)", background: "var(--accent-soft)", color: "var(--accent)", borderColor: "var(--accent-border)" }}
             >
               {c.course_code}
-              <button onClick={() => toggle(c)} aria-label={`Remove ${c.course_code}`} style={{ color: "inherit", fontSize: 13, lineHeight: 1, marginLeft: 2 }}>×</button>
+              <button data-testid="onboarding-course-remove" onClick={() => toggle(c)} aria-label={`Remove ${c.course_code}`} style={{ color: "inherit", fontSize: "var(--fs-md)", lineHeight: 1, marginLeft: 2 }}>×</button>
             </span>
           ))}
         </div>
       )}
       <div style={{ marginTop: 14, maxHeight: 260, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
-        {loading && <div style={{ padding: "14px 12px", fontSize: 12, color: "var(--text-muted)" }}>Searching…</div>}
+        {loading && <div style={{ padding: "var(--pad-md)", fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>Searching…</div>}
         {!loading && results.length === 0 && (
-          <div style={{ padding: "14px 12px", fontSize: 12, color: "var(--text-muted)" }}>No courses match.</div>
+          <div style={{ padding: "var(--pad-md)", fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>No courses match.</div>
         )}
         {!loading && results.map(c => {
           const selected = selectedIds.includes(c.id) || cacheMap.has(c.id);
           return (
             <button
+              data-testid="onboarding-course-result"
               key={c.id}
               onClick={() => toggle(c)}
               style={{
                 width: "100%",
-                padding: "10px 12px",
-                fontSize: 13,
+                padding: "var(--pad-sm) var(--pad-md)",
+                fontSize: "var(--fs-md)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
@@ -510,8 +515,8 @@ function StepLearningStyle({ value, onChange }: {
 }) {
   return (
     <div>
-      <div className="h-serif" style={{ fontSize: 26, fontWeight: 500, marginBottom: 6 }}>How do you learn best?</div>
-      <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 18 }}>
+      <div className="h-serif" style={{ fontSize: "var(--fs-4xl)", fontWeight: 500, marginBottom: 6 }}>How do you learn best?</div>
+      <div style={{ fontSize: "var(--fs-md)", color: "var(--text-dim)", marginBottom: 18 }}>
         The AI tutor adjusts its tone and pacing to match.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -519,12 +524,13 @@ function StepLearningStyle({ value, onChange }: {
           const selected = value === s.id;
           return (
             <button
+              data-testid="onboarding-learning-style"
               key={s.id}
               role="radio"
               aria-checked={selected}
               onClick={() => onChange(s.id)}
               style={{
-                padding: "14px 14px",
+                padding: "var(--pad-md)",
                 border: `1.5px solid ${selected ? "var(--accent)" : "var(--border)"}`,
                 background: selected ? "var(--accent-soft)" : "var(--bg-panel)",
                 borderRadius: "var(--r-md)",
@@ -536,9 +542,9 @@ function StepLearningStyle({ value, onChange }: {
                 <span style={{ color: selected ? "var(--accent)" : "var(--text-dim)", display: "inline-flex" }}>
                   <Icon name={s.icon} size={16} />
                 </span>
-                <span style={{ fontWeight: 600, fontSize: 14, color: selected ? "var(--accent)" : "var(--text)" }}>{s.title}</span>
+                <span style={{ fontWeight: 600, fontSize: "var(--fs-base)", color: selected ? "var(--accent)" : "var(--text)" }}>{s.title}</span>
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.4 }}>{s.description}</div>
+              <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-dim)", lineHeight: 1.4 }}>{s.description}</div>
             </button>
           );
         })}
