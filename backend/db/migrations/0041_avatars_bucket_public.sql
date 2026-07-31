@@ -1,0 +1,42 @@
+-- 0041: converge the `avatars` bucket on public read (#316).
+--
+-- Staging drift: on `sapling-staging` (ybgqdonkoqftwrmweuyv) the avatars bucket
+-- is public=false, while prod is public=true and 0029 states the intent
+-- explicitly ("`avatars` stays public (intended public read)"). Avatar <img>
+-- src values are plain public object URLs, so a private bucket serves 400s and
+-- every avatar on staging renders broken.
+--
+-- WHY THIS DRIFT NEVER SELF-HEALS (the part worth knowing):
+-- both mechanisms that "create" this bucket decline to correct an existing one.
+--   * 0011_avatars_bucket.sql INSERTs it with public=true but ends in
+--     ON CONFLICT (id) DO NOTHING — a no-op if the row already exists.
+--   * storage_service.ensure_bucket_exists (called from main.py's lifespan with
+--     public=True) treats the Storage API's 409 as success and deliberately
+--     does NOT overwrite settings, "in case an admin has intentionally tuned
+--     them in the dashboard".
+-- So a bucket that came into existence private stays private forever, no matter
+-- how many deploys or migrations run. An UPDATE is the only thing that fixes it,
+-- which is why this file exists rather than a re-run of 0011.
+--
+-- This deliberately overrides the "an admin may have tuned it" stance for THIS
+-- bucket: the read path is unauthenticated <img src> against
+-- /storage/v1/object/public/avatars/..., so private is not a valid tuning — it
+-- is broken avatars. 0029 already recorded the intent ("`avatars` stays public
+-- (intended public read)"); this asserts that state instead of assuming it.
+--
+-- Idempotent and safe across environments: a no-op where avatars is already
+-- public (prod), and affects zero rows where the bucket does not exist yet
+-- (a fresh local project before e2e-up's bucket-ensure step).
+--
+-- PRIVILEGES: touches the Supabase-managed `storage` schema, exactly as 0029
+-- does. The migrate runner connects over SUPABASE_DB_URL as the DB owner
+-- (`postgres`), which on Supabase may alter storage.buckets. If a locked-down
+-- environment's role lacks that privilege, apply this file with a
+-- storage-privileged role instead.
+--
+-- NOTE: writing this migration does not by itself fix staging — it converges
+-- on the next `python -m db.migrate` run against that project.
+
+update storage.buckets
+   set public = true
+ where id = 'avatars';
