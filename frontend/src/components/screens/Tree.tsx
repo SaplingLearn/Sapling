@@ -7,6 +7,7 @@ import { useScrollLock } from "@/lib/useScrollLock";
 import { Pill } from "../Pill";
 import { FilterPills } from "@/components/ui";
 import { KnowledgeGraph } from "../KnowledgeGraph";
+import { FullHeightScreen } from "../FullHeightScreen";
 import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
@@ -276,7 +277,7 @@ export function Tree() {
   );
 
   return (
-    <div>
+    <FullHeightScreen>
       <TopBar
         title="Your Knowledge Tree"
         subtitle="The living map of what you've learned, organized by course."
@@ -295,6 +296,8 @@ export function Tree() {
           borderBottom: "1px solid var(--border)",
           flexWrap: "wrap",
           alignItems: "center",
+          // Intrinsic height: the graph row below is the only flexible child.
+          flexShrink: 0,
         }}
       >
         <div style={{ position: "relative", flex: "0 1 260px" }}>
@@ -396,7 +399,13 @@ export function Tree() {
         )}
       </div>
 
-      <div style={{ display: "flex", height: "calc(100vh - 240px)" }}>
+      {/* The graph row absorbs whatever `<main>` has left after the TopBar and
+          the filter row. `flex: 1` + `minHeight: 0` rather than a viewport
+          subtraction: this row's child is the ResizeObserver target whose
+          contentRect becomes <KnowledgeGraph width height>, so a hardcoded
+          `calc(100vh - …)` mis-sized the CANVAS in whichever shell layout the
+          constant wasn't calibrated for (#341). */}
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div ref={ref} style={{ flex: 1, minWidth: 0, position: "relative" }}>
           {loading ? (
             <GraphPanelSkeleton />
@@ -466,7 +475,7 @@ export function Tree() {
           />
         </div>
       )}
-    </div>
+    </FullHeightScreen>
   );
 }
 
