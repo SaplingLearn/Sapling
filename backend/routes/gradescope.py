@@ -30,6 +30,12 @@ from pydantic import BaseModel, Field
 
 from db.connection import table
 from services import gradescope_service
+from services.academics import (
+    enrollment_id_for,
+    offering_course_id,
+    user_enrollment_ids,
+    user_offering_ids_for_course,
+)
 from services.auth_guard import require_self
 from services.encryption import encrypt, decrypt, encrypt_if_present
 from services.request_limits import check_rate_limit
@@ -145,14 +151,44 @@ def _establish_connection(creds: StoredCreds) -> GSConnection:
         )
 
 
-def _user_owns_course(user_id: str, sapling_course_id: str) -> bool:
-    """Return True if user_id is enrolled in sapling_course_id."""
-    rows = table("user_courses").select(
-        "id",
-        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{sapling_course_id}"},
-        limit=1,
-    )
-    return bool(rows)
+def _enrollment_for(user_id: str, sapling_course_id: str) -> str | None:
+    """Resolve (user, abstract course) → the user's enrollment id, or None.
+
+    Doubles as the ownership check this module used to do against
+    `user_courses` — a table that stopped existing when 0020 renamed it to
+    `enrollments` (offering-keyed). No enrollment means the user isn't in the
+    course, which is the same 404 the old check produced.
+
+    Gradescope links key on `enrollment_id` (0027), not the abstract course:
+    grades land on enrollment-scoped `assignments` (0021), so a link has to
+    name the specific class instance the grades belong to — otherwise a retake
+    gives two enrollments and the sync cannot tell which term's assignments to
+    write. The HTTP boundary still speaks `course_id` per the repo convention;
+    resolution happens here.
+    """
+    return enrollment_id_for(user_id, sapling_course_id)
+
+
+def _all_enrollments_for(user_id: str, sapling_course_id: str) -> list[str]:
+    """EVERY enrollment the user holds in this abstract course, not just the
+    term-preferred one.
+
+    `enrollment_id_for` re-derives a single enrollment from the current term on
+    each call, which is right for CREATING a link but wrong for finding one
+    that already exists: a retake gives two enrollments, and a link made in
+    Fall must still be findable, deletable and syncable once Spring is the
+    current term. Resolving by heuristic there produced duplicate links, a
+    delete that reported success while removing nothing, and a sync that 400'd
+    "no link" for a course `GET /links` was still listing (#265 review).
+    """
+    offering_ids = set(user_offering_ids_for_course(user_id, sapling_course_id))
+    if not offering_ids:
+        return []
+    return [
+        e["id"]
+        for e in user_enrollment_ids(user_id)
+        if e.get("offering_id") in offering_ids
+    ]
 
 
 def _enforce_gs_rate_limit(user_id: str, action: str, *, limit: int, window_sec: int) -> None:
@@ -356,46 +392,83 @@ def list_gradescope_courses(user_id: str, request: Request):
 
 @router.get("/links")
 def list_links(user_id: str, request: Request):
-    """List all sapling-course → gradescope-course mappings for user_id."""
+    """List all sapling-course → gradescope-course mappings for user_id.
+
+    The table keys on `enrollment_id` (0027) while the API keeps the abstract
+    `sapling_course_id`, so each row is mapped back out to its course before it
+    leaves — the frontend contract is unchanged.
+    """
     require_self(user_id, request)
+    enrollments = user_enrollment_ids(user_id)
+    if not enrollments:
+        return {"links": []}
+
+    course_by_enrollment = {
+        e["id"]: offering_course_id(e.get("offering_id")) for e in enrollments
+    }
     rows = table("gradescope_course_links").select(
-        "id,sapling_course_id,gradescope_course_id,last_synced_at",
-        filters={"user_id": f"eq.{user_id}"},
+        "id,enrollment_id,gradescope_course_id,last_synced_at",
+        filters={"enrollment_id": f"in.({','.join(course_by_enrollment)})"},
     )
-    return {"links": rows}
+    links = [
+        {
+            "id": r["id"],
+            "sapling_course_id": course_by_enrollment[r.get("enrollment_id")],
+            "gradescope_course_id": r.get("gradescope_course_id"),
+            "last_synced_at": r.get("last_synced_at"),
+        }
+        for r in rows
+        # Drop rather than answer sapling_course_id: null — an offering whose
+        # course can't be resolved has no id the client could act on, and a
+        # null there reads as a real link the UI can't do anything with.
+        if course_by_enrollment.get(r.get("enrollment_id"))
+    ]
+    return {"links": links}
 
 
 @router.post("/link")
 def upsert_link(body: LinkBody, request: Request):
     """Create or replace the link between a Sapling course and a Gradescope course."""
     require_self(body.user_id, request)
-    if not _user_owns_course(body.user_id, body.sapling_course_id):
+    enrollment_id = _enrollment_for(body.user_id, body.sapling_course_id)
+    if not enrollment_id:
         raise HTTPException(status_code=404, detail="Sapling course not found for user")
 
-    # Manual upsert: delete any existing link for this (user, sapling_course) then insert.
-    table("gradescope_course_links").delete(
-        filters={
-            "user_id": f"eq.{body.user_id}",
-            "sapling_course_id": f"eq.{body.sapling_course_id}",
-        }
-    )
+    # Manual upsert. The delete spans EVERY enrollment the user holds in this
+    # course, not just the one we're about to write: otherwise re-linking after
+    # a term rollover leaves the old term's row in place and the course ends up
+    # with two links (#265 review).
+    all_enrollments = _all_enrollments_for(body.user_id, body.sapling_course_id)
+    if all_enrollments:
+        table("gradescope_course_links").delete(
+            filters={"enrollment_id": f"in.({','.join(all_enrollments)})"}
+        )
     inserted = table("gradescope_course_links").insert({
-        "user_id": body.user_id,
-        "sapling_course_id": body.sapling_course_id,
+        "enrollment_id": enrollment_id,
         "gradescope_course_id": body.gradescope_course_id,
     })
-    return {"link": inserted[0] if inserted else None}
+    link = dict(inserted[0]) if inserted else None
+    if link is not None:
+        # Answer in the API's vocabulary, not the table's.
+        link["sapling_course_id"] = body.sapling_course_id
+    return {"link": link}
 
 
 @router.delete("/link/{sapling_course_id}")
 def remove_link(sapling_course_id: str, user_id: str, request: Request):
     """Remove the Gradescope link for a Sapling course."""
     require_self(user_id, request)
+    # Across ALL the user's enrollments in the course: a link created under a
+    # previous term must still be removable once the term has rolled over.
+    # Resolving the single term-preferred enrollment here deleted nothing while
+    # still answering ok:true (#265 review).
+    all_enrollments = _all_enrollments_for(user_id, sapling_course_id)
+    if not all_enrollments:
+        # Nothing resolvable to delete; stay idempotent rather than 404 on a
+        # remove, matching the previous behaviour of a no-match delete.
+        return {"ok": True}
     table("gradescope_course_links").delete(
-        filters={
-            "user_id": f"eq.{user_id}",
-            "sapling_course_id": f"eq.{sapling_course_id}",
-        }
+        filters={"enrollment_id": f"in.({','.join(all_enrollments)})"}
     )
     return {"ok": True}
 
@@ -419,15 +492,17 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
     """Pull assignments from the linked Gradescope course and upsert into the Sapling gradebook."""
     require_self(user_id, request)
     _enforce_gs_rate_limit(user_id, "sync", limit=10, window_sec=300)
-    if not _user_owns_course(user_id, sapling_course_id):
+    all_enrollments = _all_enrollments_for(user_id, sapling_course_id)
+    if not all_enrollments:
         raise HTTPException(status_code=404, detail="Sapling course not found for user")
 
+    # Find the link across every enrollment in the course, then key the whole
+    # sync on THAT row's enrollment — not on a re-derived term guess. The
+    # grades belong to the class instance the link was made against, and after
+    # a term rollover the heuristic points at a different one (#265 review).
     link_rows = table("gradescope_course_links").select(
-        "id,gradescope_course_id",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "sapling_course_id": f"eq.{sapling_course_id}",
-        },
+        "id,enrollment_id,gradescope_course_id",
+        filters={"enrollment_id": f"in.({','.join(all_enrollments)})"},
         limit=1,
     )
     if not link_rows:
@@ -436,6 +511,7 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
             detail="No Gradescope course is linked to this Sapling course",
         )
     gs_course_id = link_rows[0]["gradescope_course_id"]
+    enrollment_id = link_rows[0]["enrollment_id"]
 
     creds = _load_creds(user_id)
     if not creds:
@@ -453,10 +529,7 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
     # know whether each incoming one is an insert or an update.
     existing = table("assignments").select(
         "id,gradescope_assignment_id",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "course_id": f"eq.{sapling_course_id}",
-        },
+        filters={"enrollment_id": f"eq.{enrollment_id}"},
     )
     by_gs_id: dict[str, str] = {
         r["gradescope_assignment_id"]: r["id"]
@@ -468,9 +541,10 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
     # A new assignment whose title contains a category name (e.g. "Homework 3"
     # contains "homework") is automatically categorized; otherwise category_id
     # stays None and the user can link it manually.
-    cats = table("course_categories").select(
+    # 0021 renamed course_categories -> gradebook_categories, enrollment-keyed.
+    cats = table("gradebook_categories").select(
         "id,name",
-        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{sapling_course_id}"},
+        filters={"enrollment_id": f"eq.{enrollment_id}"},
     )
     cats_by_name: dict[str, str] = {
         c["name"].lower().strip(): c["id"]
@@ -518,8 +592,7 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
             else:
                 table("assignments").insert({
                     "id": str(uuid.uuid4()),
-                    "user_id": user_id,
-                    "course_id": sapling_course_id,
+                    "enrollment_id": enrollment_id,
                     "category_id": _infer_category_id(title),
                     **record_write,
                 })
@@ -535,10 +608,7 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
     )
     table("gradescope_course_links").update(
         {"last_synced_at": now_iso},
-        filters={
-            "user_id": f"eq.{user_id}",
-            "sapling_course_id": f"eq.{sapling_course_id}",
-        },
+        filters={"enrollment_id": f"eq.{enrollment_id}"},
     )
 
     return SyncResult(
