@@ -124,12 +124,24 @@ test("the gradebook adds no height beyond what its content needs, in both layout
       if (!shell || !main) return null;
       const s = shell.getBoundingClientRect();
       const m = main.getBoundingClientRect();
+
+      // The content's natural height has to be measured from the CHILDREN.
+      // `main.scrollHeight` is useless here: it is floored at the element's
+      // own client height, so it would grow to match any phantom height and
+      // the assertion below could never fail.
+      const cs = getComputedStyle(main);
+      let bottom = m.top;
+      for (const child of Array.from(main.children)) {
+        const pos = getComputedStyle(child).position;
+        // AmbientOrbs is position:fixed — decorative, and out of flow.
+        if (pos === "fixed" || pos === "absolute") continue;
+        bottom = Math.max(bottom, child.getBoundingClientRect().bottom);
+      }
       return {
         mainHeight: Math.round(m.height),
         // Space from the screen's <main> down to the scrollport's bottom.
         available: Math.round(s.height - (m.top - s.top)),
-        // The content's own natural height, independent of the box sizing it.
-        content: main.scrollHeight,
+        content: Math.round(bottom - m.top + parseFloat(cs.paddingBottom || "0")),
       };
     });
     expect(box, "the gradebook screen should render its own <main>").not.toBeNull();
