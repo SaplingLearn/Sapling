@@ -261,6 +261,10 @@ body { font-size: 14px; line-height: 1.5; }
 .fade-in { animation: fade-in var(--dur) var(--ease); }
 .slide-up { animation: slide-up var(--dur-slow) var(--ease); }
 .fade-up { animation: fade-in 0.5s var(--ease); animation-fill-mode: both; }
+/* Study mode-switch enter fade (#111/#490): CSS stand-in for the old
+   framer-motion crossfade so pane content never waits on the motion chunk. */
+@keyframes study-mode-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.study-mode-enter { animation: study-mode-enter 0.22s cubic-bezier(0.2, 0.85, 0.35, 1); }
 
 /* Approval gate (#290) — the "you're in" beat.
    The sapling draws itself once and the message steps in behind it; the

@@ -24,7 +24,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
@@ -102,9 +102,20 @@ const pasteTextarea = () =>
   screen.getByPlaceholderText(/paste your cards here/i);
 
 afterEach(() => {
-  // Dialog and ToastProvider both portal into document.body; RTL cleanup
-  // alone leaves portal siblings behind (same pattern as
-  // DocumentUploadModal.test.tsx).
+  // UNMOUNT first, then sweep. Order matters and both steps are needed:
+  //
+  // - vitest.config.ts sets `globals: false`, so @testing-library/react does
+  //   NOT auto-register its cleanup. Without an explicit call nothing here
+  //   ever unmounted: React kept the tree — and its pending scheduler work —
+  //   alive past the end of the file, and when jsdom was torn down that work
+  //   landed on a `window` that no longer existed. That surfaced as three
+  //   "ReferenceError: window is not defined" unhandled errors, which vitest
+  //   reports as `Errors 3` and exits non-zero on even with every test
+  //   passing — intermittently red-flagging unrelated PRs (#492 most recently).
+  // - Dialog and ToastProvider both portal into document.body, and cleanup()
+  //   alone leaves those portal siblings behind (same pattern as
+  //   DocumentUploadModal.test.tsx) — hence the body sweep afterwards.
+  cleanup();
   cleanupBody();
   vi.clearAllMocks();
 });
