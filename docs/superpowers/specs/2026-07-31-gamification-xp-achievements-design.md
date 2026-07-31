@@ -122,7 +122,7 @@ existing `streak_count`. `total_xp` and `level` are caches maintained by the awa
 path, always recomputable from `xp_events`.
 
 `achievements` gains `xp_reward int default 0`, `icon_url text`, `sort_order int
-default 0`, `is_retired bool default false`.
+default 0`. No retired flag — the wiki's existing delete action covers removal.
 
 ## Catalog migration
 
@@ -140,9 +140,10 @@ in meaning and are **remapped in place** — `update achievements set slug = ...
 
 The remaining 25 are inserted fresh. The five leftovers with no design equivalent
 (`documents_5`, `documents_25`, `quizzes_10`, `flashcards_50`, `post_count_50`) are
-marked `is_retired = true` rather than deleted — deleting would cascade away earned
-rows. Retired badges stay visible to users who hold them, are not offered to anyone
-new, and can be un-retired with one click in the wiki.
+**deleted**. `user_achievements.achievement_id` is `ON DELETE CASCADE`, so any rows
+where a user had earned one of the five go with them — those badges disappear from
+the affected profiles. The migration deletes their `achievement_triggers` rows in
+the same statement. The final catalog is exactly the design's 30.
 
 Full catalog with categories, rarities, XP rewards and triggers is in
 [Appendix A](#appendix-a--achievement-catalog).
@@ -276,12 +277,12 @@ declared in `Admin.tsx` (`type Tab = "users" | "allowlist" | "roles" | "achievem
 The tab holds, in one scrollable view:
 
 - every achievement as a card with a live badge preview rendered by the same `BadgeArt` component users see
-- inline editing of name, description, category, rarity, XP reward, sort order, secret flag and retired flag
+- inline editing of name, description, category, rarity, XP reward, sort order and secret flag
 - drag-and-drop icon upload with client-side dimension validation and instant preview
 - the existing trigger editor (type + threshold) per achievement
 - a "grant to user" control, already backed by `POST /admin/achievements/grant`
 - an **XP rules** panel listing each rule with an editable amount and an enable toggle
-- filters by category, rarity and earned-count, so the catalog stays navigable at 35 badges
+- filters by category, rarity and earned-count, so the catalog stays navigable at 30 badges
 
 All writes go through the existing admin endpoints and land in the audit log.
 
