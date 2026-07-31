@@ -122,28 +122,38 @@ existing `streak_count`. `total_xp` and `level` are caches maintained by the awa
 path, always recomputable from `xp_events`.
 
 `achievements` gains `xp_reward int default 0`, `icon_url text`, `sort_order int
-default 0`. No retired flag — the wiki's existing delete action covers removal.
+default 0`, and `status text default 'live' check (status in ('draft','live'))`.
+
+**`status` is what makes the wiki an authoring tool rather than a viewer.** A
+`draft` achievement is fully visible and editable in the admin console but is
+never served to users, never evaluated by the trigger checker, and never counted
+in "N of M badges". That lets a badge be designed, described, given an icon and a
+rarity, and sat on until its trigger actually works.
 
 ## Catalog migration
 
-The design ships 30 achievements; the DB has 10 with different slugs. Five overlap
-in meaning and are **remapped in place** — `update achievements set slug = ...`
-— so existing `user_achievements` rows survive untouched:
+The design's 30 achievements are inserted as `live`. The 10 already in the
+database keep their slugs, their triggers and their earned rows, and are flipped
+to `draft` — they become the wiki's work-in-progress list.
 
-| existing slug | becomes | note |
-|---|---|---|
-| `first_login` | `first-steps` | category moves milestone → activity |
-| `streak_7` | `on-fire` | same 7-day threshold |
-| `streak_30` | `marathon` | same 30-day threshold |
-| `rooms_joined_10` | `study-circle` | threshold relaxes 10 → 1; every existing holder still qualifies |
-| `early_adopter` | `methuselah` | both are founding-member grants |
+Nothing is deleted and nothing is remapped. That means no `user_achievements` row
+is ever cascaded away, and the two prod users holding `first_login`,
+`documents_5` and `documents_25` keep what they earned. It also means concepts
+overlap across the two sets — `Week Warrior` (draft) and `On Fire` (live) both
+describe a 7-day streak — which is harmless precisely because drafts are invisible
+to users. Resolving those overlaps is an editorial decision for the wiki, not a
+migration.
 
-The remaining 25 are inserted fresh. The five leftovers with no design equivalent
-(`documents_5`, `documents_25`, `quizzes_10`, `flashcards_50`, `post_count_50`) are
-**deleted**. `user_achievements.achievement_id` is `ON DELETE CASCADE`, so any rows
-where a user had earned one of the five go with them — those badges disappear from
-the affected profiles. The migration deletes their `achievement_triggers` rows in
-the same statement. The final catalog is exactly the design's 30.
+The resulting catalog is 40 rows: 30 live, 10 draft.
+
+| | count | user-visible | trigger-evaluated |
+|---|---|---|---|
+| design catalog (`live`) | 30 | yes | yes |
+| pre-existing (`draft`) | 10 | no | no |
+
+**Every user-facing read filters on `status = 'live'`** — `GET /api/profile/{id}/achievements`,
+the badge counts in `GET /api/gamification/me`, and `check_achievements`. A draft's
+already-earned rows stay in the table but do not surface until it is published.
 
 Full catalog with categories, rarities, XP rewards and triggers is in
 [Appendix A](#appendix-a--achievement-catalog).
@@ -216,7 +226,18 @@ must never reach a shared cache (#99). Names resolve through
 
 **Leaderboard privacy.** Users with `profile_visibility = 'private'` are excluded
 from `everyone` and `school` but always see their own row and rank. `friends` is
-unaffected — it is opt-in by construction.
+unaffected — it is opt-in by construction. The `school` scope resolves peers
+through `services/academics.py::school_peer_user_ids`, the same fail-closed
+resolver `GET /api/social/students` uses (#342) — `school` is not a column on
+`user_profiles` after the 0024 identity split, and must not be reintroduced as one.
+
+**Streak maintenance.** `users.streak_count` is currently only initialised, never
+advanced, and `longest_streak` is new. `services/streak_service.py` gains a
+`touch_streak(user_id)` called from the same post-commit hook as `award_xp`: it
+advances `streak_count` when the last active date was yesterday, resets it to 1
+on a gap, leaves it alone on a same-day repeat, and raises `longest_streak` to
+match whenever the current streak exceeds it. Without this the hero card's streak
+tile and four streak achievements would read zero forever.
 
 **`routes/social.py`** gains the friends surface: `POST /friends/request`,
 `POST /friends/requests/{id}/accept`, `POST /friends/requests/{id}/decline`,
@@ -276,6 +297,8 @@ declared in `Admin.tsx` (`type Tab = "users" | "allowlist" | "roles" | "achievem
 
 The tab holds, in one scrollable view:
 
+- a **Work in progress** section at the top, listing every `draft` achievement with a "Publish" action that flips it to `live`
+- the live catalog below it, with an "Unpublish" action that moves a badge back to draft
 - every achievement as a card with a live badge preview rendered by the same `BadgeArt` component users see
 - inline editing of name, description, category, rarity, XP reward, sort order and secret flag
 - drag-and-drop icon upload with client-side dimension validation and instant preview
