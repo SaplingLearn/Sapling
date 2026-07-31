@@ -80,9 +80,13 @@ type Mode = "guide" | "cards";
 // term with no offering of the course, #475 F4; `message` carries the server's
 // sentence when it isn't the exam-deleted one), or the generation itself
 // broke. Only the second is worth a red toast, and it carries the ids + term
-// it was built from because opening a recent guide clears the exam selection —
-// the selects are not a reliable retry target. `semester` is the term the
-// failed load resolved with ("" = unscoped), so retry replays it exactly.
+// it was built from so retry replays the load that failed rather than whatever
+// the selects hold when the user gets around to clicking — they can have moved
+// on (or been reset by a course/term switch) in between, and a failed load
+// leaves nothing on screen tying them to it. `semester` is the term the failed
+// load resolved with ("" = unscoped).
+// (Until #476 the sharper reason was that a recent-open cleared the exam
+// selection outright; that's fixed — the selects now track the open.)
 type GuideProblem =
   | { kind: "missing"; message?: string }
   | { kind: "failed"; message: string; courseId: string; examId: string; semester: string };
@@ -218,6 +222,8 @@ function GuideMode({
   const [regenerating, setRegenerating] = React.useState(false);
   const [recent, setRecent] = React.useState<StudyGuideCacheEntry[]>([]);
   const [guideProblem, setGuideProblem] = React.useState<GuideProblem | null>(null);
+  // "" = resolved unscoped. See loadGuide.
+  const [loadedTerm, setLoadedTerm] = React.useState<string>("");
 
   const loadRecent = React.useCallback(async () => {
     if (!userId) return;
@@ -231,11 +237,38 @@ function GuideMode({
 
   React.useEffect(() => { loadRecent(); }, [loadRecent]);
 
-  React.useEffect(() => {
+  // Dropping the exam selection is a response to two EVENTS — the user picking
+  // a different course, and the active term changing — never to `courseId`
+  // simply differing from its last value. That distinction is the whole of
+  // #476: openRecent changes courseId too, and a courseId-keyed effect can't
+  // tell a deliberate open from a user switch, so it wiped the exam openRecent
+  // had just set. It also landed a render late, so the loader below still got
+  // one read out of the stale pair before the reset applied.
+  const clearSelection = () => {
     setExamId("");
-    setExams([]);
     setGuide(null);
     setGuideProblem(null);
+  };
+
+  const selectCourse = (next: string) => {
+    setCourseId(next);
+    clearSelection();
+  };
+
+  // A term switch re-scopes the exam list, so an exam picked under the old term
+  // need not exist in the new one. Adjusted during render (the StudyModePanel
+  // pattern above) rather than in an effect: an effect-time reset commits once
+  // on the stale pair first, re-reading the old exam under the new term and
+  // landing on the strict resolver. `null` = uninitialized, so hydration
+  // ("" → the stored term) is not a switch.
+  const [scopedTerm, setScopedTerm] = React.useState<string | null>(null);
+  if (semesterReady && scopedTerm !== semester) {
+    if (scopedTerm !== null) clearSelection();
+    setScopedTerm(semester);
+  }
+
+  React.useEffect(() => {
+    setExams([]);
     if (!courseId || !userId || !semesterReady) return;
     setLoadingExams(true);
     getStudyGuideExams(userId, courseId, semester || undefined)
@@ -263,6 +296,11 @@ function GuideMode({
     try {
       const r = await getStudyGuide(userId, cid, eid, term);
       setGuide(r.guide);
+      // The term this guide was actually resolved under — which is the entry's
+      // own term on a recent-open, not the active selector's (#475 F1).
+      // Regenerate has to replay it, or it rebuilds against a different
+      // offering than the one on screen.
+      setLoadedTerm(term ?? "");
       setGeneratedAt(r.generated_at);
       setCached(r.cached);
       if (!r.cached) loadRecent();
@@ -317,8 +355,11 @@ function GuideMode({
     setRegenerating(true);
     setGuideProblem(null);
     try {
-      // Regenerates the SELECTED term's guide — same offering the reads key on.
-      const r = await regenerateStudyGuide(userId, courseId, examId, semester || undefined);
+      // Regenerates the term the DISPLAYED guide was read under, so rebuild
+      // and read key on the same offering. Before #476 this could use the
+      // active selector safely only because the button was unreachable on the
+      // recent-open path — the one path where the two differ.
+      const r = await regenerateStudyGuide(userId, courseId, examId, loadedTerm || undefined);
       setGuide(r.guide);
       setGeneratedAt(r.generated_at);
       setCached(false);
@@ -361,7 +402,7 @@ function GuideMode({
             </div>
             <CustomSelect
               value={courseId}
-              onChange={v => setCourseId(v)}
+              onChange={selectCourse}
               placeholder="Pick a course…"
               options={courses.map(c => ({
                 value: c.course_id,

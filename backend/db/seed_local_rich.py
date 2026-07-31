@@ -575,6 +575,51 @@ def seed_flashcards() -> None:
         )
 
 
+# (guide_id, user_id, offering_id, exam_id, generated_at, content)
+#
+# A CACHED guide, so /study's "Recent guides" rail has an entry to open without
+# any generation: the guide GET returns a cache hit on (user, offering, exam)
+# before it ever reaches the study_guide agent, which has no function-mode
+# handler. `exam_id` points at the real fall-2025 CS101 exam assignment so the
+# exam picker can resolve the same row the rail entry opens.
+_STUDY_GUIDES = [
+    ("rich-guide-cs-f25-mid", USER_ACTIVE, OFF_CS_F25, "rich-asg-cs-f25-mid",
+     "2026-03-01T12:00:00Z",
+     {
+         "exam": "Midterm Exam",
+         "due_date": "2025-10-15",
+         "overview": "Covers variables, control flow, and functions.",
+         "topics": [
+             {
+                 "name": "Variables",
+                 "importance": "Every later topic builds on binding names to values.",
+                 "concepts": ["Assignment", "Scope"],
+             },
+             {
+                 "name": "Recursion",
+                 "importance": "The midterm's hardest questions are recursive traces.",
+                 "concepts": ["Base case", "Call stack"],
+             },
+         ],
+     }),
+]
+
+
+def seed_study_guides() -> None:
+    for guide_id, user_id, off_id, exam_id, generated_at, content in _STUDY_GUIDES:
+        h.insert_if_absent(
+            "study_guides",
+            guide_id,
+            {
+                "user_id": user_id,
+                "offering_id": off_id,
+                "exam_id": exam_id,
+                "generated_at": generated_at,
+                "content": content,
+            },
+        )
+
+
 # (qa_id, concept_node_id, difficulty, score, total, questions_json, answers_json, completed_at)
 _QUIZ_ATTEMPTS = [
     ("rich-qa-cs-variables-1", "rich-node-cs-variables", "easy", 9, 10,
@@ -670,7 +715,8 @@ _SUMMARY_ORDER = [
     "schools", "courses", "course_offerings", "users", "user_profiles", "user_roles",
     "enrollments", "graph_nodes", "graph_edges", "node_mastery_events",
     "gradebook_categories", "assignments", "rooms", "room_members", "room_messages",
-    "notes", "documents", "flashcards", "quiz_attempts", "sessions", "messages",
+    "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "sessions",
+    "messages",
 ]
 
 
@@ -687,6 +733,7 @@ def main() -> None:
     seed_rooms()
     seed_notes_documents()
     seed_flashcards()
+    seed_study_guides()
     seed_quiz()
     seed_sessions()
     h.print_summary(_SUMMARY_ORDER, "Seed summary (rich local dataset):")
