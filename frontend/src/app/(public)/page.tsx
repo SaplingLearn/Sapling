@@ -404,77 +404,16 @@ export default function LandingPage() {
       entries.forEach(entry => {
         if (entry.isIntersecting) {
           entry.target.classList.remove('opacity-0', 'translate-y-[30px]');
-          if (entry.target.classList.contains('landing-stat-fade-up')) startCounters(entry.target as HTMLElement);
           obs.unobserve(entry.target);
         }
       });
     }, { threshold: 0.2 });
-    document.querySelectorAll('.landing-fade-up, .landing-stat-fade-up').forEach(el => {
+    document.querySelectorAll('.landing-fade-up').forEach(el => {
       el.classList.add('opacity-0', 'translate-y-[30px]', 'transition-all', 'duration-700', 'ease-out');
       obs.observe(el);
     });
     return () => obs.disconnect();
   }, []);
-
-  // Spotlight card mouse-follow
-  useEffect(() => {
-    const cards = Array.from(document.querySelectorAll<HTMLElement>('.landing-spotlight-card'));
-    if (cards.length === 0) return;
-
-    // `getBoundingClientRect` per mousemove forces a layout flush on every
-    // pointer sample. Measure on enter instead and hold the rect until
-    // something can actually have moved the card.
-    const rects = new WeakMap<HTMLElement, DOMRect>();
-
-    const measure = (card: HTMLElement) => {
-      const r = card.getBoundingClientRect();
-      rects.set(card, r);
-      return r;
-    };
-    const onEnter = (e: Event) => { measure(e.currentTarget as HTMLElement); };
-    const onMove = (e: MouseEvent) => {
-      const card = e.currentTarget as HTMLElement;
-      const r = rects.get(card) ?? measure(card);
-      card.style.setProperty('--mouse-x', `${e.clientX - r.left}px`);
-      card.style.setProperty('--mouse-y', `${e.clientY - r.top}px`);
-    };
-    // Rects are viewport-relative, so scrolling invalidates them even though
-    // the card hasn't moved in the document. Drop them and re-measure lazily.
-    const invalidate = () => { for (const c of cards) rects.delete(c); };
-
-    cards.forEach(c => {
-      c.addEventListener('mouseenter', onEnter);
-      c.addEventListener('mousemove', onMove);
-    });
-    window.addEventListener('scroll', invalidate, { passive: true });
-    window.addEventListener('resize', invalidate);
-    return () => {
-      cards.forEach(c => {
-        c.removeEventListener('mouseenter', onEnter);
-        c.removeEventListener('mousemove', onMove);
-      });
-      window.removeEventListener('scroll', invalidate);
-      window.removeEventListener('resize', invalidate);
-    };
-  }, []);
-
-  function startCounters(container: HTMLElement) {
-    container.querySelectorAll<HTMLElement>('.counter, .counter-float').forEach(el => {
-      if (el.classList.contains('counted')) return;
-      el.classList.add('counted');
-      const target = parseFloat(el.dataset.target || '0');
-      const isFloat = el.classList.contains('counter-float');
-      const dur = 1500, startT = performance.now();
-      function update(now: number) {
-        const p = Math.min((now - startT) / dur, 1);
-        const ease = 1 - Math.pow(1 - p, 4);
-        el.textContent = isFloat ? (target * ease).toFixed(1) : Math.floor(target * ease).toLocaleString();
-        if (p < 1) requestAnimationFrame(update);
-        else el.textContent = isFloat ? target.toFixed(1) : target.toLocaleString();
-      }
-      requestAnimationFrame(update);
-    });
-  }
 
   // ── Onboarding entry ──────────────────────────────────────────────
   // The signup flow lives at /onboarding (screens/Onboarding). Unauthenticated

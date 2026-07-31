@@ -390,7 +390,6 @@ body { font-size: 14px; line-height: 1.5; }
   .assignment-row:hover { background: var(--accent-soft); }
 }
 
-
 /* Course-detail two-column shell: assignment list (primary action surface)
  * on the left, sticky projection sidebar on the right. Collapses to a
  * single column below 1100px so the sidebar stacks above the list. */
@@ -683,44 +682,10 @@ body { font-size: 14px; line-height: 1.5; }
 .landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
 
 /* ── Button shimmer ────────────────────────────────────────────── */
-.landing-btn-shimmer { position: relative; overflow: hidden; }
-.landing-btn-shimmer::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to right, transparent, rgba(255,255,255,0.3), transparent);
-  transform: translateX(-200%);
-  transition: transform 0.7s ease;
-  border-radius: 9999px;
-  pointer-events: none;
-}
-.landing-btn-shimmer:hover::before { transform: translateX(200%); }
 
 /* ── Spotlight card (mouse-follow glow) ────────────────────────── */
-.landing-spotlight-card {
-  position: relative;
-  overflow: hidden;
-}
-.landing-spotlight-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 1rem;
-  background: radial-gradient(250px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(27,108,66,0.04) 0%, transparent 70%);
-  opacity: 0;
-  transition: opacity 0.5s ease;
-  pointer-events: none;
-  z-index: 0;
-}
-.landing-spotlight-card:hover::before { opacity: 1; }
 
 /* ── Feature card icon hover ───────────────────────────────────── */
-.landing-icon-container {
-  transition: transform 0.4s var(--ease);
-}
-.landing-spotlight-card:hover .landing-icon-container {
-  transform: scale(1.1) rotate(5deg);
-}
 
 /* ── Landing scrollbar ─────────────────────────────────────────── */
 .landing-page ::-webkit-scrollbar       { width: 6px; }
@@ -821,7 +786,6 @@ input[type="reset"]:disabled {
 .cosmetic-equipped {
   transition: box-shadow 150ms ease, border-color 150ms ease;
 }
-
 
 /* ══════════════════════════════════════════════════════════════════
    PRE-AUTH (sign-in / landing) THEME — scoped to .landing-page only.
@@ -955,26 +919,7 @@ input[type="reset"]:disabled {
 .landing-page .landing-intro-orbit-node--blue   { background: var(--info);  bottom: -3px; left: 35%; transform: translateX(-50%); }
 .landing-page .landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
 
-/* Button shimmer. */
-.landing-page .landing-btn-shimmer { position: relative; overflow: hidden; }
-.landing-page .landing-btn-shimmer::before {
-  content: ''; position: absolute; inset: 0;
-  background: linear-gradient(to right, transparent, rgba(255,255,255,0.3), transparent);
-  transform: translateX(-200%); transition: transform 0.7s ease;
-  border-radius: 9999px; pointer-events: none;
-}
-.landing-page .landing-btn-shimmer:hover::before { transform: translateX(200%); }
-
 /* Spotlight card hover glow. */
-.landing-page .landing-spotlight-card { position: relative; overflow: hidden; }
-.landing-page .landing-spotlight-card::before {
-  content: ""; position: absolute; inset: 0; border-radius: 1rem;
-  background: radial-gradient(250px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(27,108,66,0.04) 0%, transparent 70%);
-  opacity: 0; transition: opacity 0.5s ease; pointer-events: none; z-index: 0;
-}
-.landing-page .landing-spotlight-card:hover::before { opacity: 1; }
-.landing-page .landing-icon-container { transition: transform 0.4s var(--ease); }
-.landing-page .landing-spotlight-card:hover .landing-icon-container { transform: scale(1.1) rotate(5deg); }
 
 /* Landing scrollbar. */
 .landing-page ::-webkit-scrollbar       { width: 6px; }
