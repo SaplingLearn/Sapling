@@ -6,6 +6,7 @@ task types (RETRIEVAL_QUERY for queries, RETRIEVAL_DOCUMENT for indexing),
 then calls the match_course_chunks Supabase RPC for ANN retrieval.
 """
 import hashlib
+import logging
 import os
 
 from google import genai
@@ -13,6 +14,9 @@ from google.genai import types as genai_types
 
 from agents._providers import model_mode
 from db.connection import rpc, table
+from services.events_service import log_event
+
+logger = logging.getLogger(__name__)
 
 # Bound embedding requests so a stalled Gemini call can't hang quiz/tutor
 # grounding indefinitely — retrieve_chunks() runs inline on the request path.
@@ -134,8 +138,23 @@ def retrieve_chunks(
         }
         rows = rpc("match_course_chunks", params)
         return [r for r in rows if r.get("similarity", 0) >= min_similarity]
+    except _EmbeddingDisabled as e:
+        # The #439 seam guard, not a failure: below-seam embedding is disabled
+        # by design outside real mode, so every function-mode turn lands here.
+        # An error event per turn would drown the real signal below in noise.
+        logger.info("[RAG] retrieve_chunks skipped: %s", e)
+        return []
     except Exception as e:
-        print(f"[RAG] retrieve_chunks failed: {e}")
+        # Degrading to [] is deliberate (grounding is best-effort), but [] is
+        # ALSO what "nothing relevant matched" returns — so without this the
+        # caller, the logs and the rollups cannot tell an ungrounded turn from
+        # a grounded one. Log on the app path and emit a countable event (#482).
+        logger.warning("[RAG] retrieve_chunks failed: %s", e, exc_info=True)
+        log_event(
+            "rag.retrieval_failed",
+            category="error",
+            payload={"course_id": course_id, "error_type": type(e).__name__},
+        )
         return []
 
 
@@ -200,6 +219,9 @@ def index_document_chunks(
 
     # Embed in batches of 50 (API limit)
     BATCH = 50
+    # Distinguishes "the seam turned embedding off" (#439, every function-mode
+    # run) from "embedding broke" — only the latter is worth an error event.
+    embedding_disabled = False
     for i in range(0, len(records), BATCH):
         batch = records[i : i + BATCH]
         texts = [r["chunk_text"] for r in batch]
@@ -207,8 +229,13 @@ def index_document_chunks(
             vecs = _embed_documents_batch(texts)
             for rec, vec in zip(batch, vecs):
                 rec["embedding"] = vec
+        except _EmbeddingDisabled as e:
+            embedding_disabled = True
+            logger.info("[RAG] doc %s batch %s not embedded: %s", doc_id, i, e)
         except Exception as e:
-            print(f"[RAG] embed failed for doc {doc_id} batch {i}: {e}")
+            logger.warning(
+                "[RAG] embed failed for doc %s batch %s: %s", doc_id, i, e, exc_info=True
+            )
 
     # Never persist a chunk whose embedding didn't land. match_course_chunks
     # ranks by vector distance, so a NULL-embedding row can never be returned
@@ -217,10 +244,26 @@ def index_document_chunks(
     # failure used to read as a complete success (#482).
     embedded = [r for r in records if r["embedding"] is not None]
     dropped = len(records) - len(embedded)
-    if dropped:
-        print(
-            f"[RAG] doc {doc_id}: dropped {dropped}/{len(records)} chunk(s) "
-            f"with no embedding — they would be unretrievable"
+    if dropped and embedding_disabled:
+        logger.info(
+            "[RAG] doc %s: %s/%s chunk(s) not indexed — embedding disabled (#439)",
+            doc_id, dropped, len(records),
+        )
+    elif dropped:
+        # Silent data loss behind a successful-looking upload: the documents
+        # row lands, the user sees success, and these chunks are simply absent
+        # from retrieval forever. Countable so a partial-index rate is visible
+        # (#482); re-index with scripts/backfill_document_chunks.py.
+        logger.warning(
+            "[RAG] doc %s: dropped %s/%s chunk(s) with no embedding — "
+            "they would be unretrievable",
+            doc_id, dropped, len(records),
+        )
+        log_event(
+            "rag.chunks_dropped",
+            category="error",
+            user_id=uploader_id,
+            payload={"doc_id": doc_id, "dropped": dropped, "total": len(records)},
         )
 
     if not embedded:
