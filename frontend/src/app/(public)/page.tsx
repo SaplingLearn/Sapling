@@ -7,6 +7,7 @@ import { useScrollLock } from '@/lib/useScrollLock';
 import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } from 'lucide-react';
 import HowItWorks from '@/components/HowItWorks';
 import SignInModal from '@/components/SignInModal';
+import { HeroCard } from '@/components/HeroCard';
 import { BRAND_FOREST } from '@/lib/brand';
 import { Button } from "@/components/ui";
 import { IS_TEST_MODE, random, now } from '@/lib/testMode';
@@ -750,16 +751,9 @@ export default function LandingPage() {
           style={{ background: 'rgba(12,18,26,0.45)' }}
           onClick={closeModal}
         >
-          <div
-            className={`${betaModalClosing ? 'modal-card-out' : 'modal-card-in'}`}
-            style={{
-              background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)',
-              borderRadius: 20,
-              padding: '40px 52px',
-              textAlign: 'center',
-              border: '1px solid rgba(255,255,255,0.7)',
-              boxShadow: '0 20px 60px rgba(15,23,42,0.15)',
-            }}
+          <HeroCard
+            className={betaModalClosing ? 'modal-card-out' : 'modal-card-in'}
+            style={{ padding: '40px 52px', textAlign: 'center' }}
             onClick={e => e.stopPropagation()}
           >
             <h2 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 32, lineHeight: 1.1, fontWeight: 600, letterSpacing: '-0.02em', color: '#1a1a1a' }}>
@@ -768,7 +762,7 @@ export default function LandingPage() {
             <p style={{ margin: '10px 0 0', fontSize: 17, color: '#4b5563', fontStyle: 'italic' }}>
               See you in the inbox - The Team
             </p>
-          </div>
+          </HeroCard>
         </div>
       )}
       {betaModalOpen && !betaSubmitted && (
@@ -777,20 +771,16 @@ export default function LandingPage() {
           style={{ background: 'rgba(12,18,26,0.65)' }}
           onClick={() => { if (!betaSubmitting) closeModal(); }}
         >
-          <div
+          <HeroCard
             className={`relative w-full ${betaModalClosing ? 'modal-card-out' : 'modal-card-in'}`}
             style={{
               maxWidth: 'min(1040px, 94vw)',
               width: '100%',
-              background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)',
-              borderRadius: 24,
               display: 'grid',
               gridTemplateColumns: '1fr 1px 1fr',
               minHeight: 560,
               maxHeight: 'calc(100vh - 48px)',
               overflow: 'hidden',
-              border: '1px solid rgba(255,255,255,0.7)',
-              boxShadow: '0 20px 60px rgba(15,23,42,0.12), inset 0 0 0 1px rgba(255,255,255,0.5)',
             }}
             onClick={e => e.stopPropagation()}
             role="dialog"
@@ -814,9 +804,8 @@ export default function LandingPage() {
             >×</button>
 
             {/* ── Left: brand + perks panel ── */}
-            <div style={{
+            <div className="hero-surface" style={{
               padding: '36px 36px 32px',
-              background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)',
               display: 'flex', flexDirection: 'column', gap: 22,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -868,7 +857,7 @@ export default function LandingPage() {
             <div style={{ background: 'rgba(107,114,128,0.15)', alignSelf: 'stretch' }} />
 
             {/* ── Right: newsletter form ── */}
-            <div style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column', background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)' }}>
+            <div className="hero-surface" style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column' }}>
               <div style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace", fontSize: 10, color: '#D97706', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 500, marginBottom: 10 }}>
                 ● Issue 001 dropping soon
               </div>
@@ -968,7 +957,7 @@ export default function LandingPage() {
                 </p>
               </form>
             </div>
-          </div>
+          </HeroCard>
         </div>
       )}
 

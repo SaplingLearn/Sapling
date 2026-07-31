@@ -212,6 +212,35 @@ body { font-size: 14px; line-height: 1.5; }
   border-radius: var(--r-lg); box-shadow: var(--shadow-sm);
 }
 
+/* ── Hero surface (#288) ──────────────────────────────────────────────────
+   The warm marketing gradient behind the sign-in and beta modals. It was
+   inlined as a literal at five sites and had already drifted apart there
+   (three different shadow alphas, two radii, one missing inset), while the
+   --surface-hero / --surface-hero-shadow tokens sat further down this file
+   with zero consumers. These two classes are the only consumers now.
+
+   `.hero-surface` is the gradient ALONE — for panels nested inside a
+   `.card--hero`, which must not restate its border, radius or shadow.
+   `.card--hero` is the full surface, and is used together with `.card`
+   (`class="card card--hero"`), so it has to be declared after it to win.
+
+   The literal fallbacks are deliberate. The tokens are scoped to
+   `.public-surface, .landing-page`, so a `.card--hero` mounted anywhere
+   outside the pre-auth subtree would otherwise render with no background at
+   all. Every consumer is inside that subtree today — this is the guard for
+   the day one of them isn't, which for a shared component is a matter of
+   time rather than of chance. */
+.hero-surface,
+.card--hero {
+  background: var(--surface-hero, linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%));
+}
+
+.card--hero {
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 24px;
+  box-shadow: var(--surface-hero-shadow, 0 20px 60px rgba(19, 38, 16, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.5));
+}
+
 .divider { height: 1px; background: var(--border); }
 
 .label-micro {
