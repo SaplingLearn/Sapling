@@ -115,7 +115,16 @@ export function AtmosphericBackdrop() {
     // Test mode paints one still frame with seeded orbs — same path as
     // prefers-reduced-motion.
     reducedMotionRef.current = IS_TEST_MODE || !!mql?.matches;
-    const onReducedChange = () => { reducedMotionRef.current = IS_TEST_MODE || !!mql?.matches; };
+    const onReducedChange = () => {
+      reducedMotionRef.current = IS_TEST_MODE || !!mql?.matches;
+      // Un-reducing must revive the loop explicitly: tick() parks itself on a
+      // still frame when reduced (the old always-running loop resumed
+      // implicitly, so without this the backdrop would stay frozen).
+      if (!reducedMotionRef.current && rafRef.current == null && !document.hidden) {
+        lastFrameRef.current = null;
+        rafRef.current = requestAnimationFrame(tick);
+      }
+    };
     mql?.addEventListener?.("change", onReducedChange);
 
     const drawFrame = () => {

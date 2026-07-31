@@ -12,14 +12,12 @@ import { Button } from "@/components/ui";
 import { IS_TEST_MODE, random, now } from '@/lib/testMode';
 
 // HowItWorks statically imports framer-motion, which a plain import would ride
-// into the landing chunk. Lazy-load it ssr:false (same split as ChatPanel's
-// MarkdownChat) so the motion stack ships as its own client chunk. The
-// placeholder mirrors the section's own 340vh scroll height so the layout
-// below doesn't shift while the chunk loads. Tradeoff: ssr:false drops this
-// section's marketing copy from the server HTML (JS-rendering crawlers still
-// see it); if that ever matters, hoist the headings into static markup.
+// into the landing chunk. next/dynamic splits it into its own client chunk
+// while still server-rendering the section's marketing copy (#492 review:
+// ssr:false would drop it from the HTML crawlers see — the one page where
+// that matters). The placeholder mirrors the section's own 340vh scroll
+// height so layout below doesn't shift during client-side chunk loads.
 const HowItWorks = dynamic(() => import('@/components/HowItWorks'), {
-  ssr: false,
   loading: () => <section id="how-it-works" className="landing-section relative" style={{ height: '340vh' }} />,
 });
 
