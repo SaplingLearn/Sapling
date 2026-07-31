@@ -56,6 +56,10 @@ export function errorRateSeries(
  * gutter can't fit raw token totals; table fallbacks keep the exact values. */
 export function formatCompactCount(v: number): string {
   if (v >= 1_000_000) return `${Number((v / 1_000_000).toFixed(1))}M`;
-  if (v >= 1_000) return `${Number((v / 1_000).toFixed(1))}k`;
+  if (v >= 1_000) {
+    // Rounding can carry 999_950+ up to "1000k" — promote to the next unit.
+    const k = Number((v / 1_000).toFixed(1));
+    return k >= 1_000 ? `${Number((k / 1_000).toFixed(1))}M` : `${k}k`;
+  }
   return String(v);
 }

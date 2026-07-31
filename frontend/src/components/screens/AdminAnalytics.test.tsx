@@ -251,7 +251,18 @@ describe("AdminAnalytics", () => {
     await screen.findByText("42");
     // The #121 category tables survive, and each day-series chart cluster now
     // has a "View data" table twin (the hover tooltip has no keyboard path).
-    expect(screen.getAllByText("View data").length).toBeGreaterThanOrEqual(5);
+    // Summaries carry per-chart labels so screen-reader users can tell the
+    // five disclosures apart.
+    expect(screen.getAllByText(/^View data: /).length).toBeGreaterThanOrEqual(5);
+    for (const label of [
+      "View data: events per day",
+      "View data: event types",
+      "View data: cost per day",
+      "View data: cost breakdown",
+      "View data: errors per day",
+    ]) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
     const panel = (name: string) =>
       within(screen.getByRole("heading", { name }).closest("section") as HTMLElement);
     // Usage day table: the plotted 2026-07-10 value plus an explicit

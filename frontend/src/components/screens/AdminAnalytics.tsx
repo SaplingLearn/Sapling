@@ -89,7 +89,8 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
  * keyboard/screen-reader path. Rows follow the first non-empty series' dates
  * (callers zero-fill every series over the same range, so domains align);
  * a column with no value for a date renders an em dash. */
-function DaySeriesTable({ columns }: {
+function DaySeriesTable({ label, columns }: {
+  label: string;
   columns: { label: string; points: DayPointValue[]; format?: (v: number) => string }[];
 }) {
   const dates = columns.find((c) => c.points.length)?.points.map((p) => p.date) ?? [];
@@ -97,7 +98,7 @@ function DaySeriesTable({ columns }: {
   const byDate = columns.map((c) => new Map(c.points.map((p) => [p.date, p.value])));
   return (
     <details style={{ marginTop: 12 }}>
-      <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data</summary>
+      <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data: {label}</summary>
       <div style={scrollX}>
         <table style={{ borderCollapse: "collapse", minWidth: 280, marginTop: 8 }}>
           <thead>
@@ -279,14 +280,14 @@ function AnalyticsBody() {
                   fillColor="var(--sap-100, #e0ecd8)"
                   ariaLabel="Events per day"
                 />
-                <DaySeriesTable columns={[{ label: "Events", points: eventPoints }]} />
+                <DaySeriesTable label="events per day" columns={[{ label: "Events", points: eventPoints }]} />
                 <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Top event types</h3>
                 <CategoryBars
                   rows={d.by_event_type.slice(0, 8).map((r) => ({ label: r.event_type, value: r.count }))}
                   ariaLabel="Top event types"
                 />
                 <details style={{ marginTop: 12 }}>
-                  <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data</summary>
+                  <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data: event types</summary>
                   <div style={scrollX}>
                     <table style={{ borderCollapse: "collapse", minWidth: 360, marginTop: 8 }}>
                       <thead>
@@ -412,6 +413,7 @@ function AnalyticsBody() {
                 format={formatCompactCount}
               />
               <DaySeriesTable
+                label="cost per day"
                 columns={[
                   { label: "Calls", points: callPoints },
                   { label: "Tokens", points: tokenPoints },
@@ -425,7 +427,7 @@ function AnalyticsBody() {
                 format={(v) => `$${v.toFixed(4)}`}
               />
               <details style={{ marginTop: 12 }}>
-                <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data</summary>
+                <summary style={{ fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>View data: cost breakdown</summary>
                 <div style={scrollX}>
                   <table style={{ borderCollapse: "collapse", minWidth: 560, marginTop: 8 }}>
                     <thead>
@@ -468,9 +470,13 @@ function AnalyticsBody() {
 
         <Panel title="Errors" query={errs} testid="admin-analytics-errors">
           {(d) => {
-            const errorPoints = d.series?.length
-              ? zeroFillDays(d.series.map((p) => ({ date: p.date, value: p.count })), d.range.from, d.range.to)
-              : [];
+            // Zero-fill even when the series is empty: a no-error range is a
+            // flat zero line and real 0s in the table, not "unknown" dashes.
+            const errorPoints = zeroFillDays(
+              (d.series ?? []).map((p) => ({ date: p.date, value: p.count })),
+              d.range.from,
+              d.range.to,
+            );
             // The rate denominator joins ACROSS panels: the usage summary's
             // events/day series. Both series zero-fill over THIS panel's
             // range so errorRateSeries joins on an aligned date domain (days
@@ -501,10 +507,15 @@ function AnalyticsBody() {
                 />
               ) : (
                 <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
-                  Error rate appears once the usage events-per-day series loads.
+                  {summary.error
+                    ? "Couldn't load the events-per-day series, so the error rate can't be computed."
+                    : summary.data
+                      ? "No events in this range."
+                      : "Error rate appears once the usage events-per-day series loads."}
                 </div>
               )}
               <DaySeriesTable
+                label="errors per day"
                 columns={[
                   { label: "Errors", points: errorPoints },
                   { label: "Error rate", points: ratePoints, format: formatPct },
