@@ -103,7 +103,7 @@ test("the knowledge-graph canvas fills the shell scrollport exactly, in both lay
   }
 });
 
-test("the gradebook does not manufacture scroll it does not need, in both layouts (#341)", async ({ page }) => {
+test("the gradebook adds no height beyond what its content needs, in both layouts (#341)", async ({ page }) => {
   await page.goto("/gradebook");
   // Anchor on a registered testid, not copy: the transcript trigger is part
   // of the landing's own chrome, so its presence means the screen is up.
@@ -113,16 +113,43 @@ test("the gradebook does not manufacture scroll it does not need, in both layout
     await useLayout(page, layout);
     await expect(page.getByTestId("gradebook-transcript-open")).toBeVisible();
 
-    const fit = (await measure(page, "app-shell"))!;
-    // The old `minHeight: calc(100vh - var(--row-h))` subtracted a DENSITY
-    // token as if it were a nav height, so the screen was reliably TALLER
-    // than the space it had — manufacturing scroll on a page whose seeded
-    // content fits. `flex: 1 0 auto` fills exactly and still grows when the
-    // content genuinely needs it.
+    // Deliberately NOT "the page must not scroll": at topnav the scrollport
+    // is 56px shorter, and the seeded gradebook's content genuinely needs
+    // more than that — scrolling is the correct answer there. What the fix
+    // guarantees is narrower and checkable: the container contributes no
+    // height of its OWN beyond what it was given or what its content needs.
+    const box = await page.evaluate(() => {
+      const shell = document.querySelector('[data-testid="app-shell"]');
+      const main = shell?.querySelector("main");
+      if (!shell || !main) return null;
+      const s = shell.getBoundingClientRect();
+      const m = main.getBoundingClientRect();
+      return {
+        mainHeight: Math.round(m.height),
+        // Space from the screen's <main> down to the scrollport's bottom.
+        available: Math.round(s.height - (m.top - s.top)),
+        // The content's own natural height, independent of the box sizing it.
+        content: main.scrollHeight,
+      };
+    });
+    expect(box, "the gradebook screen should render its own <main>").not.toBeNull();
+
+    const { mainHeight, available, content } = box!;
+    const needed = Math.max(available, content);
+    // The bug: `minHeight: calc(100vh - var(--row-h))` subtracted a DENSITY
+    // token (40/34/48px) as if it were a nav height, so the box was taller
+    // than both the space it had AND its content — pure phantom height. On
+    // the unfixed build that surfaced as exactly 40px of spurious scroll at
+    // the default density, which is `--row-h` to the pixel.
     expect(
-      fit.scrollOverflow,
-      `layout "${layout}": the seeded gradebook fits its ${fit.shellHeight}px scrollport, ` +
-        `so it should not scroll — scrolls by ${fit.scrollOverflow}px`,
-    ).toBeLessThanOrEqual(SLACK);
+      mainHeight,
+      `layout "${layout}": <main> is ${mainHeight}px but needs only ${needed}px ` +
+        `(${available}px available, ${content}px of content) — ${mainHeight - needed}px is phantom`,
+    ).toBeLessThanOrEqual(needed + SLACK);
+    // And it must still FILL the space it was given, or `flex-grow` is broken.
+    expect(
+      mainHeight,
+      `layout "${layout}": <main> is ${mainHeight}px and does not fill its ${available}px of space`,
+    ).toBeGreaterThanOrEqual(available - SLACK);
   }
 });
