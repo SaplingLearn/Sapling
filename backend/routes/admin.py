@@ -24,6 +24,7 @@ from models import (
     LinkRoleCosmeticBody,
     AllowlistEmailBody,
     AchievementIconBody,
+    UpdateXpRuleBody,
 )
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
@@ -285,6 +286,22 @@ def delete_achievement(achievement_id: str, request: Request):
 def grant_achievement(body: GrantAchievementBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
+
+    # Resolve the badge BEFORE granting: a 'draft' achievement is
+    # work-in-progress in the admin wiki and must never reach a user.
+    achievement = table("achievements").select(
+        "id,slug,status", filters={"id": f"eq.{body.achievement_id}"},
+    )
+    if not achievement:
+        raise HTTPException(status_code=404, detail="Achievement not found")
+    achievement_row = achievement[0]
+    if achievement_row.get("status") != "live":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Achievement '{achievement_row.get('slug')}' is a draft — "
+                   f"publish it before granting.",
+        )
+
     # Check if already earned
     existing = table("user_achievements").select(
         "achievement_id",
@@ -386,6 +403,37 @@ def link_achievement_cosmetic(body: LinkAchievementCosmeticBody, request: Reques
         payload={"cosmetic_id": body.cosmetic_id},
     )
     return {"linked": True}
+
+
+# ── XP rules ─────────────────────────────────────────────────────────────────
+
+@router.get("/xp-rules")
+def list_xp_rules(request: Request):
+    require_admin(request)
+    rows = table("xp_rules").select("*", order="key.asc")
+    return {"rules": rows or []}
+
+
+@router.patch("/xp-rules/{key}")
+def update_xp_rule(key: str, body: UpdateXpRuleBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    updates: dict = {}
+    if body.amount is not None:
+        if body.amount < 0:
+            raise HTTPException(status_code=400, detail="amount must be >= 0")
+        updates["amount"] = body.amount
+    if body.enabled is not None:
+        updates["enabled"] = body.enabled
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    table("xp_rules").update(updates, filters={"key": f"eq.{key}"})
+    log_admin_action(
+        actor_id=actor, action="xp_rule.update", target_type="xp_rule",
+        target_id=key, payload=updates,
+    )
+    return {"updated": True}
 
 
 # ── Cosmetics ────────────────────────────────────────────────────────────────
