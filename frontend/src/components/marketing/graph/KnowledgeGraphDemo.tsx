@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { IS_TEST_MODE, now } from '@/lib/testMode';
+import { usePrefersReducedMotion } from '@/lib/usePrefersReducedMotion';
 
 import { COURSE_GRAPHS, TIER_COLOR, type CourseGraph } from './courseGraphs';
 import { helixEntry, radialLayout, type Point } from './layout';
@@ -20,11 +21,21 @@ function nodeRadius(g: CourseGraph, id: string): number {
 /**
  * Renders one course's edges + nodes, animating them in along the helical
  * entry path (#344). The parent keys this by `graph.id`, so picking another
- * course remounts it — a fresh `progress` state per course instead of
- * resetting one inside an effect (the "adjusting state on a prop change"
+ * course remounts it — a fresh `animatedProgress` state per course instead
+ * of resetting one inside an effect (the "adjusting state on a prop change"
  * anti-pattern React's own react-hooks/set-state-in-effect rule flags).
  * Remounting also means unmount cleanup alone is enough to cancel the RAF
  * both on course change and on real unmount — no separate reset path needed.
+ *
+ * `progress` is derived from `animatedProgress`, not the state directly:
+ * `parked` can flip after mount without a remount (`usePrefersReducedMotion`
+ * corrects from its SSR-safe default to the real client value shortly after
+ * hydration — see that hook's doc comment), and deriving `progress` this way
+ * means that transition is correct in *both* directions without an effect
+ * having to reconcile it: parked always reads back as the complete frame
+ * regardless of whatever `animatedProgress` last held, and un-parking just
+ * exposes whatever `animatedProgress` already is (still its unmounted-since
+ * initial `0` if the assembly effect below hasn't started yet).
  */
 function AssemblingGraph({
   graph,
@@ -35,10 +46,11 @@ function AssemblingGraph({
   points: Map<string, Point>;
   parked: boolean;
 }) {
+  const [animatedProgress, setAnimatedProgress] = useState(0);
   // "Parked" means the assembly is skipped and the graph renders complete —
   // fully laid out, full opacity — on the very first frame. Reduced-motion
   // visitors and the E2E/unit-test lanes (IS_TEST_MODE) both get this.
-  const [progress, setProgress] = useState(parked ? 1 : 0);
+  const progress = parked ? 1 : animatedProgress;
   const rafRef = useRef(0);
 
   useEffect(() => {
@@ -46,7 +58,7 @@ function AssemblingGraph({
     const start = now();
     const tick = () => {
       const p = Math.min(1, (now() - start) / ASSEMBLE_MS);
-      setProgress(p);
+      setAnimatedProgress(p);
       if (p < 1) rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -111,10 +123,12 @@ export default function KnowledgeGraphDemo() {
   );
   const points = useMemo(() => radialLayout(graph, VIEW_W, VIEW_H), [graph]);
 
-  const prefersReduced =
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // `usePrefersReducedMotion` (not a direct `window.matchMedia` read in the
+  // render body — #344 fix round 1) is hydration-safe: it renders the same
+  // value on the server and the first client paint, then corrects to the
+  // real value after hydration commits. See its doc comment for why it
+  // defaults to "reduced motion" rather than "no preference".
+  const prefersReduced = usePrefersReducedMotion();
   const parked = IS_TEST_MODE || prefersReduced;
 
   return (
