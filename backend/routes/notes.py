@@ -35,6 +35,7 @@ from services.notes_service import (
 )
 from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
+from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,14 @@ async def create(body: CreateNoteBody, request: Request):
     # Same F4 enrichment as the read paths so a freshly created note carries its
     # abstract course_id + labels (else it shows "Unknown course" until reload).
     note.update(_course_meta(note.get("offering_id") or offering_id, {}))
+    # create_note (services/notes_service.py) inserts a single notes row per
+    # call and this route calls it exactly once — award immediately after it
+    # returns, keyed on the freshly-created note id so a client retry is an
+    # idempotent no-op rather than a second payout.
+    award_xp_safe(
+        body.user_id, "note_created",
+        source_type="note", source_id=note["id"],
+    )
     # #117: ids + a boolean only — never the (encrypted-at-rest) title/body.
     events_service.log_event(
         "note.created",

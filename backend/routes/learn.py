@@ -26,6 +26,7 @@ from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_pre
 from services.profiles import get_display_name
 from services.graph_service import get_graph
 from services.request_context import current_request_id
+from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
 
@@ -986,6 +987,16 @@ def end_session(body: EndSessionBody, request: Request):
     table("sessions").update(
         {"ended_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{body.session_id}"},
+    )
+
+    # The row above is the commit point for "session completed" — award
+    # immediately after it, keyed on the session id. A double end-session
+    # call (no guard against re-ending here, same as the pre-existing
+    # login_streak/session_count achievement check below) re-runs this, but
+    # the xp_events idempotency key makes the repeat a clean no-op.
+    award_xp_safe(
+        body.user_id, "session_completed",
+        source_type="session", source_id=body.session_id,
     )
 
     msgs = table("messages").select(
