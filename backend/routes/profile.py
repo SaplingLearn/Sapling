@@ -572,7 +572,8 @@ def set_featured_achievements(user_id: str, body: SetFeaturedAchievementsBody, r
 @router.get("/{user_id}/achievements")
 def get_achievements(user_id: str):
     all_achs = table("achievements").select(
-        "id,name,slug,description,icon,category,rarity,is_secret"
+        "id,name,slug,description,icon,category,rarity,is_secret",
+        filters={"status": "eq.live"},
     )
     if not all_achs:
         return {"earned": [], "available": []}
