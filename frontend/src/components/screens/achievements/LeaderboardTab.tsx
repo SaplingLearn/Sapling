@@ -76,6 +76,7 @@ function Podium({ rows }: { rows: LeaderboardRow[] }) {
 function RankRow({ row }: { row: LeaderboardRow }) {
   return (
     <div
+      data-testid={row.is_you ? "leaderboard-row-you" : undefined}
       style={{
         display: "flex", alignItems: "center", gap: 12, padding: "10px 16px",
         borderRadius: "var(--r-md)",

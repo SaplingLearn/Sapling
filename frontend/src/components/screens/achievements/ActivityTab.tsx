@@ -24,11 +24,11 @@ export function computeGoalY(dailyGoalXp: number, scaleMax: number, chartH: numb
   return chartH - Math.min(chartH, Math.round((dailyGoalXp / scaleMax) * chartH));
 }
 
-function StatTile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
+function StatTile({ label, value, sub, testId }: { label: string; value: React.ReactNode; sub?: string; testId?: string }) {
   return (
     <div className="card" style={{ padding: "16px 18px" }}>
       <div className="label-micro">{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 600, marginTop: 4 }}>{value}</div>
+      <div data-testid={testId} style={{ fontSize: 22, fontWeight: 600, marginTop: 4 }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{sub}</div>}
     </div>
   );
@@ -155,7 +155,7 @@ export function ActivityTab({ userId }: { userId: string }) {
   return (
     <div style={{ padding: "24px 32px" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 16 }}>
-        <StatTile label="Week total" value={`${data.tiles.week_total} XP`} />
+        <StatTile testId="activity-week-total" label="Week total" value={`${data.tiles.week_total} XP`} />
         <StatTile label="Daily average" value={`${data.tiles.daily_avg} XP`} />
         <StatTile label="Best day" value={`${data.tiles.best_day} XP`} sub={data.tiles.best_day_label || undefined} />
         <StatTile label="Streak" value={`${data.tiles.streak} day${data.tiles.streak === 1 ? "" : "s"}`} />

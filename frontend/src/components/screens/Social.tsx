@@ -283,7 +283,7 @@ function FriendRow({ friend, onRemove }: { friend: Friend; onRemove: () => void 
   const remove = useConfirm(onRemove);
   return (
     <div
-      data-testid={`friend-row-${friend.user_id}`}
+      data-testid={`social-friend-row-${friend.user_id}`}
       style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}
     >
       <Avatar name={friend.name} size={26} />
@@ -296,7 +296,7 @@ function FriendRow({ friend, onRemove }: { friend: Friend; onRemove: () => void 
         </div>
       </div>
       <button
-        data-testid={`friend-remove-${friend.user_id}`}
+        data-testid={`social-friend-remove-${friend.user_id}`}
         className={`btn btn--sm ${remove.armed ? "btn--danger" : "btn--ghost"}`}
         onClick={remove.trigger}
         style={remove.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
@@ -396,7 +396,7 @@ export function FriendsPanel() {
           {incoming.map((r) => (
             <div
               key={r.id}
-              data-testid={`friend-incoming-${r.id}`}
+              data-testid={`social-friend-incoming-${r.id}`}
               style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}
             >
               <Avatar name={r.name} size={24} />
@@ -404,14 +404,14 @@ export function FriendsPanel() {
                 {r.name}
               </div>
               <button
-                data-testid={`friend-accept-${r.id}`}
+                data-testid={`social-friend-accept-${r.id}`}
                 className="btn btn--sm btn--primary"
                 onClick={() => accept(r.id)}
               >
                 Accept
               </button>
               <button
-                data-testid={`friend-decline-${r.id}`}
+                data-testid={`social-friend-decline-${r.id}`}
                 className="btn btn--sm btn--ghost"
                 onClick={() => decline(r.id)}
               >
@@ -428,7 +428,7 @@ export function FriendsPanel() {
           {outgoing.map((r) => (
             <div
               key={r.id}
-              data-testid={`friend-outgoing-${r.id}`}
+              data-testid={`social-friend-outgoing-${r.id}`}
               style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}
             >
               <Avatar name={r.name} size={24} />

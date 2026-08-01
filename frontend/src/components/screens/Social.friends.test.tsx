@@ -82,8 +82,8 @@ describe("FriendsPanel", () => {
 
     render(<FriendsPanel />);
 
-    await waitFor(() => expect(screen.getByTestId("friend-row-f1")).toBeInTheDocument());
-    const row = within(screen.getByTestId("friend-row-f1"));
+    await waitFor(() => expect(screen.getByTestId("social-friend-row-f1")).toBeInTheDocument());
+    const row = within(screen.getByTestId("social-friend-row-f1"));
     expect(row.getByText("Lv 3 · 450 XP")).toBeInTheDocument();
     expect(screen.queryByText("Incoming requests")).toBeNull();
     expect(screen.queryByText("Outgoing")).toBeNull();
@@ -98,10 +98,10 @@ describe("FriendsPanel", () => {
 
     render(<FriendsPanel />);
 
-    await waitFor(() => expect(screen.getByTestId("friend-incoming-r1")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("social-friend-incoming-r1")).toBeInTheDocument());
     expect(screen.getByText("Incoming requests")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeInTheDocument(); // count chip
-    expect(screen.getByTestId("friend-outgoing-r2")).toBeInTheDocument();
+    expect(screen.getByTestId("social-friend-outgoing-r2")).toBeInTheDocument();
     expect(screen.getByText("Pending")).toBeInTheDocument();
   });
 
@@ -113,9 +113,9 @@ describe("FriendsPanel", () => {
     mockedRemove.mockResolvedValue({ removed: true });
 
     render(<FriendsPanel />);
-    await waitFor(() => expect(screen.getByTestId("friend-remove-f1")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("social-friend-remove-f1")).toBeInTheDocument());
 
-    const btn = screen.getByTestId("friend-remove-f1");
+    const btn = screen.getByTestId("social-friend-remove-f1");
     fireEvent.click(btn);
     expect(mockedRemove).not.toHaveBeenCalled();
     expect(screen.getByText("Click again")).toBeInTheDocument();
@@ -138,9 +138,9 @@ describe("FriendsPanel", () => {
     mockedAccept.mockResolvedValue({ accepted: true });
 
     render(<FriendsPanel />);
-    await waitFor(() => expect(screen.getByTestId("friend-accept-r1")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("social-friend-accept-r1")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByTestId("friend-accept-r1"));
+    fireEvent.click(screen.getByTestId("social-friend-accept-r1"));
 
     await waitFor(() => expect(mockedAccept).toHaveBeenCalledWith("r1", "u1"));
     await waitFor(() => expect(mockedFetchFriends).toHaveBeenCalledTimes(2));
@@ -159,14 +159,14 @@ describe("FriendsPanel", () => {
     mockedDecline.mockRejectedValue(new Error('{"detail":"Request not found."}'));
 
     render(<FriendsPanel />);
-    await waitFor(() => expect(screen.getByTestId("friend-decline-r1")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("social-friend-decline-r1")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByTestId("friend-decline-r1"));
+    fireEvent.click(screen.getByTestId("social-friend-decline-r1"));
 
     await waitFor(() => expect(mockedDecline).toHaveBeenCalledWith("r1", "u1"));
     expect(toastSpies.error).toHaveBeenCalled();
     // The row disappears because the refetch's server truth no longer has it,
     // not because we removed it optimistically.
-    await waitFor(() => expect(screen.queryByTestId("friend-decline-r1")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("social-friend-decline-r1")).toBeNull());
   });
 });

@@ -34,6 +34,7 @@ function TabBar({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
       {TABS.map((t) => (
         <button
           key={t.value}
+          data-testid={`achievements-tab-${t.value}`}
           role="tab"
           aria-selected={tab === t.value}
           onClick={() => onChange(t.value)}
@@ -262,6 +263,7 @@ export function Achievements() {
                     }}
                   >
                     <button
+                      data-testid={`achievements-showcase-remove-${id}`}
                       onClick={() => toggleFeature(id)}
                       aria-label="Remove from showcase"
                       style={{
