@@ -1,6 +1,18 @@
-"""Friends endpoints — request, accept, decline, remove, list."""
+"""Friends endpoints — request, accept, decline, remove, list.
+
+The TestAuthGuard class below covers the identity guard added after an
+authorization-hole review: every endpoint that takes a user_id (body, query,
+or path) must call `require_self` before touching the DB, matching the rest
+of routes/social.py. conftest's autouse `_bypass_session_auth` fixture
+stubs `routes.social.require_self` to a no-op for the rest of this file's
+tests (so they can call routes with an arbitrary user_id and no session
+token); the guard tests here re-patch `routes.social.require_self` on top
+of that stub to assert it is actually invoked with the right user_id, and
+that a rejection from it actually propagates rather than being swallowed.
+"""
 from unittest.mock import MagicMock, patch
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from main import app
@@ -93,3 +105,82 @@ class TestList:
         assert r.json()["friends"] == [
             {"user_id": "u2", "name": "Priya Nair", "level": 7, "total_xp": 900}
         ]
+
+
+class TestAuthGuard:
+    """Each friends endpoint must call require_self(user_id, request) before
+    touching the DB — matching the rest of routes/social.py. These patch
+    routes.social.require_self directly (on top of conftest's autouse no-op
+    stub) to assert the call actually happens with the right user_id, and
+    that a rejection from it isn't swallowed."""
+
+    def test_send_request_checks_from_user_id(self):
+        handles = {"friend_requests": MagicMock(), "friendships": MagicMock()}
+        handles["friendships"].select.return_value = []
+        handles["friend_requests"].select.return_value = []
+        handles["friend_requests"].insert.return_value = [
+            {"id": "r1", "from_user_id": "u1", "to_user_id": "u2", "status": "pending"}
+        ]
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.require_self") as guard:
+            r = client.post("/api/social/friends/request",
+                            json={"from_user_id": "u1", "to_user_id": "u2"})
+        assert r.status_code == 200
+        assert guard.call_args[0][0] == "u1"
+
+    def test_accept_checks_user_id(self):
+        handles = {"friend_requests": MagicMock(), "friendships": MagicMock()}
+        handles["friend_requests"].select.return_value = [
+            {"id": "r1", "from_user_id": "u1", "to_user_id": "u2", "status": "pending"}
+        ]
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.check_achievements"), \
+             patch("routes.social.require_self") as guard:
+            r = client.post("/api/social/friends/requests/r1/accept?user_id=u2")
+        assert r.status_code == 200
+        assert guard.call_args[0][0] == "u2"
+
+    def test_decline_checks_user_id(self):
+        handles = {"friend_requests": MagicMock()}
+        handles["friend_requests"].select.return_value = [
+            {"id": "r1", "from_user_id": "u1", "to_user_id": "u2", "status": "pending"}
+        ]
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.require_self") as guard:
+            r = client.post("/api/social/friends/requests/r1/decline?user_id=u2")
+        assert r.status_code == 200
+        assert guard.call_args[0][0] == "u2"
+
+    def test_remove_checks_user_id(self):
+        handles = {"friendships": MagicMock()}
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.require_self") as guard:
+            r = client.delete("/api/social/friends/u2?user_id=u1")
+        assert r.status_code == 200
+        assert guard.call_args[0][0] == "u1"
+
+    def test_list_friends_checks_user_id(self):
+        handles = {"friendships": MagicMock()}
+        handles["friendships"].select.return_value = []
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.require_self") as guard:
+            r = client.get("/api/social/friends/u1")
+        assert r.status_code == 200
+        assert guard.call_args[0][0] == "u1"
+
+    def test_list_friend_requests_checks_user_id(self):
+        handles = {"friend_requests": MagicMock()}
+        handles["friend_requests"].select.return_value = []
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.require_self") as guard:
+            r = client.get("/api/social/friends/requests?user_id=u1")
+        assert r.status_code == 200
+        assert guard.call_args[0][0] == "u1"
+
+    def test_guard_rejection_propagates_not_swallowed(self):
+        """Proves the guard isn't decorative: when require_self raises, the
+        route must surface it rather than continuing on to the DB calls."""
+        with patch("routes.social.require_self",
+                   side_effect=HTTPException(status_code=403, detail="Forbidden: not your account")):
+            r = client.get("/api/social/friends/u1")
+        assert r.status_code == 403

@@ -610,7 +610,8 @@ def _are_friends(user_id: str, other_id: str) -> bool:
 
 
 @router.post("/friends/request")
-def send_friend_request(body: FriendRequestBody):
+def send_friend_request(body: FriendRequestBody, request: Request):
+    require_self(body.from_user_id, request)
     if body.from_user_id == body.to_user_id:
         raise HTTPException(status_code=400, detail="You can't friend yourself")
     if _are_friends(body.from_user_id, body.to_user_id):
@@ -645,7 +646,8 @@ def _load_request(request_id: str, user_id: str) -> dict:
 
 
 @router.post("/friends/requests/{request_id}/accept")
-def accept_friend_request(request_id: str, user_id: str):
+def accept_friend_request(request_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
     req = _load_request(request_id, user_id)
     a, b = req["from_user_id"], req["to_user_id"]
     # Symmetric rows: "my friends" stays a plain equality filter.
@@ -663,7 +665,8 @@ def accept_friend_request(request_id: str, user_id: str):
 
 
 @router.post("/friends/requests/{request_id}/decline")
-def decline_friend_request(request_id: str, user_id: str):
+def decline_friend_request(request_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
     _load_request(request_id, user_id)
     table("friend_requests").update(
         {"status": "declined", "responded_at": datetime.now(timezone.utc).isoformat()},
@@ -673,7 +676,8 @@ def decline_friend_request(request_id: str, user_id: str):
 
 
 @router.delete("/friends/{friend_id}")
-def remove_friend(friend_id: str, user_id: str):
+def remove_friend(friend_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
     table("friendships").delete(
         filters={"user_id": f"eq.{user_id}", "friend_id": f"eq.{friend_id}"}
     )
@@ -684,7 +688,8 @@ def remove_friend(friend_id: str, user_id: str):
 
 
 @router.get("/friends/requests")
-def list_friend_requests(user_id: str):
+def list_friend_requests(user_id: str, request: Request):
+    require_self(user_id, request)
     incoming = table("friend_requests").select(
         "id,from_user_id,created_at",
         filters={"to_user_id": f"eq.{user_id}", "status": "eq.pending"},
@@ -706,7 +711,11 @@ def list_friend_requests(user_id: str):
 
 
 @router.get("/friends/{user_id}")
-def list_friends(user_id: str):
+def list_friends(user_id: str, request: Request):
+    # Self-only for now: a friends list is arguably shareable with other
+    # users later (product decision), but the safe default until that's
+    # decided is that only the account owner can list their own friends.
+    require_self(user_id, request)
     rows = table("friendships").select("friend_id", filters={"user_id": f"eq.{user_id}"})
     ids = [r["friend_id"] for r in rows or []]
     if not ids:
