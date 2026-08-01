@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 # Columns copied onto the new row when a duplicate is found. `offering_id` is
 # not copied — it tells the caller which course the twin was indexed for, so it
 # can decide whether the shared chunks already exist.
-_TWIN_COLUMNS = "id,offering_id,category,extracted_text,summary,concept_notes"
+_TWIN_COLUMNS = (
+    "id,offering_id,category,extracted_text,summary,concept_notes,agent_result"
+)
 
 
 def file_sha256(file_bytes: bytes) -> str:
@@ -32,6 +34,37 @@ def file_sha256(file_bytes: bytes) -> str:
     fingerprint, or two students' copies of the same deck would look distinct.
     """
     return hashlib.sha256(file_bytes).hexdigest()
+
+
+def decode_result(raw: str | None):
+    """Rebuild a DocumentProcessingResult from the JSON stored on a document.
+
+    Storing the whole result — rather than rebuilding one from the row's
+    category/summary/concept_notes — is what makes skipping the agents on a
+    duplicate lossless. A field-by-field reconstruction would have to invent
+    `Summary.headline`, three `Summary.key_points` (min_length=3), and each
+    `Concept.importance`, none of which are persisted, and would drop
+    `syllabus.assignments` entirely — the calendar import's only source.
+
+    Returns None when there is nothing stored (documents predating the column)
+    or when the stored shape no longer validates against the current models.
+    Both degrade to "run the agents", never to an error: a stale payload must
+    not be able to fail an upload.
+    """
+    if not raw:
+        return None
+    # Imported here, not at module scope: agents/document.py pulls in the whole
+    # agent stack, and this module is imported by the upload route at startup.
+    from agents.document import DocumentProcessingResult
+
+    try:
+        return DocumentProcessingResult.model_validate_json(raw)
+    except Exception:
+        logger.warning(
+            "Stored agent result no longer validates — re-running the agents",
+            exc_info=True,
+        )
+        return None
 
 
 def chunks_already_exist(twin: dict | None, offering_id: str) -> bool:
@@ -103,4 +136,7 @@ def find_duplicate(file_hash: str) -> dict | None:
         "extracted_text": extracted,
         "summary": decrypt_if_present(first.get("summary")),
         "concept_notes": notes if isinstance(notes, list) else [],
+        # None for rows written before the column existed, or whose stored
+        # shape no longer validates. Callers treat that as "run the agents".
+        "result": decode_result(decrypt_if_present(first.get("agent_result"))),
     }

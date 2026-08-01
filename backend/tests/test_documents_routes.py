@@ -1339,6 +1339,9 @@ class TestUploadFileLevelDedup:
         "extracted_text": "photosynthesis converts light into sugar",
         "summary": "A deck on photosynthesis.",
         "concept_notes": [{"name": "Photosynthesis", "description": "d"}],
+        # No stored pipeline result — a row written before the column existed.
+        # The agents must still run for these.
+        "result": None,
     }
 
     def test_duplicate_file_skips_text_extraction(self):
@@ -1411,43 +1414,144 @@ class TestUploadFileLevelDedup:
 
         assert inserted["file_sha256"] == file_sha256(content)
 
-    def test_duplicate_syllabus_upload_still_populates_the_calendar(self):
-        """Syllabus uploads are deliberately NOT short-circuited by dedup.
+    def test_duplicate_with_a_stored_result_skips_the_agents(self):
+        """The whole pipeline result is persisted, so a byte-identical file
+        needs no LLM calls at all -- the classifier, summary and concepts
+        agents are pure functions of text that is already known."""
+        twin = dict(self._TWIN, result=_make_orchestrator_result(category="slides"))
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file") as extract,
+            patch("routes.documents.find_duplicate", return_value=twin),
+            patch("routes.documents.process_document") as agents,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d5", "file_name": "dup.pdf"}]
+            r = _make_upload(filename="dup.pdf")
 
-        Calendar assignments are read off `result.syllabus.assignments`, and no
-        column on the documents row stores them -- so they cannot be
-        reconstructed from a twin. If the dedup path ever grows an
-        agent-skipping branch, it must exclude syllabi, or the second student
-        to upload the same syllabus silently gets an empty calendar. This test
-        is the guard on that separation: the library-side dedup (OCR and
-        re-indexing) must not reach into the calendar path.
+        assert r.status_code == 200
+        extract.assert_not_called()
+        agents.assert_not_called()
+
+    def test_duplicate_without_a_stored_result_still_runs_the_agents(self):
+        """Rows written before the column existed carry no result. Falling back
+        to the agents keeps those uploads correct instead of persisting a
+        half-empty document."""
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file"),
+            patch("routes.documents.find_duplicate", return_value=self._TWIN),
+            patch(
+                "routes.documents.process_document",
+                return_value=_make_orchestrator_result(category="slides"),
+            ) as agents,
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d6", "file_name": "old.pdf"}]
+            r = _make_upload(filename="old.pdf")
+
+        assert r.status_code == 200
+        agents.assert_called_once()
+
+    def test_duplicate_syllabus_populates_the_calendar_without_rerunning_agents(self):
+        """The calendar import rides on the REPLAYED result, not on a fresh
+        agent run. `save_assignments_to_db` takes the uploader's user_id, so
+        replaying the twin's extracted assignments gives this student their own
+        calendar entries -- the separation that makes skipping the agents on a
+        syllabus safe.
         """
         from datetime import date
 
-        result = _make_orchestrator_result(
+        stored = _make_orchestrator_result(
             category="syllabus",
             is_syllabus=True,
             syllabus_assignments=[
                 {"title": "PS1", "due_date": date(2026, 4, 1), "description": None},
             ],
         )
-        twin = dict(self._TWIN, category="syllabus")
+        twin = dict(self._TWIN, category="syllabus", result=stored)
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file") as extract,
             patch("routes.documents.find_duplicate", return_value=twin),
-            patch("routes.documents.process_document", return_value=result) as agents,
+            patch("routes.documents.process_document") as agents,
             patch("routes.documents.save_assignments_to_db") as save_assignments,
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [{"id": "d4", "file_name": "syl.pdf"}]
-            r = _make_upload(filename="syl.pdf")
+            r = _make_upload(filename="syl.pdf", user_id="u2")
 
         assert r.status_code == 200
-        # OCR is still skipped -- that saving is safe for every category.
         extract.assert_not_called()
-        # But the agents still run, so the calendar still gets populated.
-        agents.assert_called_once()
+        agents.assert_not_called()
+        # The calendar is still populated -- and for THIS uploader.
         save_assignments.assert_called_once()
+        assert save_assignments.call_args[0][0] == "u2"
+
+    def test_persists_the_agent_result_for_future_reuse(self):
+        """Without the result on the row, the next duplicate has nothing to
+        replay and every uploader pays for the agents again."""
+        from services.encryption import decrypt_if_present
+
+        result = _make_orchestrator_result(category="slides")
+        with (
+            _mock_validate_user(),
+            patch(
+                "routes.documents.extract_text_from_file",
+                return_value=_doc_text("fresh text"),
+            ),
+            patch("routes.documents.find_duplicate", return_value=None),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d7", "file_name": "x.pdf"}]
+            _make_upload()
+            inserted = t.return_value.insert.call_args[0][0]
+
+        from services.document_dedup import decode_result
+
+        assert decode_result(decrypt_if_present(inserted["agent_result"])) == result
+
+    def test_streaming_duplicate_replays_without_calling_any_agent(self):
+        """The SSE route is the one the frontend uses, so the saving has to
+        land here too. The client-visible event sequence must be unchanged --
+        a replayed upload looks identical, just faster."""
+        stored = _make_orchestrator_result(category="slides")
+        twin = dict(self._TWIN, result=stored)
+        cls_run, sum_run, cpt_run = AsyncMock(), AsyncMock(), AsyncMock()
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file") as extract,
+            patch("routes.documents.find_duplicate", return_value=twin),
+            patch("routes.documents.classifier_agent.run", cls_run),
+            patch("routes.documents.summary_agent.run", sum_run),
+            patch("routes.documents.concept_extraction_agent.run", cpt_run),
+            patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
+            patch("routes.documents.table") as t,
+            patch("routes.documents._spawn_post_roll"),
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "stream-dup"}]
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("renamed.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                assert r.status_code == 200
+                body = r.read()
+
+        extract.assert_not_called()
+        cls_run.assert_not_called()
+        sum_run.assert_not_called()
+        cpt_run.assert_not_called()
+
+        steps = [json.loads(e["data"])["step"] for e in _parse_sse_stream(body)]
+        assert steps == [
+            "start", "classify", "classified", "extract", "extracted",
+            "graph_update", "graph_updated", "finalize", "done",
+        ]

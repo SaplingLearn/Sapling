@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 from services.document_dedup import (
     chunks_already_exist,
+    decode_result,
     file_sha256,
     find_duplicate,
 )
@@ -74,6 +75,31 @@ class TestFindDuplicate:
         assert filters["deleted_at"] == "is.null"
         assert filters["file_sha256"] == "eq.cafe1234"
 
+    def test_returns_the_stored_agent_result_ready_to_replay(self):
+        """The twin's whole pipeline result comes back decrypted and parsed, so
+        the caller can skip the agents entirely — including for a syllabus,
+        whose calendar assignments ride along on it."""
+        stored = _syllabus_result()
+        row = _twin_row(agent_result=encrypt_if_present(stored.model_dump_json()))
+        with patch("services.document_dedup.table") as t:
+            t.return_value.select.return_value = [row]
+
+            twin = find_duplicate("cafe1234")
+
+        assert twin["result"] == stored
+        assert twin["result"].syllabus.assignments[0].title == "PS1"
+
+    def test_result_is_none_when_the_twin_predates_the_column(self):
+        """Older rows have no stored result; the caller must fall back to
+        running the agents rather than treating None as an empty document."""
+        with patch("services.document_dedup.table") as t:
+            t.return_value.select.return_value = [_twin_row(agent_result=None)]
+
+            twin = find_duplicate("cafe1234")
+
+        assert twin is not None
+        assert twin["result"] is None
+
     def test_requires_the_twin_to_have_extracted_text(self):
         """A twin whose extraction never completed carries nothing worth
         reusing; treating it as a duplicate would skip OCR and leave the new
@@ -90,6 +116,70 @@ class TestFindDuplicate:
             t.return_value.select.side_effect = Exception("column does not exist")
 
             assert find_duplicate("cafe1234") is None
+
+
+def _syllabus_result():
+    """A full pipeline result for a syllabus — the hardest case to replay,
+    because the calendar assignments exist nowhere else on the row."""
+    from datetime import date
+
+    from agents.classifier import DocumentClassification
+    from agents.concept_extraction import Concept, ConceptList
+    from agents.document import DocumentProcessingResult
+    from agents.summary import Summary
+    from agents.syllabus_extraction import SyllabusAssignment, SyllabusAssignments
+
+    return DocumentProcessingResult(
+        classification=DocumentClassification(
+            category="syllabus", is_syllabus=True, confidence=0.9, rationale="r",
+        ),
+        summary=Summary(headline="h", abstract="a", key_points=["1", "2", "3"]),
+        concepts=ConceptList(
+            concepts=[Concept(name="Mitosis", description="d", importance=0.5)],
+        ),
+        syllabus=SyllabusAssignments(
+            course_title="BIO 110",
+            instructor=None,
+            assignments=[
+                SyllabusAssignment(
+                    title="PS1", due_date=date(2026, 4, 1), description=None,
+                ),
+            ],
+        ),
+    )
+
+
+class TestDecodeResult:
+    """Storing the whole pipeline result is what makes skipping the agents on a
+    duplicate lossless. Rebuilding one field-by-field from the row would mean
+    inventing `headline`, three `key_points`, and `importance` — none of which
+    are stored — and would drop syllabus assignments entirely."""
+
+    def test_round_trips_a_result_including_syllabus_assignments(self):
+        original = _syllabus_result()
+
+        restored = decode_result(original.model_dump_json())
+
+        assert restored == original
+
+    def test_preserves_the_due_dates_the_calendar_import_depends_on(self):
+        """save_assignments_to_db reads these; a string where a date belongs
+        would silently drop the assignment."""
+        from datetime import date
+
+        restored = decode_result(_syllabus_result().model_dump_json())
+
+        assert restored.syllabus.assignments[0].due_date == date(2026, 4, 1)
+
+    def test_returns_none_for_a_row_with_no_stored_result(self):
+        """Documents written before this column existed must fall back to
+        running the agents, not crash."""
+        assert decode_result(None) is None
+
+    def test_returns_none_when_the_stored_shape_no_longer_validates(self):
+        """The models evolve. A stored result that no longer parses must
+        degrade to re-running the agents rather than raising."""
+        assert decode_result('{"classification": {"category": "gone"}}') is None
 
 
 class TestChunksAlreadyExist:

@@ -1,0 +1,33 @@
+-- 0043: store the document pipeline result so duplicates can replay it
+--
+-- 0042 added file_sha256 so a re-upload can skip OCR and re-indexing. The
+-- remaining cost on a duplicate is the agent pipeline: classifier, summary,
+-- concepts, and (for syllabi) syllabus extraction. Those are pure functions of
+-- the extracted text — the agents carry static system prompts and no user
+-- context — so re-running them on a byte-identical file buys nothing.
+--
+-- Rebuilding a result from the columns already on the row is NOT possible:
+--   * Summary.headline is not stored.
+--   * Summary.key_points is not stored, and the model requires at least 3.
+--   * Concept.importance is not stored.
+--   * syllabus.assignments — the calendar import's only source — is not
+--     stored anywhere at all.
+-- Anything short of persisting the whole result would mean inventing those
+-- fields, which is worse than the LLM call it saves.
+--
+-- So this stores the entire DocumentProcessingResult as JSON. One column
+-- round-trips losslessly through pydantic (verified including date-typed
+-- due_dates) and covers syllabus assignments and grading categories for free.
+--
+-- Encrypted at the application layer, consistent with the other content
+-- columns on this table (summary, concept_notes, extracted_text): the payload
+-- carries the summary text, concept descriptions, and syllabus contents.
+--
+-- Nullable by design. Rows written before this migration have no result, and
+-- `services/document_dedup.py::decode_result` treats both a missing value and
+-- a payload that no longer validates against the current models as "run the
+-- agents". Model drift therefore degrades to the old behaviour rather than
+-- failing an upload.
+
+ALTER TABLE documents
+    ADD COLUMN IF NOT EXISTS agent_result TEXT;

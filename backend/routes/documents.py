@@ -390,6 +390,37 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     return row
 
 
+async def _run_document_workers(extracted_text: str, deps, classification):
+    """Run the summary / concepts / syllabus workers in parallel.
+
+    Extracted from the streaming route so the duplicate path can bypass it
+    wholesale: a replayed upload has all three outputs already and must not
+    reach any agent. Returns (summary, concepts, syllabus); syllabus is None
+    for non-syllabus documents.
+    """
+    summary_task = summary_agent.run(
+        extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+    )
+    concepts_task = concept_extraction_agent.run(
+        extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+    )
+    if classification.is_syllabus:
+        syllabus_task = syllabus_extraction_agent.run(
+            extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+        )
+        summary_r, concepts_r, syllabus_r = await asyncio.gather(
+            summary_task, concepts_task, syllabus_task,
+        )
+        record_agent_usage(syllabus_r, feature="document", task="syllabus")
+        syllabus = syllabus_r.output
+    else:
+        summary_r, concepts_r = await asyncio.gather(summary_task, concepts_task)
+        syllabus = None
+    record_agent_usage(summary_r, feature="document", task="summary")
+    record_agent_usage(concepts_r, feature="document", task="concepts")
+    return summary_r.output, concepts_r.output, syllabus
+
+
 def _persist_document(
     *,
     user_id: str,
@@ -437,16 +468,24 @@ def _persist_document(
         row["request_id"] = request_id
     if file_hash:
         row["file_sha256"] = file_hash
+        # The whole pipeline result, so a future duplicate can replay it
+        # instead of re-running the agents. Only worth storing alongside the
+        # fingerprint — without one, nothing can ever look this up.
+        # Encrypted: it carries the summary, concepts, and syllabus contents,
+        # all of which are encrypted in their own columns.
+        row["agent_result"] = encrypt_if_present(result.model_dump_json())
     try:
         inserted = table("documents").insert(row)
     except Exception:
-        # Schema may not yet have the request_id / file_sha256 columns; retry
-        # without them so deployments can ship the code before the migration
-        # runs. Drop both in one retry — the insert already failed once, and a
-        # per-column ladder would cost an extra round-trip per missing column.
+        # Schema may not yet have the request_id / file_sha256 / agent_result
+        # columns; retry without them so deployments can ship the code before
+        # the migration runs. Drop them in one retry — the insert already
+        # failed once, and a per-column ladder would cost an extra round-trip
+        # per missing column.
         if "request_id" in row or "file_sha256" in row:
             row.pop("request_id", None)
             row.pop("file_sha256", None)
+            row.pop("agent_result", None)
             inserted = table("documents").insert(row)
         else:
             raise
@@ -640,21 +679,33 @@ async def upload_document_sync(
     # alone: X-Request-ID is client-supplied, so an unscoped id would let
     # one user's replay attach to another user's in-flight/completed
     # workflow (state poisoning). No-op (nullcontext) when DBOS is off.
-    try:
-        with workflow_id(f"doc:{user_id}:{request_id}"):
-            result: DocumentProcessingResult = await process_document(extracted_text, deps)
-    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
-        logger.warning(
-            "Agent guardrails tripped for '%s'; returning 502",
-            filename, exc_info=e,
+    # A duplicate carries the twin's whole pipeline result, so the agents are
+    # skipped outright. Every per-student side effect below still fires — they
+    # run against THIS user_id, so replaying a syllabus gives this student
+    # their own calendar entries rather than reusing the twin's.
+    replayed = twin.get("result") if twin else None
+    if replayed is not None:
+        logger.info(
+            "Replaying stored pipeline result from document %s for '%s'",
+            twin.get("id"), filename,
         )
-        raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
-    except Exception as e:
-        logger.exception(
-            "Unexpected agent failure for '%s'; returning 502",
-            filename,
-        )
-        raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
+        result: DocumentProcessingResult = replayed
+    else:
+        try:
+            with workflow_id(f"doc:{user_id}:{request_id}"):
+                result: DocumentProcessingResult = await process_document(extracted_text, deps)
+        except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+            logger.warning(
+                "Agent guardrails tripped for '%s'; returning 502",
+                filename, exc_info=e,
+            )
+            raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
+        except Exception as e:
+            logger.exception(
+                "Unexpected agent failure for '%s'; returning 502",
+                filename,
+            )
+            raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
 
     # async def route: these are synchronous PostgREST round-trips — keep them
     # off the event loop, same as the SSE generator's post-roll (#132 item 22).
@@ -758,6 +809,11 @@ async def upload_document(
             else _extract_text_or_422(file_bytes, filename, file.content_type or "")
         )
     )
+    # The twin's stored pipeline result, when it has one. None means "run the
+    # agents" — either no duplicate, or a row written before the column
+    # existed. The phases below still emit their usual events either way, so a
+    # replayed upload is indistinguishable to the client apart from latency.
+    replayed = twin.get("result") if twin else None
 
     async def event_stream():
         nonlocal extracted_text
@@ -863,13 +919,16 @@ async def upload_document(
                 type="progress", step="classify",
                 message="Classifying document...",
             ))
-            cls_run = record_agent_usage(
-                await classifier_agent.run(
-                    extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-                ),
-                feature="document", task="classifier",
-            )
-            classification = cls_run.output
+            if replayed is not None:
+                classification = replayed.classification
+            else:
+                cls_run = record_agent_usage(
+                    await classifier_agent.run(
+                        extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+                    ),
+                    feature="document", task="classifier",
+                )
+                classification = cls_run.output
             yield sapling_event_to_sse(SaplingEvent(
                 type="progress", step="classified",
                 message=f"Classified as {classification.category}.",
@@ -886,30 +945,17 @@ async def upload_document(
                         + (" and syllabus" if classification.is_syllabus else "")
                         + " in parallel...",
             ))
-            summary_task = summary_agent.run(
-                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-            )
-            concepts_task = concept_extraction_agent.run(
-                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-            )
-            if classification.is_syllabus:
-                syllabus_task = syllabus_extraction_agent.run(
-                    extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
-                )
-                summary_r, concepts_r, syllabus_r = await asyncio.gather(
-                    summary_task, concepts_task, syllabus_task,
-                )
-                record_agent_usage(syllabus_r, feature="document", task="syllabus")
-                summary = summary_r.output
-                concepts = concepts_r.output
-                syllabus = syllabus_r.output
+            if replayed is not None:
+                # Replaying covers the syllabus worker too: its assignments are
+                # on the stored result, and the calendar write below runs
+                # against THIS user_id, so the uploader gets their own entries.
+                summary = replayed.summary
+                concepts = replayed.concepts
+                syllabus = replayed.syllabus
             else:
-                summary_r, concepts_r = await asyncio.gather(summary_task, concepts_task)
-                summary = summary_r.output
-                concepts = concepts_r.output
-                syllabus = None
-            record_agent_usage(summary_r, feature="document", task="summary")
-            record_agent_usage(concepts_r, feature="document", task="concepts")
+                summary, concepts, syllabus = await _run_document_workers(
+                    extracted_text, deps, classification,
+                )
             yield sapling_event_to_sse(SaplingEvent(
                 type="progress", step="extracted",
                 message=f"Extracted {len(concepts.concepts)} concept(s).",
@@ -927,7 +973,6 @@ async def upload_document(
                 type="progress", step="graph_updated",
                 message=f"Merged {merged} concept(s).",
             ))
-
             # ── Compose final result + emit ──────────────────────────────────
             final_output = DocumentProcessingResult(
                 classification=classification,
