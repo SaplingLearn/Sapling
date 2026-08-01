@@ -377,6 +377,11 @@ class AchievementIconBody(BaseModel):
     content_type: str
 
 
+class UpdateXpRuleBody(BaseModel):
+    amount: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
 # ── Cosmetics (Admin) ────────────────────────────────────────────────────────
 
 class CreateCosmeticBody(BaseModel):
