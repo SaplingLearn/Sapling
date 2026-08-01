@@ -222,11 +222,12 @@ class TestNewTriggerTypes:
 
     def test_xp_in_day_takes_the_best_day(self):
         with patch("services.achievement_service.table") as t:
-            t.return_value.select.return_value = [
+            rows = [
                 {"amount": 200, "created_at": "2026-07-01T09:00:00+00:00"},
                 {"amount": 150, "created_at": "2026-07-01T20:00:00+00:00"},
                 {"amount": 300, "created_at": "2026-07-02T09:00:00+00:00"},
             ]
+            t.return_value.select_with_count.return_value = (rows, len(rows))
             from services.achievement_service import _get_user_stat
             assert _get_user_stat("u1", "xp_in_day") == 350
 
@@ -348,13 +349,88 @@ class TestGoalStreakClamp:
             if name == "users":
                 m.select.return_value = [{"daily_goal_xp": -1}]
             elif name == "xp_events":
-                m.select.return_value = [
-                    {"amount": 10, "created_at": f"{today}T09:00:00+00:00"},
-                ]
+                rows = [{"amount": 10, "created_at": f"{today}T09:00:00+00:00"}]
+                m.select_with_count.return_value = (rows, len(rows))
             else:
                 m.select.return_value = []
+                m.select_with_count.return_value = ([], 0)
             return m
 
         with patch("services.achievement_service.table", side_effect=table_side_effect):
             from services.achievement_service import _goal_streak
             assert _goal_streak("u1") == 1
+
+
+class TestDailyTotalsPaging:
+    """`_daily_totals` backs xp_in_day (golden-hour) and goal_streak
+    (perfect-week), and since the last wave `award_xp` dispatches xp_in_day on
+    EVERY award — so this is a hot path over the whole xp_events ledger.
+
+    PostgREST caps a response at `max_rows = 1000` (supabase/config.toml) and
+    signals the truncation with 206 Partial Content — a 2xx, so
+    db/connection.py's raise_for_status() never fires. An unpaginated select
+    therefore silently sees only the first page: past ~1000 lifetime events a
+    user's best-XP day and goal streak are computed over an arbitrary subset,
+    making golden-hour unearnable and spuriously resetting perfect-week.
+    """
+
+    def _paged(self, pages):
+        """Stub select_with_count to return `pages` in order, each with the
+        exact same grand total, the way PostgREST's count=exact header does."""
+        total = sum(len(p) for p in pages)
+        handle = MagicMock()
+        handle.select_with_count.side_effect = [(p, total) for p in pages]
+        return handle, total
+
+    def test_daily_totals_accumulates_every_page(self):
+        """A full page followed by a short page: both must be summed. Fails if
+        only the first page is taken."""
+        from services.achievement_service import _XP_EVENTS_PAGE, _daily_totals
+
+        day = "2026-07-30"
+        first = [
+            {"amount": 1, "created_at": f"{day}T09:00:00+00:00"}
+            for _ in range(_XP_EVENTS_PAGE)
+        ]
+        second = [{"amount": 1, "created_at": f"{day}T10:00:00+00:00"} for _ in range(5)]
+        handle, total = self._paged([first, second])
+
+        with patch("services.achievement_service.table", return_value=handle):
+            totals = _daily_totals("u1")
+
+        assert totals == {day: total}
+        assert handle.select_with_count.call_count == 2
+        first_call, second_call = handle.select_with_count.call_args_list
+        assert first_call.kwargs["offset"] == 0
+        assert second_call.kwargs["offset"] == _XP_EVENTS_PAGE
+
+    def test_paging_is_deterministically_ordered(self):
+        """Without a stable sort, offset paging can skip or duplicate rows
+        across the page boundary — same reasoning as xp_service._ledger_total."""
+        from services.achievement_service import _XP_EVENTS_PAGE, _daily_totals
+
+        handle, _ = self._paged([[]])
+        with patch("services.achievement_service.table", return_value=handle):
+            _daily_totals("u1")
+        kwargs = handle.select_with_count.call_args.kwargs
+        assert kwargs["order"] == "created_at.asc,id.asc"
+        assert kwargs["limit"] == _XP_EVENTS_PAGE
+        assert kwargs["filters"] == {"user_id": "eq.u1"}
+
+    def test_best_day_xp_sees_events_past_the_first_page(self):
+        """golden-hour is `xp_in_day >= 500`. The qualifying day sitting on the
+        second page must still be the reported max — truncation here makes the
+        badge unearnable for any user with a long ledger."""
+        from services.achievement_service import _XP_EVENTS_PAGE, _get_user_stat
+
+        # Spread the first page over ten days so no single day on it reaches
+        # 500 — the only qualifying day is the one on the second page.
+        first = [
+            {"amount": 1, "created_at": f"2026-07-{1 + i % 10:02d}T09:00:00+00:00"}
+            for i in range(_XP_EVENTS_PAGE)
+        ]
+        second = [{"amount": 500, "created_at": "2026-07-30T09:00:00+00:00"}]
+        handle, _ = self._paged([first, second])
+
+        with patch("services.achievement_service.table", return_value=handle):
+            assert _get_user_stat("u1", "xp_in_day") == 500

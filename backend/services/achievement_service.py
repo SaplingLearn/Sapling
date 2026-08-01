@@ -156,17 +156,70 @@ def _session_stat(user_id: str, trigger_type: str) -> int:
     return best
 
 
+# supabase/config.toml sets PostgREST's `max_rows = 1000`. A response past that
+# cap doesn't error — PostgREST returns 206 Partial Content, which is a 2xx, so
+# db/connection.py's raise_for_status() never fires and the truncation is silent
+# by construction. Same constant and same reasoning as
+# routes/gamification.py::_XP_EVENTS_PAGE and xp_service.py::_XP_EVENTS_PAGE;
+# keep it at or below max_rows and page to completion.
+_XP_EVENTS_PAGE = 1000
+
+
 def _daily_totals(user_id: str) -> dict:
-    rows = table("xp_events").select(
-        "amount,created_at", filters={"user_id": f"eq.{user_id}"}
-    ) or []
+    """Per-day XP totals over the user's ENTIRE xp_events ledger.
+
+    Hot path: since the last wave `award_xp` dispatches `xp_in_day` on every
+    single award, so this runs on every action that pays XP (until the badge is
+    earned — check_achievements drops already-earned triggers before evaluating
+    the stat). It therefore has to page, for the same reason
+    xp_service._ledger_total does: an unbounded select silently stops at
+    max_rows, and past ~1000 lifetime events `golden-hour` (xp_in_day >= 500)
+    would be computed over an arbitrary truncated prefix — unearnable — while
+    `perfect-week` (goal_streak >= 7) would spuriously reset.
+
+    Deliberately UNWINDOWED, both callers included:
+
+    - `_best_day_xp` is an all-time max by definition. 0044 only just made
+      golden-hour live, so a user's qualifying day may well predate any
+      dispatch; a window would silently deny it.
+    - `_goal_streak` only walks backwards from today, so a bounded window is
+      tempting. It is still wrong: `trigger_threshold` is admin-configurable
+      from the wiki (the reason routes/social.py::create_room dispatches
+      owned_room_members at all), and a window of N days caps the reported
+      streak at N — an admin who raises perfect-week to 30 or 60 gets a badge
+      nothing can award. That is precisely the class of bug this wave exists
+      to fix, so correctness wins over the read saved.
+
+    The cost is bounded by what the same request already pays: `award_xp` pages
+    the whole ledger through `_ledger_total` on every award, so a full paged
+    scan here is a constant factor, not a new class of cost.
+
+    The `created_at,id` order is required for offset paging to be correct —
+    without a stable sort PostgREST can return rows in a different order across
+    pages, skipping or double-counting across the page boundary.
+    """
     totals: dict = {}
-    for r in rows:
-        ts = _parse_ts(r.get("created_at"))
-        if not ts:
-            continue
-        day = ts.date().isoformat()
-        totals[day] = totals.get(day, 0) + int(r.get("amount") or 0)
+    seen = 0
+    offset = 0
+    while True:
+        rows, count = table("xp_events").select_with_count(
+            "amount,created_at",
+            filters={"user_id": f"eq.{user_id}"},
+            order="created_at.asc,id.asc",
+            limit=_XP_EVENTS_PAGE,
+            offset=offset,
+        )
+        rows = rows or []
+        for r in rows:
+            ts = _parse_ts(r.get("created_at"))
+            if not ts:
+                continue
+            day = ts.date().isoformat()
+            totals[day] = totals.get(day, 0) + int(r.get("amount") or 0)
+        seen += len(rows)
+        if not rows or seen >= count:
+            break
+        offset += _XP_EVENTS_PAGE
     return totals
 
 
