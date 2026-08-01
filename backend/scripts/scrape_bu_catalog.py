@@ -12,6 +12,7 @@ Resume: re-running skips already-scraped URLs automatically.
 
 import asyncio
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,7 @@ SCHOOLS = [
     "cfa",
     "cgs",
     "cds",
+    "camed",
     "khc",
     "gms",
     "grs",
@@ -47,8 +49,13 @@ SCHOOLS = [
 
 BASE_URL = "https://www.bu.edu"
 SEMESTER_TAG = "fall_2026"
-CONCURRENCY = 8       # parallel course-page fetches
-PAGE_DELAY  = 0.4     # seconds between requests per worker
+
+# bu.edu/robots.txt asks for `Crawl-delay: 15` on the wildcard agent (/academics/
+# is not disallowed). Defaults honor that: one worker, 15s between requests — a
+# full ~7k-page crawl takes many hours, so it's meant to run unattended.
+# Override for a faster (less polite) crawl, e.g. BU_CONCURRENCY=4 BU_PAGE_DELAY=1.
+CONCURRENCY = int(os.getenv("BU_CONCURRENCY", "1"))     # parallel course-page fetches
+PAGE_DELAY  = float(os.getenv("BU_PAGE_DELAY", "15"))   # seconds between requests per worker
 
 OUTPUT_DIR   = Path(__file__).parent.parent / "data"
 OUTPUT_FILE  = OUTPUT_DIR / f"bu_catalog_{SEMESTER_TAG}.json"
@@ -63,6 +70,12 @@ HEADERS = {
 
 _sem    = None   # initialized in main()
 _errors: list[dict] = []
+
+# Distinguishes "this page does not exist" (404 -> None) from "we could not fetch
+# it" (timeout / retries exhausted -> FETCH_FAILED). The listing walk must not
+# treat a transient failure as the end of pagination — doing so silently truncated
+# the previous crawl at CAS page ~21 of 113 (416 courses instead of 2,253).
+FETCH_FAILED = object()
 
 # -- HTTP -----------------------------------------------------------------------
 
@@ -84,7 +97,7 @@ async def fetch(client: httpx.AsyncClient, url: str, retries: int = 2) -> Option
                     await asyncio.sleep(5)
                 else:
                     _errors.append({"url": url, "error": str(exc)})
-        return None
+        return FETCH_FAILED
 
 # -- Listing page parser --------------------------------------------------------
 
@@ -179,55 +192,83 @@ def _extract_prereq_and_desc(soup: BeautifulSoup) -> tuple[str, str]:
     return "", ""
 
 
-def _extract_schedule(soup: BeautifulSoup) -> tuple[list[str], list[str]]:
-    # Semester labels are in <h4>FALL 2025Schedule</h4> (text = "FALL 2025" + "Schedule")
-    semesters: list[str] = []
-    for h4 in soup.find_all("h4"):
-        m = _SEM_RE.search(h4.get_text(strip=True))
-        if m:
-            label = m.group(0).strip().title()
-            if label not in semesters:
-                semesters.append(label)
+# Registrar placeholders for "no instructor assigned yet". Kept out of
+# `instructor_name` so the DB stores NULL rather than the literal string "Staff".
+_NO_INSTRUCTOR = {"tba", "tbd", "staff", "instructor", ""}
 
-    # Instructors from all section tables
-    instructors: list[str] = []
-    for table in soup.find_all("table"):
-        headers = [th.get_text(strip=True).lower() for th in table.find_all("th")]
-        if "instructor" not in headers:
+
+def _extract_sections(soup: BeautifulSoup) -> list[dict]:
+    """One record per scheduled **section** — the operational layer of #280.
+
+    Verified against live markup (2026-07-31, e.g. /academics/cas/courses/cas-cs-330/):
+    each section is its own ``<table>`` whose header row is
+    ``Section | Instructor | Location | Schedule | Notes``, preceded by an
+    ``<h4><strong>FALL 2026</strong> Schedule</h4>`` heading that carries the term.
+
+    Column lookup is **header-driven**, not positional: BU omits columns on some
+    pages (a few schools drop Notes, GRS drops Location), so indexing by position
+    would shift instructor into location. A table with no ``Section`` header is
+    not a schedule table and is skipped.
+
+    An earlier version of this parser collapsed all of this into a bare list of
+    instructor names, discarding section/location/schedule — the fields #280
+    exists to ingest. Don't collapse it again.
+
+    Note bu.edu publishes only the *upcoming* term, so in practice every section
+    here carries one label (currently "Fall 2026"). Past terms are not
+    recoverable from this source.
+    """
+    sections: list[dict] = []
+    for tbl in soup.find_all("table"):
+        headers = [th.get_text(" ", strip=True).lower() for th in tbl.find_all("th")]
+        if "section" not in headers:
             continue
-        idx = headers.index("instructor")
-        for row in table.find_all("tr")[1:]:
+        col = {name: i for i, name in enumerate(headers)}
+
+        # The term lives in the nearest preceding <h4>, not in the table itself.
+        h4 = tbl.find_previous("h4")
+        m = _SEM_RE.search(h4.get_text(" ", strip=True)) if h4 else None
+        term = m.group(0).strip().title() if m else ""
+
+        for row in tbl.find_all("tr"):
             cells = row.find_all("td")
-            if len(cells) > idx:
-                name = cells[idx].get_text(strip=True)
-                if name and name not in ("TBA", "Staff", "") and name not in instructors:
-                    instructors.append(name)
+            if not cells:
+                continue        # the header row
 
-    return semesters, instructors
+            def cell(name: str, _cells=cells, _col=col) -> str:
+                i = _col.get(name)
+                return _cells[i].get_text(" ", strip=True) if i is not None and i < len(_cells) else ""
+
+            code = cell("section")
+            if not code:
+                continue
+            instructor = cell("instructor")
+            sections.append({
+                "term":            term,
+                "section":         code,
+                "instructor_name": None if instructor.lower() in _NO_INSTRUCTOR else instructor,
+                "meeting_times":   cell("schedule") or None,
+                "location":        cell("location") or None,
+                "notes":           cell("notes") or None,
+            })
+
+    return sections
 
 
-def _extract_schedule(soup: BeautifulSoup) -> tuple[list[str], list[str]]:
+def _derive_schedule(sections: list[dict]) -> tuple[list[str], list[str]]:
+    """Course-level rollups kept for back-compat: distinct terms, distinct instructors.
+
+    `semester_offered` is what the importer filters on to decide which courses run
+    in the target term; `instructors` is what the pre-#280 consumers read.
+    """
     semesters: list[str] = []
     instructors: list[str] = []
-    sem_pattern = re.compile(
-        r'^(FALL|SPRING|SPRG|SUMMER|SUMM|SUM|WINTER|WINT)\s+\d{4}$', re.I
-    )
-    for table in soup.find_all("table"):
-        headers = [th.get_text(strip=True) for th in table.find_all("th")]
-        for h in headers:
-            if sem_pattern.match(h.strip()) and h not in semesters:
-                semesters.append(h.strip().title())
-
-        # Instructor column
-        lower_headers = [h.lower() for h in headers]
-        if "instructor" in lower_headers:
-            idx = lower_headers.index("instructor")
-            for row in table.find_all("tr")[1:]:
-                cells = row.find_all("td")
-                if len(cells) > idx:
-                    name = cells[idx].get_text(strip=True)
-                    if name and name not in ("TBA", "Staff", "") and name not in instructors:
-                        instructors.append(name)
+    for s in sections:
+        if s["term"] and s["term"] not in semesters:
+            semesters.append(s["term"])
+        name = s["instructor_name"]
+        if name and name not in instructors:
+            instructors.append(name)
     return semesters, instructors
 
 
@@ -241,7 +282,8 @@ def parse_course(html: str, url: str, school: str) -> Optional[dict]:
 
     prerequisites, description = _extract_prereq_and_desc(soup)
     credits = _extract_credits(soup)
-    semesters, instructors = _extract_schedule(soup)
+    sections = _extract_sections(soup)
+    semesters, instructors = _derive_schedule(sections)
 
     return {
         "course_code":      code,
@@ -253,6 +295,7 @@ def parse_course(html: str, url: str, school: str) -> Optional[dict]:
         "prerequisites":    prerequisites,
         "semester_offered": semesters,
         "instructors":      instructors,
+        "sections":         sections,
         "source_url":       url,
         "scraped_at":       datetime.now(timezone.utc).isoformat(),
         "semester_tag":     SEMESTER_TAG,
@@ -279,8 +322,14 @@ async def scrape_school(
             else f"{BASE_URL}/academics/{school}/courses/{page}/"
         )
         html = await fetch(client, listing_url)
-        if not html:
+        if html is FETCH_FAILED:
+            # Loud, recorded, and NOT confused with the end of pagination.
+            msg = f"listing fetch failed at page {page} — {school} is TRUNCATED"
+            _errors.append({"url": listing_url, "error": msg})
+            print(f"  [{school}] !! {msg}", flush=True)
             break
+        if not html:
+            break   # genuine 404 — past the last page
         urls = parse_listing(html, school)
         fresh = [u for u in urls if u not in crawl_seen]
         if not fresh:
@@ -300,7 +349,7 @@ async def scrape_school(
 
     async def _fetch_one(url: str) -> Optional[dict]:
         html = await fetch(client, url)
-        if not html:
+        if html is FETCH_FAILED or not html:
             _errors.append({"url": url, "error": "empty response"})
             return None
         result = parse_course(html, url, school)
@@ -317,44 +366,120 @@ async def scrape_school(
 
     return courses
 
+# -- Rescan ---------------------------------------------------------------------
+
+async def rescan(
+    client: httpx.AsyncClient,
+    records: list[dict],
+    on_checkpoint=None,   # callable() — called every batch
+) -> tuple[int, int]:
+    """Refetch course pages already in the JSON and re-parse them **in place**.
+
+    The listing walk is skipped entirely: every URL we want is already recorded,
+    including the index orphans that only probe_unscraped_courses.py could reach
+    (a fresh crawl would silently drop those). This is the cheap way to upgrade an
+    existing scrape after a parser change — e.g. adding `sections` (#280), which
+    the previous parser threw away and no amount of re-reading the JSON recovers.
+
+    A page that fails to fetch or parse leaves its record untouched rather than
+    blanking it, so a flaky rescan degrades to "some records still stale" instead
+    of data loss. Returns (updated, failed).
+    """
+    BATCH = 100
+    updated = failed = 0
+
+    async def _refetch(rec: dict) -> Optional[dict]:
+        url = rec["source_url"]
+        html = await fetch(client, url)
+        if html is FETCH_FAILED or not html:
+            _errors.append({"url": url, "error": "rescan: empty response"})
+            return None
+        fresh = parse_course(html, url, rec.get("school", ""))
+        if fresh is None:
+            _errors.append({"url": url, "error": "rescan: parse failed"})
+        return fresh
+
+    for i in range(0, len(records), BATCH):
+        window = records[i : i + BATCH]
+        results = await asyncio.gather(*[_refetch(r) for r in window])
+        for rec, fresh in zip(window, results):
+            if fresh is None:
+                failed += 1
+                continue
+            rec.clear()
+            rec.update(fresh)
+            updated += 1
+        if on_checkpoint:
+            on_checkpoint()
+        print(f"    rescanned {min(i + BATCH, len(records)):,}/{len(records):,} "
+              f"({updated:,} updated, {failed:,} failed)", flush=True)
+
+    return updated, failed
+
 # -- Main -----------------------------------------------------------------------
 
-async def main() -> None:
+async def main(mode: str = "resume") -> None:
     global _sem
     _sem = asyncio.Semaphore(CONCURRENCY)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Resume: load whatever was scraped in a previous run
+    # Resume: load whatever was scraped in a previous run.
+    # --refresh forces a full refetch instead: resume matches on source_url, so a
+    # plain re-run skips every known course and would keep stale/missing fields
+    # (e.g. the empty semester_offered left by the shadowed-parser bug).
     existing: dict[str, dict] = {}
-    if OUTPUT_FILE.exists():
+    if OUTPUT_FILE.exists() and mode == "refresh":
+        backup = OUTPUT_FILE.with_suffix(".json.bak")
+        OUTPUT_FILE.replace(backup)
+        print(f"--refresh: previous scrape moved to {backup.name}; refetching everything")
+    elif OUTPUT_FILE.exists():
         with open(OUTPUT_FILE, encoding="utf-8") as f:
             for c in json.load(f):
                 existing[c["source_url"]] = c
-        print(f"Resuming — {len(existing)} courses already in {OUTPUT_FILE.name}")
+        verb = "Rescanning" if mode == "rescan" else "Resuming"
+        print(f"{verb} — {len(existing)} courses already in {OUTPUT_FILE.name}")
+    elif mode == "rescan":
+        raise SystemExit(f"--rescan needs an existing {OUTPUT_FILE.name}; run a plain scrape first.")
 
     seen_urls: set[str]  = set(existing.keys())
     all_courses: list[dict] = list(existing.values())
     start = datetime.now(timezone.utc)
 
+    def write_file() -> None:
+        with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+            json.dump(all_courses, f, indent=2, ensure_ascii=False)
+
     def save_checkpoint(batch: list[dict]) -> None:
         all_courses.extend(batch)
         seen_urls.update(c["source_url"] for c in batch)
-        with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-            json.dump(all_courses, f, indent=2, ensure_ascii=False)
+        write_file()
         print(f"    checkpoint: {len(all_courses)} courses saved", flush=True)
 
     async with httpx.AsyncClient(limits=httpx.Limits(max_connections=20)) as client:
-        for school in SCHOOLS:
-            print(f"\n>> {school}", flush=True)
-            before = len(all_courses)
-            await scrape_school(client, school, seen_urls, on_batch=save_checkpoint)
-            print(f"  [{school}] +{len(all_courses) - before} -> total {len(all_courses)}", flush=True)
+        if mode == "rescan":
+            # Back up first: rescan rewrites every record, so a bad parser change
+            # would otherwise overwrite the only copy of the scrape.
+            backup = OUTPUT_FILE.with_suffix(".json.prescan.bak")
+            backup.write_bytes(OUTPUT_FILE.read_bytes())
+            print(f"backup -> {backup.name}\n")
+            updated, failed = await rescan(client, all_courses, on_checkpoint=write_file)
+            print(f"\nrescan: {updated:,} updated, {failed:,} left stale")
+        else:
+            for school in SCHOOLS:
+                print(f"\n>> {school}", flush=True)
+                before = len(all_courses)
+                await scrape_school(client, school, seen_urls, on_batch=save_checkpoint)
+                print(f"  [{school}] +{len(all_courses) - before} -> total {len(all_courses)}", flush=True)
 
     elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+    with_sections = sum(1 for c in all_courses if c.get("sections"))
 
     summary = {
         "total_courses":  len(all_courses),
+        "with_sections":  with_sections,
+        "total_sections": sum(len(c.get("sections") or []) for c in all_courses),
+        "mode":           mode,
         "total_errors":   len(_errors),
         "errors":         _errors[:100],
         "elapsed_seconds": round(elapsed),
@@ -366,10 +491,27 @@ async def main() -> None:
         json.dump(summary, f, indent=2)
 
     print(f"\n{'='*50}")
-    print(f"Done: {len(all_courses):,} courses  |  {len(_errors)} errors  |  {round(elapsed/60)} min")
+    print(f"Done: {len(all_courses):,} courses  |  {with_sections:,} with sections  "
+          f"|  {len(_errors)} errors  |  {round(elapsed/60)} min")
     print(f"   Output -> {OUTPUT_FILE}")
     print(f"   Summary -> {SUMMARY_FILE}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import argparse
+
+    _p = argparse.ArgumentParser(description="Scrape the BU course catalog.")
+    _g = _p.add_mutually_exclusive_group()
+    _g.add_argument(
+        "--refresh",
+        action="store_true",
+        help="ignore (and back up) a previous scrape and re-crawl every school from the listings",
+    )
+    _g.add_argument(
+        "--rescan",
+        action="store_true",
+        help="refetch only the course pages already in the JSON and re-parse them in place "
+             "(no listing walk — use this to pick up a parser change)",
+    )
+    _a = _p.parse_args()
+    asyncio.run(main(mode="refresh" if _a.refresh else "rescan" if _a.rescan else "resume"))

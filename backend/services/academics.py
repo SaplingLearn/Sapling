@@ -123,10 +123,17 @@ def resolve_offering(
         term_id = t["id"] if t else None
 
     if term_id:
+        # Order by section first, created_at only as a tiebreak. Since #280 a
+        # course has one offering *per published section* (CAS CS 330 has 7), and
+        # those are written by a single batch insert — so they share a created_at
+        # and `created_at.asc` alone leaves the winner up to the planner. Two calls
+        # could then hand the same user different offerings and split their
+        # documents/notes across sections. Section-less rows ('') sort first, which
+        # keeps pre-#280 behaviour wherever a hollow offering still exists.
         rows = table("course_offerings").select(
             "id",
             filters={"course_id": f"eq.{course_id}", "term_id": f"eq.{term_id}"},
-            order="created_at.asc",
+            order="section.asc,created_at.asc",
             limit=1,
         )
         if rows:

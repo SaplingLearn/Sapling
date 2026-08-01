@@ -144,6 +144,24 @@ def test_resolve_offering_create_non_conflict_error_propagates():
             ac.resolve_offering("course-1", term_id="t1", create=True)
 
 
+def test_resolve_offering_orders_by_section_for_determinism():
+    """Since #280 a course has one offering per section, all written by one batch
+    insert — so they share a created_at and `created_at.asc` alone leaves the
+    winner to the planner. Ordering by section first makes the pick stable, so a
+    user's documents/notes can't drift between sections across calls.
+    """
+    factory = _factory(
+        {
+            "terms": [{"id": "t1", "label": "Fall 2026", "sort_key": 20263}],
+            "course_offerings": [{"id": "off-a1"}],
+        }
+    )
+    with patch.object(ac, "table", side_effect=factory):
+        ac.resolve_offering("course-1", term_id="t1")
+        order = factory("course_offerings").select.call_args.kwargs["order"]
+    assert order.startswith("section.asc"), f"section must be the primary sort, got {order!r}"
+
+
 def test_resolve_offering_no_create_falls_back_to_any_offering():
     # No offering in the target term, but the course has one elsewhere.
     factory = _factory(
