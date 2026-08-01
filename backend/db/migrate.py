@@ -1,9 +1,26 @@
 """Minimal migration runner for Supabase Postgres (#197).
 
 App runtime uses db/connection.py::table() (PostgREST), which cannot execute DDL.
-Migrations are raw DDL, so this admin tool connects directly with psycopg over the
-Supabase *direct* connection string (SUPABASE_DB_URL, NOT the pooler). This is the
-one sanctioned exception to the table()-only convention.
+Migrations are raw DDL, so this admin tool connects with psycopg over
+SUPABASE_DB_URL. This is the one sanctioned exception to the table()-only
+convention.
+
+WHICH CONNECTION STRING: the SESSION-mode pooler, port 5432.
+
+This file used to say "the direct connection string, NOT the pooler". That
+warning was about TRANSACTION mode (port 6543), which drops the session-level
+behaviour psycopg and DDL depend on — and it is still correct about 6543. But
+it predates Supabase moving the direct host to an IPv6-only endpoint:
+db.<ref>.supabase.co now publishes only an AAAA record, so it is unreachable
+from GitHub-hosted runners and from any network without a global IPv6 address.
+Session mode behaves like a direct connection and its host publishes an A
+record, so it is the reachable substitute — not a compromise.
+
+Two details that are easy to miss: the pooler changes the username to
+`postgres.<ref>`, and projects sit on NUMBERED clusters (`aws-0-`, `aws-1-`,
+...) whose number is not derivable from the region. Take the host from the
+dashboard's Connect panel, or let scripts/pooler_url.py assemble the URI from
+an env file.
 
 Usage:
     SUPABASE_DB_URL=postgresql://... python -m db.migrate            # apply pending
@@ -120,8 +137,10 @@ def main() -> int:
     db_url = os.environ.get("SUPABASE_DB_URL", "").strip()
     if not db_url:
         print(
-            "ERROR: SUPABASE_DB_URL is not set "
-            "(Supabase → Settings → Database → Connection string → Direct).",
+            "ERROR: SUPABASE_DB_URL is not set (Supabase → Connect → "
+            "Session pooler, port 5432, user postgres.<ref>). The direct "
+            "db.<ref>.supabase.co host is IPv6-only and unreachable from most "
+            "networks; port 6543 is transaction mode and breaks DDL.",
             file=sys.stderr,
         )
         return 1

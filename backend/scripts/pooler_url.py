@@ -34,7 +34,7 @@ from __future__ import annotations
 import pathlib
 import re
 import sys
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 SESSION_PORT = 5432
 
@@ -59,7 +59,14 @@ def build(env_file: str, region: str) -> str:
     host = parsed.hostname or ""
     # db.<ref>.supabase.co -> <ref>
     ref = host.split(".")[1] if host.startswith("db.") else host.split(".")[0]
-    pw = quote(parsed.password, safe="")
+    # urlparse() hands back the password STILL percent-encoded, so quoting it
+    # again double-escapes: a stored `p%40ss` would go out as `p%2540ss` and
+    # authenticate as the literal text `p%40ss` rather than `p@ss`. Supabase
+    # generates passwords containing reserved characters, so this is reached in
+    # practice — and it fails as "password authentication failed", which reads
+    # like a wrong secret rather than a broken builder. Decode then re-encode;
+    # the round trip is a no-op on an already-correct value.
+    pw = quote(unquote(parsed.password), safe="")
     return (
         f"postgresql://postgres.{ref}:{pw}"
         f"@{pooler_host(region)}:{SESSION_PORT}/postgres"

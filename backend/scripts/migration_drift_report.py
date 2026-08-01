@@ -8,7 +8,7 @@ merely behind, or is it lying?**
 
 Writes nothing. Runs no DDL. Safe against production.
 
-Three sections:
+Four sections:
 
   PENDING   — on disk, not in schema_migrations.
   ORPHANS   — in schema_migrations, not on disk. Means the environment ran SQL
@@ -22,10 +22,20 @@ Three sections:
               being recorded, so "pending" overstates what will actually run.
               Migrations written with IF NOT EXISTS will no-op safely; ones
               without it will fail the whole run.
+  BLOCKERS  — live rows that already violate a UNIQUE index a PENDING migration
+              would create. IF NOT EXISTS cannot save this one: it is a DATA
+              conflict, invisible to a schema-only diff, and it is what turns a
+              clean-looking backlog into a half-applied run.
 
 The object list is parsed from the migration SQL itself (CREATE TABLE / ADD
 COLUMN / CREATE INDEX), so it stays correct as migrations are added — nothing
 to keep in sync by hand.
+
+Exit codes: 2 no SUPABASE_DB_URL, 1 drift found (no ledger, orphans, a
+non-idempotent collision, or a data blocker), 0 clean. Nonzero means "do not
+apply on top of this" — so the report can gate CI directly rather than being
+re-implemented inline, which is how the workflow preflight and this script
+drifted apart in the first place.
 """
 from __future__ import annotations
 
@@ -105,6 +115,7 @@ def main() -> int:
     # Which objects the pending migrations would create, that already exist.
     print("\nALREADY EXISTS (pending migration, object already present)")
     found_any = False
+    unsafe_already = False
     for name in pending:
         sql = (MIGRATIONS / name).read_text()
         hits: list[str] = []
@@ -136,6 +147,8 @@ def main() -> int:
         if hits:
             found_any = True
             idempotent = "if not exists" in sql.lower()
+            if not idempotent:
+                unsafe_already = True
             flag = "safe: uses IF NOT EXISTS" if idempotent else "!! NO IF NOT EXISTS — would fail"
             print(f"  {name}  ({flag})")
             for h in sorted(hits):
@@ -167,6 +180,22 @@ def main() -> int:
                     print(f"      {d}")
     if not blocked:
         print("  none")
+
+    # Exit nonzero on anything that makes "apply the backlog" unsafe, so this
+    # can gate CI as-is. PENDING alone is not drift — that is the normal state
+    # of an environment that is merely behind.
+    problems = []
+    if orphans:
+        problems.append(f"{len(orphans)} orphan(s) recorded but absent from the repo")
+    if unsafe_already:
+        problems.append("an object already exists for a migration without IF NOT EXISTS")
+    if blocked:
+        problems.append("live rows already violate a pending UNIQUE index")
+    if problems:
+        print("\nDRIFT — do not apply on top of this:")
+        for p in problems:
+            print(f"  {p}")
+        return 1
 
     return 0
 
