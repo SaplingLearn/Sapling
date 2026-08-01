@@ -13,6 +13,17 @@ export function barHeights(values: number[], max: number, chartH: number): numbe
   return values.map((v) => Math.max(4, Math.round((v / max) * chartH)));
 }
 
+// Vertical position (from the top of the chart container) for the dashed
+// goal line, on the same `scaleMax` used to size the bars via `barHeights`
+// above — a mismatched scale would silently lie about whether a bar's XP
+// actually cleared the goal. Deliberately has no `barHeights`-style 4px
+// floor: a horizontal line at the very bottom of the chart is still a
+// visible line, unlike a bar that would otherwise collapse to nothing.
+export function computeGoalY(dailyGoalXp: number, scaleMax: number, chartH: number): number {
+  if (!scaleMax) return chartH;
+  return chartH - Math.min(chartH, Math.round((dailyGoalXp / scaleMax) * chartH));
+}
+
 function StatTile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
   return (
     <div className="card" style={{ padding: "16px 18px" }}>
@@ -32,7 +43,7 @@ function WeeklyChart({ week, dailyGoalXp }: { week: ActivityData["week"]; dailyG
   const xps = week.map((d) => d.xp);
   const scaleMax = Math.max(...xps, dailyGoalXp) * 1.15 || 1;
   const heights = barHeights(xps, scaleMax, WEEK_CHART_H);
-  const goalY = WEEK_CHART_H - Math.min(WEEK_CHART_H, Math.round((dailyGoalXp / scaleMax) * WEEK_CHART_H));
+  const goalY = computeGoalY(dailyGoalXp, scaleMax, WEEK_CHART_H);
   const todayIdx = week.length - 1;
 
   return (
