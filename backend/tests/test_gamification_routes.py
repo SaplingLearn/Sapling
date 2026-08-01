@@ -16,6 +16,11 @@ def _tables(handles):
     return lambda name: handles[name]
 
 
+def _one_page(handle, rows):
+    """Stub a single-page select_with_count response (rows == total)."""
+    handle.select_with_count.return_value = (rows, len(rows))
+
+
 class TestMe:
     def test_reports_level_stage_and_progress(self):
         handles = {"users": MagicMock(), "xp_events": MagicMock(),
@@ -24,9 +29,9 @@ class TestMe:
             "total_xp": 720, "level": 12, "streak_count": 23,
             "longest_streak": 31, "daily_goal_xp": 50,
         }]
-        handles["xp_events"].select.return_value = [
+        _one_page(handles["xp_events"], [
             {"amount": 40, "created_at": datetime.now(timezone.utc).isoformat()}
-        ]
+        ])
         handles["user_achievements"].select.return_value = [{"achievement_id": "a1"}]
         handles["achievements"].select.return_value = [{"id": "a1"}, {"id": "a2"}]
         with patch("routes.gamification.table", side_effect=_tables(handles)), \
@@ -46,7 +51,8 @@ class TestMe:
         handles = {"users": MagicMock(), "xp_events": MagicMock(),
                    "user_achievements": MagicMock(), "achievements": MagicMock()}
         handles["users"].select.return_value = [{"total_xp": 0, "level": 1}]
-        for k in ("xp_events", "user_achievements", "achievements"):
+        _one_page(handles["xp_events"], [])
+        for k in ("user_achievements", "achievements"):
             handles[k].select.return_value = []
         with patch("routes.gamification.table", side_effect=_tables(handles)), \
              patch("routes.gamification.stage_for_level", return_value=STAGE), \
@@ -61,7 +67,8 @@ class TestMe:
         handles = {"users": MagicMock(), "xp_events": MagicMock(),
                    "user_achievements": MagicMock(), "achievements": MagicMock()}
         handles["users"].select.return_value = [{"total_xp": 0, "level": 1}]
-        for k in ("xp_events", "user_achievements", "achievements"):
+        _one_page(handles["xp_events"], [])
+        for k in ("user_achievements", "achievements"):
             handles[k].select.return_value = []
         with patch("routes.gamification.table", side_effect=_tables(handles)), \
              patch("routes.gamification.stage_for_level", return_value=STAGE), \
@@ -83,7 +90,7 @@ class TestLeaderboard:
     def test_ranks_by_weekly_xp_descending(self):
         handles = {"xp_events": MagicMock(), "users": MagicMock(),
                    "user_settings": MagicMock(), "friendships": MagicMock()}
-        handles["xp_events"].select.return_value = self._week_events()
+        _one_page(handles["xp_events"], self._week_events())
         handles["users"].select.return_value = [
             {"id": "u1", "level": 5, "total_xp": 900, "streak_count": 3},
             {"id": "u2", "level": 9, "total_xp": 2000, "streak_count": 12},
@@ -103,7 +110,7 @@ class TestLeaderboard:
     def test_private_users_are_hidden_but_still_see_themselves(self):
         handles = {"xp_events": MagicMock(), "users": MagicMock(),
                    "user_settings": MagicMock(), "friendships": MagicMock()}
-        handles["xp_events"].select.return_value = self._week_events()
+        _one_page(handles["xp_events"], self._week_events())
         handles["users"].select.return_value = [
             {"id": "u1", "level": 5, "total_xp": 900, "streak_count": 3},
             {"id": "u2", "level": 9, "total_xp": 2000, "streak_count": 12},
@@ -124,7 +131,7 @@ class TestLeaderboard:
     def test_private_viewer_sees_their_own_row(self):
         handles = {"xp_events": MagicMock(), "users": MagicMock(),
                    "user_settings": MagicMock(), "friendships": MagicMock()}
-        handles["xp_events"].select.return_value = self._week_events()
+        _one_page(handles["xp_events"], self._week_events())
         handles["users"].select.return_value = [
             {"id": "u1", "level": 5, "total_xp": 900, "streak_count": 3},
         ]
@@ -141,7 +148,7 @@ class TestLeaderboard:
         handles = {"xp_events": MagicMock(), "users": MagicMock(),
                    "user_settings": MagicMock(), "friendships": MagicMock()}
         handles["friendships"].select.return_value = [{"friend_id": "u3"}]
-        handles["xp_events"].select.return_value = self._week_events()
+        _one_page(handles["xp_events"], self._week_events())
         handles["users"].select.return_value = [
             {"id": "u1", "level": 5, "total_xp": 900, "streak_count": 3},
             {"id": "u3", "level": 2, "total_xp": 200, "streak_count": 1},
@@ -154,6 +161,28 @@ class TestLeaderboard:
             r = client.get("/api/gamification/leaderboard?user_id=u1&scope=friends")
         assert {x["user_id"] for x in r.json()["rows"]} == {"u1", "u3"}
 
+    def test_school_scope_filters_to_peers_plus_self(self):
+        handles = {"xp_events": MagicMock(), "users": MagicMock(),
+                   "user_settings": MagicMock(), "friendships": MagicMock()}
+        _one_page(handles["xp_events"], self._week_events())
+        handles["users"].select.return_value = [
+            {"id": "u1", "level": 5, "total_xp": 900, "streak_count": 3},
+            {"id": "u3", "level": 2, "total_xp": 200, "streak_count": 1},
+        ]
+        handles["user_settings"].select.return_value = []
+        # u2 is present in the week's events but is not a school peer of u1 —
+        # school_peer_user_ids returning {u1, u3} must exclude them from rows.
+        with patch("routes.gamification.table", side_effect=_tables(handles)), \
+             patch("routes.gamification.stage_for_level", return_value=STAGE), \
+             patch("routes.gamification.academics.school_peer_user_ids",
+                   return_value={"u1", "u3"}), \
+             patch("routes.gamification.get_display_names",
+                   return_value={"u1": "A", "u3": "C"}):
+            r = client.get("/api/gamification/leaderboard?user_id=u1&scope=school")
+        ids = {x["user_id"] for x in r.json()["rows"]}
+        assert ids == {"u1", "u3"}
+        assert "u2" not in ids
+
     def test_rejects_an_unknown_scope(self):
         with patch("routes.gamification.table"):
             r = client.get("/api/gamification/leaderboard?user_id=u1&scope=galaxy")
@@ -164,11 +193,11 @@ class TestActivity:
     def test_buckets_the_last_seven_days(self):
         now = datetime.now(timezone.utc)
         handles = {"xp_events": MagicMock(), "users": MagicMock()}
-        handles["xp_events"].select.return_value = [
+        _one_page(handles["xp_events"], [
             {"amount": 40, "created_at": now.isoformat()},
             {"amount": 60, "created_at": (now - timedelta(days=1)).isoformat()},
             {"amount": 25, "created_at": (now - timedelta(days=40)).isoformat()},
-        ]
+        ])
         handles["users"].select.return_value = [
             {"streak_count": 4, "daily_goal_xp": 50}
         ]
@@ -180,3 +209,38 @@ class TestActivity:
         assert body["week"][-2]["xp"] == 60
         assert body["tiles"]["week_total"] == 100
         assert len(body["trend"]) == 8
+
+
+class TestEventsSincePagination:
+    def test_pages_past_a_full_page_of_xp_events(self):
+        """PostgREST caps a single response at supabase/config.toml's
+        max_rows (1000) and signals the cut with 206 Partial Content — a 2xx,
+        so a single unbounded select would silently drop rows past the cap.
+        This proves _events_since keeps paging until a short page comes back,
+        rather than stopping after the first (full) page."""
+        from routes.gamification import _XP_EVENTS_PAGE, _events_since
+
+        now = datetime.now(timezone.utc).isoformat()
+        full_page = [
+            {"user_id": "u1", "amount": 1, "created_at": now}
+            for _ in range(_XP_EVENTS_PAGE)
+        ]
+        short_page = [{"user_id": "u1", "amount": 2, "created_at": now}]
+        total = len(full_page) + len(short_page)
+
+        handle = MagicMock()
+        handle.select_with_count.side_effect = [
+            (full_page, total),
+            (short_page, total),
+        ]
+        with patch("routes.gamification.table", return_value=handle):
+            rows = _events_since("u1", datetime.now(timezone.utc) - timedelta(days=1))
+
+        assert len(rows) == total
+        # This amount only exists on the second page — proves both pages
+        # were accumulated, not just the first.
+        assert sum(1 for r in rows if r["amount"] == 2) == 1
+        assert handle.select_with_count.call_count == 2
+        first_call, second_call = handle.select_with_count.call_args_list
+        assert first_call.kwargs["offset"] == 0
+        assert second_call.kwargs["offset"] == _XP_EVENTS_PAGE
