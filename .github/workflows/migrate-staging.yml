@@ -12,6 +12,19 @@
 # separate `production` branch promotion, and auto-applying irreversible DDL to
 # prod on merge is a different risk decision. This runner has no down
 # migrations.
+#
+# THE SECRET MUST BE THE SESSION-MODE POOLER URI, NOT THE DIRECT ONE.
+# `db.<ref>.supabase.co` publishes only an AAAA record, and GitHub-hosted
+# runners have no outbound IPv6 — a direct string fails with "Network is
+# unreachable" / "server closed the connection unexpectedly" before it ever
+# authenticates. (Same wall on a home network without a global IPv6 address;
+# it is why staging migrations had to be applied by hand.)
+#
+# Use the pooler host on port 5432 — SESSION mode. Not 6543 (transaction mode),
+# which drops the session-level behaviour psycopg and DDL rely on. db/migrate.py
+# still says "NOT the pooler"; that warning is about transaction mode and
+# predates the IPv6-only endpoint. Session mode behaves like a direct
+# connection. Note the pooler also changes the username to `postgres.<ref>`.
 name: Migrate (staging)
 
 on:
@@ -56,7 +69,7 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.STAGING_SUPABASE_DB_URL }}
         run: |
           if [ -z "${SUPABASE_DB_URL}" ]; then
-            echo "::notice::STAGING_SUPABASE_DB_URL is not set — skipping. Add the secret (the DIRECT connection string, port 5432, not the pooler) to enable."
+            echo "::notice::STAGING_SUPABASE_DB_URL is not set — skipping. Add the secret to enable: the SESSION-mode pooler URI (aws-0-<region>.pooler.supabase.com:5432, user postgres.<ref>). Not the direct db.<ref>.supabase.co string — that is IPv6-only and unreachable from GitHub runners — and not port 6543, which is transaction mode."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
