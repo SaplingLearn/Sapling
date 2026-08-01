@@ -1,4 +1,4 @@
--- 0042: file-level duplicate detection — add file_sha256 to documents
+-- 0043: file-level duplicate detection — add file_sha256 to documents
 --
 -- The RAG corpus is shared per course, so the same lecture deck is uploaded by
 -- many students under many different filenames. `rag_service.chunk_id` already
