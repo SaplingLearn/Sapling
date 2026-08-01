@@ -86,6 +86,11 @@ const eslintConfig = [
       "src/components/marketing/surfaces/Surface.tsx",
       "src/components/marketing/surfaces/TutorSurface.tsx",
       "src/components/marketing/surfaces/UploadSurface.tsx",
+      "src/components/ProfileView.tsx",
+      "src/components/screens/Achievements.tsx",
+      "src/components/screens/achievements/HeroCard.tsx",
+      "src/components/screens/achievements/LeaderboardTab.tsx",
+      "src/components/screens/achievements/ActivityTab.tsx",
     ],
     rules: {
       "no-restricted-syntax": [
