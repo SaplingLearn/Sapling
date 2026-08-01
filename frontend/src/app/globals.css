@@ -1002,3 +1002,24 @@ input[type="reset"]:disabled {
   .landing-page .landing-feature-row:hover .landing-feature-title { transform: none; }
   .landing-page .landing-feature-row:hover .landing-feature-icon { transform: none; }
 }
+
+/* ── Knowledge graph demo (#344) ── */
+.landing-page .landing-graph-chip {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  padding: 7px 16px;
+  border-radius: 9999px;
+  border: 1px solid rgba(107, 114, 128, 0.28);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+.landing-page .landing-graph-chip:hover { border-color: var(--brand-forest); }
+.landing-page .landing-graph-chip.is-active {
+  background: var(--brand-forest);
+  border-color: var(--brand-forest);
+  color: #fff;
+}
+.landing-page .landing-graph-copy { transition: opacity 600ms ease; }

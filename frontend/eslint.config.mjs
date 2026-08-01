@@ -75,6 +75,7 @@ const eslintConfig = [
       "src/components/Gradebook/AssignmentModal.tsx",
       "src/components/screens/AdminAnalytics.tsx",
       "src/components/screens/Tree.tsx",
+      "src/components/marketing/graph/KnowledgeGraphDemo.tsx",
     ],
     rules: {
       "no-restricted-syntax": [

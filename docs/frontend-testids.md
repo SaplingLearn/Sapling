@@ -80,6 +80,7 @@ renders the element.
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
 | Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
 | Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
+| Landing knowledge graph demo | `landing-graph` | `frontend/src/components/marketing/graph/KnowledgeGraphDemo.tsx` (the pre-auth landing page's interactive course-picker + laid-out concept graph, #344) |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -323,6 +324,20 @@ Added with the upload → SSE → library journey (#387).
 | `library-detail-delete` | detail panel "Delete document" (click-twice confirm) |
 | `library-concepts-toggle-all` | detail panel "Expand all" / "Collapse all" |
 | `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
+
+### `landing-graph`
+
+Added with the #344 landing-page knowledge-graph demo. This task ships the
+static, fully laid-out render only — chips to switch course, nodes/edges for
+the selected graph; the assembly animation and hover/click interaction are
+later tasks in the same spec and reuse these same testids.
+
+| testid | element |
+| --- | --- |
+| `landing-graph` | demo section root (`aria-label` names the selected course) |
+| `landing-graph-chip-{courseId}` | one course-picker chip, per `COURSE_GRAPHS` entry — `aria-pressed` marks the active course |
+| `landing-graph-node-{nodeId}` | one SVG node group (`<g>`) in the selected course's graph |
+| `landing-graph-copy` | the section's instructional copy block (eyebrow label + heading) |
 
 ## Enforcement
 
