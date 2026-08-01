@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from main import app
@@ -244,3 +245,97 @@ class TestEventsSincePagination:
         first_call, second_call = handle.select_with_count.call_args_list
         assert first_call.kwargs["offset"] == 0
         assert second_call.kwargs["offset"] == _XP_EVENTS_PAGE
+
+
+# ── Auth guard ───────────────────────────────────────────────────────────────
+
+class TestAuthGuard:
+    """Every /api/gamification endpoint takes `user_id` as a query parameter,
+    so each one must call `require_self(user_id, request)` before touching the
+    DB — otherwise `?user_id=<victim>` is an unauthenticated read of another
+    user's XP, streaks and friends list, and `leaderboard?scope=everyone`
+    enumerates every user with an app-decrypted display name.
+
+    conftest's autouse `_bypass_session_auth` fixture stubs
+    `routes.gamification.require_self` to a no-op for the rest of this file,
+    so merely calling the endpoint proves nothing. These re-patch it on top of
+    that stub to assert it is actually invoked with the right user id, and
+    that a rejection propagates rather than being swallowed.
+    """
+
+    def _handles(self):
+        handles = {
+            "users": MagicMock(), "xp_events": MagicMock(),
+            "user_achievements": MagicMock(), "achievements": MagicMock(),
+            "friendships": MagicMock(), "user_settings": MagicMock(),
+        }
+        handles["users"].select.return_value = [{
+            "id": "u1", "total_xp": 0, "level": 1, "streak_count": 0,
+            "longest_streak": 0, "daily_goal_xp": 50,
+        }]
+        _one_page(handles["xp_events"], [])
+        handles["user_achievements"].select.return_value = []
+        handles["achievements"].select.return_value = []
+        handles["friendships"].select.return_value = []
+        handles["user_settings"].select.return_value = []
+        return handles
+
+    def test_me_checks_the_user_id(self):
+        handles = self._handles()
+        with patch("routes.gamification.table", side_effect=_tables(handles)), \
+             patch("routes.gamification.require_self") as guard:
+            r = client.get("/api/gamification/me?user_id=u1")
+        assert r.status_code == 200
+        assert guard.call_args[0][0] == "u1"
+
+    def test_leaderboard_checks_the_user_id(self):
+        handles = self._handles()
+        with patch("routes.gamification.table", side_effect=_tables(handles)), \
+             patch("routes.gamification.get_display_names", return_value={}), \
+             patch("routes.gamification.require_self") as guard:
+            r = client.get("/api/gamification/leaderboard?user_id=u1&scope=everyone")
+        assert r.status_code == 200
+        assert guard.call_args[0][0] == "u1"
+
+    def test_activity_checks_the_user_id(self):
+        handles = self._handles()
+        with patch("routes.gamification.table", side_effect=_tables(handles)), \
+             patch("routes.gamification.require_self") as guard:
+            r = client.get("/api/gamification/activity?user_id=u1")
+        assert r.status_code == 200
+        assert guard.call_args[0][0] == "u1"
+
+    def test_me_rejection_propagates(self):
+        handles = self._handles()
+        with patch("routes.gamification.table", side_effect=_tables(handles)), \
+             patch("routes.gamification.require_self",
+                   side_effect=HTTPException(status_code=403, detail="nope")):
+            r = client.get("/api/gamification/me?user_id=victim")
+        assert r.status_code == 403
+
+    def test_leaderboard_rejection_propagates(self):
+        handles = self._handles()
+        with patch("routes.gamification.table", side_effect=_tables(handles)), \
+             patch("routes.gamification.require_self",
+                   side_effect=HTTPException(status_code=403, detail="nope")):
+            r = client.get("/api/gamification/leaderboard?user_id=victim&scope=friends")
+        assert r.status_code == 403
+
+    def test_activity_rejection_propagates(self):
+        handles = self._handles()
+        with patch("routes.gamification.table", side_effect=_tables(handles)), \
+             patch("routes.gamification.require_self",
+                   side_effect=HTTPException(status_code=403, detail="nope")):
+            r = client.get("/api/gamification/activity?user_id=victim")
+        assert r.status_code == 403
+
+    def test_the_guard_runs_before_any_db_read(self):
+        """Fail-closed ordering: a rejected caller must not have caused a
+        single row to be read (an unauthenticated 403 that still enumerated
+        the leaderboard would leak through logs/timing)."""
+        handles = self._handles()
+        with patch("routes.gamification.table", side_effect=_tables(handles)) as tbl, \
+             patch("routes.gamification.require_self",
+                   side_effect=HTTPException(status_code=403, detail="nope")):
+            client.get("/api/gamification/leaderboard?user_id=victim")
+        tbl.assert_not_called()

@@ -140,9 +140,24 @@ def _get_equipped_cosmetics(settings: dict) -> dict:
 
 
 def _get_featured_achievements(user_id: str) -> list:
+    # `achievements!inner(...)` + the `achievements.status` filter is the
+    # embed-side equivalent of the `status = live` filter every top-level
+    # achievements read carries. Without the !inner the filter can't apply to
+    # the embedded table at all, and a badge the wiki has since unpublished
+    # (or one of the ten legacy seeds 0044 demotes to draft) stays pinned on
+    # the showcase — visible to other users, while absent from the grid and
+    # the "N of M" count. This showcase is served by GET /api/profile/{id},
+    # which other users can read subject to visibility, so a draft leaking
+    # here leaks work-in-progress off-team.
     rows = table("user_achievements").select(
-        "earned_at,is_featured,achievements(id,name,slug,description,icon,category,rarity,is_secret)",
-        filters={"user_id": f"eq.{user_id}", "is_featured": "eq.true"},
+        "earned_at,is_featured,"
+        "achievements!inner(id,name,slug,description,icon,category,rarity,"
+        "is_secret,xp_reward,icon_url,sort_order,status)",
+        filters={
+            "user_id": f"eq.{user_id}",
+            "is_featured": "eq.true",
+            "achievements.status": "eq.live",
+        },
     )
     if not rows:
         return []
@@ -570,9 +585,21 @@ def set_featured_achievements(user_id: str, body: SetFeaturedAchievementsBody, r
 # ── Achievements ─────────────────────────────────────────────────────────────
 
 @router.get("/{user_id}/achievements")
-def get_achievements(user_id: str):
+def get_achievements(user_id: str, request: Request):
+    # `user_id` off the path is a claim, not an identity. This payload carries
+    # per-user earned state and per-user progress counters (_progress_for runs
+    # get_user_stat against `user_id`), so it is a self-only read like every
+    # other /api/profile/{user_id}/... endpoint. The frontend only ever calls
+    # it for the signed-in user.
+    require_self(user_id, request)
+    # The select must carry every field frontend/src/lib/types.ts::Achievement
+    # declares required — the response is cast, never validated, so a missing
+    # column surfaces as `+undefined XP` and, worse, `iconUrl={undefined}`,
+    # which makes every admin-uploaded icon invisible to users (the admin wiki
+    # reads a different endpoint that selects `*`, so admins never see it).
     all_achs = table("achievements").select(
-        "id,name,slug,description,icon,category,rarity,is_secret",
+        "id,name,slug,description,icon,category,rarity,is_secret,"
+        "xp_reward,icon_url,sort_order,status",
         filters={"status": "eq.live"},
     )
     if not all_achs:
@@ -636,15 +663,24 @@ def get_achievements(user_id: str):
             })
         else:
             if ach.get("is_secret"):
+                # Hand-built rather than a row spread so the masked entry can
+                # never leak the real name/description/icon. It still has to
+                # carry every field the Achievement type declares required —
+                # xp_reward is the honest reward (the UI shows what it pays,
+                # which is not a spoiler), icon_url is nulled alongside icon.
                 entry = {
                     "id": ach["id"],
                     "name": "Secret Achievement",
                     "slug": ach["slug"],
                     "description": "Keep exploring to discover this achievement",
                     "icon": None,
+                    "icon_url": None,
                     "category": ach["category"],
                     "rarity": ach["rarity"],
                     "is_secret": True,
+                    "xp_reward": ach.get("xp_reward") or 0,
+                    "sort_order": ach.get("sort_order") or 0,
+                    "status": ach.get("status") or "live",
                     "progress": None,
                 }
             else:
@@ -731,6 +767,10 @@ def export_data(user_id: str, request: Request):
     settings = _get_or_create_settings(user_id)
     roles = _get_user_roles(user_id)
 
+    # Deliberately NOT filtered to status = live, unlike the showcase and the
+    # badge grid: this is the user's own data export of what they actually
+    # earned. If a badge they hold was later unpublished, omitting it here
+    # would make the export a lie about their own history.
     earned = table("user_achievements").select(
         "achievement_id,earned_at,is_featured,achievements(name,slug)",
         filters={"user_id": f"eq.{user_id}"},
