@@ -10,7 +10,7 @@ Tests cover:
 """
 import pytest
 from unittest.mock import MagicMock, patch, call
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class TestGetUserStat:
@@ -230,6 +230,60 @@ class TestNewTriggerTypes:
             from services.achievement_service import _get_user_stat
             assert _get_user_stat("u1", "xp_in_day") == 350
 
+    def test_session_before_hour_inverts_earlier_is_better(self):
+        """Pins the counter-intuitive 'hours before 24' encoding: a session
+        ending at 05:00 UTC clears an early-bird threshold of 7 (24-5=19), one
+        ending at 13:00 (afternoon, not "before hour") scores 0."""
+        from services.achievement_service import _session_stat
+
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [
+                {"started_at": "2026-07-01T04:00:00+00:00", "ended_at": "2026-07-01T05:00:00+00:00"},
+            ]
+            assert _session_stat("u1", "session_before_hour") == 19
+
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [
+                {"started_at": "2026-07-01T12:00:00+00:00", "ended_at": "2026-07-01T13:00:00+00:00"},
+            ]
+            assert _session_stat("u1", "session_before_hour") == 0
+
+    def test_course_grade_a_counts_enrollments_computing_to_an_a(self):
+        # e1 grades to 95% (an A); e2 grades to 70% (a C-). Each enrollment
+        # triggers its own table("assignments") call, in enrollment order, so
+        # a plain call counter (not a fresh side_effect per `table()` call)
+        # is what lets the two enrollments see different assignment rows.
+        assignments_by_call = [
+            [{"id": "a1", "category_id": "c1", "points_possible": "100", "points_earned": "95"}],
+            [{"id": "a2", "category_id": "c1", "points_possible": "100", "points_earned": "70"}],
+        ]
+        calls = {"assignments": 0}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "enrollments":
+                m.select.return_value = [
+                    {"id": "e1", "letter_scale": None, "curve_mode": "raw",
+                     "curve_avg_target": None, "curve_sd_delta": None},
+                    {"id": "e2", "letter_scale": None, "curve_mode": "raw",
+                     "curve_avg_target": None, "curve_sd_delta": None},
+                ]
+            elif name == "gradebook_categories":
+                m.select.return_value = [
+                    {"id": "c1", "name": "Exams", "weight": 100, "sort_order": 0, "drop_lowest": 0},
+                ]
+            elif name == "assignments":
+                idx = calls["assignments"]
+                calls["assignments"] += 1
+                m.select.return_value = assignments_by_call[idx]
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("services.achievement_service.table", side_effect=table_side_effect):
+            from services.achievement_service import _get_user_stat
+            assert _get_user_stat("u1", "course_grade_a") == 1
+
 
 class TestGrantPaysXp:
     def test_granting_awards_the_badge_reward(self):
@@ -278,3 +332,29 @@ class TestDraftsAreNeverGranted:
             assert check_achievements("u1", "login_streak") == []
         t.return_value.insert.assert_not_called()
         award.assert_not_called()
+
+
+class TestGoalStreakClamp:
+    def test_non_positive_stored_goal_still_terminates(self):
+        """daily_goal_xp has no CHECK enforcing positivity (0043-gamification.sql).
+        A stored goal of 0 or less would make `0 >= goal` trivially true for
+        every day with no XP events, so the backwards day-walk in _goal_streak
+        would never stop. This pins the max(goal, 1) clamp: with a -1 stored
+        goal and one day of real XP, the streak must still come back finite."""
+        today = datetime.now(timezone.utc).date().isoformat()
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [{"daily_goal_xp": -1}]
+            elif name == "xp_events":
+                m.select.return_value = [
+                    {"amount": 10, "created_at": f"{today}T09:00:00+00:00"},
+                ]
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("services.achievement_service.table", side_effect=table_side_effect):
+            from services.achievement_service import _goal_streak
+            assert _goal_streak("u1") == 1
