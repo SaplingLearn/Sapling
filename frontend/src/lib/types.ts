@@ -199,6 +199,7 @@ export interface Achievement {
   xp_reward: number;
   icon_url: string | null;
   sort_order: number;
+  status: 'draft' | 'live';
 }
 
 export interface UserAchievement {

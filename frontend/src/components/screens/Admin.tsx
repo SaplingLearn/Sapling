@@ -12,10 +12,7 @@ import { useUser } from "@/context/UserContext";
 import {
   adminFetchUsers, adminApproveUser, adminUnapproveUser,
   adminListRoles, adminCreateRole, adminDeleteRole, adminAssignRole, adminRevokeRole,
-  adminListAchievements, adminCreateAchievement, adminDeleteAchievement, adminGrantAchievement,
   adminListCosmetics, adminCreateCosmetic, adminDeleteCosmetic,
-  adminListTriggers, adminCreateTrigger, adminUpdateTrigger, adminDeleteTrigger,
-  adminListAchievementCosmetics, adminLinkAchievementCosmetic, adminUnlinkAchievementCosmetic,
   adminListRoleCosmetics, adminLinkRoleCosmetic, adminUnlinkRoleCosmetic,
   adminListAllowlist, adminApproveAllowlist, adminRevokeAllowlist,
   adminAuditLog, adminAnalyticsOverview,
@@ -23,12 +20,12 @@ import {
   type AdminFeedbackEntry, type AdminIssueReport,
 } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
-import type { Role, Achievement, Cosmetic, CosmeticType, RarityTier, AchievementCategory, AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
+import type { Role, Cosmetic, CosmeticType, RarityTier, AllowlistEmail, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
+import { AchievementWiki } from "./admin/AchievementWiki";
 
 type Tab = "users" | "allowlist" | "roles" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
-const ACH_CATS: AchievementCategory[] = ["activity", "social", "milestone", "special"];
 const COSMETIC_TYPES: CosmeticType[] = ["avatar_frame", "banner", "name_color", "title"];
 
 const COSMETIC_BUCKET = "cosmetic-assets";
@@ -90,7 +87,7 @@ export function Admin() {
         {tab === "users" && <UsersTab />}
         {tab === "allowlist" && <AllowlistTab />}
         {tab === "roles" && <RolesTab />}
-        {tab === "achievements" && <AchievementsTab />}
+        {tab === "achievements" && <AchievementWiki />}
         {tab === "cosmetics" && <CosmeticsTab />}
         {tab === "analytics" && <AnalyticsTab />}
         {tab === "audit" && <AuditTab />}
@@ -464,308 +461,6 @@ function RolesTab() {
           <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>No roles yet.</div>
         )}
         {roles.map(r => <CatalogRow key={r.id} left={<RoleBadge role={r} />} middle={r.description || r.slug} onDelete={() => del(r.id)} />)}
-      </div>
-    </div>
-  );
-}
-
-// ── Achievements ─────────────────────────────────────────────────────────────
-
-function AchievementsTab() {
-  const toast = useToast();
-  const [items, setItems] = React.useState<Achievement[]>([]);
-  const [users, setUsers] = React.useState<AdminUser[]>([]);
-  const [form, setForm] = React.useState<{
-    name: string; slug: string; description: string; icon: string;
-    category: AchievementCategory; rarity: RarityTier; is_secret: boolean;
-  }>({ name: "", slug: "", description: "", icon: "", category: "milestone", rarity: "common", is_secret: false });
-  const [saving, setSaving] = React.useState(false);
-  const [grant, setGrant] = React.useState<{ userId: string; achievementId: string }>({ userId: "", achievementId: "" });
-  const [granting, setGranting] = React.useState(false);
-
-  const [openId, setOpenId] = React.useState<string | null>(null);
-  const [triggers, setTriggers] = React.useState<AchievementTrigger[]>([]);
-  const [linkedCosmeticIds, setLinkedCosmeticIds] = React.useState<string[]>([]);
-  const [allCosmetics, setAllCosmetics] = React.useState<Cosmetic[]>([]);
-  const [newTrigger, setNewTrigger] = React.useState({ trigger_type: "", trigger_threshold: 1 });
-  const detailsRequestRef = React.useRef(0);
-  const openIdRef = React.useRef<string | null>(null);
-
-  const loadDetails = React.useCallback(async (id: string) => {
-    const requestId = ++detailsRequestRef.current;
-    try {
-      const [t, l, c] = await Promise.all([
-        adminListTriggers(id),
-        adminListAchievementCosmetics(id),
-        allCosmetics.length ? Promise.resolve({ cosmetics: allCosmetics }) : adminListCosmetics(),
-      ]);
-      if (detailsRequestRef.current !== requestId || openIdRef.current !== id) return;
-      setTriggers(t.triggers || []);
-      setLinkedCosmeticIds((l.links || []).map(x => x.cosmetic_id));
-      if (!allCosmetics.length) setAllCosmetics(c.cosmetics || []);
-    } catch (err) {
-      toast.error(`Detail load failed: ${String(err)}`);
-    }
-  }, [allCosmetics, toast]);
-
-  const toggleOpen = (id: string) => {
-    if (openId === id) {
-      openIdRef.current = null;
-      setOpenId(null);
-      return;
-    }
-    openIdRef.current = id;
-    setTriggers([]);
-    setLinkedCosmeticIds([]);
-    setOpenId(id);
-    loadDetails(id);
-  };
-
-  const addTrigger = async (id: string) => {
-    if (!newTrigger.trigger_type.trim()) { toast.warn("Trigger type required."); return; }
-    try {
-      await adminCreateTrigger({
-        achievement_id: id,
-        trigger_type: newTrigger.trigger_type.trim(),
-        trigger_threshold: newTrigger.trigger_threshold,
-      });
-      setNewTrigger({ trigger_type: "", trigger_threshold: 1 });
-      await loadDetails(id);
-      toast.success("Trigger added");
-    } catch (err) { toast.error(`Add failed: ${String(err)}`); }
-  };
-
-  const updateTriggerInline = async (tid: string, patch: Partial<AchievementTrigger>, achId: string) => {
-    try {
-      await adminUpdateTrigger(tid, {
-        ...(patch.trigger_type !== undefined ? { trigger_type: patch.trigger_type } : {}),
-        ...(patch.trigger_threshold !== undefined ? { trigger_threshold: patch.trigger_threshold } : {}),
-      });
-      await loadDetails(achId);
-    } catch (err) { toast.error(`Update failed: ${String(err)}`); }
-  };
-
-  const deleteTriggerInline = async (tid: string, achId: string) => {
-    try {
-      await adminDeleteTrigger(tid);
-      await loadDetails(achId);
-      toast.success("Trigger deleted");
-    } catch (err) { toast.error(`Delete failed: ${String(err)}`); }
-  };
-
-  const toggleCosmetic = async (achId: string, cosmeticId: string) => {
-    const linked = linkedCosmeticIds.includes(cosmeticId);
-    try {
-      if (linked) await adminUnlinkAchievementCosmetic(achId, cosmeticId);
-      else        await adminLinkAchievementCosmetic(achId, cosmeticId);
-      await loadDetails(achId);
-    } catch (err) { toast.error(`Link toggle failed: ${String(err)}`); }
-  };
-
-  const load = async () => {
-    try {
-      const [r, u] = await Promise.all([adminListAchievements(), adminFetchUsers()]);
-      setItems(r.achievements || []);
-      setUsers(u.users || []);
-    } catch (err) {
-      toast.error(`Load failed: ${String(err)}`);
-    }
-  };
-  React.useEffect(() => { load(); }, []);
-
-  const doGrant = async () => {
-    if (!grant.userId || !grant.achievementId) {
-      toast.warn("Pick a user and an achievement.");
-      return;
-    }
-    setGranting(true);
-    try {
-      await adminGrantAchievement(grant.userId, grant.achievementId);
-      toast.success("Achievement granted");
-      setGrant({ userId: "", achievementId: "" });
-    } catch (err) {
-      toast.error(`Grant failed: ${String(err)}`);
-    } finally {
-      setGranting(false);
-    }
-  };
-
-  const create = async () => {
-    if (!form.name.trim() || !form.slug.trim()) {
-      toast.warn("Name and slug are required.");
-      return;
-    }
-    setSaving(true);
-    try {
-      await adminCreateAchievement({
-        name: form.name.trim(),
-        slug: form.slug.trim(),
-        description: form.description.trim() || null,
-        icon: form.icon.trim() || null,
-        category: form.category,
-        rarity: form.rarity,
-        is_secret: form.is_secret,
-      });
-      setForm({ name: "", slug: "", description: "", icon: "", category: "milestone", rarity: "common", is_secret: false });
-      await load();
-      toast.success("Achievement created");
-    } catch (err) {
-      toast.error(`Create failed: ${String(err)}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const del = async (id: string) => {
-    try {
-      await adminDeleteAchievement(id);
-      await load();
-      toast.success("Achievement deleted");
-    } catch (err) {
-      toast.error(`Delete failed: ${String(err)}`);
-    }
-  };
-
-  return (
-    <div className="pane-split">
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div className="label-micro" style={{ marginBottom: 10 }}>Create achievement</div>
-        <LabeledField label="Name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={fieldStyle} /></LabeledField>
-        <LabeledField label="Slug"><input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-') }))} style={fieldStyle} /></LabeledField>
-        <LabeledField label="Description"><textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} style={fieldStyle} /></LabeledField>
-        <LabeledField label="Icon (emoji)"><input value={form.icon} onChange={e => setForm(f => ({ ...f, icon: e.target.value }))} placeholder="🏆" style={fieldStyle} /></LabeledField>
-        <LabeledField label="Category">
-          <CustomSelect<AchievementCategory>
-            value={form.category}
-            onChange={v => setForm(f => ({ ...f, category: v }))}
-            options={ACH_CATS.map(c => ({ value: c, label: c }))}
-          />
-        </LabeledField>
-        <LabeledField label="Rarity">
-          <CustomSelect<RarityTier>
-            value={form.rarity}
-            onChange={v => setForm(f => ({ ...f, rarity: v }))}
-            options={RARITIES.map(r => ({ value: r, label: r }))}
-          />
-        </LabeledField>
-        <label style={{ ...checkLabel, marginTop: 6 }}>
-          <input type="checkbox" checked={form.is_secret} onChange={e => setForm(f => ({ ...f, is_secret: e.target.checked }))} /> Secret (hidden until earned)
-        </label>
-        <button className="btn btn--primary" onClick={create} disabled={saving} style={{ marginTop: 14, width: "100%" }}>
-          {saving ? "Creating…" : "Create achievement"}
-        </button>
-
-        <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
-          <div className="label-micro" style={{ marginBottom: 10 }}>Grant to user</div>
-          <LabeledField label="User">
-            <CustomSelect
-              size="sm"
-              value={grant.userId}
-              onChange={v => setGrant(g => ({ ...g, userId: v }))}
-              options={users.map(u => ({ value: u.id, label: u.name || u.email, description: u.email }))}
-              placeholder="Pick a user…"
-            />
-          </LabeledField>
-          <LabeledField label="Achievement">
-            <CustomSelect
-              size="sm"
-              value={grant.achievementId}
-              onChange={v => setGrant(g => ({ ...g, achievementId: v }))}
-              options={items.map(a => ({ value: a.id, label: a.name, description: a.rarity }))}
-              placeholder="Pick one…"
-            />
-          </LabeledField>
-          <button
-            className="btn"
-            onClick={doGrant}
-            disabled={granting || !grant.userId || !grant.achievementId}
-            style={{ width: "100%", marginTop: 4 }}
-          >
-            {granting ? "Granting…" : "Grant achievement"}
-          </button>
-        </div>
-      </div>
-      <div className="card" style={{ padding: 0 }}>
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
-          <div className="label-micro">Achievements · {items.length}</div>
-        </div>
-        {items.length === 0 && <div style={{ padding: 28, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>No achievements yet.</div>}
-        {items.map(a => (
-          <CatalogRow
-            key={a.id}
-            left={<span style={{ fontSize: 18 }}>{a.icon || "★"}</span>}
-            middle={
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontWeight: 600 }}>{a.name}</span>
-                <span className="chip" style={{ textTransform: "uppercase", fontSize: 10 }}>{a.rarity}</span>
-                {a.is_secret && <span className="chip chip--warn">secret</span>}
-              </span>
-            }
-            sub={a.description || a.slug}
-            onDelete={() => del(a.id)}
-            onExpand={() => toggleOpen(a.id)}
-            expanded={openId === a.id}
-            expandedContent={
-              <div style={{ display: "grid", gap: 14 }}>
-                <div>
-                  <div className="label-micro" style={{ marginBottom: 6 }}>Triggers · {triggers.length}</div>
-                  {triggers.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>None.</div>}
-                  {triggers.map(t => (
-                    <div key={t.id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                      <input
-                        value={t.trigger_type}
-                        onChange={e => updateTriggerInline(t.id, { trigger_type: e.target.value }, a.id)}
-                        style={{ ...fieldStyle, flex: 1 }}
-                      />
-                      <input
-                        type="number"
-                        value={t.trigger_threshold}
-                        onChange={e => updateTriggerInline(t.id, { trigger_threshold: Number(e.target.value) || 0 }, a.id)}
-                        style={{ ...fieldStyle, width: 80 }}
-                      />
-                      <button className="btn btn--sm btn--ghost" onClick={() => deleteTriggerInline(t.id, a.id)}>×</button>
-                    </div>
-                  ))}
-                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
-                    <input
-                      placeholder="trigger_type (e.g. login_streak)"
-                      value={newTrigger.trigger_type}
-                      onChange={e => setNewTrigger(v => ({ ...v, trigger_type: e.target.value }))}
-                      style={{ ...fieldStyle, flex: 1 }}
-                    />
-                    <input
-                      type="number"
-                      value={newTrigger.trigger_threshold}
-                      onChange={e => setNewTrigger(v => ({ ...v, trigger_threshold: Number(e.target.value) || 0 }))}
-                      style={{ ...fieldStyle, width: 80 }}
-                    />
-                    <button className="btn btn--sm btn--primary" onClick={() => addTrigger(a.id)}>Add</button>
-                  </div>
-                </div>
-                <div>
-                  <div className="label-micro" style={{ marginBottom: 6 }}>Linked cosmetics</div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {allCosmetics.map(c => {
-                      const on = linkedCosmeticIds.includes(c.id);
-                      return (
-                        <button
-                          key={c.id}
-                          className={`chip ${on ? "chip--accent" : ""}`}
-                          onClick={() => toggleCosmetic(a.id, c.id)}
-                          style={{ cursor: "pointer", border: on ? undefined : "1px dashed var(--border)" }}
-                          title={`${c.type} · ${c.rarity}`}
-                        >
-                          {c.name}
-                        </button>
-                      );
-                    })}
-                    {allCosmetics.length === 0 && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No cosmetics defined yet.</span>}
-                  </div>
-                </div>
-              </div>
-            }
-          />
-        ))}
       </div>
     </div>
   );
