@@ -1,6 +1,6 @@
--- 0044: store the document pipeline result so duplicates can replay it
+-- 0046: store the document pipeline result so duplicates can replay it
 --
--- 0043 added file_sha256 so a re-upload can skip OCR and re-indexing. The
+-- 0045 added file_sha256 so a re-upload can skip OCR and re-indexing. The
 -- remaining cost on a duplicate is the agent pipeline: classifier, summary,
 -- concepts, and (for syllabi) syllabus extraction. Those are pure functions of
 -- the extracted text — the agents carry static system prompts and no user
