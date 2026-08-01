@@ -89,7 +89,9 @@ def save_onboarding_profile(body: OnboardingBody, request: Request):
             continue
 
         # Resolve the abstract course to a current-term offering, creating a
-        # NULL-section offering if the catalog lacks one for this term.
+        # sectionless one if the catalog lacks one for this term. "Sectionless"
+        # is the empty string, not NULL, since 0033 made section NOT NULL
+        # DEFAULT ''.
         offering_id = resolve_offering(course_id, create=True)
         if not offering_id:
             continue
