@@ -5,6 +5,8 @@ Called synchronously after events to grant achievements when thresholds are met.
 
 from datetime import datetime, timedelta, timezone
 from db.connection import table
+from services import gradebook_service
+from services.encryption import decrypt_numeric
 from services.xp_service import award_xp_safe
 
 
@@ -105,6 +107,9 @@ def _get_user_stat(user_id: str, trigger_type: str) -> int:
         )
         return len({r["room_id"] for r in rows or [] if r.get("room_id")})
 
+    if trigger_type == "course_grade_a":
+        return _course_grade_a_count(user_id)
+
     if trigger_type == "room_replies":
         owned = {
             r["id"] for r in
@@ -174,12 +179,56 @@ def _goal_streak(user_id: str) -> int:
     """Consecutive days, counting back from today, that met the daily goal."""
     rows = table("users").select("daily_goal_xp", filters={"id": f"eq.{user_id}"})
     goal = int(rows[0].get("daily_goal_xp") or 50) if rows else 50
+    # `daily_goal_xp` has no CHECK constraint enforcing positivity (0043). A
+    # zero/negative stored goal would make `0 >= goal` trivially true forever
+    # and the loop below would never terminate — clamp to at least 1 so
+    # "met the goal" always means "earned some positive XP that day".
+    goal = max(goal, 1)
     totals = _daily_totals(user_id)
     streak, day = 0, datetime.now(timezone.utc).date()
     while totals.get(day.isoformat(), 0) >= goal:
         streak += 1
         day -= timedelta(days=1)
     return streak
+
+
+def _course_grade_a_count(user_id: str) -> int:
+    """Count the user's gradebook courses (enrollments) whose currently
+    computed letter grade is an A variant (A, A-, or A+ under a custom scale).
+
+    Reuses `gradebook_service.current_grade` / `letter_for` — the same pure
+    grade math `routes/gradebook.py` runs — rather than recomputing a percent
+    here. `points_possible`/`points_earned` are encrypted at rest (see
+    CLAUDE.md gotchas), so they're decrypted the same way `_load_assignments`
+    does before being handed to the grade math.
+    """
+    enrollments = table("enrollments").select(
+        "id,letter_scale,curve_mode,curve_avg_target,curve_sd_delta",
+        filters={"user_id": f"eq.{user_id}"},
+    ) or []
+    count = 0
+    for enr in enrollments:
+        categories = table("gradebook_categories").select(
+            "id,name,weight,sort_order,drop_lowest",
+            filters={"enrollment_id": f"eq.{enr['id']}"},
+        ) or []
+        assignments = table("assignments").select(
+            "id,category_id,points_possible,points_earned",
+            filters={"enrollment_id": f"eq.{enr['id']}"},
+        ) or []
+        for a in assignments:
+            a["points_possible"] = decrypt_numeric(a.get("points_possible"))
+            a["points_earned"] = decrypt_numeric(a.get("points_earned"))
+        percent = gradebook_service.current_grade(
+            categories, assignments,
+            curve_mode=enr.get("curve_mode") or "raw",
+            curve_avg_target=enr.get("curve_avg_target"),
+            curve_sd_delta=enr.get("curve_sd_delta"),
+        )
+        letter = gradebook_service.letter_for(percent, enr.get("letter_scale"))
+        if letter and letter.startswith("A"):
+            count += 1
+    return count
 
 
 def check_achievements(user_id: str, event_type: str, event_data: dict = None) -> list:
