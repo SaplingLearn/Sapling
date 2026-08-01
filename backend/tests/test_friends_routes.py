@@ -52,6 +52,54 @@ class TestSendRequest:
                             json={"from_user_id": "u1", "to_user_id": "u2"})
         assert r.status_code == 409
 
+    def test_resend_after_decline_reactivates_the_existing_row(self):
+        """UNIQUE(from_user_id, to_user_id) on friend_requests has no status
+        carve-out, so a naive second insert() 500s once a declined row
+        already occupies the pair. The route must UPDATE that row back to
+        pending instead of inserting a duplicate."""
+        handles = {"friend_requests": MagicMock(), "friendships": MagicMock()}
+        handles["friendships"].select.return_value = []  # not friends
+        handles["friend_requests"].select.return_value = [
+            {"id": "r1", "status": "declined"}
+        ]
+        handles["friend_requests"].update.return_value = [
+            {"id": "r1", "from_user_id": "u1", "to_user_id": "u2",
+             "status": "pending", "responded_at": None}
+        ]
+        with patch("routes.social.table", side_effect=_tables(handles)):
+            r = client.post("/api/social/friends/request",
+                            json={"from_user_id": "u1", "to_user_id": "u2"})
+        assert r.status_code == 200
+        assert r.json()["request"]["status"] == "pending"
+        handles["friend_requests"].insert.assert_not_called()
+        handles["friend_requests"].update.assert_called_once()
+        data, kwargs = handles["friend_requests"].update.call_args[0], handles["friend_requests"].update.call_args[1]
+        assert data[0]["status"] == "pending"
+        assert data[0]["responded_at"] is None
+        assert kwargs["filters"] == {"id": "eq.r1"}
+
+    def test_resend_after_unfriend_reactivates_the_accepted_row(self):
+        """remove_friend deliberately leaves the friend_requests row behind
+        (it only deletes the symmetric friendships rows), so a later re-send
+        finds an 'accepted' row rather than no row at all. Same reactivation
+        path must apply, not just for 'declined'."""
+        handles = {"friend_requests": MagicMock(), "friendships": MagicMock()}
+        handles["friendships"].select.return_value = []  # unfriended already
+        handles["friend_requests"].select.return_value = [
+            {"id": "r1", "status": "accepted"}
+        ]
+        handles["friend_requests"].update.return_value = [
+            {"id": "r1", "from_user_id": "u1", "to_user_id": "u2",
+             "status": "pending", "responded_at": None}
+        ]
+        with patch("routes.social.table", side_effect=_tables(handles)):
+            r = client.post("/api/social/friends/request",
+                            json={"from_user_id": "u1", "to_user_id": "u2"})
+        assert r.status_code == 200
+        assert r.json()["request"]["status"] == "pending"
+        handles["friend_requests"].insert.assert_not_called()
+        handles["friend_requests"].update.assert_called_once()
+
 
 class TestAccept:
     def test_writes_both_directions_and_checks_both_users(self):
