@@ -11,6 +11,8 @@ import type { Achievement as AchType, AchievementCategory, UserAchievement, Rari
 import { HeroCard } from "./achievements/HeroCard";
 import { BadgeGrid, CAT_META, CAT_ORDER, type CategoryFilter } from "./achievements/BadgeGrid";
 import { BadgeModal } from "./achievements/BadgeModal";
+import { LeaderboardTab } from "./achievements/LeaderboardTab";
+import { ActivityTab } from "./achievements/ActivityTab";
 
 // Rarity colors come only from the canonical --rarity-* tokens (globals.css);
 // rarity text itself stays neutral (colored text fails 4.5:1 on several tiers).
@@ -300,18 +302,8 @@ export function Achievements() {
         </>
       )}
 
-      {/* Task 14 replaces these with the real leaderboard (fetchLeaderboard)
-          and activity (fetchActivity) views. */}
-      {tab === "leaderboard" && (
-        <div style={{ padding: "60px 32px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-          Leaderboard is coming soon.
-        </div>
-      )}
-      {tab === "activity" && (
-        <div style={{ padding: "60px 32px", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-          Activity is coming soon.
-        </div>
-      )}
+      {tab === "leaderboard" && userId && <LeaderboardTab userId={userId} />}
+      {tab === "activity" && userId && <ActivityTab userId={userId} />}
 
       {openAchievement && (
         <BadgeModal
