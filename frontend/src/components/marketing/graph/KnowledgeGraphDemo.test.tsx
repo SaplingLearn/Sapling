@@ -17,6 +17,19 @@ import { __resetReducedMotionStoreForTests } from '@/lib/usePrefersReducedMotion
 
 afterEach(cleanup);
 
+// `usePrefersReducedMotion` caches its `MediaQueryList` at module scope (by
+// design — production wants one shared subscription, not one per consumer).
+// Under vitest that cache survives across `it()` blocks in this file, so a
+// test that installs its own local `window.matchMedia` — like the two below
+// that swap it mid-run — would silently inherit whatever a *previous* test's
+// render already warmed the cache with instead of its own override. Cold
+// start every test so each one's `window.matchMedia` (whatever it is: the
+// `vitest.setup.ts` default, or a local override) is what actually gets
+// queried.
+beforeEach(() => {
+  __resetReducedMotionStoreForTests();
+});
+
 describe('KnowledgeGraphDemo', () => {
   it('renders a chip per course, with the first selected', () => {
     render(<KnowledgeGraphDemo />);
@@ -111,8 +124,10 @@ describe('KnowledgeGraphDemo — SSR/hydration parking (#344 fix round 1)', () =
   const actEnv = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 
   beforeEach(() => {
+    // The file-level `beforeEach` above already cold-starts the reduced-
+    // motion store for this test; this block only owns the hydration
+    // container + act-environment setup.
     actEnv.IS_REACT_ACT_ENVIRONMENT = true;
-    __resetReducedMotionStoreForTests();
     container = document.createElement('div');
     document.body.appendChild(container);
   });
