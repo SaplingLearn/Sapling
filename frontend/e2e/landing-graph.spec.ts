@@ -52,8 +52,8 @@ test('landing graph renders, swaps by course, and fades its copy on engagement',
  * box is ~332px, so the SVG rendered at a uniform 0.38 scale — 4.6 CSS px
  * concept labels and a 213px-tall smudge, on the device most marketing traffic
  * arrives on. The component now swaps to a phone view below the mobile
- * breakpoint, whose frame is fitted to its content (`-19 5 394 319`, #344
- * visual 3): 0.84 scale ⇒ 11.8 CSS px labels, 23.6px dots, 269px tall.
+ * breakpoint, whose frame is fitted to its content (`-4 -1 364 330`, #344
+ * visual 3): 0.91 scale ⇒ 12.8 CSS px labels, 25.5px dots, 301px tall.
  *
  * Asserting in CSS pixels — what a visitor's eye actually gets — rather than on
  * the viewBox attribute, so a different fix that reaches the same legibility

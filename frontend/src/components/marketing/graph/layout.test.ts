@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { COURSE_GRAPHS } from './courseGraphs';
+import { COURSE_GRAPHS, type CourseGraph } from './courseGraphs';
 import {
   DESKTOP_VIEW,
   GRAPH_VIEWS,
@@ -52,6 +52,116 @@ describe('radialLayout', () => {
     const small = radialLayout(G, 400, 300);
     const large = radialLayout(G, 1200, 800);
     expect(small).not.toEqual(large);
+  });
+
+  /**
+   * The geometry bug this file missed twice. The ring phase used to be a half
+   * slot on alternate depths, which on a 2-node ring (`step = π`, every fixture
+   * at depth 2) resolves to exactly {0, π}: both outer nodes dead on the
+   * horizontal axis, a settled layout of aspect 0.40 inside a near-circular
+   * sweep, and a frame the fit could never tighten.
+   *
+   * Asserted as an angle off the horizontal, not as a coordinate.
+   */
+  it('never lands a node on the horizontal axis through the centre', () => {
+    for (const graph of COURSE_GRAPHS) {
+      for (const view of GRAPH_VIEWS) {
+        const pts = radialLayout(graph, view.w, view.h, view.maxRadius);
+        for (const n of graph.nodes) {
+          if (n.id === graph.rootId) continue;
+          const p = pts.get(n.id)!;
+          const dx = p.x - view.w / 2;
+          const dy = p.y - view.h / 2;
+          // |sin| of the angle off the horizontal axis. The old rule measured
+          // exactly 0 on both depth-2 nodes; every node now measures 0.5 — 30°
+          // off, the tightest angle either ring produces.
+          expect(
+            Math.abs(dy) / Math.hypot(dx, dy),
+            `${graph.id}/${n.id} at maxRadius ${view.maxRadius}`,
+          ).toBeGreaterThan(0.4);
+        }
+      }
+    }
+  });
+
+  /**
+   * …and the invariant `ringPhase` actually claims, which is stronger than the
+   * three fixtures: for a ring of ANY size the angles are odd multiples of
+   * `π/(2·count)`, so the closest one can ever come to the horizontal axis is
+   * one such step. Swept over ring sizes 1…24 on synthetic star graphs — the
+   * cheapest way to build a ring of a given size — with the count-aware floor
+   * rather than a flat number, because a flat number is only meaningful for the
+   * ring sizes that happen to ship today.
+   */
+  it('holds the no-horizontal invariant at any ring size', () => {
+    const star = (count: number): CourseGraph => ({
+      id: `star${count}`,
+      code: 'X',
+      name: 'X',
+      rootId: 'r',
+      nodes: [
+        { id: 'r', label: 'r', tier: 'learning', blurb: '', children: [] },
+        ...Array.from({ length: count }, (_, i) => ({
+          id: `n${i}`,
+          label: `n${i}`,
+          tier: 'learning' as const,
+          blurb: '',
+          children: [],
+        })),
+      ],
+      edges: Array.from({ length: count }, (_, i) => ({ source: 'r', target: `n${i}` })),
+    });
+
+    for (let count = 1; count <= 24; count++) {
+      const pts = radialLayout(star(count), 900, 560, 232);
+      // Half a slot of the ring's own quarter-slot grid, minus float slop.
+      const floor = Math.sin(Math.PI / (2 * count)) * 0.999;
+      for (let i = 0; i < count; i++) {
+        const p = pts.get(`n${i}`)!;
+        const sin = Math.abs(p.y - 280) / Math.hypot(p.x - 450, p.y - 280);
+        expect(sin, `ring of ${count}, node ${i}`).toBeGreaterThan(floor);
+      }
+    }
+  });
+
+  /**
+   * Half a slot of rotation is what keeps a ring from lining up radially with
+   * the one inside it. The old rule spent it on every even depth — including
+   * the 2-node ring, where it was the flattening bug — so it is now spent only
+   * where it does that job: when two consecutive rings hold the same number of
+   * nodes. No shipped fixture reaches it (3 nodes then 2), so it is pinned on a
+   * synthetic 2 → 2 tree.
+   */
+  it('breaks radial spokes when two rings hold the same node count', () => {
+    const graph: CourseGraph = {
+      id: 'twotwo',
+      code: 'X',
+      name: 'X',
+      rootId: 'r',
+      nodes: ['r', 'a', 'b', 'a1', 'b1'].map((id) => ({
+        id,
+        label: id,
+        tier: 'learning' as const,
+        blurb: '',
+        children: [],
+      })),
+      edges: [
+        { source: 'r', target: 'a' },
+        { source: 'r', target: 'b' },
+        { source: 'a', target: 'a1' },
+        { source: 'b', target: 'b1' },
+      ],
+    };
+    const pts = radialLayout(graph, 900, 560, 232);
+    const angle = (id: string) => Math.atan2(pts.get(id)!.y - 280, pts.get(id)!.x - 450);
+    const off = (a: string, b: string) => Math.abs(angle(a) - angle(b));
+    // A half slot apart — not stacked on the same ray.
+    expect(off('a', 'a1')).toBeCloseTo(Math.PI / 2, 6);
+    expect(off('b', 'b1')).toBeCloseTo(Math.PI / 2, 6);
+    // …and still nothing on the horizontal axis.
+    for (const id of ['a', 'b', 'a1', 'b1']) {
+      expect(Math.abs(Math.sin(angle(id))), id).toBeGreaterThan(0.1);
+    }
   });
 
   it('keeps the default maxRadius at the old inscribed-circle rule', () => {
@@ -208,10 +318,18 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
    * The assertion above is only worth anything if the sweep actually needs the
    * headroom — otherwise a lazy "fit to the settled node positions" would pass
    * it, and that is precisely the clipping bug. So: prove the sweep leaves the
-   * settled bounding box. `helixEntry` rotates a node up to 1.5 turns on the way
-   * in, and the outer ring rests on the horizontal axis, so it passes ~0.925 ×
-   * maxRadius above and below the centre at ~83% opacity — 215 desktop units,
-   * against a settled vertical extent of 58.
+   * settled bounding box, and by how much. `helixEntry` rotates a node up to
+   * 1.5 turns on the way in, so every outer node passes through every direction
+   * before it lands.
+   *
+   * The MARGIN is what this asserts, in units, on each side. It used to be
+   * stated as a ratio ("the sweep needs ~2× the settled height"), which was only
+   * ever a proxy: the ratio is large exactly when the rest state is FLAT, and
+   * flattening the rest state is the bug the ring phase just fixed (settled
+   * aspect 0.40 → 0.91, so the ratio fell from 2.14 to 1.31 while the thing it
+   * was standing in for — how much a settled-fit frame would chop off the
+   * assembly — barely moved, 59 units against 62). Measured on each side:
+   * desktop 59.0 / 59.3, mobile 33.5 / 33.5.
    */
   for (const view of GRAPH_VIEWS) {
     it(`the ${view.maxRadius}-radius sweep leaves the settled bounding box`, () => {
@@ -241,14 +359,59 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
         }
       }
 
-      expect(sweptTop).toBeLessThan(settledTop);
-      expect(sweptBottom).toBeGreaterThan(settledBottom);
-      // Comfortably, not marginally: the sweep needs ~2× the settled height.
-      expect(sweptBottom - sweptTop).toBeGreaterThan(1.5 * (settledBottom - settledTop));
+      // Comfortably, not marginally, and on BOTH sides: a frame fitted to the
+      // rest state would chop this much off the top and bottom of the assembly,
+      // live, at ~83% opacity.
+      expect(settledTop - sweptTop).toBeGreaterThan(25);
+      expect(sweptBottom - settledBottom).toBeGreaterThan(25);
       // …and the fitted frame is sized for the sweep, not for the rest state.
       expect(view.fit.h).toBeGreaterThanOrEqual(sweptBottom - sweptTop);
+      expect(view.fit.h).toBeGreaterThan(settledBottom - settledTop);
     });
   }
+
+  /**
+   * #344 visual 3, second wave — the settled graph has to FILL the frame it is
+   * given. The flat outer ring (both depth-2 nodes on the horizontal axis) made
+   * the rest state 0.40-aspect inside a 0.86-aspect sweep, so the fitted box
+   * carried a dead band above and below the drawing: 264 of 620 rendered px,
+   * ~43%. The diagonal ring lifts every fixture past 0.60 aspect and 0.70 of
+   * the box height.
+   */
+  describe('the settled graph fills its own frame', () => {
+    for (const view of GRAPH_VIEWS) {
+      for (const graph of COURSE_GRAPHS) {
+        it(`${graph.id} at maxRadius ${view.maxRadius}`, () => {
+          const points = radialLayout(graph, view.w, view.h, view.maxRadius);
+          let l = Infinity;
+          let r = -Infinity;
+          let t = Infinity;
+          let b = -Infinity;
+          for (const n of graph.nodes) {
+            const p = points.get(n.id)!;
+            const isRoot = n.id === graph.rootId;
+            const e = drawnExtent(
+              view,
+              n.label,
+              isRoot,
+              p.x,
+              p.y,
+              isRoot ? view.rootR : view.nodeR,
+              1,
+            );
+            l = Math.min(l, e.left);
+            r = Math.max(r, e.right);
+            t = Math.min(t, e.top);
+            b = Math.max(b, e.bottom);
+          }
+          // Measured: 1.006 / 0.910 / 0.951 desktop, 1.006 / 0.844 / 0.910 phone.
+          expect((b - t) / (r - l), 'settled aspect').toBeGreaterThanOrEqual(0.6);
+          // Measured: 0.730 desktop, 0.733 phone — was 0.447 / 0.483.
+          expect((b - t) / view.fit.h, 'share of the frame height').toBeGreaterThan(0.7);
+        });
+      }
+    }
+  });
 });
 
 /**
@@ -273,8 +436,8 @@ describe('fitViewBox — one stable frame for every course', () => {
     // The shipped bug: `viewBox="0 0 900 560"` around content 578 units wide.
     expect(DESKTOP_VIEW.fit.w).toBeLessThan(DESKTOP_VIEW.w);
     expect(DESKTOP_VIEW.fit.h).toBeLessThan(DESKTOP_VIEW.h);
-    expect(viewBoxAttr(DESKTOP_VIEW.fit)).toBe('159 42 578 498');
-    expect(viewBoxAttr(MOBILE_VIEW.fit)).toBe('-19 5 394 319');
+    expect(viewBoxAttr(DESKTOP_VIEW.fit)).toBe('185 33 526 516');
+    expect(viewBoxAttr(MOBILE_VIEW.fit)).toBe('-4 -1 364 330');
   });
 });
 
@@ -384,9 +547,9 @@ describe('GraphView sizing at a 390px viewport', () => {
 
   it('renders legible labels and dots on a phone', () => {
     const scale = CONTENT_PX / MOBILE_VIEW.fit.w;
-    expect(scale).toBeCloseTo(0.8426, 4);
-    // 11.8 CSS px labels (was 4.56), 23.6 CSS px dot diameter (was 10.64),
-    // 269 CSS px of graph height (was 213).
+    expect(scale).toBeCloseTo(0.9121, 4);
+    // 12.8 CSS px labels (was 4.56), 25.5 CSS px dot diameter (was 10.64),
+    // 301 CSS px of graph height (was 213).
     expect(MOBILE_VIEW.font * scale).toBeGreaterThanOrEqual(11);
     expect(2 * MOBILE_VIEW.nodeR * scale).toBeGreaterThanOrEqual(20);
     expect(MOBILE_VIEW.fit.h * scale).toBeGreaterThanOrEqual(260);
@@ -395,8 +558,8 @@ describe('GraphView sizing at a 390px viewport', () => {
   it('documents why the desktop view is still not a phone view', () => {
     // Not an aspiration — the reason `useIsMobile` swaps views at all, kept
     // here so a future "just use one viewBox everywhere" change has to argue
-    // with it. The fit shrank the desktop box from 900 to 578 units, which
-    // lifts a phone-rendered desktop label from 4.6 to 6.9 CSS px — still
+    // with it. The fit shrank the desktop box from 900 to 526 units, which
+    // lifts a phone-rendered desktop label from 4.6 to 7.6 CSS px — still
     // nowhere near the 11px floor above.
     const scale = CONTENT_PX / DESKTOP_VIEW.fit.w;
     expect(DESKTOP_VIEW.font * scale).toBeLessThan(11);

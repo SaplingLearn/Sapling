@@ -375,9 +375,12 @@ export default function KnowledgeGraphDemo() {
           direction the rest of the section already uses, and it is the reversible
           half of the choice: no copy moves, no structure changes.
 
-          At the 720px cap the desktop graph draws at ~1.25 units per CSS px —
-          within a hair of the 1.32 it rendered at before — in a 720×621 box
-          where the fixed viewBox reserved 1184×737.
+          At the 720px cap the desktop graph draws at ~1.37 units per CSS px in
+          a 720×706 box, where the fixed viewBox reserved 1184×737 and drew the
+          graph across the middle 277px of it. The frame is taller than the
+          `578×498` first fit because the outer ring no longer lies flat on the
+          horizontal axis (see `ringPhase`): the drawing is 86% taller in CSS px
+          and now fills 73% of the box height instead of 45%.
         */}
         <svg
           data-testid="landing-graph-svg"
