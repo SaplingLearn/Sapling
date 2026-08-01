@@ -31,8 +31,27 @@ MIGRATIONS_DIR = "db/migrations"
 # Duplicate-prefix pairs and the order the runner MUST keep (first, then second).
 _PINNED_PAIRS = [
     ("0019_conventions_terms_schools.sql", "0019_gradebook_drops.sql"),
+    ("0019_gradebook_drops.sql", "0019_newsletter_approved_at.sql"),
     ("0020_academics_split.sql", "0020_gradescope.sql"),
     ("0021_gradebook.sql", "0021_gradebook_curve.sql"),
+    ("0032_retire_summer_2026.sql", "0032_rooms_missing_columns.sql"),
+    ("0033_offering_section_not_null.sql", "0033_realtime_publish_room_messages.sql"),
+]
+
+# Migrations recovered from a live ledger's orphan rows. Their filenames are not
+# cosmetic: staging's schema_migrations recorded these exact basenames, and the
+# ledger keys on basename, so renaming one re-opens the orphan it was written to
+# close — and the runner would apply its DDL a second time.
+#
+# The count guard in test_migration_naming.py cannot catch that: a rename keeps
+# the legacy count at 48 and passes. Two of the three happen to be pinned by the
+# ordering tests below (which index by exact filename and raise on a rename),
+# but 0019_newsletter_approved_at has no ordering dependency on anything, so
+# without this list nothing would hold its name.
+_RECOVERED_ORPHANS = [
+    "0019_newsletter_approved_at.sql",
+    "0032_retire_summer_2026.sql",
+    "0033_offering_section_not_null.sql",
 ]
 
 
@@ -81,6 +100,23 @@ def test_gradebook_applies_before_curve():
     the pin that contradicts the #398 comment's 'curve before gradebook' claim."""
     order = _order()
     assert order.index("0021_gradebook.sql") < order.index("0021_gradebook_curve.sql")
+
+
+def test_recovered_orphan_migrations_keep_their_exact_recorded_names():
+    """These names are load-bearing, not descriptive.
+
+    Each was recorded in a live schema_migrations ledger before it existed in
+    this repo. The ledger's primary key is the basename, so renaming one turns
+    it back into an orphan (blocking migrate-staging.yml's preflight) and makes
+    the runner apply its DDL again on every environment that already ran it.
+    """
+    order = _order()
+    for name in _RECOVERED_ORPHANS:
+        assert name in order, (
+            f"{name} is a migration recovered from a live ledger's orphan row — "
+            "its filename is the ledger's primary key and must not change. See "
+            "db/migrations/README.md."
+        )
 
 
 def test_section_not_null_applies_before_the_null_section_index():

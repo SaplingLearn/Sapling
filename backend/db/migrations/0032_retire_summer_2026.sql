@@ -29,8 +29,53 @@
 -- course_offerings.term_id is the only FK into terms (verified against the live
 -- schema) and it is ON DELETE RESTRICT — deleting first would simply fail.
 --
--- Idempotent: every statement is a WHERE-guarded write that matches nothing on
--- a second run.
+-- Replay-safe: after the first run there is no summer-2026 term and no offering
+-- pointing at it, so statements 1 and 3 match nothing. Statement 2 does still
+-- match (fall-2026 persists) but rewrites start_date to the value it already
+-- holds, so it is idempotent in effect if not in row count.
+--
+-- WHY THE GUARD BELOW EXISTS. Repointing is not unconditionally safe:
+-- course_offerings_unique is UNIQUE (course_id, term_id, section), so if a
+-- course already has an offering in BOTH summer-2026 and fall-2026 with the
+-- same section, moving the summer row onto fall-2026 lands on an occupied key
+-- and raises a duplicate-key error. That is not an exotic shape —
+-- resolve_offering(create=True) never sets section, so every app-created
+-- offering shares the identical default, and a course active across both terms
+-- produces exactly this pair.
+--
+-- Since db/migrate.py runs the whole file plus its ledger INSERT in one
+-- transaction with no per-file recovery, that error would roll this migration
+-- back and stop everything queued behind it. Choosing which of the two
+-- offerings survives is a data call (enrollments hang off one id or the other),
+-- so refuse loudly and name the collisions rather than guess.
+
+DO $$
+DECLARE
+    n      int;
+    sample text;
+BEGIN
+    SELECT count(*), left(coalesce(string_agg(g, '; '), ''), 500)
+      INTO n, sample
+      FROM (
+        SELECT format('course_id=%L section=%L', s.course_id, s.section) AS g
+          FROM course_offerings s
+          JOIN course_offerings f
+            ON f.course_id = s.course_id
+           AND f.term_id   = 'fall-2026'
+           AND f.section IS NOT DISTINCT FROM s.section
+         WHERE s.term_id = 'summer-2026'
+      ) d;
+
+    IF n > 0 THEN
+        RAISE EXCEPTION
+            'cannot retire summer-2026: % offering(s) would collide with an '
+            'existing fall-2026 offering on course_offerings_unique '
+            '(course_id, term_id, section). Merge them first — repoint '
+            'enrollments/documents/notes onto the surviving offering id, delete '
+            'the redundant row, then re-run. Collisions: %',
+            n, sample;
+    END IF;
+END $$;
 
 -- 1. Move any Summer 2026 offering into Fall 2026 before the term disappears.
 UPDATE course_offerings

@@ -38,6 +38,27 @@ That is not a theoretical problem here. `0021_gradebook.sql` DROPs and
 re-CREATEs the enrollment-keyed `assignments` table; re-running it against an
 environment that already has data would destroy the gradebook.
 
+### The one case where a new `NNNN_` file is correct
+
+The same primary-key fact cuts the other way when the ledger records a filename
+the repo does not have — an "orphan", meaning that environment ran SQL this repo
+has never seen. `migrate-staging.yml`'s preflight refuses to apply anything on
+top of that, so the backlog freezes until it is reconciled.
+
+Because the ledger keys on basename, the only fix that does not involve
+hand-editing a live ledger is to restore the file under the **exact recorded
+name**. A timestamped name would leave the orphan in place *and* re-run the DDL.
+
+Three files exist for this reason — `0019_newsletter_approved_at.sql`,
+`0032_retire_summer_2026.sql`, `0033_offering_section_not_null.sql` — which is
+why the frozen count is 48 rather than 45. These are recovered history, not
+newly claimed numbers: the numbers were already spoken for by rows in a
+production ledger, so they carry none of the concurrent-branch collision risk
+the timestamp convention exists to prevent.
+
+Recovering an orphan is the *only* sanctioned reason to add an `NNNN_` file.
+`tests/test_migration_naming.py` pins the count at 48 so anything else fails CI.
+
 The two conventions coexist permanently. Ordering still works, though for a
 narrower reason than "timestamps are longer" — sorting is character by
 character, so length decides nothing. Every legacy file starts with `0`, every

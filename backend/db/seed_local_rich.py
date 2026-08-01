@@ -125,9 +125,11 @@ _OFFERINGS = [
     (OFF_CS_F25, COURSE_CS, TERM_FALL_2025, "Dr. Ada Lovelace", "MWF 09:00", "Hall A"),
     (OFF_CS_S26, COURSE_CS, TERM_SPRING_2026, "Dr. Ada Lovelace", "MWF 11:00", "Hall A"),
     # Keeps its `su26` id: 0032 moved Summer offerings into Fall 2026, and the
-    # ids are opaque keys, not claims about the term. Renaming them would leave
-    # the old rows behind on an existing local database, where the old and new
-    # offering would collide on course_offerings_unique (course_id, term_id, '').
+    # ids are opaque keys, not claims about the term. Renaming them would break
+    # an existing local database: this upsert conflicts on
+    # (course_id, term_id, section), so a new id does not insert a second row —
+    # it UPDATEs the existing one's `id`, and enrollments.offering_id references
+    # it with no ON UPDATE clause (so NO ACTION). The rename fails on that FK.
     (OFF_ENG_SU26, COURSE_ENG, TERM_FALL_2026, "Prof. Maya Angelou", "MTWTh 10:00", "Hall C"),
     (OFF_MATH_S26, COURSE_MATH, TERM_SPRING_2026, "Dr. Emmy Noether", "TTh 10:00", "Hall B"),
     (OFF_BIO_F25, COURSE_BIO, TERM_FALL_2025, "Dr. Rosalind Franklin", "TTh 13:00", "Lab 2"),

@@ -44,6 +44,52 @@
 --
 -- Idempotent: the UPDATE matches nothing on a second run, and SET DEFAULT /
 -- SET NOT NULL are declarative rather than incremental.
+--
+-- WHY THE GUARD BELOW EXISTS. Collapsing NULL into '' is not unconditionally
+-- safe. course_offerings_unique is UNIQUE (course_id, term_id, section) and
+-- Postgres treats NULL as DISTINCT, so (c, t, NULL) and (c, t, '') coexist
+-- legally today — which is precisely the mixed state described above, since the
+-- seeders wrote '' and resolve_offering wrote NULL. Rewriting the NULL row to
+-- '' would then collide with the row already sitting on that key. Two NULL rows
+-- for the same course+term collide with each other the same way, and 0036
+-- cannot prevent it because 0036 applies AFTER this file.
+--
+-- That matters more than a single failed statement: db/migrate.py::apply_migration
+-- runs the whole file plus its ledger INSERT in ONE transaction and has no
+-- per-file recovery, so a duplicate-key error here rolls this migration back
+-- AND stops every migration queued behind it.
+--
+-- Merging the duplicates automatically is not something a migration should
+-- decide: the rows are two distinct offerings, and enrollments/documents/notes
+-- point at one id or the other, so picking a survivor is a data call. So this
+-- refuses loudly, names the offending groups, and leaves the environment
+-- exactly as it was. A fresh replay has no rows and sails through.
+
+DO $$
+DECLARE
+    n_groups int;
+    sample   text;
+BEGIN
+    SELECT count(*), left(coalesce(string_agg(g, '; '), ''), 500)
+      INTO n_groups, sample
+      FROM (
+        SELECT format('course_id=%L term_id=%L rows=%s', course_id, term_id, count(*)) AS g
+          FROM course_offerings
+         WHERE section IS NULL OR section = ''
+         GROUP BY course_id, term_id
+        HAVING count(*) > 1
+      ) d;
+
+    IF n_groups > 0 THEN
+        RAISE EXCEPTION
+            'cannot collapse NULL sections: % course+term group(s) already hold '
+            'more than one sectionless offering, so setting section to '''' would '
+            'violate course_offerings_unique. Merge them first — repoint '
+            'enrollments/documents/notes onto the surviving offering id, delete '
+            'the redundant row, then re-run. Offending groups: %',
+            n_groups, sample;
+    END IF;
+END $$;
 
 UPDATE course_offerings SET section = '' WHERE section IS NULL;
 
