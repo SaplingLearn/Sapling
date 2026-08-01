@@ -45,14 +45,18 @@ python -m pytest tests/ -q      # backend test suite
 Database (run from `backend/`; migrations are raw DDL, never dashboard SQL):
 
 ```
-python -m db.migrate              # apply pending migrations (needs SUPABASE_DB_URL = direct conn string)
+python -m db.migrate              # apply pending migrations (SUPABASE_DB_URL = SESSION-mode pooler URI, port 5432)
 python -m db.migrate --baseline   # record migrations as applied without running them
 python -m db.seed_staging         # idempotent fake demo dataset on the new schema
 ```
 
 The `db/` scripts read `.env` by default; for staging/prod ops run them under
 `dotenv -f .env.staging run -- python -m db.<script>` so they hit the right project.
-Migrations are immutable once applied — add a new numbered file, never edit an old one.
+Migrations are immutable once applied — add a new timestamp-prefixed file
+(`date -u +%Y%m%d%H%M%S`), never edit an old one. `SUPABASE_DB_URL` must be the
+SESSION-mode pooler URI (port 5432, user `postgres.<ref>`); the direct
+`db.<ref>.supabase.co` host is IPv6-only and unreachable from most networks, and
+port 6543 is transaction mode and breaks DDL. `scripts/pooler_url.py` builds it.
 
 Docker (full stack from repo root):
 
