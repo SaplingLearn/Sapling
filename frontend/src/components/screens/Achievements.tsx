@@ -1,14 +1,15 @@
 "use client";
 import React from "react";
 import { TopBar } from "../TopBar";
+import { FilterPills } from "@/components/ui";
 import { Icon } from "../Icon";
 import { AchievementsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { fetchAchievements, fetchGamificationMe, setFeaturedAchievements } from "@/lib/api";
-import type { Achievement as AchType, UserAchievement, RarityTier, GamificationMe } from "@/lib/types";
+import type { Achievement as AchType, AchievementCategory, UserAchievement, RarityTier, GamificationMe } from "@/lib/types";
 import { HeroCard } from "./achievements/HeroCard";
-import { BadgeGrid } from "./achievements/BadgeGrid";
+import { BadgeGrid, CAT_META, CAT_ORDER, type CategoryFilter } from "./achievements/BadgeGrid";
 import { BadgeModal } from "./achievements/BadgeModal";
 
 // Rarity colors come only from the canonical --rarity-* tokens (globals.css);
@@ -97,6 +98,7 @@ export function Achievements() {
   const [tab, setTab] = React.useState<Tab>("achievements");
   const [earned, setEarned] = React.useState<UserAchievement[]>([]);
   const [available, setAvailable] = React.useState<AchType[]>([]);
+  const [filter, setFilter] = React.useState<CategoryFilter>("all");
   const [me, setMe] = React.useState<GamificationMe | null>(null);
   const [featuredIds, setFeaturedIds] = React.useState<string[]>([]);
   const [dragId, setDragId] = React.useState<string | null>(null);
@@ -193,6 +195,20 @@ export function Achievements() {
     () => [...earned.map(u => u.achievement), ...available],
     [earned, available],
   );
+  // Catalog totals per category, for the FilterPills counts — "All" shows
+  // the full catalog total, each category pill shows its own total.
+  const catalogCountByCategory = React.useMemo(() => {
+    const m = new Map<AchievementCategory, number>();
+    for (const a of allAchievements) m.set(a.category, (m.get(a.category) ?? 0) + 1);
+    return m;
+  }, [allAchievements]);
+  const filterOptions: { value: CategoryFilter; label: string }[] = [
+    { value: "all", label: `All · ${allAchievements.length}` },
+    ...CAT_ORDER.map((c) => ({
+      value: c as CategoryFilter,
+      label: `${CAT_META[c].label} · ${catalogCountByCategory.get(c) ?? 0}`,
+    })),
+  ];
 
   return (
     <div>
@@ -204,6 +220,14 @@ export function Achievements() {
 
       {tab === "achievements" && (
         <>
+          <div style={{ padding: "14px 32px", borderBottom: "1px solid var(--border)" }}>
+            <FilterPills
+              options={filterOptions}
+              value={filter}
+              onChange={setFilter}
+            />
+          </div>
+
           {loading && <AchievementsSkeleton />}
           {!loading && <div style={{ padding: "24px 32px" }}>
             {me && <HeroCard me={me} />}
@@ -271,7 +295,7 @@ export function Achievements() {
               ))}
             </div>
 
-            <BadgeGrid achievements={allAchievements} earnedById={earnedById} onOpen={setOpenAchievement} />
+            <BadgeGrid achievements={allAchievements} earnedById={earnedById} onOpen={setOpenAchievement} category={filter} />
           </div>}
         </>
       )}
