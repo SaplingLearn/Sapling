@@ -196,6 +196,9 @@ export interface Achievement {
   rarity: RarityTier;
   is_secret: boolean;
   progress?: AchievementProgress | null;
+  xp_reward: number;
+  icon_url: string | null;
+  sort_order: number;
 }
 
 export interface UserAchievement {
@@ -577,4 +580,60 @@ export interface PublicRoom {
   updated_at: string | null;
   is_public: true;
   member_count: number;
+}
+
+// ── Gamification (XP / achievements / growth) ────────────────────────────────
+
+export interface GrowthStage {
+  slug: string;
+  name: string;
+  blurb: string;
+}
+
+export interface GamificationMe {
+  level: number;
+  next_level: number;
+  stage: GrowthStage;
+  total_xp: number;
+  xp_into_level: number;
+  xp_for_level: number;
+  level_pct: number;
+  streak: number;
+  longest_streak: number;
+  daily_goal_xp: number;
+  today_xp: number;
+  earned_count: number;
+  total_count: number;
+}
+
+export interface LeaderboardRow {
+  rank: number;
+  user_id: string;
+  name: string;
+  level: number;
+  stage: string;
+  total_xp: number;
+  week_xp: number;
+  streak: number;
+  is_you: boolean;
+}
+
+export interface ActivityData {
+  week: { day: string; date: string; xp: number }[];
+  trend: { label: string; xp: number }[];
+  daily_goal_xp: number;
+  tiles: {
+    week_total: number;
+    daily_avg: number;
+    best_day: number;
+    best_day_label: string;
+    streak: number;
+  };
+}
+
+export interface Friend {
+  user_id: string;
+  name: string;
+  level: number;
+  total_xp: number;
 }
