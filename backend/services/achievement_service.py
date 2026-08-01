@@ -256,6 +256,17 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
     )
     existing_ids = {row["achievement_id"] for row in existing} if existing else set()
 
+    # Drop already-earned triggers BEFORE evaluating the stat. Several stats
+    # are expensive (course_grade_a walks every enrollment's assignments,
+    # xp_in_day and goal_streak scan the whole xp_events ledger,
+    # owned_room_members counts members per owned room), and these now run on
+    # request paths — flashcard ratings, room posts, grade writes. Once a
+    # badge is earned its stat can never change the outcome, so computing it
+    # is pure waste on the steady-state path where users already hold it.
+    triggers = [t for t in triggers if t["achievement_id"] not in existing_ids]
+    if not triggers:
+        return newly_earned
+
     # Get the current stat value for this event type
     current_value = _get_user_stat(user_id, event_type)
 

@@ -1063,6 +1063,18 @@ def end_session(body: EndSessionBody, request: Request):
         from services.achievement_service import check_achievements
         newly_earned = check_achievements(body.user_id, "login_streak", {})
         newly_earned += check_achievements(body.user_id, "session_count", {})
+        # A finished session is the only thing that advances these. Without
+        # them `deep-focus` (session_minutes), `early-bird`
+        # (session_before_hour), `night-owl` (session_after_midnight) and
+        # `perfect-week` (goal_streak) are live badges nothing can award.
+        # Fired here, after the sessions row has its ended_at, because every
+        # one of these stats is computed from ended_at.
+        newly_earned += check_achievements(body.user_id, "session_minutes", {})
+        newly_earned += check_achievements(body.user_id, "session_before_hour", {})
+        newly_earned += check_achievements(body.user_id, "session_after_midnight", {})
+        # goal_streak counts days that met daily_goal_xp; the session_completed
+        # award above may well be what tipped today over the line.
+        newly_earned += check_achievements(body.user_id, "goal_streak", {})
     except Exception:
         pass
 
