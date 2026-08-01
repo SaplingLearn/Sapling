@@ -41,10 +41,14 @@ function AssemblingGraph({
   graph,
   points,
   parked,
+  onNodeEnter,
+  onNodeLeave,
 }: {
   graph: CourseGraph;
   points: Map<string, Point>;
   parked: boolean;
+  onNodeEnter: (id: string) => void;
+  onNodeLeave: () => void;
 }) {
   const [animatedProgress, setAnimatedProgress] = useState(0);
   // "Parked" means the assembly is skipped and the graph renders complete —
@@ -94,7 +98,13 @@ function AssemblingGraph({
         const h = helixEntry(p, { x: VIEW_W / 2, y: VIEW_H / 2 }, local);
         const r = nodeRadius(graph, n.id);
         return (
-          <g key={n.id} data-testid={`landing-graph-node-${n.id}`} opacity={h.opacity}>
+          <g
+            key={n.id}
+            data-testid={`landing-graph-node-${n.id}`}
+            opacity={h.opacity}
+            onMouseEnter={() => onNodeEnter(n.id)}
+            onMouseLeave={onNodeLeave}
+          >
             <circle cx={h.x} cy={h.y} r={r * h.scale} fill={TIER_COLOR[n.tier]} />
             <text
               x={h.x}
@@ -117,11 +127,39 @@ function AssemblingGraph({
 export default function KnowledgeGraphDemo() {
   const [courseId, setCourseId] = useState(COURSE_GRAPHS[0].id);
 
+  // Interaction state (#344 task 5). Both live here, in the parent, rather
+  // than inside `AssemblingGraph`: that child is keyed by `graph.id` and
+  // remounts on every course switch, which would silently wipe any state
+  // stored inside it. `engaged` in particular must survive a course switch
+  // (once a visitor has interacted, the instructional copy stays faded for
+  // the rest of the session) — that's only guaranteed by keeping it outside
+  // the subtree that remounts. `hovered` doesn't strictly need the same
+  // guarantee (a stale id from the previous course just fails the
+  // `graph.nodes.find` lookup below and renders no blurb), but the blurb
+  // paragraph itself is rendered here in the parent, as a sibling of the
+  // `<svg>`, so the parent needs read access to "which node is hovered"
+  // regardless. One state owner for both pieces of interaction state keeps
+  // `AssemblingGraph` a plain layout/animation renderer that only takes
+  // callback props, instead of splitting hover across two lifetimes for no
+  // behavioral gain.
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [engaged, setEngaged] = useState(false);
+
+  function onNodeEnter(id: string) {
+    setHovered(id);
+    setEngaged(true);
+  }
+
+  function onNodeLeave() {
+    setHovered(null);
+  }
+
   const graph = useMemo(
     () => COURSE_GRAPHS.find((g) => g.id === courseId) ?? COURSE_GRAPHS[0],
     [courseId],
   );
   const points = useMemo(() => radialLayout(graph, VIEW_W, VIEW_H), [graph]);
+  const hoveredBlurb = hovered ? graph.nodes.find((n) => n.id === hovered)?.blurb : undefined;
 
   // `usePrefersReducedMotion` (not a direct `window.matchMedia` read in the
   // render body — #344 fix round 1) is hydration-safe: it renders the same
@@ -139,7 +177,12 @@ export default function KnowledgeGraphDemo() {
       className="landing-section landing-graph relative z-10 py-24 md:py-32"
     >
       <div className="max-w-7xl mx-auto px-6 lg:px-12">
-        <div data-testid="landing-graph-copy" className="landing-graph-copy">
+        <div
+          data-testid="landing-graph-copy"
+          data-engaged={engaged ? 'true' : 'false'}
+          className="landing-graph-copy"
+          style={{ opacity: engaged ? 0.35 : 1 }}
+        >
           <span className="font-jetbrains text-[0.7rem] tracking-[0.32em] text-[var(--brand-forest)] uppercase font-medium">
             Your knowledge, mapped
           </span>
@@ -172,8 +215,28 @@ export default function KnowledgeGraphDemo() {
           role="img"
           aria-label={`${graph.name} concept graph`}
         >
-          <AssemblingGraph key={graph.id} graph={graph} points={points} parked={parked} />
+          <AssemblingGraph
+            key={graph.id}
+            graph={graph}
+            points={points}
+            parked={parked}
+            onNodeEnter={onNodeEnter}
+            onNodeLeave={onNodeLeave}
+          />
         </svg>
+
+        {/*
+          Reserved min-height (#344 task 5): the blurb text appears and
+          disappears on every hover/unhover. Without a floor, the paragraph
+          collapsing to empty on mouseleave shifts anything rendered below
+          this section on every single hover — load-bearing, not cosmetic.
+        */}
+        <p
+          data-testid="landing-graph-blurb"
+          className="landing-graph-blurb font-inter text-[var(--text-dim)] mt-4 min-h-[1.5rem]"
+        >
+          {hoveredBlurb ?? ''}
+        </p>
       </div>
     </section>
   );

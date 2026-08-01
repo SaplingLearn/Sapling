@@ -327,17 +327,19 @@ Added with the upload → SSE → library journey (#387).
 
 ### `landing-graph`
 
-Added with the #344 landing-page knowledge-graph demo. This task ships the
-static, fully laid-out render only — chips to switch course, nodes/edges for
-the selected graph; the assembly animation and hover/click interaction are
-later tasks in the same spec and reuse these same testids.
+Added with the #344 landing-page knowledge-graph demo. Ships the static,
+fully laid-out render (chips to switch course, nodes/edges for the selected
+graph), the helical assembly animation, and hover interaction (blurb reveal +
+copy fade on first engagement); click-to-expand is a later task in the same
+spec and will reuse these same testids.
 
 | testid | element |
 | --- | --- |
 | `landing-graph` | demo section root (`aria-label` names the selected course) |
 | `landing-graph-chip-{courseId}` | one course-picker chip, per `COURSE_GRAPHS` entry — `aria-pressed` marks the active course |
 | `landing-graph-node-{nodeId}` | one SVG node group (`<g>`) in the selected course's graph |
-| `landing-graph-copy` | the section's instructional copy block (eyebrow label + heading) |
+| `landing-graph-copy` | the section's instructional copy block (eyebrow label + heading) — `data-engaged` flips `"true"` on the visitor's first node hover and stays that way across course switches |
+| `landing-graph-blurb` | the reserved-height paragraph below the graph that shows the hovered node's one-sentence blurb |
 
 ## Enforcement
 

@@ -185,3 +185,41 @@ describe('KnowledgeGraphDemo — SSR/hydration parking (#344 fix round 1)', () =
     }
   });
 });
+
+describe('KnowledgeGraphDemo — interaction', () => {
+  it('shows a concept blurb on hover', () => {
+    render(<KnowledgeGraphDemo />);
+    const n = COURSE_GRAPHS[0].nodes[1];
+    fireEvent.mouseEnter(screen.getByTestId(`landing-graph-node-${n.id}`));
+    expect(screen.getByTestId('landing-graph-blurb')).toHaveTextContent(n.blurb);
+  });
+
+  it('fades the instructional copy once the visitor interacts', () => {
+    render(<KnowledgeGraphDemo />);
+    const copy = screen.getByTestId('landing-graph-copy');
+    expect(copy).toHaveAttribute('data-engaged', 'false');
+
+    fireEvent.mouseEnter(
+      screen.getByTestId(`landing-graph-node-${COURSE_GRAPHS[0].nodes[1].id}`),
+    );
+    expect(copy).toHaveAttribute('data-engaged', 'true');
+  });
+
+  it('keeps the copy faded across a course switch instead of resetting engagement', () => {
+    render(<KnowledgeGraphDemo />);
+    const copy = screen.getByTestId('landing-graph-copy');
+
+    fireEvent.mouseEnter(
+      screen.getByTestId(`landing-graph-node-${COURSE_GRAPHS[0].nodes[1].id}`),
+    );
+    expect(copy).toHaveAttribute('data-engaged', 'true');
+
+    // `AssemblingGraph` remounts (keyed by `graph.id`) on a course switch.
+    // `engaged` lives in the parent specifically so this remount can't wipe
+    // it — pin that here, not just at the component-boundary level.
+    const target = COURSE_GRAPHS[1];
+    fireEvent.click(screen.getByTestId(`landing-graph-chip-${target.id}`));
+
+    expect(copy).toHaveAttribute('data-engaged', 'true');
+  });
+});
