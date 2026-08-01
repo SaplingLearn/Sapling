@@ -176,6 +176,11 @@ class ToggleReactionBody(BaseModel):
     emoji: str
 
 
+class FriendRequestBody(BaseModel):
+    from_user_id: str
+    to_user_id: str
+
+
 class ExportBody(BaseModel):
     # No default — caller must always supply the real user_id.
     # Prevents accidental exports under the wrong account.

@@ -11,8 +11,9 @@ from agents.deps import SaplingDeps
 from agents.social_summary import social_summary_agent
 from agents.usage import record_agent_usage
 from db.connection import table
-from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
+from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody, FriendRequestBody
 from services.auth_guard import require_self, get_session_user_id
+from services.achievement_service import check_achievements
 from services.encryption import encrypt_if_present, decrypt_if_present
 from services.profiles import get_display_name, get_display_names
 from services.graph_service import get_graph
@@ -597,3 +598,129 @@ def get_students(request: Request):
     ]
     students.sort(key=lambda s: (s["name"] or ""))
     return {"students": students}
+
+
+# ── Friends ──────────────────────────────────────────────────────────────────
+
+def _are_friends(user_id: str, other_id: str) -> bool:
+    rows = table("friendships").select(
+        "friend_id", filters={"user_id": f"eq.{user_id}", "friend_id": f"eq.{other_id}"}
+    )
+    return bool(rows)
+
+
+@router.post("/friends/request")
+def send_friend_request(body: FriendRequestBody):
+    if body.from_user_id == body.to_user_id:
+        raise HTTPException(status_code=400, detail="You can't friend yourself")
+    if _are_friends(body.from_user_id, body.to_user_id):
+        raise HTTPException(status_code=409, detail="Already friends")
+    existing = table("friend_requests").select(
+        "id,status",
+        filters={
+            "from_user_id": f"eq.{body.from_user_id}",
+            "to_user_id": f"eq.{body.to_user_id}",
+        },
+    )
+    if existing and existing[0].get("status") == "pending":
+        raise HTTPException(status_code=409, detail="Request already pending")
+    result = table("friend_requests").insert({
+        "from_user_id": body.from_user_id,
+        "to_user_id": body.to_user_id,
+        "status": "pending",
+    })
+    return {"request": result[0] if result else None}
+
+
+def _load_request(request_id: str, user_id: str) -> dict:
+    rows = table("friend_requests").select(
+        "id,from_user_id,to_user_id,status", filters={"id": f"eq.{request_id}"}
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Request not found")
+    req = rows[0]
+    if req["to_user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not your request to answer")
+    return req
+
+
+@router.post("/friends/requests/{request_id}/accept")
+def accept_friend_request(request_id: str, user_id: str):
+    req = _load_request(request_id, user_id)
+    a, b = req["from_user_id"], req["to_user_id"]
+    # Symmetric rows: "my friends" stays a plain equality filter.
+    table("friendships").insert([
+        {"user_id": a, "friend_id": b},
+        {"user_id": b, "friend_id": a},
+    ])
+    table("friend_requests").update(
+        {"status": "accepted", "responded_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{request_id}"},
+    )
+    check_achievements(a, "friends_count")
+    check_achievements(b, "friends_count")
+    return {"accepted": True}
+
+
+@router.post("/friends/requests/{request_id}/decline")
+def decline_friend_request(request_id: str, user_id: str):
+    _load_request(request_id, user_id)
+    table("friend_requests").update(
+        {"status": "declined", "responded_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{request_id}"},
+    )
+    return {"declined": True}
+
+
+@router.delete("/friends/{friend_id}")
+def remove_friend(friend_id: str, user_id: str):
+    table("friendships").delete(
+        filters={"user_id": f"eq.{user_id}", "friend_id": f"eq.{friend_id}"}
+    )
+    table("friendships").delete(
+        filters={"user_id": f"eq.{friend_id}", "friend_id": f"eq.{user_id}"}
+    )
+    return {"removed": True}
+
+
+@router.get("/friends/requests")
+def list_friend_requests(user_id: str):
+    incoming = table("friend_requests").select(
+        "id,from_user_id,created_at",
+        filters={"to_user_id": f"eq.{user_id}", "status": "eq.pending"},
+    ) or []
+    outgoing = table("friend_requests").select(
+        "id,to_user_id,created_at",
+        filters={"from_user_id": f"eq.{user_id}", "status": "eq.pending"},
+    ) or []
+    ids = [r["from_user_id"] for r in incoming] + [r["to_user_id"] for r in outgoing]
+    names = get_display_names(ids) if ids else {}
+    return {
+        "incoming": [
+            {**r, "name": names.get(r["from_user_id"], "Someone")} for r in incoming
+        ],
+        "outgoing": [
+            {**r, "name": names.get(r["to_user_id"], "Someone")} for r in outgoing
+        ],
+    }
+
+
+@router.get("/friends/{user_id}")
+def list_friends(user_id: str):
+    rows = table("friendships").select("friend_id", filters={"user_id": f"eq.{user_id}"})
+    ids = [r["friend_id"] for r in rows or []]
+    if not ids:
+        return {"friends": []}
+    users = table("users").select(
+        "id,level,total_xp", filters={"id": f"in.({','.join(ids)})"}
+    ) or []
+    names = get_display_names(ids)
+    return {"friends": [
+        {
+            "user_id": u["id"],
+            "name": names.get(u["id"], "Someone"),
+            "level": u.get("level") or 1,
+            "total_xp": u.get("total_xp") or 0,
+        }
+        for u in users
+    ]}
