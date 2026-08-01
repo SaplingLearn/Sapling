@@ -45,6 +45,17 @@ RE_COLUMN = re.compile(
 )
 RE_INDEX = re.compile(r"create\s+(?:unique\s+)?index\s+(?:if\s+not\s+exists\s+)?([a-z0-9_]+)", re.I)
 
+# A UNIQUE index is the one thing in a pending migration that IF NOT EXISTS
+# cannot make safe: it still fails if the live data already violates it. That
+# is a DATA problem, invisible to a schema-only diff, and it is what turns a
+# clean-looking backlog into a half-applied run. Parsed so the check follows
+# whatever migrations are actually pending.
+RE_UNIQUE_INDEX = re.compile(
+    r"create\s+unique\s+index\s+(?:if\s+not\s+exists\s+)?([a-z0-9_]+)\s+"
+    r"on\s+([a-z0-9_.]+)\s*\(([^)]*)\)(?:\s*where\s+([^;]+))?",
+    re.I | re.S,
+)
+
 
 def bare(name: str) -> str:
     return name.split(".")[-1]
@@ -131,6 +142,31 @@ def main() -> int:
                 print(f"      {h}")
     if not found_any:
         print("  none — the ledger is behind, not lying")
+
+    # Data blockers: a pending UNIQUE index that live rows already violate.
+    print("\nDATA BLOCKERS (pending UNIQUE index vs rows already present)")
+    blocked = False
+    for name in pending:
+        sql = (MIGRATIONS / name).read_text()
+        for idx, table, cols, pred in RE_UNIQUE_INDEX.findall(sql):
+            cols_sql = ", ".join(c.strip() for c in cols.split(","))
+            where = f" WHERE {pred.strip()}" if pred else ""
+            try:
+                dupes = conn.execute(
+                    f"SELECT {cols_sql}, count(*) FROM {bare(table)}{where} "
+                    f"GROUP BY {cols_sql} HAVING count(*) > 1 LIMIT 5"
+                ).fetchall()
+            except Exception as exc:  # table may not exist yet — that's fine
+                conn.rollback()
+                print(f"  {name}: {idx} — could not check ({type(exc).__name__})")
+                continue
+            if dupes:
+                blocked = True
+                print(f"  {name}: {idx} WOULD FAIL — duplicate rows exist:")
+                for d in dupes:
+                    print(f"      {d}")
+    if not blocked:
+        print("  none")
 
     return 0
 
