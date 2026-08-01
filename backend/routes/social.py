@@ -623,8 +623,25 @@ def send_friend_request(body: FriendRequestBody, request: Request):
             "to_user_id": f"eq.{body.to_user_id}",
         },
     )
-    if existing and existing[0].get("status") == "pending":
-        raise HTTPException(status_code=409, detail="Request already pending")
+    if existing:
+        if existing[0].get("status") == "pending":
+            raise HTTPException(status_code=409, detail="Request already pending")
+        # A row for this (from_user_id, to_user_id) pair already exists —
+        # declined, or accepted-then-unfriended (remove_friend only deletes
+        # the symmetric friendships rows, it deliberately leaves the
+        # historical friend_requests row in place). UNIQUE(from_user_id,
+        # to_user_id) means a second insert here would 409/500 on the
+        # constraint, so reactivate the existing row instead of inserting
+        # a duplicate.
+        result = table("friend_requests").update(
+            {
+                "status": "pending",
+                "responded_at": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            filters={"id": f"eq.{existing[0]['id']}"},
+        )
+        return {"request": result[0] if result else None}
     result = table("friend_requests").insert({
         "from_user_id": body.from_user_id,
         "to_user_id": body.to_user_id,
