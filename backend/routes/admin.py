@@ -31,6 +31,7 @@ from services.auth_guard import require_admin, get_session_user_id
 from services.achievement_service import check_achievements
 from services.users_search import paginate_users
 from services.storage_service import upload_achievement_icon
+from services.xp_service import award_xp_safe
 
 router = APIRouter()
 
@@ -290,7 +291,7 @@ def grant_achievement(body: GrantAchievementBody, request: Request):
     # Resolve the badge BEFORE granting: a 'draft' achievement is
     # work-in-progress in the admin wiki and must never reach a user.
     achievement = table("achievements").select(
-        "id,slug,status", filters={"id": f"eq.{body.achievement_id}"},
+        "id,slug,status,xp_reward", filters={"id": f"eq.{body.achievement_id}"},
     )
     if not achievement:
         raise HTTPException(status_code=404, detail="Achievement not found")
@@ -320,6 +321,21 @@ def grant_achievement(body: GrantAchievementBody, request: Request):
         actor_id=actor, action="achievement.grant", target_type="achievement",
         target_id=body.achievement_id, payload={"user_id": body.user_id},
     )
+
+    # Pay the badge's xp_reward, exactly as achievement_service.check_achievements
+    # does on the earned path. `mentor`, `comeback`, `secret` and `methuselah`
+    # are manual-grant-only, so without this they paid 0 and two users with
+    # identical badge sets ended up with different XP totals. Same rule_key +
+    # source_id as the earned path, so the xp_events idempotency key makes a
+    # re-grant (or an earned-then-granted badge) a clean no-op rather than a
+    # double payout. _safe: XP must never fail the grant that earned it.
+    reward = int(achievement_row.get("xp_reward") or 0)
+    if reward:
+        award_xp_safe(
+            body.user_id, "achievement_unlocked",
+            source_type="achievement", source_id=body.achievement_id,
+            amount=reward,
+        )
 
     # Trigger linked cosmetics via achievement service
     check_achievements(body.user_id, "manual_admin_grant", {})
