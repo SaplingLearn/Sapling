@@ -47,18 +47,24 @@ function PodiumSpot({ row, place }: { row: LeaderboardRow; place: 1 | 2 | 3 }) {
   );
 }
 
-function Podium({ rows }: { rows: LeaderboardRow[] }) {
-  // Podium order is visual left-to-right (2nd, 1st, 3rd), not rank order —
-  // only render the places that actually have a row, so a 1- or 2-row board
-  // doesn't index past the end and stays visually centered rather than
-  // leaving a phantom gap where a missing place would sit.
-  const first = rows[0];
-  const second = rows[1];
-  const third = rows[2];
-  const spots: { row: LeaderboardRow; place: 1 | 2 | 3 }[] = [];
+export type PodiumSpot = { row: LeaderboardRow; place: 1 | 2 | 3 };
+
+// Podium order is visual left-to-right (2nd, 1st, 3rd), not rank order —
+// only returns the places that actually have a row, so a 1- or 2-row board
+// doesn't index past the end (a naive `rows[1], rows[0], rows[2]` would) and
+// stays visually centered rather than leaving a phantom gap where a missing
+// place would sit.
+export function buildPodiumSpots(rows: LeaderboardRow[]): PodiumSpot[] {
+  const [first, second, third] = rows;
+  const spots: PodiumSpot[] = [];
   if (second) spots.push({ row: second, place: 2 });
   if (first) spots.push({ row: first, place: 1 });
   if (third) spots.push({ row: third, place: 3 });
+  return spots;
+}
+
+function Podium({ rows }: { rows: LeaderboardRow[] }) {
+  const spots = buildPodiumSpots(rows);
   if (!spots.length) return null;
   return (
     <div style={{ display: "flex", alignItems: "flex-end", gap: 16, padding: "8px 24px 0", marginBottom: 8 }}>
@@ -172,10 +178,13 @@ export function LeaderboardTab({ userId }: { userId: string }) {
           <div className="card" style={{ padding: 8 }}>
             {rows.map((row) => <RankRow key={row.user_id} row={row} />)}
           </div>
-          {viewerRow && viewerRow.rank > rows.length && (
+          {viewerRow && !rows.some((r) => r.user_id === viewerRow.user_id) && (
             // Defensive only: today the viewer's row is always inside `rows`,
             // but if that ever changes, still surface their standing rather
-            // than silently omitting it.
+            // than silently omitting it. Checked by user_id, not rank — rank
+            // contiguity is an implementation detail of the current
+            // unpaginated backend, not something the LeaderboardRow type
+            // guarantees (xp_events already grew pagination once, #Task 8).
             <div className="card" style={{ padding: 8, marginTop: 10 }}>
               <RankRow row={viewerRow} />
             </div>
