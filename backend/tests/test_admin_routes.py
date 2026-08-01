@@ -142,12 +142,16 @@ class TestGrantAchievement:
                 m.select.return_value = []
             return m
 
-        with _mock_admin(), patch("routes.admin.table", side_effect=by_name):
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name) as t:
             r = client.post("/api/admin/achievements/grant", json={
                 "user_id": "u1", "achievement_id": "missing",
             })
 
         assert r.status_code == 404
+        # A missing achievement must never reach the user_achievements table
+        # at all -- not just fail to insert, but never even be queried.
+        called_names = [c.args[0] for c in t.call_args_list]
+        assert "user_achievements" not in called_names
 
     def test_409_if_achievement_is_draft(self):
         def by_name(name):
@@ -158,7 +162,7 @@ class TestGrantAchievement:
                 ]
             return m
 
-        with _mock_admin(), patch("routes.admin.table", side_effect=by_name):
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name) as t:
             r = client.post("/api/admin/achievements/grant", json={
                 "user_id": "u1", "achievement_id": "a1",
             })
@@ -168,6 +172,10 @@ class TestGrantAchievement:
         assert "secret_badge" in detail
         assert "draft" in detail.lower()
         assert "publish" in detail.lower()
+        # A draft achievement must never be written to user_achievements,
+        # even transiently -- the 409 must come from a gate, not a rollback.
+        called_names = [c.args[0] for c in t.call_args_list]
+        assert "user_achievements" not in called_names
 
     def test_grants_when_achievement_is_live(self):
         def by_name(name):
