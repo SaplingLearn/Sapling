@@ -1,0 +1,97 @@
+# Apply pending migrations to STAGING when they land on main.
+#
+# Why this exists: nothing else applies them. The backend image's CMD is a bare
+# uvicorn, there is no Procfile/release step, main.py's lifespan does not
+# migrate, and the Supabase GitHub integration reads `supabase/migrations/`
+# (the CLI convention) which this repo does not use — its migrations are raw
+# DDL under backend/db/migrations/ applied by db/migrate.py against a
+# `schema_migrations` ledger. So a merge shipped code whose schema had not
+# moved, and someone had to remember to run the migration by hand.
+#
+# STAGING ONLY, deliberately. `main` deploys the staging environment; prod is a
+# separate `production` branch promotion, and auto-applying irreversible DDL to
+# prod on merge is a different risk decision. This runner has no down
+# migrations.
+name: Migrate (staging)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/db/migrations/**"
+  workflow_dispatch:
+
+concurrency:
+  # Never let two runs apply DDL to the same database at once.
+  group: migrate-staging
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    # workflow_dispatch lets you pick ANY branch containing this file, so
+    # without this a migration could be applied to shared staging straight from
+    # an unmerged branch — bypassing review. Worse than the bypass: the
+    # filename lands in the ledger, so if the file is then edited before merge
+    # (easy, since it was only "tested"), the merge never re-applies it and
+    # staging silently diverges from the canonical file with no pending/orphan
+    # signal to catch it. That is exactly the immutability rule CLAUDE.md
+    # states — migrations are immutable once applied.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the runner's only dependency
+        # Range matches backend/requirements.txt so this can't drift onto a
+        # psycopg major the app has never run against.
+        run: pip install "psycopg[binary]>=3.2,<4"
+
+      - name: Preflight — report ledger drift instead of pushing through it
+        id: preflight
+        env:
+          SUPABASE_DB_URL: ${{ secrets.STAGING_SUPABASE_DB_URL }}
+        run: |
+          if [ -z "${SUPABASE_DB_URL}" ]; then
+            echo "::notice::STAGING_SUPABASE_DB_URL is not set — skipping. Add the secret (the DIRECT connection string, port 5432, not the pooler) to enable."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          cd backend
+          python - <<'PY'
+          import os, sys, pathlib, psycopg
+          files = sorted(p.name for p in pathlib.Path("db/migrations").glob("*.sql"))
+          with psycopg.connect(os.environ["SUPABASE_DB_URL"]) as c:
+              exists = c.execute(
+                  "SELECT to_regclass('public.schema_migrations') IS NOT NULL"
+              ).fetchone()[0]
+              if not exists:
+                  print("::error::schema_migrations does not exist on this database. "
+                        "Applying now would treat all migrations as pending and fail "
+                        "recreating existing objects. Reconcile with `python -m db.migrate "
+                        "--baseline` against a verified-current schema first (issue #317).")
+                  sys.exit(1)
+              recorded = {r[0] for r in c.execute("SELECT filename FROM schema_migrations").fetchall()}
+          pending = [f for f in files if f not in recorded]
+          orphans = sorted(recorded - set(files))
+          print(f"on disk: {len(files)} | recorded: {len(recorded)} | pending: {len(pending)}")
+          for p in pending:
+              print(f"  pending: {p}")
+          if orphans:
+              # Recorded-but-absent means the ledger and the repo disagree about
+              # history — the #317 shape. Applying more on top compounds it.
+              for o in orphans:
+                  print(f"::error::recorded but not in repo: {o}")
+              sys.exit(1)
+          PY
+
+      - name: Apply
+        if: steps.preflight.outputs.skip != 'true'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.STAGING_SUPABASE_DB_URL }}
+        run: |
+          cd backend
+          python -m db.migrate
