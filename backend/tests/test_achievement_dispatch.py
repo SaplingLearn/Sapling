@@ -277,6 +277,49 @@ class TestOwnedRoomMembersDispatch:
         assert owned, "join never dispatched owned_room_members"
         assert owned[0].args[0] == "owner1"
 
+    def test_public_join_fires_for_the_room_owner_not_the_joiner(self):
+        """#405's public rooms are an invite-less second way in. It has to
+        dispatch what the invite-code path dispatches, or `room-leader`
+        (Grovekeeper) only advances for owners whose members happened to arrive
+        by invite code — the same badge, earnable or not depending on which
+        join button the fifth member pressed."""
+        handles = {"rooms": MagicMock(), "room_members": MagicMock()}
+        handles["rooms"].select.return_value = [{
+            "id": "r1", "is_public": True, "created_by": "owner1",
+        }]
+        handles["room_members"].select.return_value = []
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social._touch_room"), \
+             patch("routes.social.invalidate_summary"), \
+             patch("services.achievement_service.check_achievements",
+                   return_value=[]) as check:
+            r = client.post("/api/social/public-rooms/r1/join",
+                            json={"user_id": "u1"})
+        assert r.status_code == 200
+        joined = [c for c in check.call_args_list
+                  if len(c.args) > 1 and c.args[1] == "rooms_joined"]
+        assert joined, "public join never dispatched rooms_joined"
+        assert joined[0].args[0] == "u1"
+        owned = [c for c in check.call_args_list
+                 if len(c.args) > 1 and c.args[1] == "owned_room_members"]
+        assert owned, "public join never dispatched owned_room_members"
+        assert owned[0].args[0] == "owner1"
+
+    def test_a_broken_dispatch_does_not_fail_the_public_join(self):
+        handles = {"rooms": MagicMock(), "room_members": MagicMock()}
+        handles["rooms"].select.return_value = [{
+            "id": "r1", "is_public": True, "created_by": "owner1",
+        }]
+        handles["room_members"].select.return_value = []
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social._touch_room"), \
+             patch("routes.social.invalidate_summary"), \
+             patch("services.achievement_service.check_achievements",
+                   side_effect=RuntimeError("boom")):
+            r = client.post("/api/social/public-rooms/r1/join",
+                            json={"user_id": "u1"})
+        assert r.status_code == 200
+
     def test_creating_a_room_fires_for_the_creator(self):
         handles = {"rooms": MagicMock(), "room_members": MagicMock()}
         with patch("routes.social.table", side_effect=_tables(handles)), \
