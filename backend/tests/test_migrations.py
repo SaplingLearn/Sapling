@@ -22,10 +22,9 @@ the numeric intent." That is not what the runner does. `sorted()` compares
 `_` (0x5F), applies **gradebook first** — which is exactly the required
 dependency order. `test_gradebook_applies_before_curve` pins that.
 """
-import re
 from pathlib import Path
 
-from db.migrate import discover_migrations
+from db.migrate import discover_migrations, is_valid_migration_name
 
 MIGRATIONS_DIR = "db/migrations"
 
@@ -44,10 +43,17 @@ def _order() -> list[str]:
 # ── Offline: apply-order pins (pure filename logic) ─────────────────────────
 
 
-def test_every_migration_has_a_four_digit_numeric_prefix():
-    """A file without the NNNN_ prefix sorts unpredictably and breaks ordering."""
-    bad = [n for n in _order() if not re.match(r"^\d{4}_.*\.sql$", n)]
-    assert bad == [], f"migrations without a NNNN_ prefix: {bad}"
+def test_every_migration_has_a_sortable_numeric_prefix():
+    """A file without a fixed-width numeric prefix sorts unpredictably and
+    breaks apply order.
+
+    Two shapes are accepted: the frozen legacy `NNNN_` files, and the
+    `YYYYMMDDHHMMSS_` timestamps used for every new migration. See
+    `tests/test_migration_naming.py` for why the legacy names can never be
+    converted, and `db.migrate.is_valid_migration_name` for the rule itself.
+    """
+    bad = [n for n in _order() if not is_valid_migration_name(n)]
+    assert bad == [], f"migrations with an unsortable prefix: {bad}"
 
 
 def test_migration_filenames_are_unique():
