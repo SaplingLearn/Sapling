@@ -1410,3 +1410,44 @@ class TestUploadFileLevelDedup:
             inserted = t.return_value.insert.call_args[0][0]
 
         assert inserted["file_sha256"] == file_sha256(content)
+
+    def test_duplicate_syllabus_upload_still_populates_the_calendar(self):
+        """Syllabus uploads are deliberately NOT short-circuited by dedup.
+
+        Calendar assignments are read off `result.syllabus.assignments`, and no
+        column on the documents row stores them -- so they cannot be
+        reconstructed from a twin. If the dedup path ever grows an
+        agent-skipping branch, it must exclude syllabi, or the second student
+        to upload the same syllabus silently gets an empty calendar. This test
+        is the guard on that separation: the library-side dedup (OCR and
+        re-indexing) must not reach into the calendar path.
+        """
+        from datetime import date
+
+        result = _make_orchestrator_result(
+            category="syllabus",
+            is_syllabus=True,
+            syllabus_assignments=[
+                {"title": "PS1", "due_date": date(2026, 4, 1), "description": None},
+            ],
+        )
+        twin = dict(self._TWIN, category="syllabus")
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file") as extract,
+            patch("routes.documents.find_duplicate", return_value=twin),
+            patch("routes.documents.process_document", return_value=result) as agents,
+            patch("routes.documents.save_assignments_to_db") as save_assignments,
+            patch("routes.documents.apply_graph_update"),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d4", "file_name": "syl.pdf"}]
+            r = _make_upload(filename="syl.pdf")
+
+        assert r.status_code == 200
+        # OCR is still skipped -- that saving is safe for every category.
+        extract.assert_not_called()
+        # But the agents still run, so the calendar still gets populated.
+        agents.assert_called_once()
+        save_assignments.assert_called_once()
