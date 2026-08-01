@@ -3,7 +3,7 @@ import React from "react";
 import { BadgeArt } from "@/components/growth/BadgeArt";
 import type { Achievement, AchievementCategory, UserAchievement } from "@/lib/types";
 
-const CAT_ORDER: AchievementCategory[] = ["activity", "social", "milestone", "special"];
+export const CAT_ORDER: AchievementCategory[] = ["activity", "social", "milestone", "special"];
 
 // Category copy, verbatim from the design's CAT_META.
 export const CAT_META: Record<AchievementCategory, { label: string; blurb: string }> = {
@@ -13,16 +13,21 @@ export const CAT_META: Record<AchievementCategory, { label: string; blurb: strin
   special:   { label: "Special",   blurb: "Rare feats, seasonal moments, and the occasional secret." },
 };
 
+export type CategoryFilter = "all" | AchievementCategory;
+
 export function BadgeGrid({
-  achievements, earnedById, onOpen,
+  achievements, earnedById, onOpen, category = "all",
 }: {
   achievements: Achievement[];
   earnedById: Map<string, UserAchievement>;
   onOpen: (a: Achievement) => void;
+  // Scopes the grid to a single category (the FilterPills row in
+  // Achievements.tsx); "all" (the default) renders every section, same as
+  // before the filter existed.
+  category?: CategoryFilter;
 }) {
-  return (
-    <>
-      {CAT_ORDER.map((cat) => {
+  const cats = category === "all" ? CAT_ORDER : [category];
+  const sections = cats.map((cat) => {
         const list = achievements.filter((a) => a.category === cat);
         if (!list.length) return null;
         const earnedCount = list.filter((a) => earnedById.has(a.id)).length;
@@ -101,7 +106,19 @@ export function BadgeGrid({
             </div>
           </section>
         );
-      })}
-    </>
-  );
+  }).filter((s): s is React.JSX.Element => s !== null);
+
+  if (!sections.length) {
+    // Both an empty catalog and an empty single-category filter land here —
+    // without this the screen just shows blank space below the showcase.
+    return (
+      <div className="label-micro" style={{ padding: "12px 0 24px" }}>
+        {category === "all"
+          ? "No achievements yet."
+          : `No ${CAT_META[category].label.toLowerCase()} achievements yet.`}
+      </div>
+    );
+  }
+
+  return <>{sections}</>;
 }
