@@ -250,17 +250,24 @@ class TestLifespanWiresEnsureBucketExists:
                 pass
 
         m.assert_called_once()
-        # Verify the lifespan passes the avatars-specific settings the
-        # bucket actually needs: public for unauthenticated <img src>
-        # reads, MAX_AVATAR_SIZE for the size cap, and the same MIME
-        # types the route's _validate_upload allows.
+        # Verify the lifespan passes the settings the bucket actually needs:
+        # public for unauthenticated <img src> reads, MAX_AVATAR_SIZE for the
+        # size cap, and the MIME types of EVERYTHING stored in it. The bucket
+        # holds achievement icons as well as avatars/cosmetics, and Supabase
+        # enforces the list even for service-role writes — asserting only
+        # ALLOWED_CONTENT_TYPES here is what let image/svg+xml go missing and
+        # every SVG icon upload 400 at runtime.
         from config import MAX_AVATAR_SIZE, STORAGE_BUCKET
-        from services.storage_service import ALLOWED_CONTENT_TYPES
+        from services.storage_service import (
+            ALLOWED_CONTENT_TYPES, ICON_CONTENT_TYPES,
+        )
         args = m.call_args
         assert args.args[0] == STORAGE_BUCKET
         assert args.kwargs["public"] is True
         assert args.kwargs["file_size_limit"] == MAX_AVATAR_SIZE
-        assert set(args.kwargs["allowed_mime_types"]) == ALLOWED_CONTENT_TYPES
+        assert set(args.kwargs["allowed_mime_types"]) == \
+            ALLOWED_CONTENT_TYPES | ICON_CONTENT_TYPES
+        assert "image/svg+xml" in args.kwargs["allowed_mime_types"]
 
 
 class TestDeleteAsset:
@@ -272,3 +279,31 @@ class TestDeleteAsset:
         mock_del.assert_called_once()
         call_url = mock_del.call_args[0][0]
         assert "avatars/u1/avatar.png" in call_url
+
+
+class TestBucketBootstrapCoversIcons:
+    """The bucket holds both avatars/cosmetics and admin-uploaded achievement
+    icons. Supabase Storage enforces the bucket's allowed_mime_types even for
+    service-role writes, so bootstrapping it from ALLOWED_CONTENT_TYPES alone
+    left image/svg+xml off the list: validate_icon accepted the SVG and the
+    PUT then 400d, surfacing to the admin as "502 Icon upload failed
+    (Supabase 400)". The bootstrap list has to be the union."""
+
+    def test_the_bootstrap_mime_list_is_the_union(self):
+        import main
+        from services.storage_service import (
+            ALLOWED_CONTENT_TYPES, ICON_CONTENT_TYPES,
+        )
+        expected = sorted(ALLOWED_CONTENT_TYPES | ICON_CONTENT_TYPES)
+        assert "image/svg+xml" in expected
+        assert sorted(main.ALLOWED_CONTENT_TYPES | main.ICON_CONTENT_TYPES) == expected
+
+    def test_every_icon_content_type_is_bootstrapped(self):
+        from services.storage_service import (
+            ALLOWED_CONTENT_TYPES, ICON_CONTENT_TYPES,
+        )
+        assert ICON_CONTENT_TYPES <= (ALLOWED_CONTENT_TYPES | ICON_CONTENT_TYPES)
+        # The real regression guard: anything validate_icon will accept must be
+        # something the bucket was created willing to store.
+        bootstrap = set(ALLOWED_CONTENT_TYPES | ICON_CONTENT_TYPES)
+        assert not (ICON_CONTENT_TYPES - bootstrap)
