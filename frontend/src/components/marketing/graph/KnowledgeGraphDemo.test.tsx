@@ -48,3 +48,25 @@ describe('KnowledgeGraphDemo', () => {
     expect(screen.getByTestId('landing-graph')).toHaveAttribute('aria-label');
   });
 });
+
+describe('KnowledgeGraphDemo — motion', () => {
+  it('parks fully assembled when reduced motion is requested', () => {
+    // jsdom has no matchMedia; supply one that reports "reduce".
+    window.matchMedia = ((q: string) => ({
+      matches: q.includes('prefers-reduced-motion'),
+      media: q,
+      addEventListener() {},
+      removeEventListener() {},
+    })) as unknown as typeof window.matchMedia;
+
+    render(<KnowledgeGraphDemo />);
+    const g = COURSE_GRAPHS[0];
+
+    // Every node present AND at full opacity — parked means complete.
+    for (const n of g.nodes) {
+      const el = screen.getByTestId(`landing-graph-node-${n.id}`);
+      expect(el).toBeInTheDocument();
+      expect(el.getAttribute('opacity')).toBe('1');
+    }
+  });
+});
