@@ -3,6 +3,7 @@ Admin routes — role, achievement, cosmetic, and user management.
 All routes require admin role.
 """
 
+import base64
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -22,6 +23,7 @@ from models import (
     LinkAchievementCosmeticBody,
     LinkRoleCosmeticBody,
     AllowlistEmailBody,
+    AchievementIconBody,
 )
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
@@ -29,6 +31,7 @@ from services.achievement_service import check_achievements
 from services.users_search import paginate_users
 from services.encryption import decrypt_if_present
 from services.profiles import get_display_names
+from services.storage_service import upload_achievement_icon
 
 router = APIRouter()
 
@@ -220,7 +223,8 @@ def create_achievement(body: CreateAchievementBody, request: Request):
 def update_achievement(achievement_id: str, request: Request, body: dict = {}):
     require_admin(request)
     actor = get_session_user_id(request)
-    allowed = {"name", "description", "icon", "category", "rarity", "is_secret"}
+    allowed = {"name", "description", "icon", "icon_url", "category", "rarity",
+               "is_secret", "xp_reward", "sort_order", "status"}
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
@@ -230,6 +234,25 @@ def update_achievement(achievement_id: str, request: Request, body: dict = {}):
         target_id=achievement_id, payload=updates,
     )
     return {"updated": True}
+
+
+@router.post("/achievements/{achievement_id}/icon")
+def upload_icon(achievement_id: str, body: AchievementIconBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    try:
+        file_bytes = base64.b64decode(body.file_base64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="file_base64 is not valid base64")
+    icon_url = upload_achievement_icon(achievement_id, file_bytes, body.content_type)
+    table("achievements").update(
+        {"icon_url": icon_url}, filters={"id": f"eq.{achievement_id}"}
+    )
+    log_admin_action(
+        actor_id=actor, action="achievement.icon", target_type="achievement",
+        target_id=achievement_id, payload={"icon_url": icon_url},
+    )
+    return {"icon_url": icon_url}
 
 
 @router.delete("/achievements/cosmetics")

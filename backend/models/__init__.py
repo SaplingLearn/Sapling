@@ -372,6 +372,11 @@ class LinkRoleCosmeticBody(BaseModel):
     cosmetic_id: str
 
 
+class AchievementIconBody(BaseModel):
+    file_base64: str
+    content_type: str
+
+
 # ── Cosmetics (Admin) ────────────────────────────────────────────────────────
 
 class CreateCosmeticBody(BaseModel):
