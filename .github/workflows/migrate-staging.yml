@@ -29,6 +29,15 @@ concurrency:
 jobs:
   migrate:
     runs-on: ubuntu-latest
+    # workflow_dispatch lets you pick ANY branch containing this file, so
+    # without this a migration could be applied to shared staging straight from
+    # an unmerged branch — bypassing review. Worse than the bypass: the
+    # filename lands in the ledger, so if the file is then edited before merge
+    # (easy, since it was only "tested"), the merge never re-applies it and
+    # staging silently diverges from the canonical file with no pending/orphan
+    # signal to catch it. That is exactly the immutability rule CLAUDE.md
+    # states — migrations are immutable once applied.
+    if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +46,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install the runner's only dependency
-        run: pip install "psycopg[binary]"
+        # Range matches backend/requirements.txt so this can't drift onto a
+        # psycopg major the app has never run against.
+        run: pip install "psycopg[binary]>=3.2,<4"
 
       - name: Preflight — report ledger drift instead of pushing through it
         id: preflight
