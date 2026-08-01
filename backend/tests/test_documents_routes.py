@@ -1555,3 +1555,34 @@ class TestUploadFileLevelDedup:
             "start", "classify", "classified", "extract", "extracted",
             "graph_update", "graph_updated", "finalize", "done",
         ]
+
+    def test_persists_the_extracted_text_so_a_later_duplicate_can_reuse_it(self):
+        """find_duplicate refuses a twin with no extracted_text -- reusing one
+        would skip OCR and leave the new document empty.
+
+        That column used to be written only by _index_document_chunks, which
+        runs as a post-roll task on the STREAMING route. /upload/sync never
+        indexes, so a sync upload persisted a row with file_sha256 set but
+        extracted_text NULL: it looked like a duplicate to the lookup and was
+        then rejected, and dedup could never fire. Caught by running the real
+        app, not by the suite.
+        """
+        from services.encryption import decrypt_if_present
+
+        text = _doc_text("the text that must survive onto the row")
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=text),
+            patch("routes.documents.find_duplicate", return_value=None),
+            patch(
+                "routes.documents.process_document",
+                return_value=_make_orchestrator_result(category="slides"),
+            ),
+            patch("routes.documents.table") as t,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [{"id": "d8", "file_name": "x.pdf"}]
+            _make_upload()
+            inserted = t.return_value.insert.call_args[0][0]
+
+        assert decrypt_if_present(inserted["extracted_text"]) == text

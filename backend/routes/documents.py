@@ -431,6 +431,7 @@ def _persist_document(
     course_id: str | None = None,
     char_count: int | None = None,
     file_hash: str | None = None,
+    extracted_text: str | None = None,
 ) -> tuple[str, dict]:
     """Insert a documents row from an orchestrator result.
 
@@ -466,6 +467,13 @@ def _persist_document(
     }
     if request_id:
         row["request_id"] = request_id
+    if extracted_text:
+        # Written here so BOTH upload routes populate it. It used to be set
+        # only by _index_document_chunks, which is a post-roll task on the
+        # streaming route — so a /upload/sync row carried a fingerprint but no
+        # text, and find_duplicate rejected it as an unusable twin. Migration
+        # 0030 intends this column to hold the text for every document.
+        row["extracted_text"] = encrypt_if_present(extracted_text)
     if file_hash:
         row["file_sha256"] = file_hash
         # The whole pipeline result, so a future duplicate can replay it
@@ -721,7 +729,7 @@ async def upload_document_sync(
         _persist_document, user_id=user_id, offering_id=offering_id,
         filename=filename, result=result, request_id=request_id,
         course_id=course_id, char_count=len(extracted_text),
-        file_hash=file_hash,
+        file_hash=file_hash, extracted_text=extracted_text,
     )
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
@@ -1054,7 +1062,7 @@ async def upload_document(
                 request_id=request_id,
                 course_id=course_id,
                 char_count=len(extracted_text) if extracted_text is not None else None,
-                file_hash=file_hash,
+                file_hash=file_hash, extracted_text=extracted_text,
             )
 
             # BackgroundTasks runs after response close — useless for SSE since
