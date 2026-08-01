@@ -37,6 +37,26 @@ import psycopg
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
+# Index builds size their working set from maintenance_work_mem, and the server
+# default is not enough for every migration in this repo. 0039_rag_vector_store
+# builds an ivfflat index over VECTOR(768) and needs ~35 MB; Supabase defaults to
+# 32 MB, so it dies with
+#     ProgramLimitExceeded: memory required is 35 MB, maintenance_work_mem is 32 MB
+# and — because apply_migration runs each file plus its ledger INSERT in one
+# transaction, and run() has no per-file recovery — takes every migration queued
+# behind it down too. Staging hit exactly this with 5 files still pending.
+#
+# Set it PER SESSION rather than per environment. `ALTER DATABASE ... SET` only
+# reaches backends started after it, and a pooled connection is often already
+# established, so the change appears to do nothing (observed against Supavisor:
+# a fresh backend saw the new value while a reused one still reported 32 MB). A
+# session-level SET always lands on the connection actually running the DDL.
+#
+# Transient — this is per-operation memory during an index build, not a
+# reservation. Override for a memory-tight instance:
+#     MIGRATE_MAINTENANCE_WORK_MEM=64MB python -m db.migrate
+MAINTENANCE_WORK_MEM = os.environ.get("MIGRATE_MAINTENANCE_WORK_MEM", "128MB")
+
 
 # Two accepted filename shapes, both sortable and both fixed-width:
 #   NNNN_          legacy sequential prefix (frozen — see below)
@@ -115,6 +135,12 @@ def run(
     baseline: bool = False,
 ) -> list[str]:
     """Apply (or baseline-record) all pending migrations. Returns filenames handled."""
+    with conn.cursor() as cur:
+        # Quoted as a literal, not a bound parameter: SET does not accept one.
+        # The value is operator-supplied config, never request input, and a bad
+        # value fails loudly here rather than mid-migration.
+        cur.execute(f"SET maintenance_work_mem = '{MAINTENANCE_WORK_MEM}'")
+    conn.commit()
     ensure_tracking_table(conn)
     applied = applied_filenames(conn)
     pending = pending_migrations(discover_migrations(migrations_dir), applied)
