@@ -102,7 +102,11 @@ def list_public_rooms(request: Request, user_id: str = Query(...)):
 @router.post("/public-rooms/{room_id}/join")
 def join_public_room(room_id: str, body: PublicJoinBody, request: Request):
     require_self(body.user_id, request)
-    rooms = table("rooms").select("id,is_public", filters={"id": f"eq.{room_id}"})
+    # created_by is selected because the achievement dispatch below needs it —
+    # owned_room_members is the OWNER's stat, not the joiner's.
+    rooms = table("rooms").select(
+        "id,is_public,created_by", filters={"id": f"eq.{room_id}"}
+    )
     if not rooms:
         raise HTTPException(status_code=404, detail="Room not found")
     if not rooms[0].get("is_public"):
@@ -120,6 +124,26 @@ def join_public_room(room_id: str, body: PublicJoinBody, request: Request):
         )
         _touch_room(room_id)
         invalidate_summary(room_id)
+
+    # #405's public rooms are a SECOND way into a room, so they must dispatch
+    # exactly what the invite-code path (join_room) dispatches. Without this,
+    # `room-leader` (Grovekeeper: create a study room five people join) only
+    # advanced for owners whose members happened to arrive by invite code — the
+    # same badge, earnable or not depending on which join button the fifth
+    # member pressed. Fired unconditionally (not only on a fresh membership),
+    # mirroring join_room: a repeat join is a cheap re-evaluation, and the
+    # owner's badge must not depend on the joiner's click history.
+    try:
+        from services.achievement_service import check_achievements
+        check_achievements(body.user_id, "rooms_joined", {})
+        # The owner is rooms.created_by, NOT the joining user — dispatching for
+        # body.user_id would evaluate the wrong user's rooms.
+        owner = rooms[0].get("created_by")
+        if owner:
+            check_achievements(owner, "owned_room_members", {})
+    except Exception:
+        pass
+
     return {"joined": True, "room_id": room_id}
 
 
