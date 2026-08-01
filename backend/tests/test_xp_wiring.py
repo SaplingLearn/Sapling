@@ -57,7 +57,20 @@ def _xp_tables(rule_key: str, amount: int = 10):
     handles["xp_rules"].select.return_value = [
         {"key": rule_key, "amount": amount, "enabled": True}
     ]
-    handles["xp_events"].insert.side_effect = lambda data: [data]
+    events: list[dict] = []
+
+    def _insert(data):
+        events.append({"amount": data["amount"]})
+        return [data]
+
+    handles["xp_events"].insert.side_effect = _insert
+    # award_xp recomputes users.total_xp by summing the ledger, so xp_events
+    # needs a real select_with_count. Leaving it a bare MagicMock would make
+    # the unpack raise *after* the insert these tests assert on — invisible
+    # here, but it would mean the route tests stopped exercising the tail of
+    # award_xp at all.
+    handles["xp_events"].select_with_count.side_effect = \
+        lambda *a, **k: (list(events), len(events))
     handles["users"].select.return_value = [{"total_xp": 0, "level": 1}]
     handles["users"].update.return_value = []
     return (lambda name: handles[name]), handles
