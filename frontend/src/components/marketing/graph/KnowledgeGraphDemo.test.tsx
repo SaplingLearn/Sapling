@@ -12,8 +12,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 
 import KnowledgeGraphDemo, { ENGAGED_HEADLINE_OPACITY } from './KnowledgeGraphDemo';
-import { COURSE_GRAPHS } from './courseGraphs';
-import { DESKTOP_VIEW, MOBILE_VIEW } from './layout';
+import { COURSE_GRAPHS, TIER_COLOR } from './courseGraphs';
+import { DESKTOP_VIEW, MOBILE_VIEW, viewBoxAttr } from './layout';
 import { __resetReducedMotionStoreForTests } from '@/lib/usePrefersReducedMotion';
 import { __resetMediaStoresForTests } from '@/lib/useIsMobile';
 
@@ -544,7 +544,7 @@ describe('KnowledgeGraphDemo — mobile viewBox (#344 review #3)', () => {
     installViewport(true);
     render(<KnowledgeGraphDemo />);
     const svg = screen.getByTestId('landing-graph-svg');
-    expect(svg.getAttribute('viewBox')).toBe(`0 0 ${MOBILE_VIEW.w} ${MOBILE_VIEW.h}`);
+    expect(svg.getAttribute('viewBox')).toBe(viewBoxAttr(MOBILE_VIEW.fit));
     expect(svg.querySelector('text')!.getAttribute('font-size')).toBe(String(MOBILE_VIEW.font));
   });
 
@@ -552,7 +552,82 @@ describe('KnowledgeGraphDemo — mobile viewBox (#344 review #3)', () => {
     installViewport(false);
     render(<KnowledgeGraphDemo />);
     const svg = screen.getByTestId('landing-graph-svg');
-    expect(svg.getAttribute('viewBox')).toBe(`0 0 ${DESKTOP_VIEW.w} ${DESKTOP_VIEW.h}`);
+    expect(svg.getAttribute('viewBox')).toBe(viewBoxAttr(DESKTOP_VIEW.fit));
     expect(svg.querySelector('text')!.getAttribute('font-size')).toBe(String(DESKTOP_VIEW.font));
+  });
+
+  /**
+   * #344 visual 3 — the frame is DERIVED from the content, never written down.
+   * A regression to a hardcoded box is the whole finding, so pin that what the
+   * component emits is what `fitViewBox` produced and that it is materially
+   * tighter than the layout box it replaced.
+   */
+  it('renders the fitted frame, not the layout box', () => {
+    installViewport(false);
+    render(<KnowledgeGraphDemo />);
+    const svg = screen.getByTestId('landing-graph-svg');
+    expect(svg.getAttribute('viewBox')).not.toBe(`0 0 ${DESKTOP_VIEW.w} ${DESKTOP_VIEW.h}`);
+    expect(DESKTOP_VIEW.fit.w).toBeLessThan(DESKTOP_VIEW.w);
+    // The fit only pays off with a width cap: stretched across the full
+    // container a tighter box would render the graph at 2× and make the
+    // section TALLER. Left-aligned + capped is the composition fix (visual 5).
+    expect(svg.getAttribute('class')).toContain('md:max-w-[720px]');
+  });
+});
+
+/**
+ * #344 visual 1, 2, 4 — brand conformance and legibility of the drawn nodes.
+ */
+describe('KnowledgeGraphDemo — node paint and label placement', () => {
+  function nodeGroup(id: string) {
+    return screen.getByTestId(`landing-graph-node-${id}`);
+  }
+
+  it('paints concept nodes with the canonical --state-* tokens', () => {
+    render(<KnowledgeGraphDemo />);
+    const g = COURSE_GRAPHS[0];
+    for (const n of g.nodes) {
+      if (n.id === g.rootId) continue;
+      const fill = nodeGroup(n.id).querySelector('circle')!.getAttribute('fill');
+      expect(fill, n.id).toBe(TIER_COLOR[n.tier]);
+      expect(fill, n.id).toMatch(/^var\(--state-/);
+    }
+  });
+
+  it('paints the course root as the brand anchor, not as a mastery status', () => {
+    render(<KnowledgeGraphDemo />);
+    const g = COURSE_GRAPHS[0];
+    // The fixture tier stays `learning` — this is a render decision, and the
+    // amber it used to inherit made the section's focal point read as a warning.
+    expect(g.nodes.find((n) => n.id === g.rootId)!.tier).toBe('learning');
+    expect(nodeGroup(g.rootId).querySelector('circle')!.getAttribute('fill')).toBe(
+      'var(--brand-forest)',
+    );
+  });
+
+  it('places the root label above the node and concept labels below theirs', () => {
+    render(<KnowledgeGraphDemo />);
+    const g = COURSE_GRAPHS[0];
+
+    const rootGroup = nodeGroup(g.rootId);
+    const rootCy = Number(rootGroup.querySelector('circle')!.getAttribute('cy'));
+    const rootBaseline = Number(rootGroup.querySelector('text')!.getAttribute('y'));
+    // Below the root is where the outer-ring → depth-1 edge crosses its x.
+    expect(rootBaseline).toBeLessThan(rootCy - DESKTOP_VIEW.rootR);
+
+    const leaf = g.nodes.find((n) => n.id !== g.rootId)!;
+    const leafGroup = nodeGroup(leaf.id);
+    const leafCy = Number(leafGroup.querySelector('circle')!.getAttribute('cy'));
+    const leafBaseline = Number(leafGroup.querySelector('text')!.getAttribute('y'));
+    expect(leafBaseline).toBeGreaterThan(leafCy + DESKTOP_VIEW.nodeR);
+  });
+
+  it('halos label text in the section backdrop so edges break around it', () => {
+    render(<KnowledgeGraphDemo />);
+    const label = nodeGroup(COURSE_GRAPHS[0].rootId).querySelector('text')!;
+    expect(label.getAttribute('stroke')).toBe('var(--bg-mesh)');
+    expect(Number(label.getAttribute('stroke-width'))).toBe(DESKTOP_VIEW.labelHalo);
+    // Stroke UNDER fill — the other paint order would outline the glyphs.
+    expect((label as unknown as SVGTextElement).style.paintOrder).toBe('stroke');
   });
 });

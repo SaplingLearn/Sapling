@@ -78,8 +78,34 @@ describe('COURSE_GRAPHS', () => {
     (_code, g) => {
       for (const n of g.nodes) {
         expect(n.blurb.length).toBeGreaterThan(0);
-        expect(TIER_COLOR[n.tier]).toMatch(/^#/);
+        expect(TIER_COLOR[n.tier]).toBeDefined();
       }
     },
   );
+});
+
+/**
+ * #344 visual 1 — this file shipped a FOURTH inlined copy of the mastery
+ * palette (`#1B6C42` / `#D97706` / `#EF4444` / `#9CA3AF`), so the landing page
+ * advertised different mastery colours than the product it advertises.
+ * globals.css:80-89 declares the canonical set and calls itself the "Single
+ * source for the 3 previously-inlined copies in Dashboard / Tree / notetaker".
+ *
+ * The old assertion here was `toMatch(/^#/)` — which is what let four wrong
+ * literals through in the first place. Any hex now fails outright.
+ */
+describe('TIER_COLOR', () => {
+  it('consumes the canonical --state-* tokens, never a literal', () => {
+    expect(TIER_COLOR).toEqual({
+      mastered: 'var(--state-mastery)',
+      learning: 'var(--state-progress)',
+      struggling: 'var(--state-struggle)',
+      unexplored: 'var(--state-neutral)',
+    });
+  });
+
+  it.each(Object.entries(TIER_COLOR))('%s is a token reference', (_tier, value) => {
+    expect(value).toMatch(/^var\(--state-[a-z]+\)$/);
+    expect(value).not.toMatch(/#/);
+  });
 });

@@ -11,12 +11,27 @@
 
 export type MasteryTier = 'mastered' | 'learning' | 'struggling' | 'unexplored';
 
-/** Matches the hero's floating legend card and the app's node colours. */
+/**
+ * The canonical knowledge-status palette — the SAME tokens the product uses.
+ *
+ * globals.css:80-89 declares these as the "Single source for the 3
+ * previously-inlined copies in Dashboard / Tree / notetaker", and the app reads
+ * them under exactly the four tier names below (notetaker/page.tsx,
+ * screens/Dashboard.tsx, screens/Learn.tsx). This file shipped a FOURTH inlined
+ * copy with four different literals — `#1B6C42` / `#D97706` / `#EF4444` /
+ * `#9CA3AF` — so the landing page advertised different mastery colours than the
+ * product it advertises, and the saturated amber root plus a `#EF4444` that
+ * reads as an error state were the loudest objects on a page whose brand
+ * atmosphere is "barely-there … like the glow under water" (#344 visual 1).
+ *
+ * Tokens, not hexes, on purpose: a future palette move lands here for free, and
+ * the hero's floating legend card ((public)/page.tsx) now reads the same four.
+ */
 export const TIER_COLOR: Record<MasteryTier, string> = {
-  mastered: '#1B6C42',
-  learning: '#D97706',
-  struggling: '#EF4444',
-  unexplored: '#9CA3AF',
+  mastered: 'var(--state-mastery)',
+  learning: 'var(--state-progress)',
+  struggling: 'var(--state-struggle)',
+  unexplored: 'var(--state-neutral)',
 };
 
 export interface DemoNode {
@@ -98,7 +113,14 @@ export const COURSE_GRAPHS: CourseGraph[] = [
       { id: 'sm-root', label: 'SM 275', tier: 'learning', blurb: 'Statistics — 21 concepts mapped from your syllabus', children: ['sm-prob', 'sm-dist', 'sm-testing'] },
       { id: 'sm-prob', label: 'Probability', tier: 'mastered', blurb: 'Sample spaces, events, and conditioning', children: ['sm-bayes'] },
       { id: 'sm-dist', label: 'Distributions', tier: 'learning', blurb: 'Shapes that recur across real data', children: ['sm-clt'] },
-      { id: 'sm-testing', label: 'Hypothesis Tests', tier: 'struggling', blurb: 'What a p-value does and does not claim', children: [] },
+      // "Hypothesis Tests" was 16 characters — three more than any other label
+      // in any fixture, and the widest object in the phone layout by a margin.
+      // At the 390px breakpoint it overlapped its sibling "Distributions" by
+      // ~21 CSS px of solid text (#344 visual 4, "worse at 390px"), and no
+      // legible mobile type scale can separate them: the two labels need
+      // 0.6·font·29/2 units of room against a ring that only yields 1.732·ring.
+      // Shortening the label is the proportionate fix — not a collision solver.
+      { id: 'sm-testing', label: 'p-Values', tier: 'struggling', blurb: 'What a p-value does and does not claim', children: [] },
       { id: 'sm-bayes', label: 'Bayes', tier: 'learning', blurb: 'Updating belief as evidence arrives', children: [] },
       { id: 'sm-clt', label: 'Central Limit', tier: 'unexplored', blurb: 'Why sample means go normal', children: [] },
     ],

@@ -6,12 +6,14 @@ import { IS_TEST_MODE, now } from '@/lib/testMode';
 import { useIsMobile } from '@/lib/useIsMobile';
 import { usePrefersReducedMotion } from '@/lib/usePrefersReducedMotion';
 
-import { COURSE_GRAPHS, TIER_COLOR, type CourseGraph } from './courseGraphs';
+import { COURSE_GRAPHS, TIER_COLOR, type CourseGraph, type DemoNode } from './courseGraphs';
 import {
   DESKTOP_VIEW,
   MOBILE_VIEW,
   helixEntry,
+  labelBaselineY,
   radialLayout,
+  viewBoxAttr,
   type GraphView,
   type Point,
 } from './layout';
@@ -56,6 +58,21 @@ export const ENGAGED_HEADLINE_OPACITY = 0.55;
 
 function nodeRadius(view: GraphView, g: CourseGraph, id: string): number {
   return id === g.rootId ? view.rootR : view.nodeR;
+}
+
+/**
+ * The root is an ANCHOR, not a status (#344 visual 2).
+ *
+ * Its fixture tier is `learning`, so it used to render in the progress amber —
+ * which made the stem the whole graph hangs from, and the largest object in the
+ * section, look like a warning. `--brand-forest` is the brand primary and the
+ * hero's logo colour, so the course node reads as "this is the course" while
+ * colour keeps carrying mastery meaning where it actually means something: the
+ * concept nodes. The fixture `tier` field is untouched — this is a render
+ * decision, not a data change.
+ */
+function nodeFill(g: CourseGraph, node: DemoNode): string {
+  return node.id === g.rootId ? 'var(--brand-forest)' : TIER_COLOR[node.tier];
 }
 
 /**
@@ -175,14 +192,28 @@ function AssemblingGraph({
             onMouseEnter={() => onNodeEnter(n.id)}
             onMouseLeave={onNodeLeave}
           >
-            <circle cx={h.x} cy={h.y} r={r * h.scale} fill={TIER_COLOR[n.tier]} />
+            <circle cx={h.x} cy={h.y} r={r * h.scale} fill={nodeFill(graph, n)} />
+            {/*
+              Labels sit ON the edge mesh — `Trees` and `Big-O` crowd their own
+              connecting lines, and until the root's label moved above the node
+              it lay along the outer-ring → depth-1 diagonal (#344 visual 4).
+              `paint-order: stroke` lays a halo in the section's own backdrop
+              colour under the glyphs and paints the fill over it, so a line
+              passing behind a word breaks around the letterforms instead of
+              running through them. One element, existing token, no backdrop
+              filter — the brand's hard "no frosted panels" line holds.
+            */}
             <text
               x={h.x}
-              y={h.y + r + view.labelGap}
+              y={labelBaselineY(view, n.id === graph.rootId, h.y, r)}
               textAnchor="middle"
               className="font-jetbrains"
               fontSize={view.font}
               fill="var(--text-dim)"
+              stroke="var(--bg-mesh)"
+              strokeWidth={view.labelHalo}
+              strokeLinejoin="round"
+              style={{ paintOrder: 'stroke' }}
               opacity={h.opacity}
             >
               {n.label}
@@ -229,14 +260,15 @@ export default function KnowledgeGraphDemo() {
     [courseId],
   );
 
-  // #344 review #3: one 900×560 viewBox rendered at every width put 4.6 CSS px
-  // labels on a 390px phone. `useIsMobile` is the same `useSyncExternalStore`
-  // shape as `usePrefersReducedMotion` — SSR-safe, no render-body matchMedia
-  // read — so the server (and the hydrating render) picks the desktop view and
-  // the phone corrects on the first commit after hydration. A viewBox is not
-  // something a CSS `@media` rule can swap, so that one-frame correction is the
-  // floor here; both views render the complete graph, so it is a resize, never
-  // a blank.
+  // #344 review #3: one viewBox rendered at every width put 4.6 CSS px labels
+  // on a 390px phone. Each view now carries its own DERIVED frame (`view.fit`,
+  // #344 visual 3) alongside its own type scale. `useIsMobile` is the same
+  // `useSyncExternalStore` shape as `usePrefersReducedMotion` — SSR-safe, no
+  // render-body matchMedia read — so the server (and the hydrating render)
+  // picks the desktop view and the phone corrects on the first commit after
+  // hydration. A viewBox is not something a CSS `@media` rule can swap, so that
+  // one-frame correction is the floor here; both views render the complete
+  // graph, so it is a resize, never a blank.
   const view = useIsMobile() ? MOBILE_VIEW : DESKTOP_VIEW;
   const points = useMemo(
     () => radialLayout(graph, view.w, view.h, view.maxRadius),
@@ -328,10 +360,29 @@ export default function KnowledgeGraphDemo() {
           })}
         </div>
 
+        {/*
+          #344 visual 3 + 5, which have to be solved together.
+
+          The frame is now measured off the content (`view.fit`) instead of the
+          hardcoded `0 0 900 560`, which drops 36% of dead margin off the box.
+          But a tight box stretched to the full 1184px container would render
+          the graph at 2× and make the section TALLER, not shorter — the fit only
+          pays off with a width cap. Capping also settles the composition: the
+          section's eyebrow, headline and chips are left-aligned on the container
+          grid while the graph was centred inside a full-bleed box one viewport
+          below a hero that is centred and symmetric, so it read as an accident.
+          Left-aligning the graph to the same grid line commits to the editorial
+          direction the rest of the section already uses, and it is the reversible
+          half of the choice: no copy moves, no structure changes.
+
+          At the 720px cap the desktop graph draws at ~1.25 units per CSS px —
+          within a hair of the 1.32 it rendered at before — in a 720×621 box
+          where the fixed viewBox reserved 1184×737.
+        */}
         <svg
           data-testid="landing-graph-svg"
-          viewBox={`0 0 ${view.w} ${view.h}`}
-          className="mt-8 w-full h-auto"
+          viewBox={viewBoxAttr(view.fit)}
+          className="mt-8 w-full max-w-[420px] md:max-w-[720px] h-auto"
           role="img"
           aria-label={`${graph.name} concept graph`}
         >
