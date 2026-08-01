@@ -2,6 +2,14 @@
 
 Everything here derives from the xp_events ledger. Responses carry
 app-decrypted display names, so Cache-Control is always `private` (#99).
+
+Every endpoint here takes `user_id` as a query parameter, which is a claim,
+never an identity — so each one opens with `require_self(user_id, request)`,
+the same guard routes/social.py and routes/profile.py use. There is no global
+auth middleware and the router is mounted without `dependencies=`, so the
+in-handler call IS the authorization. Without it `?user_id=<victim>` reads
+another user's XP/streaks and `leaderboard?scope=friends` reads their whole
+friends list, both with app-decrypted display names and no cookie.
 """
 
 from __future__ import annotations
@@ -12,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from db.connection import table
 from services import academics
+from services.auth_guard import require_self
 from services.growth import stage_for_level, xp_into_level
 from services.http_cache import cached_json, conditional, make_etag
 from services.profiles import get_display_names
@@ -73,6 +82,7 @@ def _week_start(now: datetime) -> datetime:
 
 @router.get("/me")
 def get_me(user_id: str, request: Request):
+    require_self(user_id, request)
     rows = table("users").select(
         "total_xp,level,streak_count,longest_streak,daily_goal_xp",
         filters={"id": f"eq.{user_id}"},
@@ -145,6 +155,7 @@ def _private_ids() -> set[str]:
 
 @router.get("/leaderboard")
 def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
+    require_self(user_id, request)
     if scope not in SCOPES:
         raise HTTPException(status_code=400, detail=f"scope must be one of {SCOPES}")
 
@@ -208,6 +219,7 @@ def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
 
 @router.get("/activity")
 def get_activity(user_id: str, request: Request):
+    require_self(user_id, request)
     now = datetime.now(timezone.utc)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     since = today - timedelta(days=55)          # 8 weeks back
