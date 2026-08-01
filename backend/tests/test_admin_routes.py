@@ -117,6 +117,61 @@ class TestGrantAchievement:
         assert r.status_code == 200
         assert r.json()["granted"] is True
 
+    def test_pays_the_badge_xp_reward(self):
+        """check_achievements pays xp_reward when a badge is earned; the admin
+        grant path inserted the row and awarded nothing. `mentor`, `comeback`,
+        `secret` and `methuselah` are manual-grant-only, so they paid 0 instead
+        of 980 XP and two users with identical badge sets ended up with
+        different totals."""
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = [
+                    {"id": "a1", "slug": "mentor", "status": "live",
+                     "xp_reward": 280}
+                ]
+            elif name == "user_achievements":
+                m.select.return_value = []
+                m.insert.return_value = [{}]
+            return m
+
+        with _mock_admin(),              patch("routes.admin.table", side_effect=by_name),              patch("routes.admin.check_achievements", return_value=[]),              patch("routes.admin.award_xp_safe") as award:
+            r = client.post("/api/admin/achievements/grant", json={
+                "user_id": "u1", "achievement_id": "a1",
+            })
+
+        assert r.status_code == 200
+        award.assert_called_once()
+        args, kwargs = award.call_args
+        assert args[0] == "u1"
+        # Same rule_key + source_id as the earned path, so the shared
+        # xp_events idempotency key makes a re-grant a clean no-op instead of
+        # a double payout.
+        assert args[1] == "achievement_unlocked"
+        assert kwargs["amount"] == 280
+        assert kwargs["source_type"] == "achievement"
+        assert kwargs["source_id"] == "a1"
+
+    def test_a_zero_reward_badge_awards_nothing(self):
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = [
+                    {"id": "a1", "slug": "b", "status": "live", "xp_reward": 0}
+                ]
+            elif name == "user_achievements":
+                m.select.return_value = []
+                m.insert.return_value = [{}]
+            return m
+
+        with _mock_admin(),              patch("routes.admin.table", side_effect=by_name),              patch("routes.admin.check_achievements", return_value=[]),              patch("routes.admin.award_xp_safe") as award:
+            r = client.post("/api/admin/achievements/grant", json={
+                "user_id": "u1", "achievement_id": "a1",
+            })
+
+        assert r.status_code == 200
+        award.assert_not_called()
+
     def test_409_if_already_earned(self):
         def by_name(name):
             m = MagicMock()
