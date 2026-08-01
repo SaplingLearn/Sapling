@@ -26,6 +26,7 @@ from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_pre
 from services.profiles import get_display_name
 from services.graph_service import get_graph
 from services.request_context import current_request_id
+from services.streak_service import touch_streak_safe
 from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
@@ -998,6 +999,14 @@ def end_session(body: EndSessionBody, request: Request):
         body.user_id, "session_completed",
         source_type="session", source_id=body.session_id,
     )
+
+    # touch_streak_safe shares this exact commit point: it's the same
+    # post-"session completed" moment as the XP award above, past the
+    # pending-session early return, and touch_streak's own same-day check
+    # makes a double end-session call a no-op just like the xp_events key
+    # does for the award above. Run it before the login_streak achievement
+    # check below so that check sees today's advanced streak_count.
+    touch_streak_safe(body.user_id)
 
     msgs = table("messages").select(
         "graph_update_json",
