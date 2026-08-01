@@ -75,6 +75,11 @@ const eslintConfig = [
       "src/components/Gradebook/AssignmentModal.tsx",
       "src/components/screens/AdminAnalytics.tsx",
       "src/components/screens/Tree.tsx",
+      "src/components/ProfileView.tsx",
+      "src/components/screens/Achievements.tsx",
+      "src/components/screens/achievements/HeroCard.tsx",
+      "src/components/screens/achievements/LeaderboardTab.tsx",
+      "src/components/screens/achievements/ActivityTab.tsx",
     ],
     rules: {
       "no-restricted-syntax": [

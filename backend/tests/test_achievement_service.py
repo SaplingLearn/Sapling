@@ -10,7 +10,7 @@ Tests cover:
 """
 import pytest
 from unittest.mock import MagicMock, patch, call
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class TestGetUserStat:
@@ -58,18 +58,22 @@ class TestCheckAchievements:
             elif name == "sessions":
                 m.select.return_value = [{"id": "s1"}, {"id": "s2"}, {"id": "s3"}]
             elif name == "achievements":
-                m.select.return_value = [{"slug": "study_beginner"}]
+                m.select.return_value = [{
+                    "slug": "study_beginner", "name": "Study Beginner",
+                    "xp_reward": 0, "status": "live",
+                }]
             elif name == "achievement_cosmetics":
                 m.select.return_value = []
             else:
                 m.select.return_value = []
             return m
 
-        with patch("services.achievement_service.table", side_effect=table_side_effect):
+        with patch("services.achievement_service.table", side_effect=table_side_effect), \
+             patch("services.achievement_service.award_xp_safe"):
             from services.achievement_service import check_achievements
             result = check_achievements("u1", "session_count", {})
 
-        assert "study_beginner" in result
+        assert any(e["slug"] == "study_beginner" for e in result)
 
     def test_skips_already_earned(self):
         triggers = [{"id": "t1", "achievement_id": "a1", "trigger_type": "session_count", "trigger_threshold": 1}]
@@ -140,7 +144,10 @@ class TestCheckAchievements:
             elif name == "documents":
                 m.select.return_value = [{"id": "d1"}]
             elif name == "achievements":
-                m.select.return_value = [{"slug": "first_upload"}]
+                m.select.return_value = [{
+                    "slug": "first_upload", "name": "First Upload",
+                    "xp_reward": 0, "status": "live",
+                }]
             elif name == "achievement_cosmetics":
                 m.select.return_value = linked
             elif name == "user_cosmetics":
@@ -152,9 +159,202 @@ class TestCheckAchievements:
                 m.select.return_value = []
             return m
 
-        with patch("services.achievement_service.table", side_effect=table_side_effect):
+        with patch("services.achievement_service.table", side_effect=table_side_effect), \
+             patch("services.achievement_service.award_xp_safe"):
             from services.achievement_service import check_achievements
             check_achievements("u1", "documents_uploaded", {})
 
         assert len(insert_calls) == 1
         assert insert_calls[0]["cosmetic_id"] == "cos_1"
+
+
+class TestNewTriggerTypes:
+    def test_flashcards_reviewed_sums_times_reviewed(self):
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [
+                {"times_reviewed": 40}, {"times_reviewed": 61}
+            ]
+            from services.achievement_service import _get_user_stat
+            assert _get_user_stat("u1", "flashcards_reviewed") == 101
+
+    def test_concepts_mastered_counts_mastered_nodes(self):
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [{"id": "n1"}, {"id": "n2"}]
+            from services.achievement_service import _get_user_stat
+            assert _get_user_stat("u1", "concepts_mastered") == 2
+
+    def test_courses_with_mastery_counts_distinct_courses(self):
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [
+                {"course_id": "c1"}, {"course_id": "c1"}, {"course_id": "c2"}, {"course_id": None}
+            ]
+            from services.achievement_service import _get_user_stat
+            assert _get_user_stat("u1", "courses_with_mastery") == 2
+
+    def test_friends_count(self):
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [{"friend_id": "u2"}, {"friend_id": "u3"}]
+            from services.achievement_service import _get_user_stat
+            assert _get_user_stat("u1", "friends_count") == 2
+
+    def test_level_reads_the_cached_column(self):
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [{"level": 17}]
+            from services.achievement_service import _get_user_stat
+            assert _get_user_stat("u1", "level") == 17
+
+    def test_session_minutes_takes_the_longest_session(self):
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [
+                {"started_at": "2026-07-01T10:00:00+00:00", "ended_at": "2026-07-01T10:45:00+00:00"},
+                {"started_at": "2026-07-02T10:00:00+00:00", "ended_at": "2026-07-02T12:30:00+00:00"},
+            ]
+            from services.achievement_service import _get_user_stat
+            assert _get_user_stat("u1", "session_minutes") == 150
+
+    def test_session_minutes_ignores_unfinished_sessions(self):
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [
+                {"started_at": "2026-07-01T10:00:00+00:00", "ended_at": None},
+            ]
+            from services.achievement_service import _get_user_stat
+            assert _get_user_stat("u1", "session_minutes") == 0
+
+    def test_xp_in_day_takes_the_best_day(self):
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [
+                {"amount": 200, "created_at": "2026-07-01T09:00:00+00:00"},
+                {"amount": 150, "created_at": "2026-07-01T20:00:00+00:00"},
+                {"amount": 300, "created_at": "2026-07-02T09:00:00+00:00"},
+            ]
+            from services.achievement_service import _get_user_stat
+            assert _get_user_stat("u1", "xp_in_day") == 350
+
+    def test_session_before_hour_inverts_earlier_is_better(self):
+        """Pins the counter-intuitive 'hours before 24' encoding: a session
+        ending at 05:00 UTC clears an early-bird threshold of 7 (24-5=19), one
+        ending at 13:00 (afternoon, not "before hour") scores 0."""
+        from services.achievement_service import _session_stat
+
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [
+                {"started_at": "2026-07-01T04:00:00+00:00", "ended_at": "2026-07-01T05:00:00+00:00"},
+            ]
+            assert _session_stat("u1", "session_before_hour") == 19
+
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [
+                {"started_at": "2026-07-01T12:00:00+00:00", "ended_at": "2026-07-01T13:00:00+00:00"},
+            ]
+            assert _session_stat("u1", "session_before_hour") == 0
+
+    def test_course_grade_a_counts_enrollments_computing_to_an_a(self):
+        # e1 grades to 95% (an A); e2 grades to 70% (a C-). Each enrollment
+        # triggers its own table("assignments") call, in enrollment order, so
+        # a plain call counter (not a fresh side_effect per `table()` call)
+        # is what lets the two enrollments see different assignment rows.
+        assignments_by_call = [
+            [{"id": "a1", "category_id": "c1", "points_possible": "100", "points_earned": "95"}],
+            [{"id": "a2", "category_id": "c1", "points_possible": "100", "points_earned": "70"}],
+        ]
+        calls = {"assignments": 0}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "enrollments":
+                m.select.return_value = [
+                    {"id": "e1", "letter_scale": None, "curve_mode": "raw",
+                     "curve_avg_target": None, "curve_sd_delta": None},
+                    {"id": "e2", "letter_scale": None, "curve_mode": "raw",
+                     "curve_avg_target": None, "curve_sd_delta": None},
+                ]
+            elif name == "gradebook_categories":
+                m.select.return_value = [
+                    {"id": "c1", "name": "Exams", "weight": 100, "sort_order": 0, "drop_lowest": 0},
+                ]
+            elif name == "assignments":
+                idx = calls["assignments"]
+                calls["assignments"] += 1
+                m.select.return_value = assignments_by_call[idx]
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("services.achievement_service.table", side_effect=table_side_effect):
+            from services.achievement_service import _get_user_stat
+            assert _get_user_stat("u1", "course_grade_a") == 1
+
+
+class TestGrantPaysXp:
+    def test_granting_awards_the_badge_reward(self):
+        with patch("services.achievement_service.table") as t, \
+             patch("services.achievement_service.award_xp_safe") as award:
+            def _select(columns="*", filters=None, **kw):
+                if "trigger_type" in (filters or {}):
+                    return [{"id": "t1", "achievement_id": "a1",
+                             "trigger_type": "login_streak", "trigger_threshold": 7}]
+                if columns.startswith("slug"):
+                    return [{"slug": "on-fire", "name": "On Fire", "xp_reward": 120,
+                             "status": "live"}]
+                if columns == "achievement_id":
+                    return []
+                if columns == "streak_count":
+                    return [{"streak_count": 9}]
+                return []
+            t.return_value.select.side_effect = _select
+            from services.achievement_service import check_achievements
+            earned = check_achievements("u1", "login_streak")
+        assert earned == [{"slug": "on-fire", "name": "On Fire", "xp": 120}]
+        award.assert_called_once_with(
+            "u1", "achievement_unlocked", source_type="achievement",
+            source_id="a1", amount=120,
+        )
+
+
+class TestDraftsAreNeverGranted:
+    def test_a_draft_badge_is_not_awarded(self):
+        with patch("services.achievement_service.table") as t, \
+             patch("services.achievement_service.award_xp_safe") as award:
+            def _select(columns="*", filters=None, **kw):
+                if "trigger_type" in (filters or {}):
+                    return [{"id": "t1", "achievement_id": "a1",
+                             "trigger_type": "login_streak", "trigger_threshold": 7}]
+                if columns.startswith("slug"):
+                    return [{"slug": "streak_7", "name": "Week Warrior",
+                             "xp_reward": 0, "status": "draft"}]
+                if columns == "achievement_id":
+                    return []
+                if columns == "streak_count":
+                    return [{"streak_count": 9}]
+                return []
+            t.return_value.select.side_effect = _select
+            from services.achievement_service import check_achievements
+            assert check_achievements("u1", "login_streak") == []
+        t.return_value.insert.assert_not_called()
+        award.assert_not_called()
+
+
+class TestGoalStreakClamp:
+    def test_non_positive_stored_goal_still_terminates(self):
+        """daily_goal_xp has no CHECK enforcing positivity (0043-gamification.sql).
+        A stored goal of 0 or less would make `0 >= goal` trivially true for
+        every day with no XP events, so the backwards day-walk in _goal_streak
+        would never stop. This pins the max(goal, 1) clamp: with a -1 stored
+        goal and one day of real XP, the streak must still come back finite."""
+        today = datetime.now(timezone.utc).date().isoformat()
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "users":
+                m.select.return_value = [{"daily_goal_xp": -1}]
+            elif name == "xp_events":
+                m.select.return_value = [
+                    {"amount": 10, "created_at": f"{today}T09:00:00+00:00"},
+                ]
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("services.achievement_service.table", side_effect=table_side_effect):
+            from services.achievement_service import _goal_streak
+            assert _goal_streak("u1") == 1

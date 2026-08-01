@@ -90,7 +90,7 @@
   },
   "src/components/screens/Admin.tsx": {
     "react-hooks/exhaustive-deps": {
-      "count": 3
+      "count": 2
     },
     "react/no-unescaped-entities": {
       "count": 2

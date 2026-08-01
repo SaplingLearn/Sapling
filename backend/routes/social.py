@@ -11,8 +11,9 @@ from agents.deps import SaplingDeps
 from agents.social_summary import social_summary_agent
 from agents.usage import record_agent_usage
 from db.connection import table
-from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
+from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody, FriendRequestBody
 from services.auth_guard import require_self, get_session_user_id
+from services.achievement_service import check_achievements
 from services.encryption import encrypt_if_present, decrypt_if_present
 from services.profiles import get_display_name, get_display_names
 from services.graph_service import get_graph
@@ -53,6 +54,16 @@ def create_room(body: CreateRoomBody, request: Request):
     })
     table("room_members").insert({"room_id": room_id, "user_id": body.user_id})
     invalidate_summary(room_id)
+
+    # Creating a room seeds owned_room_members at 1. Below the shipped
+    # threshold of 5, but the stat is admin-configurable from the wiki, so the
+    # create path dispatches it too rather than only the join path.
+    try:
+        from services.achievement_service import check_achievements
+        check_achievements(body.user_id, "owned_room_members", {})
+    except Exception:
+        pass
+
     return {"room_id": room_id, "invite_code": invite_code}
 
 
@@ -140,6 +151,13 @@ def join_room(body: JoinRoomBody, request: Request):
     try:
         from services.achievement_service import check_achievements
         check_achievements(body.user_id, "rooms_joined", {})
+        # owned_room_members (`room-leader`/Grovekeeper: build a room five
+        # people join) is the ROOM CREATOR's stat, not the joiner's — a join
+        # advances someone else's badge. Dispatching it for body.user_id would
+        # evaluate the wrong user's rooms and the owner would never be granted.
+        owner = room.get("created_by")
+        if owner:
+            check_achievements(owner, "owned_room_members", {})
     except Exception:
         pass
 
@@ -464,10 +482,15 @@ def send_room_message(room_id: str, body: SendMessageBody, request: Request):
     if row:
         row[0]["text"] = decrypt_if_present(row[0].get("text"))
 
-    # Check for achievements after message send
+    # Check for achievements after message send. Posting is the only thing
+    # that advances room_replies (`helping-hand`: answer in someone else's
+    # room) and rooms_active (`social-butterfly`: post in five different
+    # rooms), so this is their only possible dispatch point.
     try:
         from services.achievement_service import check_achievements
         check_achievements(body.user_id, "post_count", {})
+        check_achievements(body.user_id, "room_replies", {})
+        check_achievements(body.user_id, "rooms_active", {})
     except Exception:
         pass
 
@@ -597,3 +620,184 @@ def get_students(request: Request):
     ]
     students.sort(key=lambda s: (s["name"] or ""))
     return {"students": students}
+
+
+# ── Friends ──────────────────────────────────────────────────────────────────
+
+def _are_friends(user_id: str, other_id: str) -> bool:
+    rows = table("friendships").select(
+        "friend_id", filters={"user_id": f"eq.{user_id}", "friend_id": f"eq.{other_id}"}
+    )
+    return bool(rows)
+
+
+@router.post("/friends/request")
+def send_friend_request(body: FriendRequestBody, request: Request):
+    require_self(body.from_user_id, request)
+    if body.from_user_id == body.to_user_id:
+        raise HTTPException(status_code=400, detail="You can't friend yourself")
+    if _are_friends(body.from_user_id, body.to_user_id):
+        raise HTTPException(status_code=409, detail="Already friends")
+    # Deliberately only the exact (from, to) pair — a pending REVERSE request
+    # is left alone rather than auto-accepted or rejected. Mutual pending
+    # requests are legal and harmless now that accept_friend_request is
+    # idempotent: whichever is accepted first makes the other a no-op that
+    # still resolves its row. Auto-accepting here would silently create a
+    # friendship from a click that only meant "send a request".
+    existing = table("friend_requests").select(
+        "id,status",
+        filters={
+            "from_user_id": f"eq.{body.from_user_id}",
+            "to_user_id": f"eq.{body.to_user_id}",
+        },
+    )
+    if existing:
+        if existing[0].get("status") == "pending":
+            raise HTTPException(status_code=409, detail="Request already pending")
+        # A row for this (from_user_id, to_user_id) pair already exists —
+        # declined, or accepted-then-unfriended (remove_friend only deletes
+        # the symmetric friendships rows, it deliberately leaves the
+        # historical friend_requests row in place). UNIQUE(from_user_id,
+        # to_user_id) means a second insert here would 409/500 on the
+        # constraint, so reactivate the existing row instead of inserting
+        # a duplicate.
+        result = table("friend_requests").update(
+            {
+                "status": "pending",
+                "responded_at": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            filters={"id": f"eq.{existing[0]['id']}"},
+        )
+        return {"request": result[0] if result else None}
+    result = table("friend_requests").insert({
+        "from_user_id": body.from_user_id,
+        "to_user_id": body.to_user_id,
+        "status": "pending",
+    })
+    return {"request": result[0] if result else None}
+
+
+def _load_request(request_id: str, user_id: str) -> dict:
+    rows = table("friend_requests").select(
+        "id,from_user_id,to_user_id,status", filters={"id": f"eq.{request_id}"}
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Request not found")
+    req = rows[0]
+    if req["to_user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not your request to answer")
+    return req
+
+
+@router.post("/friends/requests/{request_id}/accept")
+def accept_friend_request(request_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
+    req = _load_request(request_id, user_id)
+    a, b = req["from_user_id"], req["to_user_id"]
+
+    # Accepting is idempotent. friendships is PRIMARY KEY (user_id, friend_id),
+    # so a second write of the same pair is a duplicate-key 500 — and since the
+    # request row would stay `pending`, it 500d on every retry, permanently.
+    # Two ways in, neither needing an adversary:
+    #   1. a plain double-click / retry on a request already accepted;
+    #   2. mutual requests — send_friend_request only checks the exact
+    #      (from, to) pair, never the reverse, so A->B and B->A can both sit
+    #      pending; accepting one makes the other's accept a duplicate.
+    # Case (1) is the status check, case (2) is the _are_friends check. Both
+    # still resolve the request row so a stale `pending` stops surfacing as an
+    # actionable incoming request forever.
+    already = req.get("status") != "pending" or _are_friends(a, b)
+
+    if not already:
+        # Symmetric rows: "my friends" stays a plain equality filter.
+        # upsert, not insert: two simultaneous accepts (a real double-click
+        # fires both before either has updated the status) both read `pending`,
+        # so the check above cannot close the race on its own — the write has
+        # to tolerate the conflict too.
+        table("friendships").upsert([
+            {"user_id": a, "friend_id": b},
+            {"user_id": b, "friend_id": a},
+        ], on_conflict="user_id,friend_id")
+
+    table("friend_requests").update(
+        {"status": "accepted", "responded_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{request_id}"},
+    )
+    if already:
+        return {"accepted": True}
+
+    check_achievements(a, "friends_count")
+    check_achievements(b, "friends_count")
+    return {"accepted": True}
+
+
+@router.post("/friends/requests/{request_id}/decline")
+def decline_friend_request(request_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
+    _load_request(request_id, user_id)
+    table("friend_requests").update(
+        {"status": "declined", "responded_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{request_id}"},
+    )
+    return {"declined": True}
+
+
+@router.delete("/friends/{friend_id}")
+def remove_friend(friend_id: str, user_id: str, request: Request):
+    require_self(user_id, request)
+    table("friendships").delete(
+        filters={"user_id": f"eq.{user_id}", "friend_id": f"eq.{friend_id}"}
+    )
+    table("friendships").delete(
+        filters={"user_id": f"eq.{friend_id}", "friend_id": f"eq.{user_id}"}
+    )
+    return {"removed": True}
+
+
+@router.get("/friends/requests")
+def list_friend_requests(user_id: str, request: Request):
+    require_self(user_id, request)
+    incoming = table("friend_requests").select(
+        "id,from_user_id,created_at",
+        filters={"to_user_id": f"eq.{user_id}", "status": "eq.pending"},
+    ) or []
+    outgoing = table("friend_requests").select(
+        "id,to_user_id,created_at",
+        filters={"from_user_id": f"eq.{user_id}", "status": "eq.pending"},
+    ) or []
+    ids = [r["from_user_id"] for r in incoming] + [r["to_user_id"] for r in outgoing]
+    names = get_display_names(ids) if ids else {}
+    return {
+        "incoming": [
+            {**r, "name": names.get(r["from_user_id"], "Someone")} for r in incoming
+        ],
+        "outgoing": [
+            {**r, "name": names.get(r["to_user_id"], "Someone")} for r in outgoing
+        ],
+    }
+
+
+@router.get("/friends/{user_id}")
+def list_friends(user_id: str, request: Request):
+    # Self-only for now: a friends list is arguably shareable with other
+    # users later (product decision), but the safe default until that's
+    # decided is that only the account owner can list their own friends.
+    require_self(user_id, request)
+    rows = table("friendships").select("friend_id", filters={"user_id": f"eq.{user_id}"})
+    ids = [r["friend_id"] for r in rows or []]
+    if not ids:
+        return {"friends": []}
+    users = table("users").select(
+        "id,level,total_xp", filters={"id": f"in.({','.join(ids)})"}
+    ) or []
+    names = get_display_names(ids)
+    return {"friends": [
+        {
+            "user_id": u["id"],
+            "name": names.get(u["id"], "Someone"),
+            "level": u.get("level") or 1,
+            "total_xp": u.get("total_xp") or 0,
+        }
+        for u in users
+    ]}

@@ -3,7 +3,7 @@ Unit tests for services/graph_service.py
 
 All Supabase calls are mocked so no live DB connection is needed.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from unittest.mock import MagicMock, patch
@@ -790,6 +790,103 @@ class TestApplyGraphUpdate:
         if "graph_edges" in mocks:
             mocks["graph_edges"].upsert.assert_not_called()
             mocks["graph_edges"].insert.assert_not_called()
+
+    def test_mastery_change_advances_streak_via_streak_service(self):
+        """apply_graph_update's mastery-change path (graph_service.py:750-751)
+        now delegates to services.streak_service.touch_streak_safe — the sole
+        writer of streak_count/longest_streak — instead of a duplicate local
+        implementation. This pins the delegation and its UTC calendar-day
+        semantics (matching services.streak_service._today(), not local
+        date.today())."""
+        existing = [
+            {"id": "n1", "concept_name": "Algebra", "mastery_score": 0.4,
+             "times_studied": 2, "course_id": "c1"}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        factory("users")  # seed the lazily-cached mock so it can be configured below
+        yesterday_utc = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+        mocks["users"].select.return_value = [
+            {"last_active_date": yesterday_utc, "streak_count": 4, "longest_streak": 4}
+        ]
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": 0.2,
+                               "reason": "practice"}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.streak_service.table", side_effect=factory), \
+             patch("services.course_context_service.update_course_context"):
+            apply_graph_update("u1", graph_update, course_id="c1")
+
+        mocks["users"].update.assert_called_once()
+        payload = mocks["users"].update.call_args[0][0]
+        assert payload["streak_count"] == 5
+        assert payload["longest_streak"] == 5
+
+
+# ── streak reconciliation (mastery path vs. session-end path) ─────────────────
+
+class _StatefulUsersTable:
+    """A `table("users")` stand-in whose row persists across select/update
+    calls, unlike a MagicMock's static `select.return_value`. Needed because
+    proving two sequential touch_streak calls agree requires the second call
+    to see the first call's write (same-day idempotency), not a frozen
+    fixture row."""
+
+    def __init__(self, row: dict):
+        self.row = dict(row)
+        self.update_calls = 0
+
+    def select(self, *_args, **_kwargs):
+        return [dict(self.row)]
+
+    def update(self, data, **_kwargs):
+        self.update_calls += 1
+        self.row.update(data)
+        return []
+
+
+class TestStreakReconciliation:
+    def test_mastery_touch_then_session_touch_same_utc_day_increments_once(self):
+        """graph_service.apply_graph_update's mastery-driven touch and
+        routes/learn.py::end_session's post-session touch both now funnel
+        through the same services.streak_service.touch_streak. Firing both
+        for the same user on the same UTC day (the ordinary shape of a real
+        study session: mastery updates during chat, then session end) must
+        advance the streak exactly once, not twice — this was the review
+        finding that motivated deleting graph_service's duplicate writer."""
+        existing = [
+            {"id": "n1", "concept_name": "Algebra", "mastery_score": 0.4,
+             "times_studied": 2, "course_id": "c1"}
+        ]
+        node_factory, mocks = _bulk_factory(existing_nodes=existing)
+        yesterday_utc = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+        users_table = _StatefulUsersTable(
+            {"last_active_date": yesterday_utc, "streak_count": 4, "longest_streak": 4}
+        )
+
+        def factory(name):
+            return users_table if name == "users" else node_factory(name)
+
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": 0.2,
+                               "reason": "practice"}],
+            "new_edges": [],
+        }
+
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.streak_service.table", side_effect=factory), \
+             patch("services.course_context_service.update_course_context"):
+            apply_graph_update("u1", graph_update, course_id="c1")   # mastery-driven touch
+
+            from services.streak_service import touch_streak_safe
+            touch_streak_safe("u1")                                  # session-end touch, same day
+
+        assert users_table.row["streak_count"] == 5
+        assert users_table.row["longest_streak"] == 5
+        assert users_table.update_calls == 1
 
 
 # ── get_recommendations ───────────────────────────────────────────────────────

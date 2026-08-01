@@ -25,6 +25,7 @@ from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
 from services.rag_service import retrieve_chunks, format_rag_context
+from services.xp_service import award_xp_safe
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
@@ -523,6 +524,14 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             pass
 
     background_tasks.add_task(_update_context, ctx_prompt, user_id, concept_node_id)
+
+    # XP + achievements: after the attempt row (score/total/answers_json) is
+    # persisted above (the atomic completed_at claim + the update at :486-494
+    # together gate this to exactly one successful submit per attempt id;
+    # a replay 409s before reaching here). source_id=body.quiz_id is the
+    # attempt id, so a hypothetical double-invocation is a no-op via the
+    # xp_events idempotency key rather than a double payout.
+    award_xp_safe(user_id, "quiz_completed", source_type="quiz", source_id=body.quiz_id)
 
     # Check for achievements after quiz completion
     try:

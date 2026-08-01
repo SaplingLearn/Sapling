@@ -3,6 +3,8 @@ Storage service for avatar and cosmetic asset uploads via Supabase Storage.
 """
 
 import logging
+import re
+import struct
 
 from fastapi import HTTPException
 from config import SUPABASE_URL, SUPABASE_SERVICE_KEY, STORAGE_BUCKET, MAX_AVATAR_SIZE
@@ -185,3 +187,163 @@ def upload_cosmetic_asset(cosmetic_id: str, file_bytes: bytes, content_type: str
 def delete_asset(path: str) -> None:
     url = f"{_storage_base}/{STORAGE_BUCKET}/{path}"
     httpx.delete(url, headers=_headers)
+
+
+# ── Achievement icons ────────────────────────────────────────────────────────
+#
+# Admins upload a 512x512 PNG/WebP/SVG for `achievements.icon_url` (0043).
+# Dimensions are parsed from the file header, never trusted from the client —
+# this is the actual enforcement (the admin-UI dimension check in Task 15 is
+# only a convenience). Malformed/truncated input must fail with a clean 400,
+# never an unhandled struct.error/IndexError.
+
+ICON_CONTENT_TYPES = {"image/png", "image/webp", "image/svg+xml"}
+ICON_SIZE_PX = 512
+MAX_ICON_BYTES = 512 * 1024
+
+_ICON_EXT = {"image/png": "png", "image/webp": "webp", "image/svg+xml": "svg"}
+
+
+def _png_dimensions(data: bytes) -> tuple[int, int] | None:
+    # 8-byte signature, 4-byte length, 4-byte "IHDR", then width/height.
+    if len(data) < 24 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    if data[12:16] != b"IHDR":
+        return None
+    return struct.unpack(">II", data[16:24])
+
+
+def _webp_dimensions(data: bytes) -> tuple[int, int] | None:
+    # 30 is the max of the three variants' offset requirements (VP8X/VP8
+    # both need up to byte 30; a minimal VP8L only needs 25) — deliberately
+    # shared rather than split per-variant so this stays one guard to read.
+    # Harmless: it fails closed, and real WebP files always exceed it.
+    if len(data) < 30 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        return None
+    fourcc = data[12:16]
+    if fourcc == b"VP8X":
+        w = int.from_bytes(data[24:27], "little") + 1
+        h = int.from_bytes(data[27:30], "little") + 1
+        return w, h
+    if fourcc == b"VP8 ":
+        w = int.from_bytes(data[26:28], "little") & 0x3FFF
+        h = int.from_bytes(data[28:30], "little") & 0x3FFF
+        return w, h
+    if fourcc == b"VP8L":
+        bits = int.from_bytes(data[21:25], "little")
+        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    return None
+
+
+def _svg_root_attrs(data: bytes) -> bytes | None:
+    """Return the root <svg> element's own attribute text, or None.
+
+    Only the root element's attributes count — a `viewBox` anywhere else in
+    the document (a decoy inside a comment, or a real attribute on a nested
+    <symbol>/<pattern>/inner <svg>) must not be mistaken for the root's. An
+    admin bypassing the upload form with a raw request could otherwise plant
+    a square decoy ahead of the real, non-square root element.
+
+    Skips leading whitespace, an XML declaration, a DOCTYPE, and comments,
+    then requires the very next tag to be the `<svg` open tag. Anything else
+    (malformed markup, no root <svg> at all, a truncated tag) returns None —
+    fail closed, same as the PNG/WebP header parsers.
+    """
+    text = data[:4096]
+    pos = 0
+    while True:
+        m = re.match(rb"\s+", text[pos:])
+        if m:
+            pos += m.end()
+            continue
+        m = re.match(rb"<\?.*?\?>", text[pos:], re.DOTALL)
+        if m:
+            pos += m.end()
+            continue
+        m = re.match(rb"<!DOCTYPE.*?>", text[pos:], re.IGNORECASE | re.DOTALL)
+        if m:
+            pos += m.end()
+            continue
+        m = re.match(rb"<!--.*?-->", text[pos:], re.DOTALL)
+        if m:
+            pos += m.end()
+            continue
+        break
+
+    root = re.match(rb"<svg\b([^>]*)>", text[pos:], re.IGNORECASE)
+    return root.group(1) if root else None
+
+
+def _svg_is_square(data: bytes) -> bool:
+    attrs = _svg_root_attrs(data)
+    if attrs is None:
+        return False
+    match = re.search(rb'viewBox\s*=\s*["\']([^"\']+)["\']', attrs)
+    if not match:
+        return False
+    parts = match.group(1).replace(b",", b" ").split()
+    if len(parts) != 4:
+        return False
+    try:
+        width, height = float(parts[2]), float(parts[3])
+    except ValueError:
+        return False
+    return width > 0 and abs(width - height) < 0.01
+
+
+def validate_icon(file_bytes: bytes, content_type: str) -> None:
+    """Reject anything that would render badly in the badge grid.
+
+    Dimensions come from the file header, not the client — an admin bypassing
+    the upload form must not be able to plant a 4000px icon.
+    """
+    if content_type not in ICON_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Icon must be PNG, WebP or SVG (got {content_type})",
+        )
+    if len(file_bytes) > MAX_ICON_BYTES:
+        raise HTTPException(status_code=400, detail="Icon must be 512 KB or smaller")
+
+    if content_type == "image/svg+xml":
+        if not _svg_is_square(file_bytes):
+            raise HTTPException(
+                status_code=400,
+                detail="SVG icons need a square viewBox (e.g. viewBox=\"0 0 64 64\")",
+            )
+        return
+
+    dims = (_png_dimensions(file_bytes) if content_type == "image/png"
+            else _webp_dimensions(file_bytes))
+    if not dims:
+        raise HTTPException(status_code=400, detail="Could not read the image header")
+    width, height = dims
+    if width != ICON_SIZE_PX or height != ICON_SIZE_PX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Icon must be exactly {ICON_SIZE_PX}x{ICON_SIZE_PX} (got {width}x{height})",
+        )
+
+
+def upload_achievement_icon(achievement_id: str, file_bytes: bytes, content_type: str) -> str:
+    validate_icon(file_bytes, content_type)
+    ext = _ICON_EXT[content_type]
+    path = f"achievement-icons/{achievement_id}.{ext}"
+    url = f"{_storage_base}/{STORAGE_BUCKET}/{path}"
+    resp = httpx.put(
+        url,
+        content=file_bytes,
+        headers={**_headers, "Content-Type": content_type, "x-upsert": "true"},
+    )
+    if resp.status_code not in (200, 201):
+        body_text = (resp.text or "").strip()[:500]
+        logger.warning(
+            "upload_achievement_icon: Supabase storage rejected upload "
+            "achievement=%s status=%d body=%s",
+            achievement_id, resp.status_code, body_text,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Icon upload failed (Supabase {resp.status_code}): {body_text or 'no body'}",
+        )
+    return f"{SUPABASE_URL}/storage/v1/object/public/{STORAGE_BUCKET}/{path}"

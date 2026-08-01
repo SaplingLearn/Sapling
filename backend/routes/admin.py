@@ -3,6 +3,7 @@ Admin routes — role, achievement, cosmetic, and user management.
 All routes require admin role.
 """
 
+import base64
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -22,11 +23,15 @@ from models import (
     LinkAchievementCosmeticBody,
     LinkRoleCosmeticBody,
     AllowlistEmailBody,
+    AchievementIconBody,
+    UpdateXpRuleBody,
 )
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
 from services.achievement_service import check_achievements
 from services.users_search import paginate_users
+from services.storage_service import upload_achievement_icon
+from services.xp_service import award_xp_safe
 
 router = APIRouter()
 
@@ -218,7 +223,8 @@ def create_achievement(body: CreateAchievementBody, request: Request):
 def update_achievement(achievement_id: str, request: Request, body: dict = {}):
     require_admin(request)
     actor = get_session_user_id(request)
-    allowed = {"name", "description", "icon", "category", "rarity", "is_secret"}
+    allowed = {"name", "description", "icon", "icon_url", "category", "rarity",
+               "is_secret", "xp_reward", "sort_order", "status"}
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
@@ -228,6 +234,25 @@ def update_achievement(achievement_id: str, request: Request, body: dict = {}):
         target_id=achievement_id, payload=updates,
     )
     return {"updated": True}
+
+
+@router.post("/achievements/{achievement_id}/icon")
+def upload_icon(achievement_id: str, body: AchievementIconBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    try:
+        file_bytes = base64.b64decode(body.file_base64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="file_base64 is not valid base64")
+    icon_url = upload_achievement_icon(achievement_id, file_bytes, body.content_type)
+    table("achievements").update(
+        {"icon_url": icon_url}, filters={"id": f"eq.{achievement_id}"}
+    )
+    log_admin_action(
+        actor_id=actor, action="achievement.icon", target_type="achievement",
+        target_id=achievement_id, payload={"icon_url": icon_url},
+    )
+    return {"icon_url": icon_url}
 
 
 @router.delete("/achievements/cosmetics")
@@ -262,6 +287,22 @@ def delete_achievement(achievement_id: str, request: Request):
 def grant_achievement(body: GrantAchievementBody, request: Request):
     require_admin(request)
     actor = get_session_user_id(request)
+
+    # Resolve the badge BEFORE granting: a 'draft' achievement is
+    # work-in-progress in the admin wiki and must never reach a user.
+    achievement = table("achievements").select(
+        "id,slug,status,xp_reward", filters={"id": f"eq.{body.achievement_id}"},
+    )
+    if not achievement:
+        raise HTTPException(status_code=404, detail="Achievement not found")
+    achievement_row = achievement[0]
+    if achievement_row.get("status") != "live":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Achievement '{achievement_row.get('slug')}' is a draft — "
+                   f"publish it before granting.",
+        )
+
     # Check if already earned
     existing = table("user_achievements").select(
         "achievement_id",
@@ -280,6 +321,21 @@ def grant_achievement(body: GrantAchievementBody, request: Request):
         actor_id=actor, action="achievement.grant", target_type="achievement",
         target_id=body.achievement_id, payload={"user_id": body.user_id},
     )
+
+    # Pay the badge's xp_reward, exactly as achievement_service.check_achievements
+    # does on the earned path. `mentor`, `comeback`, `secret` and `methuselah`
+    # are manual-grant-only, so without this they paid 0 and two users with
+    # identical badge sets ended up with different XP totals. Same rule_key +
+    # source_id as the earned path, so the xp_events idempotency key makes a
+    # re-grant (or an earned-then-granted badge) a clean no-op rather than a
+    # double payout. _safe: XP must never fail the grant that earned it.
+    reward = int(achievement_row.get("xp_reward") or 0)
+    if reward:
+        award_xp_safe(
+            body.user_id, "achievement_unlocked",
+            source_type="achievement", source_id=body.achievement_id,
+            amount=reward,
+        )
 
     # Trigger linked cosmetics via achievement service
     check_achievements(body.user_id, "manual_admin_grant", {})
@@ -363,6 +419,37 @@ def link_achievement_cosmetic(body: LinkAchievementCosmeticBody, request: Reques
         payload={"cosmetic_id": body.cosmetic_id},
     )
     return {"linked": True}
+
+
+# ── XP rules ─────────────────────────────────────────────────────────────────
+
+@router.get("/xp-rules")
+def list_xp_rules(request: Request):
+    require_admin(request)
+    rows = table("xp_rules").select("*", order="key.asc")
+    return {"rules": rows or []}
+
+
+@router.patch("/xp-rules/{key}")
+def update_xp_rule(key: str, body: UpdateXpRuleBody, request: Request):
+    require_admin(request)
+    actor = get_session_user_id(request)
+    updates: dict = {}
+    if body.amount is not None:
+        if body.amount < 0:
+            raise HTTPException(status_code=400, detail="amount must be >= 0")
+        updates["amount"] = body.amount
+    if body.enabled is not None:
+        updates["enabled"] = body.enabled
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    table("xp_rules").update(updates, filters={"key": f"eq.{key}"})
+    log_admin_action(
+        actor_id=actor, action="xp_rule.update", target_type="xp_rule",
+        target_id=key, payload=updates,
+    )
+    return {"updated": True}
 
 
 # ── Cosmetics ────────────────────────────────────────────────────────────────
