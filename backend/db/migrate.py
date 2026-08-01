@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -20,8 +21,42 @@ import psycopg
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
+# Two accepted filename shapes, both sortable and both fixed-width:
+#   NNNN_          legacy sequential prefix (frozen — see below)
+#   YYYYMMDDHHMMSS_  UTC timestamp, the convention for every NEW migration
+#
+# New migrations use a timestamp because a sequential counter is claimed when a
+# branch is written but only validated when it merges, so concurrent branches
+# routinely claim the same number.
+#
+# The legacy files are never renamed. `schema_migrations.filename` is the
+# ledger's primary key and `pending_migrations` treats an unknown basename as
+# unapplied, so renaming an applied migration re-runs it — and 0021_gradebook
+# DROPs and re-CREATEs a table.
+#
+# Ordering is unaffected, but for a narrower reason than "timestamps are
+# longer": sorting is character-by-character, so length decides nothing. Every
+# legacy file starts with "0" and every timestamp this millennium starts with
+# "2", and "0" < "2". A sequential migration numbered 3000+ would break that —
+# one more reason the legacy set is frozen.
+_MIGRATION_NAME_RE = re.compile(r"^(\d{4}|\d{14})_.+\.sql$")
+
+
+def is_valid_migration_name(name: str) -> bool:
+    """True when a filename carries a sortable, fixed-width numeric prefix.
+
+    Anything else sorts unpredictably against its siblings, which silently
+    changes apply order.
+    """
+    return bool(_MIGRATION_NAME_RE.match(name))
+
+
 def discover_migrations(migrations_dir: Path) -> list[Path]:
-    """All *.sql migration files, sorted by filename (numeric prefix = order)."""
+    """All *.sql migration files, sorted by filename.
+
+    Filename order IS apply order (see `is_valid_migration_name` for the two
+    accepted prefix shapes and why both sort correctly together).
+    """
     return sorted(Path(migrations_dir).glob("*.sql"))
 
 
