@@ -20,6 +20,15 @@ router = APIRouter()
 
 SCOPES = ("everyone", "friends", "school")
 
+# supabase/config.toml sets PostgREST's `max_rows = 1000`. A page past that
+# cap doesn't error — PostgREST returns 206 Partial Content, which is a 2xx,
+# so db/connection.py's raise_for_status() never fires; the truncation is
+# silent by construction. _events_since backs the leaderboard's weekly-XP
+# aggregation (and /me and /activity), so an unbounded single call here would
+# silently corrupt totals and rank order once platform-wide weekly events
+# cross this cap. Keep this at or below max_rows and page to completion.
+_XP_EVENTS_PAGE = 1000
+
 
 def _parse_ts(value: str | None) -> datetime | None:
     if not value:
@@ -28,12 +37,32 @@ def _parse_ts(value: str | None) -> datetime | None:
 
 
 def _events_since(user_id: str | None, since: datetime) -> list[dict]:
+    """All xp_events at/after `since`, optionally scoped to one user.
+
+    Pages to completion via select_with_count rather than a single unbounded
+    select — see _XP_EVENTS_PAGE. The `created_at,id` order is required for
+    offset paging to be correct: without a stable sort, Postgres/PostgREST
+    can return rows in a different order across pages, silently skipping or
+    duplicating rows across the page boundary.
+    """
     filters = {"created_at": f"gte.{since.isoformat()}"}
     if user_id:
         filters["user_id"] = f"eq.{user_id}"
-    return table("xp_events").select(
-        "user_id,amount,created_at", filters=filters
-    ) or []
+    out: list[dict] = []
+    offset = 0
+    while True:
+        rows, total = table("xp_events").select_with_count(
+            "user_id,amount,created_at",
+            filters=filters,
+            order="created_at.asc,id.asc",
+            limit=_XP_EVENTS_PAGE,
+            offset=offset,
+        )
+        out.extend(rows or [])
+        if not rows or len(out) >= total:
+            break
+        offset += _XP_EVENTS_PAGE
+    return out
 
 
 def _week_start(now: datetime) -> datetime:
@@ -58,6 +87,10 @@ def get_me(user_id: str, request: Request):
     # Live only — a work-in-progress badge must not inflate "12 of 30".
     catalog = table("achievements").select("id", filters={"status": "eq.live"}) or []
 
+    # NOTE: daily_goal_xp is echoed in this payload below but is not one of
+    # the etag inputs. It's inert today — nothing writes users.daily_goal_xp
+    # yet. If a settings path starts writing it, add it to make_etag's args
+    # here or clients will keep serving a stale 304 after it changes.
     etag = make_etag(user_id, total_xp, level, len(earned))
     not_mod = conditional(request, etag)
     if not_mod:
@@ -180,6 +213,10 @@ def get_activity(user_id: str, request: Request):
     since = today - timedelta(days=55)          # 8 weeks back
     events = _events_since(user_id, since)
 
+    # NOTE: daily_goal_xp is echoed in this payload below but is not one of
+    # the etag inputs. It's inert today — nothing writes users.daily_goal_xp
+    # yet. If a settings path starts writing it, add it to make_etag's args
+    # here or clients will keep serving a stale 304 after it changes.
     etag = make_etag(user_id, len(events),
                      sum(int(e.get("amount") or 0) for e in events))
     not_mod = conditional(request, etag)
