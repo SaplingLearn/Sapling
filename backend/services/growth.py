@@ -24,7 +24,9 @@ def _stages_cached() -> tuple:
 
 
 def stages() -> list[dict]:
-    """The stage bands, ascending. Deep-copied — the cache holds the original."""
+    """The stage bands, ascending. Each row is copied shallowly (`dict(r)`) so
+    callers can't mutate the cached tuple — sufficient because growth_stages
+    rows are flat (scalar columns only, no nested mutable values)."""
     return [dict(r) for r in _stages_cached()]
 
 
@@ -34,8 +36,16 @@ def clear_growth_cache() -> None:
 
 
 def _bands() -> list[dict]:
-    """Stages annotated with the span and per-level cost of each band."""
-    rows = stages()
+    """Stages annotated with the span and per-level cost of each band.
+
+    Sorted explicitly by min_level: sort_order and min_level are independent
+    columns (0043_gamification.sql ties neither to the other), so the query's
+    sort_order.asc ordering is not guaranteed to match ascending min_level.
+    _band_for_level's early-exit scan — and this function's own span
+    computation, which looks at the *next* row's min_level — both depend on
+    that ordering being correct.
+    """
+    rows = sorted(stages(), key=lambda r: r["min_level"])
     out = []
     for i, s in enumerate(rows):
         nxt = rows[i + 1]["min_level"] if i + 1 < len(rows) else None
@@ -84,6 +94,10 @@ def level_for_xp(total_xp: int) -> int:
     level, spent = 1, 0
     while level < cap:
         cost = xp_for_level(level)
+        # Only the terminal band is expected to have a non-positive per-level
+        # cost. A non-terminal band misconfigured with xp_to_complete 0/NULL
+        # would also break here, silently stranding the user at this level
+        # forever (no error) rather than looping infinitely.
         if cost <= 0 or spent + cost > total_xp:
             break
         spent += cost

@@ -94,3 +94,36 @@ class TestStageForLevel:
     def test_above_the_last_threshold_is_terminal(self):
         from services.growth import stage_for_level
         assert stage_for_level(50)["slug"] == "old"
+
+
+# sort_order and min_level are independent columns (0043_gamification.sql has no
+# constraint tying them) that merely happen to agree in the current seed. These rows
+# are fetched in sort_order order (soil before bare) but disagree with min_level rank
+# (soil's min_level=5 is greater than bare's min_level=1). Band lookups must be
+# correct regardless of the feed order.
+MISORDERED_STAGE_ROWS = [
+    {"slug": "soil", "name": "Fallow Soil", "blurb": "b", "min_level": 5, "xp_to_complete": 300, "sort_order": 0},
+    {"slug": "bare", "name": "Bare Soil", "blurb": "b", "min_level": 1, "xp_to_complete": 200, "sort_order": 1},
+    {"slug": "seed", "name": "Seed", "blurb": "b", "min_level": 10, "xp_to_complete": 500, "sort_order": 2},
+    {"slug": "sprout", "name": "Sprout", "blurb": "b", "min_level": 15, "xp_to_complete": 800, "sort_order": 3},
+    {"slug": "old", "name": "Old Growth", "blurb": "b", "min_level": 20, "xp_to_complete": None, "sort_order": 4},
+]
+
+
+class TestBandLookupDoesNotDependOnQueryOrder:
+    """Regression for a sort_order/min_level divergence: _band_for_level must not
+    rely on the query's sort_order to already be ascending by min_level."""
+
+    def test_stage_and_xp_lookups_correct_when_sort_order_disagrees_with_min_level(self):
+        with patch("services.growth.table") as t:
+            t.return_value.select.return_value = MISORDERED_STAGE_ROWS
+            from services.growth import clear_growth_cache, stage_for_level, xp_for_level
+            clear_growth_cache()
+            try:
+                assert stage_for_level(1)["slug"] == "bare"
+                assert stage_for_level(4)["slug"] == "bare"
+                assert stage_for_level(5)["slug"] == "soil"
+                assert xp_for_level(1) == 50
+                assert xp_for_level(5) == 60
+            finally:
+                clear_growth_cache()
