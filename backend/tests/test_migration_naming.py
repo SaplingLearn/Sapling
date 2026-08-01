@@ -33,7 +33,20 @@ MIGRATIONS_DIR = Path("db/migrations")
 # convention changed. Nothing may be added to this list: a new NNNN_ file is
 # exactly the mistake this convention exists to prevent, and the guard test
 # below fails if one appears.
-_LEGACY_NUMERIC_COUNT = 45
+#
+# 45 -> 48 is the one sanctioned exception, and it is not a new migration in the
+# sense this guard polices. Three migrations had been applied to staging
+# out-of-band and recorded in `schema_migrations` under NNNN_ names that existed
+# in no repo: 0019_newsletter_approved_at, 0032_retire_summer_2026,
+# 0033_offering_section_not_null. Because the ledger keys on basename, the ONLY
+# way to reconcile them without hand-editing a production ledger is to restore
+# files under those exact recorded names — a timestamped name would leave the
+# orphan in place and re-run the DDL. So these are recovered history, not newly
+# claimed numbers, and they cannot collide with anything: the numbers were
+# already spoken for.
+#
+# The count stays closed at 48. A genuinely new NNNN_ file still fails here.
+_LEGACY_NUMERIC_COUNT = 48
 
 
 def _names() -> list[str]:

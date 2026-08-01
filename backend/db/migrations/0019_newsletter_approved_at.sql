@@ -1,0 +1,30 @@
+-- 0019: newsletter_emails.approved_at.
+--
+-- RECOVERED, NOT NEW. This file is a transcription of a migration that was
+-- applied to staging out-of-band and recorded in `schema_migrations` under
+-- exactly this basename, while never existing in this repo. It is restored here
+-- so the ledger and the repo agree; see the reconciliation note at the bottom.
+--
+-- The column itself is not news: 0026_ops.sql already carries
+--   -- Absorbed from 0019_newsletter_approved_at (drift fix; prod already has
+--   -- this column).
+--   ALTER TABLE newsletter_emails ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+-- so on every environment the column is either already present or gets added by
+-- 0026 regardless. This file is therefore a deliberate no-op everywhere except
+-- in the ledger, where its absence was one of three orphans blocking
+-- .github/workflows/migrate-staging.yml's preflight.
+--
+-- WHY TRANSCRIBE RATHER THAN DELETE THE LEDGER ROW:
+-- `schema_migrations.filename` is the primary key and the runner treats any
+-- basename it has not recorded as pending. A row recorded here but absent from
+-- the repo ("orphan") means the environment ran SQL this repo has never seen —
+-- the workflow refuses to apply anything on top of that, correctly, because it
+-- cannot know what else diverged. Restoring the file under its exact recorded
+-- name clears the orphan on staging without a manual DELETE against the ledger,
+-- and makes the same DDL replayable on prod and on a fresh local database.
+--
+-- Idempotent by construction, which matters because environments disagree about
+-- whether this ran: staging recorded it, prod got the column via 0026, and a
+-- fresh database gets it here first and no-ops at 0026.
+
+ALTER TABLE newsletter_emails ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;

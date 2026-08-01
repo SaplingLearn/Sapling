@@ -2,7 +2,7 @@
  * Journey — semester scoping is opt-in, All semesters is the default (#360).
  *
  * The e2e lane vetoed auto-resolving a default term: the rich seed spans
- * Fall 2025 / Spring 2026 / Summer 2026, and an auto-picked term silently hid
+ * Fall 2025 / Spring 2026 / Fall 2026, and an auto-picked term silently hid
  * cross-term fixtures (dashboard lost MATH210; the graph shrank to one term's
  * nodes). This journey pins the reworked contract:
  *

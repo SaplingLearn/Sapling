@@ -83,6 +83,42 @@ def test_gradebook_applies_before_curve():
     assert order.index("0021_gradebook.sql") < order.index("0021_gradebook_curve.sql")
 
 
+def test_section_not_null_applies_before_the_null_section_index():
+    """Load-bearing ordering for the recovered 0033.
+
+    0033_offering_section_not_null collapses NULL sections into '', which makes
+    0036's `WHERE section IS NULL` partial index match nothing. That is the
+    intended end state — a later timestamped migration drops the dead index —
+    but only in this order. Reversed, 0036 would build a real index over live
+    NULL rows and 0033's backfill would then silently empty it, leaving an index
+    that looks load-bearing and enforces nothing.
+    """
+    order = _order()
+    assert order.index("0033_offering_section_not_null.sql") < order.index(
+        "0036_offering_null_section_unique.sql"
+    )
+
+
+def test_the_dead_null_section_index_is_dropped_after_it_is_created():
+    """The drop must land after 0036, or it drops nothing and the index
+    survives. Timestamp prefixes sort after every legacy NNNN_ file, so this
+    holds structurally — pinned because it is easy to break by renaming."""
+    order = _order()
+    assert order.index("0036_offering_null_section_unique.sql") < order.index(
+        "20260801062439_drop_dead_null_section_index.sql"
+    )
+
+
+def test_summer_retirement_applies_after_the_terms_are_seeded():
+    """0032_retire_summer_2026 deletes a term row that 0019 seeds. Reversed, the
+    DELETE matches nothing and 0019 then re-creates summer-2026, silently
+    undoing the retirement."""
+    order = _order()
+    assert order.index("0019_conventions_terms_schools.sql") < order.index(
+        "0032_retire_summer_2026.sql"
+    )
+
+
 def test_discover_is_sorted_lexicographically():
     """Pin the runner's contract: apply order == sorted(filenames). If the runner
     ever switches to numeric-aware or ctime sorting, these pins must be revisited."""
