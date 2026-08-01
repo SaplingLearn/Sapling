@@ -11,10 +11,12 @@ import {
   adminListAchievements, adminUpdateAchievement, adminUploadAchievementIcon,
   adminListXpRules, adminUpdateXpRule, adminGrantAchievement,
   adminListTriggers, adminCreateTrigger, adminUpdateTrigger, adminDeleteTrigger,
+  adminListAchievementCosmetics, adminLinkAchievementCosmetic, adminUnlinkAchievementCosmetic,
+  adminListCosmetics,
   adminFetchUsers,
 } from "@/lib/api";
 import type {
-  Achievement, AchievementCategory, RarityTier, AchievementTrigger,
+  Achievement, AchievementCategory, RarityTier, AchievementTrigger, Cosmetic,
   AdminUserListItem as AdminUser,
 } from "@/lib/types";
 
@@ -25,7 +27,7 @@ const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary
 const ICON_PX = 512;
 const MAX_ICON_BYTES = 512 * 1024;
 
-async function readIcon(file: File): Promise<{ base64: string; contentType: string }> {
+export async function readIcon(file: File): Promise<{ base64: string; contentType: string }> {
   if (!["image/png", "image/webp", "image/svg+xml"].includes(file.type)) {
     throw new Error("Icon must be a PNG, WebP or SVG");
   }
@@ -229,6 +231,15 @@ function AchievementCard({
   const [triggers, setTriggers] = React.useState<AchievementTrigger[]>([]);
   const [newTrigger, setNewTrigger] = React.useState({ trigger_type: "", trigger_threshold: 1 });
 
+  const [cosmetics, setCosmetics] = React.useState<Cosmetic[]>([]);
+  const [linkedCosmeticIds, setLinkedCosmeticIds] = React.useState<string[]>([]);
+  const [pendingCosmeticId, setPendingCosmeticId] = React.useState("");
+  const [cosmeticBusyId, setCosmeticBusyId] = React.useState<string | null>(null);
+
+  // Deliberately depends on the whole `achievement` object (not just its id):
+  // the id never changes for a card's lifetime, so a narrower dep array would
+  // freeze this closure on the achievement's first-render values forever and
+  // silently repopulate the form with stale data on every re-expand.
   const resetEditFields = React.useCallback(() => {
     setName(achievement.name);
     setDescription(achievement.description || "");
@@ -237,8 +248,7 @@ function AchievementCard({
     setXpReward(achievement.xp_reward);
     setSortOrder(achievement.sort_order);
     setSecret(achievement.is_secret);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [achievement.id]);
+  }, [achievement]);
 
   const toggleExpanded = () => {
     if (!expanded) resetEditFields();
@@ -248,9 +258,18 @@ function AchievementCard({
   React.useEffect(() => {
     if (!expanded) return;
     let alive = true;
-    adminListTriggers(achievement.id)
-      .then(r => { if (alive) setTriggers(r.triggers || []); })
-      .catch(err => { if (alive) toast.error(`Trigger load failed: ${String(err)}`); });
+    Promise.all([
+      adminListTriggers(achievement.id),
+      adminListAchievementCosmetics(achievement.id),
+      adminListCosmetics(),
+    ])
+      .then(([t, links, c]) => {
+        if (!alive) return;
+        setTriggers(t.triggers || []);
+        setLinkedCosmeticIds((links.links || []).map(l => l.cosmetic_id));
+        setCosmetics(c.cosmetics || []);
+      })
+      .catch(err => { if (alive) toast.error(`Detail load failed: ${String(err)}`); });
     return () => { alive = false; };
   }, [expanded, achievement.id, toast]);
 
@@ -260,6 +279,15 @@ function AchievementCard({
       setTriggers(r.triggers || []);
     } catch (err) {
       toast.error(`Trigger load failed: ${String(err)}`);
+    }
+  }, [achievement.id, toast]);
+
+  const reloadCosmeticLinks = React.useCallback(async () => {
+    try {
+      const r = await adminListAchievementCosmetics(achievement.id);
+      setLinkedCosmeticIds((r.links || []).map(l => l.cosmetic_id));
+    } catch (err) {
+      toast.error(`Cosmetic link load failed: ${String(err)}`);
     }
   }, [achievement.id, toast]);
 
@@ -323,7 +351,7 @@ function AchievementCard({
   const unpublishConfirm = useConfirm(unpublish);
 
   const handleFile = async (file: File | null | undefined) => {
-    if (!file) return;
+    if (!file || iconUploading) return;
     setIconUploading(true);
     try {
       const { base64, contentType } = await readIcon(file);
@@ -368,6 +396,33 @@ function AchievementCard({
       await reloadTriggers();
       toast.success("Trigger deleted");
     } catch (err) { toast.error(`Delete failed: ${String(err)}`); }
+  };
+
+  const linkCosmetic = async (cosmeticId: string) => {
+    setCosmeticBusyId(cosmeticId);
+    try {
+      await adminLinkAchievementCosmetic(achievement.id, cosmeticId);
+      setPendingCosmeticId("");
+      await reloadCosmeticLinks();
+      toast.success("Cosmetic linked");
+    } catch (err) {
+      toast.error(`Link failed: ${String(err)}`);
+    } finally {
+      setCosmeticBusyId(null);
+    }
+  };
+
+  const unlinkCosmetic = async (cosmeticId: string) => {
+    setCosmeticBusyId(cosmeticId);
+    try {
+      await adminUnlinkAchievementCosmetic(achievement.id, cosmeticId);
+      await reloadCosmeticLinks();
+      toast.success("Cosmetic unlinked");
+    } catch (err) {
+      toast.error(`Unlink failed: ${String(err)}`);
+    } finally {
+      setCosmeticBusyId(null);
+    }
   };
 
   return (
@@ -467,13 +522,13 @@ function AchievementCard({
               onChange={e => handleFile(e.target.files?.[0])}
             />
             <div
-              onClick={() => fileRef.current?.click()}
+              onClick={() => { if (!iconUploading) fileRef.current?.click(); }}
               onDragOver={e => e.preventDefault()}
-              onDrop={e => { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]); }}
+              onDrop={e => { e.preventDefault(); if (!iconUploading) handleFile(e.dataTransfer.files?.[0]); }}
               style={{
                 border: "1px dashed var(--border)", borderRadius: "var(--r-md)",
-                padding: 14, textAlign: "center", cursor: "pointer",
-                fontSize: 12, color: "var(--text-muted)",
+                padding: 14, textAlign: "center", cursor: iconUploading ? "default" : "pointer",
+                fontSize: 12, color: "var(--text-muted)", opacity: iconUploading ? 0.7 : 1,
               }}
             >
               {iconUploading ? "Uploading…" : "Drop a 512×512 PNG, WebP or SVG here, or click to choose (≤512 KB)"}
@@ -513,6 +568,52 @@ function AchievementCard({
                 style={{ ...fieldStyle, width: 80 }}
               />
               <button className="btn btn--sm btn--primary" onClick={addTrigger}>Add</button>
+            </div>
+          </div>
+
+          <div>
+            <div className="label-micro" style={{ marginBottom: 6 }}>Linked cosmetics · {linkedCosmeticIds.length}</div>
+            {linkedCosmeticIds.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>None.</div>}
+            {linkedCosmeticIds.map(cid => {
+              const c = cosmetics.find(x => x.id === cid);
+              return (
+                <div key={cid} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                  <span style={{ ...fieldStyle, flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>{c ? c.name : cid}</span>
+                    {c && (
+                      <span style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                        {c.type} · {c.rarity}
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    className="btn btn--sm btn--ghost"
+                    onClick={() => unlinkCosmetic(cid)}
+                    disabled={cosmeticBusyId === cid}
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+              <CustomSelect
+                size="sm"
+                value={pendingCosmeticId}
+                onChange={setPendingCosmeticId}
+                options={cosmetics
+                  .filter(c => !linkedCosmeticIds.includes(c.id))
+                  .map(c => ({ value: c.id, label: c.name, description: `${c.type} · ${c.rarity}` }))}
+                placeholder={cosmetics.length === 0 ? "No cosmetics defined yet" : "Pick a cosmetic to link…"}
+                disabled={cosmetics.filter(c => !linkedCosmeticIds.includes(c.id)).length === 0}
+              />
+              <button
+                className="btn btn--sm btn--primary"
+                onClick={() => linkCosmetic(pendingCosmeticId)}
+                disabled={!pendingCosmeticId || cosmeticBusyId === pendingCosmeticId}
+              >
+                Link
+              </button>
             </div>
           </div>
         </div>
