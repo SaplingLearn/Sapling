@@ -11,6 +11,7 @@ import type {
   AnalyticsBucket, LlmCostGroupBy,
   UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
   PublicRoom,
+  GamificationMe, LeaderboardRow, ActivityData, Friend,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 
@@ -1663,3 +1664,73 @@ export const generateQuizFromNote = (noteId: string, userId: string) =>
     `/api/notes/${noteId}/generate-quiz`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );
+
+// ── Gamification ─────────────────────────────────────────────────────────────
+export const fetchGamificationMe = (userId: string) =>
+  fetchJSON<GamificationMe>(`/api/gamification/me?user_id=${encodeURIComponent(userId)}`);
+
+export const fetchLeaderboard = (userId: string, scope: 'everyone' | 'friends' | 'school') =>
+  fetchJSON<{ rows: LeaderboardRow[]; you: LeaderboardRow | null; resets_at: string }>(
+    `/api/gamification/leaderboard?user_id=${encodeURIComponent(userId)}&scope=${scope}`);
+
+export const fetchActivity = (userId: string) =>
+  fetchJSON<ActivityData>(`/api/gamification/activity?user_id=${encodeURIComponent(userId)}`);
+
+// ── Friends ──────────────────────────────────────────────────────────────────
+export const fetchFriends = (userId: string) =>
+  fetchJSON<{ friends: Friend[] }>(`/api/social/friends/${encodeURIComponent(userId)}`);
+
+export const fetchFriendRequests = (userId: string) =>
+  fetchJSON<{
+    incoming: { id: string; from_user_id: string; name: string; created_at: string }[];
+    outgoing: { id: string; to_user_id: string; name: string; created_at: string }[];
+  }>(`/api/social/friends/requests?user_id=${encodeURIComponent(userId)}`);
+
+export const sendFriendRequest = (fromUserId: string, toUserId: string) =>
+  fetchJSON<{ request: { id: string } }>('/api/social/friends/request', {
+    method: 'POST',
+    body: JSON.stringify({ from_user_id: fromUserId, to_user_id: toUserId }),
+  });
+
+export const acceptFriendRequest = (requestId: string, userId: string) =>
+  fetchJSON<{ accepted: boolean }>(
+    `/api/social/friends/requests/${encodeURIComponent(requestId)}/accept?user_id=${encodeURIComponent(userId)}`,
+    { method: 'POST' });
+
+export const declineFriendRequest = (requestId: string, userId: string) =>
+  fetchJSON<{ declined: boolean }>(
+    `/api/social/friends/requests/${encodeURIComponent(requestId)}/decline?user_id=${encodeURIComponent(userId)}`,
+    { method: 'POST' });
+
+export const removeFriend = (friendId: string, userId: string) =>
+  fetchJSON<{ removed: boolean }>(
+    `/api/social/friends/${encodeURIComponent(friendId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' });
+
+// ── Admin — XP rules and icons ───────────────────────────────────────────────
+export const adminListXpRules = () =>
+  fetchJSON<{ rules: { key: string; label: string; amount: number; enabled: boolean }[] }>(
+    '/api/admin/xp-rules');
+
+export const adminUpdateXpRule = (key: string, patch: { amount?: number; enabled?: boolean }) =>
+  fetchJSON<{ updated: boolean }>(`/api/admin/xp-rules/${encodeURIComponent(key)}`, {
+    method: 'PATCH', body: JSON.stringify(patch),
+  });
+
+export const adminUpdateAchievement = (
+  achievementId: string,
+  patch: Partial<Pick<Achievement, 'name' | 'description' | 'category' | 'rarity' | 'is_secret'>>
+    & { xp_reward?: number; sort_order?: number; status?: 'draft' | 'live' },
+) =>
+  fetchJSON<{ updated: boolean }>(`/api/admin/achievements/${encodeURIComponent(achievementId)}`, {
+    method: 'PATCH', body: JSON.stringify(patch),
+  });
+
+export const adminUploadAchievementIcon = (
+  achievementId: string, fileBase64: string, contentType: string,
+) =>
+  fetchJSON<{ icon_url: string }>(
+    `/api/admin/achievements/${encodeURIComponent(achievementId)}/icon`, {
+      method: 'POST',
+      body: JSON.stringify({ file_base64: fileBase64, content_type: contentType }),
+    });
