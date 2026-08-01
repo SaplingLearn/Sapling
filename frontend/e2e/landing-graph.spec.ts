@@ -52,8 +52,12 @@ test('landing graph renders, swaps by course, and fades its copy on engagement',
  * box is ~332px, so the SVG rendered at a uniform 0.38 scale — 4.6 CSS px
  * concept labels and a 213px-tall smudge, on the device most marketing traffic
  * arrives on. The component now swaps to a phone view below the mobile
- * breakpoint, whose frame is fitted to its content (`-4 -1 364 330`, #344
- * visual 3): 0.91 scale ⇒ 12.8 CSS px labels, 25.5px dots, 301px tall.
+ * breakpoint, whose frame is fitted to its content (`-38 -11 414 356`, #344
+ * visual 3): 0.80 scale ⇒ 11.2 CSS px labels, 20.9px dots, 285px tall. Those
+ * three clear the bars below by 0.2px, 0.9px and 25px — the radial-tree layout
+ * needs a wider ring to keep a child's dot out of its parent's label, and this
+ * gate is what stops the ring growing further, so the margins are genuinely
+ * thin. See `MOBILE_VIEW` in `layout.ts` for the two-sided bracket.
  *
  * Asserting in CSS pixels — what a visitor's eye actually gets — rather than on
  * the viewBox attribute, so a different fix that reaches the same legibility

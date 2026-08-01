@@ -93,64 +93,23 @@ export function easeOutCubic(t: number): number {
 }
 
 /**
- * Where a ring's FIRST node sits, as an angle from 3 o'clock. SVG angles run
- * clockwise (y grows downward), so −π/2 is 12 o'clock.
+ * The BFS spanning tree of the UNDIRECTED graph, rooted at `graph.rootId`.
  *
- * THE BUG THIS FIXES. The rule used to be "start at 12 o'clock, and rotate
- * alternate rings by half a slot so spokes don't line up" — `offset = d % 2 ===
- * 0 ? step / 2 : 0` against a `−π/2` start. On a ring of exactly TWO nodes,
- * which is what depth 2 holds in all three fixtures, `step = π`, the half slot
- * is `π/2`, and the two angles collapse to exactly 0 and π: BOTH outer nodes
- * dead on the horizontal axis through the centre. That made the settled layout
- * a flat ellipse (aspect 0.40) sitting inside a near-circular entry sweep
- * (0.86), so the fitted frame could never be tight — the graph filled 45% of
- * its own box height and left a visible dead band above and below it.
+ * `DemoNode.children` is deliberately NOT consulted: it is dead data that
+ * disagrees with `edges` (nothing reads it but the fixtures' own prose), and
+ * trusting it would put a node's position and its drawn edges on two different
+ * sources of truth. Every edge is undirected here because the demo draws them
+ * undirected.
  *
- * THE RULE. Every ring starts three quarters of a slot BACK from 3 o'clock, so
- * its angles are `(4i − 3) · step/4` — ODD multiples of `step/4 = π/(2·count)`.
- * An odd multiple of `π/(2n)` is never a multiple of π (that would need
- * `odd = 2kn`), so no ring of ANY size can put a node on the horizontal axis.
- * For the shipped ring sizes it resolves to:
- *
- *   count 3 (depth 1): −3·(2π/3)/4 = −π/2 → 12, 4 and 8 o'clock, i.e. the exact
- *                      triangle this branch was designed and reviewed against.
- *   count 2 (depth 2): −3π/4              → the NW↔SE diagonal.
- *
- * The diagonal's DIRECTION is not free. Every fixture hangs its two outer nodes
- * off the 12 o'clock and 4 o'clock children, so the mirrored diagonal (SW↔NE,
- * `+3·step/4`) drags a depth-1 → depth-2 edge across the centre and straight
- * through a label: −7.2 units of overlap, measured, against +29.2 of clearance
- * the way round it is.
- *
- * `alternate` keeps the half-slot rotation the old rule existed for, but only
- * where it can actually do something: when a ring holds the same number of
- * nodes as the ring inside it, and the two would otherwise line up into radial
- * spokes. Half a slot moves the angles to `(4i − 1) · step/4` — still odd
- * multiples of `step/4`, so the no-horizontal proof holds on that branch too.
- * No shipped fixture reaches it (3 then 2).
+ * The tree governs POSITION only. `AssemblingGraph` still draws every entry in
+ * `graph.edges`, cross-edges included — `cs-sorting → cs-complexity` closes a
+ * triangle back to the top of the frame and is a big part of why the picture
+ * reads as a graph rather than a star.
  */
-function ringPhase(count: number, innerCount: number | undefined): number {
-  const step = (Math.PI * 2) / count;
-  return (count === innerCount ? -1 : -3) * (step / 4);
-}
-
-/**
- * Root at the centre, each BFS depth on its own ring, siblings spread evenly
- * around it, every ring phased by `ringPhase` so none of them flattens onto the
- * horizontal axis.
- *
- * `maxRadius` is the outermost ring's distance from the centre. It defaults to
- * the old inscribed-circle-minus-48 rule so every existing caller and test is
- * unchanged, but each view passes it explicitly: the binding constraint is the
- * *fitted* frame, not the layout box, and `min(w, h) / 2 - pad` can't express
- * that.
- */
-export function radialLayout(
-  graph: CourseGraph,
-  width: number,
-  height: number,
-  maxRadius: number = Math.min(width, height) / 2 - 48,
-): Map<string, Point> {
+function spanningTree(graph: CourseGraph): {
+  depth: Map<string, number>;
+  parent: Map<string, string>;
+} {
   const adj = new Map<string, string[]>();
   for (const e of graph.edges) {
     adj.set(e.source, [...(adj.get(e.source) ?? []), e.target]);
@@ -158,20 +117,93 @@ export function radialLayout(
   }
 
   const depth = new Map<string, number>([[graph.rootId, 0]]);
+  const parent = new Map<string, string>();
   const queue = [graph.rootId];
   while (queue.length) {
     const cur = queue.shift()!;
     for (const nxt of adj.get(cur) ?? []) {
       if (!depth.has(nxt)) {
         depth.set(nxt, depth.get(cur)! + 1);
+        parent.set(nxt, cur);
         queue.push(nxt);
       }
     }
   }
+  return { depth, parent };
+}
+
+/**
+ * Where the depth-1 ring's FIRST node sits, as an angle from 3 o'clock. SVG
+ * angles run clockwise (y grows downward), so −π/2 is 12 o'clock.
+ *
+ * THE INVARIANT, unchanged from the previous wave and for the same reason. The
+ * ring starts a quarter of a slot FORWARD of 3 o'clock, so its angles are
+ * `(4i + 1) · step/4` — ODD multiples of `step/4 = π/(2·count)`. An odd multiple
+ * of `π/(2n)` is never a multiple of π (that would need `odd = 2kn`), so a ring
+ * of ANY size lands no node on the horizontal axis through the centre. `−3` and
+ * `+1` are both odd, so this is the same proof the `−3·step/4` rule carried;
+ * the two differ only by one whole slot, i.e. by WHICH child gets which seat.
+ *
+ * WHY THE SEATS MOVED BY ONE. For count 3 the ring is 4, 8 and 12 o'clock
+ * either way. What changed is that the layout below is now a tree: the two
+ * children that carry subtrees (indices 0 and 1 in all three fixtures) grow a
+ * second segment straight outward, and every label hangs BELOW its dot. Seated
+ * at 4 and 8 o'clock those arms grow downward and their labels fall away from
+ * the root; seated at 12 o'clock (the old `−3·step/4`) an arm grows straight up
+ * and the drawing goes lopsided — measured, that phase puts the settled box
+ * 10.4% of the frame off-centre and cannot be made collision-free at the phone
+ * breakpoint at any radius (worst pair −2.7 units at `maxRadius` 200, still
+ * negative). The childless third child takes the 12 o'clock seat, where its
+ * label is the only object above the root.
+ *
+ * That does tie the composition to fixture declaration order — the third child
+ * being the leaf. It is the same dependency the ring layout had, and it is
+ * pinned by the collision suite rather than left to chance.
+ */
+function ringPhase(count: number): number {
+  return (Math.PI * 2) / count / 4;
+}
+
+/**
+ * A RADIAL TREE. Root at the centre; depth-1 spread evenly around the full
+ * circle at radius `ring`; every deeper node placed at radius `ring` from ITS
+ * OWN PARENT, inside a wedge centred on the direction from the centre to that
+ * parent. Siblings share (and subdivide) the wedge.
+ *
+ * THE BUG THIS FIXES. The layout used to be global concentric RINGS: a node's
+ * angle came from its index within its depth, so it had no relationship to
+ * where its parent sat. With the shipped 6-node fixtures that scatters the
+ * graph — `cs-sorting` (a child of `cs-arrays`) landed 171 units from its
+ * parent on a ring of radius 232, `cs-trees` was flung to the opposite corner,
+ * and the result read as a lopsided diagonal smear rather than a tree. Tuning
+ * the ring angles cannot fix it: the previous wave swept them, moved the
+ * aspect metric from 0.436 to 1.006, and made the composition visibly worse.
+ * Every tree edge is now exactly one `ring` long — max 170.9 → 116.0 desktop,
+ * mean 128.5 → 116.0 — because a child is placed off its parent, not off the
+ * centre.
+ *
+ * `maxRadius` is the spatial budget: `ring = maxRadius / maxDepth`, so a chain
+ * of `maxDepth` collinear steps lands exactly on it. A node whose siblings push
+ * it off its parent's outward direction sits INSIDE that radius, so `maxRadius`
+ * is an upper bound rather than an exact outer ring. It defaults to the old
+ * inscribed-circle-minus-48 rule so every existing caller and test is
+ * unchanged, but each view passes it explicitly: the binding constraint is the
+ * *fitted* frame, not the layout box, and `min(w, h) / 2 - pad` can't express
+ * that.
+ *
+ * Deterministic by construction: no randomness, no clock, no DOM read.
+ */
+export function radialLayout(
+  graph: CourseGraph,
+  width: number,
+  height: number,
+  maxRadius: number = Math.min(width, height) / 2 - 48,
+): Map<string, Point> {
+  const { depth, parent } = spanningTree(graph);
 
   const byDepth = new Map<number, string[]>();
-  // Iterate graph.nodes (declaration order), not the Map, so ring ordering is
-  // stable regardless of BFS visit order.
+  // Iterate graph.nodes (declaration order), not the Map, so sibling ordering
+  // is stable regardless of BFS visit order.
   for (const n of graph.nodes) {
     const d = depth.get(n.id) ?? 0;
     byDepth.set(d, [...(byDepth.get(d) ?? []), n.id]);
@@ -183,22 +215,52 @@ export function radialLayout(
   const ring = maxRadius / maxDepth;
 
   const out = new Map<string, Point>();
-  for (const [d, ids] of byDepth) {
+  /** Direction from the CENTRE to this node — the axis its own wedge is built on. */
+  const heading = new Map<string, number>();
+  /** Angular span this node's subtree owns, subdivided among its children. */
+  const wedge = new Map<string, number>();
+
+  for (const d of [...byDepth.keys()].sort((a, b) => a - b)) {
+    const ids = byDepth.get(d)!;
+
+    // Depth 0 is the root — plus, defensively, anything the BFS never reached.
     if (d === 0) {
       for (const id of ids) out.set(id, { x: cx, y: cy });
       continue;
     }
-    const step = (Math.PI * 2) / ids.length;
-    // Depth 0 is the centre, not a ring, so the innermost ring has nothing to
-    // line up with and never alternates.
-    const phase = ringPhase(ids.length, d > 1 ? byDepth.get(d - 1)?.length : undefined);
-    ids.forEach((id, i) => {
-      const a = i * step + phase;
-      out.set(id, {
-        x: cx + Math.cos(a) * ring * d,
-        y: cy + Math.sin(a) * ring * d,
+
+    if (d === 1) {
+      const step = (Math.PI * 2) / ids.length;
+      const phase = ringPhase(ids.length);
+      ids.forEach((id, i) => {
+        const a = i * step + phase;
+        out.set(id, { x: cx + Math.cos(a) * ring, y: cy + Math.sin(a) * ring });
+        heading.set(id, a);
+        wedge.set(id, step);
       });
-    });
+      continue;
+    }
+
+    const siblings = new Map<string, string[]>();
+    for (const id of ids) {
+      const p = parent.get(id)!;
+      siblings.set(p, [...(siblings.get(p) ?? []), id]);
+    }
+    for (const [p, kids] of siblings) {
+      const anchor = out.get(p)!;
+      const base = heading.get(p) ?? Math.atan2(anchor.y - cy, anchor.x - cx);
+      const span = wedge.get(p) ?? Math.PI * 2;
+      const slice = span / kids.length;
+      kids.forEach((id, i) => {
+        // Centre of this child's slice — a lone child therefore lands exactly
+        // on the parent's outward direction, i.e. collinear with the centre.
+        const a = base - span / 2 + (i + 0.5) * slice;
+        const q = { x: anchor.x + Math.cos(a) * ring, y: anchor.y + Math.sin(a) * ring };
+        out.set(id, q);
+        heading.set(id, Math.atan2(q.y - cy, q.x - cx));
+        wedge.set(id, slice);
+      });
+    }
   }
   return out;
 }
@@ -262,29 +324,27 @@ export function labelHalfWidth(label: string, geom: GraphGeometry): number {
 /**
  * Where a node's label baseline sits, relative to the node's drawn centre.
  *
- * On DESKTOP the root's label goes above it (#344 visual 4). It went there to
- * dodge the outer-ring → depth-1 edge, which the old flat ring dragged across
- * the root's x at `cy + 0.349 × ring` — straight through "CS 210". The ring
- * phase (see `ringPhase`) has since pulled that diagonal off the centre, so
- * below is no longer a collision either; above is kept because it is still the
- * roomier half. Measured, across all three fixtures: above clears everything by
- * 29.2 units, below by 11.5 — the binding neighbour there is the depth-1 chord
- * (`ma-matrices → ma-eigen`, `sm-dist → sm-testing`) at `cy + ring/2`, i.e.
- * `cy + 58`, against a below-baseline label bottom at `cy + 46.5`.
+ * On DESKTOP the root's label stays above it (#344 visual 4). Both halves are
+ * collision-free under the tree, and the numbers moved: measured across all
+ * three fixtures, above clears by 8.80 units — the binding neighbour is the
+ * cross-edge that runs from an 8 o'clock child up to the 12 o'clock one
+ * (`ma-matrices → ma-eigen`, `sm-dist → sm-testing`) — and below by 31.24, in
+ * the open wedge between the two downward arms. So "below" is now the roomier
+ * half, where the ring layout made it the tighter one. It is a one-line flip if
+ * the composition ever wants it; it is not taken here because 8.80 units is
+ * 6.6 CSS px at the rendered cap, and because flipping it would leave
+ * `rootLabelAbove` false in every shipped view — a flag and a branch with no
+ * caller.
  *
- * On MOBILE it stays below, because there the geometry says so. The top child
- * sits `ring` above the root with its own label hanging back down toward it, so
- * an above-the-root label only clears it when
+ * On MOBILE it stays below, because there the geometry still forbids the
+ * alternative outright. The childless third child sits `ring` straight above
+ * the root with its own label hanging back down toward it, so an
+ * above-the-root label only clears it when
  *
  *     ring ≥ rootR + nodeR + 2·labelGap + cap + descender
  *
- * — 83.8 units at the desktop type scale, against a 116-unit ring: comfortable.
- * The phone's ring is 66 against a 95.7-unit requirement, so "above" would put
- * the course code straight through the first concept's label. Below is tight
- * but positive: the same depth-1 chord passes at `cy + 33.0` and the
- * below-baseline label's cap top is at `cy + 34.1`, 1.1 units clear — which is
- * the constraint `MOBILE_VIEW`'s geometry was tuned against, and it does not
- * move with the ring phase.
+ * — 84.1 units at the phone type scale, against an 81.5-unit ring. Measured,
+ * "above" overlaps that label by 8.72 units; below clears everything by 14.53.
  *
  * Shared with `fitViewBox` and `layout.test.ts` so the frame can never be
  * fitted to a label position the component doesn't actually use.
@@ -334,13 +394,15 @@ const FIT_STEPS = 512;
  * THE THING TO NOT GET WRONG: fit to the HELIX SWEEP, not to the settled node
  * positions. `helixEntry` rotates a node up to 1.5 turns around the centre on
  * the way in, so every outer node passes through every direction on its way to
- * rest: on desktop the sweep reaches ~237 units above and below the centre
- * while the settled drawing only reaches 178 above and 199 below. A box fitted
- * to the settled positions would clip 59 units — 81 CSS px at the rendered cap
- * — off the top and bottom of the assembly, in plain view; that exact bug was
- * found and fixed once already on this branch (#344 review #4). `layout.test.ts`
- * sweeps `t` across the full range to keep it fixed, and pins the overshoot
- * itself so a settled-fit implementation fails outright.
+ * rest. Under the radial tree that gap is WIDER than it was under the rings,
+ * because a tree is a wide object inside a circular sweep: on desktop the
+ * settled drawing spans 280.5 units of height while the sweep spans 476.3, so a
+ * box fitted to the settled positions would clip 91.1 units off the top and
+ * 104.7 off the bottom — 121 and 139 CSS px at the rendered cap, in plain view.
+ * That exact bug was found and fixed once already on this branch (#344 review
+ * #4). The phone numbers are 63.6 and 73.5. `layout.test.ts` sweeps `t` across
+ * the full range to keep it fixed, and pins the overshoot itself so a
+ * settled-fit implementation fails outright.
  *
  * Fitted ONCE across all three fixtures rather than per graph: the three share
  * a topology and differ only in label widths, so a per-graph fit would produce
@@ -402,20 +464,27 @@ function withFit(geom: GraphGeometry): GraphView {
 }
 
 /**
- * `maxRadius: 232` is still `radialLayout`'s old default (`min(900, 560) / 2 -
- * 48`), so the layout's spatial budget is unchanged and the depth-1 ring sits
- * exactly where this branch was designed against. What moved is the outer ring
- * — `ringPhase` takes it off the horizontal axis and onto the diagonal — and
- * the frame fitted around the result: `185 33 526 516`, against the
- * `0 0 900 560` the demo shipped with and the `159 42 578 498` the flat ring
- * fitted to.
+ * Untouched by the tree rewrite: `maxRadius: 232` is still `radialLayout`'s old
+ * default (`min(900, 560) / 2 - 48`), so the spatial budget, the type scale and
+ * the dot sizes are exactly what this branch was designed and reviewed against.
+ * Only the arrangement inside that budget changed, and the frame re-fitted
+ * around it: `165 48 541 498`, against `185 33 526 516` for the ring layout,
+ * `159 42 578 498` for the flat ring before that, and the `0 0 900 560` the
+ * demo shipped with.
  *
  * The component caps the rendered width (`md:max-w-[720px]`), so at the cap the
- * graph draws at 1.369 user units per CSS px: 16.4px labels, 38.3px concept
- * dots, a 71px root, and a 706px-tall `<svg>` where the fixed box reserved
- * 737px inside a 1184px container. The settled drawing fills 73% of that height
- * (515 of 706 CSS px); on the flat ring it filled 45% (277 of 620), which is
- * the dead band above and below the graph that this phase change removes.
+ * graph draws at 1.331 user units per CSS px: 16.0px labels, 37.3px concept
+ * dots, a 69px root, and a 663px-tall `<svg>` — 43px SHORTER than the ring
+ * layout's 706px and 74px shorter than the 737px the fixed box reserved.
+ *
+ * The composition it buys, measured on cs210: the drawing is 448 × 281 units
+ * (596 × 374 CSS px) inside a 541 × 498 frame, centred to within 18 units
+ * horizontally and 7 vertically. It fills 83% of the frame's width against the
+ * ring layout's 71%; it fills less of its height (56% against 73%) because a
+ * three-branch tree is a wide object and the frame is fitted to a near-circular
+ * entry sweep — see `fitViewBox`. That is the deliberate trade: symmetric
+ * whitespace above and below a balanced drawing, rather than a taller drawing
+ * whose children sit nowhere near their parents.
  */
 export const DESKTOP_VIEW: GraphView = withFit({
   w: 900,
@@ -432,48 +501,58 @@ export const DESKTOP_VIEW: GraphView = withFit({
 });
 
 /**
- * Portrait-ish and much smaller in user units, so a phone's ~332px content box
- * (390 viewport − 48 of `px-6` − the 10px scrollbar globals.css paints) renders
- * it at 0.91 rather than the 0.63 the desktop frame would give: 14-unit labels
- * land at 12.8 CSS px, concept dots at a 25.5px diameter, and the `<svg>` is
- * 301px tall (#344 review #3). The frame is `-4 -1 364 330`; the diagonal outer
- * ring both narrowed it (394 → 364) and filled it — the settled drawing is 73%
- * of its height, up from 48%.
+ * The phone view, RETUNED for the tree — and the reason the retune was not
+ * optional. Frame `-38 -11 414 356`; a ~332px content box (390 viewport − 48 of
+ * `px-6` − the 10px scrollbar globals.css paints) renders it at 0.802, so
+ * 14-unit labels land at 11.23 CSS px, concept dots at a 20.9px diameter, and
+ * the `<svg>` is 285px tall — all three still over the E2E legibility gate
+ * (≥11px labels, ≥20px dots, >260px tall), and all three tighter than the ring
+ * layout's 12.8 / 25.5 / 301.
  *
- * These numbers are RETUNED, not inherited. `maxRadius` used to be pinned at
- * 108 by the *labels* — the outer ring then sat on the horizontal axis, so the
- * widest one ("Central Limit") had to clear the hardcoded 360-unit edge. The
- * fitted frame absorbs that overhang now, and it also removes ~26 units of dead
- * width, which shrinks the rendered height: keeping the old geometry under the
- * fit lands the phone `<svg>` at 259px and fails the E2E legibility gate
- * (≥11px labels, ≥20px dots, >260px tall) outright.
+ * WHY THE RING HAD TO GROW (132 → 163). Labels hang below their dots and are
+ * `middle`-anchored, so a 13-character label ("Vector Spaces", "Distributions",
+ * "Central Limit") is 3.9·font units wide on each side of its node. In a tree
+ * the child of a depth-1 node sits `ring` away along that node's outward
+ * direction, and with three children 120° apart the flattest arm is always 30°
+ * off the horizontal — that is forced, not chosen: of two arms 120° apart, the
+ * best achievable worst-case horizontal step is `ring·sin(60°)`. So the child's
+ * dot lands inside its own parent's label unless
  *
- * So the phone geometry was searched against that gate AND against the settled
- * frame's crowding, which the old numbers were already losing (they overlapped
- * by 1.5 units before the halo, 3.2 with it). Two constraints bracket the ring
- * from both sides and are what picked 132/14/14/22:
+ *   0.866 · ring  >  3.9 · font + labelHalo/2 + nodeR
  *
- *   root label vs the horizontal depth-1 edge:  rootR + labelGap ≥ ring/2 + 11.9
- *   top child's label vs the root's own dot:    rootR + labelGap ≤ ring − nodeR − 5.2
+ * — `ring ≥ 76` at this type scale, against the 66 the ring layout used. At
+ * `ring = 66` the overlap measures −13.1 units on ma242 and sm275.
  *
- * which together need `ring ≥ 2·nodeR + 34.2`. Neither constraint moves with
- * the ring phase — both are about the root, its own top child, and the depth-1
- * chord — so the retune survives it unchanged: still +0.8 units on the worst
- * pair, now with 1.8px of label, 5.5px of dot and 41px of height in hand
- * against the E2E bars (the tighter frame renders everything larger).
+ * WHAT BOUNDS IT FROM ABOVE is the same E2E gate, through the fitted frame:
+ * `fit.w ≈ 3.65·ring + 7.8·font + labelHalo + 2·fitPad`, and legibility needs
+ * `font · 332 / fit.w ≥ 11`. The two brackets leave a window about 4 units of
+ * `ring` wide; 81.5 (`maxRadius` 163, halved by `maxDepth`) sits in it with
+ * +1.23 units on the worst label pair — up from the +0.80 the ring layout
+ * shipped — and +0.23 CSS px on the label gate. `nodeR` drops 14 → 13 and
+ * `fitPad` 10 → 2 to buy that window; both are spent directly on the two
+ * constraints above, and `fitPad` still has the fit's outward whole-unit snap
+ * under it.
+ *
+ * The other constraint the previous wave tuned against — the root's label
+ * versus the horizontal depth-1 chord — is GONE: with the branch-bearing
+ * children at 4 and 8 o'clock, the only depth-1 edge any fixture draws
+ * (`ma-matrices → ma-eigen`, `sm-dist → sm-testing`) runs from 8 o'clock to 12
+ * o'clock and never crosses the root's label band. What survives unchanged is
+ * the 12 o'clock child's label clearing the root's dot, which needs
+ * `ring > nodeR + labelGap + 5.2 + rootR` — 59.2 here, with 22 units in hand.
  */
 export const MOBILE_VIEW: GraphView = withFit({
   w: 360,
   h: 300,
-  maxRadius: 132,
+  maxRadius: 163,
   font: 14,
-  rootR: 24,
-  nodeR: 14,
-  labelGap: 22,
+  rootR: 22,
+  nodeR: 13,
+  labelGap: 19,
   rootLabelAbove: false,
-  labelHalo: 3.4,
+  labelHalo: 3.5,
   edgeW: 1.8,
-  fitPad: 10,
+  fitPad: 2,
 });
 
 /** Every view the demo can render in — the sweep target for the bounds test. */

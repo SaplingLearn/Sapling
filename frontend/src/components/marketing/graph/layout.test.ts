@@ -20,6 +20,38 @@ import {
 
 const G = COURSE_GRAPHS[0];
 
+/**
+ * The BFS spanning tree of the undirected graph — restated here rather than
+ * exported from `layout.ts`, so the assertions below are an INDEPENDENT reading
+ * of the same fixtures. (Deliberately not `DemoNode.children`: that field is
+ * dead data that disagrees with `edges`, which is exactly why the layout must
+ * not read it either.)
+ */
+function bfsTree(graph: CourseGraph) {
+  const adj = new Map<string, string[]>();
+  for (const e of graph.edges) {
+    adj.set(e.source, [...(adj.get(e.source) ?? []), e.target]);
+    adj.set(e.target, [...(adj.get(e.target) ?? []), e.source]);
+  }
+  const depth = new Map<string, number>([[graph.rootId, 0]]);
+  const parent = new Map<string, string>();
+  const queue = [graph.rootId];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const nxt of adj.get(cur) ?? []) {
+      if (!depth.has(nxt)) {
+        depth.set(nxt, depth.get(cur)! + 1);
+        parent.set(nxt, cur);
+        queue.push(nxt);
+      }
+    }
+  }
+  return { depth, parent };
+}
+
+const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+  Math.hypot(a.x - b.x, a.y - b.y);
+
 describe('radialLayout', () => {
   it('positions every node', () => {
     const p = radialLayout(G, 800, 500);
@@ -55,13 +87,123 @@ describe('radialLayout', () => {
   });
 
   /**
-   * The geometry bug this file missed twice. The ring phase used to be a half
-   * slot on alternate depths, which on a 2-node ring (`step = π`, every fixture
-   * at depth 2) resolves to exactly {0, π}: both outer nodes dead on the
-   * horizontal axis, a settled layout of aspect 0.40 inside a near-circular
-   * sweep, and a frame the fit could never tighten.
+   * CRITERION 1, and the pin the whole rewrite hangs on.
    *
-   * Asserted as an angle off the horizontal, not as a coordinate.
+   * The layout used to be global concentric rings: a node's angle came from its
+   * index within its depth, with no relationship to where its parent sat. This
+   * is the invariant that says otherwise — a child is placed off ITS OWN
+   * PARENT, so the distance between the two is exactly one ring step, for every
+   * non-root node, in every fixture, in every view.
+   *
+   * It fails outright on the ring layout, where the same edges measured 116.0
+   * AND 170.9 units on desktop depending on which ring angles happened to line
+   * up (`cs-arrays → cs-sorting` was the 170.9).
+   */
+  it('places every node exactly one ring step from its BFS parent', () => {
+    for (const graph of COURSE_GRAPHS) {
+      for (const view of GRAPH_VIEWS) {
+        const pts = radialLayout(graph, view.w, view.h, view.maxRadius);
+        const { depth, parent } = bfsTree(graph);
+        // maxDepth is 2 in every fixture, so the step is half the budget.
+        const step = view.maxRadius / Math.max(...depth.values());
+        for (const n of graph.nodes) {
+          if (n.id === graph.rootId) continue;
+          const d = dist(pts.get(n.id)!, pts.get(parent.get(n.id)!)!);
+          expect(d, `${graph.id}/${n.id} → ${parent.get(n.id)}`).toBeCloseTo(step, 6);
+        }
+      }
+    }
+  });
+
+  /**
+   * CRITERION 1 as the brief states it: a child sits WITH its parent, i.e. its
+   * BFS parent is the nearest node of the previous depth. Weaker than the
+   * one-ring-step pin above (the ring layout happens to satisfy it too), but it
+   * is the property a reader actually cares about, so it is asserted rather
+   * than implied — and it stays true for a parent with several children, where
+   * the exact-step assertion alone would not rule out a child drifting nearer
+   * to somebody else's parent.
+   */
+  it('keeps every node nearer its own parent than any other node of that depth', () => {
+    for (const graph of COURSE_GRAPHS) {
+      for (const view of GRAPH_VIEWS) {
+        const pts = radialLayout(graph, view.w, view.h, view.maxRadius);
+        const { depth, parent } = bfsTree(graph);
+        for (const n of graph.nodes) {
+          if (n.id === graph.rootId) continue;
+          const mine = dist(pts.get(n.id)!, pts.get(parent.get(n.id)!)!);
+          for (const other of graph.nodes) {
+            if (other.id === parent.get(n.id)) continue;
+            if (depth.get(other.id) !== depth.get(n.id)! - 1) continue;
+            expect(
+              dist(pts.get(n.id)!, pts.get(other.id)!),
+              `${graph.id}/${n.id}: ${other.id} is nearer than its parent ${parent.get(n.id)}`,
+            ).toBeGreaterThan(mine);
+          }
+        }
+      }
+    }
+  });
+
+  /**
+   * CRITERION 2 — no long flung edges. Measured over the TREE edges, which are
+   * the ones the layout is responsible for; cross-edges are drawn but not
+   * positioned (see below).
+   *
+   * Desktop, before → after: max 170.9 → 116.0, mean 128.5 → 116.0. Phone:
+   * max 97.3 → 81.5, mean 73.1 → 81.5 (the phone's ring grew with the retune,
+   * so its mean rises while its max falls). Asserted against the ring step
+   * rather than a magic number, so it stays meaningful if a view is retuned.
+   */
+  it('draws no tree edge longer than one ring step', () => {
+    for (const graph of COURSE_GRAPHS) {
+      for (const view of GRAPH_VIEWS) {
+        const pts = radialLayout(graph, view.w, view.h, view.maxRadius);
+        const { depth, parent } = bfsTree(graph);
+        const step = view.maxRadius / Math.max(...depth.values());
+        const lengths = graph.edges
+          .filter((e) => parent.get(e.target) === e.source || parent.get(e.source) === e.target)
+          .map((e) => dist(pts.get(e.source)!, pts.get(e.target)!));
+        expect(lengths.length, `${graph.id} tree edges`).toBe(graph.nodes.length - 1);
+        expect(Math.max(...lengths), `${graph.id} longest tree edge`).toBeLessThanOrEqual(
+          step + 1e-9,
+        );
+      }
+    }
+  });
+
+  /**
+   * The tree governs POSITION only. Every fixture carries exactly one edge that
+   * is NOT a tree edge — `cs-sorting → cs-complexity`, `ma-matrices →
+   * ma-eigen`, `sm-dist → sm-testing` — and `AssemblingGraph` maps
+   * `graph.edges`, so all of them are still drawn; cs210's closes a triangle
+   * from the lower-right tip back up to the top node and is a good part of why
+   * the picture reads as a graph rather than a star. Pinned here because a
+   * future "just draw the tree" simplification would silently drop it.
+   */
+  it('leaves the fixtures with a drawn cross-edge the tree does not own', () => {
+    for (const graph of COURSE_GRAPHS) {
+      const { parent } = bfsTree(graph);
+      const cross = graph.edges.filter(
+        (e) => parent.get(e.target) !== e.source && parent.get(e.source) !== e.target,
+      );
+      expect(cross.length, `${graph.id} cross-edges`).toBe(1);
+      // …and both of its endpoints are laid out, so it is drawable.
+      const pts = radialLayout(graph, DESKTOP_VIEW.w, DESKTOP_VIEW.h, DESKTOP_VIEW.maxRadius);
+      expect(pts.get(cross[0].source)).toBeDefined();
+      expect(pts.get(cross[0].target)).toBeDefined();
+    }
+  });
+
+  /**
+   * CRITERION 3 — the invariant the previous wave established, carried over
+   * unchanged. The ring phase used to be a half slot on alternate depths, which
+   * on a 2-node ring (`step = π`, every fixture at depth 2 back then) resolved
+   * to exactly {0, π}: both outer nodes dead on the horizontal axis.
+   *
+   * The tree only phases ONE ring — depth 1 — but deeper nodes inherit their
+   * parent's heading when they are lone children, so the invariant has to hold
+   * for them too. Asserted as an angle off the horizontal, not as a coordinate.
    */
   it('never lands a node on the horizontal axis through the centre', () => {
     for (const graph of COURSE_GRAPHS) {
@@ -125,20 +267,23 @@ describe('radialLayout', () => {
   });
 
   /**
-   * Half a slot of rotation is what keeps a ring from lining up radially with
-   * the one inside it. The old rule spent it on every even depth — including
-   * the 2-node ring, where it was the flattening bug — so it is now spent only
-   * where it does that job: when two consecutive rings hold the same number of
-   * nodes. No shipped fixture reaches it (3 nodes then 2), so it is pinned on a
-   * synthetic 2 → 2 tree.
+   * The wedge rule, which no shipped fixture exercises — every parent below the
+   * root has exactly one child, so every arm is collinear with the centre. This
+   * pins what happens when one doesn't: siblings SHARE their parent's angular
+   * span, evenly and symmetrically about the parent's own outward direction, so
+   * a branchy graph fans out instead of stacking on one ray.
+   *
+   * (It replaces the old "breaks radial spokes when two rings hold the same node
+   * count" test, whose subject — a half-slot rotation applied to the SECOND
+   * concentric ring — no longer exists: there are no rings past depth 1.)
    */
-  it('breaks radial spokes when two rings hold the same node count', () => {
+  it('splits a parent’s wedge evenly between its children', () => {
     const graph: CourseGraph = {
-      id: 'twotwo',
+      id: 'fan',
       code: 'X',
       name: 'X',
       rootId: 'r',
-      nodes: ['r', 'a', 'b', 'a1', 'b1'].map((id) => ({
+      nodes: ['r', 'a', 'b', 'a1', 'a2', 'a3'].map((id) => ({
         id,
         label: id,
         tier: 'learning' as const,
@@ -149,18 +294,28 @@ describe('radialLayout', () => {
         { source: 'r', target: 'a' },
         { source: 'r', target: 'b' },
         { source: 'a', target: 'a1' },
-        { source: 'b', target: 'b1' },
+        { source: 'a', target: 'a2' },
+        { source: 'a', target: 'a3' },
       ],
     };
     const pts = radialLayout(graph, 900, 560, 232);
-    const angle = (id: string) => Math.atan2(pts.get(id)!.y - 280, pts.get(id)!.x - 450);
-    const off = (a: string, b: string) => Math.abs(angle(a) - angle(b));
-    // A half slot apart — not stacked on the same ray.
-    expect(off('a', 'a1')).toBeCloseTo(Math.PI / 2, 6);
-    expect(off('b', 'b1')).toBeCloseTo(Math.PI / 2, 6);
-    // …and still nothing on the horizontal axis.
-    for (const id of ['a', 'b', 'a1', 'b1']) {
-      expect(Math.abs(Math.sin(angle(id))), id).toBeGreaterThan(0.1);
+    const a = pts.get('a')!;
+    // Direction from `a` to each child, measured off `a` — the wedge's own axis
+    // is the direction from the centre to `a`.
+    const bearing = (id: string) => Math.atan2(pts.get(id)!.y - a.y, pts.get(id)!.x - a.x);
+    const outward = Math.atan2(a.y - 280, a.x - 450);
+    // `a` and `b` split the circle in two, so `a` owns a π wedge; three children
+    // take the centres of three π/3 slices: −π/3, 0, +π/3 off the outward axis.
+    expect(bearing('a1') - outward).toBeCloseTo(-Math.PI / 3, 6);
+    expect(bearing('a2') - outward).toBeCloseTo(0, 6);
+    expect(bearing('a3') - outward).toBeCloseTo(Math.PI / 3, 6);
+    // Symmetric about the axis, and all still one ring step out.
+    for (const id of ['a1', 'a2', 'a3']) {
+      expect(Math.hypot(pts.get(id)!.x - a.x, pts.get(id)!.y - a.y), id).toBeCloseTo(116, 6);
+    }
+    // A child pushed off its parent's outward direction lands INSIDE maxRadius.
+    for (const id of ['a1', 'a3']) {
+      expect(Math.hypot(pts.get(id)!.x - 450, pts.get(id)!.y - 280), id).toBeLessThan(232);
     }
   });
 
@@ -324,12 +479,11 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
    *
    * The MARGIN is what this asserts, in units, on each side. It used to be
    * stated as a ratio ("the sweep needs ~2× the settled height"), which was only
-   * ever a proxy: the ratio is large exactly when the rest state is FLAT, and
-   * flattening the rest state is the bug the ring phase just fixed (settled
-   * aspect 0.40 → 0.91, so the ratio fell from 2.14 to 1.31 while the thing it
-   * was standing in for — how much a settled-fit frame would chop off the
-   * assembly — barely moved, 59 units against 62). Measured on each side:
-   * desktop 59.0 / 59.3, mobile 33.5 / 33.5.
+   * ever a proxy for "a settled fit would clip" and moved for reasons that had
+   * nothing to do with clipping. Measured on each side: desktop 91.1 / 104.7,
+   * mobile 63.6 / 73.5 — wider under the radial tree than under the rings
+   * (59.0 / 59.3 and 33.5 / 33.5), because a three-branch tree is a wide, short
+   * object sitting inside a circular sweep.
    */
   for (const view of GRAPH_VIEWS) {
     it(`the ${view.maxRadius}-radius sweep leaves the settled bounding box`, () => {
@@ -371,14 +525,27 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
   }
 
   /**
-   * #344 visual 3, second wave — the settled graph has to FILL the frame it is
-   * given. The flat outer ring (both depth-2 nodes on the horizontal axis) made
-   * the rest state 0.40-aspect inside a 0.86-aspect sweep, so the fitted box
-   * carried a dead band above and below the drawing: 264 of 620 rendered px,
-   * ~43%. The diagonal ring lifts every fixture past 0.60 aspect and 0.70 of
-   * the box height.
+   * CRITERION 4 — the settled drawing has to be a SANE SHAPE, sitting in the
+   * middle of the frame it is given.
+   *
+   * The bar this replaces asked for aspect ≥ 0.60 and ≥ 0.70 of the frame
+   * height, which the ring layout met (0.91–1.01 / 0.73) while putting children
+   * nowhere near their parents. The radial tree cannot meet the height bar and
+   * should not be asked to: three children 120° apart, two of them carrying a
+   * second segment, make an object 1.73× as wide as it is tall, and the frame
+   * is fitted to a near-circular sweep. Measured: aspect 0.626 / 0.575 / 0.597
+   * desktop, 0.634 / 0.558 / 0.590 phone; 0.83–0.92 of the frame's WIDTH
+   * against the ring layout's 0.71–0.79, and 0.56–0.60 of its height.
+   *
+   * So the assertions are: the aspect stays inside a stated window (a
+   * re-flattening to the old 0.40, or a tall skinny chain, still fails), the
+   * drawing fills a real share of the frame in EACH axis, and — the part the
+   * height bar was really standing in for — it is CENTRED, so whatever
+   * whitespace the sweep costs is spent symmetrically instead of shoved to one
+   * side. The ring-phase family that keeps children with their parents but
+   * seats a branch at 12 o'clock measures 10.4% off-centre and fails this.
    */
-  describe('the settled graph fills its own frame', () => {
+  describe('the settled graph is a sane shape, centred in its frame', () => {
     for (const view of GRAPH_VIEWS) {
       for (const graph of COURSE_GRAPHS) {
         it(`${graph.id} at maxRadius ${view.maxRadius}`, () => {
@@ -404,10 +571,21 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
             t = Math.min(t, e.top);
             b = Math.max(b, e.bottom);
           }
-          // Measured: 1.006 / 0.910 / 0.951 desktop, 1.006 / 0.844 / 0.910 phone.
-          expect((b - t) / (r - l), 'settled aspect').toBeGreaterThanOrEqual(0.6);
-          // Measured: 0.730 desktop, 0.733 phone — was 0.447 / 0.483.
-          expect((b - t) / view.fit.h, 'share of the frame height').toBeGreaterThan(0.7);
+          const aspect = (b - t) / (r - l);
+          expect(aspect, 'settled aspect').toBeGreaterThanOrEqual(0.55);
+          expect(aspect, 'settled aspect').toBeLessThanOrEqual(1.1);
+          // Measured: 0.81–0.92 wide, 0.56–0.60 tall.
+          expect((r - l) / view.fit.w, 'share of the frame width').toBeGreaterThan(0.75);
+          expect((b - t) / view.fit.h, 'share of the frame height').toBeGreaterThan(0.55);
+          // Centred: measured ≤ 3.4% of the width, ≤ 1.4% of the height.
+          expect(
+            Math.abs((l + r) / 2 - (view.fit.x + view.fit.w / 2)) / view.fit.w,
+            'horizontal off-centre',
+          ).toBeLessThan(0.05);
+          expect(
+            Math.abs((t + b) / 2 - (view.fit.y + view.fit.h / 2)) / view.fit.h,
+            'vertical off-centre',
+          ).toBeLessThan(0.05);
         });
       }
     }
@@ -436,8 +614,8 @@ describe('fitViewBox — one stable frame for every course', () => {
     // The shipped bug: `viewBox="0 0 900 560"` around content 578 units wide.
     expect(DESKTOP_VIEW.fit.w).toBeLessThan(DESKTOP_VIEW.w);
     expect(DESKTOP_VIEW.fit.h).toBeLessThan(DESKTOP_VIEW.h);
-    expect(viewBoxAttr(DESKTOP_VIEW.fit)).toBe('185 33 526 516');
-    expect(viewBoxAttr(MOBILE_VIEW.fit)).toBe('-4 -1 364 330');
+    expect(viewBoxAttr(DESKTOP_VIEW.fit)).toBe('165 48 541 498');
+    expect(viewBoxAttr(MOBILE_VIEW.fit)).toBe('-38 -11 414 356');
   });
 });
 
@@ -547,9 +725,15 @@ describe('GraphView sizing at a 390px viewport', () => {
 
   it('renders legible labels and dots on a phone', () => {
     const scale = CONTENT_PX / MOBILE_VIEW.fit.w;
-    expect(scale).toBeCloseTo(0.9121, 4);
-    // 12.8 CSS px labels (was 4.56), 25.5 CSS px dot diameter (was 10.64),
-    // 301 CSS px of graph height (was 213).
+    expect(scale).toBeCloseTo(0.8019, 4);
+    // 11.23 CSS px labels, 20.85 CSS px dot diameter, 285.5 CSS px of graph
+    // height. TIGHTER than the ring layout's 12.77 / 25.54 / 301.0, and
+    // deliberately so: see `MOBILE_VIEW`. A 13-character label at this type
+    // scale is 1.34× the ring step, so the phone geometry is bracketed from
+    // BELOW by the label-vs-child-dot collision (which wants a bigger ring) and
+    // from ABOVE by this gate (which wants a smaller frame), and the window
+    // between them is about four units of ring wide. There is no slack here to
+    // spend: any future type-scale nudge has to re-solve both at once.
     expect(MOBILE_VIEW.font * scale).toBeGreaterThanOrEqual(11);
     expect(2 * MOBILE_VIEW.nodeR * scale).toBeGreaterThanOrEqual(20);
     expect(MOBILE_VIEW.fit.h * scale).toBeGreaterThanOrEqual(260);
