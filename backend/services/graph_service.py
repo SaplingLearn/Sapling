@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from config import get_mastery_tier
 from db.connection import table
+from services.streak_service import touch_streak_safe
 
 
 def _reshape_enrollment(r: dict) -> dict:
@@ -81,28 +82,6 @@ def ensure_user_exists(user_id: str) -> None:
             table("users").insert({"id": user_id, "streak_count": 0})
         except Exception:
             pass  # already exists (race condition) — safe to ignore
-
-
-def update_streak(user_id: str) -> None:
-    """Increment streak if first study activity today, reset to 1 if gap > 1 day."""
-    today = date.today().isoformat()
-    rows = table("users").select("streak_count,last_active_date", filters={"id": f"eq.{user_id}"})
-    if not rows:
-        return
-    row = rows[0]
-    last = row.get("last_active_date")
-    streak = row.get("streak_count") or 0
-
-    if last == today:
-        return  # already counted today
-
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
-    new_streak = streak + 1 if last == yesterday else 1
-
-    table("users").update(
-        {"streak_count": new_streak, "last_active_date": today},
-        filters={"id": f"eq.{user_id}"},
-    )
 
 
 def _event_ts(e: dict) -> str | None:
@@ -769,7 +748,11 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
             touched_courses.add(cid)
 
     if mastery_changes:
-        update_streak(user_id)
+        # services/streak_service.py::touch_streak is the sole writer of
+        # streak_count/longest_streak (UTC calendar days); mastery activity
+        # legitimately counts as a study day, so this stays a call site, but
+        # the maths lives in exactly one place — not duplicated here.
+        touch_streak_safe(user_id)
 
     for new_edge in graph_update.get("new_edges", []):
         src_name = " ".join((new_edge.get("source") or "").split())
