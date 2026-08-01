@@ -214,6 +214,10 @@ def _png_dimensions(data: bytes) -> tuple[int, int] | None:
 
 
 def _webp_dimensions(data: bytes) -> tuple[int, int] | None:
+    # 30 is the max of the three variants' offset requirements (VP8X/VP8
+    # both need up to byte 30; a minimal VP8L only needs 25) — deliberately
+    # shared rather than split per-variant so this stays one guard to read.
+    # Harmless: it fails closed, and real WebP files always exceed it.
     if len(data) < 30 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
         return None
     fourcc = data[12:16]
@@ -231,8 +235,50 @@ def _webp_dimensions(data: bytes) -> tuple[int, int] | None:
     return None
 
 
+def _svg_root_attrs(data: bytes) -> bytes | None:
+    """Return the root <svg> element's own attribute text, or None.
+
+    Only the root element's attributes count — a `viewBox` anywhere else in
+    the document (a decoy inside a comment, or a real attribute on a nested
+    <symbol>/<pattern>/inner <svg>) must not be mistaken for the root's. An
+    admin bypassing the upload form with a raw request could otherwise plant
+    a square decoy ahead of the real, non-square root element.
+
+    Skips leading whitespace, an XML declaration, a DOCTYPE, and comments,
+    then requires the very next tag to be the `<svg` open tag. Anything else
+    (malformed markup, no root <svg> at all, a truncated tag) returns None —
+    fail closed, same as the PNG/WebP header parsers.
+    """
+    text = data[:4096]
+    pos = 0
+    while True:
+        m = re.match(rb"\s+", text[pos:])
+        if m:
+            pos += m.end()
+            continue
+        m = re.match(rb"<\?.*?\?>", text[pos:], re.DOTALL)
+        if m:
+            pos += m.end()
+            continue
+        m = re.match(rb"<!DOCTYPE.*?>", text[pos:], re.IGNORECASE | re.DOTALL)
+        if m:
+            pos += m.end()
+            continue
+        m = re.match(rb"<!--.*?-->", text[pos:], re.DOTALL)
+        if m:
+            pos += m.end()
+            continue
+        break
+
+    root = re.match(rb"<svg\b([^>]*)>", text[pos:], re.IGNORECASE)
+    return root.group(1) if root else None
+
+
 def _svg_is_square(data: bytes) -> bool:
-    match = re.search(rb'viewBox\s*=\s*["\']([^"\']+)["\']', data[:4096])
+    attrs = _svg_root_attrs(data)
+    if attrs is None:
+        return False
+    match = re.search(rb'viewBox\s*=\s*["\']([^"\']+)["\']', attrs)
     if not match:
         return False
     parts = match.group(1).replace(b",", b" ").split()
