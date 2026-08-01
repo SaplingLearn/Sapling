@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from config import get_mastery_tier
 from db.connection import table
 from services.streak_service import touch_streak_safe
+
+logger = logging.getLogger(__name__)
 
 
 def _reshape_enrollment(r: dict) -> dict:
@@ -799,6 +802,23 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
                     update_course_context(offering_id)
                 except Exception:
                     pass
+
+    # The knowledge graph is the ONLY thing that advances these three stats, so
+    # this is the only place they can be dispatched from. Without it `rooted`,
+    # `branching`, `canopy` (concepts_mastered), `web` (graph_nodes_count) and
+    # `polymath` (courses_with_mastery) are live badges nothing can ever award.
+    # Placed at the end rather than beside the touch_streak_safe call inside
+    # `if mastery_changes:` on purpose: graph_nodes_count grows when nodes are
+    # created, which happens on updates that change no mastery at all.
+    # Post-commit side effect — the graph is already written, so a failure here
+    # must not propagate into the caller's turn.
+    try:
+        from services.achievement_service import check_achievements
+        check_achievements(user_id, "graph_nodes_count", {})
+        check_achievements(user_id, "concepts_mastered", {})
+        check_achievements(user_id, "courses_with_mastery", {})
+    except Exception:
+        logger.exception("achievement dispatch failed after graph update user=%s", user_id)
 
     return mastery_changes
 

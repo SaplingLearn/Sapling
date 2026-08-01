@@ -353,6 +353,16 @@ def rate_card(body: FlashcardRatingBody, request: Request):
         },
         filters={"id": f"eq.{body.card_id}"},
     )
+
+    # The review counter is the only thing that advances `flashcards_reviewed`
+    # (Quick Draw: review 100 cards), so this is its only possible dispatch
+    # point. Post-commit: the review is already recorded, so a failing check
+    # must not fail the rating.
+    try:
+        check_achievements(body.user_id, "flashcards_reviewed", {})
+    except Exception:
+        pass
+
     return {"ok": True}
 
 
