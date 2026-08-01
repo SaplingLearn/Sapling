@@ -107,14 +107,80 @@ class TestAccept:
         handles["friend_requests"].select.return_value = [
             {"id": "r1", "from_user_id": "u1", "to_user_id": "u2", "status": "pending"}
         ]
+        handles["friendships"].select.return_value = []  # not friends yet
         with patch("routes.social.table", side_effect=_tables(handles)), \
              patch("routes.social.check_achievements") as check:
             r = client.post("/api/social/friends/requests/r1/accept?user_id=u2")
         assert r.status_code == 200
-        inserted = handles["friendships"].insert.call_args[0][0]
-        assert {"user_id": "u1", "friend_id": "u2"} in inserted
-        assert {"user_id": "u2", "friend_id": "u1"} in inserted
+        written = handles["friendships"].upsert.call_args[0][0]
+        assert {"user_id": "u1", "friend_id": "u2"} in written
+        assert {"user_id": "u2", "friend_id": "u1"} in written
         assert check.call_count == 2
+
+    def test_a_second_accept_is_a_no_op_not_a_500(self):
+        """Double-click, or a retry: the request is already `accepted`, so the
+        friendships rows exist. A second insert of the same pair violates
+        PRIMARY KEY (user_id, friend_id) and 500s — and because the route
+        never re-checked status, the row stayed where it was, so it 500d on
+        every subsequent retry too. Accepting an already-accepted request must
+        be an idempotent no-op."""
+        handles = {"friend_requests": MagicMock(), "friendships": MagicMock()}
+        handles["friend_requests"].select.return_value = [
+            {"id": "r1", "from_user_id": "u1", "to_user_id": "u2",
+             "status": "accepted"}
+        ]
+        handles["friendships"].select.return_value = [{"friend_id": "u1"}]
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.check_achievements"):
+            r = client.post("/api/social/friends/requests/r1/accept?user_id=u2")
+        assert r.status_code == 200
+        assert r.json()["accepted"] is True
+        handles["friendships"].insert.assert_not_called()
+        handles["friendships"].upsert.assert_not_called()
+
+    def test_accepting_the_reverse_of_an_already_accepted_mutual_request(self):
+        """send_friend_request only checks the exact (from, to) pair, never the
+        reverse, so A->B and B->A can both sit pending. Once B accepts A->B the
+        two are friends; A then clicking Accept on the still-pending B->A hits
+        the same duplicate PRIMARY KEY. No adversary needed."""
+        handles = {"friend_requests": MagicMock(), "friendships": MagicMock()}
+        handles["friend_requests"].select.return_value = [
+            {"id": "r2", "from_user_id": "u2", "to_user_id": "u1",
+             "status": "pending"}
+        ]
+        # Already friends from the first accept.
+        handles["friendships"].select.return_value = [{"friend_id": "u2"}]
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.check_achievements"):
+            r = client.post("/api/social/friends/requests/r2/accept?user_id=u1")
+        assert r.status_code == 200
+        assert r.json()["accepted"] is True
+        handles["friendships"].insert.assert_not_called()
+        handles["friendships"].upsert.assert_not_called()
+        # The stale pending row is still resolved, so it stops showing up as
+        # an actionable incoming request forever.
+        handles["friend_requests"].update.assert_called_once()
+        assert handles["friend_requests"].update.call_args[0][0]["status"] == "accepted"
+
+    def test_the_friendship_write_is_conflict_safe(self):
+        """Two simultaneous accepts (a genuine double-click fires both before
+        either has updated the status) both read `pending`, so the status
+        check alone is not enough — the write itself has to tolerate the
+        duplicate. It goes through upsert on the (user_id, friend_id) primary
+        key rather than a bare insert."""
+        handles = {"friend_requests": MagicMock(), "friendships": MagicMock()}
+        handles["friend_requests"].select.return_value = [
+            {"id": "r1", "from_user_id": "u1", "to_user_id": "u2",
+             "status": "pending"}
+        ]
+        handles["friendships"].select.return_value = []
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.check_achievements"):
+            r = client.post("/api/social/friends/requests/r1/accept?user_id=u2")
+        assert r.status_code == 200
+        handles["friendships"].insert.assert_not_called()
+        assert handles["friendships"].upsert.call_args.kwargs["on_conflict"] == \
+            "user_id,friend_id"
 
     def test_only_the_recipient_may_accept(self):
         handles = {"friend_requests": MagicMock(), "friendships": MagicMock()}
