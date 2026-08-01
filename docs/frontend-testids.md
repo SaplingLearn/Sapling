@@ -337,8 +337,11 @@ spec and will reuse these same testids.
 | --- | --- |
 | `landing-graph` | demo section root (`aria-label` names the selected course) |
 | `landing-graph-chip-{courseId}` | one course-picker chip, per `COURSE_GRAPHS` entry — `aria-pressed` marks the active course |
+| `landing-graph-svg` | the `<svg>` itself — its `viewBox` is the desktop or the phone `GraphView` (`graph/layout.ts`), swapped at the mobile breakpoint |
 | `landing-graph-node-{nodeId}` | one SVG node group (`<g>`) in the selected course's graph |
 | `landing-graph-copy` | the section's instructional copy block (eyebrow label + heading) — `data-engaged` flips `"true"` on the visitor's first node hover and stays that way across course switches |
+| `landing-graph-eyebrow` | the "Your knowledge, mapped" eyebrow label — deliberately *not* faded on engagement (WCAG AA at 0.7rem) |
+| `landing-graph-headline` | the "Pick a course. Watch it grow." heading — carries the engagement fade (`ENGAGED_HEADLINE_OPACITY`) |
 | `landing-graph-blurb` | the reserved-height paragraph below the graph that shows the hovered node's one-sentence blurb |
 
 ## Enforcement

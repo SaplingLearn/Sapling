@@ -45,6 +45,49 @@ test('landing graph renders, swaps by course, and fades its copy on engagement',
   await expect(page.getByTestId('landing-graph-blurb')).toContainText('Span, basis');
 });
 
+/**
+ * #344 review #3 — the demo shipped with a single 900×560 viewBox at every
+ * width. Playwright's default 1280×720 viewport cannot see the consequence,
+ * which is why the journey above passed: at a 390px phone the section's content
+ * box is 342px, so the SVG rendered at a uniform 0.38 scale — 4.6 CSS px
+ * concept labels and a 213px-tall smudge, on the device most marketing traffic
+ * arrives on. The component now swaps to a 360×300 viewBox below the mobile
+ * breakpoint (0.95 scale ⇒ 12.4 CSS px labels, 285 CSS px tall).
+ *
+ * Asserting in CSS pixels — what a visitor's eye actually gets — rather than on
+ * the viewBox attribute, so a different fix that reaches the same legibility
+ * still passes.
+ */
+test('the graph stays legible at a 390px phone viewport (#344)', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  const section = page.getByTestId('landing-graph');
+  await section.scrollIntoViewIfNeeded();
+  await expect(page.getByTestId('landing-graph-node-cs-root')).toBeVisible();
+
+  const metrics = await page.getByTestId('landing-graph-svg').evaluate((el) => {
+    const svg = el as unknown as SVGSVGElement;
+    const rect = svg.getBoundingClientRect();
+    const label = svg.querySelector('text')!;
+    // A non-root node — the small dots are what actually got unreadable.
+    const dot = svg.querySelector<SVGCircleElement>(
+      '[data-testid="landing-graph-node-cs-arrays"] circle',
+    )!;
+    // The SVG is width:100%, so every user unit renders at this scale.
+    const scale = rect.width / svg.viewBox.baseVal.width;
+    return {
+      heightPx: rect.height,
+      labelPx: parseFloat(getComputedStyle(label).fontSize) * scale,
+      dotDiameterPx: 2 * dot.r.baseVal.value * scale,
+    };
+  });
+
+  expect(metrics.labelPx, 'concept labels in CSS px').toBeGreaterThanOrEqual(11);
+  expect(metrics.dotDiameterPx, 'non-root node diameter in CSS px').toBeGreaterThanOrEqual(20);
+  expect(metrics.heightPx, 'rendered graph height in CSS px').toBeGreaterThan(260);
+});
+
 test('the deleted scroll section is gone and the CTA still routes', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#how-it-works')).toHaveCount(0);

@@ -995,4 +995,9 @@ input[type="reset"]:disabled {
   border-color: var(--brand-forest);
   color: #fff;
 }
-.landing-page .landing-graph-copy { transition: opacity 600ms ease; }
+/* The engagement fade lives on the headline, not the copy block: CSS opacity
+   on the wrapper would group the eyebrow into it, and a child can never be
+   more opaque than its group. `--brand-forest` at 0.7rem needs α ≥ 0.86 to
+   hold WCAG AA 4.5:1 over the paper background, so the eyebrow isn't faded at
+   all — see ENGAGED_HEADLINE_OPACITY in KnowledgeGraphDemo.tsx (#344). */
+.landing-page .landing-graph-headline { transition: opacity 600ms ease; }

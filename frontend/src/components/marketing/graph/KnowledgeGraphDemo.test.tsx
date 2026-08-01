@@ -8,12 +8,14 @@ import React from 'react';
 import { act } from 'react';
 import { renderToString } from 'react-dom/server';
 import { hydrateRoot, type Root } from 'react-dom/client';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 
-import KnowledgeGraphDemo from './KnowledgeGraphDemo';
+import KnowledgeGraphDemo, { ENGAGED_HEADLINE_OPACITY } from './KnowledgeGraphDemo';
 import { COURSE_GRAPHS } from './courseGraphs';
+import { DESKTOP_VIEW, MOBILE_VIEW } from './layout';
 import { __resetReducedMotionStoreForTests } from '@/lib/usePrefersReducedMotion';
+import { __resetMediaStoresForTests } from '@/lib/useIsMobile';
 
 afterEach(cleanup);
 
@@ -28,6 +30,9 @@ afterEach(cleanup);
 // queried.
 beforeEach(() => {
   __resetReducedMotionStoreForTests();
+  // Same cache-warming hazard as above, for the `useIsMobile` store the
+  // component now consults to pick its viewBox (#344 review #3).
+  __resetMediaStoresForTests();
 });
 
 describe('KnowledgeGraphDemo', () => {
@@ -221,5 +226,333 @@ describe('KnowledgeGraphDemo — interaction', () => {
     fireEvent.click(screen.getByTestId(`landing-graph-chip-${target.id}`));
 
     expect(copy).toHaveAttribute('data-engaged', 'true');
+  });
+});
+
+// ── WCAG plumbing for the engaged-copy contrast test (#344 review #2) ───────
+// Small enough to inline, and inlining keeps the assertion honest: it derives
+// the ratio from the tokens and the opacity the component actually renders,
+// rather than restating a number someone computed once by hand.
+
+/** globals.css: `--bg` = `--ink-0`, `--text` = `--ink-800`. */
+const TOKEN_BG = '#faf8f3';
+const TOKEN_TEXT = '#1a1814';
+const TOKEN_BRAND_FOREST = '#1B6C42';
+
+function channels(hex: string): [number, number, number] {
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
+}
+
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** WCAG 2.1 contrast of `fg` at `alpha` composited over the opaque `bg`. */
+function contrastAtOpacity(fgHex: string, bgHex: string, alpha: number): number {
+  const fg = channels(fgHex);
+  const bg = channels(bgHex);
+  const composited = fg.map((c, i) => alpha * c + (1 - alpha) * bg[i]) as [number, number, number];
+  const l1 = relativeLuminance(composited);
+  const l2 = relativeLuminance(bg);
+  const [hi, lo] = l1 > l2 ? [l1, l2] : [l2, l1];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * The opacity a visitor actually sees on `el`: CSS opacity composes down the
+ * tree, so a fade on the wrapper dims every child and a child can never be
+ * *more* opaque than its group. Walking the chain is what makes this test
+ * indifferent to *where* the fix put the fade.
+ */
+function effectiveOpacity(el: Element, stopAt: Element): number {
+  let alpha = 1;
+  let cur: Element | null = el;
+  while (cur) {
+    const raw = (cur as HTMLElement).style?.opacity;
+    if (raw) alpha *= Number(raw);
+    if (cur === stopAt) break;
+    cur = cur.parentElement;
+  }
+  return alpha;
+}
+
+/**
+ * #344 review #2 — the engaged fade was a flat 0.35 on the whole copy block,
+ * and `engaged` never resets, so that was the section's PERMANENT heading
+ * treatment for the rest of the session, not a transient animation state.
+ * Over this section's flat `--bg` paper that composites the `<h2>` to
+ * #ACAAA5 (2.20:1, under the 3:1 large-text bar) and the 0.7rem eyebrow to
+ * #ACC7B5 (1.71:1, against a 4.5:1 bar).
+ */
+describe('KnowledgeGraphDemo — engaged copy contrast (#344 review #2)', () => {
+  function engage() {
+    render(<KnowledgeGraphDemo />);
+    fireEvent.mouseEnter(
+      screen.getByTestId(`landing-graph-node-${COURSE_GRAPHS[0].nodes[1].id}`),
+    );
+    const copy = screen.getByTestId('landing-graph-copy');
+    expect(copy).toHaveAttribute('data-engaged', 'true');
+    return copy;
+  }
+
+  it('keeps the faded headline over the 3:1 WCAG AA bar for large text', () => {
+    const copy = engage();
+    const headline = copy.querySelector('h2')!;
+    const alpha = effectiveOpacity(headline, copy);
+
+    // The headline is text-4xl (36px) semibold — "large text" by WCAG, 3:1.
+    // 0.55 composites to #7F7D78 = 3.88:1. The shipped 0.35 was 2.20:1.
+    expect(alpha).toBeCloseTo(ENGAGED_HEADLINE_OPACITY, 6);
+    expect(contrastAtOpacity(TOKEN_TEXT, TOKEN_BG, alpha)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('keeps the small eyebrow over the 4.5:1 WCAG AA bar for small text', () => {
+    const copy = engage();
+    const eyebrow = copy.querySelector('span')!;
+    const alpha = effectiveOpacity(eyebrow, copy);
+
+    // 0.7rem ⇒ small text ⇒ 4.5:1, and `--brand-forest` over the paper only
+    // clears that at α ≥ 0.86 — a fade nobody could perceive. So it isn't
+    // faded at all: 6.05:1. The shipped 0.35 was 1.71:1.
+    expect(contrastAtOpacity(TOKEN_BRAND_FOREST, TOKEN_BG, alpha)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+// ── Controllable IntersectionObserver + rAF, for the gating tests ──────────
+
+type FakeObserverRecord = {
+  callback: IntersectionObserverCallback;
+  targets: Element[];
+  disconnected: boolean;
+  rootMargin: string;
+};
+
+/** jsdom ships no IntersectionObserver; install one we can fire by hand. */
+function installIntersectionObserver() {
+  const records: FakeObserverRecord[] = [];
+
+  class FakeIntersectionObserver {
+    readonly root = null;
+    readonly rootMargin: string;
+    readonly thresholds: ReadonlyArray<number> = [0];
+    private record: FakeObserverRecord;
+
+    constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+      this.rootMargin = String(options?.rootMargin ?? '0px');
+      this.record = { callback, targets: [], disconnected: false, rootMargin: this.rootMargin };
+      records.push(this.record);
+    }
+    observe(el: Element) {
+      this.record.targets.push(el);
+    }
+    unobserve(el: Element) {
+      this.record.targets = this.record.targets.filter((t) => t !== el);
+    }
+    disconnect() {
+      this.record.disconnected = true;
+      this.record.targets = [];
+    }
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
+  }
+
+  const holder = window as unknown as { IntersectionObserver?: unknown };
+  const previous = holder.IntersectionObserver;
+  holder.IntersectionObserver = FakeIntersectionObserver;
+
+  return {
+    records,
+    /** Deliver an intersection change to every live observer, inside `act`. */
+    fire(isIntersecting: boolean) {
+      act(() => {
+        for (const r of records) {
+          if (r.disconnected) continue;
+          r.callback(
+            r.targets.map(
+              (target) => ({ isIntersecting, target }) as unknown as IntersectionObserverEntry,
+            ),
+            null as unknown as IntersectionObserver,
+          );
+        }
+      });
+    },
+    restore() {
+      if (previous === undefined) delete holder.IntersectionObserver;
+      else holder.IntersectionObserver = previous;
+    },
+  };
+}
+
+/** Capture rAF callbacks instead of letting jsdom schedule them on a timer. */
+function captureAnimationFrames() {
+  const queue: FrameRequestCallback[] = [];
+  const raf = vi
+    .spyOn(window, 'requestAnimationFrame')
+    .mockImplementation((cb: FrameRequestCallback) => queue.push(cb));
+  const caf = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+  return {
+    queue,
+    get frameCount() {
+      return raf.mock.calls.length;
+    },
+    /** Run the next queued frame inside `act`. */
+    step() {
+      const cb = queue.shift();
+      expect(cb, 'expected a queued animation frame').toBeTruthy();
+      act(() => cb!(0));
+    },
+    restore() {
+      raf.mockRestore();
+      caf.mockRestore();
+    },
+  };
+}
+
+function nodeOpacities(): string[] {
+  return COURSE_GRAPHS[0].nodes.map(
+    (n) => screen.getByTestId(`landing-graph-node-${n.id}`).getAttribute('opacity') ?? '',
+  );
+}
+
+/**
+ * #344 review #1 + #6 — two findings that were masking each other.
+ *
+ * #1: the assembly effect fired on mount, so the helix burned its full 1100ms
+ * during the hydration window, underneath the landing page's intro overlay and
+ * alongside the hero canvas RAF. Every visitor scrolled down to `progress === 1`
+ * and a static picture.
+ *
+ * #6: the un-park transition (`usePrefersReducedMotion` correcting its SSR-safe
+ * `true` to the real `false`) landed `progress` on 0 — a committed frame with
+ * the ENTIRE GRAPH at opacity 0. Gating #1 without fixing #6 turns that one
+ * blank frame into a section that stays blank until it is scrolled into view,
+ * which is exactly what `id="knowledge-graph"` invites someone to deep-link to.
+ */
+describe('KnowledgeGraphDemo — viewport gating and the never-blank frame (#344 review #1, #6)', () => {
+  let observer: ReturnType<typeof installIntersectionObserver>;
+  let frames: ReturnType<typeof captureAnimationFrames>;
+
+  beforeEach(() => {
+    // The majority visitor: no motion preference, so `parked` is false and the
+    // component is on the animated path — the only path where either bug bites.
+    installReducedMotion(false);
+    observer = installIntersectionObserver();
+    frames = captureAnimationFrames();
+  });
+
+  afterEach(() => {
+    frames.restore();
+    observer.restore();
+  });
+
+  it('renders the COMPLETE graph, never a blank one, before the section is near the viewport', () => {
+    render(<KnowledgeGraphDemo />);
+    // Pre-fix this was ["0", "0", "0", ...] — the whole point of #6.
+    expect(nodeOpacities()).toEqual(COURSE_GRAPHS[0].nodes.map(() => '1'));
+    const edge = screen.getByTestId('landing-graph-svg').querySelector('line')!;
+    expect(Number(edge.getAttribute('stroke-opacity'))).toBeGreaterThan(0);
+  });
+
+  it('does not start the assembly RAF until the section is reported on screen', () => {
+    render(<KnowledgeGraphDemo />);
+    // Pre-fix the effect fired on mount and this was already ≥ 1.
+    expect(frames.frameCount).toBe(0);
+    expect(observer.records).toHaveLength(1);
+    expect(observer.records[0].targets).toContain(screen.getByTestId('landing-graph'));
+  });
+
+  it('arms the assembly when the section comes into view, and only then', () => {
+    render(<KnowledgeGraphDemo />);
+    observer.fire(true);
+    expect(frames.frameCount).toBeGreaterThan(0);
+
+    frames.step();
+    // Now — and only now — a sub-1 frame is legitimate: the visitor is looking
+    // at it. The clock has barely moved, so the graph is at the start of the
+    // helix.
+    expect(nodeOpacities().every((o) => Number(o) < 1)).toBe(true);
+  });
+
+  it('settles on the complete frame if the section leaves mid-assembly', () => {
+    render(<KnowledgeGraphDemo />);
+    observer.fire(true);
+    frames.step();
+    expect(nodeOpacities().every((o) => Number(o) < 1)).toBe(true);
+
+    // Scrolled away: stop the loop (review #1's "and stop when it leaves"), and
+    // don't freeze a half-faded graph behind (review #6).
+    observer.fire(false);
+    expect(nodeOpacities()).toEqual(COURSE_GRAPHS[0].nodes.map(() => '1'));
+
+    // Coming back doesn't replay the whole helix from blank.
+    const before = frames.frameCount;
+    observer.fire(true);
+    expect(frames.frameCount).toBe(before);
+    expect(nodeOpacities()).toEqual(COURSE_GRAPHS[0].nodes.map(() => '1'));
+  });
+
+  it('gates on a root margin that cannot already be intersecting at scroll 0', () => {
+    render(<KnowledgeGraphDemo />);
+    // The section is mounted straight after a `min-h-screen` hero, so its top
+    // edge sits at exactly 100vh. A positive bottom rootMargin — the natural
+    // "give it some lead-in" reflex — pushes the root's bottom past it and
+    // arms the assembly during hydration, which is review #1 all over again.
+    const bottomInset = observer.records[0].rootMargin.trim().split(/\s+/)[2] ?? '';
+    expect(bottomInset.startsWith('-')).toBe(true);
+  });
+
+  it('degrades to the complete frame when the browser has no IntersectionObserver', () => {
+    // Deliberate: with no gate available the section stays on its static,
+    // fully laid-out frame rather than falling back to an ungated animation.
+    // That's the reduced-motion render — correct, crawlable, and never blank.
+    observer.restore();
+    render(<KnowledgeGraphDemo />);
+    expect(nodeOpacities()).toEqual(COURSE_GRAPHS[0].nodes.map(() => '1'));
+    expect(frames.frameCount).toBe(0);
+  });
+
+  it('disconnects the observer on unmount', () => {
+    const { unmount } = render(<KnowledgeGraphDemo />);
+    expect(observer.records[0].disconnected).toBe(false);
+    unmount();
+    expect(observer.records[0].disconnected).toBe(true);
+  });
+});
+
+/**
+ * #344 review #3 — one 900×560 viewBox at every width rendered 4.6 CSS px
+ * labels on a 390px phone. `layout.test.ts` owns the arithmetic; this pins that
+ * the component actually consults the breakpoint and emits the phone geometry.
+ */
+describe('KnowledgeGraphDemo — mobile viewBox (#344 review #3)', () => {
+  /** Reduced motion (so the frame is parked/complete) at a chosen breakpoint. */
+  function installViewport(isMobile: boolean) {
+    window.matchMedia = ((q: string) => ({
+      matches: q.includes('prefers-reduced-motion') ? true : q.includes('max-width') && isMobile,
+      media: q,
+      addEventListener() {},
+      removeEventListener() {},
+    })) as unknown as typeof window.matchMedia;
+  }
+
+  it('emits the phone viewBox and label size below the breakpoint', () => {
+    installViewport(true);
+    render(<KnowledgeGraphDemo />);
+    const svg = screen.getByTestId('landing-graph-svg');
+    expect(svg.getAttribute('viewBox')).toBe(`0 0 ${MOBILE_VIEW.w} ${MOBILE_VIEW.h}`);
+    expect(svg.querySelector('text')!.getAttribute('font-size')).toBe(String(MOBILE_VIEW.font));
+  });
+
+  it('keeps the desktop viewBox above it', () => {
+    installViewport(false);
+    render(<KnowledgeGraphDemo />);
+    const svg = screen.getByTestId('landing-graph-svg');
+    expect(svg.getAttribute('viewBox')).toBe(`0 0 ${DESKTOP_VIEW.w} ${DESKTOP_VIEW.h}`);
+    expect(svg.querySelector('text')!.getAttribute('font-size')).toBe(String(DESKTOP_VIEW.font));
   });
 });

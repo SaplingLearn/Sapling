@@ -55,3 +55,36 @@ test("landing page ships social cards and a canonical URL (#169)", async ({ requ
   expect(html).toContain('name="twitter:card"');
   expect(html).toContain('rel="canonical"');
 });
+
+/**
+ * The actual SSR guard (#344 review #5).
+ *
+ * The assertions above were previously described as "the guard on not breaking
+ * SSR", but they aren't: og:image / twitter:card / canonical are emitted by the
+ * Metadata API whether or not any component server-renders. The landing page
+ * mounts `KnowledgeGraphDemo` through `next/dynamic` with SSR left ON, and
+ * `ssr: false` is the first thing anyone will reach for the moment a hydration
+ * warning appears there — it would leave every other spec green while silently
+ * dropping the section's copy out of the crawled HTML, which is the entire
+ * reason that component carries the `usePrefersReducedMotion` machinery.
+ * `landing-graph.spec.ts` runs post-hydration and cannot see the difference.
+ *
+ * So assert on the RAW response body, before any JS runs. With `ssr: false`
+ * the dynamic import renders only its loading placeholder (an empty
+ * `<section id="knowledge-graph">`), and every assertion below fails.
+ */
+test("the knowledge-graph section is in the server-rendered HTML (#344)", async ({ request }) => {
+  const res = await request.get("/");
+  expect(res.status()).toBe(200);
+  const html = await res.text();
+
+  expect(html, "graph section markup must be server-rendered").toContain(
+    'data-testid="landing-graph"',
+  );
+  expect(html, "the section's copy must be crawlable").toContain(
+    "Pick a course. Watch it grow.",
+  );
+  // Concept labels are the section's actual SEO payload.
+  expect(html).toContain('data-testid="landing-graph-node-cs-root"');
+  expect(html).toContain("Recursion");
+});
