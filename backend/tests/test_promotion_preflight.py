@@ -177,6 +177,31 @@ def test_evaluate_staging_check_can_be_skipped():
     assert "staging-gap" not in [f.kind for f in findings]
 
 
+def test_evaluate_unknown_staging_ledger_with_pending_blocks_once():
+    """Missing STAGING_SUPABASE_DB_URL must not be silently read as 'nothing ran'.
+
+    None (unreadable) and set() (read, empty) are different claims. Conflating
+    them turned the default no-env-var experience into a false per-migration
+    accusation. This must be exactly one finding, not one per pending migration.
+    """
+    findings = _evaluate(staging_recorded=None)  # default fixture leaves 0002_b.sql pending
+    kinds = [f.kind for f in findings]
+    assert kinds == ["staging-unknown"]
+    assert "STAGING_SUPABASE_DB_URL" in findings[0].detail
+    assert "aws-1-us-west-2" in findings[0].detail
+
+
+def test_evaluate_unknown_staging_ledger_with_nothing_pending_is_silent():
+    """No pending migrations means the unreadable ledger never mattered."""
+    findings = _evaluate(staging_recorded=None, recorded={"0001_a.sql", "0002_b.sql"})
+    assert "staging-unknown" not in [f.kind for f in findings]
+
+
+def test_evaluate_unknown_staging_ledger_can_be_skipped():
+    findings = _evaluate(staging_recorded=None, skip_staging_check=True)
+    assert "staging-unknown" not in [f.kind for f in findings]
+
+
 def test_evaluate_blocks_on_destructive_ddl():
     findings = _evaluate(destructive=[Finding("DROP TABLE", "0002_b.sql:4: DROP TABLE x;")])
     assert "destructive" in [f.kind for f in findings]

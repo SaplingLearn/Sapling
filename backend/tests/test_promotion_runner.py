@@ -13,12 +13,22 @@ from promotion.runner import Options, Ports, run
 # so a faithful fake has to match the real wire format.
 COMPACT = (",", ":")
 HEALTH_OLD = json.dumps({"status": "ok", "commit": "old1111"}, separators=COMPACT)
-HEALTH_NEW = json.dumps({"status": "ok", "commit": "new2222"}, separators=COMPACT)
+# The deployed commit is production's merge-commit SHA, NOT main's tip — `gh pr
+# merge --merge` creates a merge commit ON production, and Railway deploys
+# production. HEALTH_NEW deliberately carries FakeGit's "origin/production" SHA
+# ("prod222"), distinct from "origin/main"'s ("main111"), so a wait loop that
+# (wrongly) compares against main instead can never match it — verified by
+# hand: temporarily pointing runner.py's post-merge wait at origin/main makes
+# test_happy_path_returns_zero_and_merges fail (times out, returns 1).
+HEALTH_NEW = json.dumps({"status": "ok", "commit": "prod222"}, separators=COMPACT)
 
 
 class FakeGit:
-    def __init__(self, head="new2222", commits_ahead=3):
-        self.head = head
+    """Distinct SHAs per ref — a fake that returned the same SHA for every ref
+    could never catch a wait loop comparing against the wrong one."""
+
+    def __init__(self, main_sha="main111", production_sha="prod222", commits_ahead=3):
+        self.shas = {"origin/main": main_sha, "origin/production": production_sha}
         self.commits_ahead = commits_ahead
         self.calls = []
 
@@ -27,7 +37,7 @@ class FakeGit:
 
     def head_sha(self, ref):
         self.calls.append(f"head:{ref}")
-        return self.head
+        return self.shas[ref]
 
     def commits_ahead_of(self, base, head):
         return self.commits_ahead
@@ -48,6 +58,11 @@ class FakeGh:
     def merge(self, number):
         self.calls.append("merge")
         self.merged = True
+
+    def revert(self, number):
+        """The runner must NEVER call this — see
+        test_smoke_failure_does_not_revert_anything."""
+        self.calls.append("revert")
 
 
 def make_ports(**over):
@@ -210,7 +225,7 @@ def test_smoke_failure_does_not_revert_anything():
 
 
 def test_merge_retries_through_a_transient_failure():
-    """The known gh squash-merge 502: error raised, but the PR does merge."""
+    """The known `gh pr merge --merge` 502: error raised, but the PR does merge."""
 
     class FlakyGh(FakeGh):
         def __init__(self):
@@ -242,13 +257,23 @@ def test_nothing_to_promote_exits_clean():
     assert run(*build(kwargs)) == 0
 
 
-def test_already_merged_pr_resumes_at_wait_and_smoke():
-    """Re-running after a failure must not re-merge."""
+def test_verify_only_skips_promotion_and_just_waits_and_smokes():
+    """--verify-only IS the resume path (the brief's "already-merged PR resumes
+    the wait" story is unreachable: after a real merge, a fresh `run()` sees
+    commits_ahead == 0 and nothing pending, so preflight reports
+    nothing-to-promote and exits clean before ever reaching the wait).
+    --verify-only skips preflight/snapshot/migrate/PR/merge entirely.
+    """
+    connect_calls = []
+    migrated = []
     kwargs = make_ports()
+    kwargs["connect"] = lambda: connect_calls.append(1) or FakeConn()
+    kwargs["migrate"] = lambda conn: migrated.append(1) or ["should-not-run"]
     gh = kwargs["gh"]
-    gh.merged = True
-    assert run(*build(kwargs)) == 0
-    assert "merge" not in gh.calls
+    assert run(*build(kwargs, verify_only=True)) == 0
+    assert connect_calls == []  # no preflight/snapshot/migrate — no DB touched
+    assert migrated == []
+    assert gh.calls == []  # no ensure_pr, no merge
 
 
 def test_unknown_live_commit_degrades_instead_of_hanging():

@@ -131,7 +131,7 @@ def evaluate(
     ledger_exists: bool,
     migration_files: list[str],
     recorded: set[str],
-    staging_recorded: set[str],
+    staging_recorded: set[str] | None,
     destructive: list[Finding],
     commits_ahead: int,
     allow_destructive: bool,
@@ -173,15 +173,36 @@ def evaluate(
         )
 
     if not skip_staging_check:
-        for name in staging_gap(pending, staging_recorded):
-            findings.append(
-                Finding(
-                    "staging-gap",
-                    f"{name} is pending on production but staging has never run it. "
-                    "Production must not be the first environment to execute DDL. "
-                    "Let migrate-staging.yml apply it first, or pass --skip-staging-check.",
+        if staging_recorded is None:
+            # None means "couldn't read staging's ledger", which is NOT the same
+            # claim as "staging has run nothing" (an empty set). Conflating the
+            # two turned a missing STAGING_SUPABASE_DB_URL — the default
+            # experience, since the var ships in no .env* example — into a false
+            # per-migration accusation that pushed operators straight to
+            # --skip-staging-check, disabling the guard entirely. Emit one
+            # honest finding instead of guessing.
+            if pending:
+                findings.append(
+                    Finding(
+                        "staging-unknown",
+                        f"Could not read staging's migration ledger, so it is unknown "
+                        f"whether staging has run the {len(pending)} pending "
+                        "migration(s). Set STAGING_SUPABASE_DB_URL to staging's "
+                        "SESSION-mode pooler URI (staging is on the aws-1-us-west-2 "
+                        "cluster), or pass --skip-staging-check to proceed "
+                        "deliberately without this guard.",
+                    )
                 )
-            )
+        else:
+            for name in staging_gap(pending, staging_recorded):
+                findings.append(
+                    Finding(
+                        "staging-gap",
+                        f"{name} is pending on production but staging has never run it. "
+                        "Production must not be the first environment to execute DDL. "
+                        "Let migrate-staging.yml apply it first, or pass --skip-staging-check.",
+                    )
+                )
 
     if destructive and not allow_destructive:
         for finding in destructive:

@@ -38,10 +38,81 @@ class Options:
     web_base: str = smoke.DEFAULT_WEB
     wait_timeout: int = 600
     poll_interval: int = 10
+    # Skip preflight/snapshot/migrate/PR/merge entirely and just wait-then-smoke
+    # against production's CURRENT tip. This is the real resume path: a re-run
+    # after a merge cannot resume by re-running preflight, because by then
+    # commits_ahead is 0 and nothing is pending, so preflight would report
+    # nothing-to-promote and exit clean before ever reaching the wait.
+    verify_only: bool = False
+
+
+def _wait_for_deploy(ports: Ports, options: Options, target: str, out: Callable[[str], None]) -> bool:
+    """Poll /api/health until it reports `target`. True on success (or a
+    degraded-but-proceeding 'unknown'), False on timeout."""
+    waited = 0
+    # Advance by at least 1 per iteration. poll_interval is 0 in tests (so they
+    # don't actually sleep), and incrementing by it directly would leave `waited`
+    # pinned at 0 — an infinite loop on the very timeout path the tests exist to
+    # cover.
+    tick = max(options.poll_interval, 1)
+    while waited < options.wait_timeout:
+        live = smoke.live_commit(ports.fetch, options.api_base)
+        if live == target[:7]:
+            out(f"  deploy is live ({live}).")
+            return True
+        if live == "unknown":
+            out(
+                "  WARNING: /api/health reports commit 'unknown' — the host is not "
+                "injecting a commit SHA, so the deploy cannot be confirmed. "
+                "Proceeding to smoke anyway."
+            )
+            return True
+        ports.sleep(options.poll_interval)
+        waited += tick
+    out(
+        f"\nTIMEOUT: the deploy never reported {target[:7]} after "
+        f"{options.wait_timeout}s. NOT running smoke — a deploy failure must "
+        "not look like a smoke failure. Check the Railway build."
+    )
+    return False
+
+
+def _run_smoke(ports: Ports, options: Options, out: Callable[[str], None]) -> int:
+    results = smoke.run_checks(ports.fetch, options.api_base, options.web_base)
+    out("\nSmoke:")
+    out(smoke.format_results(results))
+
+    if any(not r.ok for r in results):
+        out(
+            "\nSMOKE FAILED. Production was NOT reverted — the applied migrations "
+            "cannot be rolled back, so reverting the code would leave old code "
+            "against a newer schema.\n"
+            "  To revert deliberately:\n"
+            "    git checkout production && git revert -m 1 HEAD && git push origin production"
+        )
+        return EXIT_FAIL
+
+    out("\nPROMOTION COMPLETE — all smoke checks passed.")
+    return EXIT_OK
+
+
+def _wait_then_smoke(ports: Ports, options: Options, target: str, out: Callable[[str], None]) -> int:
+    if not _wait_for_deploy(ports, options, target, out):
+        return EXIT_FAIL
+    return _run_smoke(ports, options, out)
 
 
 def run(ports: Ports, options: Options) -> int:
     out = ports.out
+
+    if options.verify_only:
+        # No preflight, no migrate, no PR, no merge — just confirm production's
+        # CURRENT deploy is live and healthy. See Options.verify_only for why
+        # this, not "re-run the whole thing", is the real resume path.
+        ports.git.fetch()
+        deploy_target = ports.git.head_sha("origin/production")
+        out(f"--verify-only: waiting for the deploy to report {deploy_target[:7]}.")
+        return _wait_then_smoke(ports, options, deploy_target, out)
 
     # ---- Stage 1: preflight (read-only) --------------------------------
     ports.git.fetch()
@@ -68,7 +139,10 @@ def run(ports: Ports, options: Options) -> int:
             return EXIT_FAIL
 
         pending, _ = preflight.ledger_diff(data["migration_files"], data["recorded"])
-        out(f"Preflight OK. {commits_ahead} commit(s) to promote, {len(pending)} migration(s) pending.")
+        out(
+            f"Preflight OK. {commits_ahead} commit(s) to promote (main is at "
+            f"{head[:7]}), {len(pending)} migration(s) pending."
+        )
 
         # ---- Stage 2-4: snapshot, migrate, snapshot --------------------
         before = ports.capture(conn)
@@ -99,14 +173,22 @@ def run(ports: Ports, options: Options) -> int:
             )
             return EXIT_ABORTED
 
-        # The squash-merge 502 wedge: gh can error while the merge lands. Never
-        # trust the first failure — re-read the PR state.
+        # The gh merge 502 wedge: `gh pr merge --merge` is known to return an
+        # error (observed: HTTP 502) while the merge actually lands. Never
+        # trust the first failure — re-read the PR state, and don't trust that
+        # read blindly either: a transient failure checking state right after
+        # a merge attempt is the worst possible moment to crash the runner.
         for attempt in range(5):
             try:
                 ports.gh.merge(number)
             except Exception as exc:  # noqa: BLE001 — any gh failure gets re-checked
                 out(f"  merge attempt {attempt + 1} errored ({exc}); re-checking PR state")
-            if ports.gh.state(number) == "MERGED":
+            try:
+                merged_now = ports.gh.state(number) == "MERGED"
+            except Exception as exc:  # noqa: BLE001 — state-read is not trusted blindly either
+                out(f"  could not re-check PR state ({exc}); retrying")
+                merged_now = False
+            if merged_now:
                 break
             ports.sleep(options.poll_interval)
         else:
@@ -115,51 +197,12 @@ def run(ports: Ports, options: Options) -> int:
     else:
         out(f"PR #{number} is already merged — resuming at the deploy wait.")
 
-    out(f"Merged. Waiting for the deploy to report {head[:7]}.")
+    # `gh pr merge --merge` creates a merge commit ON production; Railway
+    # deploys production, not main. So the deploy target has to be read from
+    # origin/production AFTER a fresh fetch, never from main's tip — main's SHA
+    # will never appear in production's history once a merge commit exists.
+    ports.git.fetch()
+    deploy_target = ports.git.head_sha("origin/production")
+    out(f"Merged. Waiting for the deploy to report {deploy_target[:7]}.")
 
-    # ---- Stage 6: wait for the deploy ---------------------------------
-    waited = 0
-    # Advance by at least 1 per iteration. poll_interval is 0 in tests (so they
-    # don't actually sleep), and incrementing by it directly would leave `waited`
-    # pinned at 0 — an infinite loop on the very timeout path the tests exist to
-    # cover.
-    tick = max(options.poll_interval, 1)
-    while waited < options.wait_timeout:
-        live = smoke.live_commit(ports.fetch, options.api_base)
-        if live == head[:7]:
-            out(f"  deploy is live ({live}).")
-            break
-        if live == "unknown":
-            out(
-                "  WARNING: /api/health reports commit 'unknown' — the host is not "
-                "injecting a commit SHA, so the deploy cannot be confirmed. "
-                "Proceeding to smoke anyway."
-            )
-            break
-        ports.sleep(options.poll_interval)
-        waited += tick
-    else:
-        out(
-            f"\nTIMEOUT: the deploy never reported {head[:7]} after "
-            f"{options.wait_timeout}s. NOT running smoke — a deploy failure must "
-            "not look like a smoke failure. Check the Railway build."
-        )
-        return EXIT_FAIL
-
-    # ---- Stage 7: smoke ------------------------------------------------
-    results = smoke.run_checks(ports.fetch, options.api_base, options.web_base)
-    out("\nSmoke:")
-    out(smoke.format_results(results))
-
-    if any(not r.ok for r in results):
-        out(
-            "\nSMOKE FAILED. Production was NOT reverted — the applied migrations "
-            "cannot be rolled back, so reverting the code would leave old code "
-            "against a newer schema.\n"
-            "  To revert deliberately:\n"
-            "    git checkout production && git revert -m 1 HEAD && git push origin production"
-        )
-        return EXIT_FAIL
-
-    out("\nPROMOTION COMPLETE — all smoke checks passed.")
-    return EXIT_OK
+    return _wait_then_smoke(ports, options, deploy_target, out)
