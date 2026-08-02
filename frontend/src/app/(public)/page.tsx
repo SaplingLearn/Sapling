@@ -18,9 +18,13 @@ import { IS_TEST_MODE, random, now } from '@/lib/testMode';
 const KnowledgeGraphDemo = dynamic(
   () => import('@/components/marketing/graph/KnowledgeGraphDemo'),
   {
-    // Placeholder height matches the section's resolved height so nothing
-    // below shifts while the chunk loads.
-    loading: () => <section id="knowledge-graph" className="landing-section relative" style={{ minHeight: '80vh' }} />,
+    // Placeholder height approximates the section's resolved height so nothing
+    // below shifts while the chunk loads. MEASURED, not guessed: the section
+    // resolves to 990px at every desktop width once it wears its product
+    // chrome (#344 step 3) — the `80vh` this carried was 27–40% short of that
+    // even before, and a viewport-relative value cannot track a section whose
+    // height is set by a fixed-width inspector rail.
+    loading: () => <section id="knowledge-graph" className="landing-section relative" style={{ minHeight: '990px' }} />,
   },
 );
 

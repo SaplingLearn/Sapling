@@ -304,12 +304,14 @@ describe('radialLayout', () => {
       code: 'X',
       name: 'X',
       rootId: 'r',
+      conceptCount: count,
       nodes: [
-        { id: 'r', label: 'r', tier: 'learning', blurb: '', children: [] },
+        { id: 'r', label: 'r', tier: 'learning', mastery: 0.5, blurb: '', children: [] },
         ...Array.from({ length: count }, (_, i) => ({
           id: `n${i}`,
           label: `n${i}`,
           tier: 'learning' as const,
+          mastery: 0.5,
           blurb: '',
           children: [],
         })),
@@ -361,10 +363,12 @@ describe('radialLayout', () => {
       code: 'X',
       name: 'X',
       rootId: 'r',
+      conceptCount: 5,
       nodes: ['r', 'a', 'b', 'a1', 'a2', 'a3'].map((id) => ({
         id,
         label: id,
         tier: 'learning' as const,
+        mastery: 0.5,
         blurb: '',
         children: [],
       })),

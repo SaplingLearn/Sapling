@@ -12,7 +12,15 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 
 import KnowledgeGraphDemo, { ENGAGED_HEADLINE_OPACITY } from './KnowledgeGraphDemo';
-import { COURSE_GRAPHS, TIER_COLOR } from './courseGraphs';
+import {
+  COURSE_GRAPHS,
+  TIER_COLOR,
+  TIER_LABEL,
+  TIER_ORDER,
+  conceptNodes,
+  neighbours,
+  tierCounts,
+} from './courseGraphs';
 import { DESKTOP_VIEW, MOBILE_VIEW, viewBoxAttr } from './layout';
 import { __resetReducedMotionStoreForTests } from '@/lib/usePrefersReducedMotion';
 import { __resetMediaStoresForTests } from '@/lib/useIsMobile';
@@ -648,5 +656,321 @@ describe('KnowledgeGraphDemo — node paint and label placement', () => {
     expect(Number(label.getAttribute('stroke-width'))).toBe(DESKTOP_VIEW.labelHalo);
     // Stroke UNDER fill — the other paint order would outline the glyphs.
     expect((label as unknown as SVGTextElement).style.paintOrder).toBe('stroke');
+  });
+});
+
+/**
+ * #344 step 3 — the nodes are mastery DIALS now, not flat dots.
+ *
+ * Two things have to survive that, and both are load-bearing outside this file:
+ *
+ *  - A node group's FIRST `<circle>` stays the tier-painted disc at the full
+ *    `nodeRadius`. `e2e/landing-graph.spec.ts` reads exactly that element to
+ *    measure the phone's rendered dot diameter, and the paint tests above read
+ *    its `fill`. A ring drawn as a circle in front of it would silently hand
+ *    both of them the wrong element (and the wrong radius).
+ *  - Every dimension is measured INWARD from `nodeRadius`, so the drawn
+ *    footprint is unchanged and `fitViewBox` / `labelBaselineY` / the phone's
+ *    5.40-unit label clearance all still hold.
+ */
+describe('KnowledgeGraphDemo — the mastery dial (#344 step 3)', () => {
+  const graph = COURSE_GRAPHS[0];
+
+  function nodeGroup(id: string) {
+    return screen.getByTestId(`landing-graph-node-${id}`);
+  }
+
+  it('keeps the node’s first circle the tier disc at the full node radius', () => {
+    render(<KnowledgeGraphDemo />);
+    for (const n of graph.nodes) {
+      const disc = nodeGroup(n.id).querySelector('circle')!;
+      const expected = n.id === graph.rootId ? DESKTOP_VIEW.rootR : DESKTOP_VIEW.nodeR;
+      expect(Number(disc.getAttribute('r')), n.id).toBeCloseTo(expected, 6);
+    }
+  });
+
+  it('draws nothing outside the node radius', () => {
+    render(<KnowledgeGraphDemo />);
+    for (const n of graph.nodes) {
+      const r = n.id === graph.rootId ? DESKTOP_VIEW.rootR : DESKTOP_VIEW.nodeR;
+      for (const c of nodeGroup(n.id).querySelectorAll('circle')) {
+        const radius = Number(c.getAttribute('r'));
+        const halfStroke = Number(c.getAttribute('stroke-width') ?? 0) / 2;
+        expect(radius + halfStroke, `${n.id} circle`).toBeLessThanOrEqual(r + 1e-9);
+      }
+    }
+  });
+
+  /**
+   * The arc is the whole point of the dial: it has to encode the node's own
+   * `mastery`, not a constant. Recomputing the endpoint from the fixture and
+   * comparing it to the rendered path is what keeps a future "make the rings
+   * look fuller" tweak from quietly decoupling the picture from the data.
+   */
+  it('sweeps each arc through that node’s mastery, clockwise from 12 o’clock', () => {
+    render(<KnowledgeGraphDemo />);
+    for (const n of graph.nodes) {
+      const arc = nodeGroup(n.id).querySelector('path')!;
+      expect(arc, n.id).toBeTruthy();
+      // `M sx sy A rx ry xrot large sweep ex ey`
+      const d = arc.getAttribute('d')!;
+      const [sx, sy, rx, , , large, , ex, ey] = d
+        .replace(/[A-Za-z]/g, ' ')
+        .trim()
+        .split(/\s+/)
+        .map(Number);
+
+      const disc = nodeGroup(n.id).querySelector('circle')!;
+      const cx = Number(disc.getAttribute('cx'));
+      const cy = Number(disc.getAttribute('cy'));
+
+      // Starts at the top of the ring…
+      expect(sx, `${n.id} start x`).toBeCloseTo(cx, 1);
+      expect(sy, `${n.id} start y`).toBeCloseTo(cy - rx, 1);
+      // …and ends `mastery` of a turn clockwise from it.
+      const sweep = n.mastery * Math.PI * 2;
+      expect(ex, `${n.id} end x`).toBeCloseTo(cx + rx * Math.sin(sweep), 1);
+      expect(ey, `${n.id} end y`).toBeCloseTo(cy - rx * Math.cos(sweep), 1);
+      expect(large, `${n.id} large-arc flag`).toBe(n.mastery > 0.5 ? 1 : 0);
+    }
+  });
+
+  /**
+   * The annulus between the core and the ring is transparent paper, so an
+   * edge drawn to the node's CENTRE (which is what shipped, hidden under a
+   * solid disc) would now run straight across the middle of every dial.
+   */
+  it('stops edges at the rim of the discs they connect', () => {
+    render(<KnowledgeGraphDemo />);
+    const svg = screen.getByTestId('landing-graph-svg');
+    const centres = new Map(
+      graph.nodes.map((n) => {
+        const c = nodeGroup(n.id).querySelector('circle')!;
+        return [n.id, { x: Number(c.getAttribute('cx')), y: Number(c.getAttribute('cy')) }];
+      }),
+    );
+
+    const lines = [...svg.querySelectorAll('line')];
+    expect(lines).toHaveLength(graph.edges.length);
+    lines.forEach((line, i) => {
+      const e = graph.edges[i];
+      const a = centres.get(e.source)!;
+      const b = centres.get(e.target)!;
+      const rA = e.source === graph.rootId ? DESKTOP_VIEW.rootR : DESKTOP_VIEW.nodeR;
+      const rB = e.target === graph.rootId ? DESKTOP_VIEW.rootR : DESKTOP_VIEW.nodeR;
+      const from = { x: Number(line.getAttribute('x1')), y: Number(line.getAttribute('y1')) };
+      const to = { x: Number(line.getAttribute('x2')), y: Number(line.getAttribute('y2')) };
+      expect(Math.hypot(from.x - a.x, from.y - a.y), `${e.source} end`).toBeCloseTo(rA, 1);
+      expect(Math.hypot(to.x - b.x, to.y - b.y), `${e.target} end`).toBeCloseTo(rB, 1);
+    });
+  });
+});
+
+/**
+ * #344 step 3 — product chrome. The section used to float naked on the page
+ * background one viewport above four bento tiles that each carry a titled
+ * chrome bar over a recreated screen.
+ */
+describe('KnowledgeGraphDemo — surface chrome and legend (#344 step 3)', () => {
+  it('names the surface and reports the selected course’s own numbers', () => {
+    render(<KnowledgeGraphDemo />);
+    const surface = screen.getByTestId('landing-graph-surface');
+    expect(surface).toHaveTextContent('Knowledge Graph');
+
+    const g = COURSE_GRAPHS[0];
+    const root = g.nodes.find((n) => n.id === g.rootId)!;
+    const meta = screen.getByTestId('landing-graph-meta');
+    expect(meta).toHaveTextContent(g.code);
+    expect(meta).toHaveTextContent(`${g.conceptCount} concepts`);
+    expect(meta).toHaveTextContent(`${Math.round(root.mastery * 100)}% mastery`);
+  });
+
+  it('re-reads the chrome from the newly picked course', () => {
+    render(<KnowledgeGraphDemo />);
+    const target = COURSE_GRAPHS[1];
+    fireEvent.click(screen.getByTestId(`landing-graph-chip-${target.id}`));
+
+    const root = target.nodes.find((n) => n.id === target.rootId)!;
+    const meta = screen.getByTestId('landing-graph-meta');
+    expect(meta).toHaveTextContent(target.code);
+    expect(meta).toHaveTextContent(`${target.conceptCount} concepts`);
+    expect(meta).toHaveTextContent(`${Math.round(root.mastery * 100)}% mastery`);
+  });
+
+  /**
+   * The comprehension gap this closes: four `--state-*` hues carried the whole
+   * meaning of the picture and NOTHING on the page said what any of them
+   * meant. The counts are what make it a readout rather than a colour key.
+   */
+  it('spells out every mastery tier, in the product’s words, with its count', () => {
+    render(<KnowledgeGraphDemo />);
+    const counts = tierCounts(COURSE_GRAPHS[0]);
+    for (const tier of TIER_ORDER) {
+      const row = screen.getByTestId(`landing-graph-legend-${tier}`);
+      expect(row).toHaveTextContent(TIER_LABEL[tier]);
+      expect(row).toHaveTextContent(String(counts[tier]));
+    }
+  });
+
+  it('says how much of the course is on screen, and what the ring means', () => {
+    render(<KnowledgeGraphDemo />);
+    const g = COURSE_GRAPHS[0];
+    const legend = screen.getByTestId('landing-graph-legend');
+    expect(legend).toHaveTextContent(`${conceptNodes(g).length} of ${g.conceptCount} shown`);
+    expect(legend).toHaveTextContent(/ring\s*=\s*progress to mastery/i);
+  });
+});
+
+/**
+ * #344 step 3 — the hover readout is a panel, not a line of body text.
+ */
+describe('KnowledgeGraphDemo — detail panel (#344 step 3)', () => {
+  it('shows the COURSE at rest, so the panel is never an empty placeholder', () => {
+    render(<KnowledgeGraphDemo />);
+    const g = COURSE_GRAPHS[0];
+    const root = g.nodes.find((n) => n.id === g.rootId)!;
+
+    expect(screen.getByTestId('landing-graph-detail-name')).toHaveTextContent(root.label);
+    expect(screen.getByTestId('landing-graph-blurb')).toHaveTextContent(root.blurb);
+    // The root is the course anchor, not a mastery status (#344 visual 2), so
+    // its chip says so rather than parroting its fixture tier.
+    expect(screen.getByTestId('landing-graph-detail-tier')).toHaveTextContent('Course');
+    expect(screen.getByTestId('landing-graph-detail-mastery')).toHaveTextContent(
+      `${Math.round(root.mastery * 100)}%`,
+    );
+  });
+
+  it('swaps the whole panel — name, tier, mastery, links — to the hovered concept', () => {
+    render(<KnowledgeGraphDemo />);
+    const g = COURSE_GRAPHS[0];
+    const n = g.nodes.find((x) => x.id !== g.rootId)!;
+    fireEvent.mouseEnter(screen.getByTestId(`landing-graph-node-${n.id}`));
+
+    expect(screen.getByTestId('landing-graph-detail-name')).toHaveTextContent(n.label);
+    expect(screen.getByTestId('landing-graph-detail-tier')).toHaveTextContent(TIER_LABEL[n.tier]);
+    expect(screen.getByTestId('landing-graph-detail-mastery')).toHaveTextContent(
+      `${Math.round(n.mastery * 100)}%`,
+    );
+
+    const panel = screen.getByTestId('landing-graph-detail');
+    const links = neighbours(g, n.id);
+    expect(panel).toHaveTextContent(
+      `${links.length} connection${links.length === 1 ? '' : 's'}`,
+    );
+    for (const l of links) expect(panel).toHaveTextContent(l.label);
+  });
+
+  it('returns to the course when the pointer leaves', () => {
+    render(<KnowledgeGraphDemo />);
+    const g = COURSE_GRAPHS[0];
+    const n = g.nodes.find((x) => x.id !== g.rootId)!;
+    const el = screen.getByTestId(`landing-graph-node-${n.id}`);
+
+    fireEvent.mouseEnter(el);
+    expect(screen.getByTestId('landing-graph-detail-name')).toHaveTextContent(n.label);
+    fireEvent.mouseLeave(el);
+    expect(screen.getByTestId('landing-graph-detail-name')).toHaveTextContent(
+      g.nodes.find((x) => x.id === g.rootId)!.label,
+    );
+  });
+
+  /**
+   * A hovered id from the PREVIOUS course would still resolve to nothing and
+   * fall back to the root, but leaving it set means a mouse that never moves
+   * after a chip click reads as "hovering" a node that is no longer drawn.
+   * `engaged` deliberately does NOT reset with it (pinned above).
+   */
+  it('clears the hover when the course changes', () => {
+    render(<KnowledgeGraphDemo />);
+    const g = COURSE_GRAPHS[0];
+    const n = g.nodes.find((x) => x.id !== g.rootId)!;
+    fireEvent.mouseEnter(screen.getByTestId(`landing-graph-node-${n.id}`));
+
+    const target = COURSE_GRAPHS[1];
+    fireEvent.click(screen.getByTestId(`landing-graph-chip-${target.id}`));
+    expect(screen.getByTestId('landing-graph-detail-name')).toHaveTextContent(
+      target.nodes.find((x) => x.id === target.rootId)!.label,
+    );
+  });
+});
+
+/**
+ * #344 step 3 — ambient drift.
+ *
+ * The brand guide's atmosphere is "a barely-there field of colourful orbs
+ * drifting slowly in 3D"; this section was frozen the instant its assembly
+ * landed. The drift is a CSS animation, so the assertions are about the class
+ * and the custom properties the keyframe reads — and, more importantly, about
+ * the two populations that must NEVER see it.
+ */
+describe('KnowledgeGraphDemo — ambient drift (#344 step 3)', () => {
+  function driftingNodes() {
+    return COURSE_GRAPHS[0].nodes
+      .map((n) => screen.getByTestId(`landing-graph-node-${n.id}`))
+      .filter((el) => el.classList.contains('is-drifting'));
+  }
+
+  /** Reduced-motion + breakpoint in one controllable `matchMedia`. */
+  function installMedia({ reduced, mobile }: { reduced: boolean; mobile: boolean }) {
+    window.matchMedia = ((q: string) => ({
+      matches: q.includes('prefers-reduced-motion') ? reduced : q.includes('max-width') && mobile,
+      media: q,
+      addEventListener() {},
+      removeEventListener() {},
+    })) as unknown as typeof window.matchMedia;
+  }
+
+  it('parks every node on its laid-out point when reduced motion is requested', () => {
+    installMedia({ reduced: true, mobile: false });
+    render(<KnowledgeGraphDemo />);
+    expect(driftingNodes()).toHaveLength(0);
+    for (const n of COURSE_GRAPHS[0].nodes) {
+      const el = screen.getByTestId(`landing-graph-node-${n.id}`);
+      // No animation, and no leftover custom properties to drive one.
+      expect(el.getAttribute('style') ?? '', n.id).not.toContain('--drift');
+    }
+  });
+
+  it('does not drift the phone view, where the frame pad and label clearance are spent', () => {
+    installMedia({ reduced: false, mobile: true });
+    render(<KnowledgeGraphDemo />);
+    expect(driftingNodes()).toHaveLength(0);
+  });
+
+  it('drifts every node on the desktop view, each with its own phase', () => {
+    installMedia({ reduced: false, mobile: false });
+    render(<KnowledgeGraphDemo />);
+    const nodes = driftingNodes();
+    expect(nodes).toHaveLength(COURSE_GRAPHS[0].nodes.length);
+
+    const delays = nodes.map((el) => (el as HTMLElement).style.getPropertyValue('--drift-delay'));
+    for (const el of nodes) {
+      const style = el as HTMLElement;
+      // A negative delay starts the node part-way through its own cycle, which
+      // is what stops six nodes pulsing together like a loading state.
+      expect(Number(style.style.getPropertyValue('--drift-delay').replace('s', ''))).toBeLessThan(0);
+      const dx = Number(style.style.getPropertyValue('--drift-x').replace('px', ''));
+      const dy = Number(style.style.getPropertyValue('--drift-y').replace('px', ''));
+      // Inside the desktop frame's 10-unit fit pad, by a wide margin.
+      expect(Math.hypot(dx, dy)).toBeLessThanOrEqual(3.0001);
+      expect(Math.hypot(dx, dy)).toBeGreaterThan(0);
+    }
+    expect(new Set(delays).size).toBeGreaterThan(1);
+  });
+
+  /**
+   * The phases are hashed off the node id rather than drawn from a PRNG,
+   * because they are baked into a `style` attribute that React renders on the
+   * server and diffs on the client. `Math.random()` here is a hydration
+   * mismatch on every page load.
+   */
+  it('derives the same phase for the same node on every render', () => {
+    installMedia({ reduced: false, mobile: false });
+    const { unmount } = render(<KnowledgeGraphDemo />);
+    const first = driftingNodes().map((el) => el.getAttribute('style'));
+    unmount();
+
+    render(<KnowledgeGraphDemo />);
+    expect(driftingNodes().map((el) => el.getAttribute('style'))).toEqual(first);
   });
 });

@@ -80,7 +80,7 @@ renders the element.
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
 | Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
 | Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
-| Landing knowledge graph demo | `landing-graph` | `frontend/src/components/marketing/graph/KnowledgeGraphDemo.tsx` (the pre-auth landing page's interactive course-picker + laid-out concept graph, #344) |
+| Landing knowledge graph demo | `landing-graph` | `frontend/src/components/marketing/graph/KnowledgeGraphDemo.tsx` (the pre-auth landing page's interactive course-picker + laid-out concept graph, wearing the `landing-surface` chrome with an inspector rail and mastery legend since #344 step 3) |
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
@@ -332,20 +332,33 @@ Added with the upload → SSE → library journey (#387).
 
 Added with the #344 landing-page knowledge-graph demo. Ships the static,
 fully laid-out render (chips to switch course, nodes/edges for the selected
-graph), the helical assembly animation, and hover interaction (blurb reveal +
-copy fade on first engagement); click-to-expand is a later task in the same
-spec and will reuse these same testids.
+graph), the helical assembly animation, and hover interaction (detail-panel
+swap + copy fade on first engagement); click-to-expand is a later task in the
+same spec and will reuse these same testids.
+
+Step 3 wrapped the whole thing in the same `landing-surface` chrome the bands
+and bento use — a titled bar over a `--bg-mesh` canvas, an inspector rail and a
+mastery legend — so the ids below split into the section's own controls and the
+screen's panes.
 
 | testid | element |
 | --- | --- |
 | `landing-graph` | demo section root (`aria-label` names the selected course) |
 | `landing-graph-chip-{courseId}` | one course-picker chip, per `COURSE_GRAPHS` entry — `aria-pressed` marks the active course |
-| `landing-graph-svg` | the `<svg>` itself — its `viewBox` is the desktop or the phone `GraphView` (`graph/layout.ts`), swapped at the mobile breakpoint |
-| `landing-graph-node-{nodeId}` | one SVG node group (`<g>`) in the selected course's graph |
 | `landing-graph-copy` | the section's instructional copy block (eyebrow label + heading) — `data-engaged` flips `"true"` on the visitor's first node hover and stays that way across course switches |
 | `landing-graph-eyebrow` | the "Your knowledge, mapped" eyebrow label — deliberately *not* faded on engagement (WCAG AA at 0.7rem) |
 | `landing-graph-headline` | the "Pick a course. Watch it grow." heading — carries the engagement fade (`ENGAGED_HEADLINE_OPACITY`) |
-| `landing-graph-blurb` | the reserved-height paragraph below the graph that shows the hovered node's one-sentence blurb |
+| `landing-graph-surface` | the product-chrome frame the whole screen sits in (`landing-surface`) |
+| `landing-graph-meta` | the chrome bar's right-hand status — `{code} · {conceptCount} concepts · {n}% mastery`, all read off the selected `CourseGraph` |
+| `landing-graph-svg` | the `<svg>` itself — its `viewBox` is the desktop or the phone `GraphView` (`graph/layout.ts`), swapped at the mobile breakpoint |
+| `landing-graph-node-{nodeId}` | one SVG node group (`<g>`) in the selected course's graph. Its **first `<circle>` is the tier-painted disc at the full node radius** — the phone legibility gate measures that element, so nothing may be drawn in front of it |
+| `landing-graph-detail` | the inspector rail's frame. Never empty: with nothing hovered it shows the course (the root node) |
+| `landing-graph-detail-name` | the inspected node's name |
+| `landing-graph-detail-tier` | its mastery tier as a labelled chip (`Course` for the root, which is an anchor rather than a status) |
+| `landing-graph-detail-mastery` | its mastery as a percentage |
+| `landing-graph-blurb` | the reserved-height paragraph in the panel that shows the inspected node's one-sentence blurb |
+| `landing-graph-legend` | the mastery legend pinned to the foot of the rail |
+| `landing-graph-legend-{tier}` | one legend row — `mastered`, `learning`, `struggling` or `unexplored`, each with the tier's own count of drawn concepts |
 
 ### `landing-band` / `landing-bento` / `landing-surface`
 
