@@ -22,7 +22,12 @@ from db.connection import table
 from services import academics
 from services.auth_guard import require_self
 from services.growth import stage_for_level, xp_into_level
-from services.http_cache import cached_json, conditional, make_etag
+from services.http_cache import (
+    REVALIDATE_CACHE_CONTROL,
+    cached_json,
+    conditional,
+    make_etag,
+)
 from services.profiles import get_display_names
 
 router = APIRouter()
@@ -102,7 +107,7 @@ def get_me(user_id: str, request: Request):
     # yet. If a settings path starts writing it, add it to make_etag's args
     # here or clients will keep serving a stale 304 after it changes.
     etag = make_etag(user_id, total_xp, level, len(earned))
-    not_mod = conditional(request, etag)
+    not_mod = conditional(request, etag, REVALIDATE_CACHE_CONTROL)
     if not_mod:
         return not_mod
 
@@ -126,7 +131,7 @@ def get_me(user_id: str, request: Request):
         "today_xp": today_xp,
         "earned_count": len(earned),
         "total_count": len(catalog),
-    }, etag)
+    }, etag, REVALIDATE_CACHE_CONTROL)
 
 
 def _scope_ids(user_id: str, scope: str) -> set[str] | None:
@@ -180,7 +185,7 @@ def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
 
     ids = [k for k in weekly if k not in hidden]
     etag = make_etag(user_id, scope, len(ids), sum(weekly.get(i, 0) for i in ids))
-    not_mod = conditional(request, etag)
+    not_mod = conditional(request, etag, REVALIDATE_CACHE_CONTROL)
     if not_mod:
         return not_mod
 
@@ -214,7 +219,7 @@ def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
         "rows": rows,
         "you": you,
         "resets_at": (start + timedelta(days=7)).isoformat(),
-    }, etag)
+    }, etag, REVALIDATE_CACHE_CONTROL)
 
 
 @router.get("/activity")
@@ -231,7 +236,7 @@ def get_activity(user_id: str, request: Request):
     # here or clients will keep serving a stale 304 after it changes.
     etag = make_etag(user_id, len(events),
                      sum(int(e.get("amount") or 0) for e in events))
-    not_mod = conditional(request, etag)
+    not_mod = conditional(request, etag, REVALIDATE_CACHE_CONTROL)
     if not_mod:
         return not_mod
 
@@ -278,4 +283,4 @@ def get_activity(user_id: str, request: Request):
             "best_day_label": best["day"],
             "streak": int(u.get("streak_count") or 0),
         },
-    }, etag)
+    }, etag, REVALIDATE_CACHE_CONTROL)

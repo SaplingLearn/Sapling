@@ -339,3 +339,63 @@ class TestAuthGuard:
                    side_effect=HTTPException(status_code=403, detail="nope")):
             client.get("/api/gamification/leaderboard?user_id=victim")
         tbl.assert_not_called()
+
+
+class TestLiveCountersRevalidate:
+    """The XP surfaces must never be reused from the browser's cache without
+    asking us first.
+
+    Regression for the bug frontend/e2e/gamification.spec.ts caught on its
+    first real run against the live stack: these routes shipped with
+    http_cache.CACHE_CONTROL ("private, max-age=30, ..."), so after XP was
+    earned and the page reloaded, Chromium answered /api/gamification/me from
+    its own still-fresh copy and the hero card kept rendering "0 XP total" for
+    up to 30 seconds. The ETag was already correct and could not help — a
+    response inside its freshness window is never revalidated.
+
+    Asserting the exact directive is the point: the difference between
+    max-age=30 and no-cache IS the bug.
+    """
+
+    ROUTES = ("/api/gamification/me", "/api/gamification/leaderboard",
+              "/api/gamification/activity")
+
+    @staticmethod
+    def _empty_tables():
+        """Every table read returns nothing — these tests are about headers,
+        and an empty stack still produces a 200 with a stable ETag."""
+        def _factory(name):
+            h = MagicMock()
+            h.select.return_value = []
+            h.select_with_count.return_value = ([], 0)
+            return h
+        return _factory
+
+    def _get(self, route, headers=None):
+        with patch("routes.gamification.table", side_effect=self._empty_tables()), \
+             patch("routes.gamification.stage_for_level", return_value=STAGE), \
+             patch("routes.gamification.xp_into_level", return_value=(0, 100)):
+            return client.get(route, params={"user_id": "u1"}, headers=headers)
+
+    def test_every_live_counter_route_forbids_unrevalidated_reuse(self):
+        for route in self.ROUTES:
+            r = self._get(route)
+            assert r.status_code == 200, f"{route} -> {r.status_code}"
+            cc = r.headers.get("cache-control", "")
+            assert "no-cache" in cc, f"{route} may be reused unrevalidated: {cc!r}"
+            assert "max-age=30" not in cc, f"{route} still has a no-ask window: {cc!r}"
+            # Never shared-cacheable — user-scoped, app-decrypted data (CLAUDE.md).
+            assert "private" in cc, f"{route} is not private: {cc!r}"
+
+    def test_the_304_carries_the_same_directive_as_the_200(self):
+        """A 304 refreshes the stored response's headers. If it carried the
+        default max-age=30, the very next revalidation would hand the browser
+        a fresh no-ask window and reintroduce the bug one request later."""
+        for route in self.ROUTES:
+            first = self._get(route)
+            etag = first.headers.get("etag")
+            assert etag, f"{route} served no ETag"
+            second = self._get(route, headers={"If-None-Match": etag})
+            assert second.status_code == 304, f"{route} -> {second.status_code}"
+            assert second.headers.get("cache-control") == first.headers.get("cache-control"), \
+                f"{route}: 304 and 200 disagree on Cache-Control"
