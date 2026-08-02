@@ -434,3 +434,77 @@ class TestDailyTotalsPaging:
 
         with patch("services.achievement_service.table", return_value=handle):
             assert _get_user_stat("u1", "xp_in_day") == 500
+
+
+class TestCountRowsSelectsAnExistingColumn:
+    """_count_rows must not ask PostgREST for a column the table lacks.
+
+    Every other test in this file replaces `table` with a bare MagicMock, so
+    the requested column is never checked against anything — which is exactly
+    how `_count_rows` shipped selecting `id` from two junction tables that have
+    no `id` column. These tests give the fake a real column set so a bad
+    projection fails the way PostgREST would.
+
+    Column sets below are transcribed from the migrations:
+      room_members  PRIMARY KEY (room_id, user_id)   0001_baseline_schema.sql
+      friendships   PRIMARY KEY (user_id, friend_id) 0043_gamification.sql
+    """
+
+    # PostgREST's error for an unknown column.
+    COLUMNS = {
+        "room_members": {"room_id", "user_id", "joined_at"},
+        "friendships": {"user_id", "friend_id", "created_at"},
+    }
+
+    def _schema_aware_table(self):
+        def _table(name):
+            handle = MagicMock()
+
+            def _select(columns, filters=None, **kwargs):
+                known = self.COLUMNS[name]
+                for col in columns.split(","):
+                    if col.strip() not in known:
+                        raise RuntimeError(
+                            f'42703: column {name}.{col.strip()} does not exist'
+                        )
+                return [{"user_id": "u2"}, {"user_id": "u3"}]
+
+            handle.select.side_effect = _select
+            return handle
+
+        return _table
+
+    def test_rooms_joined_does_not_ask_for_a_nonexistent_id_column(self):
+        from services.achievement_service import _get_user_stat
+        with patch("services.achievement_service.table", self._schema_aware_table()):
+            assert _get_user_stat("u1", "rooms_joined") == 2
+
+    def test_friends_count_does_not_ask_for_a_nonexistent_id_column(self):
+        from services.achievement_service import _get_user_stat
+        with patch("services.achievement_service.table", self._schema_aware_table()):
+            assert _get_user_stat("u1", "friends_count") == 2
+
+    def test_owned_room_members_counts_members_of_each_owned_room(self):
+        """The rooms lookup DOES select `id` — rooms has one. Only the
+        room_members count must avoid it."""
+        from services.achievement_service import _get_user_stat
+
+        def _table(name):
+            handle = MagicMock()
+            if name == "rooms":
+                handle.select.return_value = [{"id": "r1"}]
+                return handle
+
+            def _select(columns, filters=None, **kwargs):
+                for col in columns.split(","):
+                    if col.strip() not in self.COLUMNS["room_members"]:
+                        raise RuntimeError(
+                            f"42703: column room_members.{col.strip()} does not exist"
+                        )
+                return [{"user_id": f"u{i}"} for i in range(5)]
+
+            handle.select.side_effect = _select
+            return handle
+
+        with patch("services.achievement_service.table", _table):
+            assert _get_user_stat("u1", "owned_room_members") == 5

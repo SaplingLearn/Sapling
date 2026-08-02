@@ -751,8 +751,16 @@ def accept_friend_request(request_id: str, user_id: str, request: Request):
     if already:
         return {"accepted": True}
 
-    check_achievements(a, "friends_count")
-    check_achievements(b, "friends_count")
+    # Guarded like every other dispatch site in this file (:64, :144, :185).
+    # The friendship rows and the request status are already committed above,
+    # so a failing badge check must not 500 a request that did succeed — that
+    # is exactly what happened while _count_rows selected a nonexistent `id`
+    # column off `friendships`.
+    try:
+        check_achievements(a, "friends_count")
+        check_achievements(b, "friends_count")
+    except Exception:
+        pass
     return {"accepted": True}
 
 
