@@ -17,10 +17,16 @@ import pytest
 # The integration tests below hit live Gemini + Supabase. The agent-path
 # unit tests in TestExtractAssignmentsViaAgent are fully mocked, so they
 # run without GEMINI_API_KEY — gate per-test rather than at the module.
+#
+# `live_llm` (#379) is what exempts them from the autouse hermetic LLM guard in
+# conftest.py; the skipif alone is not enough, because a *skipif* is invisible
+# to `request.node.get_closest_marker`. Both are needed: the marker lets the
+# real call through, the skipif keeps it from being attempted without a key.
 _requires_gemini = pytest.mark.skipif(
     not os.getenv("GEMINI_API_KEY"),
     reason="OCR/Gemini integration tests require GEMINI_API_KEY",
 )
+_live_llm = pytest.mark.live_llm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -44,6 +50,7 @@ Quiz 4: OOP Basics                  Due: March 28, 2026
 TEST_USER = "user_andres"
 
 
+@_live_llm
 @_requires_gemini
 def test_agent_parse():
     print("\n[1] Testing agent parsing from raw text...")
@@ -63,6 +70,7 @@ def parsed_assignments():
     return result.get("assignments", [])
 
 
+@_live_llm
 @_requires_gemini
 def test_save_to_db(parsed_assignments):
     print("\n[2] Testing save_assignments_to_db()...")
@@ -89,6 +97,7 @@ def test_save_to_db(parsed_assignments):
         print(f"      • {r['title']} | {r['due_date']} | {r['assignment_type']}")
 
 
+@_live_llm
 @_requires_gemini
 def test_full_pipeline():
     print("\n[3] Testing process_and_save_syllabus() full pipeline with a text/plain file...")
@@ -172,9 +181,40 @@ class TestExtractAssignmentsViaAgent:
         assert first["assignment_type"] == "other"
         assert first["due_date"] == "2026-03-15"
 
+    def test_agent_run_receives_worker_limits(self):
+        """#329: the syllabus-extraction worker must run under WORKER_LIMITS —
+        single-shot, no tools, so the worker budget applies."""
+        from agents import WORKER_LIMITS
+        from services import calendar_service
+
+        agent_run = AsyncMock(
+            return_value=SimpleNamespace(output=self._agent_output())
+        )
+
+        with (
+            patch.object(
+                calendar_service, "extract_text_from_file",
+                return_value="syllabus body",
+            ),
+            patch.object(
+                calendar_service.syllabus_extraction_agent, "run", agent_run,
+            ),
+        ):
+            asyncio.run(calendar_service.extract_assignments_from_file(
+                b"raw", "syllabus.pdf", "application/pdf",
+            ))
+
+        assert agent_run.await_count == 1
+        assert agent_run.await_args.kwargs.get("usage_limits") is WORKER_LIMITS
+
     def test_degrades_gracefully_on_usage_limit(self):
-        """UsageLimitExceeded from the agent degrades to an empty result
-        with a warning — and does NOT make a second LLM call."""
+        """UsageLimitExceeded is a DETERMINISTIC failure for that document —
+        the syllabus is too long for the worker token budget, so re-uploading
+        the same file fails identically. The degrade warning must tell the
+        user the document is too long (and to shorten/split it) and must NOT
+        use the generic "temporarily unavailable / try again" wording, which
+        would wrongly invite an identical re-upload. Still no second LLM call.
+        """
         from services import calendar_service
         from pydantic_ai.exceptions import UsageLimitExceeded
 
@@ -196,10 +236,17 @@ class TestExtractAssignmentsViaAgent:
         assert agent_run.await_count == 1
         assert result["assignments"] == []
         assert result["warnings"]  # non-empty, user-facing
+        warning = " ".join(result["warnings"]).lower()
+        assert "too long" in warning
+        assert "shorter" in warning
+        # Deterministic failure — must NOT invite an identical re-upload.
+        assert "try again" not in warning
         assert result["raw_text"] == "text body"
 
     def test_degrades_gracefully_on_unexpected_exception(self):
-        """A bare Exception from the agent also degrades gracefully."""
+        """A bare Exception from the agent degrades to the GENERIC
+        "temporarily unavailable / try again" message — a transient failure
+        where a retry is legitimate (unlike the too-long UsageLimit case)."""
         from services import calendar_service
 
         agent_run = AsyncMock(side_effect=RuntimeError("boom"))
@@ -219,7 +266,41 @@ class TestExtractAssignmentsViaAgent:
 
         assert agent_run.await_count == 1
         assert result["assignments"] == []
-        assert result["warnings"]
+        assert result["warnings"] == [
+            "Assignment extraction is temporarily unavailable. Please try again."
+        ]
+        assert result["raw_text"] == "text body"
+
+    def test_degrades_generically_on_unexpected_model_behavior(self):
+        """UnexpectedModelBehavior is a model hiccup (not a doc-size problem),
+        so it keeps the generic degrade message — a retry stays reasonable.
+        #144 keeps this as a degrade rather than a 5xx to keep syllabus upload
+        available on a single model hiccup."""
+        from services import calendar_service
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        agent_run = AsyncMock(
+            side_effect=UnexpectedModelBehavior("bad tool call")
+        )
+
+        with (
+            patch.object(
+                calendar_service, "extract_text_from_file",
+                return_value="text body",
+            ),
+            patch.object(
+                calendar_service.syllabus_extraction_agent, "run", agent_run,
+            ),
+        ):
+            result = asyncio.run(calendar_service.extract_assignments_from_file(
+                b"raw", "syllabus.pdf", "application/pdf",
+            ))
+
+        assert agent_run.await_count == 1
+        assert result["assignments"] == []
+        assert result["warnings"] == [
+            "Assignment extraction is temporarily unavailable. Please try again."
+        ]
         assert result["raw_text"] == "text body"
 
     def test_empty_text_shortcut(self):

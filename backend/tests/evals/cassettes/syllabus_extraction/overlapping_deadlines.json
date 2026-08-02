@@ -1,0 +1,38 @@
+{
+  "assignments": [
+    {
+      "description": null,
+      "due_date": "2026-03-05",
+      "title": "Reading response 1",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": "2026-03-05",
+      "title": "Peer review",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": "2026-04-02",
+      "title": "Essay 1",
+      "weight_pct": null
+    }
+  ],
+  "course_title": "ENG 305",
+  "grading_categories": [
+    {
+      "name": "Responses",
+      "weight": 20.0
+    },
+    {
+      "name": "Peer review",
+      "weight": 10.0
+    },
+    {
+      "name": "Essays",
+      "weight": 70.0
+    }
+  ],
+  "instructor": null
+}

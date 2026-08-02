@@ -25,6 +25,9 @@ import type {
   LinkedConcept as ApiLinkedConcept,
   GraphNode,
 } from "@/lib/types";
+import { now } from "@/lib/testMode";
+import { useToast } from "@/components/ToastProvider";
+import { humanizeError } from "@/lib/errorMessage";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -66,7 +69,7 @@ function normalizeMastery(tier: string): Mastery {
 }
 
 function relTime(d: Date) {
-  const diff = Date.now() - d.getTime();
+  const diff = now() - d.getTime();
   const mins = Math.round(diff / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
@@ -93,7 +96,7 @@ function apiNoteToNote(n: ApiNote): Note {
     title: n.title || "",
     body: n.body || "",
     courseId: n.course_id,
-    updatedAt: new Date(n.updated_at || Date.now()),
+    updatedAt: new Date(n.updated_at || now()),
     tags: n.tags || [],
     linkedConcepts: [],
     lastSummary: n.last_summary || null,
@@ -112,6 +115,7 @@ function apiConceptToConcept(c: ApiLinkedConcept, courseCode: string): Concept {
 export default function NotetakerPage() {
   const { userId, userReady } = useUser();
   const router = useRouter();
+  const toast = useToast();
 
   const [courses, setCourses] = React.useState<Course[]>([]);
   const [notes, setNotes] = React.useState<Note[]>([]);
@@ -301,7 +305,7 @@ export default function NotetakerPage() {
     if (!active) return;
     setNotes((prev) =>
       prev.map((n) =>
-        n.id === active.id ? { ...n, ...patch, updatedAt: new Date() } : n,
+        n.id === active.id ? { ...n, ...patch, updatedAt: new Date(now()) } : n,
       ),
     );
     const apiPatch: Partial<Pick<ApiNote, "title" | "body" | "tags">> = {};
@@ -373,6 +377,7 @@ export default function NotetakerPage() {
       );
     } catch (e) {
       console.error("Summarize failed", e);
+      toast.error(humanizeError(e, "Couldn't summarize this note."));
     } finally {
       setBusy(null);
     }
@@ -386,6 +391,7 @@ export default function NotetakerPage() {
       await refreshActiveConcepts();
     } catch (e) {
       console.error("Extract failed", e);
+      toast.error(humanizeError(e, "Couldn't extract concepts from this note."));
     } finally {
       setBusy(null);
     }
@@ -400,6 +406,7 @@ export default function NotetakerPage() {
       router.push(`/quiz?concept=${encodeURIComponent(concept_node_id)}`);
     } catch (e) {
       console.error("Quiz failed", e);
+      toast.error(humanizeError(e, "Couldn't generate a quiz from this note."));
       setBusy(null);
     }
   };
@@ -415,6 +422,7 @@ export default function NotetakerPage() {
       );
     } catch (e) {
       console.error("Send to tutor failed", e);
+      toast.error(humanizeError(e, "Couldn't send this note to the tutor."));
       setBusy(null);
     }
   };
@@ -480,7 +488,7 @@ export default function NotetakerPage() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          height: "100vh",
+          height: "100%",
           color: "var(--text-muted)",
           fontSize: 13,
         }}
@@ -499,7 +507,7 @@ export default function NotetakerPage() {
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            height: "100vh",
+            height: "100%",
             padding: 32,
             textAlign: "center",
             gap: 12,
@@ -556,7 +564,7 @@ export default function NotetakerPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div
         style={{
           flex: 1,

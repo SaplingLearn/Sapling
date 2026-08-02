@@ -1,22 +1,41 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
-import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } from 'lucide-react';
-import OnboardingFlow from '@/components/OnboardingFlow';
-import HowItWorks from '@/components/HowItWorks';
-import SignInModal from '@/components/SignInModal';
+import { useScrollLock } from '@/lib/useScrollLock';
+import { Users, PenSquare } from 'lucide-react';
+import SignInModal from '@/components/marketing/SignInModal';
+import { HeroCard } from '@/components/marketing/HeroCard';
+import FeatureBand from '@/components/marketing/FeatureBand';
+import SurfaceBento from '@/components/marketing/SurfaceBento';
+import { FEATURE_BANDS } from '@/components/marketing/featureBands';
 import { BRAND_FOREST } from '@/lib/brand';
-import { submitOnboardingProfile, type OnboardingProfilePayload } from '@/lib/api';
 import { Button } from "@/components/ui";
+import { IS_TEST_MODE, random, now } from '@/lib/testMode';
+
+const KnowledgeGraphDemo = dynamic(
+  () => import('@/components/marketing/graph/KnowledgeGraphDemo'),
+  {
+    // Placeholder height approximates the section's resolved height so nothing
+    // below shifts while the chunk loads. MEASURED, not guessed: the section
+    // resolves to 990px at every desktop width once it wears its product
+    // chrome (#344 step 3) — the `80vh` this carried was 27–40% short of that
+    // even before, and a viewport-relative value cannot track a section whose
+    // height is set by a fixed-width inspector rail.
+    loading: () => <section id="knowledge-graph" className="landing-section relative" style={{ minHeight: '990px' }} />,
+  },
+);
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!<>-_\\/[]{}=+*^?#_";
 
-const CLUSTER_COLORS = ['#9CA3AF', '#D97706', '#3B82F6', '#8A63D2', '#14B8A6', '#EF4444'];
-const OB_STEP_COLORS  = ['#D97706', '#8A63D2', '#3B82F6', '#14B8A6', '#EF4444'];
+// Hand-tuned atmospheric orb palettes, hardcoded because they feed canvas
+// fillStyle where CSS var() doesn't resolve. #3e6f8a mirrors --info in
+// globals.css — the muted blue chosen to de-neon the old #3B82F6 (#106).
+const CLUSTER_COLORS = ['#9CA3AF', '#D97706', '#3e6f8a', '#8A63D2', '#14B8A6', '#EF4444'];
 const CLUSTER_SEEDS_BG = [10.0, 11.3, 12.6, 13.9, 15.2, 16.5];
 const CLUSTER_INIT_POS = [
   { ox: -222, oy: -29, oz:  15 },
@@ -27,17 +46,19 @@ const CLUSTER_INIT_POS = [
   { ox: -229, oy:   8, oz: -30 },
 ];
 
+/* The globals.css `prefers-reduced-motion` block only neutralizes CSS
+   animations and transitions. The hero's canvas and card RAF loops are JS and
+   have to opt out themselves, or a reduced-motion visitor keeps paying for a
+   60fps render they asked not to see. */
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
 export default function LandingPage() {
   const router = useRouter();
-  const { userReady, isAuthenticated, userId } = useUser();
+  const { userReady, isAuthenticated } = useUser();
 
   const [heroMounted, setHeroMounted] = useState(false);
   const [heroText1, setHeroText1] = useState('');
   const [heroText2, setHeroText2] = useState('');
-  const [onboardingPhase, setOnboardingPhase] = useState<'idle' | 'out' | 'active' | 'complete'>('idle');
-  const [introText, setIntroText] = useState<'hidden' | 'in' | 'out'>('hidden');
-  const [outroText, setOutroText] = useState<'hidden' | 'in' | 'out'>('hidden');
-  const [outroOverlay, setOutroOverlay] = useState(false);
   const [signInOpen, setSignInOpen] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
   const [betaModalOpen, setBetaModalOpen] = useState(false);
@@ -57,9 +78,6 @@ export default function LandingPage() {
       setBetaEmailError('');
     }, 200);
   }, []);
-  const [activeStep, setActiveStep] = useState(0);
-  const [completed, setCompleted] = useState<Set<number>>(new Set());
-
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const heroContentRef = useRef<HTMLDivElement>(null);
   const floatingCardsRef = useRef<HTMLDivElement>(null);
@@ -67,45 +85,6 @@ export default function LandingPage() {
   const ambientGlowRef = useRef<HTMLDivElement>(null);
   const parallaxYRef = useRef(0);
   const mouseRef = useRef({ x: 0, y: 0 });
-  const onboardingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const introTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
-  const canvasZoomRef = useRef(1.0);
-  const zoomActiveRef = useRef(false);
-  const zoomOutroRef = useRef(false);
-  const onboardingPhaseRef = useRef<'idle' | 'out' | 'active' | 'complete'>('idle');
-  const clusterProgressRef = useRef(0);
-  const clusterActiveStepRef = useRef(0);
-  const clusterCompletedRef = useRef<Set<number>>(new Set());
-  const obNodesRef = useRef<Array<{
-    ox: number; oy: number; oz: number;
-    startOx: number; startOy: number; startOz: number;
-    migDelay: number; migDur: number;
-    color: string; radius: number; seed: number;
-    birthTime: number; stepIndex: number; isPreview: boolean;
-    dyingAt?: number;
-  }>>([]);
-  const obInitStepsRef = useRef<Set<number>>(new Set());
-  const obDoneStepsRef = useRef<Set<number>>(new Set());
-
-  // Resume onboarding if the callback stashed a pending flag.
-  // Don't auto-redirect signed-in visitors away from the landing page —
-  // they should be able to read it like anyone else.
-  useEffect(() => {
-    if (!userReady || !isAuthenticated) return;
-    const pending = sessionStorage.getItem('sapling_onboarding_pending');
-    if (!pending) return;
-    sessionStorage.removeItem('sapling_onboarding_pending');
-    window.scrollTo({ top: 0, behavior: 'instant' });
-    setActiveStep(0);
-    setCompleted(new Set());
-    setHeroMounted(true);
-    setIntroText('hidden');
-    zoomActiveRef.current = true;
-    zoomOutroRef.current = false;
-    canvasZoomRef.current = 2.5;
-    clusterProgressRef.current = 1;
-    setOnboardingPhase('active');
-  }, [userReady, isAuthenticated]);
 
   useEffect(() => {
     if (betaSubmitted) {
@@ -113,24 +92,13 @@ export default function LandingPage() {
       return () => clearTimeout(t);
     }
   }, [betaSubmitted, closeModal]);
-  useEffect(() => {
-    if (betaModalOpen) {
-      document.body.style.overflow = 'hidden';
-      return () => { document.body.style.overflow = ''; };
-    }
-  }, [betaModalOpen]);
+  // Pre-auth there is no app shell, so <body> is the real scroll container and
+  // useScrollLock resolves to it.
+  useScrollLock(betaModalOpen);
 
-  // Cleanup timeouts on unmount
-  useEffect(() => {
-    return () => {
-      if (onboardingTimeoutRef.current) clearTimeout(onboardingTimeoutRef.current);
-      introTimeoutsRef.current.forEach(clearTimeout);
-    };
-  }, []);
-
-  // Always start at the top of the landing page so Hero → Features → HowItWorks
-  // Step 1 → 2 → 3 plays in order. Without this, browser scroll restoration on
-  // reload / hot reload can drop the user mid-section where Step 2 is showing.
+  // Always start at the top of the landing page so the intro sequence plays
+  // in order. Without this, browser scroll restoration on reload / hot
+  // reload can drop the user mid-section past the hero.
   useEffect(() => {
     if (typeof window !== 'undefined' && 'scrollRestoration' in window.history) {
       window.history.scrollRestoration = 'manual';
@@ -152,15 +120,6 @@ export default function LandingPage() {
     const next = window.location.pathname + (qs ? `?${qs}` : '');
     window.history.replaceState({}, '', next);
   }, []);
-
-  // Sync refs from state
-  useEffect(() => {
-    onboardingPhaseRef.current = onboardingPhase;
-    document.body.style.overflow = onboardingPhase !== 'idle' ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [onboardingPhase]);
-  useEffect(() => { clusterActiveStepRef.current = activeStep; }, [activeStep]);
-  useEffect(() => { clusterCompletedRef.current = completed; }, [completed]);
 
   const scrambleText = useCallback((setter: (v: string) => void, final: string, duration: number) => {
     const start = Date.now();
@@ -185,7 +144,7 @@ export default function LandingPage() {
     return () => clearTimeout(timeout);
   }, [scrambleText]);
 
-  // 3D Canvas graph with zoom + OB cluster nodes
+  // 3D Canvas graph
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -194,15 +153,21 @@ export default function LandingPage() {
 
     let width = 0, height = 0;
     let rotAngle = 0;
-    let animId: number;
+    let animId = 0;
 
+    const reduceMotion = window.matchMedia(REDUCED_MOTION_QUERY);
+    // Test mode parks the loop on its single deterministic frame, same
+    // as prefers-reduced-motion.
+    let animating = !IS_TEST_MODE && !reduceMotion.matches;
+
+    // #3e6f8a mirrors --info (globals.css); literal because canvas can't resolve var().
     const palette = [
-      { c: '#8A63D2', w: 0.24 }, { c: '#3B82F6', w: 0.24 },
+      { c: '#8A63D2', w: 0.24 }, { c: '#3e6f8a', w: 0.24 },
       { c: '#D97706', w: 0.20 }, { c: '#14B8A6', w: 0.15 },
       { c: '#9CA3AF', w: 0.10 }, { c: '#D1D5DB', w: 0.07 },
     ];
     function randColor() {
-      let r = Math.random(), s = 0;
+      let r = random(), s = 0;
       for (const p of palette) { s += p.w; if (r <= s) return p.c; }
       return palette[0].c;
     }
@@ -218,42 +183,25 @@ export default function LandingPage() {
     ];
     const spread = 280;
     const bgNodes = Array.from({ length: 220 }, () => {
-      const cl = clusters[Math.floor(Math.random() * clusters.length)];
+      const cl = clusters[Math.floor(random() * clusters.length)];
       return {
-        ox: cl.x + (Math.random() - 0.5) * spread,
-        oy: cl.y + (Math.random() - 0.5) * spread,
-        oz: cl.z + (Math.random() - 0.5) * spread,
+        ox: cl.x + (random() - 0.5) * spread,
+        oy: cl.y + (random() - 0.5) * spread,
+        oz: cl.z + (random() - 0.5) * spread,
         color: randColor(),
-        radius: 1 + Math.random() * 4,
-        seed: Math.random() * 100,
+        radius: 1 + random() * 4,
+        seed: random() * 100,
         clusterIndex: undefined as number | undefined,
       };
     });
     const clusterNodes = CLUSTER_INIT_POS.map((pos, i) => ({
       ox: pos.ox, oy: pos.oy, oz: pos.oz,
       color: CLUSTER_COLORS[i],
-      radius: 2.5 + Math.random() * 1.5,
+      radius: 2.5 + random() * 1.5,
       seed: CLUSTER_SEEDS_BG[i],
       clusterIndex: i as number | undefined,
     }));
     const nodes = [...bgNodes, ...clusterNodes];
-
-    // OB graph — cluster centres per onboarding step
-    const OB_STEP_CENTERS = [
-      { ox: -230, oy: -80, oz:  25 },
-      { ox: -115, oy:-105, oz: -35 },
-      { ox: -270, oy:  65, oz: -15 },
-      { ox: -155, oy:  95, oz:  35 },
-      { ox: -215, oy: -25, oz: -55 },
-    ];
-    const OB_SPREAD = 58;
-    const OB_COUNT  = 15;
-    const easeInOutCubic = (x: number) =>
-      x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-    const stepRand = (si: number, idx: number) => {
-      const s = Math.sin(si * 9301 + idx * 49297 + 233) * 10000003;
-      return s - Math.floor(s);
-    };
 
     function resize() {
       width = window.innerWidth;
@@ -261,6 +209,9 @@ export default function LandingPage() {
       canvas!.width = width * devicePixelRatio;
       canvas!.height = height * devicePixelRatio;
       ctx!.scale(devicePixelRatio, devicePixelRatio);
+      // Resizing clears the backing store. With the loop parked there's no
+      // next frame to repaint it, so repaint the static one here.
+      if (!animating) draw();
     }
     window.addEventListener('resize', resize);
     resize();
@@ -269,77 +220,8 @@ export default function LandingPage() {
       if (!ctx) return;
       ctx.clearRect(0, 0, width, height);
       rotAngle += 0.0008;
-      const fl = 1000, cx = width / 2, cy = height / 2, t = Date.now() * 0.001;
+      const fl = 1000, cx = width / 2, cy = height / 2, t = now() * 0.001;
       const mx = mouseRef.current.x, my = mouseRef.current.y;
-      const now = Date.now();
-
-      // ── OB knowledge graph: spawn nodes per step ─────────────────────
-      if (onboardingPhaseRef.current === 'active') {
-        const asi = clusterActiveStepRef.current;
-        if (!obInitStepsRef.current.has(asi)) {
-          obInitStepsRef.current.add(asi);
-          const ctr = OB_STEP_CENTERS[asi];
-          for (let k = 0; k < 8; k++) {
-            const ox = ctr.ox + (stepRand(asi, k * 4    ) - 0.5) * OB_SPREAD * 0.9;
-            const oy = ctr.oy + (stepRand(asi, k * 4 + 1) - 0.5) * OB_SPREAD * 0.6;
-            const oz = ctr.oz + (stepRand(asi, k * 4 + 2) - 0.5) * OB_SPREAD * 0.9;
-            obNodesRef.current.push({
-              ox, oy, oz, startOx: ox, startOy: oy, startOz: oz,
-              migDelay: k * 60, migDur: 450,
-              color: OB_STEP_COLORS[asi],
-              radius: 1 + stepRand(asi, k * 4 + 3) * 1.5,
-              seed: stepRand(asi, k * 4 + 2) * 100,
-              birthTime: now, stepIndex: asi, isPreview: true,
-            });
-          }
-        }
-      }
-      if (onboardingPhaseRef.current === 'active' || onboardingPhaseRef.current === 'complete') {
-        const comp = clusterCompletedRef.current;
-        comp.forEach(si => {
-          if (!obDoneStepsRef.current.has(si)) {
-            obDoneStepsRef.current.add(si);
-            obNodesRef.current.forEach(n => {
-              if (n.stepIndex === si && n.isPreview) n.dyingAt = now;
-            });
-            const ctr = OB_STEP_CENTERS[si];
-            for (let k = 0; k < OB_COUNT; k++) {
-              obNodesRef.current.push({
-                ox: ctr.ox + (stepRand(si, k * 4    ) - 0.5) * OB_SPREAD * 2,
-                oy: ctr.oy + (stepRand(si, k * 4 + 1) - 0.5) * OB_SPREAD * 1.5,
-                oz: ctr.oz + (stepRand(si, k * 4 + 2) - 0.5) * OB_SPREAD * 2,
-                startOx: 80 + stepRand(si, k * 4 + 10) * 260,
-                startOy: (stepRand(si, k * 4 + 11) - 0.5) * 220,
-                startOz: (stepRand(si, k * 4 + 12) - 0.5) * 220,
-                migDelay: k * 50, migDur: 580 + stepRand(si, k * 4 + 13) * 160,
-                color: OB_STEP_COLORS[si],
-                radius: 1.8 + stepRand(si, k * 4 + 3) * 3,
-                seed: stepRand(si, k * 4 + 2) * 100,
-                birthTime: now, stepIndex: si, isPreview: false,
-              });
-            }
-          }
-        });
-      }
-      obNodesRef.current = obNodesRef.current.filter(n =>
-        !(n.dyingAt !== undefined && now - n.dyingAt > 500)
-      );
-      if (onboardingPhaseRef.current === 'idle' && obNodesRef.current.length > 0) {
-        obNodesRef.current = [];
-        obInitStepsRef.current = new Set();
-        obDoneStepsRef.current = new Set();
-      }
-
-      const zoomTarget = zoomOutroRef.current ? 5.5 : (zoomActiveRef.current ? 2.5 : 1.0);
-      canvasZoomRef.current += (zoomTarget - canvasZoomRef.current) * 0.025;
-      const zoom = canvasZoomRef.current;
-
-      if (zoomActiveRef.current) {
-        clusterProgressRef.current = Math.min(1, clusterProgressRef.current + 0.01);
-      } else {
-        clusterProgressRef.current = Math.max(0, clusterProgressRef.current - 0.015);
-      }
-      const clusterProgress = clusterProgressRef.current;
 
       const proj = nodes.map(n => {
         const ny = n.oy + Math.sin(t * 0.4 + n.seed) * 15;
@@ -348,17 +230,31 @@ export default function LandingPage() {
         x -= mx * (z + fl) * 0.02;
         const y2 = ny - my * (z + fl) * 0.02;
         const sc = fl / (fl + z);
-        return { x: x * sc * zoom + cx, y: y2 * sc * zoom + cy - parallaxYRef.current, z, sc: sc * zoom, n };
+        return { x: x * sc + cx, y: y2 * sc + cy - parallaxYRef.current, z, sc, n };
       }).sort((a, b) => b.z - a.z);
 
       ctx.globalCompositeOperation = 'source-over';
       ctx.lineWidth = 0.5;
+      // The pair walk itself is unavoidable (links depend on projected
+      // positions, which change every frame), but almost every pair fails the
+      // distance test — so make failing cheap: hoist the per-node threshold
+      // out of the inner loop, reject on |dx|/|dy| before multiplying, and
+      // compare squared distances so the sqrt only runs for pairs that
+      // actually draw a link.
       for (let i = 0; i < proj.length; i++) {
+        const p1 = proj[i];
+        const maxD = 70 * p1.sc;
+        const maxD2 = maxD * maxD;
+        const aScale = 0.15 * Math.min(1, p1.sc);
         for (let j = i + 1; j < proj.length; j++) {
-          const p1 = proj[i], p2 = proj[j];
-          const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-          if (d < 70 * p1.sc) {
-            const a = (1 - d / (70 * p1.sc)) * 0.15 * Math.min(1, p1.sc) * Math.max(0, 1 - clusterProgress);
+          const p2 = proj[j];
+          const dx = p1.x - p2.x;
+          if (dx > maxD || dx < -maxD) continue;
+          const dy = p1.y - p2.y;
+          if (dy > maxD || dy < -maxD) continue;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < maxD2) {
+            const a = (1 - Math.sqrt(d2) / maxD) * aScale;
             if (a > 0.002) {
               ctx.strokeStyle = `rgba(156,163,175,${a})`;
               ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
@@ -370,8 +266,7 @@ export default function LandingPage() {
       proj.forEach(p => {
         if (p.z > -fl) {
           const breathe = 0.92 + 0.08 * Math.sin(t * 0.6 + p.n.seed);
-          let fogA = p.z > 500 ? Math.max(0, 1 - (p.z - 500) / 500) : 1;
-          if (clusterProgress > 0) fogA *= Math.max(0.12, 1 - clusterProgress * 0.82);
+          const fogA = p.z > 500 ? Math.max(0, 1 - (p.z - 500) / 500) : 1;
           const r = p.n.radius * p.sc * breathe;
           if (r > 0.1) {
             ctx.globalAlpha = fogA;
@@ -381,79 +276,26 @@ export default function LandingPage() {
       });
       ctx.globalAlpha = 1;
 
-      // ── OB knowledge graph: draw with migration ───────────────────────
-      if (obNodesRef.current.length > 0) {
-        const obProj = obNodesRef.current.flatMap(n => {
-          const elapsed = now - n.birthTime;
-          const rawMigP = (elapsed - n.migDelay) / n.migDur;
-          if (rawMigP < 0) return [];
-          const migP = Math.min(1, rawMigP);
-          const easedM = easeInOutCubic(migP);
-          const curOx = n.startOx + (n.ox - n.startOx) * easedM;
-          const curOy = n.startOy + (n.oy - n.startOy) * easedM;
-          const curOz = n.startOz + (n.oz - n.startOz) * easedM;
-          const arrP = Math.min(1, Math.max(0, (elapsed - n.migDelay - n.migDur) / 400));
-          const popScale = migP < 1 ? 0.4 + 0.6 * migP : 1.0 + Math.sin(arrP * Math.PI) * 0.12;
-          const baseAlpha = migP < 1 ? easeInOutCubic(migP) : 1.0;
-          const dyingFade = n.dyingAt !== undefined
-            ? 1.0 - easeInOutCubic(Math.min(1, (now - n.dyingAt) / 350))
-            : 1.0;
-          const alpha = baseAlpha * dyingFade;
-          if (alpha < 0.005) return [];
-          const ny = curOy + Math.sin(t * 0.4 + n.seed) * 8 * migP;
-          const rx = curOx * Math.cos(rotAngle) - curOz * Math.sin(rotAngle);
-          const rz = curOz * Math.cos(rotAngle) + curOx * Math.sin(rotAngle);
-          const sc = fl / (fl + rz);
-          return [{ x: rx*sc*zoom+cx, y: ny*sc*zoom+cy-parallaxYRef.current, z: rz, sc, n, alpha, popScale, migP, arrP }];
-        }).sort((a, b) => b.z - a.z);
-
-        ctx.lineWidth = 0.7;
-        for (let i = 0; i < obProj.length; i++) {
-          for (let j = i + 1; j < obProj.length; j++) {
-            const p1 = obProj[i], p2 = obProj[j];
-            if (p1.migP < 1 || p2.migP < 1) continue;
-            if (p1.alpha < 0.1 || p2.alpha < 0.1) continue;
-            const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-            const maxD = 90 * p1.sc * zoom;
-            if (d < maxD) {
-              const a = (1 - d / maxD) * 0.35 * Math.min(p1.arrP, p2.arrP) * Math.min(p1.alpha, p2.alpha);
-              if (a > 0.003) {
-                const col = p1.n.color;
-                const r = parseInt(col.slice(1, 3), 16);
-                const g = parseInt(col.slice(3, 5), 16);
-                const b = parseInt(col.slice(5, 7), 16);
-                ctx.strokeStyle = (p1.n.isPreview && p2.n.isPreview)
-                  ? `rgba(200,210,200,${(a * 0.35).toFixed(4)})`
-                  : `rgba(${r},${g},${b},${a.toFixed(4)})`;
-                ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-              }
-            }
-          }
-        }
-
-        obProj.forEach(p => {
-          const breathe = 0.92 + 0.08 * Math.sin(t * 0.6 + p.n.seed);
-          const r = Math.max(0.1, p.n.radius * p.sc * zoom * breathe * p.popScale);
-          if (p.n.isPreview) {
-            ctx.globalAlpha = (0.25 + 0.2 * Math.sin(t * 3 + p.n.seed)) * p.alpha;
-            ctx.shadowBlur = 10;
-          } else {
-            ctx.globalAlpha = p.alpha;
-            ctx.shadowBlur = p.migP >= 1 ? 18 * (0.7 + 0.3 * Math.sin(t * 1.5 + p.n.seed * 0.3)) : 6;
-          }
-          ctx.shadowColor = p.n.color;
-          ctx.fillStyle = p.n.color;
-          ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
-          ctx.shadowBlur = 0;
-          ctx.shadowColor = 'transparent';
-        });
-        ctx.globalAlpha = 1;
-      }
-
-      animId = requestAnimationFrame(draw);
+      if (animating) animId = requestAnimationFrame(draw);
     }
+
+    // Toggling the OS preference mid-session either parks the loop on a
+    // static frame or restarts it; `draw` self-schedules only when animating.
+    const onMotionPrefChange = () => {
+      const next = !IS_TEST_MODE && !reduceMotion.matches;
+      if (next === animating) return;
+      animating = next;
+      cancelAnimationFrame(animId);
+      draw();
+    };
+    reduceMotion.addEventListener('change', onMotionPrefChange);
+
     draw();
-    return () => { window.removeEventListener('resize', resize); cancelAnimationFrame(animId); };
+    return () => {
+      window.removeEventListener('resize', resize);
+      reduceMotion.removeEventListener('change', onMotionPrefChange);
+      cancelAnimationFrame(animId);
+    };
   }, []);
 
   // Mouse + scroll
@@ -484,7 +326,7 @@ export default function LandingPage() {
       glow.style.opacity = eased.toString();
     };
 
-    const onScroll = () => {
+    const applyScroll = () => {
       const sy = window.scrollY;
       if (heroContentRef.current && sy < window.innerHeight) {
         heroContentRef.current.style.transform = `translateY(${sy * -0.3}px)`;
@@ -495,31 +337,71 @@ export default function LandingPage() {
       lastSy = sy;
     };
 
-    document.addEventListener('mousemove', onMouse);
-    window.addEventListener('scroll', onScroll);
-    onScroll();
-    return () => { document.removeEventListener('mousemove', onMouse); window.removeEventListener('scroll', onScroll); };
+    // Scroll fires far more often than the compositor paints, and each call
+    // writes inline styles on three elements. Coalesce to one write per frame.
+    let queued = 0;
+    const onScroll = () => {
+      if (queued) return;
+      queued = requestAnimationFrame(() => { queued = 0; applyScroll(); });
+    };
+
+    document.addEventListener('mousemove', onMouse, { passive: true });
+    window.addEventListener('scroll', onScroll, { passive: true });
+    applyScroll();
+    return () => {
+      document.removeEventListener('mousemove', onMouse);
+      window.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(queued);
+    };
   }, []);
 
   // Floating cards parallax
   useEffect(() => {
-    let animId: number;
-    function tick() {
+    // The cards are static markup, so resolve the NodeList and parse their
+    // dataset floats once instead of re-doing both 60 times a second.
+    const cards = Array.from(
+      floatingCardsRef.current?.querySelectorAll<HTMLElement>('.floating-card') ?? [],
+    ).map(el => ({
+      el,
+      baseRot: parseFloat(el.dataset.baseRot || '0'),
+      dur: parseFloat(el.dataset.floatDur || '5000'),
+      delay: parseFloat(el.dataset.floatDelay || '0'),
+    }));
+    if (cards.length === 0) return;
+
+    const reduceMotion = window.matchMedia(REDUCED_MOTION_QUERY);
+    let animId = 0;
+    let animating = !IS_TEST_MODE && !reduceMotion.matches;
+
+    function paint() {
       const t = Date.now();
       const mx = mouseRef.current.x, my = mouseRef.current.y;
-      floatingCardsRef.current?.querySelectorAll<HTMLElement>('.floating-card').forEach(card => {
-        const baseRot = parseFloat(card.dataset.baseRot || '0');
-        const dur = parseFloat(card.dataset.floatDur || '5000');
-        const delay = parseFloat(card.dataset.floatDelay || '0');
-        const floatY = Math.sin((t - delay) / dur * Math.PI * 2) * -8;
-        const rx = -my * 5, ry = mx * 5;
-        const par = window.scrollY * -0.3;
-        card.style.transform = `perspective(1000px) translateY(${floatY + par}px) rotateX(${rx}deg) rotateY(${ry}deg) rotateZ(${baseRot}deg)`;
-      });
-      animId = requestAnimationFrame(tick);
+      // Reduced motion keeps the cards' resting tilt but drops the drift,
+      // the mouse tilt and the scroll parallax.
+      const rx = animating ? -my * 5 : 0;
+      const ry = animating ? mx * 5 : 0;
+      const par = animating ? window.scrollY * -0.3 : 0;
+      for (const { el, baseRot, dur, delay } of cards) {
+        const floatY = animating ? Math.sin((t - delay) / dur * Math.PI * 2) * -8 : 0;
+        el.style.transform = `perspective(1000px) translateY(${floatY + par}px) rotateX(${rx}deg) rotateY(${ry}deg) rotateZ(${baseRot}deg)`;
+      }
+      if (animating) animId = requestAnimationFrame(paint);
     }
-    tick();
-    return () => cancelAnimationFrame(animId);
+
+    const onMotionPrefChange = () => {
+      const next = !IS_TEST_MODE && !reduceMotion.matches;
+      if (next === animating) return;
+      animating = next;
+      cancelAnimationFrame(animId);
+      paint();
+    };
+    reduceMotion.addEventListener('change', onMotionPrefChange);
+
+    paint();
+    return () => {
+      reduceMotion.removeEventListener('change', onMotionPrefChange);
+      cancelAnimationFrame(animId);
+    };
   }, []);
 
   // Intersection observer for fade-ups
@@ -528,130 +410,29 @@ export default function LandingPage() {
       entries.forEach(entry => {
         if (entry.isIntersecting) {
           entry.target.classList.remove('opacity-0', 'translate-y-[30px]');
-          if (entry.target.classList.contains('landing-stat-fade-up')) startCounters(entry.target as HTMLElement);
           obs.unobserve(entry.target);
         }
       });
     }, { threshold: 0.2 });
-    document.querySelectorAll('.landing-fade-up, .landing-stat-fade-up').forEach(el => {
+    document.querySelectorAll('.landing-fade-up').forEach(el => {
       el.classList.add('opacity-0', 'translate-y-[30px]', 'transition-all', 'duration-700', 'ease-out');
       obs.observe(el);
     });
     return () => obs.disconnect();
   }, []);
 
-  // Spotlight card mouse-follow
-  useEffect(() => {
-    const cards = document.querySelectorAll<HTMLElement>('.landing-spotlight-card');
-    const handler = (e: MouseEvent) => {
-      const card = (e.currentTarget as HTMLElement);
-      const r = card.getBoundingClientRect();
-      card.style.setProperty('--mouse-x', `${e.clientX - r.left}px`);
-      card.style.setProperty('--mouse-y', `${e.clientY - r.top}px`);
-    };
-    cards.forEach(c => c.addEventListener('mousemove', handler));
-    return () => cards.forEach(c => c.removeEventListener('mousemove', handler));
-  }, []);
-
-  function startCounters(container: HTMLElement) {
-    container.querySelectorAll<HTMLElement>('.counter, .counter-float').forEach(el => {
-      if (el.classList.contains('counted')) return;
-      el.classList.add('counted');
-      const target = parseFloat(el.dataset.target || '0');
-      const isFloat = el.classList.contains('counter-float');
-      const dur = 1500, startT = performance.now();
-      function update(now: number) {
-        const p = Math.min((now - startT) / dur, 1);
-        const ease = 1 - Math.pow(1 - p, 4);
-        el.textContent = isFloat ? (target * ease).toFixed(1) : Math.floor(target * ease).toLocaleString();
-        if (p < 1) requestAnimationFrame(update);
-        else el.textContent = isFloat ? target.toFixed(1) : target.toLocaleString();
-      }
-      requestAnimationFrame(update);
-    });
-  }
-
-  // ── Onboarding phase transitions ──────────────────────────────────
+  // ── Onboarding entry ──────────────────────────────────────────────
+  // The signup flow lives at /onboarding (screens/Onboarding). Unauthenticated
+  // visitors sign in first; SignInModal routes them onward based on
+  // onboarding_completed.
   function startOnboarding() {
     if (!userReady) return;
     if (!isAuthenticated) {
       setSignInError(null);
       setSignInOpen(true);
-      sessionStorage.setItem('sapling_onboarding_pending', '1');
       return;
     }
-    if (onboardingTimeoutRef.current) clearTimeout(onboardingTimeoutRef.current);
-    introTimeoutsRef.current.forEach(clearTimeout);
-    window.scrollTo({ top: 0, behavior: 'instant' });
-    setActiveStep(0);
-    setCompleted(new Set());
-    setIntroText('hidden');
-    zoomActiveRef.current = false;
-    zoomOutroRef.current = false;
-    setOnboardingPhase('out');
-    introTimeoutsRef.current = [
-      setTimeout(() => setIntroText('in'), 450),
-      setTimeout(() => {
-        setIntroText('out');
-        zoomActiveRef.current = true;
-      }, 1900),
-      setTimeout(() => {
-        setIntroText('hidden');
-        setOnboardingPhase('active');
-      }, 2550),
-    ];
-  }
-
-  function closeOnboarding() {
-    if (onboardingTimeoutRef.current) clearTimeout(onboardingTimeoutRef.current);
-    introTimeoutsRef.current.forEach(clearTimeout);
-    introTimeoutsRef.current = [];
-    zoomActiveRef.current = false;
-    zoomOutroRef.current = false;
-    setIntroText('hidden');
-    const t = Date.now();
-    obNodesRef.current.forEach(n => { if (n.dyingAt === undefined) n.dyingAt = t; });
-    setOnboardingPhase('out');
-    onboardingTimeoutRef.current = setTimeout(() => setOnboardingPhase('idle'), 700);
-  }
-
-  async function handleOnboardingComplete(formData: { firstName: string; lastName: string; school: string; year: string; majors: string[]; minors: string[]; course_ids: string[]; style: string }) {
-    // Persist onboarding data via the shared same-origin helper. The previous
-    // raw fetch hit NEXT_PUBLIC_API_URL (a cross-origin subdomain) without
-    // `credentials: 'include'`, so the sapling_session cookie was dropped and
-    // require_self 401'd — onboarding_completed never flipped to True, trapping
-    // the user in the "Get Started" flow on every sign-in. submitOnboardingProfile
-    // goes through fetchJSON (same-origin proxy + credentials + res.ok check).
-    try {
-      await submitOnboardingProfile({
-        user_id: userId,
-        first_name: formData.firstName,
-        last_name: formData.lastName,
-        year: formData.year,
-        majors: formData.majors,
-        minors: formData.minors,
-        course_ids: formData.course_ids,
-        learning_style: formData.style as OnboardingProfilePayload['learning_style'],
-      });
-    } catch (e) {
-      console.error('Failed to save onboarding profile:', e);
-    }
-
-    introTimeoutsRef.current.forEach(clearTimeout);
-    zoomActiveRef.current = true;
-    zoomOutroRef.current = false;
-    setOutroText('hidden');
-    setOutroOverlay(false);
-    setOnboardingPhase('complete');
-    introTimeoutsRef.current = [
-      setTimeout(() => setOutroText('in'), 1400),
-      setTimeout(() => {
-        setOutroText('out');
-        zoomOutroRef.current = true;
-      }, 3050),
-      setTimeout(() => setOutroOverlay(true), 3450),
-      setTimeout(() => { router.replace('/dashboard'); }, 4250),
-    ];
+    router.push('/onboarding');
   }
 
   return (
@@ -691,7 +472,7 @@ export default function LandingPage() {
         style={{
           background: 'rgba(255,255,255,0)',
           borderBottomColor: 'transparent',
-          opacity: onboardingPhase !== 'idle' ? 0 : (heroMounted ? 1 : 0),
+          opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(-30px)',
           transition: 'opacity 800ms cubic-bezier(0.22,1,0.36,1), transform 800ms cubic-bezier(0.22,1,0.36,1)',
         }}
@@ -702,7 +483,7 @@ export default function LandingPage() {
             <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: '20px', color: 'var(--brand-forest)', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Sapling</span>
           </button>
           <div className="flex items-center">
-            <button onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--text-dim)] hover:text-[var(--text)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
+            <button data-testid="signin-trigger" onClick={() => { setSignInError(null); setSignInOpen(true); }} className="text-[var(--text-dim)] hover:text-[var(--text)] font-medium text-sm tracking-wide transition-all duration-300 mr-6 hidden sm:block">Sign In</button>
             <Button variant="primary" size="lg" style={{ padding: '6px 14px' }} onClick={startOnboarding}>
               Get Started
             </Button>
@@ -719,19 +500,25 @@ export default function LandingPage() {
         <canvas ref={canvasRef} className="absolute inset-0 z-0 w-full h-full pointer-events-auto opacity-100" />
 
         {/* Floating Glass Accent Cards */}
-        <div ref={floatingCardsRef} className="absolute inset-0 z-10 hidden lg:block pointer-events-none"
-          style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease' }}
-        >
+        <div ref={floatingCardsRef} className="absolute inset-0 z-10 hidden lg:block pointer-events-none">
           <div
             className="floating-card absolute w-52 liquid-glass rounded-2xl p-5"
             style={{ position: 'absolute', top: '24%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
             data-base-rot="4" data-float-delay="1000" data-float-dur="6000"
           >
+            {/*
+              Canonical knowledge-status tokens (globals.css:80-89), not literals
+              (#344 visual 1b). These four swatches and the knowledge-graph
+              section's node colours are one viewport apart on the same page, so
+              they have to be the same palette — and it has to be the palette the
+              signed-in product actually uses. Colours only; nothing else in the
+              hero moves.
+            */}
             <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--brand-forest)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Mastered</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#D97706]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Learning</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#EF4444]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Struggling</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#9CA3AF]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Unexplored</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-mastery)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Mastered</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-progress)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Learning</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-struggle)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Struggling</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-neutral)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Unexplored</span></div>
             </div>
           </div>
 
@@ -752,9 +539,7 @@ export default function LandingPage() {
         </div>
 
         {/* Hero Content */}
-        <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6"
-          style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease' }}
-        >
+        <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6">
           <h1 style={{
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
@@ -789,112 +574,41 @@ export default function LandingPage() {
         </div>
 
         {/* Scroll Indicator */}
-        <div style={{ opacity: onboardingPhase !== 'idle' ? 0 : (heroMounted ? 1 : 0), transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 landing-animate-float-indicator flex flex-col items-center">
+        <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 landing-animate-float-indicator flex flex-col items-center">
           <div className="w-px h-14 landing-divider-v" />
           <span className="font-jetbrains text-xs tracking-[0.4em] text-[var(--text-dim)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
         </div>
       </section>
 
-      {/* ═══ Features Section ═══ */}
-      <div style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease', pointerEvents: onboardingPhase !== 'idle' ? 'none' : 'auto' }}>
-        <section id="features" className="landing-section relative py-32 md:py-40 z-10 overflow-hidden">
-          <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
-            <div className="sapling-mesh-blob sapling-mesh-blob--3" style={{ top: '6%', left: '-10%', opacity: 0.32, width: '36vw', height: '36vw' }} />
-            <div className="sapling-mesh-blob sapling-mesh-blob--2" style={{ bottom: '10%', right: '-12%', opacity: 0.20, width: '32vw', height: '32vw' }} />
-          </div>
-          <div className="absolute top-0 left-0 w-full h-px landing-divider" />
+      <div>
+        <KnowledgeGraphDemo />
 
-          <div className="max-w-7xl mx-auto px-6 lg:px-12 relative z-[1]">
-            {/* Editorial heading: asymmetric split, breathing room. */}
-            <div className="grid md:grid-cols-12 gap-8 md:gap-12 mb-20 md:mb-28 landing-fade-up">
-              <div className="md:col-span-7">
-                <span className="font-jetbrains text-[0.7rem] tracking-[0.32em] text-[var(--brand-forest)] uppercase font-medium">In the Sapling kit</span>
-                <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--text)] mt-5 leading-[1.02] tracking-tight">
-                  Tools that bend to <em className="not-italic text-[var(--brand-forest)]">your study</em>, not the other way around.
-                </h2>
-              </div>
-              <div className="md:col-span-4 md:col-start-9 md:pt-8 flex flex-col justify-end">
-                <p className="font-inter text-[var(--text-dim)] text-base leading-relaxed font-light">
-                  Six instruments, tuned to one another. Each is a verb you reach for; together they make a quiet system that learns you back.
-                </p>
-                <div className="mt-6 flex items-center gap-3">
-                  <span className="block h-px w-12 bg-[var(--brand-forest)]" />
-                  <span className="font-jetbrains text-[0.65rem] tracking-[0.3em] text-[var(--text-dim)] uppercase">Scroll the catalog</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Editorial feature catalog: hairline rows, no boxes. */}
-            <ol className="landing-feature-list border-t border-[var(--text-dim)]/15">
-              {[
-                { icon: Network,       title: 'Knowledge Graph',     desc: 'Every concept becomes a node in a living 3D network. Watch them glow as you master topics and see how everything connects.' },
-                { icon: Sparkles,      title: 'Adaptive Study Paths', desc: 'The AI reads your knowledge gaps and lays out the optimal sequence — so you always study the right thing at the right time.' },
-                { icon: FilePlus2,     title: 'Universal Upload',     desc: 'Drop in syllabi, textbooks, or notes. Sapling extracts every concept and maps it onto your graph automatically.' },
-                { icon: Brain,         title: 'Adaptive Quizzes',     desc: 'Questions that re-tune to your level in real time. They press where you are strong and meet you where you struggle.' },
-                { icon: CalendarClock, title: 'Spaced Repetition',    desc: 'Scientifically-timed reviews move concepts from short-term to long-term memory. Sapling handles the scheduling.' },
-                { icon: Users,         title: 'Live Study Rooms',     desc: 'Join classmates in shared rooms. Compare knowledge maps. Learn together, in real time, on the same canvas.' },
-              ].map((feature, i) => (
-                <li
-                  key={feature.title}
-                  className="landing-feature-row group relative border-b border-[var(--text-dim)]/15 landing-fade-up"
-                  style={{ transitionDelay: `${i * 70}ms` }}
-                >
-                  <div className="grid md:grid-cols-12 items-center gap-6 md:gap-8 py-9 md:py-12 px-2 md:px-4 transition-colors duration-500">
-                    {/* Index marker. */}
-                    <div className="md:col-span-1 font-jetbrains text-[0.7rem] tracking-[0.3em] text-[var(--text-dim)] transition-colors duration-500 group-hover:text-[var(--brand-forest)]">
-                      <span className="inline-block tabular-nums">0{i + 1}</span>
-                      <span className="hidden md:inline-block ml-3 align-middle h-px w-6 bg-[var(--text-dim)]/30 group-hover:bg-[var(--brand-forest)]/60 transition-colors duration-500" />
-                    </div>
-
-                    {/* Title with bare inline icon — no circle, no color. */}
-                    <div className="md:col-span-5 flex items-center gap-4 md:gap-5 min-w-0">
-                      <feature.icon
-                        aria-hidden
-                        className="landing-feature-icon shrink-0 w-5 h-5 md:w-6 md:h-6 text-[var(--text)] transition-transform duration-700 ease-out group-hover:scale-110 group-hover:-rotate-6"
-                        strokeWidth={1.5}
-                      />
-                      <h3 className="landing-feature-title font-playfair text-2xl md:text-3xl lg:text-4xl font-semibold text-[var(--text)] tracking-tight leading-[1.05]">
-                        {feature.title}
-                      </h3>
-                    </div>
-
-                    {/* Description: shifted left, generous width for body copy. */}
-                    <div className="md:col-span-6">
-                      <p className="font-inter text-[var(--text-dim)] text-[0.95rem] leading-relaxed font-light max-w-[52ch]">
-                        {feature.desc}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Hover-driven underline sweep, brand green. */}
-                  <span
-                    aria-hidden
-                    className="landing-feature-underline pointer-events-none absolute left-0 bottom-0 h-[2px] w-0 bg-[var(--brand-forest)] group-hover:w-full transition-[width] duration-[900ms] ease-out"
-                  />
-                </li>
-              ))}
-            </ol>
-
-            {/* Tail mark: editorial closing rule. */}
-            <div className="mt-10 flex items-center gap-4 landing-fade-up">
-              <span className="block h-px flex-1 bg-[var(--text-dim)]/15" />
-              <span className="font-jetbrains text-[0.65rem] tracking-[0.32em] text-[var(--text-dim)] uppercase">— end of catalog</span>
-            </div>
-          </div>
-        </section>
-
-        <HowItWorks />
+        {/* ═══ Feature bands + bento ═══
+            One arc — material in → practice → retention — with the bento of
+            built surfaces re-energising the middle. Band 3 is the closing
+            claim, so it (not a grid tile) hands off to the CTA; content and
+            side-alternation live in components/marketing/featureBands.tsx. */}
+        <FeatureBand {...FEATURE_BANDS[0]} />
+        <FeatureBand {...FEATURE_BANDS[1]} />
+        <SurfaceBento />
+        <FeatureBand {...FEATURE_BANDS[2]} />
 
         {/* ═══ Final CTA ═══ */}
         <section className="landing-section py-32 relative text-center z-10">
-          {/* Blend from HowItWorks' dark-green tint down to the mesh */}
+          {/* Soft green wash in the section's upper body.
+              This used to start at full strength on the very top edge, because
+              it was blending DOWN out of HowItWorks' dark-green scroll tint.
+              That section is gone, so a tint that starts at 0.08 on the
+              boundary now fades in from flat paper and reads as a hard seam.
+              Peak it below the edge and start from transparent instead. */}
           <div
             aria-hidden
             className="pointer-events-none absolute left-0 right-0 z-0"
             style={{
               top: 0,
               height: 'clamp(240px, 42vh, 480px)',
-              background: 'linear-gradient(to bottom, rgba(20,83,45,0.08) 0%, rgba(20,83,45,0.04) 45%, rgba(20,83,45,0) 100%)',
+              background:
+                'linear-gradient(to bottom, rgba(20,83,45,0) 0%, rgba(20,83,45,0.05) 35%, rgba(20,83,45,0) 100%)',
             }}
           />
           <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
@@ -943,16 +657,9 @@ export default function LandingPage() {
           style={{ background: 'rgba(12,18,26,0.45)' }}
           onClick={closeModal}
         >
-          <div
-            className={`${betaModalClosing ? 'modal-card-out' : 'modal-card-in'}`}
-            style={{
-              background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)',
-              borderRadius: 20,
-              padding: '40px 52px',
-              textAlign: 'center',
-              border: '1px solid rgba(255,255,255,0.7)',
-              boxShadow: '0 20px 60px rgba(15,23,42,0.15)',
-            }}
+          <HeroCard
+            className={betaModalClosing ? 'modal-card-out' : 'modal-card-in'}
+            style={{ padding: '40px 52px', textAlign: 'center' }}
             onClick={e => e.stopPropagation()}
           >
             <h2 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 32, lineHeight: 1.1, fontWeight: 600, letterSpacing: '-0.02em', color: '#1a1a1a' }}>
@@ -961,7 +668,7 @@ export default function LandingPage() {
             <p style={{ margin: '10px 0 0', fontSize: 17, color: '#4b5563', fontStyle: 'italic' }}>
               See you in the inbox - The Team
             </p>
-          </div>
+          </HeroCard>
         </div>
       )}
       {betaModalOpen && !betaSubmitted && (
@@ -970,20 +677,16 @@ export default function LandingPage() {
           style={{ background: 'rgba(12,18,26,0.65)' }}
           onClick={() => { if (!betaSubmitting) closeModal(); }}
         >
-          <div
+          <HeroCard
             className={`relative w-full ${betaModalClosing ? 'modal-card-out' : 'modal-card-in'}`}
             style={{
               maxWidth: 'min(1040px, 94vw)',
               width: '100%',
-              background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)',
-              borderRadius: 24,
               display: 'grid',
               gridTemplateColumns: '1fr 1px 1fr',
               minHeight: 560,
               maxHeight: 'calc(100vh - 48px)',
               overflow: 'hidden',
-              border: '1px solid rgba(255,255,255,0.7)',
-              boxShadow: '0 20px 60px rgba(15,23,42,0.12), inset 0 0 0 1px rgba(255,255,255,0.5)',
             }}
             onClick={e => e.stopPropagation()}
             role="dialog"
@@ -1007,9 +710,8 @@ export default function LandingPage() {
             >×</button>
 
             {/* ── Left: brand + perks panel ── */}
-            <div style={{
+            <div className="hero-surface" style={{
               padding: '36px 36px 32px',
-              background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)',
               display: 'flex', flexDirection: 'column', gap: 22,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1061,7 +763,7 @@ export default function LandingPage() {
             <div style={{ background: 'rgba(107,114,128,0.15)', alignSelf: 'stretch' }} />
 
             {/* ── Right: newsletter form ── */}
-            <div style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column', background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)' }}>
+            <div className="hero-surface" style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column' }}>
               <div style={{ fontFamily: "var(--font-jetbrains), 'JetBrains Mono', monospace", fontSize: 10, color: '#D97706', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 500, marginBottom: 10 }}>
                 ● Issue 001 dropping soon
               </div>
@@ -1151,7 +853,7 @@ export default function LandingPage() {
                     transition: 'all 0.18s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                     fontFamily: "var(--font-dm-sans), 'DM Sans', sans-serif",
                   }}
-                  onMouseEnter={e => { if (!betaSubmitting) e.currentTarget.style.background = '#155A35'; }}
+                  onMouseEnter={e => { if (!betaSubmitting) e.currentTarget.style.background = 'var(--brand-forest-hover)'; }}
                   onMouseLeave={e => { if (!betaSubmitting) e.currentTarget.style.background = 'var(--brand-forest)'; }}
                 >
                   {betaSubmitting ? 'Planting your node…' : <>Sign Me Up <span style={{ opacity: 0.7 }}>→</span></>}
@@ -1161,98 +863,8 @@ export default function LandingPage() {
                 </p>
               </form>
             </div>
-          </div>
+          </HeroCard>
         </div>
-      )}
-
-      {/* ═══ Intro title reveal ═══ */}
-      {onboardingPhase !== 'idle' && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 75,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            pointerEvents: 'none',
-            opacity: introText === 'in' ? 1 : 0,
-            transition: 'opacity 650ms cubic-bezier(0.22,1,0.36,1)',
-          }}
-        >
-          <div style={{
-            position: 'absolute',
-            width: '680px', height: '260px',
-            background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.62) 0%, rgba(255,255,255,0.28) 45%, transparent 72%)',
-            pointerEvents: 'none',
-          }} />
-          <p style={{
-            position: 'relative',
-            fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif",
-            fontSize: 'clamp(26px, 4vw, 50px)',
-            fontWeight: 600,
-            color: '#0f172a',
-            textShadow: '0 1px 2px rgba(255,255,255,0.9)',
-            letterSpacing: '-0.02em',
-            textAlign: 'center',
-            lineHeight: 1.2,
-            margin: 0,
-          }}>
-            Let&apos;s Learn About You...
-          </p>
-        </div>
-      )}
-
-      {/* ═══ Outro: Welcome to Sapling ═══ */}
-      {onboardingPhase === 'complete' && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 76,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            pointerEvents: 'none',
-            opacity: outroText === 'in' ? 1 : 0,
-            transition: 'opacity 700ms cubic-bezier(0.22,1,0.36,1)',
-          }}
-        >
-          <div style={{
-            position: 'absolute',
-            width: '780px', height: '280px',
-            background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.65) 0%, rgba(255,255,255,0.28) 45%, transparent 72%)',
-            pointerEvents: 'none',
-          }} />
-          <p style={{
-            position: 'relative',
-            fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif",
-            fontSize: 'clamp(30px, 5vw, 62px)',
-            fontWeight: 600,
-            color: '#0f172a',
-            textShadow: '0 1px 2px rgba(255,255,255,0.9)',
-            letterSpacing: '-0.025em',
-            textAlign: 'center',
-            lineHeight: 1.1,
-            margin: 0,
-          }}>
-            Welcome to Sapling
-          </p>
-        </div>
-      )}
-
-      {/* ═══ Outro white overlay ═══ */}
-      <div style={{
-        position: 'fixed', inset: 0, zIndex: 92,
-        background: 'white',
-        opacity: outroOverlay ? 1 : 0,
-        transition: 'opacity 900ms cubic-bezier(0.4,0,0.2,1)',
-        pointerEvents: 'none',
-      }} />
-
-      {/* ═══ Onboarding flow ═══ */}
-      {onboardingPhase !== 'idle' && (
-        <OnboardingFlow
-          visible={onboardingPhase === 'active'}
-          onClose={closeOnboarding}
-          onFinish={handleOnboardingComplete}
-          activeStep={activeStep}
-          completed={completed}
-          setActiveStep={setActiveStep}
-          setCompleted={setCompleted}
-        />
       )}
 
       {/* ═══ Sign-in modal ═══ */}

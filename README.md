@@ -23,6 +23,7 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 * **Adaptive Quizzes** — AI-generated quizzes targeting your weakest concepts, with difficulty scaling based on your performance and spaced-repetition scheduling that resurfaces concepts you've missed before.
 * **Flashcards** — Generate AI flashcards per course, or import them from paste, file (CSV/Markdown/Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (Easy / Hard / Forgot).
 * **Gradebook** — Track your real-world grade per course. Categories + weights, per-assignment scores, per-course letter-scale overrides, and current grade calculation. Upload a syllabus and Sapling extracts categories and assignments automatically.
+* **Gradescope Sync** — Link a Sapling course to a Gradescope course and pull assignment grades in automatically. Sign in with a Gradescope email/password or, for BU accounts, a live SSO + Duo 2FA flow; credentials are stored encrypted and re-authenticated fresh on each sync.
 * **Study Guide** — Generate a Gemini-powered exam study guide from your uploaded course materials. Guides are cached per exam and can be regenerated at any time.
 * **Class Intelligence** — Aggregates anonymized class-wide patterns to surface common misconceptions and weak areas, personalizing your sessions.
 * **Calendar & Syllabus Tracking** — Paste your syllabus and Sapling extracts assignments, deadlines, and topics automatically.
@@ -40,11 +41,12 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 ## Tech Stack
 
 * **Frontend** — Next.js 16 (TypeScript, App Router). The knowledge graph renders in 2D via D3.js (default) or 3D via `react-force-graph-3d` (three.js/WebGL), lazy-loaded so the 3D stack only enters the bundle when toggled on. Vitest with jsdom + React Testing Library for unit + component tests.
-* **Backend** — FastAPI (Python) serving a REST API. Document ingestion runs through a Pydantic AI agentic pipeline (4 typed worker agents fanned out in parallel via `asyncio.gather`). Quiz generation, the chat tutor, syllabus extraction, and the notetaker (summary / concepts / chat) are also Pydantic AI agents; the remaining LLM-driven routes still use the structured-prompt helper in `services/gemini_service.py` until they're migrated.
+* **Backend** — FastAPI (Python) serving a REST API. Document ingestion runs through a Pydantic AI agentic pipeline (4 typed worker agents fanned out in parallel via `asyncio.gather`). Quiz generation, the chat tutor, syllabus extraction, and the notetaker (summary / concepts / chat) are also Pydantic AI agents — every LLM call in the backend goes through these agents; the legacy structured-prompt helper (`services/gemini_service.py`) was retired in ADR 0024.
 * **AI** — Google Gemini, with per-task model routing configurable via env vars. Defaults: `gemini-2.5-flash-lite` for classifier, summary, quiz generation, and note summary/concepts; `gemini-2.5-flash` for concept extraction, syllabus parsing, and note chat; `gemini-2.5-pro` for the chat tutor. Override per task via `SAPLING_MODEL_<TASK>`.
 * **Streaming** — `sse-starlette` Server-Sent Events on `POST /api/documents/upload` for live per-phase progress. The frontend SSE consumer (`frontend/src/lib/sse.ts`) parses the wire format from a fetch ReadableStream so it works with multipart POSTs (which `EventSource` can't do).
 * **Observability** — [Logfire](https://logfire.pydantic.dev) auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom span scrubber (`backend/services/logfire_scrubber.py`) truncates and SHA-256-fingerprints risky attribute paths (prompt text, model output, message content) before egress so user-uploaded document text never ships verbatim. `genai-prices` provides per-call cost telemetry. Per-request structured logging includes a correlation ID, status, and duration.
 * **OCR** — Docling (layout-aware PDF → Markdown) with GOT-OCR 2.0 fallback for math/handwriting; Tesseract retained as a legacy fallback.
+* **Gradescope sync** — Per-user grade import via the unofficial `gradescopeapi` client, plus a Playwright headless-Chromium flow for BU SSO + Duo 2FA sign-in (run `playwright install chromium` after `pip install`). Credentials are stored encrypted and the app re-authenticates fresh on each sync.
 * **Database** — Supabase (PostgreSQL) for all persistent data
 * **Encryption** — AES-256-GCM column-level encryption (via the `cryptography` library) for user PII, document summaries/concept notes, OAuth tokens, chat messages, and gradebook notes
 * **Deploy** — Frontend on Cloudflare Workers via `@opennextjs/cloudflare`
@@ -110,6 +112,17 @@ npm run dev                # → http://localhost:3000
 - `PATCH` `/api/gradebook/courses/{course_id}/scale` — Override the per-course letter-grade scale
 - `POST`  `/api/gradebook/syllabus/apply` — Apply a parsed syllabus (replaces categories, dedupes assignments)
 
+**Gradescope**
+- `POST`   `/api/gradescope/credentials` — Test a Gradescope login, then save encrypted email/password credentials
+- `POST`   `/api/gradescope/credentials/bu-sso` — Live BU SSO sign-in via headless Chromium (WebLogin + Duo), storing session cookies
+- `DELETE` `/api/gradescope/credentials` — Remove stored credentials
+- `GET`    `/api/gradescope/status` — Whether credentials are saved and when the user last synced
+- `GET`    `/api/gradescope/courses` — List the user's Gradescope student courses (live)
+- `GET`    `/api/gradescope/links` — List Sapling-course → Gradescope-course mappings
+- `POST`   `/api/gradescope/link` — Create or update a course mapping
+- `DELETE` `/api/gradescope/link/{sapling_course_id}` — Remove a course mapping
+- `POST`   `/api/gradescope/sync/{sapling_course_id}` — Pull assignments from the linked Gradescope course and upsert grades into the gradebook
+
 **Study Guide**
 - `GET`  `/api/study-guide/{user_id}/guide` — Get (or generate) a study guide for an exam
 - `GET`  `/api/study-guide/{user_id}/cached` — List all cached study guides
@@ -123,7 +136,7 @@ npm run dev                # → http://localhost:3000
 - `POST` `/api/calendar/save` — Save extracted assignments
 
 **Documents**
-- `POST` `/api/documents/upload` — **Streaming SSE upload.** Runs the agentic pipeline (classifier → parallel summary/concepts/syllabus → graph merge) and emits typed SSE events the client renders as live progress: `status:start`, `progress:classify`, `progress:classified`, `progress:extract`, `progress:extracted`, `progress:graph_update`, `progress:graph_updated`, `result:finalize`, `status:done`. Errors emit `error:fallback` (degraded to legacy single-call pipeline) or `error:failed` (terminal). Idempotent on `X-Request-ID` — a retry with the same ID returns the previously persisted document without re-running the pipeline.
+- `POST` `/api/documents/upload` — **Streaming SSE upload.** Runs the agentic pipeline (classifier → parallel summary/concepts/syllabus → graph merge) and emits typed SSE events the client renders as live progress: `status:start`, `progress:classify`, `progress:classified`, `progress:extract`, `progress:extracted`, `progress:graph_update`, `progress:graph_updated`, `result:finalize`, `status:done`. Errors emit `error:failed` (terminal). Idempotent on `X-Request-ID` — a retry with the same ID returns the previously persisted document without re-running the pipeline.
 - `POST` `/api/documents/upload/sync` — Non-streaming JSON upload. Same orchestrator under the hood, returns the persisted document as a single JSON response. Used by callers that don't need progress events.
 - `GET`  `/api/documents/user/{user_id}` — List a user's documents
 - `DELETE` `/api/documents/doc/{doc_id}` — Delete a document
@@ -215,11 +228,12 @@ npm run dev                # → http://localhost:3000
 | `ENCRYPTION_KEY` | ✅ | AES-256-GCM key for column-level encryption (32 bytes as 64 hex chars; generate with `python -c "import secrets; print(secrets.token_hex(32))"`) |
 | `PORT` | — | Backend port (default `5000`) |
 | `FRONTEND_URL` | — | Allowed CORS origin (default `http://localhost:3000`) |
+| `APP_ENV` | — | Deployment environment (default `production`, fail-closed checks). Set `local` for local dev (relaxes `SESSION_SECRET`); set `staging` on the staging deploy (adds a noindex header, still fail-closed). |
 | `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (for sign-in and Calendar) |
 | `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
 | `SESSION_SECRET` | — | HMAC secret for session tokens (min 32 bytes) |
 | `ALLOWED_EMAIL_DOMAINS` | — | Comma-separated sign-in email-domain allowlist (default `bu.edu`). Empty value disables the check (any domain may sign in). |
-| `SUPABASE_DB_URL` | — | Supabase **direct** connection string (port 5432, not the pooler) — used only by the `db.migrate` migration runner, never at app runtime |
+| `SUPABASE_DB_URL` | — | Supabase **session-mode pooler** URI (port 5432, user `postgres.<ref>`) — used only by the `db.migrate` migration runner, never at app runtime. Not the direct `db.<ref>` host (IPv6-only, unreachable from most networks); not port 6543 (transaction mode, breaks DDL) |
 | `LOGFIRE_TOKEN` | — | If set, traces ship to logfire.pydantic.dev. Without it, Logfire stays local-only. The Sapling scrubber redacts prompt/output content before egress regardless. |
 | `SAPLING_MODEL_CLASSIFIER` | — | Override classifier-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_SUMMARY` | — | Override summary-agent model (default `gemini-2.5-flash-lite`) |
@@ -258,17 +272,14 @@ npm test            # vitest run
 npm run test:watch  # vitest watch
 ```
 
-**Evals** (live Gemini, on demand) — 95 cases across 6 agents: the 4 worker agents (`document_classification`, `document_summary`, `concept_extraction`, `syllabus_extraction`) plus the chat tutor (`chat_tutor`) and quiz generator (`quiz_generation`). Three modes via `SAPLING_EVAL_MODE`:
+**Evals** — extraction-accuracy harness for the migrated agents. Five offline datasets (`document_classification`, `document_summary`, `concept_extraction`, `syllabus_extraction`, `quiz_generation`) run in replay mode against committed cassettes — no network, fully deterministic. Each task reports a per-evaluator accuracy score; a task fails only when it regresses below the committed baseline in `tests/evals/baselines.json` or a cassette is missing. One command runs them all:
 ```bash
 cd backend
-# Replay (default; no network, requires recorded cassettes):
-SAPLING_EVAL_MODE=replay python tests/evals/document_classification.py
-# Record (hits live Gemini, writes cassettes to tests/evals/cassettes/):
-SAPLING_EVAL_MODE=record python tests/evals/document_classification.py
-# Live (hits live Gemini, no recording):
-SAPLING_EVAL_MODE=live   python tests/evals/document_classification.py
+python tests/evals/run_all.py                                  # replay (default), gate on baselines
+SAPLING_EVAL_MODE=record python tests/evals/run_all.py         # refresh cassettes (live Gemini)
+SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py  # refresh baselines from current scores
 ```
-The `.github/workflows/evals.yml` workflow runs replay-mode in CI; it's currently `workflow_dispatch`-only until cassette coverage is complete (4 / 95 recorded today).
+`.github/workflows/evals.yml` runs `run_all.py` in replay mode on every PR that touches `backend/agents/**` or the harness. The `chat_tutor` dataset is excluded from the offline harness because its retrieval tool reads a live Supabase (tracked under #149). See `backend/tests/evals/README.md` for the record/refresh workflow.
 
 ## Architecture & Dev Context
 
@@ -301,7 +312,7 @@ The `.github/workflows/evals.yml` workflow runs replay-mode in CI; it's currentl
 
 ## Migrations
 
-Schema lives as ordered SQL files in `backend/db/migrations/` (numeric prefix = apply order, `0001`–`0028`). A minimal runner (`backend/db/migrate.py`) applies pending files in order and records each in a tracking table, so it's idempotent — re-running only applies what's new. The runner connects directly with `psycopg` over the Supabase **direct** connection string (`SUPABASE_DB_URL`, not the pooler); this is the one sanctioned exception to the `db/connection.py::table()`-only convention, since runtime PostgREST can't execute DDL.
+Schema lives as ordered SQL files in `backend/db/migrations/`, applied in filename order. New migrations use a UTC timestamp prefix (`date -u +%Y%m%d%H%M%S`); the legacy `NNNN_` files are frozen and must never be renamed, since the ledger keys on basename and a rename re-runs the migration. See `backend/db/migrations/README.md`. A minimal runner (`backend/db/migrate.py`) applies pending files in order and records each in a tracking table, so it's idempotent — re-running only applies what's new. The runner connects with `psycopg` over the **session-mode pooler** URI (`SUPABASE_DB_URL`, port 5432, user `postgres.<ref>`); this is the one sanctioned exception to the `db/connection.py::table()`-only convention, since runtime PostgREST can't execute DDL.
 
 ```bash
 cd backend

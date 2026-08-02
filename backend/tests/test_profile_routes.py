@@ -19,6 +19,7 @@ All DB access and auth guards are mocked.
 """
 import pytest
 from unittest.mock import MagicMock, patch
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from main import app
@@ -35,6 +36,77 @@ def _mock_self():
 
 def _mock_session_user():
     return patch("routes.profile.get_session_user_id", return_value=USER_ID)
+
+
+# ── Visibility-matrix helpers (#134) ────────────────────────────────────────
+
+VIEWER_ID = "viewer_user_9"
+
+FULL_PROFILE_ROW = {
+    "user_id": USER_ID, "name": "Test", "username": "tester",
+    "avatar_url": "https://cdn/a.png", "bio": "Secret", "location": "Hidden",
+    "website": "https://t.io", "year": "junior", "majors": ["Math"], "minors": ["CS"],
+}
+
+
+def _visibility_tables(visibility):
+    """table() factory for a user whose profile carries every sensitive field."""
+    user_row = {"id": USER_ID, "email": None, "streak_count": 3, "created_at": "2025-01-01"}
+    settings_row = {"user_id": USER_ID, "profile_visibility": visibility}
+
+    def table_side_effect(name):
+        m = MagicMock()
+        if name == "users":
+            m.select.return_value = [user_row]
+        elif name == "user_profiles":
+            m.select.return_value = [dict(FULL_PROFILE_ROW)]
+        elif name == "user_settings":
+            m.select.return_value = [settings_row]
+        else:
+            m.select.return_value = []
+        return m
+
+    return table_side_effect
+
+
+def _viewer(viewer_id):
+    """Patch the route's session read to a specific viewer (None = anonymous)."""
+    if viewer_id is None:
+        return patch(
+            "routes.profile.get_session_user_id",
+            side_effect=HTTPException(status_code=401, detail="Not authenticated"),
+        )
+    return patch("routes.profile.get_session_user_id", return_value=viewer_id)
+
+
+def _assert_private_stub(data):
+    """Restricted view: identity-adjacent decoration only; personal data out."""
+    assert data["id"] == USER_ID
+    assert data["username"] == "tester"
+    assert data["avatar_url"] == "https://cdn/a.png"
+    assert data["created_at"] == "2025-01-01"
+    # #134: these must never leak on a restricted profile.
+    assert data.get("name") in (None, "")
+    assert data.get("year") is None
+    assert data.get("majors") in (None, [])
+    assert data.get("minors") in (None, [])
+    assert data.get("school") is None
+    assert data.get("bio") is None
+    assert data.get("location") is None
+    assert data.get("website") is None
+    assert data.get("featured_achievements") in (None, [])
+    assert data.get("stats") in (None, {})
+
+
+def _assert_full_profile(data):
+    assert data["name"] == "Test"
+    assert data["year"] == "junior"
+    assert data["majors"] == ["Math"]
+    assert data["minors"] == ["CS"]
+    assert data["bio"] == "Secret"
+    assert data["location"] == "Hidden"
+    assert data["website"] == "https://t.io"
+    assert data["stats"].get("streak_count") == 3
 
 
 # ── GET /api/profile/{user_id} ─────────────────────────────────────────────
@@ -91,30 +163,78 @@ class TestGetPublicProfile:
         assert r.status_code == 404
 
     def test_private_profile_hides_bio_and_stats(self):
-        user_row = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
-        profile_row = {"user_id": USER_ID, "name": "Test", "username": None, "avatar_url": None, "bio": "Secret", "location": "Hidden", "website": None}
-        settings_row = {"user_id": USER_ID, "profile_visibility": "private"}
-
-        def table_side_effect(name):
-            m = MagicMock()
-            if name == "users":
-                m.select.return_value = [user_row]
-            elif name == "user_profiles":
-                m.select.return_value = [profile_row]
-            elif name == "user_settings":
-                m.select.return_value = [settings_row]
-            else:
-                m.select.return_value = []
-            return m
-
-        with patch("routes.profile.table", side_effect=table_side_effect):
+        # #134 tightened: a private profile viewed by ANOTHER user returns only
+        # the minimal stub — name/year/majors/minors/school are personal data
+        # and must be hidden alongside bio/location/website/stats.
+        with _viewer("someone_else"), \
+             patch("routes.profile.table", side_effect=_visibility_tables("private")):
             r = client.get(f"/api/profile/{USER_ID}")
 
         assert r.status_code == 200
-        data = r.json()
-        assert data["bio"] is None
-        assert data["location"] is None
-        assert data["stats"] == {}
+        _assert_private_stub(r.json())
+
+
+# ── Visibility matrix: private/school × owner/peer/stranger/anonymous (#134) ─
+
+class TestProfileVisibilityMatrix:
+    def test_private_profile_hidden_from_anonymous(self):
+        with _viewer(None), \
+             patch("routes.profile.table", side_effect=_visibility_tables("private")):
+            r = client.get(f"/api/profile/{USER_ID}")
+        # Anonymous viewing stays allowed (public profiles are anonymous-
+        # visible); it must narrow the payload, never 401.
+        assert r.status_code == 200
+        _assert_private_stub(r.json())
+
+    def test_private_profile_owner_sees_everything(self):
+        with _viewer(USER_ID), \
+             patch("routes.profile.table", side_effect=_visibility_tables("private")):
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 200
+        _assert_full_profile(r.json())
+
+    def test_school_profile_same_school_sees_extended(self):
+        with _viewer(VIEWER_ID), \
+             patch("routes.profile.table", side_effect=_visibility_tables("school")), \
+             patch("routes.profile.school_peer_user_ids",
+                   return_value={USER_ID, VIEWER_ID}) as peers:
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 200
+        _assert_full_profile(r.json())
+        peers.assert_called_once_with(USER_ID)
+
+    def test_school_profile_different_school_gets_stub(self):
+        with _viewer(VIEWER_ID), \
+             patch("routes.profile.table", side_effect=_visibility_tables("school")), \
+             patch("routes.profile.school_peer_user_ids", return_value={USER_ID}):
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 200
+        _assert_private_stub(r.json())
+
+    def test_school_profile_anonymous_gets_stub(self):
+        with _viewer(None), \
+             patch("routes.profile.table", side_effect=_visibility_tables("school")), \
+             patch("routes.profile.school_peer_user_ids", return_value=set()):
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 200
+        _assert_private_stub(r.json())
+
+    def test_school_profile_owner_sees_everything_without_peer_lookup(self):
+        with _viewer(USER_ID), \
+             patch("routes.profile.table", side_effect=_visibility_tables("school")), \
+             patch("routes.profile.school_peer_user_ids", return_value=set()) as peers:
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 200
+        _assert_full_profile(r.json())
+        peers.assert_not_called()
+
+    def test_public_profile_anonymous_sees_extended(self):
+        # Guard: the viewer resolution must not narrow PUBLIC profiles.
+        with _viewer(None), \
+             patch("routes.profile.table", side_effect=_visibility_tables("public")):
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 200
+        _assert_full_profile(r.json())
 
 
 # ── PATCH /api/profile/{user_id} ───────────────────────────────────────────
@@ -234,6 +354,47 @@ class TestGetSettings:
 
         assert r.status_code == 200
         assert r.json()["theme"] == "light"
+
+
+# ── PATCH /api/profile/{user_id}/settings ──────────────────────────────────
+
+class TestUpdateSettingsVisibility:
+    """profile_visibility is validated in-route against its DB CHECK enum (0031),
+    so a bad value returns 400 rather than reaching PostgREST as a raw CHECK
+    violation → 500 (#342)."""
+
+    def _tables(self):
+        captured = {}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "user_settings":
+                m.select.return_value = [{"user_id": USER_ID, "profile_visibility": "public"}]
+                m.update.side_effect = lambda data, filters: captured.update({"data": data}) or [{}]
+            else:
+                m.select.return_value = []
+            return m
+
+        return table_side_effect, captured
+
+    def test_school_tier_is_accepted(self):
+        table_side_effect, captured = self._tables()
+        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+            r = client.patch(
+                f"/api/profile/{USER_ID}/settings", json={"profile_visibility": "school"}
+            )
+        assert r.status_code == 200
+        assert captured["data"]["profile_visibility"] == "school"
+
+    def test_invalid_visibility_is_rejected_400(self):
+        table_side_effect, captured = self._tables()
+        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+            r = client.patch(
+                f"/api/profile/{USER_ID}/settings", json={"profile_visibility": "friends"}
+            )
+        assert r.status_code == 400
+        # And nothing was written — the bad value never reached the DB.
+        assert "data" not in captured
 
 
 # ── POST /api/profile/{user_id}/equip ──────────────────────────────────────
@@ -751,3 +912,83 @@ class TestGetUserOr404SelectColumns:
             f"_get_user_or_404 SELECTs columns that don't exist on `user_profiles`: "
             f"{sorted(unknown_profiles)}."
         )
+
+
+class TestUpdateSettingsShareClassContext:
+    """#72: the Class Intel opt-out must be patchable — it's the persisted
+    preference the write chokepoint (course_context_service) filters on, and
+    SharedContextToggle PATCHes it best-effort. A whitelist miss here would
+    silently 400 the toggle's persistence forever (the frontend swallows it)."""
+
+    def _tables(self):
+        captured = {}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "user_settings":
+                m.select.return_value = [{"user_id": USER_ID, "share_class_context": True}]
+                m.update.side_effect = lambda data, filters: captured.update({"data": data}) or [{}]
+            else:
+                m.select.return_value = []
+            return m
+
+        return table_side_effect, captured
+
+    def test_share_class_context_is_patchable(self):
+        table_side_effect, captured = self._tables()
+        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+            r = client.patch(
+                f"/api/profile/{USER_ID}/settings", json={"share_class_context": False}
+            )
+        assert r.status_code == 200
+        assert captured["data"]["share_class_context"] is False
+
+
+class TestShareClassContextToggleRefresh:
+    """#72 (PR #464 review): persisting the opt-out is not enough — the
+    aggregates must refresh NOW, not whenever a classmate's activity next
+    fires update_course_context. The PATCH schedules one refresh per
+    enrolled offering; update_course_context re-reads user_settings, so the
+    just-written value is what its chokepoint filter sees."""
+
+    def _tables(self):
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "user_settings":
+                m.select.return_value = [{"user_id": USER_ID, "share_class_context": True}]
+                m.update.return_value = [{}]
+            elif name == "enrollments":
+                m.select.return_value = [
+                    {"offering_id": "off-1"},
+                    {"offering_id": "off-2"},
+                    {"offering_id": "off-1"},  # duplicate → deduped
+                ]
+            else:
+                m.select.return_value = []
+            return m
+
+        return table_side_effect
+
+    def test_toggling_share_class_context_refreshes_every_enrolled_offering(self):
+        with (
+            _mock_self(),
+            patch("routes.profile.table", side_effect=self._tables()),
+            patch("routes.profile.update_course_context") as refresh,
+        ):
+            r = client.patch(
+                f"/api/profile/{USER_ID}/settings", json={"share_class_context": False}
+            )
+        assert r.status_code == 200
+        # TestClient runs BackgroundTasks after the response: one refresh per
+        # distinct offering.
+        assert sorted(c.args[0] for c in refresh.call_args_list) == ["off-1", "off-2"]
+
+    def test_other_settings_do_not_trigger_refresh(self):
+        with (
+            _mock_self(),
+            patch("routes.profile.table", side_effect=self._tables()),
+            patch("routes.profile.update_course_context") as refresh,
+        ):
+            r = client.patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})
+        assert r.status_code == 200
+        refresh.assert_not_called()

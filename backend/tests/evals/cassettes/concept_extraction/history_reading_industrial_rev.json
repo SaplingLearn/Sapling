@@ -1,0 +1,34 @@
+{
+  "concepts": [
+    {
+      "description": "The Industrial Revolution was a period in 18th-century Britain characterized by significant economic and social changes, driven by factors like cheap coal, expensive labor, and steam power.",
+      "importance": 1.0,
+      "name": "Industrial Revolution"
+    },
+    {
+      "description": "Key conditions in 18th-century Britain, including cheap coal, expensive labor, an open patent regime, and a navigable transport network, facilitated the onset of the Industrial Revolution.",
+      "importance": 0.9,
+      "name": "Factors Enabling the Industrial Revolution"
+    },
+    {
+      "description": "Steam power was a transformative technology during the Industrial Revolution that dramatically changed manufacturing processes.",
+      "importance": 0.85,
+      "name": "Steam Power"
+    },
+    {
+      "description": "Urbanization during the Industrial Revolution led to the concentration of workers in factory towns, altering population distribution and social structures.",
+      "importance": 0.75,
+      "name": "Urbanization"
+    },
+    {
+      "description": "During the Industrial Revolution, working conditions in factories became a significant public concern due to their harshness.",
+      "importance": 0.7,
+      "name": "Working Conditions"
+    },
+    {
+      "description": "The Factory Acts were legislative measures introduced in response to public concerns about poor working conditions during the Industrial Revolution.",
+      "importance": 0.65,
+      "name": "Factory Acts"
+    }
+  ]
+}

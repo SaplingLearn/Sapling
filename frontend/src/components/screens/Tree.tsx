@@ -3,17 +3,20 @@ import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { Pill } from "../Pill";
 import { FilterPills } from "@/components/ui";
-import { KnowledgeGraph } from "../KnowledgeGraph";
+import { KnowledgeGraph } from "../graph/KnowledgeGraph";
+import { FullHeightScreen } from "../FullHeightScreen";
 import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { getGraph, getCourses, getSessions, deleteGraphNode, type EnrolledCourse, type Session } from "@/lib/api";
+import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
+import { getGraph, getCourses, getSessions, addGraphNode, deleteGraphNode, type EnrolledCourse, type Session } from "@/lib/api";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -28,6 +31,7 @@ export function Tree() {
   const router = useRouter();
   const search = useSearchParams();
   const { userId, userReady } = useUser();
+  const [activeSemester, , semesterHydrated] = useActiveSemester();
   const isMobile = useIsMobile();
   const suggest = search.get("suggest");
 
@@ -46,6 +50,13 @@ export function Tree() {
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [loading, setLoading] = React.useState(true);
 
+  // Manual add-concept composer (#330) — only offered when a single course
+  // is selected: courseFilter is a FILTER whose "all" value gives no course
+  // to attribute the new node to.
+  const [addingConcept, setAddingConcept] = React.useState(false);
+  const [newConceptName, setNewConceptName] = React.useState("");
+  const [savingConcept, setSavingConcept] = React.useState(false);
+
   const toast = useToast();
 
   React.useEffect(() => {
@@ -58,7 +69,7 @@ export function Tree() {
     if (!userId) return;
     try {
       const [graphRes, coursesRes, sessionsRes] = await Promise.all([
-        getGraph(userId),
+        getGraph(userId, activeSemester || undefined),
         getCourses(userId),
         getSessions(userId, 50).catch(() => ({ sessions: [] })),
       ]);
@@ -78,11 +89,39 @@ export function Tree() {
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, activeSemester]);
+
+  // Manual add-concept (#330): create-or-merge server-side (the backend
+  // dedups case/whitespace-insensitively), then reload so the canonical row
+  // and its anchor edge render from DB truth. The selected node anchors the
+  // edge when it belongs to the chosen course; otherwise the course root
+  // does, server-side.
+  const submitAddConcept = async () => {
+    const name = newConceptName.trim();
+    if (!name || courseFilter === "all" || !userId || savingConcept) return;
+    setSavingConcept(true);
+    try {
+      const res = await addGraphNode(userId, {
+        concept_name: name,
+        course_id: courseFilter,
+        anchor_node_id: selected && selected.course_id === courseFilter ? selected.id : undefined,
+      });
+      toast.success(res.already_existed ? `Merged into your existing “${name}” node.` : `Added “${name}”.`);
+      setNewConceptName("");
+      setAddingConcept(false);
+      await load();
+    } catch {
+      toast.error("Couldn't add the concept.");
+    } finally {
+      setSavingConcept(false);
+    }
+  };
 
   React.useEffect(() => {
-    if (userReady && userId) load();
-  }, [userReady, userId, load]);
+    // Wait for the active-semester read from localStorage before the first load,
+    // so returning users fetch scoped once instead of unscoped-then-scoped.
+    if (userReady && userId && semesterHydrated) load();
+  }, [userReady, userId, semesterHydrated, load]);
 
   // Auto-select node matching ?suggest= once data loads.
   React.useEffect(() => {
@@ -91,16 +130,21 @@ export function Tree() {
     if (target) setSelected(target);
   }, [suggest, nodes]);
 
+  useScrollLock(fullscreen);
+
   React.useEffect(() => {
     if (!fullscreen) return;
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(false); };
     document.addEventListener("keydown", h);
-    document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", h);
-      document.body.style.overflow = "";
     };
   }, [fullscreen]);
+
+  const scopedCourses = React.useMemo(
+    () => (activeSemester ? courses.filter((c) => courseInTerm(c, activeSemester)) : courses),
+    [courses, activeSemester],
+  );
 
   const filteredNodes = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -131,11 +175,13 @@ export function Tree() {
     return n?.id;
   }, [suggest, nodes]);
 
-  const onLearn = (n: GraphNode) => router.push(
-    `/learn?topic=${encodeURIComponent(n.name)}&mode=socratic${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`,
-  );
+  const onLearn = (n: GraphNode) => router.push(learnHrefForNode(n));
+  // Subject-root (course) nodes have no single quiz topic — open the picker
+  // rather than seeding the course name (mirrors the tutor fix, #319). The
+  // Quiz screen only reads `topic`/`concept`, so the old `course_id` param was
+  // dead and is dropped.
   const onQuiz = (n: GraphNode) => router.push(
-    `/quiz?topic=${encodeURIComponent(n.name)}${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`,
+    n.is_subject_root ? "/quiz" : `/quiz?topic=${encodeURIComponent(n.name)}`,
   );
 
   const del = useConfirm(async () => {
@@ -208,7 +254,7 @@ export function Tree() {
           {sessionsForSelected.slice(0, 4).map(s => (
             <button
               key={s.id}
-              onClick={() => router.push(`/learn?session=${s.id}`)}
+              onClick={() => router.push(`/learn?resume=${encodeURIComponent(s.id)}`)}
               style={{
                 display: "flex", justifyContent: "space-between", alignItems: "center",
                 width: "100%", padding: "8px 10px",
@@ -231,7 +277,7 @@ export function Tree() {
   );
 
   return (
-    <div>
+    <FullHeightScreen>
       <TopBar
         title="Your Knowledge Tree"
         subtitle="The living map of what you've learned, organized by course."
@@ -250,6 +296,8 @@ export function Tree() {
           borderBottom: "1px solid var(--border)",
           flexWrap: "wrap",
           alignItems: "center",
+          // Intrinsic height: the graph row below is the only flexible child.
+          flexShrink: 0,
         }}
       >
         <div style={{ position: "relative", flex: "0 1 260px" }}>
@@ -296,7 +344,7 @@ export function Tree() {
         }}
       >
         <Pill active={courseFilter === "all"} onClick={() => setCourseFilter("all")}>All courses</Pill>
-        {courses.map((c) => (
+        {scopedCourses.map((c) => (
           <Pill
             key={c.course_id}
             active={courseFilter === c.course_id}
@@ -311,9 +359,53 @@ export function Tree() {
             {c.course_code || c.course_name}
           </Pill>
         ))}
+        {courseFilter !== "all" && (
+          addingConcept ? (
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center", marginLeft: "auto" }}>
+              <input
+                data-testid="graph-add-concept-input"
+                autoFocus
+                value={newConceptName}
+                placeholder="Concept name"
+                onChange={(e) => setNewConceptName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submitAddConcept();
+                  if (e.key === "Escape") { setAddingConcept(false); setNewConceptName(""); }
+                }}
+                style={{
+                  fontSize: 13, padding: "5px 10px", border: "1px solid var(--border)",
+                  borderRadius: "var(--r-full)", background: "var(--bg-panel)", width: 180,
+                }}
+              />
+              <button
+                data-testid="graph-add-concept-submit"
+                className="btn btn--sm btn--primary"
+                disabled={!newConceptName.trim() || savingConcept}
+                onClick={submitAddConcept}
+              >
+                Add
+              </button>
+            </span>
+          ) : (
+            <button
+              data-testid="graph-add-concept"
+              className="btn btn--sm"
+              style={{ marginLeft: "auto" }}
+              onClick={() => setAddingConcept(true)}
+            >
+              ＋ Add concept
+            </button>
+          )
+        )}
       </div>
 
-      <div style={{ display: "flex", height: "calc(100vh - 240px)" }}>
+      {/* The graph row absorbs whatever `<main>` has left after the TopBar and
+          the filter row. `flex: 1` + `minHeight: 0` rather than a viewport
+          subtraction: this row's child is the ResizeObserver target whose
+          contentRect becomes <KnowledgeGraph width height>, so a hardcoded
+          `calc(100vh - …)` mis-sized the CANVAS in whichever shell layout the
+          constant wasn't calibrated for (#341). */}
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div ref={ref} style={{ flex: 1, minWidth: 0, position: "relative" }}>
           {loading ? (
             <GraphPanelSkeleton />
@@ -383,7 +475,7 @@ export function Tree() {
           />
         </div>
       )}
-    </div>
+    </FullHeightScreen>
   );
 }
 

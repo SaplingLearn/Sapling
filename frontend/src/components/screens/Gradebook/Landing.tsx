@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { TopBar } from "@/components/TopBar";
+import { FullHeightScreen } from "@/components/FullHeightScreen";
 import { SemesterChips } from "@/components/Gradebook/SemesterChips";
 import {
   CourseCard,
@@ -9,10 +10,12 @@ import {
 } from "@/components/Gradebook/CourseCard";
 import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { useUser } from "@/context/UserContext";
-import { getGradebookSummary, getCourses } from "@/lib/api";
-import type { EnrolledCourse } from "@/lib/api";
+import { getGradebookSummary, getCourses, getSemesters } from "@/lib/api";
+import { courseTermLabels, currentTerm } from "@/lib/semesters";
+import { now } from "@/lib/testMode";
 import type { GradebookCourseSummary } from "@/lib/types";
 import { SyllabusUploadFlow } from "@/components/Gradebook/SyllabusUploadFlow";
+import { TranscriptModal } from "@/components/Gradebook/TranscriptModal";
 import { Button } from "@/components/ui";
 
 const SAMPLE_SEMESTERS = ["Spring 2026", "Fall 2025"];
@@ -99,25 +102,48 @@ export function GradebookLanding() {
   const [semesters, setSemesters] = React.useState<string[]>([]);
   const [selected, setSelected] = React.useState<string>("");
   const [courses, setCourses] = React.useState<GradebookCourseSummary[]>([]);
+  const [termGpa, setTermGpa] = React.useState<number | null>(null);
   const [colorMap, setColorMap] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
+  const [termsReady, setTermsReady] = React.useState(false);
   const [uploadOpen, setUploadOpen] = React.useState(false);
+  const [transcriptOpen, setTranscriptOpen] = React.useState(false);
+
+  // /gradebook?semester=<label> is how the dashboard archive deep-links into a
+  // past term. Read straight off location because useSearchParams() would need
+  // a Suspense boundary in the route shell, which this component doesn't own.
+  const [requestedTerm] = React.useState(() =>
+    typeof window === "undefined"
+      ? ""
+      : new URLSearchParams(window.location.search).get("semester") ?? "",
+  );
 
   React.useEffect(() => {
+    // SAMPLE_SEMESTERS is the logged-out marketing preview only. A signed-in
+    // user with no terms must see their own empty state, never demo chips.
     if (!userId) {
       setSemesters(SAMPLE_SEMESTERS);
       setSelected(SAMPLE_SEMESTERS[0]);
+      setTermsReady(true);
       return;
     }
-    getCourses(userId)
-      .then((res) => {
-        const all = res.courses as (EnrolledCourse & { semester?: string })[];
-        const distinct = Array.from(
-          new Set(all.map((c) => (c as any).semester).filter(Boolean)),
-        ) as string[];
-        const list = distinct.length ? distinct : SAMPLE_SEMESTERS;
-        setSemesters(list);
-        setSelected(list[0]);
+    Promise.all([
+      getCourses(userId),
+      // The chips still work off the course terms alone if this 404s or the
+      // project has no terms seeded — sort_key just stops informing the order.
+      getSemesters().catch(() => ({ semesters: [] })),
+    ])
+      .then(([coursesRes, semestersRes]) => {
+        const all = coursesRes.courses ?? [];
+        const terms = semestersRes.semesters ?? [];
+        const labels = courseTermLabels(all, terms);
+        setSemesters(labels);
+        const preferred = labels.includes(requestedTerm)
+          ? requestedTerm
+          : // Thread the test-mode clock (frozen under NEXT_PUBLIC_TEST_MODE,
+            // #426) — currentTerm's default `today` is the real wall clock.
+            currentTerm(terms, new Date(now()))?.label;
+        setSelected(preferred && labels.includes(preferred) ? preferred : labels[0] ?? "");
         const colors: Record<string, string> = {};
         for (const c of all) {
           if (c.color) colors[c.course_id] = c.color;
@@ -125,15 +151,23 @@ export function GradebookLanding() {
         setColorMap(colors);
       })
       .catch(() => {
-        setSemesters(SAMPLE_SEMESTERS);
-        setSelected(SAMPLE_SEMESTERS[0]);
-      });
-  }, [userId]);
+        setSemesters([]);
+        setSelected("");
+      })
+      .finally(() => setTermsReady(true));
+  }, [userId, requestedTerm]);
 
   React.useEffect(() => {
-    if (!selected) return;
+    if (!termsReady) return;
+    if (!selected) {
+      setCourses([]);
+      setTermGpa(null);
+      setLoading(false);
+      return;
+    }
     if (!userId) {
       setCourses(SAMPLE_COURSES[selected] ?? []);
+      setTermGpa(null);
       setLoading(false);
       return;
     }
@@ -141,12 +175,14 @@ export function GradebookLanding() {
     getGradebookSummary(userId, selected)
       .then((res) => {
         setCourses(res.courses.length ? res.courses : []);
+        setTermGpa(res.gpa ?? null);
       })
       .catch(() => {
         setCourses([]);
+        setTermGpa(null);
       })
       .finally(() => setLoading(false));
-  }, [userId, selected]);
+  }, [userId, selected, termsReady]);
 
   const gridRef = React.useRef<HTMLDivElement>(null);
 
@@ -190,7 +226,7 @@ export function GradebookLanding() {
   if (!userReady) return null;
 
   return (
-    <>
+    <FullHeightScreen>
       <TopBar
         title="Grades"
         actions={
@@ -204,16 +240,60 @@ export function GradebookLanding() {
           padding: "var(--pad-xl)",
           position: "relative",
           overflow: "hidden",
-          minHeight: "calc(100vh - var(--row-h))",
+          // Fill whatever `<main>` has left below the TopBar, and keep growing
+          // when the content is taller. Was `calc(100vh - var(--row-h))`, which
+          // subtracted a DENSITY token (40/34/48px) as if it were a nav height
+          // — wrong in both shell layouts and at every density (#341).
+          flex: "1 0 auto",
         }}
       >
         <AmbientOrbs />
         <div style={{ position: "relative", zIndex: 1 }}>
-        <SemesterChips
-          semesters={semesters}
-          selected={selected}
-          onSelect={setSelected}
-        />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 16,
+            flexWrap: "wrap",
+          }}
+        >
+          <SemesterChips
+            semesters={semesters}
+            selected={selected}
+            onSelect={setSelected}
+          />
+          {userId && (
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              {termGpa !== null && (
+                <span
+                  data-testid="gradebook-term-gpa"
+                  className="mono"
+                  title="Credit-weighted GPA for this semester"
+                  style={{
+                    fontSize: 12,
+                    letterSpacing: "0.02em",
+                    color: "var(--text-dim)",
+                  }}
+                >
+                  Term GPA{" "}
+                  <strong style={{ color: "var(--text)", fontWeight: 600 }}>
+                    {termGpa.toFixed(2)}
+                  </strong>
+                </span>
+              )}
+              <button
+                type="button"
+                data-testid="gradebook-transcript-open"
+                className="btn"
+                onClick={() => setTranscriptOpen(true)}
+                style={{ padding: "5px 14px", fontSize: 12 }}
+              >
+                Transcript
+              </button>
+            </div>
+          )}
+        </div>
         {loading ? (
           <LoadingSkeleton />
         ) : courses.length === 0 ? (
@@ -236,6 +316,7 @@ export function GradebookLanding() {
                 course={c}
                 variant="default"
                 courseColor={colorMap[c.course_id] || "var(--accent)"}
+                semester={selected}
               />
             ))}
           </div>
@@ -244,13 +325,20 @@ export function GradebookLanding() {
       </main>
 
       {userId && (
-        <SyllabusUploadFlow
-          open={uploadOpen}
-          userId={userId}
-          onClose={() => setUploadOpen(false)}
-        />
+        <>
+          <SyllabusUploadFlow
+            open={uploadOpen}
+            userId={userId}
+            onClose={() => setUploadOpen(false)}
+          />
+          <TranscriptModal
+            open={transcriptOpen}
+            userId={userId}
+            onClose={() => setTranscriptOpen(false)}
+          />
+        </>
       )}
-    </>
+    </FullHeightScreen>
   );
 }
 

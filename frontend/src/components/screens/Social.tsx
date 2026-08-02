@@ -3,6 +3,7 @@ import React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Icon } from "../Icon";
+import { FullHeightScreen } from "../FullHeightScreen";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
 import { Toggle } from "@/components/ui";
@@ -10,11 +11,12 @@ import { SocialRoomsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
-import { IS_LOCAL_MODE } from "@/lib/api";
 import {
   getUserRooms,
   createRoom,
   joinRoom,
+  listPublicRooms,
+  joinPublicRoom,
   getRoomMessages,
   sendRoomMessage,
   toggleRoomReaction,
@@ -28,10 +30,15 @@ import {
   getStudents,
   type StudentRow,
 } from "@/lib/api";
-import type { RoomMessageRow, RoomOverviewData } from "@/lib/types";
+import type { PublicRoom, RoomMessageRow, RoomOverviewData } from "@/lib/types";
 
 type Tab = "overview" | "chat" | "match" | "activity" | "directory";
-type Room = { id: string; name: string; invite_code: string; member_count: number; created_by?: string };
+type Room = {
+  id: string; name: string; invite_code: string; member_count: number;
+  created_by?: string;
+  // #405 columns (populated on create; older rows may carry nulls)
+  topic?: string | null; course?: string | null; is_public?: boolean | null;
+};
 
 const EMOJI_50 = [
   "👍","🎉","❤️","🔥","🙌","💯","😂","😊","🤔","😮",
@@ -42,10 +49,9 @@ const EMOJI_50 = [
 ];
 
 function supabaseClient() {
-  if (IS_LOCAL_MODE) return null;
   if (typeof window === "undefined") return null;
   try {
-    // Lazy so local mode doesn't blow up.
+    // Lazy require so Supabase isn't pulled into the SSR bundle.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { getSupabase } = require("@/lib/supabase");
     return getSupabase();
@@ -98,15 +104,32 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
   const toast = useToast();
   const [mode, setMode] = React.useState<"idle" | "create" | "join">("idle");
   const [value, setValue] = React.useState("");
+  // #405 create-form fields: optional labeling + the public flag
+  // (false = invite-only; true = listed and joinable without an invite).
+  const [topic, setTopic] = React.useState("");
+  const [course, setCourse] = React.useState("");
+  const [isPublic, setIsPublic] = React.useState(false);
+
+  const reset = () => {
+    setMode("idle");
+    setValue("");
+    setTopic("");
+    setCourse("");
+    setIsPublic(false);
+  };
 
   const submit = async () => {
     if (!value.trim() || !userId) return;
     try {
-      if (mode === "create") await createRoom(userId, value.trim());
-      else if (mode === "join") await joinRoom(userId, value.trim());
+      if (mode === "create") {
+        await createRoom(userId, value.trim(), {
+          topic: topic.trim() || undefined,
+          course: course.trim() || undefined,
+          is_public: isPublic,
+        });
+      } else if (mode === "join") await joinRoom(userId, value.trim());
       toast.success(mode === "create" ? "Room created" : "Joined room");
-      setMode("idle");
-      setValue("");
+      reset();
       onDone();
     } catch (err) {
       toast.error(String(err));
@@ -116,31 +139,165 @@ function CreateJoinBar({ onDone }: { onDone: () => void }) {
   if (mode === "idle") {
     return (
       <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-        <button className="btn btn--sm btn--primary" style={{ flex: 1 }} onClick={() => setMode("create")}>
+        <button data-testid="social-create-room" className="btn btn--sm btn--primary" style={{ flex: 1 }} onClick={() => setMode("create")}>
           <Icon name="plus" size={12} /> Create
         </button>
-        <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => setMode("join")}>Join</button>
+        <button data-testid="social-join-room" className="btn btn--sm" style={{ flex: 1 }} onClick={() => setMode("join")}>Join</button>
       </div>
     );
   }
 
+  const inputStyle: React.CSSProperties = {
+    flex: 1, padding: "6px 10px",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
+    fontSize: 12, background: "var(--bg-panel)",
+  };
+
   return (
-    <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-      <input
-        autoFocus
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") setMode("idle"); }}
-        placeholder={mode === "create" ? "Room name" : "Invite code"}
-        style={{
-          flex: 1, padding: "6px 10px",
-          border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-          fontSize: 12, background: "var(--bg-panel)",
-        }}
-      />
-      <button className="btn btn--sm btn--primary" onClick={submit}>Go</button>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          data-testid="social-create-join-input"
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); if (e.key === "Escape") reset(); }}
+          placeholder={mode === "create" ? "Room name" : "Invite code"}
+          style={inputStyle}
+        />
+        <button data-testid="social-create-join-submit" className="btn btn--sm btn--primary" onClick={submit}>Go</button>
+      </div>
+      {mode === "create" && (
+        <>
+          <input
+            data-testid="social-create-topic"
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder="Topic (optional)"
+            style={inputStyle}
+          />
+          <input
+            data-testid="social-create-course"
+            value={course}
+            onChange={(e) => setCourse(e.target.value)}
+            placeholder="Course (optional)"
+            style={inputStyle}
+          />
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-dim)" }}>
+            <input
+              data-testid="social-create-public"
+              type="checkbox"
+              checked={isPublic}
+              onChange={(e) => setIsPublic(e.target.checked)}
+            />
+            Public — anyone can find and join without an invite
+          </label>
+        </>
+      )}
     </div>
   );
+}
+
+function PublicRoomsList({ excludeIds, onJoined }: { excludeIds: string[]; onJoined: () => void }) {
+  const { userId } = useUser();
+  const toast = useToast();
+  const [rooms, setRooms] = React.useState<PublicRoom[]>([]);
+  const [joining, setJoining] = React.useState<string | null>(null);
+
+  const refresh = React.useCallback(async () => {
+    if (!userId) return;
+    try {
+      setRooms((await listPublicRooms(userId)).rooms);
+    } catch (err) {
+      // Never swallow: an empty list has to mean "no public rooms", not
+      // "the fetch broke" (#463/#185 convention). This is a secondary
+      // surface, so it toasts rather than taking over with a banner.
+      toast.error(`Couldn't load public rooms. ${String(err)}`);
+    }
+  }, [userId, toast]);
+
+  React.useEffect(() => { refresh(); }, [refresh]);
+
+  const discoverable = rooms.filter((r) => !excludeIds.includes(r.id));
+  if (discoverable.length === 0) return null;
+
+  const join = async (roomId: string) => {
+    if (!userId || joining) return;
+    setJoining(roomId);
+    try {
+      await joinPublicRoom(userId, roomId);
+      toast.success("Joined room");
+      onJoined();
+      // onJoined reloads MY rooms; this list owns its own data, so refresh
+      // it too or the joined room lingers as "discoverable" (#485 review).
+      await refresh();
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setJoining(null);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div className="label-micro" style={{ marginBottom: 6 }}>Public rooms</div>
+      {discoverable.map((r) => (
+        <div
+          key={r.id}
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "8px 10px", marginBottom: 4,
+            border: "1px solid var(--border)", borderRadius: "var(--r-md)",
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              {r.topic ? `${r.topic} · ` : ""}{r.member_count} member{r.member_count === 1 ? "" : "s"}
+            </div>
+          </div>
+          <button
+            data-testid={`social-public-join-${r.id}`}
+            className="btn btn--sm"
+            disabled={joining !== null}
+            onClick={() => join(r.id)}
+          >
+            {joining === r.id ? "Joining…" : "Join"}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Intrinsic pixel size of a picked image file, or null if it can't be read
+ * (#315).
+ *
+ * Measured from an object URL rather than after upload, so the dimensions
+ * travel with the message that creates it and history renders reserved from
+ * the first paint. Resolving null on error is deliberate: a message that
+ * cannot be measured should still send, it just renders unreserved like it
+ * did before.
+ */
+async function readImageSize(file: File): Promise<{ width: number; height: number } | undefined> {
+  if (typeof window === "undefined" || !file.type.startsWith("image/")) return undefined;
+  const url = URL.createObjectURL(file);
+  try {
+    return await new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () =>
+        resolve(
+          img.naturalWidth && img.naturalHeight
+            ? { width: img.naturalWidth, height: img.naturalHeight }
+            : undefined,
+        );
+      img.onerror = () => resolve(undefined);
+      img.src = url;
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function RoomChat({ roomId, members }: { roomId: string; members: { user_id: string; name: string }[] }) {
@@ -372,12 +529,16 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
       return;
     }
     try {
+      // Measure before upload so the transcript can reserve the exact box.
+      // Failure is non-fatal: without dimensions the attachment just renders
+      // unreserved, which is the pre-#315 behaviour.
+      const imageSize = await readImageSize(file);
       const path = `${roomId}/${userId}-${Date.now()}-${file.name}`;
       const up = await supa.storage.from("chat-images").upload(path, file);
       if (up.error) throw up.error;
       const pub = supa.storage.from("chat-images").getPublicUrl(path);
       const url: string = pub.data.publicUrl;
-      const res = await sendRoomMessage(roomId, userId, userName || "Me", "", url);
+      const res = await sendRoomMessage(roomId, userId, userName || "Me", "", url, undefined, imageSize);
       // Append from the POST response (own realtime echoes are skipped to avoid
       // duplicates), deduping by id in case the echo already landed.
       const saved = res?.message as RoomMessageRow | undefined;
@@ -433,11 +594,12 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
       </div>
       <div
         ref={scrollRef}
+        data-testid="social-chat-messages"
         style={{ flex: 1, overflowY: "auto", padding: "12px 24px", display: "flex", flexDirection: "column", gap: 14 }}
       >
         {hasMore && (
           <div style={{ textAlign: "center" }}>
-            <button className="btn btn--ghost btn--sm" onClick={loadEarlier} disabled={loadingEarlier}>
+            <button data-testid="social-chat-load-earlier" className="btn btn--ghost btn--sm" onClick={loadEarlier} disabled={loadingEarlier}>
               {loadingEarlier ? "Loading…" : "Load earlier messages"}
             </button>
           </div>
@@ -450,7 +612,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
           const isMenuOpen = menu === m.id;
           const isEditing = editing === m.id;
           return (
-            <div key={m.id} style={{ display: "flex", gap: 10, alignSelf: self ? "flex-end" : "flex-start", maxWidth: "72%", position: "relative" }} className="fade-in">
+            <div key={m.id} data-testid={`social-chat-message-${m.id}`} style={{ display: "flex", gap: 10, alignSelf: self ? "flex-end" : "flex-start", maxWidth: "72%", position: "relative" }} className="fade-in">
               {!self && <Avatar name={m.user_name} size={32} />}
               <div style={{ position: "relative" }}>
                 {!self && <div style={{ fontSize: 11, color: "var(--text-dim)", fontWeight: 600, marginBottom: 2 }}>{m.user_name}</div>}
@@ -466,6 +628,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                 ) : isEditing ? (
                   <div style={{ display: "flex", gap: 6 }}>
                     <input
+                      data-testid="social-chat-edit-input"
                       autoFocus
                       value={editValue}
                       onChange={e => setEditValue(e.target.value)}
@@ -478,8 +641,8 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                         borderRadius: "var(--r-sm)", fontSize: 13, background: "var(--bg-panel)",
                       }}
                     />
-                    <button className="btn btn--sm btn--primary" onClick={() => handleEditSave(m.id)}>Save</button>
-                    <button className="btn btn--sm btn--ghost" onClick={() => { setEditing(null); setEditValue(""); }}>
+                    <button data-testid="social-chat-edit-save" className="btn btn--sm btn--primary" onClick={() => handleEditSave(m.id)}>Save</button>
+                    <button data-testid="social-chat-edit-cancel" className="btn btn--sm btn--ghost" onClick={() => { setEditing(null); setEditValue(""); }}>
                       <Icon name="x" size={11} />
                     </button>
                   </div>
@@ -495,7 +658,39 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                     }}
                   >
                     {m.image_url && (
-                      <img src={m.image_url} alt="attachment" style={{ maxWidth: 260, borderRadius: "var(--r-sm)", marginBottom: m.text ? 6 : 0 }} />
+                      <img
+                        src={m.image_url}
+                        alt="attachment"
+                        loading="lazy"
+                        decoding="async"
+                        {...(m.image_width && m.image_height
+                          ? { width: m.image_width, height: m.image_height }
+                          : {})}
+                        style={{
+                          maxWidth: 260,
+                          borderRadius: "var(--r-sm)",
+                          marginBottom: m.text ? 6 : 0,
+                          // With intrinsic dimensions the browser reserves the
+                          // box from the aspect ratio before the lazily-loaded
+                          // bytes arrive, so scrolling back through history
+                          // does not shift the transcript. Safari has no scroll
+                          // anchoring to hide it, which is why this matters.
+                          ...(m.image_width && m.image_height
+                            ? {
+                                aspectRatio: `${m.image_width} / ${m.image_height}`,
+                                height: "auto",
+                                // Belt and braces against dimensions that do
+                                // not match the bytes: the server bounds them,
+                                // but a merely WRONG pair would otherwise
+                                // stretch the image instead of letterboxing.
+                                objectFit: "contain" as const,
+                                // maxWidth alone cannot cap a very tall image
+                                // once the ratio drives the height.
+                                maxHeight: 320,
+                              }
+                            : {}),
+                        }}
+                      />
                     )}
                     {renderText(m.text)}
                     {m.edited_at && <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 6 }}>(edited)</span>}
@@ -506,6 +701,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                     {m.reactions.map((r) => (
                       <button
                         key={r.emoji}
+                        data-testid={`social-chat-reaction-${r.emoji}`}
                         onClick={() => handleReaction(m.id, r.emoji)}
                         style={{
                           fontSize: 11, padding: "2px 8px",
@@ -521,18 +717,18 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                 )}
                 {isMenuOpen && !m.is_deleted && (
                   <div style={{ position: "absolute", top: -32, right: 0, display: "flex", gap: 4, background: "var(--bg-panel)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-full)", padding: 4, boxShadow: "var(--shadow-md)" }}>
-                    <button className="btn btn--ghost btn--sm" title="React" onClick={(e) => { e.stopPropagation(); setPicker(m.id); }}>
+                    <button data-testid="social-chat-message-react" className="btn btn--ghost btn--sm" title="React" onClick={(e) => { e.stopPropagation(); setPicker(m.id); }}>
                       😊
                     </button>
-                    <button className="btn btn--ghost btn--sm" title="Reply" onClick={(e) => { e.stopPropagation(); setReplyTo(m); setMenu(null); inputRef.current?.focus(); }}>
+                    <button data-testid="social-chat-message-reply" className="btn btn--ghost btn--sm" title="Reply" onClick={(e) => { e.stopPropagation(); setReplyTo(m); setMenu(null); inputRef.current?.focus(); }}>
                       ↪
                     </button>
                     {self && (
                       <>
-                        <button className="btn btn--ghost btn--sm" title="Edit" onClick={(e) => { e.stopPropagation(); setEditing(m.id); setEditValue(m.text || ""); setMenu(null); }}>
+                        <button data-testid="social-chat-message-edit" className="btn btn--ghost btn--sm" title="Edit" onClick={(e) => { e.stopPropagation(); setEditing(m.id); setEditValue(m.text || ""); setMenu(null); }}>
                           <Icon name="pencil" size={11} />
                         </button>
-                        <button className="btn btn--ghost btn--sm" title="Delete" onClick={(e) => { e.stopPropagation(); handleDelete(m); setMenu(null); }}>
+                        <button data-testid="social-chat-message-delete" className="btn btn--ghost btn--sm" title="Delete" onClick={(e) => { e.stopPropagation(); handleDelete(m); setMenu(null); }}>
                           <Icon name="x" size={11} />
                         </button>
                       </>
@@ -542,7 +738,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
                 {picker === m.id && (
                   <div style={{ position: "absolute", top: 20, right: 0, zIndex: 20, background: "var(--bg-panel)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-md)", padding: 10, boxShadow: "var(--shadow-lg)", display: "grid", gridTemplateColumns: "repeat(10, 1fr)", gap: 4, width: 340 }}>
                     {EMOJI_50.map((e) => (
-                      <button key={e} onClick={() => handleReaction(m.id, e)} style={{ fontSize: 16, padding: 4, borderRadius: 4 }}>{e}</button>
+                      <button key={e} data-testid={`social-chat-emoji-${e}`} onClick={() => handleReaction(m.id, e)} style={{ fontSize: 16, padding: 4, borderRadius: 4 }}>{e}</button>
                     ))}
                   </div>
                 )}
@@ -557,7 +753,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
           <div style={{ color: "var(--text-dim)" }}>
             Replying to <strong>{replyTo.user_name}</strong>: {replyTo.text?.slice(0, 80) || "(attachment)"}
           </div>
-          <button className="btn btn--ghost btn--sm" onClick={() => setReplyTo(null)}>
+          <button data-testid="social-chat-reply-cancel" className="btn btn--ghost btn--sm" onClick={() => setReplyTo(null)}>
             <Icon name="x" size={11} />
           </button>
         </div>
@@ -569,6 +765,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
             {filteredMentions.map((m, i) => (
               <button
                 key={m.user_id}
+                data-testid={`social-chat-mention-${m.user_id}`}
                 onClick={() => applyMention(m.name)}
                 style={{
                   display: "block", width: "100%", textAlign: "left",
@@ -584,6 +781,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
         <div style={{ display: "flex", gap: 8, alignItems: "center", background: "var(--bg-subtle)", borderRadius: "var(--r-full)", padding: "6px 14px", border: "1px solid var(--border)" }}>
           <textarea
             ref={inputRef}
+            data-testid="social-chat-input"
             value={input}
             rows={1}
             onChange={(e) => onInputChange(e.target.value)}
@@ -608,6 +806,7 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
           />
           <input
             ref={fileRef}
+            data-testid="social-chat-image-input"
             type="file"
             accept="image/*"
             hidden
@@ -617,10 +816,10 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
               e.target.value = "";
             }}
           />
-          <button className="btn btn--ghost btn--sm" onClick={() => fileRef.current?.click()} title="Attach image">
+          <button data-testid="social-chat-attach" className="btn btn--ghost btn--sm" onClick={() => fileRef.current?.click()} title="Attach image">
             <Icon name="doc" size={13} />
           </button>
-          <button className="btn btn--primary btn--sm" onClick={send} disabled={!input.trim()}>
+          <button data-testid="social-chat-send" className="btn btn--primary btn--sm" onClick={send} disabled={!input.trim()}>
             <Icon name="send" size={13} />
           </button>
         </div>
@@ -648,7 +847,11 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
   }, [roomId]);
 
   const refresh = () => getRoomOverview(roomId).then(setData).catch(console.error);
-  const isLeader = data?.room?.created_by === userId;
+  // Ownership, not authorship: the backend's kick gate keys on owner_id
+  // (#405, transferable later). Fall back to created_by for rows predating
+  // the 0038 backfill.
+  const roomOwnerId = data?.room?.owner_id ?? data?.room?.created_by;
+  const isLeader = roomOwnerId === userId;
 
   const comparison = React.useMemo(() => {
     if (!data || !suggestedId || suggestedId === userId) return null;
@@ -720,6 +923,7 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <div className="label-micro">Members</div>
           <button
+            data-testid="social-room-leave"
             className={`btn btn--sm ${leave.armed ? "btn--danger" : ""}`}
             onClick={leave.trigger}
             style={leave.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
@@ -731,7 +935,7 @@ function RoomOverview({ roomId, onChange }: { roomId: string; onChange: () => vo
           <MemberRow
             key={m.user_id}
             member={m}
-            isLeader={data.room.created_by === m.user_id}
+            isLeader={(data.room.owner_id ?? data.room.created_by) === m.user_id}
             canKick={isLeader && m.user_id !== userId}
             onKick={async () => {
               try {
@@ -779,7 +983,7 @@ function MemberRow({
 }) {
   const kick = useConfirm(onKick);
   return (
-    <div style={{
+    <div data-testid={`social-member-${member.user_id}`} style={{
       display: "flex", alignItems: "center", gap: 10,
       padding: "10px 0", borderBottom: last ? "none" : "1px solid var(--border)",
     }}>
@@ -798,6 +1002,7 @@ function MemberRow({
       </Link>
       {canKick && (
         <button
+          data-testid={`social-member-kick-${member.user_id}`}
           className={`btn btn--sm ${kick.armed ? "btn--danger" : "btn--ghost"}`}
           onClick={kick.trigger}
           style={kick.armed ? { background: "var(--err-soft)", color: "var(--err)" } : undefined}
@@ -842,7 +1047,7 @@ function StudyMatch({ roomId }: { roomId: string }) {
           <div style={{ color: "var(--text-dim)", marginBottom: 20 }}>
             We&apos;ll pair you with members whose knowledge complements yours.
           </div>
-          <button className="btn btn--primary" onClick={run} disabled={loading}>
+          <button data-testid="social-match-run" className="btn btn--primary" onClick={run} disabled={loading}>
             {loading ? "Finding…" : "Find matches"}
           </button>
         </div>
@@ -930,8 +1135,7 @@ function SchoolDirectory() {
     if (!t) return students;
     return students.filter(s =>
       s.name.toLowerCase().includes(t) ||
-      s.courses.some(c => c.toLowerCase().includes(t)) ||
-      s.top_concepts.some(c => c.toLowerCase().includes(t))
+      s.courses.some(c => c.toLowerCase().includes(t))
     );
   }, [q, students]);
 
@@ -944,6 +1148,7 @@ function SchoolDirectory() {
             <div className="h-serif" style={{ fontSize: 22 }}>Students at your school</div>
           </div>
           <input
+            data-testid="social-directory-search"
             value={q}
             onChange={e => setQ(e.target.value)}
             placeholder="Search by name, course, concept"
@@ -984,15 +1189,8 @@ function SchoolDirectory() {
                       {s.courses.slice(0, 3).join(" · ")}
                     </div>
                   )}
-                  {s.top_concepts.length > 0 && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
-                      {s.top_concepts.slice(0, 3).map(c => (
-                        <span key={c} className="chip chip--accent">{c}</span>
-                      ))}
-                    </div>
-                  )}
                   <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6 }}>
-                    {s.stats.mastered}/{s.stats.total} concepts · {s.streak}d streak
+                    {s.streak}d streak
                   </div>
                 </div>
               </Link>
@@ -1044,13 +1242,13 @@ export function Social() {
   const members = (overview?.members || []).map(m => ({ user_id: m.user_id, name: m.name }));
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
+    <FullHeightScreen direction="row">
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {tab === "directory" ? <SchoolDirectory /> : active ? (
           <>
             <div style={{ padding: "18px 24px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
-                <div className="h-serif" style={{ fontSize: 22, fontWeight: 500 }}>{active.name}</div>
+                <div data-testid="social-room-name" className="h-serif" style={{ fontSize: 22, fontWeight: 500 }}>{active.name}</div>
                 <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
                   <CopyChip code={active.invite_code} />
                   <span>{active.member_count} members</span>
@@ -1087,6 +1285,7 @@ export function Social() {
           <div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>Study Rooms</div>
           <CreateJoinBar onDone={load} />
           <button
+            data-testid="social-directory-open"
             className="btn btn--sm"
             style={{ marginTop: 8, width: "100%" }}
             onClick={() => setTab("directory")}
@@ -1104,6 +1303,7 @@ export function Social() {
           {!loading && rooms.map((r) => (
             <button
               key={r.id}
+              data-testid={`social-room-item-${r.id}`}
               onClick={() => { setActiveId(r.id); setTab("chat"); }}
               style={{
                 width: "100%", padding: "10px 12px",
@@ -1113,13 +1313,19 @@ export function Social() {
                 marginBottom: 4, display: "flex", flexDirection: "column", gap: 2,
               }}
             >
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.member_count} members</div>
+              <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                {r.name}
+                {r.is_public && <span className="chip" style={{ fontSize: 10 }}>Public</span>}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                {r.topic ? `${r.topic} · ` : ""}{r.member_count} members
+              </div>
             </button>
           ))}
+          {!loading && <PublicRoomsList excludeIds={rooms.map((r) => r.id)} onJoined={load} />}
         </div>
       </aside>
-    </div>
+    </FullHeightScreen>
   );
 }
 
@@ -1137,7 +1343,7 @@ function CopyChip({ code }: { code: string }) {
     }
   };
   return (
-    <button className="chip" onClick={copy} title="Copy invite code">
+    <button data-testid="social-invite-copy" className="chip" onClick={copy} title="Copy invite code">
       {copied ? "Copied!" : code}
     </button>
   );

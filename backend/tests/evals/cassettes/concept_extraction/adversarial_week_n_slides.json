@@ -1,0 +1,39 @@
+{
+  "concepts": [
+    {
+      "description": "This concept covers the foundational principles of statistics, defining its scope, purpose, and basic terminology.",
+      "importance": 1.0,
+      "name": "Introduction to Statistics"
+    },
+    {
+      "description": "This concept focuses on methods for summarizing and organizing data, including measures of central tendency, variability, and data visualization.",
+      "importance": 0.95,
+      "name": "Descriptive Statistics"
+    },
+    {
+      "description": "This concept introduces various probability distributions, explaining how to model the likelihood of different outcomes for random variables.",
+      "importance": 0.9,
+      "name": "Probability Distributions"
+    },
+    {
+      "description": "This concept explores different sampling techniques and the fundamental Central Limit Theorem, which is crucial for making inferences about populations from samples.",
+      "importance": 0.88,
+      "name": "Sampling and the Central Limit Theorem"
+    },
+    {
+      "description": "This concept covers the methodology for testing claims or hypotheses about population parameters using sample data.",
+      "importance": 0.85,
+      "name": "Hypothesis Testing"
+    },
+    {
+      "description": "This concept explains how to construct and interpret confidence intervals, providing a range of plausible values for an unknown population parameter.",
+      "importance": 0.82,
+      "name": "Confidence Intervals"
+    },
+    {
+      "description": "This concept introduces the basics of linear regression, a statistical method used to model the linear relationship between a dependent variable and one or more independent variables.",
+      "importance": 0.8,
+      "name": "Linear Regression"
+    }
+  ]
+}

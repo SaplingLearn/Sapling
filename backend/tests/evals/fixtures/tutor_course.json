@@ -1,0 +1,69 @@
+{
+  "_comment": "Synthetic course fixture for the chat_tutor offline evals (ADR 0023, issue #149). Plaintext by design: this data never touches the app database or its encryption boundary — FixtureRetrieval serves it straight to the agent. Concepts deliberately overlap the eval cases' topics so grounding evaluators have something to ground against.",
+  "user_id": "eval-user",
+  "course": {
+    "course_id": "eval-course",
+    "course_code": "IDS 201",
+    "course_name": "Interdisciplinary Foundations"
+  },
+  "concepts": [
+    {"concept_name": "Limits", "mastery": 0.78, "mastery_tier": "mastered", "last_reviewed_at": "2026-07-18T10:00:00Z"},
+    {"concept_name": "Derivatives", "mastery": 0.52, "mastery_tier": "learning", "last_reviewed_at": "2026-07-20T10:00:00Z"},
+    {"concept_name": "Integrals", "mastery": 0.3, "mastery_tier": "struggling", "last_reviewed_at": "2026-07-21T09:30:00Z"},
+    {"concept_name": "Chain Rule", "mastery": 0.15, "mastery_tier": "struggling", "last_reviewed_at": "2026-07-19T14:00:00Z"},
+    {"concept_name": "Recursion", "mastery": 0.62, "mastery_tier": "learning", "last_reviewed_at": "2026-07-22T16:00:00Z"},
+    {"concept_name": "Base Case", "mastery": 0.35, "mastery_tier": "struggling", "last_reviewed_at": "2026-07-22T16:05:00Z"},
+    {"concept_name": "Big-O Notation", "mastery": 0.48, "mastery_tier": "learning", "last_reviewed_at": "2026-07-15T11:00:00Z"},
+    {"concept_name": "Closures", "mastery": 0.05, "mastery_tier": "unexplored", "last_reviewed_at": null},
+    {"concept_name": "Photosynthesis", "mastery": 0.55, "mastery_tier": "learning", "last_reviewed_at": "2026-07-10T08:00:00Z"},
+    {"concept_name": "Mitosis", "mastery": 0.8, "mastery_tier": "mastered", "last_reviewed_at": "2026-07-08T13:00:00Z"},
+    {"concept_name": "Newton's First Law", "mastery": 0.25, "mastery_tier": "struggling", "last_reviewed_at": "2026-07-12T15:00:00Z"},
+    {"concept_name": "Supply And Demand", "mastery": 0.0, "mastery_tier": "unexplored", "last_reviewed_at": null}
+  ],
+  "edges": [
+    {"source": "Limits", "target": "Derivatives", "relationship_type": "prerequisite", "strength": 0.9},
+    {"source": "Derivatives", "target": "Integrals", "relationship_type": "related", "strength": 0.7},
+    {"source": "Derivatives", "target": "Chain Rule", "relationship_type": "builds_on", "strength": 0.8},
+    {"source": "Recursion", "target": "Base Case", "relationship_type": "related", "strength": 0.85},
+    {"source": "Recursion", "target": "Big-O Notation", "relationship_type": "related", "strength": 0.5}
+  ],
+  "documents": [
+    {
+      "document_id": "eval-doc-1",
+      "file_name": "calculus-week3-notes.pdf",
+      "summary": "Lecture notes covering limits as the foundation of derivatives, the definition of the derivative as a limit of difference quotients, and an introduction to the chain rule with worked examples.",
+      "concept_notes": [
+        {"name": "Limits", "description": "The value a function approaches as the input approaches a point; the foundation of the derivative definition."},
+        {"name": "Derivatives", "description": "Instantaneous rate of change; the slope of the tangent line, defined as a limit of difference quotients."},
+        {"name": "Chain Rule", "description": "Differentiating composite functions: d/dx f(g(x)) = f'(g(x)) * g'(x)."}
+      ]
+    },
+    {
+      "document_id": "eval-doc-2",
+      "file_name": "recursion-lab.pdf",
+      "summary": "Lab handout on writing recursive functions in Python: identifying the base case, the recursive step, and tracing the call stack for factorial and Fibonacci.",
+      "concept_notes": [
+        {"name": "Recursion", "description": "A function that calls itself on a smaller subproblem until reaching a base case."},
+        {"name": "Base Case", "description": "The non-recursive branch that terminates the recursion; without it the call stack overflows."},
+        {"name": "Big-O Notation", "description": "Asymptotic upper bound on running time; naive Fibonacci recursion is O(2^n)."}
+      ]
+    },
+    {
+      "document_id": "eval-doc-3",
+      "file_name": "syllabus.pdf",
+      "summary": "Course syllabus for IDS 201 Interdisciplinary Foundations: weekly topics spanning calculus, computing, biology, physics, and economics, with two midterms and a final project.",
+      "concept_notes": [
+        {"name": "Photosynthesis", "description": "Conversion of light energy to chemical energy in chloroplasts; light-dependent reactions and the Calvin cycle."},
+        {"name": "Newton's First Law", "description": "An object stays at rest or in uniform motion unless acted on by a net external force (inertia)."}
+      ]
+    }
+  ],
+  "messages": [
+    {"role": "user", "content": "Can we go over derivatives again? I got lost in lecture.", "created_at": "2026-07-20T10:00:00Z"},
+    {"role": "assistant", "content": "Of course! Before we dive in: in your own words, what does a derivative measure?", "created_at": "2026-07-20T10:00:30Z"},
+    {"role": "user", "content": "I think it's the slope of a function at a point?", "created_at": "2026-07-20T10:01:10Z"},
+    {"role": "assistant", "content": "Exactly — the slope of the tangent line. And we get it by taking a limit of difference quotients. What happens to (f(x+h)-f(x))/h as h shrinks?", "created_at": "2026-07-20T10:01:45Z"},
+    {"role": "user", "content": "It approaches the instantaneous rate of change.", "created_at": "2026-07-20T10:02:20Z"},
+    {"role": "assistant", "content": "Well put. Next time let's connect this to the chain rule, which is where you said things got fuzzy.", "created_at": "2026-07-20T10:03:00Z"}
+  ]
+}

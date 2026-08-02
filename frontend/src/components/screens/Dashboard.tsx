@@ -3,13 +3,15 @@ import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { MiniStat } from "../MiniStat";
-import { KnowledgeGraph } from "../KnowledgeGraph";
+import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { ManageCoursesModal } from "../ManageCoursesModal";
 import { DashboardSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useLayoutPref } from "@/lib/useLayoutPref";
+import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import {
   getGraph,
   getCourses,
@@ -21,7 +23,8 @@ import {
   type Assignment,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { IS_TEST_MODE, now } from "@/lib/testMode";
 
 const QUOTES = [
   "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
@@ -189,6 +192,7 @@ export function Dashboard() {
   const router = useRouter();
   const search = useSearchParams();
   const { userId, userName, userReady } = useUser();
+  const [activeSemester, , semesterHydrated] = useActiveSemester();
   const isMobile = useIsMobile();
   const [layoutPref] = useLayoutPref();
   // Top-nav layout keeps the pre-revamp 3-column dashboard with the
@@ -246,8 +250,10 @@ export function Dashboard() {
     const d = new Date(0); d.setHours(0, 0, 0, 0); return d;
   });
   React.useEffect(() => {
-    setQuote(QUOTES[Math.floor(Math.random() * QUOTES.length)]);
-    const t = new Date(); t.setHours(0, 0, 0, 0); setToday(t);
+    // Test mode freezes the quote to index 0 and the clock to the fixed
+    // test instant so the hero copy is byte-stable across loads.
+    setQuote(IS_TEST_MODE ? QUOTES[0] : QUOTES[Math.floor(Math.random() * QUOTES.length)]);
+    const t = new Date(now()); t.setHours(0, 0, 0, 0); setToday(t);
   }, []);
   const weekDays = React.useMemo(() => getWeekDays(today), [today]);
 
@@ -257,12 +263,17 @@ export function Dashboard() {
     setLoading(true);
     setLoadError(null);
     try {
+      // Empty `activeSemester` means "All semesters" — the DEFAULT — so the
+      // fetch goes out unscoped. Scoping is opt-in: it only applies once the
+      // user picks a term in the Courses & Semesters hub (nothing auto-resolves
+      // a default term; an auto-picked term hides cross-term data — vetoed by
+      // the e2e lane, #360).
       const [graphRes, coursesRes, assignsRes, sessionsRes, recsRes] = await Promise.all([
-        getGraph(userId),
+        getGraph(userId, activeSemester || undefined),
         getCourses(userId),
         getUpcomingAssignments(userId),
         getSessions(userId, 10),
-        getRecommendations(userId).catch(() => ({ recommendations: [] })),
+        getRecommendations(userId, activeSemester || undefined).catch(() => ({ recommendations: [] })),
       ]);
       const cs = coursesRes.courses || [];
       setCourses(cs);
@@ -294,27 +305,29 @@ export function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, activeSemester]);
 
   React.useEffect(() => {
-    if (userReady && userId) load();
-  }, [userReady, userId, load]);
+    // Wait for the active-semester read from localStorage before the first load,
+    // so returning users fetch scoped once instead of unscoped-then-scoped.
+    if (userReady && userId && semesterHydrated) load();
+  }, [userReady, userId, semesterHydrated, load]);
+
+  useScrollLock(fullscreen);
 
   React.useEffect(() => {
     if (!fullscreen) return;
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(false); };
     document.addEventListener("keydown", h);
-    document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", h);
-      document.body.style.overflow = "";
     };
   }, [fullscreen]);
 
   const firstName = userName ? userName.split(" ")[0] : "";
   const [greetingPrefix, setGreetingPrefix] = React.useState<string>("Welcome back");
   React.useEffect(() => {
-    setGreetingPrefix(getGreetingPrefix(new Date()));
+    setGreetingPrefix(getGreetingPrefix(new Date(now())));
   }, []);
   const greetingText = firstName ? `${greetingPrefix}, ${firstName}` : "Welcome back";
   const [greetingDone, setGreetingDone] = React.useState(false);
@@ -322,8 +335,13 @@ export function Dashboard() {
   // return JSX), not as TopBar title/subtitle. Leaving the TopBar lean
   // makes the Dashboard feel like an arrival page, not a tool page.
 
+  const scopedCourses = React.useMemo(
+    () => (activeSemester ? courses.filter((c) => courseInTerm(c, activeSemester)) : courses),
+    [courses, activeSemester],
+  );
+
   const courseProgress = React.useMemo(() => {
-    return courses.map(c => {
+    return scopedCourses.map(c => {
       const courseNodes = nodes.filter(n => n.course_id === c.course_id && !n.is_subject_root);
       const mastered = courseNodes.filter(n => n.mastery_tier === "mastered").length;
       const learning = courseNodes.filter(n => n.mastery_tier === "learning").length;
@@ -340,7 +358,7 @@ export function Dashboard() {
         progress: total ? mastered / total : 0,
       };
     });
-  }, [courses, nodes]);
+  }, [scopedCourses, nodes]);
 
   const suggestNode = React.useMemo(() => {
     if (!suggest) return null;
@@ -392,11 +410,11 @@ export function Dashboard() {
         <div>
           <div className="label-micro">Your knowledge graph</div>
           <div className="h-serif" style={{ fontSize: 20, marginTop: 2 }}>
-            {stats.total || nodes.filter((n) => !n.is_subject_root).length} concepts across {courses.length} courses
+            {stats.total || nodes.filter((n) => !n.is_subject_root).length} concepts across {scopedCourses.length} courses
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          {useLegacyPanels && courses.slice(0, 5).map((c) => (
+          {useLegacyPanels && scopedCourses.slice(0, 5).map((c) => (
             <div key={c.course_id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)" }}>
               <span style={{ width: 10, height: 10, borderRadius: "50%", background: c.color || "var(--accent)" }} />
               {c.course_code || c.course_name}
@@ -418,19 +436,15 @@ export function Dashboard() {
           width={size.w}
           height={size.h}
           highlightId={suggestNode?.id}
-          onNodeClick={(n) => {
-            const p = new URLSearchParams();
-            p.set("topic", n.name);
-            p.set("mode", "socratic");
-            if (n.course_id) p.set("course_id", n.course_id);
-            router.push(`/learn?${p.toString()}`);
-          }}
+          onNodeClick={(n) => router.push(learnHrefForNode(n))}
         />
         {/* Courses key — sidebar layout only. Top-nav layout uses the
             full My Courses panel in the left column instead. */}
         {!useLegacyPanels && (
           <CoursesKey
             courseProgress={courseProgress}
+            hasCourses={courses.length > 0}
+            semesterActive={!!activeSemester}
             onManage={() => setCoursesOpen(true)}
           />
         )}
@@ -460,7 +474,7 @@ export function Dashboard() {
 
   const relTime = (iso: string | null | undefined) => {
     if (!iso) return "—";
-    const diff = Date.now() - new Date(iso).getTime();
+    const diff = now() - new Date(iso).getTime();
     const mins = Math.round(diff / 60000);
     if (mins < 1) return "just now";
     if (mins < 60) return `${mins}m ago`;
@@ -550,6 +564,7 @@ export function Dashboard() {
           sessions.slice(0, 3).map((s) => (
             <button
               key={s.id}
+              data-testid={`dashboard-resume-${s.id}`}
               onClick={() => router.push(`/learn?resume=${encodeURIComponent(s.id)}`)}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%",
@@ -592,7 +607,7 @@ export function Dashboard() {
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
         )}
         {assignments.slice(0, 4).map((a) => {
-          const diffMs = new Date(a.due_date).getTime() - Date.now();
+          const diffMs = new Date(a.due_date).getTime() - now();
           const hours = diffMs / (1000 * 60 * 60);
           const days = Math.ceil(diffMs / 86400000);
           let chipClass = "chip--info";
@@ -734,63 +749,19 @@ export function Dashboard() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">My courses</div>
           <button className="btn btn--ghost btn--sm" onClick={() => setCoursesOpen(true)}>
-            <Icon name="cog" size={12} /> Manage
+            <Icon name="cog" size={12} /> Courses & Semesters
           </button>
         </div>
-        {courseProgress.length === 0 && (
+        {courses.length === 0 ? (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No enrolled courses yet.</div>
-        )}
-        {courseProgress.map(({ course, mastered, learning, struggling, unexplored, total, progress }) => {
-          const pct = Math.round(progress * 100);
-          const baseColor = course.color || "var(--accent)";
-          const segments = [
-            { key: "mastered",   count: mastered,   color: baseColor, opacity: 1,    label: "Mastered" },
-            { key: "learning",   count: learning,   color: baseColor, opacity: 0.78, label: "Learning" },
-            { key: "struggling", count: struggling, color: baseColor, opacity: 0.55, label: "Struggling" },
-            { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: "Unexplored" },
-          ];
-          return (
-            <div key={course.course_id} style={{ marginBottom: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: baseColor, flexShrink: 0 }} />
-                  <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {course.course_code || course.course_name}
-                  </strong>
-                </span>
-                <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
-                  {pct}%
-                </span>
-              </div>
-              {total > 0 ? (
-                <div
-                  style={{
-                    display: "flex",
-                    height: 8,
-                    background: "var(--bg-soft)",
-                    borderRadius: "var(--r-full)",
-                    overflow: "hidden",
-                  }}
-                  title={segments.filter(s => s.count > 0).map(s => `${s.label}: ${s.count}`).join(" · ")}
-                >
-                  {segments.map((s) => s.count > 0 && (
-                    <div
-                      key={s.key}
-                      style={{
-                        width: `${(s.count / total) * 100}%`,
-                        background: s.color,
-                        opacity: s.opacity,
-                        transition: "width var(--dur) var(--ease)",
-                      }}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div style={{ height: 8, background: "var(--bg-soft)", borderRadius: "var(--r-full)" }} />
-              )}
-            </div>
-          );
-        })}
+        ) : courseProgress.length === 0 ? (
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Nothing enrolled this semester.
+          </div>
+        ) : null}
+        {courseProgress.map((entry) => (
+          <CourseProgressRow key={entry.course.course_id} entry={entry} />
+        ))}
       </div>
 
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
@@ -802,7 +773,7 @@ export function Dashboard() {
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
         )}
         {assignments.slice(0, 4).map((a) => {
-          const diffMs = new Date(a.due_date).getTime() - Date.now();
+          const diffMs = new Date(a.due_date).getTime() - now();
           const hours = diffMs / (1000 * 60 * 60);
           const days = Math.ceil(diffMs / 86400000);
           let chipClass = "chip--info";
@@ -1026,7 +997,7 @@ export function Dashboard() {
             highlightId={suggestNode?.id}
             onNodeClick={(n) => {
               setFullscreen(false);
-              router.push(`/learn?topic=${encodeURIComponent(n.name)}&mode=socratic${n.course_id ? `&course_id=${encodeURIComponent(n.course_id)}` : ""}`);
+              router.push(learnHrefForNode(n));
             }}
           />
         </div>
@@ -1081,16 +1052,86 @@ type CourseProgressEntry = {
   progress: number;
 };
 
+// One "My courses" line: colour dot, course code, mastery percentage and the
+// four-segment mastery bar.
+function CourseProgressRow({
+  entry,
+}: {
+  entry: CourseProgressEntry;
+}) {
+  const { course, mastered, learning, struggling, unexplored, total, progress } = entry;
+  const pct = Math.round(progress * 100);
+  const baseColor = course.color || "var(--accent)";
+  const segments = [
+    { key: "mastered",   count: mastered,   color: baseColor, opacity: 1,    label: "Mastered" },
+    { key: "learning",   count: learning,   color: baseColor, opacity: 0.78, label: "Learning" },
+    { key: "struggling", count: struggling, color: baseColor, opacity: 0.55, label: "Struggling" },
+    { key: "unexplored", count: unexplored, color: "var(--bg-soft)", opacity: 1, label: "Unexplored" },
+  ];
+
+  const body = (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, marginBottom: 4 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ width: 10, height: 10, borderRadius: "50%", background: baseColor, flexShrink: 0 }} />
+          <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {course.course_code || course.course_name}
+          </strong>
+        </span>
+        <span className="mono" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, marginLeft: 8 }}>
+          {pct}%
+        </span>
+      </div>
+      {total > 0 ? (
+        <div
+          style={{
+            display: "flex",
+            height: 8,
+            background: "var(--bg-soft)",
+            borderRadius: "var(--r-full)",
+            overflow: "hidden",
+          }}
+          title={segments.filter(s => s.count > 0).map(s => `${s.label}: ${s.count}`).join(" · ")}
+        >
+          {segments.map((s) => s.count > 0 && (
+            <div
+              key={s.key}
+              style={{
+                width: `${(s.count / total) * 100}%`,
+                background: s.color,
+                opacity: s.opacity,
+                transition: "width var(--dur) var(--ease)",
+              }}
+            />
+          ))}
+        </div>
+      ) : (
+        <div style={{ height: 8, background: "var(--bg-soft)", borderRadius: "var(--r-full)" }} />
+      )}
+    </>
+  );
+
+  return <div style={{ marginBottom: 12 }}>{body}</div>;
+}
+
 function CoursesKey({
   courseProgress,
+  hasCourses,
+  semesterActive,
   onManage,
 }: {
   courseProgress: CourseProgressEntry[];
+  hasCourses: boolean;
+  semesterActive: boolean;
   onManage: () => void;
 }) {
   const [collapsed, setCollapsed] = React.useState(true);
 
-  if (courseProgress.length === 0) return null;
+  // No enrolled courses at all → nothing to key, render nothing (the original
+  // null case). But when courses exist and the active semester merely has none
+  // of them, keep the panel so the "Nothing enrolled this semester." empty
+  // state below is reachable.
+  if (courseProgress.length === 0 && !(hasCourses && semesterActive)) return null;
 
   // A thick white outline painted BEHIND the glyphs, plus a soft halo.
   // `paint-order: stroke fill` pushes the stroke under the fill so
@@ -1163,8 +1204,10 @@ function CoursesKey({
             <button
               className="btn btn--ghost btn--sm"
               onClick={onManage}
-              title="Manage courses"
+              title="Courses & Semesters"
+              aria-label="Courses & Semesters"
               style={paddedIconBtn}
+              data-testid="dashboard-courses-manage"
             >
               <Icon name="cog" size={13} />
             </button>
@@ -1174,6 +1217,7 @@ function CoursesKey({
             onClick={() => setCollapsed(c => !c)}
             aria-label={collapsed ? "Expand courses key" : "Collapse courses key"}
             style={paddedIconBtn}
+            data-testid="dashboard-courses-key-toggle"
           >
             <Icon name={collapsed ? "plus" : "x"} size={13} />
           </button>
@@ -1196,7 +1240,10 @@ function CoursesKey({
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5, gap: 8 }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                     <span style={{ width: 11, height: 11, borderRadius: "50%", background: baseColor, flexShrink: 0, ...legibleDot }} />
-                    <strong style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...legibleText }}>
+                    <strong
+                      data-testid="dashboard-course-code"
+                      style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...legibleText }}
+                    >
                       {course.course_code || course.course_name}
                     </strong>
                   </span>
@@ -1232,6 +1279,12 @@ function CoursesKey({
               </div>
             );
           })}
+
+          {courseProgress.length === 0 && (
+            <div style={{ fontSize: 12, color: "var(--text-dim)", ...legibleText }}>
+              Nothing enrolled this semester.
+            </div>
+          )}
         </div>
       )}
     </div>

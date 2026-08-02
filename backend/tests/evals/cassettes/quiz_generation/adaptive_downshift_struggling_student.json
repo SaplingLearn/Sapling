@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Recursion",
+      "correct_answer": "If n == 0, return 1",
+      "difficulty": "medium",
+      "explanation": "The factorial of 0 is defined as 1. This is the simplest case that stops the recursion.",
+      "options": [
+        "If n < 0, return -1",
+        "If n == 0, return 1",
+        "If n == 1, return 1",
+        "If n > 1, return n * factorial(n-1)"
+      ],
+      "question": "What is the base case for a recursive function that calculates the factorial of a non-negative integer?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Dynamic Programming",
+      "correct_answer": "An optimal solution to a problem contains optimal solutions to its subproblems",
+      "difficulty": "medium",
+      "explanation": "The principle of optimality states that an optimal solution to a problem must be composed of optimal solutions to its subproblems.",
+      "options": [
+        "An optimal solution to a problem contains optimal solutions to its subproblems",
+        "The problem can be broken down into overlapping subproblems",
+        "The solution can be built up from smaller subproblems",
+        "All subproblems must be independent of each other"
+      ],
+      "question": "In dynamic programming, what is the principle of optimality?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Graph Traversal",
+      "correct_answer": "Finding the shortest path in an unweighted graph",
+      "difficulty": "medium",
+      "explanation": "BFS explores the graph layer by layer, guaranteeing that the first time it reaches a node, it does so via the shortest path from the source in an unweighted graph.",
+      "options": [
+        "Finding the shortest path in an unweighted graph",
+        "Finding the shortest path in a weighted graph",
+        "Detecting cycles in a directed graph",
+        "Topological sorting"
+      ],
+      "question": "Which of the following is a common application of Breadth-First Search (BFS) in graph traversal?",
+      "type": "multiple_choice"
+    }
+  ]
+}

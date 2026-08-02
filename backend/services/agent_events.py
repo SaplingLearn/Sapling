@@ -12,7 +12,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-SaplingEventType = Literal["status", "progress", "result", "error"]
+# "status"/"progress"/"result" are the document-pipeline vocabulary (ADR 0006).
+# "token"/"graph_update"/"done" extend it for chat streams; "error" is shared.
+SaplingEventType = Literal[
+    "status", "progress", "result", "error", "token", "graph_update", "done"
+]
 
 
 class SaplingEvent(BaseModel):
@@ -106,3 +110,17 @@ def sapling_event_to_sse(event: SaplingEvent) -> dict[str, str]:
     JSON-encoded full payload, so the frontend can switch on type and
     still read the full structured event."""
     return {"event": event.type, "data": event.model_dump_json()}
+
+
+# Every EventSourceResponse must pass this as its Cache-Control (#356).
+# `no-transform` opts the stream out of intermediary compression: the
+# frontend proxies /api/* through Next's node server (`next start` — the e2e
+# stack and any self-hosted deploy), which wraps responses in the
+# `compression` middleware unless config.compress is false. gzip BUFFERS
+# small SSE frames, so a paced token stream reaches the browser as one
+# burst at end-of-response — progressive rendering silently broken. The
+# middleware's standard filter skips responses whose Cache-Control contains
+# `no-transform`. `no-store` preserves sse_starlette's own default caching
+# posture (it only ever `setdefault`s Cache-Control, so a route-supplied
+# value replaces it entirely).
+SSE_CACHE_CONTROL = "no-store, no-transform"

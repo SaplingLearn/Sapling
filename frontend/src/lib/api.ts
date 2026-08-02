@@ -3,20 +3,38 @@ import type {
   UserProfile, UserSettings, UserRole, UserAchievement, Achievement,
   UserCosmetic, CosmeticType, Role, Cosmetic, RarityTier, AchievementCategory,
   GradebookSummary, GradebookCourse, GradeCategory, GradedAssignment, LetterScaleTier,
+  GpaReport,
   ExtractedSyllabusCategory,
   AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
   Note, LinkedConcept,
+  GraphUpdate, MasteryChange,
+  AnalyticsBucket, LlmCostGroupBy,
+  UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
+  PublicRoom,
 } from '@/lib/types';
-
-import { handleLocalRequest } from '@/lib/localData';
+import { statusOf } from '@/lib/errorMessage';
 
 export const API_URL = '';
-export const IS_LOCAL_MODE = process.env.NEXT_PUBLIC_LOCAL_MODE === 'true';
+
+/**
+ * A failed API response. Carries the HTTP status alongside the body text so
+ * callers can branch on the status instead of pattern-matching the message —
+ * `lib/errorMessage.ts` reads `status` off the thrown value.
+ *
+ * `message` stays the raw body for backward compatibility: callers that
+ * stringify the error, or read `.message`, behave exactly as they did before.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
 
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
-  if (IS_LOCAL_MODE) {
-    return handleLocalRequest(path, options) as T;
-  }
   const res = await fetch(`${API_URL}${path}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -24,7 +42,7 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(err || `HTTP ${res.status}`);
+    throw new ApiError(err || `HTTP ${res.status}`, res.status);
   }
   return res.json();
 }
@@ -33,12 +51,39 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
 export const getUsers = () =>
   fetchJSON<{ users: { id: string; name: string; room_id: string | null }[] }>('/api/users');
 
-// Graph
-export const getGraph = (userId: string) =>
-  fetchJSON<{ nodes: any[]; edges: any[]; stats: any }>(`/api/graph/${userId}`);
+// Auth
+export interface MeResponse {
+  user_id: string;
+  is_approved: boolean;
+  onboarding_completed: boolean;
+  username: string | null;
+  name: string;
+  avatar_url: string;
+  roles: { role: Role; granted_at: string }[];
+  equipped_cosmetics: Record<string, unknown>;
+  is_admin: boolean;
+}
 
-export const getRecommendations = (userId: string) =>
-  fetchJSON<{ recommendations: any[] }>(`/api/graph/${userId}/recommendations`);
+// Cookie-authenticated identity lookup (backend/routes/auth.py::get_me
+// resolves the user via get_session_user_id, which reads the `sapling_session`
+// cookie or an `auth_token` query param — no `user_id` param needed either
+// way). UserContext's bootstrap falls back to this when localStorage has no
+// `sapling_user` entry but the HttpOnly session cookie is still valid
+// (#430); the OAuth callback (src/app/auth/callback/page.tsx) already reads
+// this same endpoint off the same cookie, though via a bare `fetch` rather
+// than this `fetchJSON` wrapper.
+export const getMe = () => fetchJSON<MeResponse>('/api/auth/me');
+
+// Graph
+export const getGraph = (userId: string, semester?: string) =>
+  fetchJSON<{ nodes: any[]; edges: any[]; stats: any }>(
+    `/api/graph/${userId}${semester ? `?semester=${encodeURIComponent(semester)}` : ""}`,
+  );
+
+export const getRecommendations = (userId: string, semester?: string) =>
+  fetchJSON<{ recommendations: any[] }>(
+    `/api/graph/${userId}/recommendations${semester ? `?semester=${encodeURIComponent(semester)}` : ""}`,
+  );
 
 export interface EnrolledCourse {
   enrollment_id: string;
@@ -51,15 +96,26 @@ export interface EnrolledCourse {
   nickname: string | null;
   node_count: number;
   enrolled_at: string;
+  // Human term label of the offering the enrollment hangs off, e.g. "Fall 2025".
+  // The backend emits "" when the offering has no term joined — treat it as unknown,
+  // never as a past term. This is the REPRESENTATIVE (most-recent) term of a course
+  // that the backend collapses to one row per abstract course_id (#449); use `terms`
+  // (below) for semester membership so a course enrolled across terms shows on each.
+  term: string;
+  // Every term label this abstract course is enrolled in (Fall 2025 + Spring 2026 for
+  // a re-take), alongside `enrollment_ids`. Present since the get_courses collapse;
+  // optional for backward-compat. Filter/scope by membership, not the singular `term`.
+  terms?: string[];
+  enrollment_ids?: string[];
 }
 
 export const getCourses = (userId: string) =>
   fetchJSON<{ courses: EnrolledCourse[] }>(`/api/graph/${userId}/courses`);
 
-export const addCourse = (userId: string, courseId: string, color?: string, nickname?: string) =>
-  fetchJSON<{ course_id: string; already_existed: boolean; error?: string }>(`/api/graph/${userId}/courses`, {
+export const addCourse = (userId: string, courseId: string, color?: string, nickname?: string, term?: string) =>
+  fetchJSON<{ course_id: string; already_existed: boolean; term?: string; error?: string }>(`/api/graph/${userId}/courses`, {
     method: 'POST',
-    body: JSON.stringify({ course_id: courseId, ...(color ? { color } : {}), ...(nickname ? { nickname } : {}) }),
+    body: JSON.stringify({ course_id: courseId, ...(color ? { color } : {}), ...(nickname ? { nickname } : {}), ...(term ? { term } : {}) }),
   });
 
 export const deleteCourse = (userId: string, courseId: string) =>
@@ -73,6 +129,27 @@ export const updateCourseColor = (userId: string, courseId: string, color: strin
     `/api/graph/${userId}/courses/${encodeURIComponent(courseId)}/color`,
     { method: 'PATCH', body: JSON.stringify({ color }) }
   );
+
+export const describeConcept = (userId: string, concept: string, courseLabel?: string) =>
+  fetchJSON<{ description: string }>(
+    `/api/graph/${userId}/concept-description`,
+    { method: 'POST', body: JSON.stringify({ concept, course_label: courseLabel ?? null }) }
+  );
+
+// Manual add-concept (#330). Returns the CANONICAL node — freshly created,
+// or the dedup survivor when the (case/whitespace-insensitive) name already
+// existed on this course — plus the merge flag the UI toasts on.
+export const addGraphNode = (
+  userId: string,
+  body: { concept_name: string; course_id: string; anchor_node_id?: string },
+) =>
+  fetchJSON<{
+    node: {
+      id: string; concept_name: string; course_id: string | null;
+      mastery_score: number; mastery_tier: string;
+    };
+    already_existed: boolean;
+  }>(`/api/graph/${userId}/nodes`, { method: 'POST', body: JSON.stringify(body) });
 
 export const deleteGraphNode = (userId: string, nodeId: string) =>
   fetchJSON<{ deleted: boolean }>(
@@ -122,6 +199,161 @@ export const sendChat = (
       ...(modelPref ? { model_pref: modelPref } : {}),
     }),
   });
+
+export interface GraphDelta {
+  nodes: Record<string, Array<Record<string, unknown>>>;
+  mastery_changes: MasteryChange[];
+}
+
+export interface ChatResult {
+  reply: string;
+  graph_update: GraphUpdate;
+  mastery_changes: MasteryChange[];
+  session_id?: string;
+  graph_state?: any;
+}
+
+interface StreamEvent {
+  type: string;
+  step: string;
+  message: string;
+  data?: Record<string, unknown> | null;
+}
+
+// Thrown from consumeChatStream on a mid-stream `error` event. Carries the
+// backend's `request_id` (ADR 0009, stamped for Logfire correlation) as a
+// property — not just baked into the message string — so a caller that
+// wants to display or copy it (see DocumentUploadModal's "Reference:"
+// pattern) doesn't have to re-parse the message text for it.
+//
+// `retryable` (#151a): the backend marks an error event retryable:false when
+// graph/mastery tool writes already landed for the turn — re-running it (the
+// ladder's JSON rung, or a transparent client retry) would re-apply those
+// writes. Defaults to true so older backends / events without the field keep
+// today's behavior.
+export class ChatStreamError extends Error {
+  requestId?: string;
+  retryable: boolean;
+  constructor(message: string, requestId?: string, retryable = true) {
+    // Keep the full id here (correlation needs an exact match); a caller
+    // that wants a short display form truncates it itself, same as
+    // DocumentUploadModal's "Reference: {id.slice(0, 8)}…" pattern.
+    super(requestId ? `${message} (ref: ${requestId})` : message);
+    this.name = 'ChatStreamError';
+    this.requestId = requestId;
+    this.retryable = retryable;
+  }
+}
+
+/**
+ * The stream ladder's Rung-3 decision (#151a): may this failed stream turn
+ * be transparently re-run through the non-streaming JSON route?
+ *
+ * false when:
+ *  - the backend said so (`ChatStreamError.retryable === false` — tool
+ *    writes landed; a re-run would double-apply them), or
+ *  - the failure was an HTTP 413 (request too large / processing budget —
+ *    the JSON route fails the exact same way, so falling back just doubles
+ *    the wait before the same error).
+ *
+ * Everything else (transport failures, idle timeouts, 5xx before any
+ * token) stays retryable — the transparent JSON fallback is the whole
+ * point of the ladder.
+ */
+export function shouldFallBackToJson(err: unknown): boolean {
+  if (err instanceof ChatStreamError) return err.retryable;
+  return statusOf(err) !== 413;
+}
+
+export interface StreamChatHandlers {
+  onToken?: (delta: string) => void;
+  onGraphUpdate?: (delta: GraphDelta) => void;
+  signal?: AbortSignal;
+}
+
+const STREAM_IDLE_MS = 45_000;
+
+async function consumeChatStream(
+  path: string,
+  payload: Record<string, unknown>,
+  { onToken, onGraphUpdate, signal }: StreamChatHandlers,
+): Promise<ChatResult> {
+  const { streamSSE } = await import('./sse');
+  let result: ChatResult | null = null;
+
+  for await (const e of streamSSE<StreamEvent>(
+    `${API_URL}${path}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'include',
+      signal,
+    },
+    { idleTimeoutMs: STREAM_IDLE_MS },
+  )) {
+    const ev = e.data;
+    if (ev.type === 'token') onToken?.(String(ev.data?.delta ?? ''));
+    else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
+    else if (ev.type === 'error') {
+      const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
+      // Only an explicit false clears the flag — absent/other values keep
+      // the default-true contract with older backends.
+      const retryable = ev.data?.retryable !== false;
+      throw new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
+    }
+    else if (ev.type === 'done') result = ev.data as unknown as ChatResult;
+  }
+
+  if (!result) throw new Error('Chat stream ended without a done event.');
+  return result;
+}
+
+export const streamChat = (
+  sessionId: string,
+  userId: string,
+  message: string,
+  mode: string,
+  useSharedContext = true,
+  modelPref?: ModelPref,
+  handlers: StreamChatHandlers = {},
+): Promise<ChatResult> => {
+  return consumeChatStream(
+    '/api/learn/chat/stream',
+    {
+      session_id: sessionId,
+      user_id: userId,
+      message,
+      mode,
+      use_shared_context: useSharedContext,
+      ...(modelPref ? { model_pref: modelPref } : {}),
+    },
+    handlers,
+  );
+};
+
+export const startSessionStream = (
+  userId: string,
+  topic: string,
+  mode: string,
+  useSharedContext = true,
+  courseId?: string,
+  modelPref?: ModelPref,
+  handlers: StreamChatHandlers = {},
+): Promise<ChatResult> => {
+  return consumeChatStream(
+    '/api/learn/start-session/stream',
+    {
+      user_id: userId,
+      topic,
+      mode,
+      use_shared_context: useSharedContext,
+      course_id: courseId,
+      ...(modelPref ? { model_pref: modelPref } : {}),
+    },
+    handlers,
+  );
+};
 
 export interface SessionSummaryData {
   concepts_covered: string[];
@@ -229,7 +461,6 @@ export const getAllAssignments = (userId: string) =>
   fetchJSON<{ assignments: Assignment[] }>(`/api/calendar/all/${userId}`);
 
 export const extractSyllabus = (formData: FormData, userId?: string): Promise<any> => {
-  if (IS_LOCAL_MODE) return Promise.resolve({ assignments: [] });
   if (userId) formData.set('user_id', userId);
   return fetch(`${API_URL}/api/calendar/extract`, { method: 'POST', body: formData, credentials: 'include' })
     .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(String(data?.detail || `HTTP ${r.status}`)); return data; });
@@ -297,11 +528,26 @@ export const exportToGoogleCalendar = (userId: string, assignmentIds: string[]) 
   });
 
 // Social
-export const createRoom = (userId: string, roomName: string) =>
+export const createRoom = (
+  userId: string,
+  roomName: string,
+  opts?: { topic?: string; course?: string; is_public?: boolean },
+) =>
   fetchJSON<{ room_id: string; invite_code: string }>('/api/social/rooms/create', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, room_name: roomName }),
+    body: JSON.stringify({ user_id: userId, room_name: roomName, ...opts }),
   });
+
+// #405 public rooms: is_public=true rooms are listed (no invite_code in the
+// payload, by construction) and joinable without an invite.
+export const listPublicRooms = (userId: string) =>
+  fetchJSON<{ rooms: PublicRoom[] }>(`/api/social/public-rooms?user_id=${encodeURIComponent(userId)}`);
+
+export const joinPublicRoom = (userId: string, roomId: string) =>
+  fetchJSON<{ joined: boolean; room_id: string }>(
+    `/api/social/public-rooms/${encodeURIComponent(roomId)}/join`,
+    { method: 'POST', body: JSON.stringify({ user_id: userId }) },
+  );
 
 export const joinRoom = (userId: string, inviteCode: string) =>
   fetchJSON<{ room: any }>('/api/social/rooms/join', {
@@ -334,10 +580,22 @@ export const getRoomMessages = (roomId: string, opts?: { before?: string; limit?
   );
 };
 
-export const sendRoomMessage = (roomId: string, userId: string, userName: string, text: string, imageUrl?: string, replyToId?: string) =>
+export const sendRoomMessage = (
+  roomId: string, userId: string, userName: string, text: string,
+  imageUrl?: string, replyToId?: string,
+  /** Intrinsic pixel size of imageUrl, so the transcript can reserve the box
+   *  before the lazily-loaded image arrives (#315). */
+  imageSize?: { width: number; height: number },
+) =>
   fetchJSON<{ message: any }>(`/api/social/rooms/${roomId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, user_name: userName, text: text || null, image_url: imageUrl || null, reply_to_id: replyToId || null }),
+    body: JSON.stringify({
+      user_id: userId, user_name: userName, text: text || null,
+      image_url: imageUrl || null,
+      image_width: imageSize?.width ?? null,
+      image_height: imageSize?.height ?? null,
+      reply_to_id: replyToId || null,
+    }),
   });
 
 export const toggleRoomReaction = (roomId: string, messageId: string, userId: string, emoji: string) =>
@@ -374,8 +632,9 @@ export interface StudentRow {
   name: string;
   streak: number;
   courses: string[];
-  stats: { mastered: number; learning: number; struggling: number; unexplored: number; total: number };
-  top_concepts: string[];
+  // Per-concept mastery (stats/top_concepts) was removed from this endpoint in
+  // #342: it is academic-performance data that belongs on the profile page, not
+  // in a browsable directory. The directory is now name + courses + streak only.
 }
 
 export const getStudents = () =>
@@ -398,7 +657,6 @@ export const uploadDocument = (formData: FormData, signal?: AbortSignal): Promis
   // Non-streaming JSON upload. Hits /upload/sync (legacy contract) so callers
   // that don't care about progress events stay one-line. The streaming /upload
   // route is exposed separately via uploadDocumentStream below.
-  if (IS_LOCAL_MODE) return Promise.resolve({ id: 'local-doc', status: 'processed' });
   return fetch(`${API_URL}/api/documents/upload/sync`, { method: 'POST', body: formData, signal, credentials: 'include' })
     .then(async r => { if (!r.ok) { const e = await r.text(); throw new Error(e || `HTTP ${r.status}`); } return r.json(); });
 };
@@ -420,10 +678,6 @@ export async function uploadDocumentStream(
   signal?: AbortSignal,
   requestId?: string,
 ): Promise<any> {
-  if (IS_LOCAL_MODE) {
-    onEvent({ type: 'status', step: 'done', message: 'Saved.' });
-    return { id: 'local-doc', status: 'processed' };
-  }
   const { streamSSE } = await import('./sse');
   let finalDoc: any = null;
   const headers: Record<string, string> = {};
@@ -480,16 +734,25 @@ export interface GenerateFlashcardsResponse {
   context_used?: { documents_found: number; weak_concepts_found: number };
 }
 
-export const generateFlashcards = (userId: string, topic: string, count = 5) =>
+// `semester` (term label, #141) grounds generation in that term's course
+// documents; omitted = current term. JSON.stringify drops it when unset.
+export const generateFlashcards = (userId: string, topic: string, count = 5, semester?: string) =>
   fetchJSON<GenerateFlashcardsResponse>('/api/flashcards/generate', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, topic, count }),
+    body: JSON.stringify({ user_id: userId, topic, count, semester }),
   });
 
-export const getFlashcards = (userId: string, topic?: string) =>
-  fetchJSON<{ flashcards: any[] }>(
-    `/api/flashcards/user/${userId}${topic ? `?topic=${encodeURIComponent(topic)}` : ''}`
+// `semester` scopes the list to that term's offerings (term-less cards stay
+// visible); ""/undefined = All semesters, the unscoped default (#141).
+export const getFlashcards = (userId: string, topic?: string, semester?: string) => {
+  const params = new URLSearchParams();
+  if (topic) params.set('topic', topic);
+  if (semester) params.set('semester', semester);
+  const qs = params.toString();
+  return fetchJSON<{ flashcards: any[] }>(
+    `/api/flashcards/user/${userId}${qs ? `?${qs}` : ''}`
   );
+};
 
 export const rateFlashcard = (userId: string, cardId: string, rating: number) =>
   fetchJSON<{ ok: boolean }>('/api/flashcards/rate', {
@@ -591,24 +854,36 @@ export interface StudyGuideCacheEntry {
   exam_title: string;
   overview: string;
   generated_at: string;
+  // The entry's OWN term label (#475 F1): a recent guide opens as its own
+  // term, overriding the active selector for that open. null when the row's
+  // offering has no term; optional for bodies cached before the field shipped.
+  semester?: string | null;
 }
 
-export const getStudyGuideExams = (userId: string, courseId: string) =>
+// The study-guide reads take an optional `semester` (term label, #141).
+// With it, each read resolves STRICTLY to that term's offering. Omitted/"":
+// getStudyGuide/regenerateStudyGuide fall back to current-term offering
+// resolution, while getStudyGuideExams lists exams across ALL of the user's
+// enrollments of the course (every term) — that asymmetry is pre-existing
+// behavior, documented as-is.
+export const getStudyGuideExams = (userId: string, courseId: string, semester?: string) =>
   fetchJSON<{ exams: StudyGuideExam[] }>(
-    `/api/study-guide/${encodeURIComponent(userId)}/exams?course_id=${encodeURIComponent(courseId)}`,
+    `/api/study-guide/${encodeURIComponent(userId)}/exams?course_id=${encodeURIComponent(courseId)}` +
+      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
   );
 
-export const getStudyGuide = (userId: string, courseId: string, examId: string) =>
+export const getStudyGuide = (userId: string, courseId: string, examId: string, semester?: string) =>
   fetchJSON<{ guide: StudyGuideContent; generated_at: string; cached: boolean }>(
-    `/api/study-guide/${encodeURIComponent(userId)}/guide?course_id=${encodeURIComponent(courseId)}&exam_id=${encodeURIComponent(examId)}`,
+    `/api/study-guide/${encodeURIComponent(userId)}/guide?course_id=${encodeURIComponent(courseId)}&exam_id=${encodeURIComponent(examId)}` +
+      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
   );
 
-export const regenerateStudyGuide = (userId: string, courseId: string, examId: string) =>
+export const regenerateStudyGuide = (userId: string, courseId: string, examId: string, semester?: string) =>
   fetchJSON<{ success: boolean; guide: StudyGuideContent; generated_at: string }>(
     '/api/study-guide/regenerate',
     {
       method: 'POST',
-      body: JSON.stringify({ user_id: userId, course_id: courseId, exam_id: examId }),
+      body: JSON.stringify({ user_id: userId, course_id: courseId, exam_id: examId, semester }),
     },
   );
 
@@ -904,6 +1179,34 @@ export const adminAuditLog = (params?: {
 export const adminAnalyticsOverview = () =>
   fetchJSON<AnalyticsOverview>('/api/admin/analytics/overview');
 
+// Admin — analytics rollups (#121, over the #120 API). Params the caller
+// leaves unset are omitted so the backend defaults stay server-owned
+// (last 30 days, group_by=feature, no series).
+const analyticsQuery = (params?: Record<string, string | number | undefined>) => {
+  const qp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params ?? {})) {
+    if (v !== undefined && v !== '') qp.set(k, String(v));
+  }
+  const s = qp.toString();
+  return s ? `?${s}` : '';
+};
+
+export const adminUsageSummary = (params?: { from?: string; to?: string; bucket?: AnalyticsBucket }) =>
+  fetchJSON<UsageSummaryData>(`/api/admin/analytics/usage/summary${analyticsQuery(params)}`);
+
+export const adminUsageByUser = (params?: { from?: string; to?: string; limit?: number; offset?: number }) =>
+  fetchJSON<UsageByUserData>(`/api/admin/analytics/usage/by-user${analyticsQuery(params)}`);
+
+export const adminLlmCost = (params?: {
+  from?: string; to?: string; group_by?: LlmCostGroupBy; bucket?: AnalyticsBucket;
+}) =>
+  fetchJSON<LlmCostData>(`/api/admin/analytics/llm/cost${analyticsQuery(params)}`);
+
+export const adminErrors = (params?: {
+  from?: string; to?: string; limit?: number; offset?: number; bucket?: AnalyticsBucket;
+}) =>
+  fetchJSON<ErrorsPageData>(`/api/admin/analytics/errors${analyticsQuery(params)}`);
+
 // Careers
 export const submitJobApplication = async (data: {
   position: string;
@@ -914,7 +1217,6 @@ export const submitJobApplication = async (data: {
   portfolio_link?: string;
   resume?: File | null;
 }): Promise<{ ok: boolean; id: string | null }> => {
-  if (IS_LOCAL_MODE) return { ok: true, id: null };
   const formData = new FormData();
   formData.append('position', data.position);
   formData.append('full_name', data.full_name);
@@ -957,7 +1259,6 @@ function readFileAsBase64(file: File): Promise<string> {
 export const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
 export const uploadAvatar = async (userId: string, file: File): Promise<{ avatar_url: string }> => {
-  if (IS_LOCAL_MODE) return { avatar_url: URL.createObjectURL(file) };
   // Size-check BEFORE the base64 encode. Reading a 50 MB file just to
   // throw it out is wasted CPU + memory. Settings.tsx already
   // pre-checks size for the toast UX, but a future caller (admin
@@ -982,6 +1283,23 @@ export const uploadAvatar = async (userId: string, file: File): Promise<{ avatar
   });
 };
 
+// ── Semesters ────────────────────────────────────────────────────────────────
+
+export interface Semester {
+  id: string;
+  term: string;
+  year: number;
+  label: string;
+  start_date: string;
+  end_date: string;
+  // year * 10 + term ordinal (Spring=1, Summer=2, Fall=3, Winter=4) — the
+  // canonical ordering key; the backend serves terms sort_key-descending.
+  sort_key: number;
+}
+
+export const getSemesters = () =>
+  fetchJSON<{ semesters: Semester[] }>('/api/semesters');
+
 // ── Gradebook ────────────────────────────────────────────────────────────────
 
 export const getGradebookSummary = (userId: string, semester: string) =>
@@ -989,30 +1307,52 @@ export const getGradebookSummary = (userId: string, semester: string) =>
     `/api/gradebook/summary?user_id=${encodeURIComponent(userId)}&semester=${encodeURIComponent(semester)}`,
   );
 
-export const getGradebookCourse = (userId: string, courseId: string) =>
+// `semester` pins which enrollment of the course to load (a course can be
+// taken in several terms, #139); omitted = the backend resolves the current
+// term with its single-offering fallback.
+export const getGradebookCourse = (userId: string, courseId: string, semester?: string) =>
   fetchJSON<GradebookCourse>(
-    `/api/gradebook/courses/${encodeURIComponent(courseId)}?user_id=${encodeURIComponent(userId)}`,
+    `/api/gradebook/courses/${encodeURIComponent(courseId)}?user_id=${encodeURIComponent(userId)}` +
+      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
   );
 
+// Credit-weighted GPA. Without `semester`: the cumulative/transcript report
+// across all terms (scope "cumulative"); with it: that one term.
+export const getGpa = (userId: string, semester?: string) =>
+  fetchJSON<GpaReport>(
+    `/api/gradebook/gpa?user_id=${encodeURIComponent(userId)}` +
+      (semester ? `&semester=${encodeURIComponent(semester)}` : ''),
+  );
+
+// Course-keyed gradebook MUTATIONS below take the same optional `semester`
+// (term-label body field, matching the backend body models) as
+// getGradebookCourse: the backend resolves (course, semester) to ONE
+// enrollment, and without the term a write from an archived term's page
+// would silently land on the current term's enrollment (#139/#468).
+// Id-keyed calls (deleteCategory, update/deleteGradedAssignment) resolve by
+// row ownership and don't need it. `JSON.stringify` drops an undefined
+// `semester`, so the wire format is unchanged when unset.
 export const createCategory = (
   userId: string,
   courseId: string,
   name: string,
   weight: number,
+  semester?: string,
 ) =>
   fetchJSON<{ category: GradeCategory }>(
     `/api/gradebook/courses/${encodeURIComponent(courseId)}/categories`,
-    { method: 'POST', body: JSON.stringify({ user_id: userId, name, weight }) },
+    { method: 'POST', body: JSON.stringify({ user_id: userId, semester, name, weight }) },
   );
 
 export const bulkUpdateCategories = (
   userId: string,
   courseId: string,
   categories: { id?: string; name: string; weight: number; sort_order: number; drop_lowest: number }[],
+  semester?: string,
 ) =>
   fetchJSON<{ categories: GradeCategory[] }>(
     `/api/gradebook/courses/${encodeURIComponent(courseId)}/categories`,
-    { method: 'PATCH', body: JSON.stringify({ user_id: userId, categories }) },
+    { method: 'PATCH', body: JSON.stringify({ user_id: userId, semester, categories }) },
   );
 
 export const deleteCategory = (userId: string, categoryId: string) =>
@@ -1025,10 +1365,11 @@ export const createGradedAssignment = (
   userId: string,
   courseId: string,
   fields: Partial<Omit<GradedAssignment, 'id' | 'course_id' | 'source'>> & { title: string },
+  semester?: string,
 ) =>
   fetchJSON<{ assignment: GradedAssignment }>('/api/gradebook/assignments', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, course_id: courseId, ...fields }),
+    body: JSON.stringify({ user_id: userId, course_id: courseId, semester, ...fields }),
   });
 
 export const updateGradedAssignment = (
@@ -1051,10 +1392,11 @@ export const setLetterScale = (
   userId: string,
   courseId: string,
   scale: LetterScaleTier[] | null,
+  semester?: string,
 ) =>
   fetchJSON<{ updated: true; letter_scale: LetterScaleTier[] | null }>(
     `/api/gradebook/courses/${encodeURIComponent(courseId)}/scale`,
-    { method: 'PATCH', body: JSON.stringify({ user_id: userId, scale }) },
+    { method: 'PATCH', body: JSON.stringify({ user_id: userId, semester, scale }) },
   );
 
 export async function setCurveSettings(
@@ -1067,11 +1409,12 @@ export async function setCurveSettings(
     curve_final_mean?: number | null;
     curve_final_sd?: number | null;
   },
+  semester?: string,
 ): Promise<{ updated: boolean }> {
   return fetchJSON(`/api/gradebook/courses/${encodeURIComponent(courseId)}/curve`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: userId, ...settings }),
+    body: JSON.stringify({ user_id: userId, semester, ...settings }),
   });
 }
 

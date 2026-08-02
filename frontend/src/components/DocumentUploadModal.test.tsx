@@ -2,9 +2,14 @@
 /**
  * Component tests for DocumentUploadModal — covers SSE-driven error UX:
  *   1. Terminal error event (`step="failed"`) -> toast.error
- *   2. Fallback error event (`step="fallback"`) -> toast.warn (NOT toast.error)
- *   3. Retry button mints a fresh request_id on the second uploadDocumentStream call
- *   4. request_id is surfaced under the row with a working "copy" button
+ *      (the only error step since #151b — `step="fallback"` died with the
+ *      legacy pipeline)
+ *   2. Retry button mints a fresh request_id on the second uploadDocumentStream call
+ *   3. request_id is surfaced under the row with a working "copy" button
+ *
+ * Plus the inline course-add flow (#186): a course added via the modal's
+ * search must be immediately selectable in the per-file Course dropdown,
+ * default new rows for zero-course users, and reset when the modal reopens.
  *
  * The module-level vi.mock for "@/lib/api" replaces the real network helpers
  * with controllable spies so tests can drive arbitrary SSE event sequences.
@@ -31,11 +36,16 @@ import { DocumentUploadModal } from "./DocumentUploadModal";
 import { ToastProvider } from "./ToastProvider";
 import {
   uploadDocumentStream,
+  addCourse,
+  onboardingCoursesSearch,
   type UploadEvent,
   type EnrolledCourse,
+  type OnboardingCourse,
 } from "@/lib/api";
 
 const mockedUpload = vi.mocked(uploadDocumentStream);
+const mockedAddCourse = vi.mocked(addCourse);
+const mockedSearch = vi.mocked(onboardingCoursesSearch);
 
 const COURSE: EnrolledCourse = {
   enrollment_id: "e1",
@@ -48,6 +58,7 @@ const COURSE: EnrolledCourse = {
   nickname: null,
   node_count: 0,
   enrolled_at: "2026-01-01",
+  term: "Spring 2026",
 };
 
 function renderModal() {
@@ -129,47 +140,6 @@ describe("DocumentUploadModal SSE error UX", () => {
     await waitFor(() => {
       expect(screen.getAllByText(/upload failed/i).length).toBe(2);
     });
-  });
-
-  it("emits toast.warn (not toast.error) on fallback SSE error event", async () => {
-    const events: UploadEvent[] = [
-      { type: "status", step: "start", message: "Document received." },
-      {
-        type: "error",
-        step: "fallback",
-        message: "Switching to legacy",
-        data: { request_id: "trace-fallback-1" },
-      },
-      {
-        // Wire-format note: the streaming /upload route emits the result
-        // event with step="finalize" (see backend/routes/documents.py).
-        // The component branches on `ev.type` only, but matching the
-        // backend's actual step keeps the fixture honest.
-        type: "result",
-        step: "finalize",
-        message: "Saved.",
-        data: { id: "doc-1", classification: { category: "other" } },
-      },
-      { type: "status", step: "done", message: "Done." },
-    ];
-    mockedUpload.mockImplementation(async (_fd, onEvent) => {
-      for (const e of events) onEvent(e);
-      // Result already streamed; resolve with the same shape uploadDocumentStream
-      // would return after collecting the result event.
-      return { id: "doc-1", classification: { category: "other" } };
-    });
-
-    const user = userEvent.setup();
-    renderModal();
-    await addFile(user);
-
-    await user.click(screen.getByRole("button", { name: /start upload/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/switching to fallback/i)).toBeInTheDocument();
-    });
-    // No "upload failed" toast — fallback is a warn, not an error.
-    expect(screen.queryByText(/upload failed/i)).not.toBeInTheDocument();
   });
 
   it("retry mints a fresh request_id on the second uploadDocumentStream call", async () => {
@@ -256,5 +226,109 @@ describe("DocumentUploadModal SSE error UX", () => {
     await waitFor(() => {
       expect(clipboardWrite).toHaveBeenCalledWith(RID);
     });
+  });
+});
+
+describe("DocumentUploadModal inline course add (#186)", () => {
+  const NEW_COURSE: OnboardingCourse = {
+    id: "c-2",
+    course_code: "MATH200",
+    course_name: "Calculus II",
+  };
+
+  beforeEach(() => {
+    mockedAddCourse.mockReset();
+    mockedAddCourse.mockResolvedValue({ course_id: "c-2", already_existed: false });
+    mockedSearch.mockReset();
+    mockedSearch.mockResolvedValue({ courses: [NEW_COURSE] });
+  });
+
+  afterEach(() => {
+    // Restore the hoisted-factory default so other describes see an empty
+    // search result set regardless of test ordering.
+    mockedSearch.mockReset();
+    mockedSearch.mockImplementation(async () => ({ courses: [] }));
+  });
+
+  /** Searches for NEW_COURSE and clicks its result row, waiting for the add to settle. */
+  async function inlineAddCourse(user: ReturnType<typeof userEvent.setup>) {
+    await user.type(screen.getByTestId("upload-modal-course-search"), "math");
+    // The search is debounced 200ms; findBy* polls past it.
+    const resultBtn = await screen.findByTestId(`upload-modal-course-result-${NEW_COURSE.id}`);
+    await user.click(resultBtn);
+    await waitFor(() => {
+      expect(mockedAddCourse).toHaveBeenCalledWith("u1", NEW_COURSE.id);
+      // addCourseInline clears the query + results once the add resolves.
+      expect(
+        screen.queryByTestId(`upload-modal-course-result-${NEW_COURSE.id}`),
+      ).not.toBeInTheDocument();
+    });
+  }
+
+  it("makes an inline-added course immediately selectable in the per-file Course dropdown", async () => {
+    const user = userEvent.setup();
+    renderModal();
+
+    await inlineAddCourse(user);
+    await addFile(user);
+
+    await user.click(screen.getByRole("button", { name: "Course" }));
+    // Both the enrolled course and the just-added one are options.
+    expect(screen.getByRole("option", { name: /CS101/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /MATH200/ })).toBeInTheDocument();
+  });
+
+  it("defaults new file rows to the inline-added course when the user had no courses", async () => {
+    const user = userEvent.setup();
+    render(
+      <ToastProvider>
+        <DocumentUploadModal
+          open
+          userId="u1"
+          courses={[]}
+          onClose={() => {}}
+          onComplete={() => {}}
+        />
+      </ToastProvider>,
+    );
+
+    await inlineAddCourse(user);
+    await addFile(user);
+
+    // The row's course select defaults to the just-added course, not the
+    // "Pick a course" placeholder (pre-#186 the default was courses[0] of
+    // the stale prop, i.e. empty).
+    expect(screen.getByRole("button", { name: "Course" })).toHaveTextContent("MATH200");
+  });
+
+  it("resets inline-added courses when the modal is closed and reopened", async () => {
+    const user = userEvent.setup();
+    const modal = (open: boolean) => (
+      <ToastProvider>
+        <DocumentUploadModal
+          open={open}
+          userId="u1"
+          courses={[COURSE]}
+          onClose={() => {}}
+          onComplete={() => {}}
+        />
+      </ToastProvider>
+    );
+    const { rerender } = render(modal(true));
+
+    await inlineAddCourse(user);
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: "Course" }));
+    expect(screen.getByRole("option", { name: /MATH200/ })).toBeInTheDocument();
+
+    // Close (parent refreshes `courses` via onComplete in the real flow)
+    // and reopen: the locally merged extras must be gone.
+    rerender(modal(false));
+    rerender(modal(true));
+
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: "Course" }));
+    expect(screen.getByRole("option", { name: /CS101/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /MATH200/ })).not.toBeInTheDocument();
   });
 });

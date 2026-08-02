@@ -1,6 +1,7 @@
 import uuid
 import random
 import string
+from datetime import datetime, timezone
 from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -8,17 +9,29 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from agents._run import run_agent_sync
 from agents.deps import SaplingDeps
 from agents.social_summary import social_summary_agent
+from agents.usage import record_agent_usage
 from db.connection import table
-from models import CreateRoomBody, JoinRoomBody, MatchBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
+from models import CreateRoomBody, JoinRoomBody, MatchBody, PublicJoinBody, SendMessageBody, EditMessageBody, ToggleReactionBody, LeaveRoomBody
 from services.auth_guard import require_self, get_session_user_id
 from services.encryption import encrypt_if_present, decrypt_if_present
 from services.profiles import get_display_name, get_display_names
 from services.graph_service import get_graph
+from services import academics
 from services.matching_service import find_study_matches
 from services.request_context import current_request_id
 from services.social_cache_service import get_cached_summary, save_summary, invalidate as invalidate_summary
 
 router = APIRouter()
+
+
+def _touch_room(room_id: str) -> None:
+    """Bump rooms.updated_at on membership changes (#405 gave it a writer;
+    message traffic is deliberately left alone — the 0033 realtime publication
+    owns that flow)."""
+    table("rooms").update(
+        {"updated_at": datetime.now(timezone.utc).isoformat()},
+        {"id": f"eq.{room_id}"},
+    )
 
 
 @router.post("/rooms/create")
@@ -31,10 +44,72 @@ def create_room(body: CreateRoomBody, request: Request):
         "name": body.room_name,
         "invite_code": invite_code,
         "created_by": body.user_id,
+        # #405 semantics: owner_id is REAL ownership (transferable later),
+        # seeded to the creator; is_public gates the invite-less public join.
+        "owner_id": body.user_id,
+        "topic": body.topic,
+        "course": body.course,
+        "is_public": body.is_public,
     })
     table("room_members").insert({"room_id": room_id, "user_id": body.user_id})
     invalidate_summary(room_id)
     return {"room_id": room_id, "invite_code": invite_code}
+
+
+@router.get("/public-rooms")
+def list_public_rooms(request: Request, user_id: str = Query(...)):
+    """Public rooms (#405): is_public=true rooms, joinable without an invite.
+    The select never includes invite_code, so the public listing cannot leak
+    the private join path."""
+    require_self(user_id, request)
+    rooms = table("rooms").select(
+        "id,name,topic,course,owner_id,created_by,created_at,updated_at,is_public",
+        filters={"is_public": "eq.true"},
+    ) or []
+    out = []
+    for room in rooms:
+        members = table("room_members").select(
+            "user_id", filters={"room_id": f"eq.{room['id']}"},
+        ) or []
+        # Explicit projection (never a row spread): the public payload cannot
+        # leak invite_code even if the row carries it.
+        out.append({
+            "id": room["id"],
+            "name": room.get("name"),
+            "topic": room.get("topic"),
+            "course": room.get("course"),
+            "owner_id": room.get("owner_id"),
+            "created_by": room.get("created_by"),
+            "created_at": room.get("created_at"),
+            "updated_at": room.get("updated_at"),
+            "is_public": True,
+            "member_count": len(members),
+        })
+    return {"rooms": out}
+
+
+@router.post("/public-rooms/{room_id}/join")
+def join_public_room(room_id: str, body: PublicJoinBody, request: Request):
+    require_self(body.user_id, request)
+    rooms = table("rooms").select("id,is_public", filters={"id": f"eq.{room_id}"})
+    if not rooms:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if not rooms[0].get("is_public"):
+        raise HTTPException(status_code=403, detail="This room is invite-only")
+    existing = table("room_members").select(
+        "room_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"},
+    )
+    if not existing:
+        # UPSERT, not insert: the pre-read is only a "did we actually add"
+        # signal, so a double-click racing itself must no-op on the
+        # room_members PK rather than surface a raw 500 (PR #485 review;
+        # same shape as #464's check-then-act finding).
+        table("room_members").upsert(
+            {"room_id": room_id, "user_id": body.user_id}, on_conflict="room_id,user_id",
+        )
+        _touch_room(room_id)
+        invalidate_summary(room_id)
+    return {"joined": True, "room_id": room_id}
 
 
 @router.post("/rooms/join")
@@ -53,7 +128,10 @@ def join_room(body: JoinRoomBody, request: Request):
         filters={"room_id": f"eq.{room['id']}", "user_id": f"eq.{body.user_id}"},
     )
     if not existing:
-        table("room_members").insert({"room_id": room["id"], "user_id": body.user_id})
+        table("room_members").upsert(
+            {"room_id": room["id"], "user_id": body.user_id}, on_conflict="room_id,user_id",
+        )
+        _touch_room(room["id"])
         invalidate_summary(room["id"])
 
     members = table("room_members").select("user_id", filters={"room_id": f"eq.{room['id']}"})
@@ -139,7 +217,10 @@ def room_overview(room_id: str, request: Request):
                 "Summarize this study group's collective knowledge:\n"
                 + "\n".join(member_summaries)
             )
-            result = run_agent_sync(social_summary_agent.run(user_message, deps=deps))
+            result = record_agent_usage(
+                run_agent_sync(social_summary_agent.run(user_message, deps=deps)),
+                feature="social", task="social_summary",
+            )
             ai_summary = result.output.summary
             save_summary(room_id, member_summaries, ai_summary)
         except Exception as e:
@@ -257,6 +338,7 @@ def school_match(body: MatchBody, request: Request):
 def leave_room(room_id: str, body: LeaveRoomBody, request: Request):
     require_self(body.user_id, request)
     table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"})
+    _touch_room(room_id)
     invalidate_summary(room_id)
     return {"left": True}
 
@@ -270,9 +352,12 @@ def kick_member(room_id: str, member_id: str, request: Request, requester_id: st
     )
     if not room_rows:
         raise HTTPException(status_code=404, detail="Room not found")
-    if room_rows[0]["created_by"] != requester_id:
-        raise HTTPException(status_code=403, detail="Only the room leader can kick members")
+    # #405: authorization keys on owner_id (real, transferable ownership) —
+    # created_by stays the immutable creator record and no longer gates.
+    if room_rows[0]["owner_id"] != requester_id:
+        raise HTTPException(status_code=403, detail="Only the room owner can kick members")
     table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{member_id}"})
+    _touch_room(room_id)
     invalidate_summary(room_id)
     return {"kicked": True}
 
@@ -302,7 +387,7 @@ def get_room_messages(room_id: str, request: Request, before: str | None = None,
     # `limit`, an extra page exists. (Using `len(rows) == limit` reports a
     # phantom "load more" at exact page boundaries — issue #131.)
     rows = table("room_messages").select(
-        "id,room_id,user_id,user_name,text,image_url,reply_to_id,is_deleted,edited_at,created_at",
+        "id,room_id,user_id,user_name,text,image_url,image_width,image_height,reply_to_id,is_deleted,edited_at,created_at",
         filters=filters,
         order="created_at.desc",
         limit=limit + 1,
@@ -371,6 +456,8 @@ def send_room_message(room_id: str, body: SendMessageBody, request: Request):
         "user_name": body.user_name,
         "text": encrypt_if_present(body.text or None),
         "image_url": body.image_url or None,
+        "image_width": body.image_width or None,
+        "image_height": body.image_height or None,
         "reply_to_id": body.reply_to_id or None,
     })
 
@@ -436,21 +523,61 @@ def toggle_reaction(room_id: str, message_id: str, body: ToggleReactionBody, req
 
 @router.get("/students")
 def get_students(request: Request):
-    """Return a lightweight profile for every user in the DB."""
+    """A lightweight directory of students who share the viewer's school.
+
+    Scoped for #342. Before this, the endpoint returned a profile for *every*
+    user in the DB to any authenticated caller — the `user_id` was bound and
+    never used, so it authenticated without authorizing. Two boundaries now
+    apply:
+
+    - **School scope**: only users enrolled at the same school as the viewer
+      (via ``academics.school_peer_user_ids``). An empty scope (viewer not
+      enrolled / course carries no school) yields an empty directory — fail
+      closed, mirroring the enrollment-scoping pattern in ``calendar.py``.
+    - **profile_visibility**: users who set their profile to ``private`` opt out
+      of the directory entirely. ``public`` and ``school`` are both listed (the
+      endpoint is already school-scoped, so they're equivalent here).
+
+    The payload is deliberately lightweight — name, streak, course names — and
+    carries **no mastery data**: per-concept mastery is academic-performance
+    information that belongs on the profile page (which already gates detail on
+    profile_visibility), not in a browsable directory.
+    """
     user_id = get_session_user_id(request)
-    users = table("users").select("id,streak_count")
+
+    peer_ids = academics.school_peer_user_ids(user_id)
+    if not peer_ids:
+        return {"students": []}
+    peer_list = sorted(peer_ids)
+
+    # Honor profile_visibility: drop 'private' users from the listing. Users with
+    # no settings row default to 'public' (the column default), so they stay.
+    settings_rows = table("user_settings").select(
+        "user_id,profile_visibility",
+        filters={"user_id": f"in.({','.join(peer_list)})"},
+    ) or []
+    hidden = {
+        s["user_id"] for s in settings_rows if s.get("profile_visibility") == "private"
+    }
+    visible_ids = [uid for uid in peer_list if uid not in hidden]
+    if not visible_ids:
+        return {"students": []}
+
+    users = table("users").select(
+        "id,streak_count", filters={"id": f"in.({','.join(visible_ids)})"}
+    ) or []
     # Display names live on user_profiles (0024); resolve in bulk and decrypt.
     name_map = get_display_names([u["id"] for u in users])
-    # A user's courses now resolve through the enrollment chain
+
+    # A user's courses resolve through the enrollment chain
     # (enrollments → course_offerings → courses); the abstract `courses` catalog
     # no longer carries a per-user row. Read the offering's abstract course name
     # via the embedded join and dedup, since one abstract course may have several
     # offerings (per term/section) the user is enrolled in.
     enrollment_rows = table("enrollments").select(
-        "user_id,course_offerings(courses(course_name))"
-    )
-    nodes_rows = table("graph_nodes").select("user_id,mastery_tier,concept_name,mastery_score")
-
+        "user_id,course_offerings(courses(course_name))",
+        filters={"user_id": f"in.({','.join(visible_ids)})"},
+    ) or []
     courses_by_user: dict = defaultdict(set)
     for e in enrollment_rows:
         offering = e.get("course_offerings") or {}
@@ -459,33 +586,12 @@ def get_students(request: Request):
         if course_name:
             courses_by_user[e["user_id"]].add(course_name)
 
-    mastery_by_user: dict = defaultdict(
-        lambda: {"mastered": 0, "learning": 0, "struggling": 0, "unexplored": 0, "total": 0}
-    )
-    top_concepts_by_user: dict = defaultdict(list)
-    for n in nodes_rows:
-        uid = n["user_id"]
-        tier = n["mastery_tier"]
-        mastery_by_user[uid]["total"] += 1
-        if tier in mastery_by_user[uid]:
-            mastery_by_user[uid][tier] += 1
-        if tier == "mastered":
-            top_concepts_by_user[uid].append((n.get("mastery_score", 0), n["concept_name"]))
-
-    # Sort each user's mastered concepts by score desc, keep top 4
-    for uid in top_concepts_by_user:
-        top_concepts_by_user[uid] = [
-            name for _, name in sorted(top_concepts_by_user[uid], reverse=True)[:4]
-        ]
-
     students = [
         {
             "user_id": u["id"],
             "name": name_map.get(u["id"], ""),
             "streak": u.get("streak_count") or 0,
             "courses": sorted(courses_by_user[u["id"]]),
-            "stats": dict(mastery_by_user[u["id"]]),
-            "top_concepts": top_concepts_by_user[u["id"]],
         }
         for u in users
     ]

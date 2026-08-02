@@ -35,7 +35,7 @@ Env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 
 ### 2.1 Google Gemini
 
-- **Used by the backend only** (`backend/services/gemini_service.py`). Frontend never calls Gemini directly.
+- **Used by the backend only** (Pydantic AI agents under `backend/agents/`; the former `services/gemini_service.py` seam was deleted in ADR 0024). Frontend never calls Gemini directly.
 - Referenced in the user-facing disclaimer (`DisclaimerModal.tsx`, `AIDisclaimerChip.tsx`): "Sapling uses Google Gemini to tutor, quiz, and track your progress."
 - CLAUDE.md mentions the backend does streaming via SSE but the frontend consumes non-streaming JSON. See QUESTIONS Q16.
 

@@ -1,0 +1,11 @@
+# Opt-in durable-execution extra (ADR 0011 / #154).
+#
+# Installs the `dbos` package so backend/services/durable.py's @workflow /
+# @step decorators go real when an operator sets DBOS_ENABLED=true (with
+# DBOS_DATABASE_URL pointing at a Postgres instance). Never in
+# requirements.txt or requirements.lock: durability is opt-in and the
+# default (prod-default and hermetic-test) path must keep working with
+# `dbos` NOT installed — see backend/tests/test_durable_shim.py.
+#
+# Install with: pip install -r requirements-durable.txt
+dbos>=2.28,<3

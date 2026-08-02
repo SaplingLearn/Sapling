@@ -1,13 +1,13 @@
 """Unit tests for services.flashcard_import_service."""
 import io
-import json
 import os
 import sqlite3
-import time
 import zipfile
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, UnexpectedModelBehavior
 
 from services import flashcard_import_service as svc
 
@@ -89,6 +89,23 @@ class TestRateLimit:
             svc.check_rate_limit("u1")
         now[0] = 1061.0  # past 60-second window
         assert svc.check_rate_limit("u1") is None
+
+    def test_retry_capped_at_window_on_coincident_timestamps(self, monkeypatch):
+        # Windows' coarse timer (~15.6ms tick) reliably lands a tight loop of
+        # calls on the identical time.time() value, so elapsed == 0.0 exactly
+        # and the retry hint must still stay within (0, window] (#346).
+        monkeypatch.setattr(svc.time, "time", lambda: 1000.0)
+        for _ in range(5):
+            svc.check_rate_limit("u1")
+        assert svc.check_rate_limit("u1") == 60
+
+    def test_retry_uses_ceiling_of_remaining_window(self, monkeypatch):
+        now = [1000.0]
+        monkeypatch.setattr(svc.time, "time", lambda: now[0])
+        for _ in range(5):
+            svc.check_rate_limit("u1")
+        now[0] = 1059.5  # 0.5s of the window left -> ceil to 1
+        assert svc.check_rate_limit("u1") == 1
 
 
 # ── parse_xlsx ───────────────────────────────────────────────────────────────
@@ -225,17 +242,26 @@ class TestScrapeQuizlet:
                 svc.scrape_quizlet_url("https://quizlet.com/123/abc")
 
 
+# ── flashcard agent helpers (#146) ───────────────────────────────────────────
+
+def _agent_returning(cards):
+    """AsyncMock for flashcard_agent.run returning a Flashcards of these dicts."""
+    from agents.flashcard import Flashcards, FlashCard
+    fc = Flashcards(cards=[FlashCard(front=c["front"], back=c["back"]) for c in cards])
+    return AsyncMock(return_value=SimpleNamespace(output=fc))
+
+
 # ── extract_cards_from_image ─────────────────────────────────────────────────
 
 class TestExtractFromImage:
-    def test_runs_extraction_then_gemini_split(self):
+    def test_runs_extraction_then_agent_split(self):
+        run = _agent_returning([
+            {"front": "Mitosis", "back": "cell division"},
+            {"front": "Meiosis", "back": "halving"},
+        ])
         with patch("services.flashcard_import_service.extraction_service") as ext, \
-             patch("services.flashcard_import_service.call_gemini") as gem:
+             patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             ext.extract_text_from_file.return_value = "# Notes\nMitosis: cell division\nMeiosis: halving"
-            gem.return_value = json.dumps([
-                {"front": "Mitosis", "back": "cell division"},
-                {"front": "Meiosis", "back": "halving"},
-            ])
             cards = svc.extract_cards_from_image(b"\x89PNG_fake_bytes", filename="notes.png")
 
         ext.extract_text_from_file.assert_called_once()
@@ -245,34 +271,94 @@ class TestExtractFromImage:
         ]
 
     def test_returns_empty_on_empty_extraction(self):
+        run = _agent_returning([])
         with patch("services.flashcard_import_service.extraction_service") as ext, \
-             patch("services.flashcard_import_service.call_gemini") as gem:
+             patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             ext.extract_text_from_file.return_value = ""
             cards = svc.extract_cards_from_image(b"", filename="x.png")
         assert cards == []
-        gem.assert_not_called()
+        run.assert_not_called()
 
 
 # ── gemini_generate_cards ────────────────────────────────────────────────────
 
 class TestGenerateCards:
-    def test_calls_gemini_with_prompt_and_returns_parsed(self):
-        with patch("services.flashcard_import_service.call_gemini") as gem:
-            gem.return_value = json.dumps([
-                {"front": "Q1", "back": "A1"},
-                {"front": "Q2", "back": "A2"},
-            ])
+    def test_calls_agent_with_prompt_and_returns_cards(self):
+        run = _agent_returning([
+            {"front": "Q1", "back": "A1"},
+            {"front": "Q2", "back": "A2"},
+        ])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             cards = svc.gemini_generate_cards("source notes", count=2, difficulty="recall")
         assert cards == [{"front": "Q1", "back": "A1"}, {"front": "Q2", "back": "A2"}]
-        sent = gem.call_args.args[0]
+        sent = run.call_args.args[0]  # the rendered prompt handed to the agent
         assert "source notes" in sent
         assert "recall" in sent
         assert "2" in sent
 
-    def test_invalid_json_returns_empty(self):
-        with patch("services.flashcard_import_service.call_gemini") as gem:
-            gem.return_value = "not valid json"
+    def test_bad_model_output_degrades_to_empty(self):
+        # A model whose output can't satisfy the schema is "bad output" → [].
+        run = AsyncMock(side_effect=UnexpectedModelBehavior("unparseable"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             assert svc.gemini_generate_cards("x", count=5, difficulty="recall") == []
+
+    def test_transport_failure_propagates(self):
+        # Transport/runtime errors must NOT masquerade as "no cards" — they
+        # propagate so the route surfaces a retryable 502.
+        run = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            with pytest.raises(RuntimeError):
+                svc.gemini_generate_cards("x", count=5, difficulty="recall")
+
+    def test_content_filter_propagates(self):
+        # A provider content-filter block (e.g. Gemini RECITATION, which the
+        # close-grounding flashcard prompt invites) is NOT schema noncompliance.
+        # ContentFilterError subclasses UnexpectedModelBehavior, so without its
+        # own carve-out it would degrade to [] and the route would answer a
+        # misleading 200 with zero cards; it must propagate → route 502 (#340).
+        run = AsyncMock(side_effect=ContentFilterError("blocked: RECITATION"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            with pytest.raises(ContentFilterError):
+                svc.gemini_generate_cards("x", count=5, difficulty="recall")
+
+    def test_non_transient_http_error_propagates(self):
+        run = AsyncMock(side_effect=ModelHTTPError(status_code=400, model_name="gemini-2.5-flash"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            with pytest.raises(ModelHTTPError):
+                svc.gemini_generate_cards("x", count=5, difficulty="recall")
+
+    def test_transient_http_error_retries_then_succeeds(self):
+        # 429/5xx is retried once (mirrors the old call_gemini retries=1).
+        from agents.flashcard import Flashcards, FlashCard
+        ok = SimpleNamespace(output=Flashcards(cards=[FlashCard(front="Q1", back="A1")]))
+        run = AsyncMock(side_effect=[
+            ModelHTTPError(status_code=429, model_name="gemini-2.5-flash"),
+            ok,
+        ])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run), \
+             patch("services.flashcard_import_service.time.sleep") as sleep:
+            cards = svc.gemini_generate_cards("x", count=1, difficulty="recall")
+        assert cards == [{"front": "Q1", "back": "A1"}]
+        assert run.call_count == 2
+        sleep.assert_called_once()
+
+    def test_transient_http_error_reraises_after_retries_exhausted(self):
+        run = AsyncMock(side_effect=ModelHTTPError(status_code=503, model_name="gemini-2.5-flash"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run), \
+             patch("services.flashcard_import_service.time.sleep"):
+            with pytest.raises(ModelHTTPError):
+                svc.gemini_generate_cards("x", count=1, difficulty="recall")
+        assert run.call_count == 2  # initial + 1 retry
+
+    def test_filters_cards_missing_a_side(self):
+        run = _agent_returning([
+            {"front": "keep", "back": "yes"},
+            {"front": "", "back": "no front"},
+            {"front": "no back", "back": ""},
+        ])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            cards = svc.gemini_generate_cards("x", count=3, difficulty="recall")
+        assert cards == [{"front": "keep", "back": "yes"}]
 
 
 # ── gemini_cleanup_cards ─────────────────────────────────────────────────────
@@ -280,26 +366,119 @@ class TestGenerateCards:
 class TestCleanupCards:
     def test_replaces_cards_in_input_order(self):
         cards = [{"front": "miotsis", "back": "cell div."}]
-        with patch("services.flashcard_import_service.call_gemini") as gem:
-            gem.return_value = json.dumps([{"front": "Mitosis", "back": "Cell division"}])
+        run = _agent_returning([{"front": "Mitosis", "back": "Cell division"}])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             out = svc.gemini_cleanup_cards(cards)
         assert out == [{"front": "Mitosis", "back": "Cell division"}]
 
-    def test_falls_back_to_input_on_invalid_response(self):
+    def test_falls_back_to_input_on_bad_output(self):
+        # Cleanup is non-destructive polish: when the model returns nothing
+        # usable it keeps the user's original cards rather than erroring.
         cards = [{"front": "X", "back": "Y"}]
-        with patch("services.flashcard_import_service.call_gemini") as gem:
-            gem.return_value = "garbage"
+        run = AsyncMock(side_effect=UnexpectedModelBehavior("unparseable"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             out = svc.gemini_cleanup_cards(cards)
         assert out == cards
+
+    def test_transport_failure_propagates(self):
+        # A real outage still propagates (→ route 502), not a silent no-op.
+        cards = [{"front": "X", "back": "Y"}]
+        run = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            with pytest.raises(RuntimeError):
+                svc.gemini_cleanup_cards(cards)
+
+    def test_content_filter_propagates(self):
+        # A content-filter block propagates (→ route 502) even on the cleanup
+        # path — unlike schema-noncompliant output, which falls back to the
+        # user's original cards (#340).
+        cards = [{"front": "X", "back": "Y"}]
+        run = AsyncMock(side_effect=ContentFilterError("blocked: SAFETY"))
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            with pytest.raises(ContentFilterError):
+                svc.gemini_cleanup_cards(cards)
 
 
 # ── gemini_cloze ─────────────────────────────────────────────────────────────
 
 class TestCloze:
     def test_generates_cloze_cards(self):
-        with patch("services.flashcard_import_service.call_gemini") as gem:
-            gem.return_value = json.dumps([
-                {"front": "{{...}} is the powerhouse of the cell.", "back": "Mitochondria"},
-            ])
+        run = _agent_returning([
+            {"front": "{{...}} is the powerhouse of the cell.", "back": "Mitochondria"},
+        ])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
             cards = svc.gemini_cloze("Mitochondria is the powerhouse of the cell.")
         assert cards == [{"front": "{{...}} is the powerhouse of the cell.", "back": "Mitochondria"}]
+
+
+# ── generate_flashcards (moved off gemini_service in #146) ────────────────────
+
+class TestGenerateFlashcards:
+    def test_returns_agent_cards_with_grounded_prompt(self):
+        run = _agent_returning([
+            {"front": "What is a base case?", "back": "The stopping condition of a recursion."},
+        ])
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            cards = svc.generate_flashcards(
+                "Recursion", count=1, weak_concepts=["base case"],
+            )
+        assert cards == [
+            {"front": "What is a base case?", "back": "The stopping condition of a recursion."},
+        ]
+        sent = run.call_args.args[0]
+        assert "Recursion" in sent
+        assert "base case" in sent  # weak-concept focus threaded into the prompt
+
+    def test_prompt_grounds_on_documents_and_context(self):
+        # Exercises the doc_blocks/concept_notes loop and the extra_block branch:
+        # the rendered prompt must carry the document, its concepts, and the
+        # free-text context, and the category must be upper-cased.
+        run = _agent_returning([{"front": "Q", "back": "A"}])
+        documents = [
+            {
+                "file_name": "week3_lecture.pdf",
+                "category": "lecture",  # lowercase → proves category.upper()
+                "summary": "Overview of tree traversals.",
+                "concept_notes": [
+                    {"name": "DFS", "description": "Depth-first traversal."},
+                    {"name": "BFS"},  # no description → bare "- BFS" line
+                    "not-a-dict",  # non-dict entry is skipped, not fatal
+                    {"description": "orphan"},  # missing name → skipped
+                ],
+            }
+        ]
+        with patch("services.flashcard_import_service.flashcard_agent.run", new=run):
+            cards = svc.generate_flashcards(
+                "Data Structures",
+                count=3,
+                context="Focus on the midterm review session.",
+                documents=documents,
+                weak_concepts=["recursion depth"],
+            )
+        assert cards == [{"front": "Q", "back": "A"}]
+        sent = run.call_args.args[0]
+        # Topic + weak-concept coverage preserved.
+        assert "Data Structures" in sent
+        assert "recursion depth" in sent
+        # Document block: upper-cased category, file name, summary.
+        assert "[LECTURE] week3_lecture.pdf" in sent
+        assert "Overview of tree traversals." in sent
+        # Concept notes: with and without a description.
+        assert "- DFS: Depth-first traversal." in sent
+        assert "- BFS" in sent
+        # Free-text context branch.
+        assert "Focus on the midterm review session." in sent
+
+
+class TestRateLimitClockSkew:
+    def test_retry_capped_when_clock_steps_backward(self, monkeypatch):
+        # NTP can step time.time() BACKWARD between calls: now < bucket[0]
+        # makes the remaining window exceed the 60s window, and bare ceil()
+        # would report an impossible retry hint. The min() cap is load-bearing
+        # exactly here (#346).
+        now = [1000.0]
+        monkeypatch.setattr(svc.time, "time", lambda: now[0])
+        for _ in range(5):
+            svc.check_rate_limit("u-skew")
+        now[0] = 998.5  # clock stepped back 1.5s
+        assert svc.check_rate_limit("u-skew") == 60

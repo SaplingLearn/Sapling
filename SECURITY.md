@@ -10,7 +10,7 @@ The codebase is split into a FastAPI backend (`backend/`) and a Next.js frontend
 
 ### 1.1 Google OAuth 2.0 with PKCE
 
-**Files:** `backend/routes/auth.py`, `frontend/src/components/SignInModal.tsx`, `frontend/src/app/auth/callback/page.tsx`, `frontend/src/app/api/auth/session/route.ts`
+**Files:** `backend/routes/auth.py`, `frontend/src/components/marketing/SignInModal.tsx`, `frontend/src/app/auth/callback/page.tsx`, `frontend/src/app/api/auth/session/route.ts`
 
 Sign-in is a full-page redirect to `${API_URL}/api/auth/google`. The backend drives the OAuth flow and the frontend never touches Google directly.
 
@@ -40,7 +40,7 @@ base64url(payload).base64url(signature)
 
 **Files:** `frontend/src/app/api/auth/session/route.ts`, `frontend/wrangler.toml`
 
-The session cookie is set exclusively by the Next.js route handler — never by the backend — using these flags:
+The session cookie is set exclusively by the Next.js route handler — never by the backend in any deployed environment — using these flags:
 
 | Flag        | Value                | Purpose                                             |
 |-------------|----------------------|-----------------------------------------------------|
@@ -52,6 +52,8 @@ The session cookie is set exclusively by the Next.js route handler — never by 
 | `maxAge`    | 30 days              | Set to `0` on sign-out for immediate deletion       |
 
 `COOKIE_DOMAIN=.saplinglearn.com` is shipped via `wrangler.toml [vars]` (commit `b1377ec`); the leading dot is what permits `api.saplinglearn.com` and the app origin to share the same session.
+
+**One test-only exception (#381).** `POST /api/auth/test-login` (`backend/routes/auth.py`) sets `sapling_session` directly, with the same flags, so the pytest integration suite and Playwright's global setup can obtain a session without driving real Google OAuth (which is not headless-automatable). It is hard-gated on `APP_ENV in {"local", "test"}` — evaluated per request, not captured at import — and returns a stock `404 {"detail": "Not Found"}` in every other environment, so it does not advertise its existence; it is also `include_in_schema=False`, so it never appears in `/openapi.json`. The allowlist is deliberately narrower than `config.IS_LOCAL` (`{local, development, dev, test}`). See `backend/tests/test_auth_test_login.py`.
 
 ### 1.4 Sign-out
 
@@ -186,7 +188,7 @@ All Gemini callers decrypt before constructing a prompt. None of `decrypt_if_pre
 
 - **`routes/learn.py`** — student name (`get_user_name`), document summaries, and concept notes decrypted before `_make_system_prompt()` (`learn.py` ~lines 130, 133, 243, 286).
 - **`routes/quiz.py`** — student name decrypted before `quiz_context_update` and `quiz_generation` prompts (`quiz.py` ~lines 192, 198).
-- **`routes/study_guide.py`** — document summary and concept notes decrypted before `call_gemini_json` (`study_guide.py` ~lines 43, 49, 54).
+- **`routes/study_guide.py`** — document summary and concept notes decrypted before the study-guide agent's context block is assembled (`study_guide.py` ~lines 43, 49, 54).
 - **`routes/flashcards.py`** — same decrypt pattern before flashcard extraction (~lines 130, 133, 424, 428).
 - **`routes/documents.py`** — concept extension and graph updates decrypt summaries first (~lines 237, 240, 454, 458).
 

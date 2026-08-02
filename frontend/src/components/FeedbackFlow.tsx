@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
-import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { useToast } from "./ToastProvider";
 
 const DELAY_MS = 45_000;
@@ -50,7 +50,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useBodyScrollLock(open);
+  useScrollLock(open);
 
   useEffect(() => {
     if (!passive) return;

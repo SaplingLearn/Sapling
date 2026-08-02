@@ -5,16 +5,22 @@ generate quiz, send to tutor) come in Phase 4 below.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
+from agents import ORCHESTRATOR_LIMITS, WORKER_LIMITS
 from agents.deps import SaplingDeps
 from agents.note_chat import note_chat_agent
 from agents.note_concepts import note_concepts_agent
 from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
+from agents.usage import record_agent_usage
 from db.connection import table
-from services.academics import offering_course_id, resolve_offering
+from services import events_service
+from services.academics import offering_course_id, resolve_offering, term_id_for_label
 from services.auth_guard import get_session_user_id, require_self
 from services.notes_service import (
     create_note,
@@ -27,9 +33,79 @@ from services.notes_service import (
     unlink_concept,
     update_note,
 )
+from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# note_chat has no legacy fallback (ADR 0017), so guardrail trips degrade to
+# an in-band reply rather than falling back or surfacing a 5xx (#329).
+_CHAT_DEGRADED_REPLY = (
+    "I couldn't finish answering that — the request hit its processing "
+    "budget. Try again with a shorter or more specific message."
+)
+
+
+async def _run_note_worker(agent, user_prompt: str, deps: SaplingDeps, *, action: str):
+    """Run a single-shot note worker under WORKER_LIMITS (#329).
+
+    The two guardrail failure modes are distinct and must not be conflated:
+    a budget trip is deterministic (retrying the same note fails identically),
+    while unexpected model behavior is a genuine bug that must page us.
+    """
+    try:
+        return await agent.run(user_prompt, deps=deps, usage_limits=WORKER_LIMITS)
+    except UsageLimitExceeded as e:
+        # Deterministic budget exhaustion — a 413 with no "try again" wording,
+        # since retrying the same (too-long) note trips the same limit.
+        logger.warning(
+            "note %s agent hit its usage budget; returning 413", action, exc_info=e
+        )
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"This note is too long to complete {action} automatically. "
+                "Shortening the note may help."
+            ),
+        ) from e
+    except UnexpectedModelBehavior as e:
+        # Malformed model output / validation-retry exhaustion — a real bug,
+        # surfaced as a 5xx (so alerting fires) with a traceback in the log.
+        logger.exception("note %s agent returned unexpected model behavior", action)
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong generating this note's AI output.",
+        ) from e
+
+
+def _course_meta(offering_id: str | None, cache: dict) -> dict:
+    """Resolve an offering to its abstract course id + human labels.
+
+    Notes key on the OFFERING (a course taught in a term), but the notetaker
+    UI keys on the abstract catalog course id (and shows a course label).
+    Without these fields every note renders as "Unknown course" (finding F4).
+    Mirrors calendar.py::_course_meta_cached: a per-request memo keyed on
+    offering_id so a list of notes sharing a course hits the DB once.
+    """
+    if not offering_id:
+        return {"course_id": None, "course_code": None, "course_name": None}
+    if offering_id not in cache:
+        course_id = offering_course_id(offering_id)
+        course = {}
+        if course_id:
+            rows = table("courses").select(
+                "id,course_code,course_name",
+                filters={"id": f"eq.{course_id}"}, limit=1,
+            )
+            course = rows[0] if rows else {}
+        cache[offering_id] = {
+            "course_id": course_id,
+            "course_code": course.get("course_code"),
+            "course_name": course.get("course_name"),
+        }
+    return cache[offering_id]
 
 
 class CreateNoteBody(BaseModel):
@@ -53,13 +129,53 @@ async def list_user_notes(
     user_id: str,
     request: Request,
     course_id: str | None = None,
+    semester: str | None = None,
 ):
     require_self(user_id, request)
     # The API speaks abstract course ids; notes key on the offering. Resolve
-    # the (current-term) offering for the requested course before filtering.
-    offering_id = resolve_offering(course_id) if course_id else None
-    notes = await list_notes(user_id=user_id, offering_id=offering_id)
-    return {"notes": notes}
+    # the (current-term) offering for the requested course before filtering —
+    # or, with a `semester` (term label, #141), STRICTLY that term's offering:
+    # an unknown label or a term with no offering of the course answers with
+    # the empty shape, never a silent fall-back to another term. `semester`
+    # without `course_id` is ignored (this is the course-filtered read; the
+    # notetaker UI itself carries no semester context — the param exists for
+    # API completeness).
+    offering_id = None
+    semester_missed = False
+    if course_id:
+        if semester:
+            term_id = term_id_for_label(semester)
+            offering_id = (
+                resolve_offering(course_id, term_id, fallback=False)
+                if term_id
+                else None
+            )
+            semester_missed = offering_id is None
+        else:
+            offering_id = resolve_offering(course_id)
+    notes = (
+        []
+        if semester_missed
+        else await list_notes(user_id=user_id, offering_id=offering_id)
+    )
+    # Attach the abstract course id + labels resolved from each note's offering.
+    # The notetaker UI keys on course_id; without it every note shows "Unknown
+    # course" (finding F4). Shared per-request memo so notes in the same course
+    # resolve the courses row once.
+    meta_cache: dict = {}
+    for n in notes:
+        n.update(_course_meta(n.get("offering_id"), meta_cache))
+    # ETag from each note's (id, updated_at) — any create/edit/delete changes the
+    # set or bumps updated_at. A matching If-None-Match returns 304 and skips
+    # re-serializing the (already-decrypted) note list.
+    etag = make_etag(
+        "notes", user_id, offering_id or "",
+        *sorted(f"{n.get('id')}:{n.get('updated_at')}" for n in notes),
+    )
+    not_modified = conditional(request, etag)
+    if not_modified is not None:
+        return not_modified
+    return cached_json({"notes": notes}, etag)
 
 
 @router.post("")
@@ -67,6 +183,8 @@ async def create(body: CreateNoteBody, request: Request):
     require_self(body.user_id, request)
     # Abstract course id from the client → the current-term offering the note
     # is stored against (create=True so a fresh note lands in the real term).
+    # CREATE path: deliberately NOT semester-scoped (#141) — new content
+    # belongs to the current term by design.
     offering_id = resolve_offering(body.course_id, create=True)
     note = await create_note(
         user_id=body.user_id,
@@ -74,6 +192,21 @@ async def create(body: CreateNoteBody, request: Request):
         title=body.title,
         body=body.body,
         tags=body.tags,
+    )
+    # Same F4 enrichment as the read paths so a freshly created note carries its
+    # abstract course_id + labels (else it shows "Unknown course" until reload).
+    note.update(_course_meta(note.get("offering_id") or offering_id, {}))
+    # #117: ids + a boolean only — never the (encrypted-at-rest) title/body.
+    events_service.log_event(
+        "note.created",
+        category="usage",
+        user_id=body.user_id,
+        payload={
+            "note_id": note.get("id"),
+            "course_id": body.course_id,
+            "offering_id": offering_id,
+            "has_body": bool(body.body),
+        },
     )
     return note
 
@@ -84,6 +217,9 @@ async def read(note_id: str, request: Request, user_id: str):
     note = await get_note(note_id=note_id, user_id=user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # Same offering → course_id/label enrichment as the list route (F4), so a
+    # single-note read returns a consistent shape.
+    note.update(_course_meta(note.get("offering_id"), {}))
     return note
 
 
@@ -98,7 +234,9 @@ async def patch(note_id: str, body: UpdateNoteBody, request: Request):
     if body.tags is not None:
         patch_dict["tags"] = body.tags
     if body.course_id is not None:
-        # Re-home the note onto the offering for the new abstract course.
+        # RE-HOME path: moving a note onto another abstract course files it
+        # under that course's CURRENT-term offering — deliberately not
+        # semester-scoped (#141), like the create path above.
         patch_dict["offering_id"] = resolve_offering(body.course_id, create=True)
     if not patch_dict:
         raise HTTPException(status_code=400, detail="No fields to update.")
@@ -187,6 +325,22 @@ async def _lookup_concept_nodes_by_name(
     return await _asyncio.to_thread(_fetch)
 
 
+def _note_user_prompt(note: dict) -> str:
+    """Assemble the note-worker user prompt (#150-hardened).
+
+    Title and body are student-authored: the body ships inside the
+    untrusted envelope, the title gets delimiter neutralization. Assembly-
+    boundary only — the note row keeps its raw text.
+    """
+    from services.prompt_safety import neutralize_delimiters, wrap_untrusted
+
+    title = neutralize_delimiters(note.get("title") or "(untitled)")
+    body_text = wrap_untrusted(
+        note.get("body") or "", source="student note body"
+    ) or "(empty)"
+    return f"Title: {title}\n\nBody:\n{body_text}"
+
+
 def _deps_for(user_id: str, course_id: str | None, note_id: str | None) -> SaplingDeps:
     from db.connection import _client  # type: ignore  # only for opaque pass-through
     return SaplingDeps(
@@ -204,14 +358,16 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    user_prompt = (
-        f"Title: {note.get('title') or '(untitled)'}\n\n"
-        f"Body:\n{note.get('body') or '(empty)'}"
-    )
+    user_prompt = _note_user_prompt(note)
     # The graph keys on the abstract course; the note carries the offering.
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    result = await note_summary_agent.run(user_prompt, deps=deps)
+    result = record_agent_usage(
+        await _run_note_worker(
+            note_summary_agent, user_prompt, deps, action="summarization"
+        ),
+        feature="notes", task="note_summary", user_id=body.user_id,
+    )
     summary_text = result.output.summary
     await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
     return {"summary": summary_text}
@@ -225,14 +381,16 @@ async def extract_concepts(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    user_prompt = (
-        f"Title: {note.get('title') or '(untitled)'}\n\n"
-        f"Body:\n{note.get('body') or '(empty)'}"
-    )
+    user_prompt = _note_user_prompt(note)
     # Concepts land in the abstract-course graph; resolve offering → course.
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    result = await note_concepts_agent.run(user_prompt, deps=deps)
+    result = record_agent_usage(
+        await _run_note_worker(
+            note_concepts_agent, user_prompt, deps, action="concept extraction"
+        ),
+        feature="notes", task="note_concepts", user_id=body.user_id,
+    )
     names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
     await apply_concepts_to_graph(
         user_id=body.user_id, course_id=course_id, concept_names=names
@@ -261,8 +419,32 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
         raise HTTPException(status_code=404, detail="Note not found.")
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
-    result = await note_chat_agent.run(body.message, deps=deps)
-    return {"reply": result.output}
+    try:
+        result = record_agent_usage(
+            await note_chat_agent.run(
+                body.message, deps=deps, usage_limits=ORCHESTRATOR_LIMITS
+            ),
+            feature="notes", task="note_chat", user_id=body.user_id,
+        )
+    except UsageLimitExceeded as e:
+        # Only a real budget trip reaches the in-band degrade, so the budget
+        # wording in _CHAT_DEGRADED_REPLY is accurate. Retrying is safe with no
+        # partial-write rollback: any graph write apply_graph_update_tool made
+        # before the trip is idempotent (apply_graph_update upserts nodes
+        # on_conflict, and note_chat writes no mastery events or edges).
+        logger.warning(
+            "note_chat agent hit its usage budget; degrading in-band", exc_info=e
+        )
+        return {"reply": _CHAT_DEGRADED_REPLY, "degraded": True}
+    except UnexpectedModelBehavior as e:
+        # Not a budget signal — a genuine bug. Surface it as a 5xx (never the
+        # budget reply) so alerting fires; the log carries a traceback.
+        logger.exception("note_chat agent returned unexpected model behavior")
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong answering that.",
+        ) from e
+    return {"reply": result.output, "degraded": False}
 
 
 @router.post("/{note_id}/send-to-tutor")

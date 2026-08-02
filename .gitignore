@@ -34,11 +34,15 @@ dist/
 *.sqlite
 *.sqlite3
 
+# ---- RAG data (large files — stored in Supabase Storage) ----
+backend/data/*.json
+
 # ---- Env / secrets ----
 .env
 .env.*
 !.env.example
 !.env.staging.example
+!.env.local.example
 
 # ---- OS ----
 .DS_Store
@@ -65,6 +69,17 @@ Thumbs.db
 # ---- Worktrees ----
 .worktrees/
 
+# ---- Local E2E stack run dir (PIDs + logs, scripts/e2e-up.sh, #384) ----
+.e2e/
+
+# ---- Chapter 2 exploratory runs (scripts/explore.sh, #399) ----
+.explore/
+
 # ---- Superpowers brainstorm sessions ----
 .superpowers/
 
+
+# ---- Editor swap / scratch files (#175) ----
+*.sw[a-p]
+.*.sw[a-p]
+*~

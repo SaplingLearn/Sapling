@@ -5,6 +5,13 @@ import { useRouter } from "next/navigation";
 import { CustomSelect } from "./CustomSelect";
 import { useToast } from "./ToastProvider";
 import { generateQuiz, submitQuiz } from "@/lib/api";
+import {
+  conceptOptionsForCourse,
+  courseOptions,
+  resolveInitialSelection,
+  type QuizConcept,
+  type QuizCourseInput,
+} from "@/lib/quizSelection";
 
 type Phase = "select" | "active" | "review" | "results";
 
@@ -26,7 +33,10 @@ interface QuizQuestion {
 
 interface QuizAnswer {
   question_id: number | string;
-  selected: string;
+  // Wire name per backend models.AnswerItem — the shell revamp renamed this
+  // to `selected` and every UI submission 422'd (caught by the #393 E2E
+  // journey). The RESPONSE items (QuizResult below) do use `selected`.
+  selected_label: string;
 }
 
 interface QuizResult {
@@ -40,6 +50,7 @@ interface QuizResult {
 interface QuizPanelProps {
   userId: string;
   concepts: ConceptOption[];
+  courses: QuizCourseInput[];
   initialConceptId?: string | null;
   onExit: () => void;
 }
@@ -57,12 +68,33 @@ const DIFFICULTY_OPTIONS = [
   { value: "adaptive", label: "Adaptive" },
 ];
 
-export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPanelProps) {
+export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit }: QuizPanelProps) {
   const router = useRouter();
   const toast = useToast();
 
+  // Normalize the incoming concepts to the helper's shape once. The picker
+  // choice (course → concept) is derived from this via quizSelection.
+  const normConcepts = useMemo<QuizConcept[]>(
+    () => concepts.map(c => ({
+      id: c.id,
+      name: c.name,
+      course_id: c.course_id ?? null,
+      course_code: c.course_code ?? null,
+    })),
+    [concepts],
+  );
+
+  // A deep link (?concept=/?topic=) preselects the concept AND its course so
+  // the concept dropdown is populated on arrival; otherwise the student picks
+  // a course first.
+  const initial = useMemo(
+    () => resolveInitialSelection(normConcepts, initialConceptId),
+    [normConcepts, initialConceptId],
+  );
+
   const [phase, setPhase] = useState<Phase>("select");
-  const [conceptId, setConceptId] = useState<string | null>(initialConceptId ?? concepts[0]?.id ?? null);
+  const [courseId, setCourseId] = useState<string | null>(initial.courseId);
+  const [conceptId, setConceptId] = useState<string | null>(initial.conceptId);
   const [count, setCount] = useState("5");
   const [difficulty, setDifficulty] = useState("medium");
 
@@ -86,8 +118,15 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
     setLoading(true);
     try {
       const res = await generateQuiz(userId, conceptId, Number(count), difficulty);
+      const nextQuestions = res.questions || [];
+      if (nextQuestions.length === 0) {
+        // Zero questions would render the "active" phase blank (it's gated on
+        // currentQuestion, and quiz-exit lives inside it) — stay in select (#184).
+        toast.warn("No questions were generated — try another concept or difficulty.");
+        return;
+      }
       setQuizId(res.quiz_id);
-      setQuestions(res.questions || []);
+      setQuestions(nextQuestions);
       setAnswers([]);
       setQIndex(0);
       setCurrentSelection(null);
@@ -104,7 +143,7 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
     if (!currentQuestion || !currentSelection) return;
     const chosen = currentQuestion.options.find(o => o.label === currentSelection);
     setLastCorrect(!!chosen?.correct);
-    setAnswers(a => [...a, { question_id: currentQuestion.id, selected: currentSelection }]);
+    setAnswers(a => [...a, { question_id: currentQuestion.id, selected_label: currentSelection }]);
     setPhase("review");
   };
 
@@ -142,16 +181,25 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
     router.push(`/learn?topic=${encodeURIComponent(concept)}&mode=socratic`);
   };
 
-  const conceptOptions = useMemo(
-    () => concepts.map(c => ({
-      value: c.id,
-      label: c.course_code ? `${c.course_code} — ${c.name}` : c.name,
-    })),
-    [concepts],
+  const courseOpts = useMemo(() => courseOptions(courses), [courses]);
+  const conceptOpts = useMemo(
+    () => conceptOptionsForCourse(normConcepts, courseId),
+    [normConcepts, courseId],
   );
+
+  // Switching course clears any concept that doesn't belong to the new course.
+  const onCourseChange = (nextCourseId: string) => {
+    setCourseId(nextCourseId);
+    setConceptId(prev =>
+      prev && normConcepts.some(c => c.id === prev && c.course_id === nextCourseId)
+        ? prev
+        : null,
+    );
+  };
 
   return (
     <div
+      data-testid="quiz-panel"
       style={{
         display: "flex",
         flexDirection: "column",
@@ -166,20 +214,38 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
             <div className="label-micro" style={{ marginBottom: 4 }}>Quiz</div>
             <div className="h-serif" style={{ fontSize: 24 }}>Test what you know</div>
           </div>
-          <div>
-            <div className="label-micro" style={{ marginBottom: 6 }}>Concept</div>
-            {concepts.length === 0 ? (
-              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No concepts yet — learn something first.</div>
-            ) : (
-              <CustomSelect<string>
-                value={conceptId ?? ""}
-                options={conceptOptions}
-                onChange={v => setConceptId(v)}
-                style={{ width: "100%" }}
-                placeholder="Pick a concept…"
-              />
-            )}
-          </div>
+          {courses.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No courses yet — add a course first.</div>
+          ) : (
+            <>
+              <div>
+                <div className="label-micro" style={{ marginBottom: 6 }}>Course</div>
+                <CustomSelect<string>
+                  value={courseId ?? ""}
+                  options={courseOpts}
+                  onChange={onCourseChange}
+                  style={{ width: "100%" }}
+                  placeholder="Pick a course…"
+                />
+              </div>
+              <div>
+                <div className="label-micro" style={{ marginBottom: 6 }}>Concept</div>
+                <CustomSelect<string>
+                  value={conceptId ?? ""}
+                  options={conceptOpts}
+                  onChange={v => setConceptId(v)}
+                  style={{ width: "100%" }}
+                  disabled={!courseId}
+                  placeholder={!courseId ? "Pick a course first…" : "Pick a concept…"}
+                />
+                {courseId && conceptOpts.length === 0 && (
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+                    No concepts yet for this course — learn something first.
+                  </div>
+                )}
+              </div>
+            </>
+          )}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>Count</div>
@@ -191,8 +257,8 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <button className="btn" onClick={onExit}>Cancel</button>
-            <button className="btn btn--primary" onClick={start} disabled={loading || !conceptId}>
+            <button data-testid="quiz-cancel" className="btn" onClick={onExit}>Cancel</button>
+            <button data-testid="quiz-start" className="btn btn--primary" onClick={start} disabled={loading || !conceptId}>
               {loading ? "Generating…" : "Start quiz"}
             </button>
           </div>
@@ -206,12 +272,13 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
             <div className="chip" style={{ textTransform: "uppercase" }}>{currentQuestion.difficulty}</div>
           </div>
           <div style={{ fontSize: 16, lineHeight: 1.55 }}>{currentQuestion.question}</div>
-          <div role="radiogroup" aria-label="Answer choices" style={{ display: "grid", gap: 8 }}>
+          <div data-testid="quiz-answer-options" role="radiogroup" aria-label="Answer choices" style={{ display: "grid", gap: 8 }}>
             {currentQuestion.options.map(o => {
               const selected = currentSelection === o.label;
               return (
                 <button
                   key={o.label}
+                  data-testid={`quiz-answer-option-${o.label}`}
                   role="radio"
                   aria-checked={selected}
                   onClick={() => setCurrentSelection(o.label)}
@@ -232,8 +299,8 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
             })}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <button className="btn" onClick={onExit}>Exit</button>
-            <button className="btn btn--primary" onClick={submitCurrent} disabled={!currentSelection}>
+            <button data-testid="quiz-exit" className="btn" onClick={onExit}>Exit</button>
+            <button data-testid="quiz-submit-answer" className="btn btn--primary" onClick={submitCurrent} disabled={!currentSelection}>
               Submit answer
             </button>
           </div>
@@ -244,6 +311,7 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
         <>
           <div className="label-micro">Review</div>
           <div
+            data-testid="quiz-review-verdict"
             style={{
               padding: "10px 14px",
               borderRadius: "var(--r-md)",
@@ -297,10 +365,10 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
             {currentQuestion.explanation}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <button className="btn" onClick={() => explainConcept(currentQuestion.concept_tested)}>
+            <button data-testid="quiz-explain-concept" className="btn" onClick={() => explainConcept(currentQuestion.concept_tested)}>
               Explain this
             </button>
-            <button className="btn btn--primary" onClick={next}>
+            <button data-testid="quiz-next" className="btn btn--primary" onClick={next}>
               {qIndex + 1 >= questions.length ? "See results" : "Next question"}
             </button>
           </div>
@@ -310,18 +378,18 @@ export function QuizPanel({ userId, concepts, initialConceptId, onExit }: QuizPa
       {phase === "results" && results && (
         <>
           <div className="label-micro">Results</div>
-          <div className="h-serif" style={{ fontSize: 32 }}>
+          <div data-testid="quiz-results-score" className="h-serif" style={{ fontSize: 32 }}>
             {Math.round((results.score / Math.max(1, results.total)) * 100)}%
           </div>
-          <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
+          <div data-testid="quiz-results-mastery" style={{ fontSize: 13, color: "var(--text-dim)" }}>
             {results.score} / {results.total} correct · mastery{" "}
             <span style={{ color: results.mastery_after >= results.mastery_before ? "var(--accent)" : "var(--err)", fontWeight: 600 }}>
               {Math.round(results.mastery_before * 100)}% → {Math.round(results.mastery_after * 100)}%
             </span>
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button className="btn" onClick={retake}>Retake</button>
-            <button className="btn btn--primary" onClick={onExit}>Done</button>
+            <button data-testid="quiz-retake" className="btn" onClick={retake}>Retake</button>
+            <button data-testid="quiz-done" className="btn btn--primary" onClick={onExit}>Done</button>
           </div>
         </>
       )}

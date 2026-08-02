@@ -1,0 +1,19 @@
+{
+  "concepts": [
+    {
+      "description": "A fundamental proof in number theory demonstrating that the square root of two cannot be expressed as a simple fraction, often proven by contradiction.",
+      "importance": 0.9,
+      "name": "Irrationality of the Square Root of Two"
+    },
+    {
+      "description": "Euclid's theorem stating that there are infinitely many prime numbers, a classic proof often using contradiction or construction.",
+      "importance": 0.9,
+      "name": "Infinitude of Primes"
+    },
+    {
+      "description": "A basic proof in number theory demonstrating that the result of adding any two odd integers will always be an even integer.",
+      "importance": 0.9,
+      "name": "Sum of Two Odd Integers"
+    }
+  ]
+}

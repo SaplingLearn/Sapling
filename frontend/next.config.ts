@@ -2,6 +2,40 @@ import type { NextConfig } from "next";
 // The dev-mode OpenNext hook lets `next dev` continue to work locally
 // against Cloudflare bindings (R2/KV/env vars). Safe no-op in prod builds.
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
+import { checkFrontendDeployEnv, resolveFrontendEnv } from "./src/lib/deployGuard";
+
+// Cross-check BEFORE deriving: checkFrontendDeployEnv's "explicit lock"
+// branch exists to fail the build when DEPLOY_ENV disagrees with explicit
+// BACKEND_URL/NEXT_PUBLIC_API_URL/COOKIE_DOMAIN vars (the "staging config on
+// the prod worker" footgun). It must see the operator-provided env — running
+// it after the derivation below would only ever see the already-corrected
+// values, silently converting the fail-loud guard into an auto-correct that
+// masks a wrong DEPLOY_ENV pasted into the other environment's build panel.
+if (process.env.NODE_ENV === "production") {
+  const deployProblems = checkFrontendDeployEnv(process.env);
+  if (deployProblems.length) {
+    throw new Error(
+      "Frontend deploy-config guard failed:\n  - " +
+        deployProblems.join("\n  - ") +
+        "\nCheck the Cloudflare Workers Build variables and deploy command " +
+        "(prod: 'npx wrangler deploy'; staging: 'npx wrangler deploy --env staging').",
+    );
+  }
+}
+
+// DEPLOY_ENV is the single knob: when a Workers Build sets DEPLOY_ENV=staging|
+// production, the build-time BACKEND_URL (the /api rewrite target) and the
+// inlined NEXT_PUBLIC_API_URL / COOKIE_DOMAIN are DERIVED from FRONTEND_ENVS so
+// they cannot be half-set or point at the wrong environment. Setting these on
+// process.env before Next reads them keeps NEXT_PUBLIC_* inlining consistent.
+// When DEPLOY_ENV is unset we leave the explicit vars alone (local/docker, or a
+// legacy build that sets BACKEND_URL directly).
+const RESOLVED = resolveFrontendEnv(process.env);
+if (RESOLVED.derived) {
+  process.env.BACKEND_URL = RESOLVED.apiUrl;
+  process.env.NEXT_PUBLIC_API_URL = RESOLVED.apiUrl;
+  if (RESOLVED.cookieDomain) process.env.COOKIE_DOMAIN = RESOLVED.cookieDomain;
+}
 
 // .trim() defends against a stray leading/trailing space in the build
 // variable: an untrimmed " https://..." makes the /api rewrite destination
@@ -36,6 +70,9 @@ if (process.env.NODE_ENV === "production") {
         "/api rewrite as 'Invalid rewrite found') — check the Cloudflare Workers Builds variable.",
     );
   }
+
+  // The "staging config on the prod worker" cross-check runs ABOVE, before
+  // the DEPLOY_ENV derivation mutates process.env — see the comment there.
 }
 
 const nextConfig: NextConfig = {

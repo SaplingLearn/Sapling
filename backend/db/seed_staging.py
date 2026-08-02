@@ -6,7 +6,8 @@ This lays a small, self-contained demo dataset on top of the *new*
 (post-0019–0027) schema so the live staging app renders the knowledge graph,
 gradebook, and courses-with-term against a real database. Migrations 0019–0027
 must already be applied and the canonical ``terms`` (fall-2025 / spring-2026 /
-summer-2026 / fall-2026) already seeded (0019); this seed only *reads* those
+fall-2026 — 0019 seeds these and 0032 retires Summer 2026) already seeded; this
+seed only *reads* those
 terms and adds demo rows around them. It never touches, duplicates, or depends
 on the real course catalog.
 
@@ -26,13 +27,12 @@ from __future__ import annotations
 
 import os
 import sys
-from collections import defaultdict
 
 # Allow ``python db/seed_staging.py`` as well as ``python -m db.seed_staging``.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import get_mastery_tier  # noqa: E402  (tier ↔ score stay consistent)
-from db.connection import table  # noqa: E402  (module-level; patched in tests)
+from db import seed_helpers as h  # noqa: E402
 from services.encryption import encrypt_if_present  # noqa: E402
 
 # ─── Deterministic ids (everything namespaced `seed-…`) ──────────────────────
@@ -64,56 +64,11 @@ ENR_MATH = "seed-enr-math210-spring2026"
 ENR_BIO = "seed-enr-bio110-fall2025"
 
 
-# ─── Idempotency helpers ─────────────────────────────────────────────────────
-
-_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"created": 0, "skipped": 0})
-
-
-def _record(table_name: str, created: bool) -> None:
-    _counts[table_name]["created" if created else "skipped"] += 1
-
-
-def _upsert(table_name: str, row: dict, on_conflict: str) -> None:
-    """Upsert a single row on its natural UNIQUE key.
-
-    merge-duplicates makes a re-run a no-op (same content, same key). We still
-    track created-vs-skipped via a pre-check on the conflict key for an honest
-    summary, but the write itself is the source of truth for idempotency.
-    """
-    exists = _exists_by(table_name, {k: row[k] for k in on_conflict.split(",")})
-    table(table_name).upsert(row, on_conflict=on_conflict)
-    _record(table_name, created=not exists)
-
-
-def _insert_if_absent(table_name: str, row_id: str, row: dict) -> None:
-    """Insert a row keyed on a deterministic id, only if that id is absent.
-
-    For tables with no natural UNIQUE (enrollments, gradebook_categories,
-    assignments, documents, notes, node_mastery_events) this is what keeps a
-    re-run from duplicating — especially the append-only node_mastery_events.
-    """
-    if _exists_by(table_name, {"id": row_id}):
-        _record(table_name, created=False)
-        return
-    table(table_name).insert({"id": row_id, **row})
-    _record(table_name, created=True)
-
-
-def _exists_by(table_name: str, eq_filters: dict) -> bool:
-    filters = {col: f"eq.{val}" for col, val in eq_filters.items()}
-    # Select a column we're already filtering on (always present) rather than a
-    # hardcoded "id": user_profiles is keyed on user_id and has no `id` column,
-    # so `select=id` 400s there. The filter keys are the natural/PK columns.
-    select_col = next(iter(eq_filters))
-    rows = table(table_name).select(select_col, filters=filters, limit=1) or []
-    return len(rows) > 0
-
-
 # ─── Seed steps ──────────────────────────────────────────────────────────────
 
 
 def seed_school() -> None:
-    _upsert(
+    h.upsert(
         "schools",
         {"id": SCHOOL_ID, "name": "Sapling Demo University", "slug": "sapling-demo"},
         on_conflict="slug",
@@ -130,7 +85,7 @@ def seed_courses() -> None:
          "Structure and function of the living cell."),
     ]
     for cid, code, name, dept, credits, desc in courses:
-        _upsert(
+        h.upsert(
             "courses",
             {
                 "id": cid,
@@ -156,7 +111,7 @@ def seed_offerings() -> None:
         (OFF_BIO, COURSE_BIO, TERM_FALL_2025, "Dr. Rosalind Franklin", "TTh 13:00", "Lab 2"),
     ]
     for oid, cid, term_id, instructor, meeting, location in offerings:
-        _upsert(
+        h.upsert(
             "course_offerings",
             {
                 "id": oid,
@@ -174,7 +129,7 @@ def seed_offerings() -> None:
 def seed_user() -> None:
     # Slim users row (profile fields live in user_profiles after the 0024 split).
     # email is encrypted on staging.
-    _upsert(
+    h.upsert(
         "users",
         {
             "id": USER_ID,
@@ -187,7 +142,7 @@ def seed_user() -> None:
         on_conflict="id",
     )
     # 🔒 name fields via encrypt_if_present.
-    _upsert(
+    h.upsert(
         "user_profiles",
         {
             "user_id": USER_ID,
@@ -224,7 +179,7 @@ def seed_enrollments() -> None:
         if curve_mode == "curved":
             row["curve_avg_target"] = 0.85
             row["curve_sd_delta"] = 0.05
-        _insert_if_absent("enrollments", eid, row)
+        h.insert_if_absent("enrollments", eid, row)
 
 
 # Graph: keyed on the ABSTRACT course_id (mastery is cumulative across terms).
@@ -271,7 +226,7 @@ def seed_graph() -> None:
     for course_id, nodes in _GRAPH_NODES.items():
         for node_id, concept, score in nodes:
             subject = concept.split()[0]
-            _upsert(
+            h.upsert(
                 "graph_nodes",
                 {
                     "id": node_id,
@@ -287,7 +242,7 @@ def seed_graph() -> None:
 
     for src_id, tgt_id, rel_type, strength in _GRAPH_EDGES:
         edge_id = f"seed-edge-{src_id.removeprefix('seed-node-')}-{tgt_id.removeprefix('seed-node-')}"
-        _upsert(
+        h.upsert(
             "graph_edges",
             {
                 "id": edge_id,
@@ -301,7 +256,7 @@ def seed_graph() -> None:
         )
 
     for node_id, event_id, delta, reason in _MASTERY_EVENTS:
-        _insert_if_absent(
+        h.insert_if_absent(
             "node_mastery_events",
             event_id,
             {"node_id": node_id, "delta": delta, "reason": reason},
@@ -338,7 +293,7 @@ _ASSIGNMENTS = [
 
 def seed_gradebook() -> None:
     for enr_id, cat_id, name, weight, drop_lowest in _CATEGORIES:
-        _insert_if_absent(
+        h.insert_if_absent(
             "gradebook_categories",
             cat_id,
             {
@@ -350,7 +305,7 @@ def seed_gradebook() -> None:
         )
 
     for asg_id, enr_id, cat_id, title, due, atype, source, possible, earned in _ASSIGNMENTS:
-        _insert_if_absent(
+        h.insert_if_absent(
             "assignments",
             asg_id,
             {
@@ -371,7 +326,7 @@ def seed_study() -> None:
     # A document + a note on the CS101 fall-2025 offering so study endpoints
     # have data. category ∈ {syllabus, lecture_notes, slides, reading,
     # assignment, study_guide, other} (0025).
-    _insert_if_absent(
+    h.insert_if_absent(
         "documents",
         "seed-doc-cs-fall-syllabus",
         {
@@ -388,7 +343,7 @@ def seed_study() -> None:
             ),
         },
     )
-    _insert_if_absent(
+    h.insert_if_absent(
         "notes",
         "seed-note-cs-fall-week1",
         {
@@ -408,25 +363,17 @@ def seed_study() -> None:
 
 
 def _print_summary() -> None:
-    print("\nSeed summary (staging demo data):")
     order = [
         "schools", "courses", "course_offerings", "users", "user_profiles",
         "enrollments", "graph_nodes", "graph_edges", "node_mastery_events",
         "gradebook_categories", "assignments", "documents", "notes",
     ]
-    total_created = 0
-    for name in order:
-        c = _counts.get(name, {"created": 0, "skipped": 0})
-        total_created += c["created"]
-        print(f"  {name:22s} created={c['created']:<3d} skipped(exists)={c['skipped']}")
-    print(f"  {'TOTAL created':22s} {total_created}")
-    if total_created == 0:
-        print("  (all rows already present — re-run was a no-op)")
+    h.print_summary(order, "Seed summary (staging demo data):")
 
 
 def main() -> None:
     """Seed the staging demo dataset. Idempotent; safe to re-run."""
-    _counts.clear()  # fresh per-run summary (also keeps re-runs in one process honest)
+    h.reset_counts()  # fresh per-run summary (also keeps re-runs in one process honest)
     seed_school()
     seed_courses()
     seed_offerings()

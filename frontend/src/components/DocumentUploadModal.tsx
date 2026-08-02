@@ -4,6 +4,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 import { CustomSelect } from "./CustomSelect";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { useToast } from "./ToastProvider";
 import {
   uploadDocumentStream,
@@ -52,6 +53,9 @@ interface Props {
   onComplete: (uploaded: UploadItem[]) => void;
 }
 
+/** The slice of a course the per-file dropdown + inline-add flow need. */
+type CourseOption = Pick<EnrolledCourse, "course_id" | "course_code" | "course_name">;
+
 const CATEGORY_OPTIONS = [
   { value: "syllabus", label: "Syllabus" },
   { value: "lecture_notes", label: "Lecture notes" },
@@ -70,18 +74,22 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   const [courseQuery, setCourseQuery] = React.useState("");
   const [courseResults, setCourseResults] = React.useState<OnboardingCourse[]>([]);
   const [addingCourse, setAddingCourse] = React.useState(false);
+  // Courses added inline this session (#186). `courses` is a read-only prop
+  // the parent only refreshes via onComplete (fired at done/close), so a
+  // just-added course must be merged locally to be selectable right away.
+  const [extraCourses, setExtraCourses] = React.useState<CourseOption[]>([]);
 
   React.useEffect(() => setMounted(true), []);
+
+  useScrollLock(open);
 
   React.useEffect(() => {
     if (!open) {
       setItems([]);
       setCourseQuery("");
       setCourseResults([]);
-      return;
+      setExtraCourses([]);
     }
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
   }, [open]);
 
   React.useEffect(() => {
@@ -91,6 +99,11 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     }, 200);
     return () => clearTimeout(t);
   }, [courseQuery]);
+
+  const allCourses = React.useMemo<CourseOption[]>(() => {
+    const seen = new Set(courses.map(c => c.course_id));
+    return [...courses, ...extraCourses.filter(c => !seen.has(c.course_id))];
+  }, [courses, extraCourses]);
 
   const activeUploads = items.filter(it => it.status === "uploading").length;
 
@@ -103,7 +116,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   };
 
   const addFiles = (fileList: File[]) => {
-    const defaultCourseId = courses[0]?.course_id || "";
+    const defaultCourseId = allCourses[0]?.course_id || "";
     const candidates = fileList
       .slice(0, MAX_FILES - items.length)
       .filter(f => {
@@ -160,15 +173,11 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
         }
 
         if (ev.type === "error") {
-          // Two flavors of error event from the streaming route:
-          //   step === "fallback" — orchestrator tripped, legacy path will run.
-          //                         Degraded mode, NOT a terminal failure.
-          //   step === "failed"   — terminal failure from _stream_legacy_fallback.
-          // Anything else we treat as informational and skip toasting to avoid
-          // double-firing alongside the catch-block toast.
-          if (ev.step === "fallback") {
-            toast.warn(`Switching to fallback: ${ev.message}`);
-          } else if (ev.step === "failed") {
+          // The streaming route's only error step is "failed" — terminal
+          // (#151b retired the legacy pipeline and its step === "fallback"
+          // event with it). Anything else we treat as informational and skip
+          // toasting to avoid double-firing alongside the catch-block toast.
+          if (ev.step === "failed") {
             toast.error(`Upload failed: ${ev.message}`);
           }
           setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: ev.message } : i));
@@ -256,11 +265,16 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   const addCourseInline = async (course: OnboardingCourse) => {
     setAddingCourse(true);
     try {
-      await addCourse(userId, course.id);
+      const resp = await addCourse(userId, course.id);
       toast.success(`Added ${course.course_code}`);
       setCourseQuery("");
       setCourseResults([]);
-      // Parent refreshes courses via onComplete.
+      // Parent refreshes courses via onComplete (fired at done/close), so
+      // merge the new course locally to make it selectable this session.
+      const courseId = resp?.course_id || course.id;
+      setExtraCourses(prev => prev.some(c => c.course_id === courseId)
+        ? prev
+        : [...prev, { course_id: courseId, course_code: course.course_code, course_name: course.course_name }]);
     } catch (err) {
       toast.error(`Failed: ${String(err)}`);
     } finally {
@@ -286,6 +300,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
       }}
     >
       <div
+        data-testid="upload-modal"
         onClick={e => e.stopPropagation()}
         className="card slide-up"
         style={{ width: "min(720px, 100%)", maxHeight: "88vh", overflow: "hidden", padding: 0, display: "flex", flexDirection: "column" }}
@@ -295,13 +310,14 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             <div className="label-micro">Upload</div>
             <div className="h-serif" style={{ fontSize: 20 }}>Add course materials</div>
           </div>
-          <button className="btn btn--ghost btn--sm" onClick={handleClose} aria-label="Close">
+          <button data-testid="upload-modal-close" className="btn btn--ghost btn--sm" onClick={handleClose} aria-label="Close">
             <Icon name="x" size={14} />
           </button>
         </div>
 
         <div style={{ padding: 20, overflowY: "auto" }}>
           <div
+            data-testid="upload-modal-dropzone"
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
             onDrop={e => {
@@ -322,9 +338,10 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
               PDF, DOCX, PPTX · max 100 MB each
             </div>
-            <label className="btn btn--primary btn--sm">
+            <label data-testid="upload-modal-browse" className="btn btn--primary btn--sm">
               <Icon name="up" size={12} /> Browse
               <input
+                data-testid="upload-modal-file-input"
                 type="file"
                 multiple
                 accept=".pdf,.docx,.pptx"
@@ -337,10 +354,11 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             </label>
           </div>
 
-          {courses.length < 10 && (
+          {allCourses.length < 10 && (
             <div style={{ marginTop: 16 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>+ Add a course</div>
               <input
+                data-testid="upload-modal-course-search"
                 value={courseQuery}
                 onChange={e => setCourseQuery(e.target.value)}
                 placeholder="Search a course to add"
@@ -355,6 +373,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                   {courseResults.map(c => (
                     <button
                       key={c.id}
+                      data-testid={`upload-modal-course-result-${c.id}`}
                       disabled={addingCourse}
                       onClick={() => addCourseInline(c)}
                       style={{
@@ -376,9 +395,10 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             {items.length === 0 && (
               <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Files you add will appear here.</div>
             )}
-            {items.map(item => (
+            {items.map((item, idx) => (
               <div
                 key={item.id}
+                data-testid={`upload-modal-file-row-${idx}`}
                 className="card"
                 style={{ padding: 14, marginBottom: 10, display: "flex", flexDirection: "column", gap: 10 }}
               >
@@ -400,6 +420,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                   </div>
                   <StatusBadge status={item.status} />
                   <button
+                    data-testid={`upload-modal-file-remove-${idx}`}
                     className="btn btn--ghost btn--sm"
                     disabled={item.status === "uploading"}
                     onClick={() => {
@@ -418,7 +439,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                     onChange={(v) => setItemField(item.id, p => ({ ...p, courseId: v }))}
                     placeholder="Pick a course"
                     ariaLabel="Course"
-                    options={courses.map(c => ({ value: c.course_id, label: c.course_code || c.course_name }))}
+                    options={allCourses.map(c => ({ value: c.course_id, label: c.course_code || c.course_name }))}
                   />
                   {item.status === "processed" && (
                     <>
@@ -430,13 +451,13 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                         options={CATEGORY_OPTIONS}
                         ariaLabel="Category"
                       />
-                      <button className="btn btn--ghost btn--sm" onClick={() => reanalyze(item)}>
+                      <button data-testid={`upload-modal-file-reanalyze-${idx}`} className="btn btn--ghost btn--sm" onClick={() => reanalyze(item)}>
                         <Icon name="sparkle" size={12} /> Re-analyze
                       </button>
                     </>
                   )}
                   {(item.status === "error" || item.status === "aborted") && (
-                    <button className="btn btn--ghost btn--sm" onClick={() => retry(item)}>
+                    <button data-testid={`upload-modal-file-retry-${idx}`} className="btn btn--ghost btn--sm" onClick={() => retry(item)}>
                       <Icon name="sparkle" size={12} /> Retry
                     </button>
                   )}
@@ -472,6 +493,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                     <span>Reference: {item.requestId.slice(0, 8)}…</span>
                     <button
                       type="button"
+                      data-testid={`upload-modal-file-copy-request-id-${idx}`}
                       onClick={() => {
                         const rid = item.requestId || "";
                         if (navigator.clipboard) {
@@ -499,11 +521,12 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             {activeUploads > 0 && ` · ${activeUploads} uploading`}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn--ghost btn--sm" onClick={handleClose}>Cancel</button>
+            <button data-testid="upload-modal-cancel" className="btn btn--ghost btn--sm" onClick={handleClose}>Cancel</button>
             {allFinished ? (
-              <button className="btn btn--sm btn--primary" onClick={done}>Done</button>
+              <button data-testid="upload-modal-done" className="btn btn--sm btn--primary" onClick={done}>Done</button>
             ) : (
               <button
+                data-testid="upload-modal-submit"
                 className="btn btn--sm btn--primary"
                 disabled={items.length === 0 || items.every(i => i.status !== "pending")}
                 onClick={startAll}
@@ -521,8 +544,9 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
 
 /**
  * Pull concept names out of either the orchestrator result shape
- * ({ concepts: { concepts: [{ name, ... }] } }) or the legacy fallback
- * shape ({ concept_notes: [{ name }] }). Returns at most a flat string[].
+ * ({ concepts: { concepts: [{ name, ... }] } }) or the persisted-row
+ * shape ({ concept_notes: [{ name }] }) that idempotent replays and
+ * /upload/sync responses carry. Returns at most a flat string[].
  */
 function extractConceptNames(resp: any): string[] {
   const fromOrchestrator = resp?.concepts?.concepts;
@@ -531,9 +555,9 @@ function extractConceptNames(resp: any): string[] {
       .map((c: { name?: unknown }) => c?.name)
       .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
   }
-  const fromLegacy = resp?.concept_notes;
-  if (Array.isArray(fromLegacy)) {
-    return fromLegacy
+  const fromRow = resp?.concept_notes;
+  if (Array.isArray(fromRow)) {
+    return fromRow
       .map((n: { name?: unknown }) => n?.name)
       .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
   }

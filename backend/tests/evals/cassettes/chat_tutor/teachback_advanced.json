@@ -1,0 +1,31 @@
+{
+  "text": "You've got the main components right! The Pumping Lemma is indeed a tool to prove a language *isn't* regular, and it involves splitting a string and repeating (or \"pumping\") the middle part.\n\nThere's a subtle but crucial point you've inverted. The lemma states that for a regular language, there exists a pumping length `p` such that any string `s` with length at least `p` *can* be pumped and remain in the language.\n\nTo prove a language is *not* regular, we use this by contradiction. We show that for a given language, this property fails.\n\nSo, for the proof to work, what are we hoping to show when we pump the middle section of a chosen string?",
+  "tool_calls": [
+    {
+      "args": {
+        "concepts": [
+          "Pumping Lemma",
+          "Regular Languages"
+        ]
+      },
+      "tool_name": "apply_graph_update_tool"
+    },
+    {
+      "args": {
+        "updates": [
+          {
+            "concept_name": "Pumping Lemma",
+            "mastery_delta": 0.1,
+            "reason": "Partially correct explanation."
+          },
+          {
+            "concept_name": "Regular Languages",
+            "mastery_delta": 0.1,
+            "reason": "Used term correctly in context."
+          }
+        ]
+      },
+      "tool_name": "update_mastery_tool"
+    }
+  ]
+}

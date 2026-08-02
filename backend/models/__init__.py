@@ -46,7 +46,7 @@ class ActionBody(BaseModel):
 class GenerateQuizBody(BaseModel):
     user_id: str = "user_andres"
     concept_node_id: str
-    num_questions: int = 5
+    num_questions: int = Field(default=5, ge=1, le=10)
     difficulty: str = "medium"
     use_shared_context: bool = True
     # Mirrors the Learn-route fast/smart toggle so quiz generation has
@@ -122,6 +122,15 @@ class UpdateCourseColorBody(BaseModel):
 class CreateRoomBody(BaseModel):
     user_id: str = "user_andres"
     room_name: str = "Study Room"
+    # #405 semantics: optional labeling + the public flag (false = invite-only).
+    topic: str | None = None
+    course: str | None = None
+    is_public: bool = False
+
+
+class PublicJoinBody(BaseModel):
+    """Body for the invite-less join of a public room (#405)."""
+    user_id: str
 
 
 class JoinRoomBody(BaseModel):
@@ -142,6 +151,18 @@ class SendMessageBody(BaseModel):
     user_name: str
     text: Optional[str] = None
     image_url: Optional[str] = None
+    # Intrinsic pixel size of image_url, measured client-side at upload (#315).
+    # Optional: older clients omit them and the UI falls back to unreserved
+    # layout, exactly as before.
+    #
+    # BOUNDED, because these are client-supplied and the transcript renders
+    # them as an aspect-ratio directly. Unbounded, any room member could post
+    # width=1/height=2000000000 — inside Postgres INTEGER range, so it inserts
+    # cleanly — and blow out that room's transcript for everyone, with no edit
+    # path to recover. 20000 is comfortably past any real image (8K is 7680)
+    # while keeping the ratio sane.
+    image_width: Optional[int] = Field(default=None, gt=0, le=20000)
+    image_height: Optional[int] = Field(default=None, gt=0, le=20000)
     reply_to_id: Optional[str] = None
 
 
@@ -231,6 +252,8 @@ class UpdateSettingsBody(BaseModel):
     theme: Optional[str] = None
     font_size: Optional[str] = None
     accent_color: Optional[str] = None
+    # #72: Class Intel opt-out (user_settings.share_class_context, 0037)
+    share_class_context: Optional[bool] = None
 
 
 class EquipCosmeticBody(BaseModel):

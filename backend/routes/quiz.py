@@ -1,24 +1,30 @@
+import asyncio
 import json
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
+from agents import ORCHESTRATOR_LIMITS
 from agents.quiz import quiz_agent, Quiz, QuizQuestion
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
+from agents.usage import record_agent_usage
 from db.connection import table
 from models import GenerateQuizBody, SubmitQuizBody
+from routes.learn import _get_catalog_chunk
+from services import events_service
 from services.auth_guard import require_self
 from services.profiles import get_display_name
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
+from services.rag_service import retrieve_chunks, format_rag_context
 from services.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
@@ -134,11 +140,68 @@ def _resolve_model_pref(model_pref: str | None):
     """
     if not model_pref:
         return None
+    from agents._providers import _model_mode, google_model
+    if _model_mode() != "real":
+        # #391 seam: the per-request fast/smart override must not bypass
+        # SAPLING_MODEL_MODE by constructing a live GoogleModel. Same fix as
+        # routes/learn.py (#392) — there the browser always sends a pref;
+        # the quiz UI does not send one today, but any client that did would
+        # silently put live Gemini back in the function-mode path. Fall
+        # through to the agent's default model, which model_for("quiz")
+        # already built for the active mode.
+        return None
     name = _PREF_MODEL_NAMES.get(model_pref)
     if not name:
         return None
-    from agents._providers import google_model
     return google_model(name)
+
+
+def _resolve_bu_code(course_id: str | None) -> str | None:
+    """Resolve a Sapling course UUID to its BU course_code (course_chunks
+    partition key). None if unresolvable OR if the lookup fails — grounding
+    must never break quiz generation."""
+    if not course_id:
+        return None
+    try:
+        rows = table("courses").select(
+            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+        )
+    except Exception:
+        return None
+    return (rows[0].get("course_code") if rows else None) or None
+
+
+def _course_material_block(course_id: str | None, concept_name: str) -> str:
+    """Best-effort catalog + document-chunk context for a concept.
+
+    Returns "" if nothing is available (no course, no bu_code, no chunks) or
+    if retrieval raises — grounding must never break quiz generation.
+    """
+    bu_code = _resolve_bu_code(course_id)
+    if not bu_code:
+        return ""
+    blocks: list[str] = []
+    try:
+        catalog = _get_catalog_chunk(bu_code)
+    except Exception:
+        catalog = ""
+    if catalog:
+        blocks.append("COURSE CATALOG (official BU course data):\n\n" + catalog)
+    try:
+        chunks = retrieve_chunks(concept_name, course_id=bu_code, k=5)
+    except Exception:
+        chunks = []
+    # Drop any retrieved chunk that merely repeats the catalog block already
+    # injected above — catalog chunks share the course_chunks store and can
+    # rank into the semantic results, which would send the same
+    # course-description text to the model twice (wasted prompt tokens).
+    if catalog:
+        catalog_norm = catalog.strip()
+        chunks = [c for c in chunks if (c.get("chunk_text") or "").strip() != catalog_norm]
+    rag_block = format_rag_context(chunks)
+    if rag_block:
+        blocks.append(rag_block)
+    return "\n\n".join(blocks)
 
 
 async def _quiz_via_agent(
@@ -172,7 +235,7 @@ async def _quiz_via_agent(
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
     # needs and trust the prompt to drive tool calls.
-    user_message = (
+    routing_msg = (
         f"Generate {num_questions} {difficulty} questions for the student. "
         f"The target concept is '{concept_name}' "
         f"(concept_node_id={concept_node_id}). Follow the workflow in your "
@@ -180,16 +243,33 @@ async def _quiz_via_agent(
         f"read_recent_quiz_attempts."
     )
     if use_shared_context:
-        user_message += (
+        routing_msg += (
             " Also call read_misconceptions_for_course and use those misconceptions "
             "as distractors and probes."
         )
 
+    # Course-material grounding does blocking network I/O (a Gemini
+    # embedding call, bounded at 60s) plus sync Supabase reads. Run it in a
+    # worker thread so a slow/stalled retrieval can't freeze this worker's
+    # event loop for every other in-flight request. Matches the
+    # asyncio.to_thread pattern used by the agent read tools.
+    material = await asyncio.to_thread(_course_material_block, course_id, concept_name)
+    if material:
+        user_message = (
+            "COURSE MATERIAL for '" + concept_name + "':\n\n" + material
+            + "\n\n[GENERATE QUIZ]\n" + routing_msg
+        )
+    else:
+        user_message = routing_msg
+
     model_override = _resolve_model_pref(model_pref)
-    run_kwargs: dict = {"deps": deps}
+    run_kwargs: dict = {"deps": deps, "usage_limits": ORCHESTRATOR_LIMITS}
     if model_override is not None:
         run_kwargs["model"] = model_override
-    result = await quiz_agent.run(user_message, **run_kwargs)
+    result = record_agent_usage(
+        await quiz_agent.run(user_message, **run_kwargs),
+        feature="quiz", task="quiz", user_id=deps.user_id,
+    )
     quiz: Quiz = result.output
     # Filter out questions where the agent's correct_answer didn't match
     # any option verbatim — _agent_question_to_wire returns None for those.
@@ -276,6 +356,20 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         "difficulty": body.difficulty,
         "questions_json": questions,
     })
+    # #117: quiz.started once the attempt row exists. num_questions is the
+    # actual generated count (the agent may return fewer than requested).
+    events_service.log_event(
+        "quiz.started",
+        category="usage",
+        user_id=body.user_id,
+        request_id=request_id,
+        payload={
+            "quiz_id": quiz_id,
+            "concept_node_id": body.concept_node_id,
+            "num_questions": len(questions),
+            "difficulty": body.difficulty,
+        },
+    )
     return {"quiz_id": quiz_id, "questions": questions}
 
 
@@ -291,6 +385,33 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         questions = json.loads(questions)
     user_id = attempt["user_id"]
     require_self(user_id, request)
+
+    # #129: completed_at is written on the first successful submit. A re-POST
+    # of the same quiz_id must not re-run apply_graph_update (double mastery
+    # delta + duplicate node_mastery_events row + streak bump), the background
+    # quiz-context task, or achievements. 409 rather than replaying the original
+    # 200: quiz_attempts stores no mastery_before/after, so faithfully
+    # reconstructing the first response would need a migration.
+    if attempt.get("completed_at"):
+        raise HTTPException(
+            status_code=409, detail="Quiz attempt has already been submitted"
+        )
+    # The read above is only the fast path — two CONCURRENT submits (a
+    # double-click on the final submit) would both pass it. The atomic claim
+    # below (conditional update on completed_at IS NULL, PR #464 review) is
+    # the real gate: exactly one request wins the row; the loser 409s before
+    # any mastery write. A crash after the claim leaves the attempt
+    # completed-but-scoreless (retry 409s) — strictly safer than double
+    # mastery. The final update further down fills score/total/answers_json.
+    claimed = table("quiz_attempts").update(
+        {"completed_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{body.quiz_id}", "completed_at": "is.null"},
+    )
+    if not claimed:
+        raise HTTPException(
+            status_code=409, detail="Quiz attempt has already been submitted"
+        )
+
     concept_node_id = attempt["concept_node_id"]
 
     answer_map = {str(a.question_id): a.selected_label for a in body.answers}
@@ -301,7 +422,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         selected = answer_map.get(qid, "")
         correct_opt = next((o for o in q["options"] if o.get("correct")), None)
         correct_label = correct_opt["label"] if correct_opt else ""
-        is_correct = selected == correct_label
+        # #129: a malformed item with NO correct option must never grade as
+        # correct — '' == '' would otherwise hand a free point whenever the
+        # answer is also missing.
+        is_correct = bool(correct_opt) and selected == correct_label
         if is_correct:
             score += 1
         results.append({
@@ -364,7 +488,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             "score": score,
             "total": total,
             "answers_json": [a.model_dump() for a in body.answers],
-            "completed_at": datetime.utcnow().isoformat(),
+            # completed_at was already stamped by the atomic claim above.
         },
         filters={"id": f"eq.{body.quiz_id}"},
     )
@@ -390,7 +514,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     def _update_context(prompt: str, uid: str, node_id: str):
         try:
-            result = run_agent_sync(quiz_context_agent.run(prompt))
+            result = record_agent_usage(
+                run_agent_sync(quiz_context_agent.run(prompt)),
+                feature="quiz", task="quiz_context", user_id=uid,
+            )
             save_quiz_context(uid, node_id, result.output.model_dump())
         except Exception:
             pass
@@ -403,6 +530,21 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         check_achievements(user_id, "quizzes_completed", {})
     except Exception:
         pass
+
+    # #117: quiz.completed on the success path only — a 409 replay (the
+    # atomic completed_at claim above) or any earlier 4xx never reaches here.
+    events_service.log_event(
+        "quiz.completed",
+        category="usage",
+        user_id=user_id,
+        payload={
+            "quiz_id": body.quiz_id,
+            "concept_node_id": concept_node_id,
+            "score": score,
+            "total": total,
+            "mastery_delta": mastery_delta,
+        },
+    )
 
     return {
         "score": score,

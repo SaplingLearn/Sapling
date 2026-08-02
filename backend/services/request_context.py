@@ -63,12 +63,46 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         start = time.perf_counter()
         try:
             response = await call_next(request)
-        finally:
+        except Exception:
+            # A truly UNHANDLED exception (not a raised HTTPException — those
+            # are converted to responses by handlers running INSIDE the app)
+            # propagates through this dispatch on its way to Starlette's
+            # outermost ServerErrorMiddleware, so no response object ever
+            # reaches the >=400 seam below. Emit the error.5xx HERE — with the
+            # real duration and request id — then re-raise so the 500 response
+            # is still produced normally. Exactly-once: this request never
+            # reaches the response-path emission.
             _REQUEST_ID_CTX.reset(token)
+            from services import events_service
+
+            crash_payload = {
+                "path": request.url.path,
+                "method": request.method,
+                "status_code": 500,
+                "duration_ms": round((time.perf_counter() - start) * 1000, 1),
+            }
+            crash_route = request.scope.get("route")
+            crash_template = getattr(crash_route, "path_format", None) or getattr(
+                crash_route, "path", None
+            )
+            if crash_template:
+                crash_payload["route"] = crash_template
+            events_service.log_event(
+                "error.5xx",
+                category="error",
+                user_id=getattr(request.state, "user_id", None),
+                request_id=rid,
+                payload=crash_payload,
+            )
+            raise
+        finally:
+            # Idempotent under the except-path's early reset (reset of an
+            # already-reset token would raise; guard by only resetting when
+            # the var still holds this request's id).
+            if _REQUEST_ID_CTX.get() == rid:
+                _REQUEST_ID_CTX.reset(token)
 
         # One log line per request, severity tracking the response code.
-        # Unhandled exceptions are converted to 500 by the @app.exception_handler
-        # in main.py, so they show up here as 5xx with no special-casing.
         dur_ms = (time.perf_counter() - start) * 1000
         level = (
             logging.ERROR if response.status_code >= 500
@@ -80,6 +114,43 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             "[%s] %s %s -> %d (%.1fms)",
             rid, request.method, request.url.path, response.status_code, dur_ms,
         )
+
+        # #117: persist 4xx/5xx as observability events (the error rollups in
+        # /api/admin/analytics). Errors ONLY — 2xx/3xx traffic would swamp the
+        # events table for zero analytical value. Notes:
+        # - the request-id contextvar was already reset in the `finally`
+        #   above, so `rid` is passed explicitly;
+        # - only the PATH is recorded, never the full URL — query strings
+        #   carry search terms and other user input;
+        # - `route` is the matched FastAPI template (bounded cardinality);
+        #   unmatched requests (e.g. a bare 404) simply omit it;
+        # - user_id comes off request.state, stamped by
+        #   auth_guard.get_session_user_id on a successful decode (the shared
+        #   ASGI scope is the only channel that propagates back out of
+        #   BaseHTTPMiddleware's downstream task).
+        if response.status_code >= 400:
+            # Local import: events_service imports current_request_id from
+            # this module at import time, so a top-level import here would be
+            # circular.
+            from services import events_service
+
+            payload = {
+                "path": request.url.path,
+                "method": request.method,
+                "status_code": response.status_code,
+                "duration_ms": round(dur_ms, 1),
+            }
+            route = request.scope.get("route")
+            template = getattr(route, "path_format", None) or getattr(route, "path", None)
+            if template:
+                payload["route"] = template
+            events_service.log_event(
+                "error.5xx" if response.status_code >= 500 else "error.4xx",
+                category="error",
+                user_id=getattr(request.state, "user_id", None),
+                request_id=rid,
+                payload=payload,
+            )
 
         # Always echo back so clients can capture it from successful responses too.
         response.headers["X-Request-ID"] = rid

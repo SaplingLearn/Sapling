@@ -36,6 +36,69 @@ const eslintConfig = [
       "react-hooks/exhaustive-deps": "error",
     },
   },
+  // ── data-testid convention on the core E2E surfaces (#382) ───────────────
+  //
+  // The browser suite (#385) drives six surfaces: sign-in, the approval gate,
+  // the upload modal, the tutor composer, the quiz answer flow, and the graph
+  // container. Those tests must anchor on `data-testid`, never on CSS classes
+  // or copy — both churn on every design pass.
+  //
+  // This block enforces the convention where it matters: any NEW `<button>`,
+  // `<input>` or `<textarea>` added to one of the files that owns those
+  // surfaces must carry a `data-testid`. It is deliberately NOT global — the
+  // rest of the app is out of scope, and a repo-wide version would be noise.
+  //
+  // Naming rules live in `docs/frontend-testids.md`. When a new surface joins
+  // the browser suite, add its owning file to `files` below.
+  {
+    files: [
+      "src/components/marketing/SignInModal.tsx",
+      "src/app/pending/page.tsx",
+      "src/components/screens/Onboarding.tsx",
+      "src/components/DocumentUploadModal.tsx",
+      "src/components/chat/ChatPanel.tsx",
+      "src/components/QuizPanel.tsx",
+      "src/components/graph/KnowledgeGraph.tsx",
+      "src/components/graph/KnowledgeGraph2D.tsx",
+      "src/components/graph/KnowledgeGraph3D.tsx",
+      "src/components/ShellFrame.tsx",
+      "src/components/screens/Social.tsx",
+      "src/components/screens/Dashboard.tsx",
+      "src/components/screens/Learn.tsx",
+      "src/components/screens/Library.tsx",
+      "src/components/screens/Calendar.tsx",
+      "src/components/screens/Gradebook/Landing.tsx",
+      "src/components/screens/Gradebook/Course.tsx",
+      "src/components/Gradebook/TranscriptModal.tsx",
+      "src/components/Gradebook/CourseCard.tsx",
+      "src/components/Gradebook/AssignmentList.tsx",
+      "src/components/Gradebook/AssignmentModal.tsx",
+      "src/components/screens/AdminAnalytics.tsx",
+      "src/components/screens/Tree.tsx",
+      "src/components/marketing/graph/KnowledgeGraphDemo.tsx",
+      "src/components/marketing/FeatureBand.tsx",
+      "src/components/marketing/SurfaceBento.tsx",
+      "src/components/marketing/surfaces/GradebookSurface.tsx",
+      "src/components/marketing/surfaces/NotesSurface.tsx",
+      "src/components/marketing/surfaces/QuizSurface.tsx",
+      "src/components/marketing/surfaces/ReviewSurface.tsx",
+      "src/components/marketing/surfaces/RoomsSurface.tsx",
+      "src/components/marketing/surfaces/Surface.tsx",
+      "src/components/marketing/surfaces/TutorSurface.tsx",
+      "src/components/marketing/surfaces/UploadSurface.tsx",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            'JSXOpeningElement[name.name=/^(button|input|textarea)$/]:not(:has(JSXAttribute[name.name="data-testid"]))',
+          message:
+            "E2E surface (#382): every <button>/<input>/<textarea> in this file needs a data-testid. See docs/frontend-testids.md for the naming convention.",
+        },
+      ],
+    },
+  },
 ];
 
 export default eslintConfig;

@@ -2,7 +2,9 @@
 import React from "react";
 import Link from "next/link";
 import { TopBar } from "../TopBar";
+import { FullHeightScreen } from "../FullHeightScreen";
 import { Icon } from "../Icon";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { Avatar } from "../Avatar";
 import { CustomSelect } from "../CustomSelect";
 import { ProfileView } from "../ProfileView";
@@ -76,12 +78,29 @@ export function Settings() {
 
   React.useEffect(() => {
     if (!userReady || !userId) return;
-    fetchSettings(userId)
-      .then(s => {
-        setSettings(s);
-        setUsernameDraft(s.username || "");
-        if (s.accent_color) {
-          document.documentElement.style.setProperty("--accent", s.accent_color);
+    // The `/settings` payload can come back with the profile identity fields
+    // (display name, username, bio, location, website) unset, which would
+    // leave the Profile form blank and risk a save wiping the stored values.
+    // Seed those fields from the public profile as a fallback so the inputs
+    // reflect what's actually stored. The profile fetch is best-effort — a
+    // failure there must not block settings from loading.
+    Promise.all([
+      fetchSettings(userId),
+      fetchPublicProfile(userId).catch(() => null),
+    ])
+      .then(([s, profile]) => {
+        const seeded: UserSettings = {
+          ...s,
+          display_name: s.display_name || profile?.name || null,
+          username: s.username || profile?.username || null,
+          bio: s.bio || profile?.bio || null,
+          location: s.location || profile?.location || null,
+          website: s.website || profile?.website || null,
+        };
+        setSettings(seeded);
+        setUsernameDraft(seeded.username || "");
+        if (seeded.accent_color) {
+          document.documentElement.style.setProperty("--accent", seeded.accent_color);
         }
       })
       .catch((e) => console.error("settings load", e));
@@ -213,10 +232,10 @@ export function Settings() {
     }
   };
 
-  const tabs: Tab[] = ["profile", "preferences", "notifications", "data"];
+  const tabs: Tab[] = ["profile", "cosmetics", "preferences", "notifications", "data"];
 
   return (
-    <div>
+    <FullHeightScreen>
       <TopBar
         title="Settings"
         subtitle="Profile, preferences, and account"
@@ -229,7 +248,10 @@ export function Settings() {
           </>
         }
       />
-      <div style={{ display: "flex", height: "calc(100vh - 112px)" }}>
+      {/* Fills whatever `<main>` leaves below TopBar. `minHeight: 0` lets this
+          shrink past its content so the panes below scroll internally rather
+          than pushing the screen taller than `<main>`. */}
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div style={{ flex: 1, minWidth: 0, padding: "24px 32px", overflowY: "auto" }}>
           {!settings && tab !== "cosmetics" && <SettingsFormSkeleton />}
           {tab === "profile" && settings && (
@@ -257,7 +279,7 @@ export function Settings() {
                   <Icon name="pencil" size={12} /> {uploadingAvatar ? "Uploading…" : "Change avatar"}
                 </button>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 16, padding: "12px 0", borderBottom: "1px solid var(--border)", alignItems: "center" }}>
+              <div className="settings-field-row">
                 <div className="label-micro">Username</div>
                 <div>
                   <div style={{ position: "relative" }}>
@@ -305,17 +327,7 @@ export function Settings() {
                   ["Website", "website"],
                 ] as const
               ).map(([label, key]) => (
-                <div
-                  key={key}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "180px 1fr",
-                    gap: 16,
-                    padding: "12px 0",
-                    borderBottom: "1px solid var(--border)",
-                    alignItems: "center",
-                  }}
-                >
+                <div key={key} className="settings-field-row">
                   <div className="label-micro">{label}</div>
                   <input
                     defaultValue={settings[key] ?? ""}
@@ -635,7 +647,7 @@ export function Settings() {
       {previewOpen && preview && (
         <PreviewModal profile={preview} onClose={() => setPreviewOpen(false)} />
       )}
-    </div>
+    </FullHeightScreen>
   );
 }
 
@@ -878,6 +890,10 @@ function CosmeticPreview({
           <img
             src={cosmetic.asset_url}
             alt=""
+            width={64}
+            height={64}
+            loading="lazy"
+            decoding="async"
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", objectFit: "contain" }}
           />
         )}
@@ -887,7 +903,7 @@ function CosmeticPreview({
   if (cosmetic.type === "banner" && cosmetic.asset_url) {
     return (
       <div style={{ width: "100%", height: 48, borderRadius: "var(--r-sm)", overflow: "hidden", border: "1px solid var(--border)" }}>
-        <img src={cosmetic.asset_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <img src={cosmetic.asset_url} alt="" width={180} height={48} loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       </div>
     );
   }
@@ -910,13 +926,13 @@ function CosmeticPreview({
 }
 
 function PreviewModal({ profile, onClose }: { profile: UserProfile; onClose: () => void }) {
+  // This modal only exists while it's open, so the lock is unconditional.
+  useScrollLock(true);
+
   React.useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => {
-      document.body.style.overflow = prev;
       window.removeEventListener("keydown", onKey);
     };
   }, [onClose]);

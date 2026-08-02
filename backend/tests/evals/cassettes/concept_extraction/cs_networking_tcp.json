@@ -1,0 +1,49 @@
+{
+  "concepts": [
+    {
+      "description": "TCP (Transmission Control Protocol) is a core internet protocol that provides reliable, ordered, and byte-stream oriented communication between applications. It forms the basis for many network services.",
+      "importance": 1.0,
+      "name": "TCP Fundamentals"
+    },
+    {
+      "description": "The three-way handshake is the mechanism TCP uses to establish a connection between two hosts, ensuring both sides are ready to send and receive data. It involves the exchange of SYN and ACK segments.",
+      "importance": 0.9,
+      "name": "Three-Way Handshake"
+    },
+    {
+      "description": "TCP's congestion control mechanism aims to prevent network overload by dynamically adjusting the data transmission rate, employing strategies like slow start, congestion avoidance, and fast recovery.",
+      "importance": 0.9,
+      "name": "Congestion Control"
+    },
+    {
+      "description": "TCP segments are the basic unit of data transfer in TCP, characterized by their reliability, ordered delivery, and byte-stream orientation, ensuring data integrity and correct sequencing.",
+      "importance": 0.8,
+      "name": "TCP Segments"
+    },
+    {
+      "description": "TCP's flow control mechanism prevents a sender from overwhelming a receiver with data by using the receiver's advertised window to limit the amount of unacknowledged data outstanding.",
+      "importance": 0.8,
+      "name": "Flow Control"
+    },
+    {
+      "description": "Slow start is an algorithm used in TCP congestion control to gradually increase the amount of data sent into the network after a connection is established or after congestion is detected.",
+      "importance": 0.7,
+      "name": "Slow Start"
+    },
+    {
+      "description": "Congestion avoidance is a phase in TCP congestion control that follows slow start, where the transmission window is increased more conservatively to probe for available bandwidth and avoid network congestion.",
+      "importance": 0.7,
+      "name": "Congestion Avoidance"
+    },
+    {
+      "description": "Fast recovery is a TCP congestion control algorithm that attempts to quickly recover from packet loss indicated by duplicate ACKs without entering a slow start phase, thus maintaining high throughput.",
+      "importance": 0.7,
+      "name": "Fast Recovery"
+    },
+    {
+      "description": "The receiver's advertised window is a value sent by the receiving host to the sending host, indicating the amount of buffer space currently available for incoming data, thereby regulating the sender's data rate.",
+      "importance": 0.6,
+      "name": "Receiver's Advertised Window"
+    }
+  ]
+}

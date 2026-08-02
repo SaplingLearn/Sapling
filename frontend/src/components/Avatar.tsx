@@ -46,6 +46,10 @@ export function Avatar({
           <img
             src={img}
             alt=""
+            width={size}
+            height={size}
+            loading="lazy"
+            decoding="async"
             referrerPolicy="no-referrer"
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />

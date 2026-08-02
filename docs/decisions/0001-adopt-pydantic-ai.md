@@ -3,6 +3,10 @@
 - Status: accepted
 - Date: 2026-05-03
 - Supersedes: none
+- Superseded by: ADR 0024 — the legacy-fallback clause ONLY (the
+  "`gemini_service.py` stays as the fallback during migration" posture).
+  The framework adoption itself stands; `services/gemini_service.py` was
+  deleted in #151.
 
 ## Context
 

@@ -1,8 +1,18 @@
 "use client";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { AnimatePresence, motion, MotionGlobalConfig, useReducedMotion } from "framer-motion";
+import { IS_TEST_MODE } from "@/lib/testMode";
+
+// Deterministic DOM for browser tests (#383): framer-motion's own test
+// seam jumps every animation straight to its final keyframe. No-op in
+// production builds (flag inlined to false at build time). Same gate as
+// Study.tsx / HowItWorks.tsx — the flag is module-side-effect scoped, so
+// every framer-motion consumer must set it for direct-navigation runs.
+if (IS_TEST_MODE) MotionGlobalConfig.skipAnimations = true;
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { Toggle } from "@/components/ui";
 import { CustomSelect } from "../CustomSelect";
 import { DocumentUploadModal } from "../DocumentUploadModal";
@@ -25,6 +35,8 @@ import {
   type EnrolledCourse,
   type GoogleEvent,
 } from "@/lib/api";
+import { now } from "@/lib/testMode";
+import { humanizeError } from "@/lib/errorMessage";
 
 type View = "month" | "week" | "day" | "table";
 
@@ -51,9 +63,9 @@ function dateKey(d: Date) {
 }
 
 function dueLabel(date: string) {
-  const now = Date.now();
+  const nowMs = now();
   const due = new Date(date).getTime();
-  const diffMs = due - now;
+  const diffMs = due - nowMs;
   const diffHours = diffMs / (1000 * 60 * 60);
   if (diffHours <= 0) return { label: "overdue", cls: "chip--err" };
   if (diffHours <= 24) return { label: "due soon", cls: "chip--err" };
@@ -67,17 +79,30 @@ export function Calendar() {
   const search = useSearchParams();
   const toast = useToast();
   const { userId, userReady } = useUser();
+  // Disable the view-swap fade/slide for users who ask for reduced motion.
+  // The global CSS reduced-motion rule only neutralises CSS transitions;
+  // framer's JS-driven animations need this explicit opt-out.
+  const prefersReduced = useReducedMotion();
 
   const [assignments, setAssignments] = React.useState<Assignment[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [view, setView] = React.useState<View>("month");
-  const [cursor, setCursor] = React.useState(new Date());
+  const [cursor, setCursor] = React.useState(() => new Date(now()));
   const [googleConnected, setGoogleConnected] = React.useState(false);
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [googleEvents, setGoogleEvents] = React.useState<GoogleEvent[] | null>(null);
   const [importingGoogle, setImportingGoogle] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+
+  // True once a load has succeeded — gates HOW a later failure surfaces.
+  // `load` doubles as the background reload (AssignmentTable's onReload,
+  // the OAuth-reconnect effect, upload onComplete), and a reload failure
+  // must never blank an already-populated calendar behind the full-page
+  // banner (PR #463 review; same `error && !data` gating as the Gradebook
+  // screen's ErrorBanner).
+  const hasLoadedRef = React.useRef(false);
 
   const load = React.useCallback(async () => {
     if (!userId) return;
@@ -90,12 +115,29 @@ export function Calendar() {
       setAssignments(a.assignments || []);
       setCourses(c.courses || []);
       setGoogleConnected(Boolean(s.connected));
+      setLoadError(null);
+      hasLoadedRef.current = true;
     } catch (err) {
+      // Surface the failure (#185) — a swallowed error here renders a
+      // normal-looking empty calendar, indistinguishable from an empty
+      // account. Initial load → full-page banner (there is nothing else to
+      // show); background reload → toast, keeping the loaded view intact.
       console.error("calendar load failed", err);
+      const message = humanizeError(err, "Check your connection and try again.");
+      if (hasLoadedRef.current) {
+        toast.error(`Couldn't refresh the calendar. ${message}`);
+      } else {
+        setLoadError(message);
+      }
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, toast]);
+
+  const retryLoad = React.useCallback(() => {
+    setLoading(true);
+    void load();
+  }, [load]);
 
   React.useEffect(() => {
     if (userReady && userId) load();
@@ -115,7 +157,7 @@ export function Calendar() {
   }, [search, router, toast, load]);
 
   const today = React.useMemo(() => {
-    const d = new Date(); d.setHours(0, 0, 0, 0); return d;
+    const d = new Date(now()); d.setHours(0, 0, 0, 0); return d;
   }, []);
 
   const byDate = React.useMemo(() => {
@@ -181,7 +223,7 @@ export function Calendar() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `assignments-${dateKey(new Date())}.csv`;
+    link.download = `assignments-${dateKey(new Date(now()))}.csv`;
     link.click();
     URL.revokeObjectURL(url);
     toast.success(`Exported ${ids.length} row${ids.length === 1 ? "" : "s"}.`);
@@ -205,7 +247,7 @@ export function Calendar() {
           <button className="btn btn--sm" onClick={() => shift(setCursor, view, -1)}>
             <Icon name="chev" size={12} /> Prev
           </button>
-          <button className="btn btn--sm" onClick={() => setCursor(new Date())}>Today</button>
+          <button className="btn btn--sm" onClick={() => setCursor(new Date(now()))}>Today</button>
           <button className="btn btn--sm" onClick={() => shift(setCursor, view, 1)}>
             Next <Icon name="chev" size={12} />
           </button>
@@ -248,21 +290,40 @@ export function Calendar() {
         actions={topActions}
       />
 
-      {loading && <CalendarMonthSkeleton />}
-      {!loading && view === "month" && <MonthView cursor={cursor} byDate={byDate} today={today} courses={courses} />}
-      {!loading && view === "week" && <WeekView cursor={cursor} byDate={byDate} today={today} courses={courses} />}
-      {!loading && view === "day" && <DayView cursor={cursor} byDate={byDate} courses={courses} />}
-      {!loading && view === "table" && (
-        <AssignmentTable
-          assignments={assignments}
-          courses={courses}
-          selected={selected}
-          onSelectedChange={setSelected}
-          onExport={exportCsv}
-          onReload={load}
-          googleConnected={googleConnected}
-        />
-      )}
+      {/* Crossfade/slide the calendar body when the view (or load state)
+          changes, keyed on that state. Mirrors Study.tsx's mode="wait"
+          pattern so the swap settles instead of snapping (#295). */}
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={loading ? "loading" : loadError ? "error" : view}
+          initial={prefersReduced ? false : { opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={prefersReduced ? { opacity: 1 } : { opacity: 0, y: -8 }}
+          transition={{ duration: prefersReduced ? 0 : 0.22, ease: [0.2, 0.85, 0.35, 1] }}
+        >
+          {loading ? (
+            <CalendarMonthSkeleton />
+          ) : loadError ? (
+            <LoadErrorBanner message={loadError} onRetry={retryLoad} />
+          ) : view === "month" ? (
+            <MonthView cursor={cursor} byDate={byDate} today={today} courses={courses} />
+          ) : view === "week" ? (
+            <WeekView cursor={cursor} byDate={byDate} today={today} courses={courses} />
+          ) : view === "day" ? (
+            <DayView cursor={cursor} byDate={byDate} courses={courses} />
+          ) : (
+            <AssignmentTable
+              assignments={assignments}
+              courses={courses}
+              selected={selected}
+              onSelectedChange={setSelected}
+              onExport={exportCsv}
+              onReload={load}
+              googleConnected={googleConnected}
+            />
+          )}
+        </motion.div>
+      </AnimatePresence>
 
       <DocumentUploadModal
         open={uploadOpen}
@@ -289,20 +350,60 @@ export function Calendar() {
   );
 }
 
+// Load-failure state distinct from a legitimately empty calendar (#185).
+// Mirrors the Gradebook course ErrorBanner: what went wrong + a retry.
+function LoadErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div style={{ padding: "20px 32px" }}>
+      <div
+        role="alert"
+        data-testid="calendar-load-error"
+        style={{
+          padding: "20px 24px",
+          borderRadius: "var(--r-md)",
+          background: "var(--err-soft)",
+          border: "1px solid color-mix(in oklab, var(--err) 20%, transparent)",
+          display: "flex",
+          gap: 16,
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 600, color: "var(--err)", marginBottom: 4 }}>
+            We couldn&apos;t load your calendar.
+          </div>
+          <div style={{ fontSize: 13, color: "var(--text-dim)" }}>{message}</div>
+        </div>
+        <button
+          type="button"
+          className="btn btn--primary"
+          data-testid="calendar-load-retry"
+          onClick={onRetry}
+          style={{ padding: "8px 16px" }}
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function GoogleEventsModal({
   events, onClose,
 }: {
   events: GoogleEvent[];
   onClose: () => void;
 }) {
+  // This modal only exists while it's open, so the lock is unconditional.
+  useScrollLock(true);
+
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
     };
   }, [onClose]);
 

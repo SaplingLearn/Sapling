@@ -3,6 +3,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { TopBar } from "@/components/TopBar";
+import { FullHeightScreen } from "@/components/FullHeightScreen";
 import { useUser } from "@/context/UserContext";
 import { useToast } from "@/components/ToastProvider";
 import {
@@ -18,6 +19,7 @@ import {
   syncGradescopeCourse,
   setCurveSettings,
 } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
 import { applyCurveToAssignment, hasCurveData } from "@/components/Gradebook/curveUtils";
 import { EditWeightsModal } from "@/components/Gradebook/EditWeightsModal";
 import { AssignmentList } from "@/components/Gradebook/AssignmentList";
@@ -94,7 +96,22 @@ interface Props {
   courseId: string;
 }
 
-function CurveSettingsModal({
+// /gradebook/<id>?semester=<label> — the landing's cards carry the selected
+// term so a course enrolled in several terms resolves to that term's
+// enrollment instead of 404ing off the current one (#139). Read straight off
+// location (useSearchParams() would need a Suspense boundary in the route
+// shell, which this screen doesn't own), and read it at CALL time — every
+// fetch AND every course-keyed mutation below must see the URL the user is
+// actually on, not a mount-frozen copy. Writes that drop the term would
+// silently land on the CURRENT term's enrollment (#468 review).
+function currentSemesterParam(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  return new URLSearchParams(window.location.search).get("semester") || undefined;
+}
+
+// Exported for Course.curveModal.test.tsx (#166 failure-surfacing contract);
+// only GradebookCourseScreen below renders it in the app.
+export function CurveSettingsModal({
   open,
   course,
   onClose,
@@ -108,6 +125,7 @@ function CurveSettingsModal({
     curve_sd_delta: number | null;
   }) => Promise<void>;
 }) {
+  const toast = useToast();
   const [mounted, setMounted] = React.useState(false);
   const [avgTarget, setAvgTarget] = React.useState<string>(
     course.curve_avg_target != null ? (course.curve_avg_target * 100).toFixed(0) : "83"
@@ -173,6 +191,8 @@ function CurveSettingsModal({
             variant="primary"
             size="sm"
             disabled={saving}
+            // On failure the modal stays open (no onClose) so the user can
+            // see the toast and retry — closing would look like success.
             onClick={async () => {
               setSaving(true);
               try {
@@ -181,6 +201,8 @@ function CurveSettingsModal({
                   curve_sd_delta: toFloat(sdDelta),
                 });
                 onClose();
+              } catch (err) {
+                toast.error(humanizeError(err, "Couldn't save curve settings. Try again."));
               } finally { setSaving(false); }
             }}
           >
@@ -236,7 +258,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
     if (!userId) return;
     setFetchError(null);
     try {
-      const fresh = await getGradebookCourse(userId, courseId);
+      const fresh = await getGradebookCourse(userId, courseId, currentSemesterParam());
       setData(fresh);
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : "Unknown error";
@@ -442,7 +464,12 @@ export function GradebookCourseScreen({ courseId }: Props) {
     const newMode = data.curve_mode === "curved" ? "raw" : "curved";
     setData((prev) => prev ? { ...prev, curve_mode: newMode } : prev);
     try {
-      await setCurveSettings(userId, courseId, { curve_mode: newMode });
+      await setCurveSettings(
+        userId,
+        courseId,
+        { curve_mode: newMode },
+        currentSemesterParam(),
+      );
       await refresh(); // Server recomputes data.percent with the new curve_mode
     } catch {
       setData((prev) => prev ? { ...prev, curve_mode: data.curve_mode } : prev);
@@ -455,10 +482,12 @@ export function GradebookCourseScreen({ courseId }: Props) {
       curve_sd_delta: number | null;
     }) => {
       if (!data || !userId) return;
-      await setCurveSettings(userId, courseId, {
-        curve_mode: data.curve_mode,
-        ...settings,
-      });
+      await setCurveSettings(
+        userId,
+        courseId,
+        { curve_mode: data.curve_mode, ...settings },
+        currentSemesterParam(),
+      );
       await refresh(); // Recompute server grade with new curve policy
     },
     [data, userId, courseId, refresh],
@@ -487,7 +516,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
   if (!userReady || !userId) return null;
 
   return (
-    <>
+    <FullHeightScreen>
       <AmbientOrbs />
       <TopBar
         breadcrumb={
@@ -550,7 +579,9 @@ export function GradebookCourseScreen({ courseId }: Props) {
         style={{
           padding: "var(--pad-xl)",
           position: "relative",
-          minHeight: "calc(100vh - var(--row-h))",
+          // See Gradebook/Landing.tsx — same `calc(100vh - var(--row-h))`
+          // density-token-as-nav-height mistake, same flex fix (#341).
+          flex: "1 0 auto",
         }}
       >
         <div
@@ -626,6 +657,8 @@ export function GradebookCourseScreen({ courseId }: Props) {
 
       {data && (
         <>
+          {/* The onSave/onDelete callbacks below deliberately don't catch:
+              each modal catches, toasts, and stays open on failure (#166). */}
           <EditWeightsModal
             open={editWeights}
             initial={data.categories}
@@ -633,9 +666,11 @@ export function GradebookCourseScreen({ courseId }: Props) {
             onSave={async (drafts) => {
               const draftIds = new Set(drafts.map((d) => d.id).filter(Boolean) as string[]);
               for (const c of data.categories) {
+                // deleteCategory is id-keyed (ownership check server-side) —
+                // no term needed; the course-keyed bulk PATCH below is.
                 if (!draftIds.has(c.id)) await deleteCategory(userId, c.id);
               }
-              await bulkUpdateCategories(userId, courseId, drafts);
+              await bulkUpdateCategories(userId, courseId, drafts, currentSemesterParam());
               await refresh();
             }}
           />
@@ -647,9 +682,10 @@ export function GradebookCourseScreen({ courseId }: Props) {
             onClose={() => setAssignModal({ open: false, initial: null })}
             onSave={async (draft: AssignmentDraft) => {
               if (assignModal.initial) {
+                // Id-keyed — the existing assignment already pins its enrollment.
                 await updateGradedAssignment(userId, assignModal.initial.id, draft);
               } else {
-                await createGradedAssignment(userId, courseId, draft);
+                await createGradedAssignment(userId, courseId, draft, currentSemesterParam());
               }
               await refresh();
             }}
@@ -668,7 +704,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
             initial={data.letter_scale}
             onClose={() => setEditScale(false)}
             onSave={async (scale) => {
-              await setLetterScale(userId, courseId, scale);
+              await setLetterScale(userId, courseId, scale, currentSemesterParam());
               await refresh();
             }}
           />
@@ -696,7 +732,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
           />
         </>
       )}
-    </>
+    </FullHeightScreen>
   );
 }
 

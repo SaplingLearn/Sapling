@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Hash Tables",
+      "correct_answer": "Hash Table",
+      "difficulty": "medium",
+      "explanation": "Hash tables use a hash function to map keys to indices, allowing for average O(1) operations. However, collisions can lead to O(n) worst-case performance.",
+      "options": [
+        "Binary Search Tree",
+        "Hash Table",
+        "Array",
+        "Linked List"
+      ],
+      "question": "Which data structure provides average O(1) time complexity for insertion, deletion, and retrieval, but can degrade to O(n) in the worst case?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Binary Search Trees",
+      "correct_answer": "Efficient searching with an average time complexity of O(log n)",
+      "difficulty": "medium",
+      "explanation": "Binary Search Trees allow for efficient searching, insertion, and deletion with an average time complexity of O(log n). The worst-case scenario for a BST can be O(n) if the tree becomes unbalanced.",
+      "options": [
+        "Constant time insertion",
+        "Guaranteed O(log n) search time in all cases",
+        "Efficient searching with an average time complexity of O(log n)",
+        "Unlimited storage capacity"
+      ],
+      "question": "What is the primary advantage of a Binary Search Tree over a simple unsorted list?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Big-O Analysis",
+      "correct_answer": "The algorithm's execution time grows quadratically with the input size.",
+      "difficulty": "medium",
+      "explanation": "Big-O notation describes the upper bound of an algorithm's time or space complexity. O(n^2) means the execution time increases with the square of the input size, indicating a significant performance degradation for large inputs.",
+      "options": [
+        "The algorithm will always perform a fixed number of operations regardless of input size.",
+        "The algorithm's execution time grows quadratically with the input size.",
+        "The algorithm's execution time grows linearly with the input size.",
+        "The algorithm's execution time decreases as the input size grows."
+      ],
+      "question": "If a sorting algorithm's performance is described as O(n^2) in the worst case, what does this imply about its efficiency as the input size (n) grows?",
+      "type": "multiple_choice"
+    }
+  ]
+}

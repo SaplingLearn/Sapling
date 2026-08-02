@@ -5,8 +5,8 @@ import { Icon } from "./Icon";
 import { Pill } from "./Pill";
 import { useToast } from "./ToastProvider";
 import { useUser } from "@/context/UserContext";
-import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
-import { submitIssueReport, IS_LOCAL_MODE, API_URL } from "@/lib/api";
+import { useScrollLock } from "@/lib/useScrollLock";
+import { submitIssueReport, API_URL } from "@/lib/api";
 
 const TOPICS = ["Bug", "Feature", "Polish", "Content", "Other"] as const;
 type Topic = typeof TOPICS[number];
@@ -23,7 +23,6 @@ interface ReportIssueFlowProps {
 // public anon storage client, so issues-media-files can be made private. Returns
 // the storage path (stored in screenshot_urls), not a public URL.
 async function uploadScreenshot(file: File): Promise<string> {
-  if (IS_LOCAL_MODE) return URL.createObjectURL(file);
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(`${API_URL}/api/issue-reports/screenshot`, {
@@ -45,7 +44,7 @@ export function ReportIssueFlow({ open, onClose }: ReportIssueFlowProps) {
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  useBodyScrollLock(open);
+  useScrollLock(open);
 
   const reset = useCallback(() => {
     setTopic("Bug");

@@ -19,7 +19,6 @@ import {
   adminListRoleCosmetics, adminLinkRoleCosmetic, adminUnlinkRoleCosmetic,
   adminListAllowlist, adminApproveAllowlist, adminRevokeAllowlist,
   adminAuditLog, adminAnalyticsOverview,
-  IS_LOCAL_MODE,
 } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Role, Achievement, Cosmetic, CosmeticType, RarityTier, AchievementCategory, AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
@@ -33,7 +32,6 @@ const COSMETIC_TYPES: CosmeticType[] = ["avatar_frame", "banner", "name_color", 
 const COSMETIC_BUCKET = "cosmetic-assets";
 
 async function uploadCosmeticAsset(file: File): Promise<string> {
-  if (IS_LOCAL_MODE) return URL.createObjectURL(file);
   const ext = file.name.split(".").pop() || "png";
   const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const { error } = await supabase.storage.from(COSMETIC_BUCKET).upload(path, file, { cacheControl: "3600", upsert: false });
@@ -395,7 +393,7 @@ function RolesTab() {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) 1fr", gap: 16 }}>
+    <div className="pane-split">
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div className="label-micro" style={{ marginBottom: 10 }}>Preview</div>
         <RoleProfilePreview
@@ -626,7 +624,7 @@ function AchievementsTab() {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) 1fr", gap: 16 }}>
+    <div className="pane-split">
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div className="label-micro" style={{ marginBottom: 10 }}>Create achievement</div>
         <LabeledField label="Name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={fieldStyle} /></LabeledField>
@@ -901,7 +899,7 @@ function CosmeticsTab() {
   for (const c of items) grouped[c.type]?.push(c);
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(300px, 380px) 1fr", gap: 16 }}>
+    <div className="pane-split pane-split--wide">
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div className="label-micro" style={{ marginBottom: 10 }}>Create cosmetic</div>
         <LabeledField label="Type">
@@ -938,7 +936,7 @@ function CosmeticsTab() {
               />
             </div>
             {form.asset_url && (
-              <img src={form.asset_url} alt="" style={{ maxHeight: 56, marginTop: 6, borderRadius: "var(--r-sm)", border: "1px solid var(--border)" }} />
+              <img src={form.asset_url} alt="" loading="lazy" decoding="async" style={{ maxHeight: 56, marginTop: 6, borderRadius: "var(--r-sm)", border: "1px solid var(--border)" }} />
             )}
           </LabeledField>
         )}
@@ -985,7 +983,7 @@ function CosmeticsTab() {
               <CatalogRow
                 key={c.id}
                 left={c.asset_url ? (
-                  <img src={c.asset_url} alt="" style={{ width: 28, height: 28, borderRadius: "var(--r-sm)", objectFit: "cover", border: "1px solid var(--border)" }} />
+                  <img src={c.asset_url} alt="" width={28} height={28} loading="lazy" decoding="async" style={{ width: 28, height: 28, borderRadius: "var(--r-sm)", objectFit: "cover", border: "1px solid var(--border)" }} />
                 ) : c.css_value ? (
                   <span style={{ padding: "2px 6px", fontSize: 10, borderRadius: "var(--r-sm)", background: c.css_value, color: "#fff", border: "1px solid var(--border)" }}>
                     sample
@@ -1056,7 +1054,7 @@ function AnalyticsTab() {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14 }}>
+      <div className="metric-grid">
         <MetricCard label="Users" value={totals.users} />
         <MetricCard label="Approved" value={totals.approved} accent />
         <MetricCard label="Pending" value={totals.pending} warn={totals.pending > 0} />

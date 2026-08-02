@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
+import { useScrollLock } from "@/lib/useScrollLock";
 
 const ACK_KEY = "sapling_disclaimer_ack";
 
@@ -23,7 +23,7 @@ export function DisclaimerModal({
     if (!acked) setInternalOpen(true);
   }, [isControlled]);
 
-  useBodyScrollLock(open);
+  useScrollLock(open);
 
   const ack = () => {
     localStorage.setItem(ACK_KEY, "true");

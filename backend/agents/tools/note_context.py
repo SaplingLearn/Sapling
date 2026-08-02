@@ -58,8 +58,30 @@ async def read_active_note_tool(
 
     `note_id` rides on `ctx.deps.session_id` (the route sets it). The
     LLM never names whose note to read.
+
+    #150: the note is student-authored — the body arrives at the model
+    inside the untrusted envelope; short scalars (title, tags, linked
+    concept names) get delimiter neutralization, covered by the system
+    prompt's UNTRUSTED CONTENT POLICY. Applied here (the LLM boundary),
+    not in `read_active_note`, so routes/tests get clean data.
     """
+    from services.prompt_safety import neutralize_delimiters, wrap_untrusted
+
     note_id = ctx.deps.session_id
     if not note_id:
         return NoteContext(title="", body="", tags=[], linked_concepts=[])
-    return await read_active_note(note_id=note_id, user_id=ctx.deps.user_id)
+    note = await read_active_note(note_id=note_id, user_id=ctx.deps.user_id)
+    return NoteContext(
+        title=neutralize_delimiters(note.title),
+        body=wrap_untrusted(note.body, source="student note body"),
+        tags=[neutralize_delimiters(t) for t in note.tags],
+        linked_concepts=[
+            LinkedConcept(
+                id=c.id,
+                concept_name=neutralize_delimiters(c.concept_name),
+                mastery_tier=c.mastery_tier,
+                mastery_score=c.mastery_score,
+            )
+            for c in note.linked_concepts
+        ],
+    )

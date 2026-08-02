@@ -6,6 +6,7 @@ export interface GraphNode {
   times_studied: number;
   last_studied_at: string | null;
   subject: string;
+  description?: string | null;
   course_id?: string | null;
   course_color?: string | null;
   color?: string | null;
@@ -115,7 +116,12 @@ export interface RoomMember {
 }
 
 export interface RoomOverviewData {
-  room: { id: string; name: string; invite_code: string; created_by: string };
+  room: {
+    id: string; name: string; invite_code: string; created_by: string;
+    // #405: real ownership, distinct from the immutable creator record.
+    // Optional so rows predating the 0038 backfill still typecheck.
+    owner_id?: string | null;
+  };
   members: RoomMember[];
   ai_summary: string;
 }
@@ -126,6 +132,9 @@ export interface RoomMessageRow {
   user_name: string;
   text: string | null;
   image_url: string | null;
+  /** Intrinsic size of image_url; null on messages sent before #315. */
+  image_width?: number | null;
+  image_height?: number | null;
   created_at: string;
   reply_to_id: string | null;
   is_deleted: boolean;
@@ -142,7 +151,7 @@ export interface ConceptNote {
 export interface Document {
   id: string;
   user_id: string;
-  course_id: string;
+  course_id: string | null;
   file_name: string;
   category: 'syllabus' | 'lecture_notes' | 'slides' | 'reading' | 'assignment' | 'study_guide' | 'other';
   summary: string | null;
@@ -309,6 +318,29 @@ export interface GradebookCourseSummary {
 
 export interface GradebookSummary {
   courses: GradebookCourseSummary[];
+  // Credit-weighted GPA for the requested term; null until something is graded.
+  gpa: number | null;
+  semester: string;
+}
+
+// One enrollment row of GET /api/gradebook/gpa. `grade_points` is null while
+// the course has no graded percent yet (rendered as in-progress, excluded
+// from GPA math); `credits` is null when the offering doesn't declare any.
+export interface GpaCourseRow {
+  course_id: string;
+  course_code: string;
+  semester: string;
+  credits: number | null;
+  percent: number | null;
+  letter: string | null;
+  grade_points: number | null;
+}
+
+export interface GpaReport {
+  gpa: number | null;
+  courses: GpaCourseRow[];
+  semester: string | null;
+  scope: "semester" | "cumulative";
 }
 
 export interface GradebookCourse {
@@ -423,4 +455,126 @@ export interface Note {
   last_summary_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ── Admin analytics (#121) ───────────────────────────────────────────────────
+// Mirrors backend/routes/admin_analytics.py's response models (issue #120 plus
+// the #121 bucket/series addition). Distinct names from the legacy
+// AnalyticsOverview family above, which belongs to /admin/analytics/overview.
+// `range` uses the wire key "from" (the backend serializes its `from_` field
+// with an alias); `series` is present only when the request set `bucket=day`
+// and is sparse — days with no rows are omitted, the client zero-fills.
+
+export type LlmCostGroupBy = 'user' | 'feature' | 'model';
+export type AnalyticsBucket = 'day';
+
+export interface AnalyticsRange {
+  from: string;
+  to: string;
+}
+
+export interface UsageDayPoint {
+  date: string; // YYYY-MM-DD, UTC
+  count: number;
+}
+
+export interface CostDayPoint {
+  date: string; // YYYY-MM-DD, UTC
+  calls: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+export interface EventTypeCount {
+  event_type: string;
+  count: number;
+}
+
+export interface UsageSummaryData {
+  range: AnalyticsRange;
+  total_events: number;
+  distinct_active_users: number;
+  by_event_type: EventTypeCount[];
+  truncated: boolean;
+  series: UsageDayPoint[] | null;
+}
+
+export interface UserUsageRow {
+  user_id: string;
+  event_count: number;
+  by_category: Record<string, number>;
+  llm_cost_usd: number;
+  total_tokens: number;
+}
+
+export interface UsageByUserData {
+  range: AnalyticsRange;
+  total_users: number;
+  limit: number;
+  offset: number;
+  users: UserUsageRow[];
+  truncated: boolean;
+}
+
+export interface LlmCostRow {
+  key: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+export interface LlmCostTotals {
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+export interface LlmCostData {
+  range: AnalyticsRange;
+  group_by: LlmCostGroupBy;
+  rows: LlmCostRow[];
+  totals: LlmCostTotals;
+  truncated: boolean;
+  series: CostDayPoint[] | null;
+}
+
+export interface ErrorEventRow {
+  created_at: string | null;
+  event_type: string;
+  request_id: string | null;
+  user_id: string | null;
+  path: string | null;
+  method: string | null;
+  status_code: number | null;
+  duration_ms: number | null;
+}
+
+export interface ErrorsPageData {
+  range: AnalyticsRange;
+  total: number;
+  limit: number;
+  offset: number;
+  errors: ErrorEventRow[];
+  // Refers to the bucket series' scan (the feed itself is paginated).
+  truncated: boolean;
+  series: UsageDayPoint[] | null;
+}
+
+// ── Public rooms (#405) ──────────────────────────────────────────────────────
+// The invite-less discovery payload; deliberately carries NO invite_code.
+export interface PublicRoom {
+  id: string;
+  name: string;
+  topic: string | null;
+  course: string | null;
+  owner_id: string;
+  created_by: string;
+  created_at: string | null;
+  updated_at: string | null;
+  is_public: true;
+  member_count: number;
 }

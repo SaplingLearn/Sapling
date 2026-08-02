@@ -24,10 +24,12 @@ logging.basicConfig(
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
+from routes.admin_analytics import router as admin_analytics_router
 from routes.newsletter import router as newsletter_router
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services.request_context import RequestIDMiddleware, current_request_id
 from services.storage_service import ALLOWED_CONTENT_TYPES, ensure_bucket_exists
+from services.durable import init_dbos, shutdown_dbos
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -80,11 +82,59 @@ async def _lifespan(_app: FastAPI):
         file_size_limit=MAX_AVATAR_SIZE,
         allowed_mime_types=sorted(ALLOWED_CONTENT_TYPES),
     )
+    # #116/#118: start the fire-and-forget observability drain thread so LLM
+    # usage + event rows flush off the request path.
+    from services import events_service
+    events_service.start_worker()
+    # ADR 0011 / #154: construct + launch DBOS when DBOS_ENABLED=true; no-op
+    # passthrough otherwise. Fails loudly (raises) if the operator opted in
+    # and launch fails — see services/durable.py::init_dbos.
+    init_dbos()
     yield
-    # No shutdown hooks today.
+    # Stop the drain thread and flush anything still queued so the last batch
+    # of usage rows isn't lost on shutdown.
+    events_service.shutdown()
+    shutdown_dbos()
+
+
+def _drop_request_arguments(_request, _attributes):
+    """request_attributes_mapper for instrument_fastapi: never log endpoint args.
+
+    FastAPI instrumentation otherwise records the parsed endpoint arguments —
+    the request body and query/path params — on the request span under
+    ``fastapi.arguments.values``. In Sapling those carry student content: chat
+    messages, note bodies, quiz answers, uploaded document text. That path is
+    NOT covered by the ``scrub_value`` callback (Logfire routes only a subset of
+    attributes through scrubbing, and a body field named e.g. ``body`` matches
+    no risky pattern), so the only safe move is to drop the arguments entirely.
+    Returning ``None`` tells Logfire to record no argument attributes at all.
+
+    We keep the method, route template, status, and latency — which is what the
+    request trace is actually for. (The full URL and rendered span message do
+    still carry the raw query string; Sapling query params are ids/enums plus a
+    couple of low-sensitivity search terms, never prompts/completions/document
+    text — see docs/observability-logging-tracking.md.)
+    """
+    return None
 
 
 app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
+
+# Emit a span per HTTP request (method, route, status, latency) so request
+# traces and errors show up in Logfire alongside the Pydantic AI agent spans.
+# Like configure()/instrument_pydantic_ai() above, this is always on but inert
+# without LOGFIRE_TOKEN (send_to_logfire="if-token-present").
+#
+# Egress safety (layered): request bodies/params are dropped via
+# _drop_request_arguments; request/response headers are not captured
+# (capture_headers=False); and the separate arguments/endpoint spans are off
+# (extra_spans=False). No student content leaves the process on request spans.
+logfire.instrument_fastapi(
+    app,
+    capture_headers=False,
+    extra_spans=False,
+    request_attributes_mapper=_drop_request_arguments,
+)
 
 if recost_api_key and RecostMiddleware is not None:
     app.add_middleware(
@@ -162,6 +212,7 @@ app.include_router(careers.router,     prefix="/api/careers")
 app.include_router(onboarding.router,  prefix="/api/onboarding")
 app.include_router(profile_router,     prefix="/api/profile")
 app.include_router(admin_router,       prefix="/api/admin")
+app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
 app.include_router(newsletter_router,  prefix="/api/newsletter")
 app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")
@@ -171,7 +222,19 @@ app.include_router(academics.router,   prefix="/api", tags=["academics"])
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "sapling-backend"}
+    # model_mode surfaces the #391 seam state (real | function | cassette) so
+    # E2E journeys (#387) can fail fast with a pointed message when the stack
+    # was booted in real mode, instead of running agent stages against live
+    # Gemini. (The RAG embed path sits below the seam — #439 — so "function"
+    # here vouches for the agent stages, not every byte of egress.) Not a
+    # secret: it names a mode, not a key.
+    from agents._providers import _model_mode
+
+    return {
+        "status": "ok",
+        "service": "sapling-backend",
+        "model_mode": _model_mode(),
+    }
 
 
 @app.get("/api/users")
@@ -218,9 +281,13 @@ def gemini_test(request: Request):
     require_admin(request)  # 403 unless the session belongs to an admin; 401 if unauthenticated
     from agents._run import run_agent_sync
     from agents.health import health_probe_agent
+    from agents.usage import record_agent_usage
     try:
-        result = run_agent_sync(
-            health_probe_agent.run('Reply with exactly the text: Gemini OK')
+        result = record_agent_usage(
+            run_agent_sync(
+                health_probe_agent.run('Reply with exactly the text: Gemini OK')
+            ),
+            feature="health",
         )
         return {"ok": True, "reply": result.output.strip()}
     except Exception as e:

@@ -1,0 +1,17 @@
+{
+  "text": "You've got the first part right \u2014 a closure is a function!\n\nWhat makes it special isn't just that it *uses* variables, but *where* it gets them. A closure is a function that remembers the variables from the environment where it was created, even after that environment is gone.\n\nHere's a classic example:\n```python\ndef outer_function(x):\n  # This inner function is a closure\n  def inner_function(y):\n    return x + y\n  return inner_function\n\n# Create a closure that \"remembers\" x = 5\nadd_five = outer_function(5)\n\n# Now, call the closure\nprint(add_five(10)) # What do you think this prints?\n```\n\nThe `add_five` function is a closure. It \"remembers\" that `x` is 5, long after `outer_function` has finished running.\n\nSo, my question is: in the line `add_five = outer_function(5)`, the `outer_function` runs and then it's done. Why can `add_five` still access the variable `x`?",
+  "tool_calls": [
+    {
+      "args": {
+        "updates": [
+          {
+            "concept_name": "Closures",
+            "mastery_delta": -0.05,
+            "reason": "Identified a closure as just a function with variables, missing the key concept of lexical scope."
+          }
+        ]
+      },
+      "tool_name": "update_mastery_tool"
+    }
+  ]
+}

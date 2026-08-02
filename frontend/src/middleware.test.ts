@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { NextRequest } from 'next/server';
 import { middleware, config } from './middleware';
 
@@ -10,14 +10,6 @@ function req(path: string): NextRequest {
 }
 
 describe('middleware — /profile gating (#189)', () => {
-  beforeEach(() => {
-    // Ensure the local-mode short-circuit is off so gating actually runs.
-    vi.stubEnv('NEXT_PUBLIC_LOCAL_MODE', 'false');
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   it('redirects an unauthenticated /profile/:id request (no longer passes through)', async () => {
     const res = await middleware(req('/profile/some-user-id'));
     // Pre-fix: /profile wasn't protected → NextResponse.next() (status 200, no

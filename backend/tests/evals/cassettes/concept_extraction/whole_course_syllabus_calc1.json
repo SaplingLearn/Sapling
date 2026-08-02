@@ -1,0 +1,74 @@
+{
+  "concepts": [
+    {
+      "description": "Explores the behavior of functions as input approaches a certain value, forming the foundational understanding of continuity and the basis for calculus.",
+      "importance": 1.0,
+      "name": "Limits and Continuity"
+    },
+    {
+      "description": "Introduces the concept of instantaneous rate of change and slope of a tangent line, along with systematic rules for computing derivatives of various functions.",
+      "importance": 0.98,
+      "name": "Derivatives and Rules of Differentiation"
+    },
+    {
+      "description": "Establishes the crucial connection between differentiation and integration, providing a method for evaluating definite integrals using antiderivatives.",
+      "importance": 0.97,
+      "name": "The Fundamental Theorem of Calculus"
+    },
+    {
+      "description": "Covers various methods for finding antiderivatives and evaluating integrals, including substitution, integration by parts, trigonometric substitution, and partial fractions.",
+      "importance": 0.95,
+      "name": "Techniques of Integration"
+    },
+    {
+      "description": "Utilizes definite integrals to calculate areas between curves and volumes of solids of revolution using methods like disk, washer, and shell.",
+      "importance": 0.93,
+      "name": "Applications of Integration to Area and Volume"
+    },
+    {
+      "description": "Applies derivatives to analyze the properties of functions, such as intervals of increase/decrease, concavity, and local extrema, to accurately sketch their graphs.",
+      "importance": 0.92,
+      "name": "Curve Sketching"
+    },
+    {
+      "description": "Uses calculus to find the maximum or minimum values of a function, often applied to solve real-world problems involving quantities like area, volume, or cost.",
+      "importance": 0.91,
+      "name": "Optimization"
+    },
+    {
+      "description": "Involves finding the rate at which one quantity is changing based on the known rates of other related quantities, often in dynamic physical scenarios.",
+      "importance": 0.9,
+      "name": "Related Rates"
+    },
+    {
+      "description": "A technique for differentiating functions that are not explicitly defined in terms of one variable, often used for equations involving mixed variables.",
+      "importance": 0.89,
+      "name": "Implicit Differentiation"
+    },
+    {
+      "description": "States that for a continuous and differentiable function on a closed interval, there is at least one point where the instantaneous rate of change equals the average rate of change.",
+      "importance": 0.88,
+      "name": "Mean Value Theorem"
+    },
+    {
+      "description": "A method used to evaluate indeterminate forms of limits by taking the derivatives of the numerator and denominator.",
+      "importance": 0.87,
+      "name": "L'Hopital's Rule"
+    },
+    {
+      "description": "Approximates the area under a curve by dividing it into a series of rectangles, leading to the formal definition of the definite integral.",
+      "importance": 0.85,
+      "name": "Riemann Sums"
+    },
+    {
+      "description": "Introduces simple differential equations and methods for solving them, providing a foundation for understanding models of change.",
+      "importance": 0.83,
+      "name": "Differential Equations Basics"
+    },
+    {
+      "description": "Explores ordered lists of numbers and the sums of these lists, including concepts like convergence and divergence, which are typically covered at the end of Calculus I or in Calculus II.",
+      "importance": 0.8,
+      "name": "Sequences and Series"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Stereochemistry",
+      "correct_answer": "3-methylpentane",
+      "difficulty": "medium",
+      "explanation": "Chirality requires a carbon atom bonded to four different groups. In 3-methylpentane, the second carbon is bonded to a hydrogen, a methyl group, an ethyl group, and a propyl group, making it chiral.",
+      "options": [
+        "2-methylpentane",
+        "3-methylpentane",
+        "2,2-dimethylbutane",
+        "3,3-dimethylhexane"
+      ],
+      "question": "Which of the following is a chiral molecule?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "SN1 vs SN2",
+      "correct_answer": "Primary alkyl halide, polar aprotic solvent, strong nucleophile",
+      "difficulty": "medium",
+      "explanation": "SN2 reactions are favored by primary alkyl halides (less steric hindrance), polar aprotic solvents (which do not solvate the nucleophile), and strong nucleophiles.",
+      "options": [
+        "Primary alkyl halide, polar protic solvent, weak nucleophile",
+        "Tertiary alkyl halide, polar aprotic solvent, strong nucleophile",
+        "Primary alkyl halide, polar aprotic solvent, strong nucleophile",
+        "Tertiary alkyl halide, polar protic solvent, weak nucleophile"
+      ],
+      "question": "Which reaction conditions favor an SN2 mechanism?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Resonance Structures",
+      "correct_answer": "A structure with a single bond between carbon and one oxygen and a double bond to the other, with charges distributed appropriately.",
+      "difficulty": "medium",
+      "explanation": "Resonance structures for the acetate ion show the delocalization of the negative charge across both oxygen atoms, resulting in one C-O single bond and one C-O double bond, with the negative charge being shared.",
+      "options": [
+        "A structure with a single bond between carbon and one oxygen and a double bond to the other, with charges distributed appropriately.",
+        "A structure where all bonds to oxygen are single bonds and the negative charge is localized on the carbon atom.",
+        "A structure where both bonds to oxygen are double bonds.",
+        "A structure with a double bond to one oxygen and a single bond to the other, with both oxygens having a full octet and no formal charges."
+      ],
+      "question": "Which of the following represents a valid resonance structure for the acetate ion?",
+      "type": "multiple_choice"
+    }
+  ]
+}

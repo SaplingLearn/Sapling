@@ -106,7 +106,7 @@ def _make_table(questions=None):
             mock.select.return_value = [{"name": "Andres"}]
         else:
             mock.select.return_value = []
-        mock.update.return_value = []
+        mock.update.return_value = [{"id": "updated"}]
         return mock
 
     return factory
@@ -235,7 +235,7 @@ class TestSubmitQuiz:
                 mock.select.return_value = [{"name": "Andres"}]
             else:
                 mock.select.return_value = []
-            mock.update.return_value = []
+            mock.update.return_value = [{"id": "updated"}]
             return mock
 
         with patch("routes.quiz.table", side_effect=factory):
@@ -252,6 +252,113 @@ class TestSubmitQuiz:
 
         assert r.status_code == 200
         assert r.json()["score"] == 2
+
+
+# ── POST /api/quiz/submit — resubmit + malformed-item grading (#129) ────────
+
+
+MALFORMED_QUESTIONS = [
+    {
+        "id": 1,
+        "text": "What does a for-loop do?",
+        "options": [
+            {"label": "A", "correct": True},
+            {"label": "B", "correct": False},
+        ],
+        "explanation": "A is correct.",
+    },
+    {
+        # Malformed: generation drift left NO option flagged correct. Before
+        # #129 this graded as correct whenever the answer was also missing
+        # ('' == '' — the free point).
+        "id": 2,
+        "text": "What is a function?",
+        "options": [
+            {"label": "C", "correct": False},
+            {"label": "D", "correct": False},
+        ],
+        "explanation": "Nothing is marked correct.",
+    },
+]
+
+
+class TestSubmitQuizResubmit:
+    """#129: the first submit writes quiz_attempts.completed_at; re-POSTing
+    the same quiz_id must 409 without re-running apply_graph_update (second
+    mastery delta + duplicate node_mastery_events row + streak bump), the
+    background quiz-context task, or achievements."""
+
+    def _completed_attempt_factory(self):
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz1",
+                    "user_id": "user_andres",
+                    "concept_node_id": "node1",
+                    "difficulty": "medium",
+                    "questions_json": SAMPLE_QUESTIONS,
+                    "completed_at": "2026-07-29T12:00:00",  # already scored
+                }]
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "mastery_score": 0.5,
+                    "concept_name": "Loops",
+                    "course_id": "course1",
+                }]
+            else:
+                mock.select.return_value = []
+            mock.update.return_value = [{"id": "updated"}]
+            return mock
+
+        return factory
+
+    def test_resubmit_of_completed_attempt_returns_409_and_applies_nothing(self):
+        apply_mock = MagicMock()
+        ctx_run = _noop_ctx_agent()
+        with (
+            patch("routes.quiz.table", side_effect=self._completed_attempt_factory()),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
+            patch("routes.quiz.save_quiz_context") as save_mock,
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+        assert r.status_code == 409
+        # No second mastery event: the sanctioned graph write must not fire.
+        apply_mock.assert_not_called()
+        # Nor the background context update behind it.
+        ctx_run.assert_not_called()
+        save_mock.assert_not_called()
+
+
+class TestSubmitQuizMalformedItem:
+    """#129: a malformed item (no option flagged correct) must never grade
+    as correct — before the fix, a missing answer matched the empty
+    correct label ('' == '') and handed out a free point."""
+
+    def test_missing_answer_on_item_without_correct_option_is_not_correct(self):
+        with _submit_quiz_mocks(questions=MALFORMED_QUESTIONS):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                # No answer at all for the malformed question 2.
+                "answers": [{"question_id": 1, "selected_label": "A"}],
+            })
+        assert r.status_code == 200
+        data = r.json()
+        assert data["score"] == 1, (
+            "free-point regression: an unanswered malformed item "
+            "(no correct option) was graded as correct"
+        )
+        flags = {res["question_id"]: res["correct"] for res in data["results"]}
+        assert flags["1"] is True
+        assert flags["2"] is False
 
 
 # ── Cross-user node ownership (IDOR regression, issue #157) ─────────────────
@@ -348,13 +455,13 @@ class TestQuizNodeOwnership:
                     "difficulty": "medium",
                     "questions_json": SAMPLE_QUESTIONS,
                 }]
-                mock.update.return_value = []
+                mock.update.return_value = [{"id": "updated"}]
             elif name == "graph_nodes":
                 mock.select.side_effect = self._ownership_aware_graph_select
                 mock.update.side_effect = lambda *a, **k: update_calls.append((a, k)) or []
             else:
                 mock.select.return_value = []
-                mock.update.return_value = []
+                mock.update.return_value = [{"id": "updated"}]
             return mock
 
         apply_mock = MagicMock()
@@ -433,6 +540,79 @@ class TestGenerateQuizDifficultyEnum:
         assert r.status_code == 200
 
 
+# ── POST /api/quiz/generate — num_questions bound (issue #XXX) ────────────────
+
+
+class TestGenerateQuizNumQuestionsBound:
+    """num_questions must be bounded to 1-10 inclusive. Requests outside
+    this range should return HTTP 422 (validation error) instead of
+    silently truncating to the schema max_length. This regression test
+    prevents the bug where num_questions > 10 silently returned ≤10
+    questions instead of erroring."""
+
+    def test_num_questions_over_cap_rejected(self):
+        """POST with num_questions=15 should return 422, not silently truncate."""
+        agent_run = AsyncMock()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 15,  # exceeds max_length=10
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 422
+        # The agent must not run for an over-cap num_questions.
+        agent_run.assert_not_called()
+
+    def test_num_questions_at_cap_accepted(self):
+        """POST with num_questions=10 (at the max) should succeed."""
+        from types import SimpleNamespace
+        fake_quiz = Quiz(questions=[
+            QuizQuestion(
+                question="Q?", type="multiple_choice", difficulty="medium",
+                options=["a", "b", "c", "d"], correct_answer="a",
+                explanation="x", concept="X",
+            )
+            for _ in range(10)
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+            ),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 10,
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 200
+
+    def test_num_questions_below_min_rejected(self):
+        """POST with num_questions=0 should return 422."""
+        agent_run = AsyncMock()
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 0,  # below min=1
+                "difficulty": "medium",
+                "use_shared_context": False,
+            })
+        assert r.status_code == 422
+        agent_run.assert_not_called()
+
+
 # ── POST /api/quiz/submit — mastery routes through apply_graph_update ────────
 
 
@@ -464,7 +644,7 @@ class TestSubmitQuizMasteryWrite:
                 mock.select.return_value = [{"name": "Andres"}]
             else:
                 mock.select.return_value = []
-            mock.update.return_value = []
+            mock.update.return_value = [{"id": "updated"}]
             return mock
 
         with (
@@ -849,6 +1029,133 @@ class TestQuizWireFormatContract:
         assert correct[0]["text"].strip() == "4"
 
 
+class TestQuizGrounding:
+    """_quiz_via_agent prepends a COURSE MATERIAL block (best-effort) and
+    the quiz still generates when grounding is absent."""
+
+    NODE = {"id": "node_x", "user_id": "user_1", "course_id": "course-uuid-1",
+            "concept_name": "dynamic programming"}
+
+    def _valid_quiz_result(self):
+        # quiz_agent.run(...) returns an object whose .output is a Quiz whose
+        # single question passes wire validation (correct_answer ∈ options).
+        from agents.quiz import Quiz, QuizQuestion
+        q = QuizQuestion(
+            question="What does memoization avoid?",
+            type="multiple_choice", difficulty="easy",
+            options=["Recomputation", "Sorting", "Hashing", "Recursion"],
+            correct_answer="Recomputation",
+            explanation="Memoization caches subproblem results.",
+            concept="dynamic programming",
+        )
+        return MagicMock(output=Quiz(questions=[q]))
+
+    def _table_factory(self, *, course_code="CAS CS 330"):
+        def factory(name):
+            m = MagicMock()
+            if name == "graph_nodes":
+                m.select.return_value = [self.NODE]
+            elif name == "courses":
+                m.select.return_value = [{"course_code": course_code}] if course_code else []
+            else:  # quiz_attempts insert, etc.
+                m.select.return_value = []
+                m.insert.return_value = []
+                m.update.return_value = []
+            return m
+        return factory
+
+    def test_resolve_bu_code_returns_course_code(self):
+        from routes.quiz import _resolve_bu_code
+        with patch("routes.quiz.table", side_effect=self._table_factory()):
+            assert _resolve_bu_code("course-uuid-1") == "CAS CS 330"
+
+    def test_resolve_bu_code_none_for_missing(self):
+        from routes.quiz import _resolve_bu_code
+        assert _resolve_bu_code(None) is None
+        with patch("routes.quiz.table", side_effect=self._table_factory(course_code=None)):
+            assert _resolve_bu_code("course-uuid-1") is None
+
+    def test_material_injected_when_chunks_exist(self):
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value="Course: CAS CS 330 ..."),
+            patch("routes.quiz.retrieve_chunks",
+                  return_value=[{"course_id": "CAS CS 330",
+                                 "chunk_text": "Memoization caches subproblem results.",
+                                 "similarity": 0.81}]),
+        ):
+            client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        msg = agent_run.call_args[0][0]
+        assert "COURSE MATERIAL" in msg
+        assert "Memoization caches subproblem results." in msg
+        assert "[GENERATE QUIZ]" in msg
+        assert "dynamic programming" in msg  # routing message preserved
+
+    def test_no_block_when_retrieval_empty(self):
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value=""),
+            patch("routes.quiz.retrieve_chunks", return_value=[]),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        msg = agent_run.call_args[0][0]
+        assert "COURSE MATERIAL" not in msg
+        assert r.status_code == 200
+
+    def test_retrieval_exception_is_swallowed(self):
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=self._table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+            patch("routes.quiz._get_catalog_chunk", return_value=""),
+            patch("routes.quiz.retrieve_chunks", side_effect=RuntimeError("embed down")),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        assert r.status_code == 200  # grounding failure never 502s the quiz
+        assert "COURSE MATERIAL" not in agent_run.call_args[0][0]
+
+    def test_bu_code_resolution_failure_is_swallowed(self):
+        """A transient/erroring `courses` lookup (timeout, 5xx, malformed-id
+        400 from PostgREST) must degrade grounding to '' rather than
+        propagating out of _resolve_bu_code and 502ing the whole quiz."""
+        def factory(name):
+            m = MagicMock()
+            if name == "graph_nodes":
+                m.select.return_value = [self.NODE]
+            elif name == "courses":
+                m.select.side_effect = RuntimeError("db down")
+            else:  # quiz_attempts insert, etc.
+                m.select.return_value = []
+                m.insert.return_value = []
+                m.update.return_value = []
+            return m
+
+        agent_run = AsyncMock(return_value=self._valid_quiz_result())
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.quiz_agent.run", new=agent_run),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_1", "concept_node_id": "node_x",
+                "num_questions": 1, "difficulty": "easy", "use_shared_context": False,
+            })
+        assert r.status_code == 200  # bu_code resolution failure never 502s the quiz
+        assert "COURSE MATERIAL" not in agent_run.call_args[0][0]
+
+
 # ── Per-request model_pref (Fast/Smart toggle, mirrors chat tutor) ──────────
 
 class TestQuizModelPref:
@@ -931,3 +1238,148 @@ class TestQuizModelPref:
         assert _resolve_model_pref(None) is None
         assert _resolve_model_pref("") is None
         assert _resolve_model_pref("auto") is None  # not in the map
+
+
+class TestSubmitQuizConcurrentClaim:
+    """#129 (PR #464 review): the completed_at pre-read is only a fast path —
+    two CONCURRENT submits both pass it. The real gate is the atomic claim
+    (conditional update on completed_at IS NULL); the loser sees zero updated
+    rows and must 409 before any mastery write."""
+
+    def _race_loser_factory(self):
+        """Attempt reads as un-scored (completed_at None) — the pre-read
+        passes — but the atomic claim returns [] (another request already
+        stamped the row between our read and our write)."""
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz1",
+                    "user_id": "user_andres",
+                    "concept_node_id": "node1",
+                    "difficulty": "medium",
+                    "questions_json": SAMPLE_QUESTIONS,
+                    "completed_at": None,
+                }]
+                mock.update.return_value = []  # claim lost: no row matched is.null
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "mastery_score": 0.5,
+                    "concept_name": "Loops",
+                    "course_id": "course1",
+                }]
+            else:
+                mock.select.return_value = []
+                mock.update.return_value = []
+            return mock
+
+        return factory
+
+    def test_losing_the_atomic_claim_409s_and_applies_nothing(self):
+        apply_mock = MagicMock()
+        ctx_run = _noop_ctx_agent()
+        with (
+            patch("routes.quiz.table", side_effect=self._race_loser_factory()),
+            patch("routes.quiz.apply_graph_update", new=apply_mock),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=ctx_run),
+            patch("routes.quiz.save_quiz_context") as save_mock,
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+        assert r.status_code == 409
+        apply_mock.assert_not_called()
+        ctx_run.assert_not_called()
+        save_mock.assert_not_called()
+
+    def test_winning_the_claim_stamps_completed_at_with_is_null_filter(self):
+        """The claim must be the conditional-update idiom: filters carry
+        completed_at=is.null so PostgREST arbitrates, not app code."""
+        claim_calls = []
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz1",
+                    "user_id": "user_andres",
+                    "concept_node_id": "node1",
+                    "difficulty": "medium",
+                    "questions_json": SAMPLE_QUESTIONS,
+                    "completed_at": None,
+                }]
+                def _update(data, filters):
+                    claim_calls.append((data, filters))
+                    return [{"id": "quiz1"}]
+                mock.update.side_effect = _update
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "mastery_score": 0.5,
+                    "concept_name": "Loops",
+                    "course_id": "course1",
+                }]
+            else:
+                mock.select.return_value = []
+                mock.update.return_value = []
+            return mock
+
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.apply_graph_update"),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+        assert r.status_code == 200
+        # First update is the claim: stamps completed_at, gated on is.null.
+        data, filters = claim_calls[0]
+        assert "completed_at" in data
+        assert filters.get("completed_at") == "is.null"
+
+
+# ── quiz_context_update.txt template hygiene (#306) ──────────────────────────
+
+class TestQuizContextPromptTemplate:
+    """#306: the template is the *user message* for quiz_context_agent, whose
+    output shape is owned by `output_type=QuizContext`. A duplicated in-prompt
+    JSON schema is dead weight that can only drift silently (editing it changes
+    nothing about what the agent returns), so the template must not carry one —
+    but it must keep every placeholder routes/quiz.py's .replace chain fills."""
+
+    @staticmethod
+    def _template_text() -> str:
+        from routes.quiz import PROMPTS_DIR
+        import os
+        with open(os.path.join(PROMPTS_DIR, "quiz_context_update.txt")) as f:
+            return f.read()
+
+    def test_no_dead_json_schema_block(self):
+        text = self._template_text()
+        assert "Output ONLY valid JSON" not in text
+        # The field list lives on QuizContext, not in the template.
+        assert '"weak_areas"' not in text
+        assert '"recommended_difficulty"' not in text
+
+    def test_placeholders_the_route_fills_are_present(self):
+        text = self._template_text()
+        for placeholder in (
+            "{concept_name}",
+            "{student_name}",
+            "{existing_quiz_context_json}",
+            "{score}",
+            "{total}",
+            "{quiz_results_json}",
+        ):
+            assert placeholder in text, f"missing placeholder: {placeholder}"

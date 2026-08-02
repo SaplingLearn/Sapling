@@ -1,0 +1,29 @@
+{
+  "concepts": [
+    {
+      "description": "This concept involves proving the Law of Cosines, a fundamental geometric theorem relating the lengths of the sides of a triangle to the cosine of one of its angles, by utilizing the properties of the dot product of vectors.",
+      "importance": 0.95,
+      "name": "Law of Cosines"
+    },
+    {
+      "description": "This concept focuses on deriving the angle-addition formula for the sine function, sin(a+b), which expresses the sine of a sum of two angles in terms of the sines and cosines of the individual angles.",
+      "importance": 0.95,
+      "name": "Angle-Addition Identity for Sine"
+    },
+    {
+      "description": "This concept explores the property of orthogonal matrices, demonstrating how they preserve the Euclidean inner product, meaning the dot product of two vectors remains unchanged after transformation by an orthogonal matrix.",
+      "importance": 0.95,
+      "name": "Orthogonal Matrices and Inner Product Preservation"
+    },
+    {
+      "description": "This concept involves proving the anti-commutative property of the cross product, which states that changing the order of the vectors in a cross product reverses the direction of the resulting vector.",
+      "importance": 0.95,
+      "name": "Anti-Commutativity of the Cross Product"
+    },
+    {
+      "description": "This concept demonstrates how the Cauchy-Schwarz inequality, a fundamental inequality in linear algebra, can be used to prove the triangle inequality, which states that the sum of the lengths of any two sides of a triangle must be greater than or equal to the length of the third side.",
+      "importance": 0.95,
+      "name": "Triangle Inequality and Cauchy-Schwarz"
+    }
+  ]
+}

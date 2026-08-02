@@ -1,0 +1,38 @@
+{
+  "assignments": [
+    {
+      "description": null,
+      "due_date": null,
+      "title": "Reading responses",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": null,
+      "title": "Midterm essay",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": null,
+      "title": "Final essay",
+      "weight_pct": null
+    }
+  ],
+  "course_title": "PHIL 101",
+  "grading_categories": [
+    {
+      "name": "Reading responses",
+      "weight": 40.0
+    },
+    {
+      "name": "Midterm essay",
+      "weight": 60.0
+    },
+    {
+      "name": "Final essay",
+      "weight": 100.0
+    }
+  ],
+  "instructor": null
+}

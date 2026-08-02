@@ -30,18 +30,20 @@ from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from db.connection import table
+from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
-from services.gemini_service import MODEL_LITE, call_gemini_json
 from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
 from services.course_context_service import update_course_context
 from services.achievement_service import check_achievements
-from services.agent_events import SaplingEvent, sapling_event_to_sse
+from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.request_context import current_request_id
+from services.durable import workflow_id
 from agents import WORKER_LIMITS
+from agents._providers import model_mode
 from agents.classifier import classifier_agent
 from agents.summary import summary_agent
 from agents.concept_extraction import concept_extraction_agent
@@ -49,6 +51,9 @@ from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
 from agents.tools.graph import apply_concepts_to_graph
+from agents._run import run_agent_sync
+from agents.concept_scan import concept_scan_agent
+from agents.usage import record_agent_usage
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +73,41 @@ VALID_CATEGORIES = {
     "assignment", "study_guide", "other",
 }
 
+# Minimum usable extracted text, in stripped characters. Below this a document
+# carries nothing to classify or summarize, and sending it to the model
+# produces a *fabrication* rather than an error: the classify prompt's JSON
+# schema requires a summary and a concept list with no "insufficient content"
+# escape hatch, so an empty `Content:` block makes the model invent a plausible
+# document. Those invented concepts then flow into the course's shared
+# knowledge graph, where they mislead every enrolled student.
+#
+# Matches the 50-char floor that
+# `extraction_service._extract_text_from_file_uncached` already applies when
+# deciding whether native PDF text is worth keeping.
+MIN_EXTRACTED_CHARS = 50
+
+# Shown for both the sync 422 and the SSE error event. Names the likely cause
+# (a scanned/image-only file) and the concrete fix.
+UNREADABLE_DOCUMENT_DETAIL = (
+    "No text could be read from this document. It looks like a scanned or "
+    "image-only file, so there is nothing to analyze. Try uploading a version "
+    "with selectable text."
+)
+
+# 502 detail for agent-pipeline failures on /upload/sync (#151b — the ADR-0001
+# legacy fallback is gone, see ADR 0024). Retry-friendly on purpose: nothing
+# was persisted, and the client mints a fresh X-Request-ID per attempt, so a
+# retry re-runs the pipeline instead of replaying the failure.
+UPLOAD_FAILED_DETAIL = (
+    "Document processing failed and nothing was saved. Please try uploading "
+    "the file again."
+)
+
+
+def _has_usable_text(text: str | None) -> bool:
+    """True when extraction produced enough text to be worth analyzing."""
+    return len((text or "").strip()) >= MIN_EXTRACTED_CHARS
+
 
 def _validate_user(user_id: str) -> None:
     """Verify that the user_id corresponds to an existing user."""
@@ -76,44 +116,24 @@ def _validate_user(user_id: str) -> None:
         raise HTTPException(status_code=403, detail="Invalid user.")
 
 
-def _coerce_str_list(value) -> list[str]:
-    """Coerce LLM output into a list[str], dropping non-strings and blanks."""
-    if not isinstance(value, list):
-        return []
-    out: list[str] = []
-    for item in value:
-        if isinstance(item, str):
-            s = item.strip()
-            if s:
-                out.append(s)
-    return out
-
-
-def _coerce_dict_list(value) -> list[dict]:
-    """Coerce LLM output into a list[dict]."""
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
-
-
-def _extend_course_concepts(
+def _scan_user_message(
     *,
     course_label: str,
     existing_concepts: list[str],
     doc_filename: str | None = None,
     doc_summary: str | None = None,
     doc_concept_notes: list[dict] | None = None,
-) -> list[str]:
-    """Focused LLM call: extend an existing course concept set.
-
-    The LLM is shown the course label, every concept already in the graph,
-    and (when scanning a specific document) that document's stored summary
-    and concept notes. It returns new concepts to add, avoiding duplicates.
-    """
+) -> str:
+    """Build the concept_scan agent's user message: course label + existing
+    concepts + (optional) document context."""
     existing_block = (
         "\n".join(f"- {c}" for c in existing_concepts) if existing_concepts else "(none yet)"
     )
-    doc_block = ""
+    lines = [
+        f'Course: "{course_label}"',
+        "Concepts already in the graph:",
+        existing_block,
+    ]
     if doc_filename or doc_summary or doc_concept_notes:
         notes_block = (
             "\n".join(
@@ -122,137 +142,93 @@ def _extend_course_concepts(
             )
             or "  (none)"
         )
-        doc_block = (
-            "\nNew document being scanned:\n"
-            f"  Title: {doc_filename or '(untitled)'}\n"
-            f"  Summary: {doc_summary or '(none)'}\n"
-            "  Concepts already extracted from this document:\n"
-            f"{notes_block}\n"
+        lines += [
+            "",
+            "New document being scanned:",
+            f"  Title: {doc_filename or '(untitled)'}",
+            f"  Summary: {doc_summary or '(none)'}",
+            "  Concepts already extracted from this document:",
+            notes_block,
+        ]
+    return "\n".join(lines)
+
+
+async def _extend_via_agent(
+    *,
+    user_id: str,
+    course_id: str,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_concept_notes: list[dict] | None = None,
+) -> list[str]:
+    """Run concept_scan_agent and return new concept names. Raises on agent
+    failure; the sync dispatcher (_extend_concepts) degrades to []."""
+    deps = SaplingDeps(
+        user_id=user_id,
+        course_id=course_id,
+        supabase=None,
+        request_id=current_request_id() or str(uuid.uuid4()),
+    )
+    message = _scan_user_message(
+        course_label=course_label,
+        existing_concepts=existing_concepts,
+        doc_filename=doc_filename,
+        doc_summary=doc_summary,
+        doc_concept_notes=doc_concept_notes,
+    )
+    result = record_agent_usage(
+        await concept_scan_agent.run(
+            message, deps=deps, usage_limits=WORKER_LIMITS,
+        ),
+        feature="document", task="concept_scan",
+    )
+    return list(result.output.concepts)
+
+
+def _extend_concepts(
+    user_id: str,
+    course_id: str,
+    *,
+    course_label: str,
+    existing_concepts: list[str],
+    doc_filename: str | None = None,
+    doc_summary: str | None = None,
+    doc_concept_notes: list[dict] | None = None,
+) -> list[str]:
+    """Concept extension via concept_scan_agent — the only scan path since
+    #151b (ADR 0024 retired the legacy call_gemini_json fallback).
+
+    Sync entry point for the sync /scan-concepts handlers: drives the async
+    agent via run_agent_sync. Best-effort enrichment (D4): any agent failure
+    degrades to "no new concepts" with a warning log, so the scan response
+    reports {"concepts": [], "added": 0, "existing": N} instead of 500ing a
+    route whose whole job is optional graph enrichment.
+    """
+    try:
+        return run_agent_sync(
+            _extend_via_agent(
+                user_id=user_id,
+                course_id=course_id,
+                course_label=course_label,
+                existing_concepts=existing_concepts,
+                doc_filename=doc_filename,
+                doc_summary=doc_summary,
+                doc_concept_notes=doc_concept_notes,
+            )
         )
-
-    prompt = (
-        f"You are curating the concept set for the course \"{course_label}\".\n"
-        "Concepts already in the student's graph for this course:\n"
-        f"{existing_block}\n"
-        f"{doc_block}"
-        "Return ONLY valid JSON with no markdown or backticks:\n"
-        '{ "concepts": ["...", "..."] }\n'
-        "Rules:\n"
-        "- Return between 0 and 15 NEW concepts that should be in this course's "
-        "graph but are not in the existing list above.\n"
-        "- If the existing set already covers the relevant material, return [].\n"
-        "- Each concept is a short Title Case noun phrase "
-        "(e.g. \"Linear Regression\", \"Big-O Analysis\").\n"
-        "- Do NOT repeat or paraphrase any existing concept.\n"
-        "- No assignment titles, week labels, page numbers, problem numbers, or "
-        "administrative items.\n"
-        "- concepts must be a JSON array of strings."
-    )
-    raw = call_gemini_json(prompt, model=MODEL_LITE)
-    if not isinstance(raw, dict):
-        return []
-    return _coerce_str_list(raw.get("concepts"))
-
-
-def _coerce_concept_notes(value) -> list[dict]:
-    """Coerce LLM output into a list of {name, description} dicts.
-
-    Drops entries missing either field. Names are stripped; descriptions
-    preserve their markdown body verbatim so the frontend MarkdownChat
-    renderer can handle math, mermaid, plots, and theorem callouts.
-    """
-    if not isinstance(value, list):
-        return []
-    out: list[dict] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        name = item.get("name")
-        desc = item.get("description")
-        if not isinstance(name, str) or not isinstance(desc, str):
-            continue
-        name = name.strip()
-        desc = desc.strip()
-        if not name or not desc:
-            continue
-        out.append({"name": name, "description": desc})
-    return out
-
-
-def _process_document(filename: str, extracted_text: str) -> dict:
-    """Single LLM call: classify, summarize, and extract assignments + concepts.
-
-    Returns a normalized shape with all fields validated and coerced — callers
-    can trust the types without further isinstance checks.
-    """
-    prompt = (
-        f"You are processing a student document titled '{filename}'.\n"
-        f"Content: {extracted_text[:12000]}\n"
-        "Return ONLY valid JSON with no markdown or backticks:\n"
-        "{\n"
-        '  "category": one of ["syllabus","lecture_notes","slides","reading","assignment","study_guide","other"],\n'
-        '  "summary": "2-3 sentence overview of the document",\n'
-        '  "concept_notes": [{"name": "Concept Name", "description": "..."}],\n'
-        '  "categories": [],\n'
-        '  "assignments": []\n'
-        "}\n"
-        'If category is "syllabus", populate "assignments" with every deadline found:\n'
-        '  {"title": "...", "due_date": "YYYY-MM-DD (assume 2026 if year missing)", '
-        '"course_name": "...", "assignment_type": one of [homework,exam,reading,project,quiz,other], "notes": "..." or null}\n'
-        'For non-syllabus documents, "assignments" must be [].\n'
-        'If category is "syllabus", also populate "categories" with the grading-weight buckets:\n'
-        '  {"name": "Exams", "weight": 40}  // weight passes through verbatim, do not normalize\n'
-        'For non-syllabus documents, "categories" must be [].\n'
-        "\n"
-        'Populate "concept_notes" with the document\'s key concepts. Use this for ALL categories — '
-        "this is the single takeaways list for the document.\n"
-        "  - Syllabus: 5–15 high-level course topics drawn from the schedule, learning outcomes, or topic list.\n"
-        "  - Assignment: 1–8 specific topics the assignment tests or practices.\n"
-        "  - Lecture notes / slides / reading / study_guide / other: 4–12 concepts the document covers.\n"
-        '  - "name" is a short Title Case noun phrase (e.g. "Linear Regression", "Big-O Analysis"). '
-        "Do NOT use problem numbers, week labels, or administrative items as names. The name is what "
-        "becomes the concept node in the student's knowledge graph, so it must read as a standalone topic.\n"
-        '  - "description" is a 2–4 sentence explanation of the concept written for the student. '
-        "It must be MARKDOWN and may use:\n"
-        "      • inline math `$x^2$` and display math `$$\\int f(x)\\,dx$$`\n"
-        "      • fenced ```mermaid``` blocks for diagrams\n"
-        "      • fenced ```plot``` blocks for function plots (function-plot.js JSON spec)\n"
-        "      • `:::theorem`, `:::definition`, `:::proof`, `:::lemma`, `:::example`, `:::note` directives\n"
-        "    Use these tools only when they genuinely clarify the concept; otherwise keep it prose. "
-        "Each description should align tightly with what a graph node for this concept would represent.\n"
-        "\n"
-        '"concept_notes" must be a JSON array of {"name": str, "description": str} objects.'
-    )
-    raw = call_gemini_json(prompt)
-    if not isinstance(raw, dict):
-        raw = {}
-
-    category = raw.get("category")
-    if category not in VALID_CATEGORIES:
-        category = "other"
-
-    summary = raw.get("summary")
-    if not isinstance(summary, str):
-        summary = ""
-
-    concept_notes = _coerce_concept_notes(raw.get("concept_notes"))
-
-    categories = _coerce_dict_list(raw.get("categories"))
-    clean_categories = []
-    for c in categories:
-        name = c.get("name")
-        weight = c.get("weight")
-        if isinstance(name, str) and name.strip() and isinstance(weight, (int, float)):
-            clean_categories.append({"name": name.strip(), "weight": float(weight)})
-
-    return {
-        "category": category,
-        "summary": summary.strip(),
-        "categories": clean_categories,
-        "assignments": _coerce_dict_list(raw.get("assignments")),
-        "concept_notes": concept_notes,
-        "concepts": [c["name"] for c in concept_notes],
-    }
+    except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+        logger.warning(
+            "concept_scan agent guardrails tripped; degrading to no new concepts",
+            exc_info=e,
+        )
+    except Exception:
+        logger.warning(
+            "concept_scan agent failed; degrading to no new concepts",
+            exc_info=True,
+        )
+    return []
 
 
 @router.get("/user/{user_id}")
@@ -264,11 +240,31 @@ def list_documents(user_id: str, request: Request):
         filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         order="created_at.desc",
     ) or []
+    # The row keys on the OFFERING (0025); the HTTP boundary keeps the
+    # abstract course_id (#435 — Library.tsx filters/labels on d.course_id).
+    # Resolve each unique offering_id once (mirrors routes/learn.py's
+    # list_sessions offering_to_course pattern), not once per row.
+    offering_to_course: dict[str, str | None] = {}
     for d in docs:
         d["summary"] = decrypt_if_present(d.get("summary"))
         notes_raw = d.get("concept_notes")
         if isinstance(notes_raw, str):
-            d["concept_notes"] = decrypt_json(notes_raw)
+            try:
+                d["concept_notes"] = decrypt_json(notes_raw)
+            except Exception:
+                # decrypt_json re-raises when both decrypt AND plaintext
+                # parse fail (a genuinely corrupted row) — degrade that one
+                # row instead of 500ing the whole list (matches
+                # _existing_doc_by_request_id and scan_document_concepts).
+                logger.warning(
+                    "concept_notes decrypt failed for document %s; degrading to []",
+                    d.get("id"),
+                )
+                d["concept_notes"] = []
+        off_id = d.get("offering_id")
+        if off_id and off_id not in offering_to_course:
+            offering_to_course[off_id] = offering_course_id(off_id)
+        d["course_id"] = offering_to_course.get(off_id)
     return {"documents": docs}
 
 
@@ -334,13 +330,23 @@ def _extract_text_or_422(file_bytes: bytes, filename: str, content_type: str) ->
     path on /upload/sync and on /upload when the flag is off.
     """
     try:
-        return extract_text_from_file(file_bytes, filename, content_type)
+        text = extract_text_from_file(file_bytes, filename, content_type)
     except Exception:
         logger.exception("Text extraction failed for '%s'", filename)
         raise HTTPException(
             status_code=422,
             detail="Could not read this document. Please try a different file.",
         )
+    # Extraction can "succeed" and return nothing -- a rasterized PDF has no
+    # text layer, so there is no exception to catch. Reject here rather than
+    # letting an empty document reach the model (see MIN_EXTRACTED_CHARS).
+    if not _has_usable_text(text):
+        logger.warning(
+            "Extraction yielded %d usable chars for '%s' - rejecting as unreadable",
+            len((text or "").strip()), filename,
+        )
+        raise HTTPException(status_code=422, detail=UNREADABLE_DOCUMENT_DETAIL)
+    return text
 
 
 def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
@@ -386,6 +392,8 @@ def _persist_document(
     filename: str,
     result: DocumentProcessingResult,
     request_id: str | None = None,
+    course_id: str | None = None,
+    char_count: int | None = None,
 ) -> tuple[str, dict]:
     """Insert a documents row from an orchestrator result.
 
@@ -395,7 +403,9 @@ def _persist_document(
     returned row carries the plaintext shape so callers can pass it
     straight back to the client without an extra decrypt step.
     ``request_id`` (when provided) is stored verbatim for idempotent
-    replay detection. Returns (document_id, full_row).
+    replay detection. ``course_id``/``char_count`` only feed the
+    document.processed observability event (#117); they are not persisted
+    on the row. Returns (document_id, full_row).
     """
     now = datetime.now(timezone.utc).isoformat()
     concept_notes = [
@@ -429,6 +439,21 @@ def _persist_document(
     full_row = inserted[0] if inserted else row
     full_row["summary"] = summary
     full_row["concept_notes"] = concept_notes
+    # #117: one document.processed per persisted document, covering both the
+    # sync and the streaming agent path. Ids/counts only — never the text,
+    # summary, or concept notes.
+    events_service.log_event(
+        "document.processed",
+        category="usage",
+        user_id=user_id,
+        request_id=request_id,
+        payload={
+            "document_id": full_row["id"],
+            "category": result.classification.category,
+            "course_id": course_id,
+            "char_count": char_count,
+        },
+    )
     return full_row["id"], full_row
 
 
@@ -522,7 +547,10 @@ async def upload_document_sync(
     if len(file_bytes) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,
-            detail="File exceeds the 100 MB limit. Please upload a smaller file.",
+            detail=(
+                f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit. "
+                "Please upload a smaller file."
+            ),
         )
 
     extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
@@ -551,44 +579,69 @@ async def upload_document_sync(
         response.setdefault("categories", [])
         return response
 
+    # #117: one document.upload per accepted upload attempt — AFTER the
+    # idempotency short-circuit (PR #465 review), so an X-Request-ID retry of
+    # an already-persisted upload doesn't inflate the count. Counts only —
+    # the extracted text itself never enters a payload.
+    events_service.log_event(
+        "document.upload",
+        category="usage",
+        user_id=user_id,
+        request_id=request_id,
+        payload={
+            "course_id": course_id,
+            "offering_id": offering_id,
+            "char_count": len(extracted_text),
+        },
+    )
+
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id,
         supabase=None,
         request_id=request_id,
     )
+    # Failure mapping (#151b): the agent pipeline is the ONLY pipeline — the
+    # ADR-0001 legacy fallback is gone (ADR 0024). Nothing has been persisted
+    # at this point and the client mints a fresh X-Request-ID per attempt, so
+    # both branches surface a retry-friendly 502: guardrail trips (budget /
+    # degenerate output) log at WARNING, anything else is a bug and logs the
+    # full exception.
+    # Scope the DBOS workflow id to user_id + request_id, not request_id
+    # alone: X-Request-ID is client-supplied, so an unscoped id would let
+    # one user's replay attach to another user's in-flight/completed
+    # workflow (state poisoning). No-op (nullcontext) when DBOS is off.
     try:
-        result: DocumentProcessingResult = await process_document(extracted_text, deps)
+        with workflow_id(f"doc:{user_id}:{request_id}"):
+            result: DocumentProcessingResult = await process_document(extracted_text, deps)
     except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
         logger.warning(
-            "Agent guardrails tripped for '%s'; falling back to legacy",
+            "Agent guardrails tripped for '%s'; returning 502",
             filename, exc_info=e,
         )
-        return await _legacy_upload_pipeline(
-            filename=filename, extracted_text=extracted_text,
-            course_id=course_id, offering_id=offering_id, user_id=user_id,
-            background_tasks=background_tasks,
-            request_id=request_id,
-        )
-    except Exception:
+        raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
+    except Exception as e:
         logger.exception(
-            "Unexpected agent failure for '%s'; falling back to legacy",
+            "Unexpected agent failure for '%s'; returning 502",
             filename,
         )
-        return await _legacy_upload_pipeline(
-            filename=filename, extracted_text=extracted_text,
-            course_id=course_id, offering_id=offering_id, user_id=user_id,
-            background_tasks=background_tasks,
-            request_id=request_id,
-        )
+        raise HTTPException(status_code=502, detail=UPLOAD_FAILED_DETAIL) from e
 
-    _save_orchestrator_syllabus(user_id=user_id, course_id=course_id,
-                                filename=filename, result=result)
-    _graph_backstop(user_id=user_id, course_id=course_id,
-                    filename=filename, result=result)
-    _, full_row = _persist_document(user_id=user_id, offering_id=offering_id,
-                                    filename=filename, result=result,
-                                    request_id=request_id)
+    # async def route: these are synchronous PostgREST round-trips — keep them
+    # off the event loop, same as the SSE generator's post-roll (#132 item 22).
+    await asyncio.to_thread(
+        _save_orchestrator_syllabus, user_id=user_id, course_id=course_id,
+        filename=filename, result=result,
+    )
+    await asyncio.to_thread(
+        _graph_backstop, user_id=user_id, course_id=course_id,
+        filename=filename, result=result,
+    )
+    _, full_row = await asyncio.to_thread(
+        _persist_document, user_id=user_id, offering_id=offering_id,
+        filename=filename, result=result, request_id=request_id,
+        course_id=course_id, char_count=len(extracted_text),
+    )
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
     background_tasks.add_task(update_course_context, course_id)
@@ -629,7 +682,10 @@ async def upload_document(
     if len(file_bytes) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,
-            detail="File exceeds the 15 MB limit. Please upload a smaller file.",
+            detail=(
+                f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit. "
+                "Please upload a smaller file."
+            ),
         )
 
     # Unify the agent-trace request_id with the middleware-stamped one so
@@ -684,6 +740,23 @@ async def upload_document(
                 ))
                 return
 
+            # #117: one document.upload per accepted upload attempt — AFTER
+            # the idempotent-replay short-circuit (PR #465 review), so an
+            # X-Request-ID retry doesn't inflate the count. char_count is
+            # unknown (None) when OCR_ASYNC_ENABLED defers extraction below —
+            # document.processed carries the real count once extraction ran.
+            events_service.log_event(
+                "document.upload",
+                category="usage",
+                user_id=user_id,
+                request_id=request_id,
+                payload={
+                    "course_id": course_id,
+                    "offering_id": offering_id,
+                    "char_count": len(extracted_text) if extracted_text is not None else None,
+                },
+            )
+
             # ── Phase 0: text extraction (when OCR_ASYNC_ENABLED) ─────────────
             # Failures here can NOT fall through to the legacy fallback —
             # the legacy path uses the same extractor, and would crash on
@@ -718,14 +791,39 @@ async def upload_document(
                     type="progress", step="extracted_text",
                     message=f"Extracted {len(extracted_text):,} chars.",
                 ))
+                # Extraction can succeed and still yield nothing usable -- a
+                # rasterized PDF has no text layer, so the except branch above
+                # never fires. Stop here rather than asking the model to
+                # summarize an empty document, which it answers by inventing
+                # one (see MIN_EXTRACTED_CHARS). Same terminal error+done pair
+                # as the extraction-failure path, so clients need no new case.
+                if not _has_usable_text(extracted_text):
+                    logger.warning(
+                        "Async extraction yielded %d usable chars for '%s' - "
+                        "rejecting as unreadable",
+                        len((extracted_text or "").strip()), filename,
+                    )
+                    yield sapling_event_to_sse(SaplingEvent(
+                        type="error", step="failed",
+                        message=UNREADABLE_DOCUMENT_DETAIL,
+                        data={"request_id": request_id},
+                    ))
+                    yield sapling_event_to_sse(SaplingEvent(
+                        type="status", step="done",
+                        message="Failed.",
+                    ))
+                    return
 
             # ── Phase 1: classifier (serial gate) ─────────────────────────────
             yield sapling_event_to_sse(SaplingEvent(
                 type="progress", step="classify",
                 message="Classifying document...",
             ))
-            cls_run = await classifier_agent.run(
-                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+            cls_run = record_agent_usage(
+                await classifier_agent.run(
+                    extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+                ),
+                feature="document", task="classifier",
             )
             classification = cls_run.output
             yield sapling_event_to_sse(SaplingEvent(
@@ -757,6 +855,7 @@ async def upload_document(
                 summary_r, concepts_r, syllabus_r = await asyncio.gather(
                     summary_task, concepts_task, syllabus_task,
                 )
+                record_agent_usage(syllabus_r, feature="document", task="syllabus")
                 summary = summary_r.output
                 concepts = concepts_r.output
                 syllabus = syllabus_r.output
@@ -765,6 +864,8 @@ async def upload_document(
                 summary = summary_r.output
                 concepts = concepts_r.output
                 syllabus = None
+            record_agent_usage(summary_r, feature="document", task="summary")
+            record_agent_usage(concepts_r, feature="document", task="concepts")
             yield sapling_event_to_sse(SaplingEvent(
                 type="progress", step="extracted",
                 message=f"Extracted {len(concepts.concepts)} concept(s).",
@@ -796,15 +897,75 @@ async def upload_document(
                 message="Processing complete.",
                 data=final_output.model_dump(mode="json"),
             ))
+        except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
+            # Terminal (#151b): `step="fallback"` left the SSE vocabulary
+            # with the legacy pipeline (ADR 0024). Emit the exact
+            # error:failed + status:done tail the deleted fallback used on
+            # double-failure, so clients need no new case. Retry is safe —
+            # nothing was persisted, and a retry mints a fresh X-Request-ID.
+            logger.warning(
+                "Agent guardrails tripped during stream for '%s'; failing",
+                filename, exc_info=e,
+            )
+            yield sapling_event_to_sse(SaplingEvent(
+                type="error", step="failed",
+                message="Document processing failed. Please try again.",
+                data={"request_id": request_id} if request_id else None,
+            ))
+            yield sapling_event_to_sse(SaplingEvent(
+                type="status", step="done",
+                message="Failed.",
+            ))
+            return
+        except Exception:
+            # Same terminal tail; a bare exception is a bug, so keep the
+            # full exception log where the guardrail branch logs a WARNING.
+            logger.exception("Unexpected streaming failure for '%s'", filename)
+            yield sapling_event_to_sse(SaplingEvent(
+                type="error", step="failed",
+                message="Document processing failed. Please try again.",
+                data={"request_id": request_id} if request_id else None,
+            ))
+            yield sapling_event_to_sse(SaplingEvent(
+                type="status", step="done",
+                message="Failed.",
+            ))
+            return
 
-            # ── Post-roll: side effects + persistence ─────────────────────────
-            _save_orchestrator_syllabus(user_id=user_id, course_id=course_id,
-                                        filename=filename, result=final_output)
-            _graph_backstop(user_id=user_id, course_id=course_id,
-                            filename=filename, result=final_output)
-            doc_id, _ = _persist_document(user_id=user_id, offering_id=offering_id,
-                                          filename=filename, result=final_output,
-                                          request_id=request_id)
+        # ── Post-roll: side effects + persistence (#132 item 11) ──────────
+        # Runs AFTER the terminal `result` event is on the wire, in its own
+        # try/except. A post-result failure still emits the terminal
+        # error:failed + status:done pair and NEVER a second result — the
+        # client already holds the processed document, and every emitter in
+        # this generator sends at most one result per stream. The legacy
+        # fallback this separation used to guard against re-triggering
+        # (result → error → result → done, plus a second model call) is
+        # GONE (#151b, ADR 0024); the separate try/except now simply keeps
+        # the post-result failure tail identical to the pre-result failure
+        # branches above. #154 builds on this structure — keep persistence
+        # in the post-roll, after the result event.
+        try:
+            # Synchronous PostgREST writes — threaded so they don't block
+            # the event loop serving this (and every other) SSE stream
+            # (#132 item 22; same pattern as the async-OCR extraction above).
+            await asyncio.to_thread(
+                _save_orchestrator_syllabus,
+                user_id=user_id, course_id=course_id,
+                filename=filename, result=final_output,
+            )
+            await asyncio.to_thread(
+                _graph_backstop,
+                user_id=user_id, course_id=course_id,
+                filename=filename, result=final_output,
+            )
+            doc_id, _ = await asyncio.to_thread(
+                _persist_document,
+                user_id=user_id, offering_id=offering_id,
+                filename=filename, result=final_output,
+                request_id=request_id,
+                course_id=course_id,
+                char_count=len(extracted_text) if extracted_text is not None else None,
+            )
 
             # BackgroundTasks runs after response close — useless for SSE since
             # the stream IS the response. _spawn_post_roll uses create_task
@@ -814,96 +975,35 @@ async def upload_document(
                 ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 ("update_course_context", update_course_context, course_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
+                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
             )
-
+        except Exception:
+            logger.exception(
+                "Post-result persistence failed for '%s' — result already "
+                "sent, so no legacy fallback (it would re-run the pipeline "
+                "and emit a second result)", filename,
+            )
+            yield sapling_event_to_sse(SaplingEvent(
+                type="error", step="failed",
+                message="The document was processed but could not be saved. "
+                        "Please try uploading it again.",
+                data={"request_id": request_id} if request_id else None,
+            ))
             yield sapling_event_to_sse(SaplingEvent(
                 type="status", step="done",
-                message="Saved.",
-                data={"document_id": doc_id},
+                message="Failed.",
             ))
-        except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
-            logger.warning(
-                "Agent guardrails tripped during stream for '%s'; falling back",
-                filename, exc_info=e,
-            )
-            yield sapling_event_to_sse(SaplingEvent(
-                type="error", step="fallback",
-                message="Agent guardrails tripped; using legacy pipeline.",
-                data={"request_id": request_id},
-            ))
-            async for sse_event in _stream_legacy_fallback(
-                filename=filename, extracted_text=extracted_text,
-                course_id=course_id, offering_id=offering_id, user_id=user_id,
-                request_id=request_id,
-            ):
-                yield sse_event
-        except Exception:
-            logger.exception("Unexpected streaming failure for '%s'", filename)
-            yield sapling_event_to_sse(SaplingEvent(
-                type="error", step="fallback",
-                message="Unexpected error during processing; using legacy pipeline.",
-                data={"request_id": request_id},
-            ))
-            async for sse_event in _stream_legacy_fallback(
-                filename=filename, extracted_text=extracted_text,
-                course_id=course_id, offering_id=offering_id, user_id=user_id,
-                request_id=request_id,
-            ):
-                yield sse_event
+            return
 
-    return EventSourceResponse(event_stream())
-
-
-async def _stream_legacy_fallback(
-    *, filename: str, extracted_text: str, course_id: str, offering_id: str,
-    user_id: str, request_id: str | None = None,
-):
-    """Run _legacy_upload_pipeline and yield SSE progress/result/done events.
-
-    Used by the streaming /upload route's exception handlers to deliver
-    a document via the legacy path even when the agent pipeline trips.
-    The legacy path is a single-shot Gemini call so we cannot observe
-    its internal phases — instead we emit a synthetic ``progress`` event
-    before kicking it off so the UI doesn't sit on a blank spinner for
-    the legacy call's wall-clock latency. If the legacy path also fails,
-    we yield a terminal error event so the client doesn't see a silent
-    EOF mid-stream. ``request_id`` is the middleware-stamped correlation
-    ID — included in any error event so callers can match the failure
-    to a Logfire span, and threaded into the legacy insert so a retry
-    with the same X-Request-ID is deduped.
-    """
-    yield sapling_event_to_sse(SaplingEvent(
-        type="progress", step="fallback_processing",
-        message="Falling back to single-call pipeline. Processing document...",
-    ))
-    try:
-        legacy_response = await _legacy_upload_pipeline(
-            filename=filename, extracted_text=extracted_text,
-            course_id=course_id, offering_id=offering_id, user_id=user_id,
-            request_id=request_id,
-        )
-    except Exception:
-        logger.exception("Legacy fallback also failed for '%s'", filename)
-        yield sapling_event_to_sse(SaplingEvent(
-            type="error", step="failed",
-            message="Document processing failed. Please try again.",
-            data={"request_id": request_id} if request_id else None,
-        ))
         yield sapling_event_to_sse(SaplingEvent(
             type="status", step="done",
-            message="Failed.",
+            message="Saved.",
+            data={"document_id": doc_id},
         ))
-        return
-    yield sapling_event_to_sse(SaplingEvent(
-        type="result", step="finalize",
-        message="Processing complete (legacy fallback).",
-        data=legacy_response,
-    ))
-    yield sapling_event_to_sse(SaplingEvent(
-        type="status", step="done",
-        message="Saved.",
-        data={"document_id": legacy_response.get("id")},
-    ))
+
+    return EventSourceResponse(
+        event_stream(), headers={"Cache-Control": SSE_CACHE_CONTROL}
+    )
 
 
 def _invalidate_study_guide_cache(user_id: str, offering_id: str) -> None:
@@ -931,6 +1031,101 @@ def _check_upload_achievements(user_id: str) -> None:
         pass
 
 
+def _index_document_chunks(
+    doc_id: str,
+    course_id: str,      # Sapling UUID — resolved to BU code internally
+    user_id: str,
+    extracted_text: str,
+    category: str,
+    doc_summary: str = "",
+) -> None:
+    """Chunk, embed, and upsert a document into course_chunks.
+
+    Runs in a background thread via _spawn_post_roll after the document
+    is persisted, so it never blocks the SSE stream.
+    """
+    import time
+    from services.chunker import chunk_for_category
+    from services.rag_service import embed_document_text, index_document_chunks
+    from services.encryption import encrypt_if_present
+
+    MIN_COURSE_RELEVANCE = 0.35
+
+    try:
+        # Resolve BU course code from Sapling UUID
+        rows = table("courses").select(
+            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
+        )
+        bu_course_id = (rows[0].get("course_code") or course_id) if rows else course_id
+
+        chunks = chunk_for_category(extracted_text, category)
+        if not chunks:
+            return
+
+        # Store raw extracted text on the document row (best-effort)
+        try:
+            table("documents").update(
+                {"extracted_text": encrypt_if_present(extracted_text)},
+                filters={"id": f"eq.{doc_id}"},
+            )
+        except Exception:
+            logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
+
+        # Relevance gate: skip docs that are off-topic for the course. The
+        # embedding-based check below routes through services.rag_service
+        # (#413) — the shared lazy client behind the #439 model_mode() gate —
+        # catalog_rows itself is a plain Supabase read (not gated) so the gate
+        # is only ever skipped when there's actually a catalog embedding to
+        # compare against.
+        catalog_rows = table("course_chunks").select(
+            "embedding",
+            filters={"course_id": f"eq.{bu_course_id}", "category": "eq.catalog"},
+            limit=1,
+        )
+        if catalog_rows and catalog_rows[0].get("embedding"):
+            if model_mode() != "real":
+                # #439: no google.genai.Client in non-real mode. Raising here
+                # (instead of silently skipping the gate) reproduces the exact
+                # behavior a real embed-call failure already produced: the
+                # outer `except` below aborts indexing and logs
+                # "_index_document_chunks failed for doc %s" — the line
+                # e2e_oracles/logscan.py's ALLOWLIST already expects. Function
+                # mode is now that same no-op, by design, not by accident of a
+                # swallowed exception.
+                raise RuntimeError(
+                    "RAG relevance-gate embedding skipped: "
+                    "SAPLING_MODEL_MODE != 'real' (#439)"
+                )
+
+            # #413: no raw genai.Client here — a keyless run used to construct
+            # Client(api_key="") whose ValueError the outer `except` swallowed
+            # into a silent no-index degrade. rag_service's shared lazy client
+            # (dummy-key fallback + timeout) fails at call time with a clear
+            # API error instead, on the same degrade path.
+            catalog_vec = catalog_rows[0]["embedding"]
+            sample_text = doc_summary or chunks[0]
+            doc_sample_vec = embed_document_text(sample_text)
+            time.sleep(1.5)
+            dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
+            if dot < MIN_COURSE_RELEVANCE:
+                logger.warning(
+                    "[RAG] doc %s skipped — relevance to %s is %.3f (< %.2f)",
+                    doc_id, bu_course_id, dot, MIN_COURSE_RELEVANCE,
+                )
+                return
+
+        count = index_document_chunks(
+            course_code=bu_course_id,
+            doc_id=doc_id,
+            uploader_id=user_id,
+            chunks=chunks,
+        )
+        logger.info("[RAG] indexed %d chunks for doc %s", count, doc_id)
+
+    except Exception:
+        logger.exception("[RAG] _index_document_chunks failed for doc %s", doc_id)
+
+
 def _spawn_post_roll(*tasks: tuple) -> None:
     """Fire-and-forget post-roll work for SSE / non-FastAPI-BackgroundTasks
     contexts. Each tuple is (label, callable, *args). Exceptions in the
@@ -948,101 +1143,6 @@ def _log_post_roll_exc(task: "asyncio.Task", label: str) -> None:
     exc = task.exception()
     if exc is not None:
         logger.error("Post-roll task '%s' failed: %s", label, exc, exc_info=exc)
-
-
-async def _legacy_upload_pipeline(
-    *,
-    filename: str,
-    extracted_text: str,
-    course_id: str,
-    offering_id: str,
-    user_id: str,
-    background_tasks: BackgroundTasks | None = None,
-    request_id: str | None = None,
-) -> dict:
-    """The pre-orchestrator upload pipeline, kept as a fallback per ADR-0001.
-
-    Verbatim copy of the previous upload_document body from text-extraction
-    onward. File validation already happened in the caller, so this function
-    starts at the AI processing step.
-
-    The documents row keys on ``offering_id`` (0025); the graph,
-    assignment-calendar, and course-context side effects key on the abstract
-    ``course_id``.
-
-    background_tasks is optional: in streaming-fallback contexts there is
-    no FastAPI BackgroundTasks to attach to (the response IS the stream),
-    so post-roll work is fired via asyncio.create_task instead.
-
-    ``request_id`` (when provided) is stored on the documents row so a
-    client retry with the same X-Request-ID can short-circuit instead of
-    re-running the pipeline.
-    """
-    # ── AI: classify, summarize, and extract assignments (single call) ─────────
-    ai = _process_document(filename, extracted_text)
-
-    if ai["category"] == "syllabus" and ai["assignments"]:
-        try:
-            for a in ai["assignments"]:
-                a["course_id"] = course_id
-            save_assignments_to_db(user_id, ai["assignments"], source="syllabus")
-        except Exception:
-            logger.exception("Assignment save failed for '%s' (best-effort)", filename)
-
-    if ai["category"] in ("syllabus", "assignment") and ai["concepts"]:
-        try:
-            new_nodes = [
-                {"concept_name": name, "initial_mastery": 0.0}
-                for name in ai["concepts"]
-            ]
-            apply_graph_update(user_id, {"new_nodes": new_nodes}, course_id=course_id)
-        except Exception:
-            logger.exception("Concept population failed for '%s' (best-effort)", filename)
-
-    # ── Persist to documents table ────────────────────────────────────────────
-    now = datetime.now(timezone.utc).isoformat()
-    row = {
-        "id": str(uuid.uuid4()),
-        "user_id": user_id,
-        "offering_id": offering_id,
-        "file_name": filename,
-        "category": ai["category"],
-        "summary": encrypt_if_present(ai["summary"] or None),
-        "concept_notes": encrypt_json(ai["concept_notes"]) if ai["concept_notes"] is not None else None,
-        "created_at": now,
-        "processed_at": now,
-    }
-    if request_id:
-        row["request_id"] = request_id
-    try:
-        inserted = table("documents").insert(row)
-    except Exception:
-        # Schema may not yet have the request_id column; retry without it
-        # so deployments can ship the code before the migration runs.
-        if "request_id" in row:
-            row.pop("request_id", None)
-            inserted = table("documents").insert(row)
-        else:
-            raise
-
-    if background_tasks is not None:
-        background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
-        background_tasks.add_task(update_course_context, course_id)
-        background_tasks.add_task(_check_upload_achievements, user_id)
-    else:
-        _spawn_post_roll(
-            ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
-            ("update_course_context", update_course_context, course_id),
-            ("check_upload_achievements", _check_upload_achievements, user_id),
-        )
-
-    response = dict(inserted[0] if inserted else row)
-    response["summary"] = decrypt_if_present(response.get("summary"))
-    notes_raw = response.get("concept_notes")
-    if isinstance(notes_raw, str):
-        response["concept_notes"] = decrypt_json(notes_raw)
-    response["categories"] = ai.get("categories", [])
-    return response
 
 
 def _course_label(course_id: str) -> str:
@@ -1075,7 +1175,9 @@ def _scan_concepts_for_course(
     ) or []
     existing_concepts = [r["concept_name"] for r in existing_rows if r.get("concept_name")]
 
-    concepts = _extend_course_concepts(
+    concepts = _extend_concepts(
+        user_id,
+        course_id,
         course_label=_course_label(course_id),
         existing_concepts=existing_concepts,
         doc_filename=doc_filename,

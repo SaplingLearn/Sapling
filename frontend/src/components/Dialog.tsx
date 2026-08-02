@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { useScrollLock } from '@/lib/useScrollLock';
 
 const UI_FONT = "var(--font-dm-sans), 'DM Sans', sans-serif";
 
@@ -24,6 +25,13 @@ interface DialogProps {
   showCloseButton?: boolean;
   padding?: string;
   zIndex?: number;
+  /**
+   * Element to focus on open. Without it focus lands on the first focusable
+   * node in the panel — the close button, since it precedes {children} in
+   * the DOM. Form dialogs pass their first field instead. `autoFocus` can't
+   * do this job: React fires it at mount, before the focus pass below.
+   */
+  initialFocusRef?: React.RefObject<HTMLElement | null>;
 }
 
 export default function Dialog({
@@ -37,6 +45,7 @@ export default function Dialog({
   showCloseButton = true,
   padding = '28px',
   zIndex = 100,
+  initialFocusRef,
 }: DialogProps) {
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
@@ -44,6 +53,10 @@ export default function Dialog({
   const previousFocusRef = useRef<Element | null>(null);
   const autoTitleId = useId();
   const effectiveLabelledBy = labelledBy ?? (title ? autoTitleId : undefined);
+
+  // Lock the scrolling container while open so background content doesn't
+  // scroll-bleed behind the modal (matches the other portal modals).
+  useScrollLock(open);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -55,6 +68,8 @@ export default function Dialog({
     const focusTimer = setTimeout(() => {
       const panel = panelRef.current;
       if (!panel) return;
+      const preferred = initialFocusRef?.current;
+      if (preferred) { preferred.focus(); return; }
       const focusable = panel.querySelector<HTMLElement>(
         'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
       );
@@ -67,7 +82,7 @@ export default function Dialog({
       const prev = previousFocusRef.current;
       if (prev instanceof HTMLElement) prev.focus();
     };
-  }, [open]);
+  }, [open, initialFocusRef]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!open) return;

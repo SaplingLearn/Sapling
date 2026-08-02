@@ -7,6 +7,9 @@ MagicMock per table name, seeded with canned `.select()` rows and recording
 """
 from unittest.mock import MagicMock, patch
 
+import httpx
+import pytest
+
 import services.academics as ac
 
 
@@ -92,6 +95,55 @@ def test_resolve_offering_creates_when_missing_and_create_true():
     assert payload["id"] == off_id
 
 
+def _conflict_error() -> httpx.HTTPStatusError:
+    req = httpx.Request("POST", "http://test/course_offerings")
+    return httpx.HTTPStatusError(
+        "conflict", request=req, response=httpx.Response(409, request=req)
+    )
+
+
+def test_resolve_offering_create_conflict_reselects_winner():
+    """Losing the create race to the 0036 partial unique index re-selects the
+    now-existing offering and returns it instead of raising."""
+    factory = _factory(
+        {"terms": [{"id": "t1", "sort_key": 1}]},
+        # pre-insert term lookup misses, post-conflict re-select finds the winner
+        select_seqs={"course_offerings": [[], [{"id": "off-winner"}]]},
+    )
+    cache: dict = {}
+
+    def make(name):
+        m = cache.get(name) or factory(name)
+        cache[name] = m
+        if name == "course_offerings":
+            m.insert.side_effect = _conflict_error()
+        return m
+
+    with patch.object(ac, "table", side_effect=make):
+        assert ac.resolve_offering("course-1", term_id="t1", create=True) == "off-winner"
+
+
+def test_resolve_offering_create_non_conflict_error_propagates():
+    """Only 409 means 'someone else created it' — other HTTP errors re-raise."""
+    req = httpx.Request("POST", "http://test/course_offerings")
+    err = httpx.HTTPStatusError(
+        "boom", request=req, response=httpx.Response(500, request=req)
+    )
+    factory = _factory({"terms": [{"id": "t1", "sort_key": 1}], "course_offerings": []})
+    cache: dict = {}
+
+    def make(name):
+        m = cache.get(name) or factory(name)
+        cache[name] = m
+        if name == "course_offerings":
+            m.insert.side_effect = err
+        return m
+
+    with patch.object(ac, "table", side_effect=make):
+        with pytest.raises(httpx.HTTPStatusError):
+            ac.resolve_offering("course-1", term_id="t1", create=True)
+
+
 def test_resolve_offering_no_create_falls_back_to_any_offering():
     # No offering in the target term, but the course has one elsewhere.
     factory = _factory(
@@ -100,6 +152,28 @@ def test_resolve_offering_no_create_falls_back_to_any_offering():
     )
     with patch.object(ac, "table", side_effect=factory):
         assert ac.resolve_offering("course-1", create=False) == "off-legacy"
+
+
+def test_resolve_offering_fallback_false_returns_none_on_term_miss():
+    """#141: an explicitly targeted term with no offering must NOT silently
+    resolve to another term's offering. fallback=False returns None so the
+    caller degrades to its own empty/404 behavior instead."""
+    factory = _factory(
+        {"terms": [{"id": "t1", "sort_key": 1}]},
+        # The any-offering row exists, proving the fallback would have hit it.
+        select_seqs={"course_offerings": [[], [{"id": "off-legacy"}]]},
+    )
+    with patch.object(ac, "table", side_effect=factory):
+        assert ac.resolve_offering("course-1", term_id="t1", fallback=False) is None
+
+
+def test_resolve_offering_fallback_false_still_returns_term_match():
+    factory = _factory(
+        {"terms": [{"id": "t1", "sort_key": 1}],
+         "course_offerings": [{"id": "off-t1"}]},
+    )
+    with patch.object(ac, "table", side_effect=factory):
+        assert ac.resolve_offering("course-1", term_id="t1", fallback=False) == "off-t1"
 
 
 # ── user_offering_ids_for_course ────────────────────────────────────────────
@@ -134,3 +208,46 @@ def test_term_for_offering():
     }
     with patch.object(ac, "table", side_effect=_factory(rows)):
         assert ac.term_for_offering("off-1")["label"] == "Fall 2026"
+
+
+# ── term_id_for_label ────────────────────────────────────────────────────────
+
+def test_term_id_for_label_resolves_by_label():
+    rows = {"terms": [{"id": "t-spring"}]}
+    with patch.object(ac, "table", side_effect=_factory(rows)):
+        assert ac.term_id_for_label("Spring 2026") == "t-spring"
+
+
+def test_term_id_for_label_falls_back_to_id():
+    # First select (by label) empty; second (by id) returns the row.
+    factory = _factory({}, select_seqs={"terms": [[], [{"id": "t-xyz"}]]})
+    with patch.object(ac, "table", side_effect=factory):
+        assert ac.term_id_for_label("t-xyz") == "t-xyz"
+
+
+def test_term_id_for_label_none_for_empty():
+    with patch.object(ac, "table", side_effect=_factory({})):
+        assert ac.term_id_for_label("") is None
+
+
+# ── user_course_ids_for_term ─────────────────────────────────────────────────
+
+def test_user_course_ids_for_term_intersects_enrollments_and_term():
+    rows = {
+        "enrollments": [{"offering_id": "off-1"}, {"offering_id": "off-2"}],
+        # course_offerings filtered by (id in off-1,off-2) AND term_id eq t-spring
+        "course_offerings": [{"course_id": "bio-101"}],
+    }
+    with patch.object(ac, "table", side_effect=_factory(rows)):
+        assert ac.user_course_ids_for_term("user_andres", "t-spring") == {"bio-101"}
+
+
+def test_user_course_ids_for_term_empty_when_no_enrollments():
+    with patch.object(ac, "table", side_effect=_factory({"enrollments": []})):
+        assert ac.user_course_ids_for_term("user_andres", "t-spring") == set()
+
+
+def test_user_course_ids_for_term_empty_args():
+    with patch.object(ac, "table", side_effect=_factory({})):
+        assert ac.user_course_ids_for_term("", "t") == set()
+        assert ac.user_course_ids_for_term("u", "") == set()

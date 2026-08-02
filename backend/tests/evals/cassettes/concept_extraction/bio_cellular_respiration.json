@@ -1,0 +1,59 @@
+{
+  "concepts": [
+    {
+      "description": "The metabolic process that breaks down glucose to produce ATP, involving glycolysis, the citric acid cycle, and oxidative phosphorylation.",
+      "importance": 1.0,
+      "name": "Cellular Respiration"
+    },
+    {
+      "description": "A series of protein complexes on the inner mitochondrial membrane that uses electron carriers to drive oxidative phosphorylation, producing the bulk of ATP.",
+      "importance": 0.95,
+      "name": "Electron Transport Chain"
+    },
+    {
+      "description": "The process of ATP synthesis driven by the electron transport chain and chemiosmosis, producing the majority of ATP during cellular respiration.",
+      "importance": 0.9,
+      "name": "Oxidative Phosphorylation"
+    },
+    {
+      "description": "The initial stage of cellular respiration where glucose is broken down into pyruvate, ATP, and NADH in the cytoplasm.",
+      "importance": 0.9,
+      "name": "Glycolysis"
+    },
+    {
+      "description": "The process by which a proton gradient across the inner mitochondrial membrane drives the synthesis of ATP through ATP synthase during oxidative phosphorylation.",
+      "importance": 0.85,
+      "name": "Chemiosmosis"
+    },
+    {
+      "description": "A series of reactions within the mitochondrion that further oxidizes acetyl-CoA, producing additional NADH and FADH2.",
+      "importance": 0.85,
+      "name": "Citric Acid Cycle"
+    },
+    {
+      "description": "A three-carbon molecule produced during glycolysis, which enters the mitochondrion to be oxidized to acetyl-CoA.",
+      "importance": 0.8,
+      "name": "Pyruvate"
+    },
+    {
+      "description": "An electron carrier molecule produced during glycolysis and the citric acid cycle, essential for providing electrons to the electron transport chain.",
+      "importance": 0.8,
+      "name": "NADH"
+    },
+    {
+      "description": "An organelle in eukaryotic cells where pyruvate is oxidized, and the citric acid cycle, electron transport chain, and oxidative phosphorylation occur.",
+      "importance": 0.75,
+      "name": "Mitochondrion"
+    },
+    {
+      "description": "A two-carbon molecule formed from the oxidation of pyruvate within the mitochondrion, which then enters the citric acid cycle.",
+      "importance": 0.7,
+      "name": "Acetyl-CoA"
+    },
+    {
+      "description": "An electron carrier molecule produced during the citric acid cycle, which donates electrons to the electron transport chain.",
+      "importance": 0.7,
+      "name": "FADH2"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Newton's First Law",
+      "correct_answer": "Newton's First Law",
+      "difficulty": "easy",
+      "explanation": "Newton's First Law of Motion, also known as the law of inertia, describes the behavior of objects at rest or in uniform motion.",
+      "options": [
+        "Newton's First Law",
+        "Newton's Second Law",
+        "Newton's Third Law",
+        "Law of Conservation of Energy"
+      ],
+      "question": "What is the principle that states an object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced force?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Kinetic Energy",
+      "correct_answer": "Kinetic Energy",
+      "difficulty": "easy",
+      "explanation": "Kinetic energy is the energy of motion. It depends on the object's mass and velocity.",
+      "options": [
+        "Kinetic Energy",
+        "Potential Energy",
+        "Thermal Energy",
+        "Chemical Energy"
+      ],
+      "question": "What is the energy an object possesses due to its motion?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Momentum",
+      "correct_answer": "Momentum",
+      "difficulty": "easy",
+      "explanation": "Momentum is a vector quantity defined as mass in motion, calculated by multiplying an object's mass by its velocity (p = mv).",
+      "options": [
+        "Momentum",
+        "Force",
+        "Work",
+        "Power"
+      ],
+      "question": "What is the measure of the amount of motion an object has, calculated as the product of its mass and velocity?",
+      "type": "multiple_choice"
+    }
+  ]
+}

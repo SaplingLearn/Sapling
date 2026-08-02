@@ -1,0 +1,60 @@
+{
+  "questions": [
+    {
+      "concept": "Cell Membrane",
+      "correct_answer": "To regulate the passage of substances into and out of the cell",
+      "difficulty": "easy",
+      "explanation": "The cell membrane acts as a selectively permeable barrier, controlling which molecules can enter or leave the cell.",
+      "options": [
+        "To provide structural support to the cell",
+        "To regulate the passage of substances into and out of the cell",
+        "To synthesize proteins for the cell",
+        "To store genetic information"
+      ],
+      "question": "What is the primary function of the cell membrane?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Photosynthesis",
+      "correct_answer": "Carbon Dioxide",
+      "difficulty": "easy",
+      "explanation": "Plants use carbon dioxide from the air, water from the soil, and light energy to produce glucose (food) and oxygen during photosynthesis.",
+      "options": [
+        "Oxygen",
+        "Nitrogen",
+        "Carbon Dioxide",
+        "Hydrogen"
+      ],
+      "question": "What gas do plants primarily take in from the atmosphere for photosynthesis?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Mitosis",
+      "correct_answer": "Two genetically identical daughter cells",
+      "difficulty": "easy",
+      "explanation": "Mitosis produces two daughter cells that are exact genetic copies of the parent cell, crucial for growth and repair.",
+      "options": [
+        "Four genetically identical daughter cells",
+        "Two genetically identical daughter cells",
+        "Four genetically different daughter cells",
+        "Two genetically different daughter cells"
+      ],
+      "question": "Mitosis is a type of cell division that results in:",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Diffusion",
+      "correct_answer": "High concentration to an area of low concentration",
+      "difficulty": "easy",
+      "explanation": "Diffusion is a passive process where molecules spread out from a region where they are more concentrated to a region where they are less concentrated.",
+      "options": [
+        "High concentration to an area of low concentration",
+        "Low concentration to an area of high concentration",
+        "High temperature to an area of low temperature",
+        "Low pressure to an area of high pressure"
+      ],
+      "question": "Diffusion is the movement of molecules from an area of:",
+      "type": "multiple_choice"
+    }
+  ]
+}

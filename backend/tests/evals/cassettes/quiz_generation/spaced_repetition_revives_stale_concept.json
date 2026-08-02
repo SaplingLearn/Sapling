@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Cell Membrane",
+      "correct_answer": "To regulate the passage of substances into and out of the cell",
+      "difficulty": "medium",
+      "explanation": "The cell membrane acts as a selective barrier, controlling which molecules can enter or leave the cell, thus maintaining the cell's internal environment.",
+      "options": [
+        "To provide structural support to the cell",
+        "To regulate the passage of substances into and out of the cell",
+        "To synthesize proteins",
+        "To generate energy for the cell"
+      ],
+      "question": "What is the primary function of the cell membrane?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Cell Membrane",
+      "correct_answer": "Active transport",
+      "difficulty": "medium",
+      "explanation": "Active transport requires energy to move molecules across the cell membrane from an area of lower concentration to an area of higher concentration.",
+      "options": [
+        "Simple diffusion",
+        "Facilitated diffusion",
+        "Osmosis",
+        "Active transport"
+      ],
+      "question": "Which of the following processes involves the movement of molecules against their concentration gradient?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Photosynthesis",
+      "correct_answer": "To capture light energy from the sun",
+      "difficulty": "medium",
+      "explanation": "Chlorophyll, the pigment that gives plants their green color, is essential for absorbing light energy, which powers the process of photosynthesis.",
+      "options": [
+        "To absorb water from the soil",
+        "To capture light energy from the sun",
+        "To release carbon dioxide into the atmosphere",
+        "To break down glucose for energy"
+      ],
+      "question": "What is the main role of chlorophyll in photosynthesis?",
+      "type": "multiple_choice"
+    }
+  ]
+}

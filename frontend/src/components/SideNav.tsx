@@ -76,6 +76,8 @@ export function SideNav() {
     <aside
       role="navigation"
       aria-label="Primary"
+      // Hook for the pre-hydration mobile guard in globals.css (#110).
+      data-app-sidenav=""
       style={{
         width,
         minWidth: width,
@@ -109,6 +111,9 @@ export function SideNav() {
         <img
           src="/sapling-icon.svg"
           alt="Sapling"
+          width={32}
+          height={32}
+          decoding="async"
           style={{
             width: 32,
             height: 32,
@@ -236,8 +241,9 @@ export function SideNav() {
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  width: 24,
-                  height: 24,
+                  width: 44,
+                  height: 44,
+                  flexShrink: 0,
                   borderRadius: "var(--r-sm)",
                   color: "var(--text-muted)",
                   transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
@@ -266,7 +272,7 @@ export function SideNav() {
                 alignItems: "center",
                 justifyContent: "center",
                 width: "100%",
-                height: 28,
+                height: 44,
                 marginTop: 6,
                 borderRadius: "var(--r-sm)",
                 color: "var(--text-muted)",
@@ -304,6 +310,7 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         justifyContent: collapsed ? "center" : "flex-start",
         gap: 10,
         width: "100%",
+        minHeight: 44,
         padding: collapsed ? "8px 0" : "8px 12px",
         borderRadius: "var(--r-sm)",
         background: active ? "var(--bg-soft)" : "transparent",

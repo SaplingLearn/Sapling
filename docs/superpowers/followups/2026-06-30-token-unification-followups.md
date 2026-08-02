@@ -12,14 +12,28 @@ Each is its own plan / PR. Severity tags map to `docs/frontend-rhythm-audit.md`.
 
 ## Component re-skins (the visible "feels different" fixes)
 
-- [ ] **[P0-B] Beta CTA button species.** Replace the rounded-full pill + infinite `beta-glow`
+- [x] **[P0-B] Beta CTA button species.** Replace the rounded-full pill + infinite `beta-glow`
       animation with the app button language (rectangular, `--r-sm`, solid `--brand-forest`).
       Convert the perpetual glow into a single finite entrance using `--brand-glow`.
       Files: `app/(public)/page.tsx`, `globals.css` (`.beta-glow-btn`).
-- [ ] **[P1-E] Extract one hero-card primitive from `--surface-hero`.** Replace the duplicated
+      ✅ **Done (verified 2026-07-30):** landed with the #291 motion work and the beta-pill
+      removal (#287). `beta-glow` / `.beta-glow-btn` no longer exist anywhere in `frontend/src`,
+      and the landing CTAs are the shared `<Button variant="primary" size="xl">`
+      (`.btn .btn--primary .btn--xl`) — app button language, no motion. The glow was **deleted
+      outright rather than converted** to a `--brand-glow` entrance, which satisfies the intent
+      (no perpetual motion, one button species); `--brand-glow` consequently has no consumers.
+- [x] **[P1-E] Extract one hero-card primitive from `--surface-hero`.** Replace the duplicated
       inline 24px warm-gradient box in the beta modal (`app/(public)/page.tsx`) and
       `components/SignInModal.tsx` with a single shared component backed by `--surface-hero` /
       `--surface-hero-shadow`.
+      ✅ **Done (verified 2026-07-30):** landed with #288. `.card--hero` (a named variant of
+      `.card`) plus `.hero-surface` (the gradient alone, for panels nested inside a hero card)
+      now consume both tokens, and a thin `<HeroCard>` wrapper owns the pair. All five literal
+      sites are converted — four in `app/(public)/page.tsx`, one in `components/SignInModal.tsx`
+      — and `HeroCard.test.tsx` fails if a literal copy of the gradient reappears anywhere in
+      `frontend/src`. The literal fallbacks (`var(--surface-hero, …)`) exist because the tokens
+      are scoped to `.public-surface, .landing-page`; every consumer is inside that subtree
+      today, so they are defensive rather than load-bearing.
 - [ ] **[P1-C] Re-home onboarding** (`components/screens/Onboarding.tsx`) into the app's
       layout/spacing/type — `--pad-*` spacing, the shell type scale — instead of a centered
       card floating in a radial-gradient void.
@@ -27,8 +41,14 @@ Each is its own plan / PR. Severity tags map to `docs/frontend-rhythm-audit.md`.
       brief "you're in ✓" confirmation beat so the beta→pending transition isn't glow→silence.
 - [ ] **[P2-G] Normalize pre-auth motion** to one or two finite, purposeful moments
       (mesh blobs `sapling-blob`, `landing-card-float`, shimmer are currently infinite loops).
-- [ ] **[P2-I] Delete dead code** `components/OnboardingFlow.tsx` (36 KB, unused old-DNA onboarding
-      not imported by the active route).
+- [x] **[P2-I] Delete dead code** `components/OnboardingFlow.tsx` (36 KB, old-DNA onboarding).
+      ⚠️ **Correction (2026-07-07):** this component is **not** actually dead — it is still imported
+      and rendered by the active public landing route (`app/(public)/page.tsx`: `import` at L7,
+      rendered at L1247 under `onboardingPhase !== 'idle'`). It must be **unwired from the landing
+      page first**, or deletion breaks the build. Re-scope #292 to "unwire, then delete." (#292)
+      ✅ **Done (2026-07-16):** signup cut over to the `/onboarding` route (`screens/Onboarding.tsx`);
+      landing phase machine stripped, `OnboardingFlow.tsx` deleted, `sapling_onboarding_pending`
+      flag removed. Spec: `docs/superpowers/specs/2026-07-16-onboarding-cutover-design.md`. (#292)
 
 ## Directory / structural hygiene
 

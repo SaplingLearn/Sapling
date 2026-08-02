@@ -1,0 +1,28 @@
+{
+  "assignments": [
+    {
+      "description": null,
+      "due_date": "2026-10-15",
+      "title": "Midterm",
+      "weight_pct": 40.0
+    },
+    {
+      "description": null,
+      "due_date": "2026-12-12",
+      "title": "Final",
+      "weight_pct": 60.0
+    }
+  ],
+  "course_title": "HIST 110",
+  "grading_categories": [
+    {
+      "name": "Midterm",
+      "weight": 40.0
+    },
+    {
+      "name": "Final",
+      "weight": 60.0
+    }
+  ],
+  "instructor": null
+}

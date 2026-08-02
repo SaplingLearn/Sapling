@@ -1,7 +1,8 @@
 """Hermetic tests for db/seed_staging.py (#258).
 
-No real DB: `db.seed_staging.table` is patched to a recording FakeTable backed by
-an in-memory per-table store that mimics PostgREST's eq-filter select, insert,
+No real DB: `db.seed_helpers.table` (the shared idempotency helpers seed_staging
+delegates to — #363 prep) is patched to a recording FakeTable backed by an
+in-memory per-table store that mimics PostgREST's eq-filter select, insert,
 and upsert(merge-duplicates) semantics closely enough to exercise the seed's
 idempotency, FK consistency, enum validity, multi-term, and encryption boundaries.
 """
@@ -10,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 import db.seed_staging as seed
+from db import seed_helpers
 from services.encryption import decrypt
 
 # CHECK-enum sets read off migrations 0019–0027 (the seed must stay within these).
@@ -24,7 +26,10 @@ DOC_CATEGORIES = {
 CURVE_MODES = {"raw", "curved"}
 
 # Terms pre-seeded by 0019 — the seed references these but never writes them.
-PRESEEDED_TERMS = {"fall-2025", "spring-2026", "summer-2026", "fall-2026"}
+# summer-2026 is deliberately absent: 0019 seeds it, but 0032_retire_summer_2026
+# deletes it, so a fake DB that still offers it would let a seed referencing a
+# nonexistent term pass here and fail against a real database.
+PRESEEDED_TERMS = {"fall-2025", "spring-2026", "fall-2026"}
 
 
 # Primary key column per table (user_profiles is keyed on user_id, not id).
@@ -109,7 +114,7 @@ def store():
     def _factory(name: str):
         return _FakeTable(name, s)
 
-    with patch.object(seed, "table", side_effect=_factory):
+    with patch.object(seed_helpers, "table", side_effect=_factory):
         yield s
 
 

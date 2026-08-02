@@ -2,7 +2,16 @@
 Unit tests for the shared course context system.
 
 Tests: course_context_service (incl. course_summary agent), graph_service
-       (apply_graph_update side-effects), learn.py (build_system_prompt).
+       (apply_graph_update side-effects), learn.py topic/offering helpers.
+
+(The legacy build_system_prompt tests were deleted with the template
+pipeline in #151a. Their surviving contracts moved to the agent side:
+academic integrity + injection guard per mode in
+test_prompt_injection.py::TestAgentPromptHardening, peer-aggregate text
+wrapped as untrusted in
+test_prompt_injection.py::test_read_misconceptions_tool_neutralizes_peer_text,
+and the use_shared_context opt-out constraint in
+test_learn_routes.py::test_use_shared_context_false_appends_constraint.)
 
 Run from backend/:
     python -m pytest tests/test_shared_course_context.py -v
@@ -292,6 +301,142 @@ class TestUpdateCourseContext(unittest.TestCase):
         self.assertEqual(len(upsert_payload["common_misconceptions"]), 1)
         self.assertEqual(len(upsert_payload["prerequisite_gaps"]), 1)
 
+    # ── #72: the persisted Class Intel opt-out gates the WRITE path ──────────
+
+    @staticmethod
+    def _table_factory(settings_rows, nodes_tbl, stats_tbl, summary_tbl):
+        """Dispatch table() by name for the share_class_context tests."""
+        enrollment_rows = [{"user_id": "u1"}, {"user_id": "u2"}]
+        course_rows = [{"course_code": "CS101", "course_name": "Intro CS"}]
+        offering_rows = [{"course_id": "abstract-cs101"}]
+        settings_tbl = MagicMock()
+        settings_tbl.select.return_value = settings_rows
+
+        def _table(name):
+            m = MagicMock()
+            if name == "enrollments":
+                m.select.return_value = enrollment_rows
+            elif name == "user_settings":
+                return settings_tbl
+            elif name == "course_offerings":
+                m.select.return_value = offering_rows
+            elif name == "courses":
+                m.select.return_value = course_rows
+            elif name == "graph_nodes":
+                return nodes_tbl
+            elif name == "quiz_context":
+                m.select.return_value = []
+            elif name == "offering_concept_stats":
+                return stats_tbl
+            elif name == "offering_summary":
+                return summary_tbl
+            else:
+                m.select.return_value = []
+            return m
+
+        return _table, settings_tbl
+
+    @patch("services.academics.table")
+    @patch("services.course_context_service.table")
+    def test_opted_out_user_excluded_from_aggregation(self, mock_table, mock_ac_table):
+        """A user whose user_settings.share_class_context is false must not
+        contribute graph data to the class aggregates (#72)."""
+        nodes_tbl = MagicMock()
+        nodes_tbl.select.return_value = [
+            {"id": "n1", "concept_name": "Loops", "mastery_score": 0.2,
+             "mastery_tier": "struggling", "user_id": "u1"},
+        ]
+        stats_tbl = MagicMock()
+        summary_tbl = MagicMock()
+        summary_tbl.select.return_value = []
+
+        _table, _ = self._table_factory(
+            [{"user_id": "u2", "share_class_context": False}],
+            nodes_tbl, stats_tbl, summary_tbl,
+        )
+        mock_table.side_effect = _table
+        mock_ac_table.side_effect = _table
+
+        with patch("services.course_context_service._generate_summary_with_gemini", return_value="summary"):
+            from services.course_context_service import update_course_context
+            update_course_context("off-1")
+
+        # graph_nodes must be filtered to opted-in users only — u2's graph is
+        # never queried.
+        nodes_tbl.select.assert_called_once()
+        node_filters = nodes_tbl.select.call_args.kwargs["filters"]
+        self.assertEqual(node_filters["user_id"], "in.(u1)")
+        # And the class summary counts only the opted-in student.
+        summary_tbl.upsert.assert_called_once()
+        self.assertEqual(summary_tbl.upsert.call_args[0][0]["student_count"], 1)
+
+    @patch("services.academics.table")
+    @patch("services.course_context_service.table")
+    def test_missing_settings_row_defaults_to_opt_in(self, mock_table, mock_ac_table):
+        """A user with NO user_settings row is opted in (matching the column
+        default) — only an explicit false excludes them."""
+        nodes_tbl = MagicMock()
+        nodes_tbl.select.return_value = [
+            {"id": "n1", "concept_name": "Loops", "mastery_score": 0.2,
+             "mastery_tier": "struggling", "user_id": "u1"},
+            {"id": "n2", "concept_name": "Loops", "mastery_score": 0.9,
+             "mastery_tier": "mastered", "user_id": "u2"},
+        ]
+        stats_tbl = MagicMock()
+        summary_tbl = MagicMock()
+        summary_tbl.select.return_value = []
+
+        # u1 has an explicit opt-in row; u2 has no settings row at all.
+        _table, settings_tbl = self._table_factory(
+            [{"user_id": "u1", "share_class_context": True}],
+            nodes_tbl, stats_tbl, summary_tbl,
+        )
+        mock_table.side_effect = _table
+        mock_ac_table.side_effect = _table
+
+        with patch("services.course_context_service._generate_summary_with_gemini", return_value="summary"):
+            from services.course_context_service import update_course_context
+            update_course_context("off-1")
+
+        # The settings lookup covers every enrolled user in one select…
+        settings_tbl.select.assert_called_once()
+        settings_filters = settings_tbl.select.call_args.kwargs["filters"]
+        self.assertEqual(settings_filters["user_id"], "in.(u1,u2)")
+        # …and both users are aggregated (u2 included despite no row).
+        node_filters = nodes_tbl.select.call_args.kwargs["filters"]
+        self.assertEqual(node_filters["user_id"], "in.(u1,u2)")
+        summary_tbl.upsert.assert_called_once()
+        self.assertEqual(summary_tbl.upsert.call_args[0][0]["student_count"], 2)
+
+    @patch("services.academics.table")
+    @patch("services.course_context_service.table")
+    def test_all_opted_out_purges_aggregates_without_crash(self, mock_table, mock_ac_table):
+        """When every enrolled student opted out, the refresh must not crash and
+        must not publish anything — stale aggregates are purged instead so
+        previously shared data stops being served."""
+        nodes_tbl = MagicMock()
+        stats_tbl = MagicMock()
+        summary_tbl = MagicMock()
+        summary_tbl.select.return_value = []
+
+        _table, _ = self._table_factory(
+            [{"user_id": "u1", "share_class_context": False},
+             {"user_id": "u2", "share_class_context": False}],
+            nodes_tbl, stats_tbl, summary_tbl,
+        )
+        mock_table.side_effect = _table
+        mock_ac_table.side_effect = _table
+
+        with patch("services.course_context_service._generate_summary_with_gemini", return_value="summary"):
+            from services.course_context_service import update_course_context
+            update_course_context("off-1")  # must not raise
+
+        nodes_tbl.select.assert_not_called()
+        stats_tbl.upsert.assert_not_called()
+        summary_tbl.upsert.assert_not_called()
+        stats_tbl.delete.assert_called_once_with({"offering_id": "eq.off-1"})
+        summary_tbl.delete.assert_called_once_with({"offering_id": "eq.off-1"})
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. graph_service — apply_graph_update side-effects on course context
@@ -386,7 +531,7 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. learn.py — build_system_prompt
+# 4. learn.py — topic/offering resolution helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestLearnHelpers(unittest.TestCase):
@@ -460,58 +605,6 @@ class TestLearnHelpers(unittest.TestCase):
         from routes.learn import _get_session_offering_id
         result = _get_session_offering_id("session-missing")
         self.assertEqual(result, "")
-
-    @patch("services.course_context_service.get_course_context", return_value={})
-    def test_build_system_prompt_no_course_id(self, mock_ctx):
-        from routes.learn import build_system_prompt
-        prompt = build_system_prompt("socratic", "Alice", "{}")
-        self.assertNotIn("COURSE INTELLIGENCE", prompt)
-        mock_ctx.assert_not_called()
-
-    @patch("routes.learn.table")
-    @patch("services.course_context_service.get_course_context", return_value={})
-    def test_build_system_prompt_course_id_but_empty_ctx(self, mock_ctx, mock_table):
-        mock_table.return_value.select.return_value = []
-        from routes.learn import build_system_prompt
-        prompt = build_system_prompt("socratic", "Alice", "{}", course_id="course-1")
-        self.assertNotIn("COURSE INTELLIGENCE", prompt)
-        mock_ctx.assert_called_once_with("course-1")
-
-    @patch("routes.learn.table")
-    @patch("services.course_context_service.get_course_context")
-    def test_build_system_prompt_injects_shared_block(self, mock_ctx, mock_table):
-        mock_ctx.return_value = {
-            "course_summary": {"avg_class_mastery": 0.6, "top_struggling_concepts": ["Pointers"]},
-            "concept_stats": [],
-        }
-        mock_table.return_value.select.return_value = [
-            {"course_code": "CS101", "course_name": "Intro CS"}
-        ]
-
-        from routes.learn import build_system_prompt
-        prompt = build_system_prompt("socratic", "Alice", "{}", course_id="course-1")
-        self.assertIn("COURSE INTELLIGENCE", prompt)
-        self.assertIn("CS101", prompt)
-        mock_ctx.assert_called_once_with("course-1")
-
-    @patch("routes.learn.table")
-    @patch("services.course_context_service.get_course_context")
-    def test_build_system_prompt_mode_appended_after_shared_block(self, mock_ctx, mock_table):
-        """Mode prompt must always be the last section."""
-        mock_ctx.return_value = {
-            "course_summary": {"avg_class_mastery": 0.5, "top_struggling_concepts": []},
-            "concept_stats": [],
-        }
-        mock_table.return_value.select.return_value = [
-            {"course_code": "CS101", "course_name": "Intro CS"}
-        ]
-
-        from routes.learn import build_system_prompt, MODE_PROMPTS
-        prompt = build_system_prompt("expository", "Bob", "{}", course_id="course-1")
-        expository_text = MODE_PROMPTS["expository"]
-        ctx_pos = prompt.find("COURSE INTELLIGENCE")
-        mode_pos = prompt.find(expository_text[:40])
-        self.assertGreater(mode_pos, ctx_pos)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

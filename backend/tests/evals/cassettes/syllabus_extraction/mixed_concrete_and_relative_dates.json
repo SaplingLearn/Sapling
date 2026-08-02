@@ -1,0 +1,44 @@
+{
+  "assignments": [
+    {
+      "description": null,
+      "due_date": "2026-09-12",
+      "title": "Lab Report 1",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": null,
+      "title": "Lab Report 2",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": "2026-10-17",
+      "title": "Midterm",
+      "weight_pct": 30.0
+    },
+    {
+      "description": null,
+      "due_date": null,
+      "title": "Final",
+      "weight_pct": 40.0
+    }
+  ],
+  "course_title": "BIO 201",
+  "grading_categories": [
+    {
+      "name": "Labs",
+      "weight": 30.0
+    },
+    {
+      "name": "Midterm",
+      "weight": 30.0
+    },
+    {
+      "name": "Final",
+      "weight": 40.0
+    }
+  ],
+  "instructor": null
+}

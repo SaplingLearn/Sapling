@@ -1,0 +1,38 @@
+{
+  "assignments": [
+    {
+      "description": null,
+      "due_date": "2026-02-01",
+      "title": "Quiz 1",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": "2026-03-14",
+      "title": "Midterm",
+      "weight_pct": 30.0
+    },
+    {
+      "description": null,
+      "due_date": "2026-05-07",
+      "title": "Final",
+      "weight_pct": 50.0
+    }
+  ],
+  "course_title": "ECON 101",
+  "grading_categories": [
+    {
+      "name": "Quizzes",
+      "weight": 20.0
+    },
+    {
+      "name": "Midterm",
+      "weight": 30.0
+    },
+    {
+      "name": "Final",
+      "weight": 50.0
+    }
+  ],
+  "instructor": null
+}

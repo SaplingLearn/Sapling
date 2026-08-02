@@ -1,0 +1,44 @@
+{
+  "concepts": [
+    {
+      "description": "A fundamental statistical method used to model the linear relationship between a dependent variable and one or more independent variables by fitting a linear equation to observed data.",
+      "importance": 0.95,
+      "name": "Linear Regression"
+    },
+    {
+      "description": "A framework that analyzes a model's prediction error into components related to bias (error from incorrect assumptions), variance (error from sensitivity to training data fluctuations), and irreducible error.",
+      "importance": 0.9,
+      "name": "Bias-Variance Decomposition"
+    },
+    {
+      "description": "The mathematical formulation central to linear regression, where the goal is to minimize the sum of the squares of the differences between observed and predicted values.",
+      "importance": 0.85,
+      "name": "Least-Squares Problem"
+    },
+    {
+      "description": "The process of choosing the most appropriate model from a set of candidates, often informed by understanding the bias-variance trade-off to optimize generalization performance.",
+      "importance": 0.8,
+      "name": "Model Selection"
+    },
+    {
+      "description": "A direct analytical solution for finding the coefficients that minimize the least-squares objective function in linear regression.",
+      "importance": 0.75,
+      "name": "Normal Equations"
+    },
+    {
+      "description": "A matrix factorization technique used to solve the least-squares problem, often preferred for its numerical stability compared to the normal equations.",
+      "importance": 0.75,
+      "name": "QR Decomposition"
+    },
+    {
+      "description": "A technique used in linear regression to prevent overfitting by adding a penalty term to the least-squares cost function, shrinking coefficients towards zero.",
+      "importance": 0.7,
+      "name": "Ridge Regularization"
+    },
+    {
+      "description": "A mathematical notation used to describe the asymptotic upper bound of the runtime or space complexity of algorithms, applied here to assess the efficiency of matrix solves.",
+      "importance": 0.6,
+      "name": "Big-O Analysis"
+    }
+  ]
+}

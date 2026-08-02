@@ -5,11 +5,12 @@ Powers the AI Chat panel inside the notetaker. Distinct from
 tutoring session, and the system prompt nudges the agent to ground
 in what the student is actively writing.
 
-Tools:
+Tools (wire names — what the model sees):
   - read_active_note (note-specific; from agents/tools/note_context.py)
-  - search_course_materials (existing; reuses chat_tutor's grounding)
-  - apply_graph_update (existing; lets the agent mark new concepts
-    while answering, the same way the course tutor does)
+  - search_course_materials (chat_tutor's grounding; registered under the
+    prompt-facing name via Tool(..., name=...) — #135)
+  - apply_graph_update_tool (lets the agent mark new concepts while
+    answering, the same way the course tutor does)
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from agents.deps import SaplingDeps
 from agents.tools.chat_context import search_course_materials_tool
 from agents.tools.graph import apply_graph_update_tool
 from agents.tools.note_context import read_active_note_tool
+from services.prompt_safety import INJECTION_GUARD_PROMPT
 
 
 _PROMPT = (
@@ -32,6 +34,9 @@ _PROMPT = (
     "beyond the note. Use `apply_graph_update_tool` when the student "
     "mentions a concept that isn't yet in their knowledge graph for "
     "this course.\n\n"
+    # #150: this agent's tools return student-authored note/document text.
+    + INJECTION_GUARD_PROMPT
+    + "\n\n"
     "Tone: warm, concise, no filler. Use math/code blocks where helpful "
     "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Keep replies short — "
     "this is a sidecar chat, not a tutoring session."
@@ -47,7 +52,10 @@ note_chat_agent = Agent[SaplingDeps, str](
     metadata={"prompt_version": _PROMPT_HASH, "agent": "note_chat"},
     tools=[
         Tool(read_active_note_tool, name="read_active_note", takes_ctx=True),
-        search_course_materials_tool,
+        # #135: register under the prompt-facing name — the bare callable would
+        # derive the wire name "search_course_materials_tool", which the system
+        # prompt never mentions.
+        Tool(search_course_materials_tool, name="search_course_materials", takes_ctx=True),
         apply_graph_update_tool,
     ],
 )

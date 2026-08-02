@@ -1,0 +1,17 @@
+{
+  "text": "That's a great start! You've correctly described the \"what\" and the \"why\" of mitosis: creating two identical cells.\n\nMy question for you is: what are the specific stages the cell goes through to make sure each new daughter cell gets a perfect copy of the DNA?",
+  "tool_calls": [
+    {
+      "args": {
+        "updates": [
+          {
+            "concept_name": "Mitosis",
+            "mastery_delta": 0.1,
+            "reason": "Correctly explained the high-level outcome."
+          }
+        ]
+      },
+      "tool_name": "update_mastery_tool"
+    }
+  ]
+}

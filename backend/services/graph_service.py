@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
 from config import get_mastery_tier
 from db.connection import table
@@ -111,6 +111,20 @@ def _event_ts(e: dict) -> str | None:
     return e.get("created_at") or e.get("ts")
 
 
+def _parse_event_ts(raw: str) -> datetime:
+    """Parse a mastery-event timestamp to an aware-UTC datetime.
+
+    Rows in the wild carry three shapes: tz-aware ISO (TIMESTAMPTZ reads via
+    PostgREST, and every write after the #248 sweep), legacy naive strings
+    (pre-sweep ``utcnow()`` writes — UTC by construction), and Z-suffixed
+    strings. Normalize all three to aware UTC so arithmetic against
+    ``datetime.now(timezone.utc)`` never mixes naive and aware."""
+    ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
 def _compute_velocity(events: list) -> float:
     """Mastery gained per day over the last 14 days. Returns 0.0 if insufficient data.
 
@@ -119,12 +133,11 @@ def _compute_velocity(events: list) -> float:
     """
     if not events:
         return 0.0
-    cutoff = datetime.utcnow() - timedelta(days=14)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=14)
     recent = []
     for e in events:
         try:
-            ts = datetime.fromisoformat(_event_ts(e).replace("Z", "+00:00")).replace(tzinfo=None)
-            if ts > cutoff:
+            if _parse_event_ts(_event_ts(e)) > cutoff:
                 recent.append(e)
         except Exception:
             pass
@@ -134,22 +147,37 @@ def _compute_velocity(events: list) -> float:
     if positive_gain == 0:
         return 0.0
     try:
-        first_ts = datetime.fromisoformat(_event_ts(recent[0]).replace("Z", "+00:00")).replace(tzinfo=None)
-        days = max(1, (datetime.utcnow() - first_ts).days)
+        first_ts = _parse_event_ts(_event_ts(recent[0]))
+        days = max(1, (datetime.now(timezone.utc) - first_ts).days)
     except Exception:
         days = 1
     return round(positive_gain / days, 4)
 
 
-def get_graph(user_id: str) -> dict:
+def get_graph(user_id: str, semester: str | None = None) -> dict:
     ensure_user_exists(user_id)
-    
+
     # Get all enrolled courses for this user
     enrolled_courses = _user_enrolled_courses(user_id)
-    
+
+    # Optional semester scope (Path A): restrict to the courses the user is
+    # enrolled in for that term. `allowed_course_ids is None` means "all terms".
+    allowed_course_ids: set[str] | None = None
+    if semester:
+        from services.academics import term_id_for_label, user_course_ids_for_term
+        term_id = term_id_for_label(semester)
+        allowed_course_ids = (
+            user_course_ids_for_term(user_id, term_id) if term_id else set()
+        )
+        enrolled_courses = [
+            c for c in enrolled_courses if c.get("course_id") in allowed_course_ids
+        ]
+
     # Get all graph nodes for this user
     nodes_raw = table("graph_nodes").select("*", filters={"user_id": f"eq.{user_id}"})
     nodes = nodes_raw or []
+    if allowed_course_ids is not None:
+        nodes = [n for n in nodes if n.get("course_id") in allowed_course_ids]
     node_ids = {n["id"] for n in nodes}
 
     edges_raw = table("graph_edges").select("*", filters={"user_id": f"eq.{user_id}"})
@@ -227,12 +255,21 @@ def get_graph(user_id: str) -> dict:
         if cid and cid in course_color_map:
             n["course_color"] = course_color_map[cid]
 
-    # Build subject root hubs from enrolled courses
+    # Build subject root hubs from enrolled courses — one root per DISTINCT
+    # abstract course, not per enrollment. A user can hold two offerings of the
+    # same abstract course (e.g. re-taking it, or two sections); the graph stays
+    # keyed on the abstract course_id, so without this dedup the synthesized
+    # subject_root node (and its hub-spoke edges) would be duplicated once per
+    # extra enrollment (#355).
     subject_nodes = []
     subject_edges = []
+    seen_course_ids: set[str] = set()
 
     for enrollment in enrolled_courses:
         course_id = enrollment["course_id"]
+        if course_id in seen_course_ids:
+            continue
+        seen_course_ids.add(course_id)
         course = enrollment.get("courses", {}) if isinstance(enrollment.get("courses"), dict) else {}
         course_code = course.get("course_code", "")
         course_name = course.get("course_name", "")
@@ -279,22 +316,68 @@ def get_graph(user_id: str) -> dict:
 
 def get_courses(user_id: str) -> list:
     """
-    Return user's enrolled courses joined with abstract catalog data + term.
+    Return the user's enrolled courses, collapsed to ONE row per **abstract**
+    ``course_id``.
+
+    A user can hold the same abstract course across multiple terms (e.g. CS101 in
+    Fall 2025 *and* Spring 2026 = two enrollments/offerings sharing one abstract
+    ``course_id``). This list is consumed as *abstract courses* — the dashboard
+    course count, the /tree filter chips, and the quiz / study / notetaker /
+    upload course pickers all key on ``course_id`` — so the old per-enrollment
+    fan-out surfaced the same course twice (#449, findings F1/F3). We collapse
+    here instead of leaving every consumer to de-dupe.
+
+    Collapse rule: one row per ``course_id``; the **most recent** enrollment
+    (latest ``enrolled_at`` — rows arrive ordered ``enrolled_at.asc``, so the
+    last occurrence wins) is the representative for
+    ``enrollment_id``/``color``/``nickname``/``term``/``enrolled_at``.
+    ``node_count`` is the graph-node count for the abstract course (the graph
+    keys on ``course_id``), counted **once** — never doubled across offerings.
+    Per-enrollment detail is preserved, not dropped: ``enrollment_ids`` and
+    ``terms`` carry every offering the user holds for the course. (Gradebook /
+    analytics still resolve per-enrollment/term via their own enrollment-keyed
+    endpoints, not this abstract-course list.)
+
     Returns list of dicts with: enrollment_id, course_id (abstract), course_code,
-    course_name, school, department, color, nickname, term, node_count, enrolled_at.
+    course_name, school, department, color, nickname, term, node_count,
+    enrolled_at, enrollment_ids, terms.
     """
     rows = _user_enrolled_courses(user_id)
 
-    result = []
+    # Collapse enrollments to one representative row per abstract course_id,
+    # preserving first-seen order, while accumulating every enrollment id / term.
+    order: list[str] = []
+    reps: dict[str, dict] = {}
+    enrollment_ids: dict[str, list[str]] = {}
+    terms: dict[str, list[str]] = {}
     for r in rows:
-        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
         course_id = r.get("course_id")  # abstract
+        if not course_id:
+            continue
+        if course_id not in reps:
+            order.append(course_id)
+            enrollment_ids[course_id] = []
+            terms[course_id] = []
+        reps[course_id] = r  # last (most recent enrolled_at) wins as representative
+        eid = r.get("id")
+        if eid and eid not in enrollment_ids[course_id]:
+            enrollment_ids[course_id].append(eid)
+        term_label = r.get("term")
+        if term_label and term_label not in terms[course_id]:
+            terms[course_id].append(term_label)
 
-        # Count nodes for this course (graph keys on the abstract course id)
+    result = []
+    for course_id in order:
+        r = reps[course_id]
+        course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
+
+        # Count nodes for this course (graph keys on the abstract course id).
+        # Counted once per distinct course — the fan-out used to run this per
+        # enrollment, double-counting the same abstract course's nodes.
         node_rows = table("graph_nodes").select(
             "id",
             filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-        ) if course_id else []
+        ) or []
 
         result.append({
             "enrollment_id": r["id"],
@@ -308,34 +391,69 @@ def get_courses(user_id: str) -> list:
             "term": r.get("term", ""),
             "node_count": len(node_rows),
             "enrolled_at": r.get("enrolled_at"),
+            "enrollment_ids": enrollment_ids[course_id],
+            "terms": terms[course_id],
         })
     return result
 
 
-def add_course(user_id: str, course_id: str, color: str | None = None, nickname: str | None = None) -> dict:
+def add_course(
+    user_id: str,
+    course_id: str,
+    color: str | None = None,
+    nickname: str | None = None,
+    term: str | None = None,
+) -> dict:
     """
     Enroll a user in a course. ``course_id`` is the abstract catalog course id;
-    the enrollment is created against the **current term's offering** of that
-    course (created if the catalog lacks one), so new enrollments land in the
-    real current semester.
+    the enrollment is created against an offering of that course (created if the
+    catalog lacks one).
+
+    ``term`` is an optional semester **label** (e.g. "Fall 2026") — the semester
+    the caller is enrolling into (the active tab in the Courses & Semesters hub).
+    When given and resolvable it picks that term's offering, so the course shows
+    up under the tab the user was viewing instead of being silently dropped into
+    the date-derived current term. When omitted/unresolvable it falls back to the
+    current term.
+
+    Single return contract: ``{course_id, already_existed, ...}`` —
+    ``already_existed=True`` carries ``term`` (the label the course is already
+    taken in; "" when unknown), ``already_existed=False`` means a fresh
+    enrollment was created — or ``{course_id, error}`` when the course/term
+    can't be resolved. The up-front no-retake check is the only
+    already-existed path: ``resolve_offering``'s conflict retry (migration
+    0036) makes a lost create race land on the winner's offering.
     """
     # Verify the abstract course exists in the catalog
     course_check = table("courses").select("id", filters={"id": f"eq.{course_id}"})
     if not course_check:
         return {"course_id": course_id, "error": "Course not found in catalog"}
 
-    from services.academics import resolve_offering
-    offering_id = resolve_offering(course_id, create=True)
+    from services.academics import (
+        resolve_offering,
+        user_offering_ids_for_course,
+        term_for_offering,
+        term_id_for_label,
+    )
+
+    # No-retake rule: a course already enrolled in ANY term can't be added again.
+    # (Broadens the old current-term-only check so cross-semester duplicates are
+    # rejected instead of silently creating a second enrollment.)
+    existing_offerings = user_offering_ids_for_course(user_id, course_id)
+    if existing_offerings:
+        existing_term = term_for_offering(existing_offerings[0]) or {}
+        return {
+            "course_id": course_id,
+            "already_existed": True,
+            "term": existing_term.get("label", ""),
+        }
+
+    # Resolve the requested semester label → term id. An unknown label yields
+    # None, which resolve_offering treats as "current term".
+    term_id = term_id_for_label(term) if term else None
+    offering_id = resolve_offering(course_id, term_id=term_id, create=True)
     if not offering_id:
         return {"course_id": course_id, "error": "No term available to enroll into"}
-
-    # Check if already enrolled in this offering
-    existing = table("enrollments").select(
-        "id",
-        filters={"user_id": f"eq.{user_id}", "offering_id": f"eq.{offering_id}"},
-    )
-    if existing:
-        return {"course_id": course_id, "already_existed": True}
 
     table("enrollments").insert({
         "id": str(uuid.uuid4()),
@@ -458,6 +576,82 @@ def _coerce_unit(value, default: float = 0.0) -> float:
     return max(0.0, min(1.0, f))
 
 
+def add_node(
+    user_id: str,
+    concept_name: str,
+    course_id: str,
+    anchor_node_id: str | None = None,
+    initial_mastery: float = 0.0,
+) -> dict:
+    """Create-or-merge one manually named concept (#330).
+
+    A thin wrapper over apply_graph_update so the dedup, edge machinery, and
+    offering-analytics refresh stay in one place (routes never write
+    graph_nodes/graph_edges directly). The anchor id resolves to its concept
+    NAME because apply_graph_update's edge _lookup is name-keyed; a stale or
+    out-of-course anchor silently drops the edge, never the node. Returns
+    {"node": <canonical row>, "already_existed": bool} so the UI can toast
+    merge-vs-create and reconcile its optimistic id.
+
+    Dedup caveat (pre-existing, inherited from apply_graph_update): the
+    case/whitespace folding is Python-side, while the 0023 constraint is a
+    case-SENSITIVE UNIQUE. Two concurrent adds differing only in case can
+    therefore both land, and `already_existed` is computed from a pre-read
+    that can go stale under the same race. Sequential use — every path the
+    UI offers — dedups correctly. Tracked separately for a citext/functional
+    index rather than widened here.
+    """
+    name = " ".join((concept_name or "").split())
+    if not name:
+        raise ValueError("concept_name must be non-empty")
+    if not course_id:
+        raise ValueError("course_id is required")
+    norm = _normalize_concept(name)
+    scope = {"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
+
+    pre = table("graph_nodes").select("id,concept_name", filters=scope) or []
+    already_existed = any(
+        _normalize_concept(r.get("concept_name") or "") == norm for r in pre
+    )
+
+    update: dict = {
+        "new_nodes": [
+            {"concept_name": name, "course_id": course_id, "initial_mastery": initial_mastery},
+        ],
+    }
+    if anchor_node_id:
+        # Scoped to the target course as well as the user: apply_graph_update
+        # resolves edge endpoints by NAME *within* the course, so an anchor
+        # from another course could silently wire to a same-named node here
+        # instead of being dropped as stale (PR #485 review).
+        anchor_rows = table("graph_nodes").select(
+            "id,concept_name",
+            filters={
+                "id": f"eq.{anchor_node_id}",
+                "user_id": f"eq.{user_id}",
+                "course_id": f"eq.{course_id}",
+            },
+        ) or []
+        anchor_name = (anchor_rows[0].get("concept_name") if anchor_rows else "") or ""
+        if anchor_name and _normalize_concept(anchor_name) != norm:
+            update["new_edges"] = [
+                {"source": anchor_name, "target": name, "relationship_type": "related", "strength": 0.5},
+            ]
+
+    apply_graph_update(user_id, update, course_id=course_id)
+
+    rows = table("graph_nodes").select(
+        "id,concept_name,course_id,mastery_score,mastery_tier", filters=scope,
+    ) or []
+    node = next(
+        (r for r in rows if _normalize_concept(r.get("concept_name") or "") == norm),
+        None,
+    )
+    if node is None:
+        raise RuntimeError(f"add_node: {name!r} missing after apply_graph_update")
+    return {"node": node, "already_existed": already_existed}
+
+
 def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None = None) -> list:
     """
     Apply a graph_update dict to the DB. Returns mastery_changes list.
@@ -549,7 +743,7 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         before = row["mastery_score"]
         after = max(0.0, min(1.0, before + delta))
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         # Update only the scalar columns — the mastery_events JSONB blob is gone (0023).
         table("graph_nodes").update(
             {
@@ -626,13 +820,23 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
     return mastery_changes
 
 
-def get_recommendations(user_id: str) -> list:
+def get_recommendations(user_id: str, semester: str | None = None) -> list:
+    filters = {
+        "user_id": f"eq.{user_id}",
+        "mastery_tier": "in.(struggling,learning,unexplored)",
+    }
+    if semester:
+        from services.academics import term_id_for_label, user_course_ids_for_term
+        term_id = term_id_for_label(semester)
+        allowed = user_course_ids_for_term(user_id, term_id) if term_id else set()
+        # Unresolved label / no enrollment in that term → no recommendations.
+        if not allowed:
+            return []
+        filters["course_id"] = f"in.({','.join(allowed)})"
+
     rows = table("graph_nodes").select(
-        "concept_name,mastery_score,mastery_tier",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "mastery_tier": "in.(struggling,learning,unexplored)",
-        },
+        "concept_name,mastery_score,mastery_tier,course_id",
+        filters=filters,
         order="mastery_score.asc",
         limit=5,
     )

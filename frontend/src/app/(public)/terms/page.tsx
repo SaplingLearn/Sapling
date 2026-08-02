@@ -1,4 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Terms of Service",
+  description:
+    "The terms that govern your use of Sapling's AI study tools.",
+  alternates: { canonical: "/terms" },
+};
 
 const FOOTER_LINKS = [
   { label: "Home", href: "/" },

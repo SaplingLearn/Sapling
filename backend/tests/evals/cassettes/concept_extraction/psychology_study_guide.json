@@ -1,0 +1,64 @@
+{
+  "concepts": [
+    {
+      "description": "A cognitive system responsible for temporarily holding and manipulating information, crucial for tasks like reasoning and comprehension.",
+      "importance": 0.95,
+      "name": "Working Memory"
+    },
+    {
+      "description": "The system responsible for storing information over extended periods, ranging from minutes to a lifetime.",
+      "importance": 0.95,
+      "name": "Long-Term Memory"
+    },
+    {
+      "description": "A conceptual model that describes the three fundamental processes involved in memory formation and access: getting information in, keeping it there, and getting it back out.",
+      "importance": 0.93,
+      "name": "Encoding-Storage-Retrieval Framework"
+    },
+    {
+      "description": "A prominent model proposing that working memory consists of several components, including the central executive, phonological loop, and visuospatial sketchpad.",
+      "importance": 0.92,
+      "name": "Baddeley's Model of Working Memory"
+    },
+    {
+      "description": "A type of learning where an organism learns to associate a neutral stimulus with a meaningful stimulus, leading to a learned response.",
+      "importance": 0.9,
+      "name": "Classical Conditioning"
+    },
+    {
+      "description": "A type of learning in which behaviors are strengthened or weakened by the consequences that follow them, often involving reinforcement or punishment.",
+      "importance": 0.9,
+      "name": "Operant Conditioning"
+    },
+    {
+      "description": "A dual-process theory proposing two distinct modes of thinking: System 1 is fast, intuitive, and emotional, while System 2 is slower, more deliberate, and logical.",
+      "importance": 0.88,
+      "name": "Kahneman's System 1 and System 2"
+    },
+    {
+      "description": "A perceptual process where existing knowledge, expectations, and context influence how sensory information is interpreted.",
+      "importance": 0.87,
+      "name": "Top-Down Perception"
+    },
+    {
+      "description": "A perceptual process driven by sensory input from the environment, where raw data is processed and built up into a complete perception.",
+      "importance": 0.87,
+      "name": "Bottom-Up Perception"
+    },
+    {
+      "description": "Cognitive models that explain how individuals selectively focus on certain stimuli while ignoring others, influencing perception and information processing.",
+      "importance": 0.85,
+      "name": "Theories of Attention"
+    },
+    {
+      "description": "A metaphor suggesting that attention works like a spotlight, highlighting a specific area of interest and processing information within that focused region more thoroughly.",
+      "importance": 0.8,
+      "name": "Spotlight Model of Attention"
+    },
+    {
+      "description": "A model proposing that attention can be flexibly adjusted, either narrowing to intensely focus on a small area or widening to encompass a broader region with less detail.",
+      "importance": 0.8,
+      "name": "Zoom Lens Model of Attention"
+    }
+  ]
+}

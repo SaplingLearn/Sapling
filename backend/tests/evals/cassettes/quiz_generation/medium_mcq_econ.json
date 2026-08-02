@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Marginal Cost",
+      "correct_answer": "The additional cost incurred by producing one more unit of a good.",
+      "difficulty": "medium",
+      "explanation": "Marginal cost (MC) specifically refers to the change in total cost resulting from producing one additional unit. It's a key concept in understanding a firm's production decisions.",
+      "options": [
+        "The total cost of production.",
+        "The cost of all fixed inputs.",
+        "The additional cost incurred by producing one more unit of a good.",
+        "The average cost per unit produced."
+      ],
+      "question": "A firm's marginal cost is the additional cost incurred by producing one more unit of a good.",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Price Elasticity of Demand",
+      "correct_answer": "-2.0",
+      "difficulty": "medium",
+      "explanation": "Price elasticity of demand is calculated as the percentage change in quantity demanded divided by the percentage change in price. In this case, -10% / 5% = -2.0. A value greater than 1 (in absolute terms) indicates elastic demand.",
+      "options": [
+        "0.5",
+        "2.0",
+        "-0.5",
+        "-2.0"
+      ],
+      "question": "If the quantity demanded of a product decreases by 10% when its price increases by 5%, what is the price elasticity of demand?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Comparative Advantage",
+      "correct_answer": "With a lower opportunity cost.",
+      "difficulty": "medium",
+      "explanation": "Comparative advantage is determined by opportunity cost, not absolute cost. A country should specialize in producing goods where it has the lowest opportunity cost, even if it's not the most efficient producer in absolute terms.",
+      "options": [
+        "With fewer resources.",
+        "At a lower absolute cost.",
+        "With a lower opportunity cost.",
+        "More efficiently in terms of labor hours."
+      ],
+      "question": "A country has a comparative advantage in producing a good if it can produce that good at a lower opportunity cost than another country.",
+      "type": "multiple_choice"
+    }
+  ]
+}

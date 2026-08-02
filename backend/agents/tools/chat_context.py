@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -48,42 +47,13 @@ from agents.deps import SaplingDeps
 from db.connection import table
 from services.encryption import decrypt_if_present, decrypt_json
 
+# Shared tokenizer (#149): factored to services/token_overlap.py so the
+# graph-context seed block selects concepts with the same token semantics
+# this module ranks documents with. `_tokenize` stays importable under its
+# historical name for callers/tests.
+from services.token_overlap import tokenize as _tokenize
+
 logger = logging.getLogger(__name__)
-
-
-# Words that show up in nearly every academic question and would otherwise
-# dominate the keyword-overlap score. Filtering them keeps short queries
-# like "what is recursion?" from matching every document with the word
-# "what" in its summary.
-_STOPWORDS: frozenset[str] = frozenset(
-    {
-        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-        "of", "in", "on", "at", "to", "for", "with", "by", "from", "as",
-        "and", "or", "but", "not", "no", "so", "if", "then", "than", "that",
-        "this", "these", "those", "it", "its", "i", "you", "we", "they",
-        "he", "she", "him", "her", "them", "us", "do", "does", "did", "done",
-        "have", "has", "had", "what", "which", "who", "whom", "whose",
-        "when", "where", "why", "how", "can", "could", "would", "should",
-        "will", "may", "might", "must", "about", "into", "over", "under",
-    }
-)
-
-# Token = run of word chars, lowercased. Same shape across query and
-# document text so overlap math is symmetric.
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
-
-
-def _tokenize(text: str | None) -> set[str]:
-    """Lowercase and tokenize, dropping stopwords. Returns a set so
-    repeated occurrences in the doc do not game the overlap score (we
-    want to know whether a term is present, not how many times)."""
-    if not text:
-        return set()
-    return {
-        t.lower()
-        for t in _TOKEN_RE.findall(text)
-        if t.lower() not in _STOPWORDS and len(t) > 1
-    }
 
 
 # search_course_materials
@@ -242,6 +212,45 @@ async def search_course_materials(
     ]
 
 
+def _harden_materials(materials: list[CourseMaterial]) -> list[CourseMaterial]:
+    """#150: envelope student-derived free text at the LLM boundary.
+
+    Summaries and concept-note descriptions are distilled from student
+    uploads — long free text, so they get the full untrusted envelope.
+    Short scalars (file names, concept names) only get delimiter
+    neutralization; the system prompt's UNTRUSTED CONTENT POLICY covers
+    them. Applied in the TOOL wrapper, not the pure function, so routes
+    and tests reading materials directly still get clean data.
+    """
+    from services.prompt_safety import neutralize_delimiters, wrap_untrusted
+
+    hardened: list[CourseMaterial] = []
+    for m in materials:
+        notes: list[dict] = []
+        for note in m.concept_notes:
+            note = dict(note)
+            if isinstance(note.get("name"), str):
+                note["name"] = neutralize_delimiters(note["name"])
+            if isinstance(note.get("description"), str) and note["description"]:
+                note["description"] = wrap_untrusted(
+                    note["description"], source="document concept note"
+                )
+            notes.append(note)
+        hardened.append(
+            CourseMaterial(
+                document_id=m.document_id,
+                file_name=neutralize_delimiters(m.file_name),
+                summary=(
+                    wrap_untrusted(m.summary, source="document summary")
+                    if m.summary
+                    else m.summary
+                ),
+                concept_notes=notes,
+            )
+        )
+    return hardened
+
+
 async def search_course_materials_tool(
     ctx: RunContext[SaplingDeps],
     query: str,
@@ -251,11 +260,18 @@ async def search_course_materials_tool(
 
     The LLM supplies `query` (and optionally `limit`); `course_id` and
     `user_id` are pulled from `ctx.deps` so the model can't aim a search at
-    another course's — or another user's — materials.
+    another course's — or another user's — materials. Fetches through the
+    retrieval seam (ADR 0023): `deps.retrieval` when injected (evals),
+    else the Supabase-backed default — identical to calling
+    `search_course_materials` directly. Free-text fields arrive at the
+    model inside the #150 untrusted envelope (`_harden_materials`).
     """
-    return await search_course_materials(
+    from agents.tools.retrieval import resolve_retrieval
+
+    materials = await resolve_retrieval(ctx.deps).course_materials(
         ctx.deps.course_id, query, limit, user_id=ctx.deps.user_id
     )
+    return _harden_materials(materials)
 
 
 # read_session_history
@@ -346,11 +362,27 @@ async def read_session_history_tool(
 
     `session_id` is read off `ctx.deps` rather than accepted from the
     LLM — letting the model supply it would let it read other students'
-    chat history. The LLM supplies only `last_n`.
+    chat history. The LLM supplies only `last_n`. Fetches through the
+    retrieval seam (ADR 0023).
     """
+    from agents.tools.retrieval import resolve_retrieval
+
+    from services.prompt_safety import neutralize_delimiters
+
     if not ctx.deps.session_id:
         return []
-    return await read_session_history(ctx.deps.session_id, last_n)
+    rows = await resolve_retrieval(ctx.deps).session_history(
+        ctx.deps.session_id, last_n
+    )
+    # #150 (PR #471 review): past USER turns are replayed verbatim — a
+    # student can plant a literal envelope delimiter in one turn and have
+    # this tool hand it back as a REAL byte-match later. Neutralize; the
+    # guard preamble covers the rest (a full envelope here would be
+    # theater while message_history itself carries the same text).
+    return [
+        m.model_copy(update={"content": neutralize_delimiters(m.content)})
+        for m in rows
+    ]
 
 
 # read_user_progress
@@ -460,5 +492,10 @@ async def read_user_progress(
 async def read_user_progress_tool(
     ctx: RunContext[SaplingDeps],
 ) -> CourseProgress:
-    """Pydantic AI tool wrapper. Reads user_id and course_id from deps."""
-    return await read_user_progress(ctx.deps.user_id, ctx.deps.course_id)
+    """Pydantic AI tool wrapper. Reads user_id and course_id from deps.
+    Fetches through the retrieval seam (ADR 0023)."""
+    from agents.tools.retrieval import resolve_retrieval
+
+    return await resolve_retrieval(ctx.deps).progress(
+        ctx.deps.user_id, ctx.deps.course_id
+    )

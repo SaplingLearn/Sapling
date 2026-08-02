@@ -2,8 +2,10 @@
 
 Replaces routes/learn.py:152's build_system_prompt + call_gemini_multiturn
 with a typed Pydantic AI agent. Tools handle the data lookups that used
-to be string-stuffed: search_course_materials, read_session_history,
-read_user_progress, apply_graph_update_tool.
+to be string-stuffed — wire names: search_course_materials (registered
+under that prompt-facing name via Tool(..., name=...), #135),
+read_session_history_tool, read_user_progress_tool,
+apply_graph_update_tool, update_mastery_tool.
 
 Modes (Socratic, Expository, TeachBack) are gated by selecting different
 system prompts at construction time. The route picks the right agent
@@ -23,22 +25,45 @@ from __future__ import annotations
 import hashlib
 from typing import Literal
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, Tool
 
 from agents._providers import model_for
 from agents.deps import SaplingDeps
+from services.prompt_safety import INJECTION_GUARD_PROMPT
 from agents.tools.chat_context import (
     read_session_history_tool,
     read_user_progress_tool,
     search_course_materials_tool,
 )
-from agents.tools.graph import apply_graph_update_tool
+from agents.tools.graph import apply_graph_update_tool, update_mastery_tool
+from agents.tools.graph_read import (
+    read_concepts_for_user_tool,
+    read_graph_neighborhood_tool,
+)
 
 
 TutorMode = Literal["socratic", "expository", "teachback"]
 
 
 # ── System prompts (one per mode) ──────────────────────────────────────────
+
+# #150: academic-integrity parity with the legacy prompt
+# (prompts/preamble.txt) — held out of #149 for this issue. Compact form
+# of the same non-negotiable: guide, never do the graded work.
+_ACADEMIC_INTEGRITY = (
+    "ACADEMIC INTEGRITY (non-negotiable): your job is to build "
+    "understanding, never to do the student's graded work. Do not hand "
+    "over the final answer, essay, code, or numeric result for homework, "
+    "problem sets, labs, or take-home quizzes/exams, and never reproduce "
+    "verbatim solution text from uploaded materials as \"the answer\". "
+    "Teach instead: hints, leading questions, step breakdowns, checking "
+    "their reasoning, and ANALOGOUS worked examples (different numbers or "
+    "wording). Fully explaining concepts, definitions, theorems, and "
+    "general worked examples is encouraged — the restriction covers only "
+    "the student's own graded deliverables. If the student pushes for the "
+    "answer, or you are unsure whether it's graded, guide rather than "
+    "solve."
+)
 
 # The shared preamble is identical across modes so a prompt-version bump
 # in shared guidance shows up as a hash change for every mode at once.
@@ -50,6 +75,29 @@ _SHARED_PREAMBLE = (
     "fabricate context.\n\n"
     "Tone: warm, concise, no filler. Use math/code blocks where helpful "
     "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Don't over-explain.\n\n"
+    # #150: injection resistance — single source of truth in
+    # services/prompt_safety.py, shared with the legacy preamble.
+    + INJECTION_GUARD_PROMPT
+    + "\n\n"
+    + _ACADEMIC_INTEGRITY
+    + "\n\n"
+    "Knowledge graph tools:\n"
+    "- apply_graph_update_tool: register NEW concepts the student hasn't seen before.\n"
+    "- update_mastery_tool: adjust mastery on EXISTING concepts this turn. "
+    "Use +0.1 to +0.3 when they answer correctly; −0.05 to −0.1 for gaps. "
+    "Call this in EVERY turn where the student demonstrated understanding "
+    "or revealed a misconception. After your tool calls complete, ALWAYS "
+    "write your reply to the student — never end the turn on a tool call "
+    "or with an empty message.\n\n"
+    "Graph tools (read):\n"
+    "- read_graph_neighborhood: expand around named concepts — their "
+    "mastery, tier, and how they connect (prerequisite/builds_on/related).\n"
+    "- read_concepts_for_user: list the student's tracked concepts, "
+    "weakest mastery first.\n"
+    "The GRAPH CONTEXT block in the message already lists the student's "
+    "tracked concepts for this course — use these read tools only to "
+    "expand beyond it (e.g. relationships of a concept the block didn't "
+    "include). Hard cap: at most TWO graph reads per turn.\n\n"
 )
 
 _SOCRATIC_PROMPT = _SHARED_PREAMBLE + (
@@ -96,15 +144,27 @@ _PROMPT_HASHES: dict[TutorMode, str] = {
 # the frontend renders via MarkdownChat. No structured output here; that
 # is reserved for routes that grade or extract.
 
-# All four tools are registered on every mode. The system prompt steers
+# All seven tools are registered on every mode. The system prompt steers
 # WHEN to call them; the surface stays uniform so a Pro-tier model can
 # decide for itself which lookups are worth the round trip.
-_TOOLS = [
-    search_course_materials_tool,
-    read_session_history_tool,
-    read_user_progress_tool,
-    apply_graph_update_tool,
-]
+
+
+def _build_tools() -> list:
+    # Fresh Tool instances per agent (rather than one shared module-level
+    # list) so no Tool object is registered on multiple agents.
+    return [
+        # #135: register under the prompt-facing name — the bare callable
+        # would derive the wire name "search_course_materials_tool".
+        Tool(search_course_materials_tool, name="search_course_materials", takes_ctx=True),
+        read_session_history_tool,
+        read_user_progress_tool,
+        apply_graph_update_tool,
+        update_mastery_tool,
+        # #149: read-only graph tools, registered under the prompt-facing
+        # names the _SHARED_PREAMBLE "Graph tools (read)" paragraph uses.
+        Tool(read_graph_neighborhood_tool, name="read_graph_neighborhood", takes_ctx=True),
+        Tool(read_concepts_for_user_tool, name="read_concepts_for_user", takes_ctx=True),
+    ]
 
 
 def _build_agent(mode: TutorMode) -> Agent[SaplingDeps, str]:
@@ -118,7 +178,7 @@ def _build_agent(mode: TutorMode) -> Agent[SaplingDeps, str]:
             "agent": "chat_tutor",
             "mode": mode,
         },
-        tools=_TOOLS,
+        tools=_build_tools(),
     )
 
 

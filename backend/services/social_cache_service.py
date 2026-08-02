@@ -9,7 +9,7 @@ is stored alongside the summary so we can detect when data changed.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 
 from db.connection import table
 
@@ -36,7 +36,7 @@ def save_summary(room_id: str, member_summaries: list[str], summary: str) -> Non
             "room_id": room_id,
             "summary": summary,
             "member_hash": _compute_hash(member_summaries),
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         },
         on_conflict="room_id",
     )

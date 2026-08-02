@@ -1,0 +1,46 @@
+{
+  "chat_tutor": {
+    "ExpositoryHasStructureEvaluator": 1.0,
+    "GraphToolUsedEvaluator": 1.0,
+    "GroundedConceptEvaluator": 1.0,
+    "MasteryUpdateEmittedEvaluator": 1.0,
+    "NoToolMisuseEvaluator": 1.0,
+    "NonEmptyEvaluator": 1.0,
+    "SocraticEndsWithQuestionEvaluator": 1.0,
+    "TeachBackProbesEvaluator": 1.0
+  },
+  "concept_extraction": {
+    "AllNamesTitleCaseEvaluator": 1.0,
+    "ConceptCountInRangeEvaluator": 1.0,
+    "NoAdministrativeNamesEvaluator": 1.0,
+    "OrderedByImportanceEvaluator": 1.0
+  },
+  "document_classification": {
+    "CategoryEvaluator": 0.8,
+    "SyllabusFlagEvaluator": 0.88
+  },
+  "document_summary": {
+    "AbstractLengthEvaluator": 0.933333,
+    "HeadlineLengthEvaluator": 1.0,
+    "KeyPointsCountEvaluator": 1.0,
+    "NoMarkdownLeakEvaluator": 1.0
+  },
+  "quiz_generation": {
+    "AdaptiveDifficultyEvaluator": 1.0,
+    "ConceptCoverageEvaluator": 1.0,
+    "DifficultyMixEvaluator": 1.0,
+    "MultipleChoiceShapeEvaluator": 1.0,
+    "QuestionCountEvaluator": 1.0,
+    "SpacedRepetitionConceptEvaluator": 1.0,
+    "TypeMixEvaluator": 1.0
+  },
+  "syllabus_extraction": {
+    "AssignmentCountEvaluator": 1.0,
+    "AssignmentTypeNonNullEvaluator": 1.0,
+    "DueDateIsoStringEvaluator": 1.0,
+    "GradingCategoriesPresenceEvaluator": 1.0,
+    "NoInventedDatesEvaluator": 0.933333,
+    "WeightsAreNumericEvaluator": 1.0,
+    "WireFormatRequiredKeysEvaluator": 1.0
+  }
+}

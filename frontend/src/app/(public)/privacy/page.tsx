@@ -1,4 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  description:
+    "How Sapling collects, protects, and uses your data — including document uploads, tutoring transcripts, and study analytics.",
+  alternates: { canonical: "/privacy" },
+};
 
 const FOOTER_LINKS = [
   { label: "Home", href: "/" },

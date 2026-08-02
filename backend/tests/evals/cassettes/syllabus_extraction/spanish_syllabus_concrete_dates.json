@@ -1,0 +1,38 @@
+{
+  "assignments": [
+    {
+      "description": null,
+      "due_date": "2026-02-10",
+      "title": "Tarea 1",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": "2026-03-15",
+      "title": "Parcial",
+      "weight_pct": null
+    },
+    {
+      "description": null,
+      "due_date": "2026-05-05",
+      "title": "Examen final",
+      "weight_pct": null
+    }
+  ],
+  "course_title": "C\u00e1lculo I \u2014 Semestre primavera 2026",
+  "grading_categories": [
+    {
+      "name": "Tareas",
+      "weight": 20.0
+    },
+    {
+      "name": "Parcial",
+      "weight": 30.0
+    },
+    {
+      "name": "Final",
+      "weight": 50.0
+    }
+  ],
+  "instructor": null
+}

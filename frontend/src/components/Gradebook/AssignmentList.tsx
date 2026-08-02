@@ -2,6 +2,7 @@
 import React from "react";
 import type { GradedAssignment, GradeCategory } from "@/lib/types";
 import { categoryColor } from "@/components/Gradebook/categoryColor";
+import { now } from "@/lib/testMode";
 
 interface Props {
   assignments: GradedAssignment[];
@@ -171,6 +172,7 @@ export function AssignmentList({
           )}
           <button
             type="button"
+            data-testid="gradebook-add-assignment"
             onClick={onAdd}
             className="btn btn--primary"
             style={{ padding: "8px 14px", fontSize: 13 }}
@@ -354,6 +356,10 @@ function CategoryGroup({
         }}
       >
         <span
+          aria-hidden="true"
+          style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }}
+        />
+        <span
           className="mono"
           style={{
             fontSize: 11,
@@ -401,7 +407,7 @@ function CategoryGroup({
           listStyle: "none",
           margin: 0,
           padding: "0 0 0 20px",
-          borderLeft: `2px solid ${color}`,
+          borderLeft: "1px solid var(--border)",
           display: "flex",
           flexDirection: "column",
         }}
@@ -604,7 +610,9 @@ function EmptyEntries({ onAdd }: { onAdd: () => void }) {
 function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();
   if (!Number.isFinite(then)) return "just now";
-  const diffSec = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  // now() = the test-mode clock (frozen under NEXT_PUBLIC_TEST_MODE, #426),
+  // Date.now() otherwise — keeps the "Synced Xm ago" label deterministic in e2e.
+  const diffSec = Math.max(0, Math.floor((now() - then) / 1000));
   if (diffSec < 60) return "just now";
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
   if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;

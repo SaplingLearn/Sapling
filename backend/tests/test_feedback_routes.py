@@ -146,3 +146,75 @@ class TestSubmitIssueReport:
         assert set(data.keys()) == {
             "id", "user_id", "topic", "description", "screenshot_urls",
         }
+
+
+class TestFeedbackAuth:
+    """#134: the two write endpoints must derive user_id from the SESSION.
+
+    Before the fix they took no Request and inserted body.user_id verbatim, so
+    anyone could write rows attributed to any user. The wire body still carries
+    user_id for backward compatibility — it is accepted but never trusted.
+    Auth-restore pattern copied from tests/test_issue_screenshot_auth.py.
+    """
+
+    def test_unauthenticated_feedback_returns_401(self):
+        from services import auth_guard
+
+        recorded: list = []
+        with patch("routes.feedback.table", side_effect=_factory(recorded)), \
+             patch("routes.feedback.get_session_user_id", auth_guard._real_get_session_user_id), \
+             patch.object(auth_guard, "_decode_session", auth_guard._real_decode_session):
+            r = client.post(
+                "/api/feedback",
+                json={"user_id": "user_andres", "type": "global", "rating": 3},
+            )
+        assert r.status_code == 401
+        assert recorded == []
+
+    def test_unauthenticated_issue_report_returns_401(self):
+        from services import auth_guard
+
+        recorded: list = []
+        with patch("routes.feedback.table", side_effect=_factory(recorded)), \
+             patch("routes.feedback.get_session_user_id", auth_guard._real_get_session_user_id), \
+             patch.object(auth_guard, "_decode_session", auth_guard._real_decode_session):
+            r = client.post(
+                "/api/issue-reports",
+                json={
+                    "user_id": "user_andres",
+                    "topic": "bug",
+                    "description": "broke",
+                    "screenshot_urls": [],
+                },
+            )
+        assert r.status_code == 401
+        assert recorded == []
+
+    def test_feedback_attributed_to_session_user_not_body(self):
+        recorded: list = []
+        with patch("routes.feedback.table", side_effect=_factory(recorded)), \
+             patch("routes.feedback.get_session_user_id", return_value="session_user"):
+            r = client.post(
+                "/api/feedback",
+                json={"user_id": "someone_else", "type": "global", "rating": 3},
+            )
+        assert r.status_code == 200
+        _name, data = recorded[0]
+        assert data["user_id"] == "session_user"
+
+    def test_issue_report_attributed_to_session_user_not_body(self):
+        recorded: list = []
+        with patch("routes.feedback.table", side_effect=_factory(recorded)), \
+             patch("routes.feedback.get_session_user_id", return_value="session_user"):
+            r = client.post(
+                "/api/issue-reports",
+                json={
+                    "user_id": "someone_else",
+                    "topic": "bug",
+                    "description": "broke",
+                    "screenshot_urls": [],
+                },
+            )
+        assert r.status_code == 200
+        _name, data = recorded[0]
+        assert data["user_id"] == "session_user"

@@ -3,6 +3,7 @@ import React from "react";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { TopBar } from "../TopBar";
+import { FullHeightScreen } from "../FullHeightScreen";
 import { Icon } from "../Icon";
 import { FilterPills, Toggle } from "@/components/ui";
 import { DocumentUploadModal } from "../DocumentUploadModal";
@@ -11,13 +12,13 @@ import { LibraryGridSkeleton, LibraryListSkeleton } from "../Skeleton";
 // Lazy-load to keep mermaid/katex/highlight.js out of the OpenNext
 // server bundle. See ChatPanel.tsx for the rationale.
 const MarkdownChat = dynamic(
-  () => import("../MarkdownChat").then((m) => m.MarkdownChat),
+  () => import("../chat/MarkdownChat").then((m) => m.MarkdownChat),
   { ssr: false, loading: () => null },
 );
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { useBodyScrollLock } from "@/lib/useBodyScrollLock";
+import { useScrollLock } from "@/lib/useScrollLock";
 import { useUser } from "@/context/UserContext";
 import {
   getDocuments,
@@ -56,7 +57,7 @@ export function Library() {
   const [view, setView] = React.useState<View>("grid");
   const [loading, setLoading] = React.useState(true);
 
-  useBodyScrollLock(Boolean(detail));
+  useScrollLock(Boolean(detail));
   const [modalMounted, setModalMounted] = React.useState(false);
   React.useEffect(() => setModalMounted(true), []);
 
@@ -121,11 +122,27 @@ export function Library() {
     });
   }, [documents, cat, courseFilter, query]);
 
+  // #449 (upstream, out of scope here): GET /api/graph/{userId}/courses
+  // returns one row per ENROLLMENT, so a course with two offerings (e.g.
+  // CS101 in both fall and spring) surfaces as two rows sharing the same
+  // course_id — the API can't collapse that itself since enrollment_id-
+  // keyed consumers (the gradebook) depend on the per-enrollment rows.
+  // This is the Library render-side dedupe: one filter pill / label per
+  // distinct abstract course, keeping the first enrollment's row (color,
+  // course_code, course_name) as the stable representative.
+  const dedupedCourses = React.useMemo(() => {
+    const byId = new Map<string, EnrolledCourse>();
+    for (const c of courses) {
+      if (!byId.has(c.course_id)) byId.set(c.course_id, c);
+    }
+    return [...byId.values()];
+  }, [courses]);
+
   const courseLookup = React.useMemo(() => {
     const map: Record<string, string> = {};
-    for (const c of courses) map[c.course_id] = c.course_code || c.course_name;
+    for (const c of dedupedCourses) map[c.course_id] = c.course_code || c.course_name;
     return map;
-  }, [courses]);
+  }, [dedupedCourses]);
 
   const groupedByCourse = React.useMemo(() => {
     const counts: Record<string, number> = { all: documents.length, uncategorized: 0 };
@@ -137,7 +154,7 @@ export function Library() {
   }, [documents]);
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
+    <FullHeightScreen direction="row">
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <TopBar
           title="Library"
@@ -146,6 +163,7 @@ export function Library() {
             <>
               <div style={{ position: "relative" }}>
                 <input
+                  data-testid="library-search"
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   placeholder="Search documents…"
@@ -158,6 +176,7 @@ export function Library() {
               </div>
               {courseScanCourseId && (
                 <button
+                  data-testid="library-course-scan"
                   className="btn btn--sm"
                   onClick={runCourseScan}
                   disabled={courseScanning}
@@ -168,6 +187,7 @@ export function Library() {
                 </button>
               )}
               <button
+                data-testid="library-upload"
                 className="btn btn--sm btn--primary"
                 onClick={() => setUploadOpen(true)}
                 disabled={courses.length === 0}
@@ -223,10 +243,11 @@ export function Library() {
               }}>
                 {filtered.map(d => {
                   const isSelected = detail?.id === d.id;
-                  const courseLabel = courseLookup[d.course_id];
+                  const courseLabel = courseLookup[d.course_id ?? ""];
                   return (
                     <button
                       key={d.id}
+                      data-testid={`library-doc-${d.id}`}
                       onClick={() => setDetail(d)}
                       className="card"
                       style={{
@@ -280,6 +301,7 @@ export function Library() {
                   return (
                     <button
                       key={d.id}
+                      data-testid={`library-doc-${d.id}`}
                       onClick={() => setDetail(d)}
                       style={{
                         width: "100%", display: "flex", alignItems: "center", gap: 16,
@@ -340,20 +362,23 @@ export function Library() {
         }}>
           <div className="label-micro" style={{ marginBottom: 10 }}>Courses</div>
           <CourseRow
+            testid="library-course-filter-all"
             label="All"
             count={groupedByCourse.all || 0}
             active={courseFilter === "all"}
             onClick={() => setCourseFilter("all")}
           />
           <CourseRow
+            testid="library-course-filter-uncategorized"
             label="Uncategorized"
             count={groupedByCourse.uncategorized || 0}
             active={courseFilter === "uncategorized"}
             onClick={() => setCourseFilter("uncategorized")}
           />
-          {courses.map(c => (
+          {dedupedCourses.map(c => (
             <CourseRow
               key={c.course_id}
+              testid={`library-course-filter-${c.course_id}`}
               label={c.course_code || c.course_name}
               subLabel={c.course_code ? c.course_name : undefined}
               color={c.color || undefined}
@@ -413,18 +438,20 @@ export function Library() {
           }
         }}
       />
-    </div>
+    </FullHeightScreen>
   );
 }
 
 function CourseRow({
-  label, subLabel, color, count, active, onClick,
+  testid, label, subLabel, color, count, active, onClick,
 }: {
+  testid: string;
   label: string; subLabel?: string; color?: string;
   count: number; active: boolean; onClick: () => void;
 }) {
   return (
     <button
+      data-testid={testid}
       onClick={onClick}
       style={{
         width: "100%", display: "flex", alignItems: "center", gap: 8,
@@ -501,7 +528,7 @@ function DetailPanel({
     <aside style={container}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span className="chip">{doc.category.replace("_", " ")}</span>
-        <button className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">
+        <button data-testid="library-detail-close" className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">
           <Icon name="x" size={12} />
         </button>
       </div>
@@ -537,6 +564,7 @@ function DetailPanel({
             </div>
           </div>
           <button
+            data-testid="library-detail-scan"
             onClick={runScan}
             disabled={scanState === "scanning"}
             className="btn btn--sm"
@@ -553,6 +581,7 @@ function DetailPanel({
       </div>
 
       <button
+        data-testid="library-detail-delete"
         onClick={del.trigger}
         className={`btn ${del.armed ? "btn--danger" : ""}`}
         style={{ width: "100%", background: del.armed ? "var(--err-soft)" : undefined, color: del.armed ? "var(--err)" : undefined }}
@@ -583,6 +612,7 @@ function ConceptList({ notes }: { notes: ConceptNote[] }) {
       >
         <div className="label-micro">Key concepts ({notes.length})</div>
         <button
+          data-testid="library-concepts-toggle-all"
           onClick={toggleAll}
           className="btn btn--ghost btn--sm"
           style={{ fontSize: 11 }}
@@ -604,6 +634,7 @@ function ConceptList({ notes }: { notes: ConceptNote[] }) {
               }}
             >
               <button
+                data-testid={`library-concept-toggle-${i}`}
                 onClick={() => setOpen(prev => ({ ...prev, [i]: !prev[i] }))}
                 aria-expanded={isOpen}
                 style={{

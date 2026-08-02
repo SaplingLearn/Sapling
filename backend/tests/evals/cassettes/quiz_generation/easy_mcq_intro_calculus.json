@@ -1,0 +1,46 @@
+{
+  "questions": [
+    {
+      "concept": "Limits",
+      "correct_answer": "The behavior of a function as it approaches a certain input value.",
+      "difficulty": "easy",
+      "explanation": "A limit describes the value that a function 'approaches' as the input (or independent variable) approaches some value. It doesn't necessarily mean the function reaches that value at that exact point.",
+      "options": [
+        "The value a function reaches at a specific point.",
+        "The behavior of a function as it approaches a certain input value.",
+        "The rate of change of a function at a point.",
+        "The area under the curve of a function."
+      ],
+      "question": "What is the fundamental concept of a limit in calculus?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Derivatives",
+      "correct_answer": "The instantaneous rate of change of the function.",
+      "difficulty": "easy",
+      "explanation": "The derivative of a function at a point represents the instantaneous rate at which the function's value is changing with respect to its input variable at that specific point.",
+      "options": [
+        "The instantaneous rate of change of the function.",
+        "The total change in the function over an interval.",
+        "The area under the curve of the function.",
+        "The point where the function crosses the x-axis."
+      ],
+      "question": "Which of the following best defines the derivative of a function?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Continuity",
+      "correct_answer": "The function must be defined at c, the limit as x approaches c must exist, and these two values must be equal.",
+      "difficulty": "easy",
+      "explanation": "The formal definition of continuity at a point requires three conditions to be met: the function is defined at the point, the limit exists at that point, and the limit's value equals the function's value at that point.",
+      "options": [
+        "The function must be defined at c, the limit as x approaches c must exist, and these two values must be equal.",
+        "The function must be defined at c, and the limit as x approaches c must exist.",
+        "The limit as x approaches c must exist, and these two values must be equal.",
+        "The function must be defined at c, and the limit as x approaches c from the left must equal the limit as x approaches c from the right."
+      ],
+      "question": "For a function to be continuous at a point 'c', what must be true?",
+      "type": "multiple_choice"
+    }
+  ]
+}
