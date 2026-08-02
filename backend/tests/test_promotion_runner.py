@@ -272,6 +272,42 @@ def test_merge_state_unreadable_does_not_claim_production_unchanged():
     assert "unknown" in text
 
 
+def test_merge_state_stale_confirmation_does_not_claim_production_unchanged():
+    """The all-reads-fail case above is only the narrowest instance. Here the
+    FIRST post-merge read succeeds (genuinely not merged yet), but every read
+    after that fails — so 4 more merge() attempts happen with no way to know
+    whether one of them landed. A flag that only remembers "was any read ever
+    successful" would print the accurate-sounding but false "Production code
+    unchanged" here; only the MOST RECENT read's outcome is trustworthy.
+    """
+
+    class StaleThenUnreadableGh(FakeGh):
+        def __init__(self):
+            super().__init__()
+            self.state_calls = 0
+
+        def state(self, number):
+            self.state_calls += 1
+            # call 1 = the pre-confirm already_merged check; call 2 = the
+            # FIRST retry-loop read. Both succeed and say OPEN. Every read
+            # after that (covering merge attempts 2-5) fails.
+            if self.state_calls <= 2:
+                return "OPEN"
+            raise RuntimeError("gh: pr view failed (rate limited)")
+
+        def merge(self, number):
+            self.calls.append("merge")
+            self.merged = True  # any of attempts 2-5 may have landed...
+
+    lines = []
+    kwargs = make_ports(gh=StaleThenUnreadableGh(), out=lines.append)
+    assert run(*build(kwargs)) == 1
+    text = "\n".join(lines).lower()
+    assert "unchanged" not in text
+    assert "unknown" in text
+    assert "gh pr view" in text
+
+
 def test_nothing_to_promote_exits_clean():
     kwargs = make_ports()
     kwargs["git"].commits_ahead = 0
@@ -293,22 +329,36 @@ def test_verify_only_skips_promotion_and_just_waits_and_smokes():
     commits_ahead == 0 and nothing pending, so preflight reports
     nothing-to-promote and exits clean before ever reaching the wait).
     --verify-only skips preflight/snapshot/migrate/PR/merge entirely, but the
-    wait-then-smoke tail must still genuinely run — a stub that just returns
-    EXIT_OK would satisfy the "nothing mutating happened" assertions alone,
-    so this also has to prove the fetcher was actually driven through both
-    the deploy wait (/api/health) and a smoke-only check.
+    wait-then-smoke tail must still genuinely run.
+
+    /api/health alone does NOT prove the wait loop ran: it is ALSO one of
+    smoke's own CHECKS (smoke.py), hit by run_checks independently of any
+    wait — a run() that short-circuited straight to _run_smoke would still
+    fetch /api/health once and pass a naive "was /api/health fetched?" check.
+    So the health fake here reports a non-matching commit on the first poll
+    and the matching one only on the second, forcing the wait loop to
+    iterate (and therefore sleep) at least once — a signal ONLY the wait
+    loop can produce — and `sleep` is spied on directly.
     """
     connect_calls = []
     migrated = []
     fetch_urls = []
-    kwargs = make_ports()
-    original_fetch = kwargs["fetch"]
+    sleep_calls = []
+    health_sequence = [HEALTH_OLD, HEALTH_NEW, HEALTH_NEW, HEALTH_NEW, HEALTH_NEW]
 
-    def spy_fetch(method, url):
+    def fetch(method, url):
         fetch_urls.append(url)
-        return original_fetch(method, url)
+        if url.endswith("/api/health"):
+            return 200, health_sequence.pop(0) if health_sequence else HEALTH_NEW
+        if url.endswith("/api/auth/test-login"):
+            return 404, ""
+        if "analytics" in url:
+            return 401, ""
+        return 200, "<html>"
 
-    kwargs["fetch"] = spy_fetch
+    kwargs = make_ports()
+    kwargs["fetch"] = fetch
+    kwargs["sleep"] = lambda seconds: sleep_calls.append(seconds)
     kwargs["connect"] = lambda: connect_calls.append(1) or FakeConn()
     kwargs["migrate"] = lambda conn: migrated.append(1) or ["should-not-run"]
     gh = kwargs["gh"]
@@ -316,10 +366,10 @@ def test_verify_only_skips_promotion_and_just_waits_and_smokes():
     assert connect_calls == []  # no preflight/snapshot/migrate — no DB touched
     assert migrated == []
     assert gh.calls == []  # no ensure_pr, no merge
-    assert any(u.endswith("/api/health") for u in fetch_urls)  # the deploy wait ran
+    assert len(sleep_calls) >= 1  # only the wait loop sleeps in --verify-only
     # /api/semesters is only ever requested by smoke.run_checks (CHECKS), never
     # by the wait loop (which only ever calls /api/health) — its presence is
-    # proof smoke genuinely executed, not just that the wait loop did.
+    # proof smoke genuinely executed too, not just the wait.
     assert any(u.endswith("/api/semesters") for u in fetch_urls)
 
 

@@ -179,13 +179,16 @@ def run(ports: Ports, options: Options) -> int:
         # read blindly either: a transient failure checking state right after
         # a merge attempt is the worst possible moment to crash the runner.
         #
-        # `state_confirmed` tracks whether ANY post-merge state read actually
-        # succeeded (regardless of what it said — the loop breaks immediately
-        # on a MERGED read, so by construction every read that reaches here
-        # said "not merged yet"). This matters for the exhaustion message
-        # below: if every read failed, we genuinely do not know whether one
-        # of the merge attempts landed, and must not claim it didn't.
-        state_confirmed = False
+        # `current_state` is reassigned every iteration (None on a failed
+        # read), so by the time the loop exhausts it reflects only the LAST
+        # attempt's outcome, not "was any read ever successful". That matters:
+        # e.g. attempt 1 reads OPEN, attempts 2-5 all fail to read — the
+        # runner has NOT confirmed production is unchanged, because attempts
+        # 2-5's merge() calls could have landed with no way to know. A sticky
+        # "any read ever succeeded" flag would print the accurate-sounding but
+        # false "Production code unchanged" here; only the most recent read
+        # tells us what we currently know.
+        current_state = None
         for attempt in range(5):
             try:
                 ports.gh.merge(number)
@@ -193,7 +196,6 @@ def run(ports: Ports, options: Options) -> int:
                 out(f"  merge attempt {attempt + 1} errored ({exc}); re-checking PR state")
             try:
                 current_state = ports.gh.state(number)
-                state_confirmed = True
             except Exception as exc:  # noqa: BLE001 — state-read is not trusted blindly either
                 out(f"  could not re-check PR state ({exc}); retrying")
                 current_state = None
@@ -201,17 +203,18 @@ def run(ports: Ports, options: Options) -> int:
                 break
             ports.sleep(options.poll_interval)
         else:
-            if state_confirmed:
-                # At least one read genuinely succeeded and said "not merged" —
-                # this claim is one this run actually knows to be true.
+            if current_state is not None:
+                # The LAST state read genuinely succeeded and said "not
+                # merged" — this claim is one this run actually knows to be
+                # true right now.
                 out(f"\nPR #{number} never reported MERGED. Production code unchanged.")
             else:
-                # Every `gh pr view` read failed. `gh.merge` may have landed on
-                # any of the attempts above — this run cannot tell. Saying
-                # "production unchanged" here would be exactly the false
-                # report this tool exists to prevent.
+                # The last `gh pr view` read failed. `gh.merge` may have
+                # landed on this or an earlier attempt — this run cannot
+                # tell. Saying "production unchanged" here would be exactly
+                # the false report this tool exists to prevent.
                 out(
-                    f"\nPR #{number}'s merge outcome is UNKNOWN: every `gh pr view` "
+                    f"\nPR #{number}'s merge outcome is UNKNOWN: the last `gh pr view` "
                     "read failed, so this run cannot confirm whether the merge "
                     "landed or not. Do not assume either way — check "
                     f"`gh pr view {number}` by hand before doing anything else. "
