@@ -95,6 +95,44 @@ def test_scan_destructive_clean_migration_passes(tmp_path):
     assert scan_destructive([f]) == []
 
 
+def test_scan_destructive_flags_wrapped_type_change(tmp_path):
+    """House style wraps ALTER COLUMN ... TYPE across lines; must not evade the scan."""
+    f = tmp_path / "0056_w.sql"
+    f.write_text(
+        "ALTER TABLE assignments\n"
+        "  ALTER COLUMN points_possible\n"
+        "  TYPE numeric\n"
+        "  USING points_possible::numeric;\n"
+    )
+    assert [x.kind for x in scan_destructive([f])] == ["ALTER COLUMN ... TYPE"]
+
+
+def test_scan_destructive_flags_wrapped_drop_column(tmp_path):
+    f = tmp_path / "0057_w.sql"
+    f.write_text("ALTER TABLE t\n  DROP COLUMN old;\n")
+    assert [x.kind for x in scan_destructive([f])] == ["DROP COLUMN"]
+
+
+def test_scan_destructive_ignores_wrapped_drop_not_null(tmp_path):
+    """Real benign shape from 0012_gradebook.sql: DROP NOT NULL is not DROP COLUMN."""
+    f = tmp_path / "0058_ok.sql"
+    f.write_text("ALTER TABLE assignments\n  ALTER COLUMN due_date DROP NOT NULL;\n")
+    assert scan_destructive([f]) == []
+
+
+def test_scan_destructive_wrapped_statement_reports_start_line(tmp_path):
+    f = tmp_path / "0059_w.sql"
+    f.write_text(
+        "CREATE TABLE ok (id int);\n"
+        "\n"
+        "ALTER TABLE t\n"
+        "  DROP COLUMN old;\n"
+    )
+    findings = scan_destructive([f])
+    assert [x.kind for x in findings] == ["DROP COLUMN"]
+    assert findings[0].detail.startswith("0059_w.sql:3:")
+
+
 def _evaluate(**over):
     kwargs = dict(
         db_url=POOLER,

@@ -11,8 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-# Line-oriented, deliberately. A migration that is destructive on one line and
-# harmless on the next should name the line, and the runner prints it verbatim
+# Matched against a whitespace-collapsed statement, not a single line — this
+# repo writes wrapped multi-line ALTER TABLE/ALTER COLUMN clauses in house
+# style (e.g. db/migrations/0012_gradebook.sql), so a line-oriented scan would
+# miss a destructive clause split across lines. The finding still reports the
+# statement's starting line and the runner prints the original source verbatim
 # so the operator judges the actual statement rather than a filename.
 DESTRUCTIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("DROP TABLE", re.compile(r"\bDROP\s+TABLE\b", re.I)),
@@ -92,14 +95,30 @@ def scan_destructive(paths: list[Path]) -> list[Finding]:
     This matters because the runner applies migrations BEFORE the code merges,
     so between those stages the OLD production code runs against the NEW schema.
     Additive DDL is harmless in that window; destructive DDL is not.
+
+    Scans whole statements (split on `;`), not individual lines: this repo's
+    house style wraps `ALTER TABLE ... ALTER COLUMN ... TYPE ...` across
+    several lines, and a keyword split across lines would evade a line-by-line
+    regex entirely. Each statement is whitespace-collapsed before matching so
+    a wrapped statement matches identically to a single-line one; the finding
+    still reports the line where the statement *begins* and the original
+    (uncollapsed) source line, so the operator sees real SQL.
     """
     findings: list[Finding] = []
     for path in paths:
         raw_lines = path.read_text().splitlines()
-        scan_lines = _strip_comments("\n".join(raw_lines)).splitlines()
-        for lineno, line in enumerate(scan_lines, 1):
+        stripped = _strip_comments("\n".join(raw_lines))
+        offset = 0
+        for statement in stripped.split(";"):
+            start = offset
+            offset += len(statement) + 1  # +1 for the ';' the split consumed
+            content_start = start + (len(statement) - len(statement.lstrip()))
+            collapsed = " ".join(statement.split())
+            if not collapsed:
+                continue
             for label, pattern in DESTRUCTIVE_PATTERNS:
-                if pattern.search(line):
+                if pattern.search(collapsed):
+                    lineno = stripped.count("\n", 0, content_start) + 1
                     original = raw_lines[lineno - 1].strip()
                     findings.append(Finding(label, f"{path.name}:{lineno}: {original}"))
     return findings
