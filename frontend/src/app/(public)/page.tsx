@@ -578,14 +578,20 @@ export default function LandingPage() {
 
         {/* ═══ Final CTA ═══ */}
         <section className="landing-section py-32 relative text-center z-10">
-          {/* Soft green tint blending down into the mesh below */}
+          {/* Soft green wash in the section's upper body.
+              This used to start at full strength on the very top edge, because
+              it was blending DOWN out of HowItWorks' dark-green scroll tint.
+              That section is gone, so a tint that starts at 0.08 on the
+              boundary now fades in from flat paper and reads as a hard seam.
+              Peak it below the edge and start from transparent instead. */}
           <div
             aria-hidden
             className="pointer-events-none absolute left-0 right-0 z-0"
             style={{
               top: 0,
               height: 'clamp(240px, 42vh, 480px)',
-              background: 'linear-gradient(to bottom, rgba(20,83,45,0.08) 0%, rgba(20,83,45,0.04) 45%, rgba(20,83,45,0) 100%)',
+              background:
+                'linear-gradient(to bottom, rgba(20,83,45,0) 0%, rgba(20,83,45,0.05) 35%, rgba(20,83,45,0) 100%)',
             }}
           />
           <div aria-hidden className="absolute inset-0 pointer-events-none z-0">

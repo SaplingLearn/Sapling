@@ -319,9 +319,26 @@ export default function KnowledgeGraphDemo() {
       id="knowledge-graph"
       data-testid="landing-graph"
       aria-label={`Interactive knowledge graph for ${graph.name}`}
-      className="landing-section landing-graph relative z-10 py-24 md:py-32"
+      className="landing-section landing-graph relative z-10 py-24 md:py-32 overflow-hidden"
     >
-      <div className="max-w-7xl mx-auto px-6 lg:px-12">
+      {/* Atmospheric continuity. The hero above and the CTA below both carry
+          mesh blobs; the sections this one replaced (#features, HowItWorks)
+          carried --3 and --2 plus a green tint. Without them the middle of the
+          page is a flat hole between two atmospheric sections, and the cut in
+          and out of it reads as a seam. Lower opacity than the hero's so the
+          graph itself stays the focus. */}
+      <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
+        <div
+          className="sapling-mesh-blob sapling-mesh-blob--3"
+          style={{ top: '2%', left: '-14%', bottom: 'auto', opacity: 0.26, width: '34vw', height: '34vw' }}
+        />
+        <div
+          className="sapling-mesh-blob sapling-mesh-blob--2"
+          style={{ bottom: '-8%', right: '-10%', top: 'auto', opacity: 0.18, width: '30vw', height: '30vw' }}
+        />
+      </div>
+
+      <div className="relative z-[1] max-w-7xl mx-auto px-6 lg:px-12">
         <div
           data-testid="landing-graph-copy"
           data-engaged={engaged ? 'true' : 'false'}
