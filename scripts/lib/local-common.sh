@@ -137,7 +137,7 @@ migrate_reload_seed() {
   KEY="$(grep -E '^SUPABASE_SERVICE_KEY=' backend/.env | cut -d= -f2-)"
   for _ in $(seq 1 30); do
     code="$(curl -s -o /dev/null -w '%{http_code}' \
-      "http://127.0.0.1:54321/rest/v1/terms?select=id&limit=1" \
+      "http://127.0.0.1:${SUPABASE_API_PORT:-54321}/rest/v1/terms?select=id&limit=1" \
       -H "apikey: $KEY" -H "Authorization: Bearer $KEY")"
     [ "$code" = "200" ] && { echo "  ready"; break; }
     sleep 1
