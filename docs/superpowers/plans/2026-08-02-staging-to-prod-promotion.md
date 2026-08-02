@@ -1112,8 +1112,13 @@ import pytest
 from promotion.runner import Options, Ports, run
 from promotion.preflight import Finding
 
-HEALTH_OLD = json.dumps({"status": "ok", "commit": "old1111"})
-HEALTH_NEW = json.dumps({"status": "ok", "commit": "new2222"})
+# Compact separators on purpose: FastAPI emits `{"status":"ok",...}` with no
+# spaces, and smoke's `api health` check looks for the literal `"status":"ok"`.
+# json.dumps' default `", "`/`": "` separators would not contain that substring,
+# so a faithful fake has to match the real wire format.
+COMPACT = (",", ":")
+HEALTH_OLD = json.dumps({"status": "ok", "commit": "old1111"}, separators=COMPACT)
+HEALTH_NEW = json.dumps({"status": "ok", "commit": "new2222"}, separators=COMPACT)
 
 
 class FakeGit:
@@ -1248,7 +1253,11 @@ def test_declining_the_prompt_stops_without_merging():
     kwargs = make_ports(confirm=lambda prompt: False)
     gh = kwargs["gh"]
     assert run(*build(kwargs)) == 2
-    assert gh.calls == []
+    # ensure_pr runs BEFORE the prompt on purpose — the prompt names the PR
+    # number, and an already-merged PR is how a re-run resumes. Declining must
+    # leave the PR open and unmerged, not uncreated.
+    assert "merge" not in gh.calls
+    assert gh.merged is False
 
 
 def test_declining_warns_that_migrations_already_applied():
@@ -1351,7 +1360,7 @@ def test_unknown_live_commit_degrades_instead_of_hanging():
     """No Railway env var: don't wait forever, warn and smoke anyway."""
     def fetch(method, url):
         if url.endswith("/api/health"):
-            return 200, json.dumps({"status": "ok", "commit": "unknown"})
+            return 200, json.dumps({"status": "ok", "commit": "unknown"}, separators=COMPACT)
         if url.endswith("/api/auth/test-login"):
             return 404, ""
         if "analytics" in url:
@@ -1495,6 +1504,11 @@ def run(ports: Ports, options: Options) -> int:
 
     # ---- Stage 6: wait for the deploy ---------------------------------
     waited = 0
+    # Advance by at least 1 per iteration. poll_interval is 0 in tests (so they
+    # don't actually sleep), and incrementing by it directly would leave `waited`
+    # pinned at 0 — an infinite loop on the very timeout path the tests exist to
+    # cover.
+    tick = max(options.poll_interval, 1)
     while waited < options.wait_timeout:
         live = smoke.live_commit(ports.fetch, options.api_base)
         if live == head[:7]:
@@ -1508,7 +1522,7 @@ def run(ports: Ports, options: Options) -> int:
             )
             break
         ports.sleep(options.poll_interval)
-        waited += options.poll_interval
+        waited += tick
     else:
         out(
             f"\nTIMEOUT: the deploy never reported {head[:7]} after "
