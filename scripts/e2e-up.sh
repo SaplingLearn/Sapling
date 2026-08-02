@@ -30,7 +30,17 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-LOCAL_DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+# Overridable to match supabase/config.toml when a machine cannot use the
+# default ports. Windows reserves whole bands of the ephemeral range for
+# WinNAT/Hyper-V — on this project's dev box TCP 54288-54788 is excluded, which
+# swallows the API (54321), DB (54322) and Studio (54323) ports, and binding
+# them fails with "An attempt was made to access a socket in a way forbidden by
+# its access permissions" even though every container is healthy. Shifting
+# config.toml's ports and exporting these two is the no-admin way out.
+# Defaults are the documented contract, so Linux and CI are unaffected.
+SUPABASE_DB_PORT="${SUPABASE_DB_PORT:-54322}"
+SUPABASE_API_PORT="${SUPABASE_API_PORT:-54321}"
+LOCAL_DB_URL="postgresql://postgres:postgres@127.0.0.1:$SUPABASE_DB_PORT/postgres"
 DB_CONTAINER="supabase_db_sapling"
 
 # Shared migrate → ensure buckets → reload PostgREST → seed sequence (#10),
@@ -60,7 +70,12 @@ fi
 E2E_DIR="$REPO_ROOT/.e2e"
 BACKEND_PORT="$(grep -E '^PORT=' backend/.env 2>/dev/null | head -n1 | cut -d= -f2-)"
 BACKEND_PORT="${BACKEND_PORT:-5000}"
-FRONTEND_PORT=3000
+# Overridable so a machine whose :3000 is already taken (another worktree's
+# `next dev`, say) can still boot the lane without stopping that server. The
+# Playwright harness follows via E2E_FRONTEND_URL (frontend/e2e/support/stack.ts);
+# nothing else hardcodes the frontend's own port — build:test only bakes
+# BACKEND_URL, and the browser reaches the API same-origin through Next.
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 
 # Poll a URL until it returns HTTP 200 (same curl style as local-common.sh),
 # failing the boot if it never comes up — with a log tail when the caller has
@@ -244,21 +259,21 @@ echo "▶ Starting frontend (next start on :$FRONTEND_PORT, log: .e2e/frontend.l
 # Same setsid-simple-command shape as the backend launch above.
 (
   cd frontend || exit 1
-  $DETACH npm run start:test >"$E2E_DIR/frontend.log" 2>&1 &
+  $DETACH npm run start:test -- --port "$FRONTEND_PORT" >"$E2E_DIR/frontend.log" 2>&1 &
   echo $! >"$E2E_DIR/frontend.pid"
 ) || { echo "✗ could not start frontend"; exit 1; }
 
 # ── Health-check all four services ───────────────────────────────────────────
 echo "▶ Health-checking all services…"
 if "$CONTAINER_CMD" exec "$DB_CONTAINER" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
-  echo "  ✓ Postgres (:54322)"
+  echo "  ✓ Postgres (:$SUPABASE_DB_PORT)"
 else
   echo "✗ Postgres health check failed ($CONTAINER_CMD exec $DB_CONTAINER pg_isready)"
   exit 1
 fi
 KEY="$(grep -E '^SUPABASE_SERVICE_KEY=' backend/.env | head -n1 | cut -d= -f2-)"
-wait_for_http "Supabase REST / PostgREST (:54321)" \
-  "http://127.0.0.1:54321/rest/v1/terms?select=id&limit=1" 30 "" \
+wait_for_http "Supabase REST / PostgREST (:$SUPABASE_API_PORT)" \
+  "http://127.0.0.1:$SUPABASE_API_PORT/rest/v1/terms?select=id&limit=1" 30 "" \
   -H "apikey: $KEY" -H "Authorization: Bearer $KEY"
 wait_for_http "backend (uvicorn :$BACKEND_PORT)" \
   "http://127.0.0.1:$BACKEND_PORT/api/health" 15 "$E2E_DIR/backend.log"
@@ -270,7 +285,7 @@ cat <<DONE
 ✅ E2E stack is up.
      frontend  http://localhost:$FRONTEND_PORT   (test-profile production build)
      backend   http://localhost:$BACKEND_PORT   (health: /api/health)
-     Supabase  http://127.0.0.1:54321  (Studio: http://127.0.0.1:54323)
+     Supabase  http://127.0.0.1:$SUPABASE_API_PORT  (Studio: see supabase/config.toml [studio])
    PIDs + logs: .e2e/          Tear down: make e2e-down
    Harness sign-in: POST /api/auth/test-login with a seeded rich-* user (#381).
 DONE

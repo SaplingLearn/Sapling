@@ -87,7 +87,7 @@ def applied_filenames(conn: psycopg.Connection) -> set[str]:
 def apply_migration(conn: psycopg.Connection, path: Path) -> None:
     """Run one migration's SQL and record it, atomically."""
     with conn.cursor() as cur:
-        cur.execute(path.read_text())
+        cur.execute(path.read_text(encoding="utf-8"))
         cur.execute("INSERT INTO schema_migrations (filename) VALUES (%s)", (path.name,))
     conn.commit()
 
