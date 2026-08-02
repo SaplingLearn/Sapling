@@ -102,9 +102,15 @@ def _staging_recorded() -> set[str] | None:
     url = os.environ.get("STAGING_SUPABASE_DB_URL", "").strip()
     if not url:
         return None
-    with psycopg.connect(url) as conn, conn.cursor() as cur:
-        cur.execute("SELECT filename FROM schema_migrations")
-        return {row[0] for row in cur.fetchall()}
+    try:
+        with psycopg.connect(url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT filename FROM schema_migrations")
+            return {row[0] for row in cur.fetchall()}
+    except psycopg.Error as exc:
+        # Same wart _run() fixes for subprocesses: an unwrapped driver error
+        # would escape main()'s handler as a raw traceback instead of the one
+        # clean line an operator needs mid-promotion.
+        raise RuntimeError(f"could not read staging's migration ledger ({exc})") from exc
 
 
 def _preflight_data(conn) -> dict:
@@ -141,8 +147,11 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true")
     args = parser.parse_args()
 
+    # --verify-only touches no database at all (see runner.Options.verify_only:
+    # it skips preflight/snapshot/migrate entirely), so it must not be blocked
+    # by a credential this mode never uses.
     db_url = os.environ.get("SUPABASE_DB_URL", "").strip()
-    if not db_url:
+    if not db_url and not args.verify_only:
         print(
             "ERROR: SUPABASE_DB_URL is not set. Run under production's env:\n"
             "  venv/bin/dotenv -f .env.production run -- venv/bin/python -m promotion\n"

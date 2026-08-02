@@ -178,21 +178,46 @@ def run(ports: Ports, options: Options) -> int:
         # trust the first failure — re-read the PR state, and don't trust that
         # read blindly either: a transient failure checking state right after
         # a merge attempt is the worst possible moment to crash the runner.
+        #
+        # `state_confirmed` tracks whether ANY post-merge state read actually
+        # succeeded (regardless of what it said — the loop breaks immediately
+        # on a MERGED read, so by construction every read that reaches here
+        # said "not merged yet"). This matters for the exhaustion message
+        # below: if every read failed, we genuinely do not know whether one
+        # of the merge attempts landed, and must not claim it didn't.
+        state_confirmed = False
         for attempt in range(5):
             try:
                 ports.gh.merge(number)
             except Exception as exc:  # noqa: BLE001 — any gh failure gets re-checked
                 out(f"  merge attempt {attempt + 1} errored ({exc}); re-checking PR state")
             try:
-                merged_now = ports.gh.state(number) == "MERGED"
+                current_state = ports.gh.state(number)
+                state_confirmed = True
             except Exception as exc:  # noqa: BLE001 — state-read is not trusted blindly either
                 out(f"  could not re-check PR state ({exc}); retrying")
-                merged_now = False
-            if merged_now:
+                current_state = None
+            if current_state == "MERGED":
                 break
             ports.sleep(options.poll_interval)
         else:
-            out(f"\nPR #{number} never reported MERGED. Production code unchanged.")
+            if state_confirmed:
+                # At least one read genuinely succeeded and said "not merged" —
+                # this claim is one this run actually knows to be true.
+                out(f"\nPR #{number} never reported MERGED. Production code unchanged.")
+            else:
+                # Every `gh pr view` read failed. `gh.merge` may have landed on
+                # any of the attempts above — this run cannot tell. Saying
+                # "production unchanged" here would be exactly the false
+                # report this tool exists to prevent.
+                out(
+                    f"\nPR #{number}'s merge outcome is UNKNOWN: every `gh pr view` "
+                    "read failed, so this run cannot confirm whether the merge "
+                    "landed or not. Do not assume either way — check "
+                    f"`gh pr view {number}` by hand before doing anything else. "
+                    "The migrations applied earlier in this run are ALREADY "
+                    "APPLIED regardless of the merge outcome."
+                )
             return EXIT_FAIL
     else:
         out(f"PR #{number} is already merged — resuming at the deploy wait.")
