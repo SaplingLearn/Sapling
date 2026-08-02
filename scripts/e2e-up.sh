@@ -280,6 +280,23 @@ wait_for_http "backend (uvicorn :$BACKEND_PORT)" \
 wait_for_http "frontend (next start :$FRONTEND_PORT)" \
   "http://127.0.0.1:$FRONTEND_PORT/" 60 "$E2E_DIR/frontend.log" -L
 
+# Without setsid, $! is the `npm` wrapper, and npm EXITS once next-server is
+# spawned. e2e-down then finds a dead PID, skips (kill -0 fails, so even the
+# taskkill fallback never runs), and next-server survives holding the port —
+# observed exactly once, orphaning :3001 through a clean `e2e-down`.
+#
+# The server is healthy by this line, so the process listening on the port is
+# unambiguously ours: record THAT pid instead. Only on the no-setsid path —
+# under setsid the recorded pid leads the process group and is already right.
+if [ -z "$DETACH" ] && command -v netstat >/dev/null 2>&1; then
+  owner="$(netstat -ano -p tcp 2>/dev/null \
+    | awk -v p=":$FRONTEND_PORT" '$2 ~ p"$" && $4 == "LISTENING" {print $5; exit}')"
+  if [ -n "$owner" ]; then
+    echo "$owner" >"$E2E_DIR/frontend.pid"
+    echo "  ↳ tracking frontend by port owner (pid $owner); npm wrapper has exited"
+  fi
+fi
+
 cat <<DONE
 
 ✅ E2E stack is up.
