@@ -63,7 +63,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import uuid
 from pathlib import Path
 
@@ -446,4 +445,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # main() returns None; failures raise SystemExit from run()/_resolve_term,
+    # which already carries the exit status. sys.exit(main()) would just be
+    # sys.exit(None).
+    main()

@@ -22,11 +22,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from bs4 import BeautifulSoup  # noqa: E402
 
-import scrape_bu_catalog as scrape  # noqa: E402
 from scrape_bu_catalog import (  # noqa: E402
     _derive_schedule,
     _extract_sections,
     parse_course,
+    scrape_school,
 )
 
 
@@ -246,16 +246,17 @@ def test_listing_timeout_is_recorded_as_truncated_not_end_of_pagination(monkeypa
     async def _no_sleep(_seconds):
         return None
 
-    monkeypatch.setattr(scrape.asyncio, "sleep", _no_sleep)
-    monkeypatch.setattr(scrape, "_sem", asyncio.Semaphore(1))
-    monkeypatch.setattr(scrape, "_errors", [])
+    errors: list[dict] = []
+    monkeypatch.setattr("scrape_bu_catalog.asyncio.sleep", _no_sleep)
+    monkeypatch.setattr("scrape_bu_catalog._sem", asyncio.Semaphore(1))
+    monkeypatch.setattr("scrape_bu_catalog._errors", errors)
 
     client = _TimeoutClient()
-    courses = asyncio.run(scrape.scrape_school(client, "cas", seen=set()))
+    courses = asyncio.run(scrape_school(client, "cas", seen=set()))
 
     assert courses == []
     # Two records: the exhausted retries from fetch(), then the loud TRUNCATED
     # marker from the listing walk that refused to call it end-of-pagination.
-    assert any("TRUNCATED" in e["error"] for e in scrape._errors)
+    assert any("TRUNCATED" in e["error"] for e in errors)
     # Every attempt was against page 1; the walk stopped instead of advancing.
     assert all(u.endswith("/academics/cas/courses/") for u in client.urls)
