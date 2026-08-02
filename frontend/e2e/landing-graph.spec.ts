@@ -52,14 +52,25 @@ test('landing graph renders, swaps by course, and fades its copy on engagement',
  * box is ~332px, so the SVG rendered at a uniform 0.38 scale — 4.6 CSS px
  * concept labels and a 213px-tall smudge, on the device most marketing traffic
  * arrives on. The component now swaps to a phone view below the mobile
- * breakpoint, whose frame is fitted to its content (`-32 -25 443 365`, #344
- * visual 3): 0.75 scale ⇒ 12.0 CSS px labels, 22.5px dots, 273px tall. Those
- * three clear the bars below by 1.0px, 2.5px and 13px. The bracket is still
+ * breakpoint, whose frame is fitted to its content (`-32 40 429 230`, #344
+ * visual 3): 0.77 scale ⇒ 12.4 CSS px labels, 23.2px dots, 178px tall. The
+ * first two clear the bars below by 1.4px and 3.2px. The bracket is still
  * two-sided — a bigger ring keeps labels off their neighbours, a smaller frame
  * keeps the type legible — but the upward fan put its two deep arms 90° apart
  * and symmetric about the vertical, which widened the window: the first two
  * margins were 0.2px and 0.9px under the downward tree. See `MOBILE_VIEW` in
  * `layout.ts`.
+ *
+ * THE HEIGHT BAR MOVED 260 → 170, and it is not a legibility bar being lowered.
+ * `viewBox` is fitted to the entry SWEEP, not to the settled drawing, or the
+ * assembly gets clipped mid-flight (#344 review #4). While `helixEntry` turned
+ * 1.5 times, that sweep was nearly a disc and the frame nearly square, so this
+ * phone frame was 273px tall around a drawing 156px tall — 118px of empty paper
+ * that the ">260px" bar was, in effect, asserting. The entry is a quarter turn
+ * now: the frame is 178px, the DRAWING inside it is 161px — bigger than before —
+ * and the honest version of this bar (the drawing's rendered height, not the
+ * frame's) lives in `layout.test.ts`, where the settled extents can be measured
+ * exactly rather than inferred from a bounding rect.
  *
  * Asserting in CSS pixels — what a visitor's eye actually gets — rather than on
  * the viewBox attribute, so a different fix that reaches the same legibility
@@ -92,7 +103,7 @@ test('the graph stays legible at a 390px phone viewport (#344)', async ({ page }
 
   expect(metrics.labelPx, 'concept labels in CSS px').toBeGreaterThanOrEqual(11);
   expect(metrics.dotDiameterPx, 'non-root node diameter in CSS px').toBeGreaterThanOrEqual(20);
-  expect(metrics.heightPx, 'rendered graph height in CSS px').toBeGreaterThan(260);
+  expect(metrics.heightPx, 'rendered graph height in CSS px').toBeGreaterThan(170);
 });
 
 test('the deleted scroll section is gone and the CTA still routes', async ({ page }) => {

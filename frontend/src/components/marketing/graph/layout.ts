@@ -362,7 +362,7 @@ export function radialLayout(
 
 /**
  * How far *inside* its target radius a node starts. The offset from the centre
- * is scaled by `1 - (1 - e) * ENTRY_CONTRACTION`, i.e. 0.55× at t=0 rising to
+ * is scaled by `1 - (1 - e) * ENTRY_CONTRACTION`, i.e. 0× at t=0 rising to
  * exactly 1× at t=1.
  *
  * This used to be a *stretch* (`1 + (1 - e) * 0.9`, so 1.9× at t=0), which is
@@ -374,25 +374,72 @@ export function radialLayout(
  * the disc of radius |target − centre|. `layout.test.ts` pins that as an
  * explicit bounds sweep over every fixture × every view.
  *
- * It reads better too: nodes now grow outward from the root rather than flying
- * in from off-frame.
+ * IT IS NOW EXACTLY 1, i.e. a node starts ON the centre rather than 55% of the
+ * way out to its seat, and that is the second half of the frame-tightening this
+ * wave is about (see `ENTRY_TURNS`). At 1 the radial term collapses to
+ * `radiusScale = e`, which is precisely the straight-line entry's own easing —
+ * so the path becomes "the straight line from the centre to the seat, ROTATED
+ * by a decaying angle", and the whole of the mid-flight deviation measured in
+ * `layout.test.ts` is the helix rather than a radius mismatch. It also buys
+ * frame: the widest swing happens where the node is nearest the centre, so
+ * pulling the start in shrinks how far the sweep bulges past the settled
+ * drawing — at the same quarter turn, 0.45 overhangs the settled top by 68.6
+ * units and 1 by 27.9, which is 41 units of section height (50 CSS px) and the
+ * difference between the drawing sitting 9.1% and 4.2% off the frame's centre.
+ *
+ * It reads better too: nodes now grow outward from the middle of the canopy
+ * rather than flying in from off-frame, and at t=0 they are at 0.35 scale and
+ * zero opacity, so the pile-up at the centre is never actually drawn.
  */
-const ENTRY_CONTRACTION = 0.45;
+const ENTRY_CONTRACTION = 1;
+
+/**
+ * How far a node is rotated around the centre on the way in — the HELIX, and
+ * the thing that sets how much dead vertical band the section carries.
+ *
+ * IT WAS 1.5 (540°). `fitViewBox` fits the frame to the SWEEP rather than to
+ * the settled positions (it has to — see there), and a node that turns a turn
+ * and a half passes through EVERY direction at between 0.55 and 1.00 of its
+ * final radius. The union of those sweeps is very nearly a DISC, so the fitted
+ * frame came out very nearly SQUARE while the settled drawing is an upward fan
+ * about twice as wide as it is tall. The difference was dead space, ~149 CSS px
+ * of it above and below the drawing at the 720px cap, for ANY layout at all:
+ * the previous wave measured the whole family and reported it as its closing
+ * concern.
+ *
+ * A QUARTER TURN. 90° of rotation with the radial ramp still reads as a swoop
+ * with depth — the node arrives on a curve, not on a line — while the swept
+ * union hugs the drawing: the frame goes 603 × 534 → 582 × 334 units and the
+ * band per side goes 162/136 → 48/13 CSS px. 540° at the 1.1s the component
+ * spends on the assembly is ~490°/s, which is a blur nobody can follow; the
+ * quarter turn is the same idea at a speed the eye can read.
+ *
+ * WHY NOT LESS, AND WHY NOT MORE. Less: at 0.15 turns the mid-flight deviation
+ * from the straight-line path falls to 13 units (10% of the travel radius) and
+ * the entry starts reading as a plain zoom. More: the sweep's bulge past the
+ * settled drawing is one-sided — the fan's tips are far from the centre and
+ * only 27° above the horizontal, so rotating them TOWARD the vertical gains
+ * height, while nothing in the drawing can swing below the root's caption —
+ * and past ~0.3 turns that lopsided headroom pushes the drawing off the frame's
+ * vertical centre by more than the 5% `layout.test.ts` allows. 0.25 sits inside
+ * both bars with room (4.2% off-centre, 48px of band).
+ */
+const ENTRY_TURNS = 0.25;
 
 /**
  * Position along the helical entry path. `t` runs 0 → 1.
  *
- * The node spirals outward from near the centre: its offset from the centre is
- * rotated by a decreasing angle and contracted by a shrinking factor, while
- * scale and opacity rise. At t=1 every term collapses and the node sits exactly
- * on `target`, so the animation has no seam where it hands off to the static
+ * The node spirals outward from the centre: its offset from the centre is
+ * rotated by a decreasing angle and scaled by a growing factor, while scale and
+ * opacity rise. At t=1 every term collapses and the node sits exactly on
+ * `target`, so the animation has no seam where it hands off to the static
  * layout.
  */
 export function helixEntry(
   target: Point,
   centre: Point,
   t: number,
-  turns = 1.5,
+  turns = ENTRY_TURNS,
 ): { x: number; y: number; scale: number; opacity: number } {
   const e = easeOutCubic(t);
   const dx = target.x - centre.x;
@@ -482,18 +529,24 @@ const FIT_STEPS = 512;
  * stayed permanently empty. The frame is now measured off the content instead.
  *
  * THE THING TO NOT GET WRONG: fit to the HELIX SWEEP, not to the settled node
- * positions. `helixEntry` rotates a node up to 1.5 turns around the centre on
- * the way in, so every outer node passes through every direction on its way to
- * rest. Under the upward fan that gap is WIDER still than it was under the
- * downward tree, because a canopy is a wide, short object inside a circular
- * sweep: on desktop the settled drawing spans 284.3 units of height while the
- * sweep spans 513.6, so a box fitted to the settled positions would clip 125.8
- * units off the top and 103.6 off the bottom — 150 and 124 CSS px at the
- * rendered cap, in plain view. That exact bug was found and fixed once already
- * on this branch (#344 review #4). The phone numbers are 82.9 and 69.6, against
- * 63.6 and 73.5 before. `layout.test.ts` sweeps `t` across
- * the full range to keep it fixed, and pins the overshoot itself so a
- * settled-fit implementation fails outright.
+ * positions. `helixEntry` rotates every node around the centre on the way in,
+ * so a node arrives from a direction that is not its own, and the frame has to
+ * hold the arc. That exact bug was found and fixed once already on this branch
+ * (#344 review #4), and the fix must survive the sweep getting SHORTER: at the
+ * quarter turn this file now ships, the desktop settled drawing spans 284.3
+ * units of height while the sweep spans 312.2, so a box fitted to the settled
+ * positions would still chop 27.9 units — 34.5 CSS px at the rendered cap — off
+ * the top of the assembly, live, at ~80% opacity. The phone number is 17.6
+ * units (13.6 px). `layout.test.ts` sweeps `t` across the full range to keep it
+ * fixed, and asserts the clipping directly (it builds the settled-fit box and
+ * proves the assembly leaves it) so a settled-fit implementation fails outright.
+ *
+ * The overshoot is ONE-SIDED and that is geometry, not an oversight: the fan's
+ * tips sit far from the centre and only ~27° above the horizontal, so rotating
+ * them toward the vertical lifts them past the settled top, while the lowest
+ * ink in the drawing — the course code under the root — is close to the centre
+ * and nothing swings below it. The frame's bottom edge is therefore the settled
+ * bottom plus `fitPad`, and the sweep sets the other three sides.
  *
  * Fitted ONCE across all three fixtures rather than per graph: the three share
  * a topology and differ only in label widths, so a per-graph fit would produce
@@ -555,14 +608,19 @@ function withFit(geom: GraphGeometry): GraphView {
 }
 
 /**
- * Retuned for the upward fan. Frame `161 17 603 534`, against `165 48 541 498`
- * for the downward radial tree, `185 33 526 516` for the ring layout before it,
- * and the `0 0 900 560` the demo shipped with.
+ * Frame `161 114 582 334`, against `161 17 603 534` for the same fan under the
+ * 1.5-turn entry sweep, `165 48 541 498` for the downward radial tree,
+ * `185 33 526 516` for the ring layout before it, and the `0 0 900 560` the demo
+ * shipped with. Nothing about the layout moved between the last two — only the
+ * sweep the frame is fitted to (see `ENTRY_TURNS`).
  *
  * The component caps the rendered width (`md:max-w-[720px]`), so at the cap the
- * graph draws at 1.194 user units per CSS px: 16.7px labels, 33.4px concept
- * dots, a 62px root, and a **637.6px-tall `<svg>` — 25px SHORTER** than the
- * downward tree's 662.8 and 99px shorter than the 737px the fixed box reserved.
+ * graph draws at 1.237 user units per CSS px: 17.3px labels, 34.6px concept
+ * dots, a 64px root, and a **413.2px-tall `<svg>` — 224px SHORTER** than the
+ * 637.6 the 1.5-turn sweep fitted, 250px shorter than the downward tree's 662.8
+ * and 324px shorter than the 737px the fixed box reserved. The drawing itself
+ * did not shrink; it grew (694 × 352 CSS px against 669 × 339). What left was
+ * the dead band: 162/136 CSS px above and below the drawing, now **48/13**.
  *
  * WHY `maxRadius` LEFT 232, i.e. why it is no longer `radialLayout`'s
  * inscribed-circle default. Under the upward fan the drawing wraps its own
@@ -577,21 +635,11 @@ function withFit(geom: GraphGeometry): GraphView {
  * - the shape assertions, which are scale-free.
  *
  * The composition it buys, measured on cs210: the drawing is 506 × 284 units
- * (604 × 339 CSS px) inside a 603 × 534 frame, centred to within 2.8% of the
- * width and 2.1% of the height. It fills **0.839 of the frame's width** against
- * the downward tree's 0.828 (ma242 0.916, sm275 0.881), and 0.53 of its height.
- *
- * The height share is the one number that did not improve, and it is worth
- * being precise about why: `fitViewBox` fits the frame to the ENTRY SWEEP, and
- * the sweep is very nearly a disc, so the frame is very nearly square whatever
- * the drawing does. Dead vertical space is therefore ≈ (drawing width −
- * drawing height) / 2 for any layout, and a canopy is by definition wider than
- * tall. Measured: 149 CSS px of band above and below, against 145 for the
- * downward tree — a wash. Making that band small needs a drawing with aspect
- * ≈ 1, which is neither a canopy nor shorter (swept: a symmetric fan narrow
- * enough to fill the height renders a 683px section). The lever that would
- * actually shrink it is the sweep itself — `helixEntry`'s 1.5 turns — and that
- * is an animation change, out of this wave's scope.
+ * (626 × 352 CSS px) inside a 582 × 334 frame, centred to within 1.1% of the
+ * width and 4.2% of the height. It fills **0.869 of the frame's width** (ma242
+ * 0.949, sm275 0.913) and **0.851 of its height**, against 0.839 and 0.532
+ * under the 1.5-turn sweep — the height share is where the tightened sweep
+ * lands, and it is the number the dead band is the complement of.
  */
 export const DESKTOP_VIEW: GraphView = withFit({
   w: 900,
@@ -608,13 +656,21 @@ export const DESKTOP_VIEW: GraphView = withFit({
 });
 
 /**
- * The phone view, and the breakpoint that gains the most from the upward fan.
- * Frame `-32 -25 443 365`; a ~332px content box (390 viewport − 48 of `px-6` −
- * the 10px scrollbar globals.css paints) renders it at 0.7494, so 16-unit
- * labels land at **11.99 CSS px**, concept dots at a **22.48px** diameter, and
- * the `<svg>` is **273.5px** tall. All three clear the E2E legibility gate
- * (≥11px labels, ≥20px dots, >260px tall), and all three are BETTER than the
- * downward tree's 11.23 / 20.85 / 285.5 on the two that were nearly lost.
+ * The phone view. Frame `-32 40 429 230`; a ~332px content box (390 viewport −
+ * 48 of `px-6` − the 10px scrollbar globals.css paints) renders it at 0.7739,
+ * so 16-unit labels land at **12.38 CSS px**, concept dots at a **23.22px**
+ * diameter, the DRAWING is **328 × 161 px**, and the `<svg>` is **178.0px**
+ * tall — against 11.99 / 22.48 / 317 × 156 / 273.5 under the 1.5-turn sweep.
+ *
+ * READ THAT LAST PAIR CAREFULLY, because one of them went DOWN. The frame lost
+ * 95px of height while the drawing inside it grew: what left was the band of
+ * empty paper the circular sweep reserved (64/54 CSS px above and below, now
+ * **16/2**). The E2E gate's third bar was written against the frame — it read
+ * ">260px tall" as "not the 213px smudge the fixed 900×560 viewBox rendered
+ * here" — and a frame measurement can no longer stand in for that, because this
+ * frame is nearly all drawing. So the bar moved to 170 and `layout.test.ts`
+ * gained the honest one: the SETTLED DRAWING's rendered height, which improves
+ * (155.6 → 160.7 px) rather than being traded away.
  *
  * THE CONSTRAINT THAT WAS RAZOR-THIN AND NO LONGER IS. Labels hang below their
  * dots and are `middle`-anchored, so a 13-character label ("Vector Spaces",
@@ -631,16 +687,19 @@ export const DESKTOP_VIEW: GraphView = withFit({
  * `ring·sin 45°` on BOTH of them instead of `ring·sin 60°` on one and
  * `ring·sin 30°` on the other, and the crowded pair moves from "a child's dot
  * inside its parent's label" to "the middle shoot's label beside a depth-1
- * dot". Measured worst pair over all three fixtures: **+5.40 units = 4.05 CSS
- * px**, a 4× improvement, with the label gate now clearing by 0.99 CSS px
- * instead of 0.23.
+ * dot". Measured worst pair over all three fixtures: **+5.40 units**, unchanged
+ * by this wave (the settled layout did not move) and now **4.18 CSS px** rather
+ * than 4.05, because the tighter frame renders every unit slightly bigger.
  *
  * The window is still two-sided — the collision wants a bigger ring, the
  * legibility gate wants a smaller frame (`font · 332 / fit.w ≥ 11`) — and the
- * point below was picked by sweeping `maxRadius`, `font`, `rootR`, `nodeR` and
- * `labelGap` against BOTH ends plus the shape assertions, maximising the worst
- * normalised margin. `fitPad` stays at 2 (the fit's outward whole-unit snap
- * sits under it); everything else moved.
+ * numbers below were picked by sweeping `maxRadius`, `font`, `rootR`, `nodeR`
+ * and `labelGap` against BOTH ends plus the shape assertions, maximising the
+ * worst normalised margin. Tightening the sweep moved both margins the right
+ * way (the label gate clears by 1.38 CSS px now, against 0.99), so none of them
+ * needed to move. `fitPad` stays at 2: it is now most of the air under the
+ * course code, and the 4 units of descender the fit reserves for a caption that
+ * has no descenders sit under that again.
  */
 export const MOBILE_VIEW: GraphView = withFit({
   w: 360,

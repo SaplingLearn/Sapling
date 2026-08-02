@@ -375,16 +375,17 @@ export default function KnowledgeGraphDemo() {
           direction the rest of the section already uses, and it is the reversible
           half of the choice: no copy moves, no structure changes.
 
-          At the 720px cap the desktop graph draws at ~1.19 units per CSS px in
-          a 720×638 box, where the fixed viewBox reserved 1184×737 and drew the
-          graph across the middle 277px of it. The box is 25px SHORTER than the
-          720×663 the downward radial tree fitted to and 68px shorter than the
-          concentric rings before it: the course sits at the base and its
-          concepts fan upward, which is both the brand's picture and a wider,
-          shorter object — it fills 84% of the frame's width (up from 83%, and
-          from 71% under the rings) and 53% of its height, centred, with the
-          whitespace the circular entry sweep costs spent symmetrically above
-          and below.
+          At the 720px cap the desktop graph draws at ~1.24 units per CSS px in
+          a 720×413 box, where the fixed viewBox reserved 1184×737 and drew the
+          graph across the middle 277px of it. The box is 224px SHORTER than the
+          720×638 the same upward fan fitted while `helixEntry` turned 1.5 times
+          on the way in: the frame is fitted to that entry SWEEP (it has to be,
+          or the assembly gets clipped mid-flight), a 540° sweep is very nearly a
+          disc, and a near-square frame around a canopy twice as wide as it is
+          tall is dead paper on the top and bottom edges. At a quarter turn the
+          sweep hugs the drawing, so the drawing now fills 87% of the frame's
+          width and 85% of its height — and it renders BIGGER than it did in the
+          taller box (694×352 CSS px against 669×339).
         */}
         <svg
           data-testid="landing-graph-svg"

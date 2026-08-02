@@ -450,14 +450,48 @@ describe('helixEntry', () => {
     expect(r.scale).toBeLessThan(0.5);
   });
 
+  /**
+   * THE ENTRY IS A HELIX, NOT A FADE-IN — and this is the test that has to keep
+   * meaning that now the sweep is a quarter turn instead of 1.5 turns.
+   *
+   * Both bars are stated as SHAPE, not as a distance in units, because a
+   * distance bar silently weakens whenever the travel radius or the geometry
+   * moves. The measurements are taken at mid-flight (t = 0.5), where
+   * `easeOutCubic` has 12.5% of the entry left to run:
+   *
+   * - the node is more than a TENTH OF ITS OWN TRAVEL RADIUS off the point a
+   *   straight-line entry with the same easing would be at (measured 0.172, i.e.
+   *   21.97 units on this 128.06-unit example — it was 129.61 units at 1.5
+   *   turns, but 1.01 radii, because at 540° the "straight line" comparison is
+   *   meaningless: the node is halfway round the far side);
+   * - and it is more than 5° off its own settled BEARING from the centre
+   *   (measured 11.25° = 12.5% of the quarter turn), which is the part a plain
+   *   scale-and-fade cannot fake at any distance.
+   *
+   * The old bar was `> 10` units, i.e. 7.8% of this radius, so the floor went
+   * UP with the sweep coming down. `ENTRY_CONTRACTION = 1` is what makes the
+   * first number readable: the radial term is then exactly the straight line's
+   * own easing, so every unit of deviation measured here is rotation.
+   *
+   * Both bars BITE. Mid-flight offset is `2·e·sin(45°·turns)` radii and the
+   * swing is `45°·turns`, so dropping the entry to 0.146 turns fails the first
+   * and 0.111 fails the second — i.e. this test is what stops the next person
+   * from tightening the frame the lazy way, by taking the helix out entirely.
+   */
   it('rotates around the centre on the way in — the helix', () => {
     const mid = helixEntry(target, centre, 0.5);
     const straight = {
       x: centre.x + (target.x - centre.x) * easeOutCubic(0.5),
       y: centre.y + (target.y - centre.y) * easeOutCubic(0.5),
     };
+    const travel = Math.hypot(target.x - centre.x, target.y - centre.y);
     const off = Math.hypot(mid.x - straight.x, mid.y - straight.y);
-    expect(off).toBeGreaterThan(10);
+    expect(off / travel, 'mid-flight offset from the straight line, in radii').toBeGreaterThan(0.1);
+
+    const bearing = (p: { x: number; y: number }) =>
+      Math.atan2(p.y - centre.y, p.x - centre.x);
+    const swing = Math.abs(bearing(mid) - bearing(target)) * (180 / Math.PI);
+    expect(swing, 'mid-flight bearing swing, degrees').toBeGreaterThan(5);
   });
 
   it('grows monotonically', () => {
@@ -513,6 +547,28 @@ function drawnExtent(
 }
 
 /**
+ * The height of the SETTLED drawing — top of the highest ink to bottom of the
+ * lowest, across every fixture, in user units. Not the frame: the frame also
+ * holds the entry sweep's headroom, and telling the two apart is the whole
+ * subject of the phone-sizing test below that uses it.
+ */
+function settledHeight(view: (typeof GRAPH_VIEWS)[number]): number {
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (const graph of COURSE_GRAPHS) {
+    const points = radialLayout(graph, view.w, view.h, view.maxRadius);
+    for (const n of graph.nodes) {
+      const p = points.get(n.id)!;
+      const isRoot = n.id === graph.rootId;
+      const e = drawnExtent(view, n.label, isRoot, p.x, p.y, isRoot ? view.rootR : view.nodeR, 1);
+      top = Math.min(top, e.top);
+      bottom = Math.max(bottom, e.bottom);
+    }
+  }
+  return bottom - top;
+}
+
+/**
  * #344 review #4 — the bug this file should have caught during development.
  *
  * The entry path used to stretch the offset from the centre by up to 1.9×, so
@@ -565,19 +621,30 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
   /**
    * The assertion above is only worth anything if the sweep actually needs the
    * headroom — otherwise a lazy "fit to the settled node positions" would pass
-   * it, and that is precisely the clipping bug. So: prove the sweep leaves the
-   * settled bounding box, and by how much. `helixEntry` rotates a node up to
-   * 1.5 turns on the way in, so every outer node passes through every direction
-   * before it lands.
+   * it, and that is precisely the clipping bug (#344 review #4). So: build the
+   * box a settled fit would produce, and prove the ASSEMBLY LEAVES IT.
    *
-   * The MARGIN is what this asserts, in units, on each side. It used to be
-   * stated as a ratio ("the sweep needs ~2× the settled height"), which was only
-   * ever a proxy for "a settled fit would clip" and moved for reasons that had
-   * nothing to do with clipping. Measured on each side: desktop 125.8 / 103.6,
-   * mobile 82.9 / 69.6 — wider again under the upward fan than under the
-   * downward tree (91.1 / 104.7 and 63.6 / 73.5), which were themselves wider
-   * than the rings (59.0 / 59.3 and 33.5 / 33.5), because a canopy is a wide,
-   * short object sitting inside a circular sweep.
+   * That is now asserted directly rather than through the old proxy. The proxy
+   * was "the swept box overhangs the settled box by more than 25 units on the
+   * top AND the bottom", which held while `helixEntry` turned 1.5 times and
+   * every node passed through every direction (desktop 125.8 / 103.6 units,
+   * mobile 82.9 / 69.6). At the quarter turn it does not, and the reason is
+   * geometry rather than a weaker guard:
+   *
+   * - the fan's tips sit far from the centre and only ~27° above the horizontal,
+   *   so rotating them toward the vertical lifts them PAST the settled top —
+   *   desktop by 27.9 units (34.5 CSS px at the cap), mobile by 17.6 (13.6 px),
+   *   both at ~80% opacity, both plainly visible if the frame did not hold them;
+   * - nothing can swing BELOW the settled bottom, because the lowest ink is the
+   *   course code hanging under the root and the root is the node nearest the
+   *   centre. The bottom overhang is exactly 0, and the frame's bottom edge is
+   *   the settled bottom plus `fitPad` by construction.
+   *
+   * So the top overhang is asserted with a number, the bottom is asserted to be
+   * non-negative (the sweep never dips below the frame's floor), and the
+   * settled-fit box is built and shown to clip — which is the property the whole
+   * `fitViewBox` doc comment is about, and which no amount of retuning can make
+   * vacuous.
    */
   for (const view of GRAPH_VIEWS) {
     it(`the ${view.maxRadius}-radius sweep leaves the settled bounding box`, () => {
@@ -607,14 +674,29 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
         }
       }
 
-      // Comfortably, not marginally, and on BOTH sides: a frame fitted to the
-      // rest state would chop this much off the top and bottom of the assembly,
-      // live, at ~83% opacity.
-      expect(settledTop - sweptTop).toBeGreaterThan(25);
-      expect(sweptBottom - settledBottom).toBeGreaterThan(25);
+      // The assembly rises this far above where it comes to rest — desktop
+      // 27.9 units, mobile 17.6 — and a frame fitted to the rest state would
+      // chop exactly that much off the top of it, live, at ~80% opacity.
+      expect(settledTop - sweptTop, 'sweep above the settled top').toBeGreaterThan(12);
+      // Nothing ever swings below the course code: the frame's floor is the
+      // settled floor, and the sweep must not need more than that.
+      expect(sweptBottom - settledBottom, 'sweep below the settled bottom').toBeGreaterThanOrEqual(
+        0,
+      );
       // …and the fitted frame is sized for the sweep, not for the rest state.
       expect(view.fit.h).toBeGreaterThanOrEqual(sweptBottom - sweptTop);
       expect(view.fit.h).toBeGreaterThan(settledBottom - settledTop);
+
+      // The bug, stated as the bug: fit the frame to the settled positions the
+      // way the demo originally did, and the assembly leaves it.
+      const settledFit = {
+        top: Math.floor(settledTop - view.fitPad),
+        bottom: Math.ceil(settledBottom + view.fitPad),
+      };
+      expect(
+        settledFit.top - sweptTop,
+        'how far the assembly escapes a settled-fitted frame',
+      ).toBeGreaterThan(10);
     });
   }
 
@@ -622,7 +704,8 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
    * CRITERION 4/5 — the settled drawing has to be a SANE SHAPE, sitting in the
    * middle of the frame it is given.
    *
-   * TWO BARS MOVED WITH THE UPWARD FAN, both deliberately, both downward.
+   * TWO BARS MOVED WITH THE UPWARD FAN, both downward; the tightened entry
+   * sweep has now put one of them back, well above where it started.
    *
    * The ASPECT WINDOW goes 0.55–1.10 → 0.40–0.80. A canopy is legitimately
    * wider than tall: three shoots leaving one base 45° apart, two of them
@@ -632,23 +715,34 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
    * fails the "grow it straight up into a tall skinny chain" family, which is
    * the way an upward layout goes wrong.
    *
-   * The FRAME-HEIGHT SHARE goes 0.55 → 0.50 (measured 0.532 desktop, 0.569
-   * phone, against 0.563 / 0.599 for the downward tree). That is a real, small
-   * regression and it is geometric, not a tuning slip: `fitViewBox` fits to the
-   * ENTRY SWEEP, the sweep is very nearly a disc, so the frame is very nearly
-   * square whatever the drawing does, and dead vertical space is therefore
-   * ≈ (drawing width − drawing height) / 2 for ANY layout. Widening the drawing
-   * to fill more of the frame's width — which criterion 4 asks for and which
-   * this change delivers, 0.828 → 0.839 on cs210 — necessarily spends a little
-   * of its height share. The bar is kept as a floor with a stated number rather
-   * than deleted, so a future change that empties the frame still fails.
+   * The FRAME-HEIGHT SHARE went 0.55 → 0.50 with the fan, and is now **0.75**,
+   * which is the whole point of tightening the entry sweep. It measures how much
+   * of the frame the drawing actually occupies vertically, i.e. it is the dead
+   * band stated as a ratio, and it is the bar that would have caught the band in
+   * the first place had it been set honestly. Under the 1.5-turn sweep the frame
+   * was fitted to what is very nearly a DISC, so it came out very nearly square
+   * around a drawing twice as wide as it is tall: 0.532 desktop, 0.569 phone —
+   * ~149 CSS px of empty paper above and below. At a quarter turn the swept
+   * union hugs the drawing and the same measurement is **0.851 desktop, 0.903
+   * phone**. The floor is set at 0.75 rather than at the measurement, so the
+   * type scale still has somewhere to move, but it is now high enough that
+   * putting the 540° sweep back fails this test rather than merely making the
+   * section 224px taller in silence.
    *
-   * What is asserted, then: the aspect stays inside a stated window, the
-   * drawing fills a real share of the frame on EACH axis, and it is CENTRED, so
-   * whatever whitespace the sweep costs is spent symmetrically instead of
-   * shoved to one side. The left-to-right seating family — which grows upward
-   * and keeps children with their parents, but puts a two-step arm on the
-   * vertical and the leaf beside it — measures 13% off-centre and fails this.
+   * What is asserted, then: the aspect stays inside a stated window, the drawing
+   * fills a real share of the frame on EACH axis, and it is CENTRED, so whatever
+   * whitespace the sweep does cost is spent symmetrically instead of shoved to
+   * one side. The left-to-right seating family — which grows upward and keeps
+   * children with their parents, but puts a two-step arm on the vertical and the
+   * leaf beside it — measures 13% off-centre and fails this.
+   *
+   * The VERTICAL off-centre number moved 2.1% → 4.2% (desktop; 1.8% → 3.9%
+   * phone) and the 5% bar did not, which is the constraint that picked the
+   * quarter turn over a third of one. The sweep's headroom is one-sided — the
+   * fan's tips lift past the settled top when they rotate through the vertical,
+   * while nothing swings below the course code — so every degree of rotation
+   * buys frame at the top only and slides the drawing down inside it. At 0.3
+   * turns this reads 5.4% and fails.
    */
   describe('the settled graph is a sane shape, centred in its frame', () => {
     for (const view of GRAPH_VIEWS) {
@@ -679,10 +773,10 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
           const aspect = (b - t) / (r - l);
           expect(aspect, 'settled aspect').toBeGreaterThanOrEqual(0.4);
           expect(aspect, 'settled aspect').toBeLessThanOrEqual(0.8);
-          // Measured: 0.815–0.934 wide, 0.532–0.569 tall.
+          // Measured: 0.841–0.964 wide, 0.851–0.903 tall.
           expect((r - l) / view.fit.w, 'share of the frame width').toBeGreaterThan(0.75);
-          expect((b - t) / view.fit.h, 'share of the frame height').toBeGreaterThan(0.5);
-          // Centred: measured ≤ 3.2% of the width, ≤ 2.1% of the height.
+          expect((b - t) / view.fit.h, 'share of the frame height').toBeGreaterThan(0.75);
+          // Centred: measured ≤ 3.9% of the width, ≤ 4.2% of the height.
           expect(
             Math.abs((l + r) / 2 - (view.fit.x + view.fit.w / 2)) / view.fit.w,
             'horizontal off-centre',
@@ -719,8 +813,8 @@ describe('fitViewBox — one stable frame for every course', () => {
     // The shipped bug: `viewBox="0 0 900 560"` around content 578 units wide.
     expect(DESKTOP_VIEW.fit.w).toBeLessThan(DESKTOP_VIEW.w);
     expect(DESKTOP_VIEW.fit.h).toBeLessThan(DESKTOP_VIEW.h);
-    expect(viewBoxAttr(DESKTOP_VIEW.fit)).toBe('161 17 603 534');
-    expect(viewBoxAttr(MOBILE_VIEW.fit)).toBe('-32 -25 443 365');
+    expect(viewBoxAttr(DESKTOP_VIEW.fit)).toBe('161 114 582 334');
+    expect(viewBoxAttr(MOBILE_VIEW.fit)).toBe('-32 40 429 230');
   });
 });
 
@@ -816,7 +910,7 @@ describe('settled frame — no foreign label collisions', () => {
  * 390px phone viewport is a uniform 0.38 scale: 4.6 CSS px labels and 10.6 CSS
  * px dots. These pin the sizes the mobile view actually resolves to, in the
  * units a visitor sees — and they are the unit-test twin of the Playwright gate
- * in `e2e/landing-graph.spec.ts` (≥11px labels, ≥20px dots, >260px tall).
+ * in `e2e/landing-graph.spec.ts` (≥11px labels, ≥20px dots, >170px tall).
  */
 describe('GraphView sizing at a 390px viewport', () => {
   /**
@@ -830,27 +924,37 @@ describe('GraphView sizing at a 390px viewport', () => {
 
   it('renders legible labels and dots on a phone', () => {
     const scale = CONTENT_PX / MOBILE_VIEW.fit.w;
-    expect(scale).toBeCloseTo(0.7494, 4);
-    // 11.99 CSS px labels, 22.48 CSS px dot diameter, 273.5 CSS px of graph
-    // height. The phone geometry is still bracketed from BELOW by a label
-    // collision (which wants a bigger ring) and from ABOVE by this gate (which
-    // wants a smaller frame), but the upward fan widened the window: its two
-    // deep arms are 90° apart and symmetric, so the worst horizontal step is
-    // `ring·sin 45°` on both instead of `ring·sin 60°` on one and `ring·sin 30°`
-    // on the other. The margins on the three bars are +0.99px / +2.48px /
-    // +13.5px, against the downward tree's +0.23px / +0.85px / +25.5px — the
-    // first two roughly quadrupled, and the first one was inside the noise of
-    // whether Chromium paints a scrollbar at this viewport.
+    expect(scale).toBeCloseTo(0.7739, 4);
+    // 12.38 CSS px labels, 23.22 CSS px dot diameter, 178.0 CSS px of frame.
+    // The phone geometry is still bracketed from BELOW by a label collision
+    // (which wants a bigger ring) and from ABOVE by the type gate (which wants a
+    // smaller frame), and tightening the entry sweep moved both the right way at
+    // once: the frame narrowed 443 → 429 units, so every unit renders bigger.
+    // Margins are now +1.38px and +3.22px, against +0.99px and +2.48px under the
+    // 1.5-turn sweep and +0.23px / +0.85px under the downward tree.
     expect(MOBILE_VIEW.font * scale).toBeGreaterThanOrEqual(11);
     expect(2 * MOBILE_VIEW.nodeR * scale).toBeGreaterThanOrEqual(20);
-    expect(MOBILE_VIEW.fit.h * scale).toBeGreaterThanOrEqual(260);
+    // THE THIRD BAR CHANGED WHAT IT MEASURES, and it is worth being explicit.
+    // It used to be `fit.h * scale >= 260` — the FRAME's rendered height — and
+    // it was written to fail the "213px smudge" the hardcoded 900×560 viewBox
+    // rendered at this viewport. That reading only worked while the frame was
+    // mostly empty paper: fitting to a 1.5-turn sweep reserved 64 and 54 CSS px
+    // of band above and below a 156px-tall drawing, and the bar was passing on
+    // the band. The quarter turn spends 16 and 2 instead, so the frame is 178px
+    // and the DRAWING inside it is 160.7 — bigger than it was, in a box 95px
+    // shorter. So: assert the drawing, which is what "not a smudge" meant, and
+    // keep a floor on the frame that a genuinely tiny graph still fails.
+    expect(MOBILE_VIEW.fit.h * scale, 'rendered frame height').toBeGreaterThanOrEqual(170);
+    expect(settledHeight(MOBILE_VIEW) * scale, 'rendered drawing height').toBeGreaterThanOrEqual(
+      150,
+    );
   });
 
   it('documents why the desktop view is still not a phone view', () => {
     // Not an aspiration — the reason `useIsMobile` swaps views at all, kept
     // here so a future "just use one viewBox everywhere" change has to argue
-    // with it. The fit shrank the desktop box from 900 to 526 units, which
-    // lifts a phone-rendered desktop label from 4.6 to 7.6 CSS px — still
+    // with it. The fit shrank the desktop box from 900 to 582 units, which
+    // lifts a phone-rendered desktop label from 4.6 to 8.0 CSS px — still
     // nowhere near the 11px floor above.
     const scale = CONTENT_PX / DESKTOP_VIEW.fit.w;
     expect(DESKTOP_VIEW.font * scale).toBeLessThan(11);
