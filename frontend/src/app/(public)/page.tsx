@@ -5,22 +5,28 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { useScrollLock } from '@/lib/useScrollLock';
-import { Network, Sparkles, FilePlus2, Brain, CalendarClock, Users, PenSquare } from 'lucide-react';
+import { Users, PenSquare } from 'lucide-react';
 import SignInModal from '@/components/marketing/SignInModal';
 import { HeroCard } from '@/components/marketing/HeroCard';
+import FeatureBand from '@/components/marketing/FeatureBand';
+import SurfaceBento from '@/components/marketing/SurfaceBento';
+import { FEATURE_BANDS } from '@/components/marketing/featureBands';
 import { BRAND_FOREST } from '@/lib/brand';
 import { Button } from "@/components/ui";
 import { IS_TEST_MODE, random, now } from '@/lib/testMode';
 
-// HowItWorks statically imports framer-motion, which a plain import would ride
-// into the landing chunk. next/dynamic splits it into its own client chunk
-// while still server-rendering the section's marketing copy (#492 review:
-// ssr:false would drop it from the HTML crawlers see — the one page where
-// that matters). The placeholder mirrors the section's own 340vh scroll
-// height so layout below doesn't shift during client-side chunk loads.
-const HowItWorks = dynamic(() => import('@/components/marketing/HowItWorks'), {
-  loading: () => <section id="how-it-works" className="landing-section relative" style={{ height: '340vh' }} />,
-});
+const KnowledgeGraphDemo = dynamic(
+  () => import('@/components/marketing/graph/KnowledgeGraphDemo'),
+  {
+    // Placeholder height approximates the section's resolved height so nothing
+    // below shifts while the chunk loads. MEASURED, not guessed: the section
+    // resolves to 990px at every desktop width once it wears its product
+    // chrome (#344 step 3) — the `80vh` this carried was 27–40% short of that
+    // even before, and a viewport-relative value cannot track a section whose
+    // height is set by a fixed-width inspector rail.
+    loading: () => <section id="knowledge-graph" className="landing-section relative" style={{ minHeight: '990px' }} />,
+  },
+);
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 
@@ -90,9 +96,9 @@ export default function LandingPage() {
   // useScrollLock resolves to it.
   useScrollLock(betaModalOpen);
 
-  // Always start at the top of the landing page so Hero → Features → HowItWorks
-  // Step 1 → 2 → 3 plays in order. Without this, browser scroll restoration on
-  // reload / hot reload can drop the user mid-section where Step 2 is showing.
+  // Always start at the top of the landing page so the intro sequence plays
+  // in order. Without this, browser scroll restoration on reload / hot
+  // reload can drop the user mid-section past the hero.
   useEffect(() => {
     if (typeof window !== 'undefined' && 'scrollRestoration' in window.history) {
       window.history.scrollRestoration = 'manual';
@@ -500,11 +506,19 @@ export default function LandingPage() {
             style={{ position: 'absolute', top: '24%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
             data-base-rot="4" data-float-delay="1000" data-float-dur="6000"
           >
+            {/*
+              Canonical knowledge-status tokens (globals.css:80-89), not literals
+              (#344 visual 1b). These four swatches and the knowledge-graph
+              section's node colours are one viewport apart on the same page, so
+              they have to be the same palette — and it has to be the palette the
+              signed-in product actually uses. Colours only; nothing else in the
+              hero moves.
+            */}
             <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--brand-forest)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Mastered</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#D97706]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Learning</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#EF4444]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Struggling</span></div>
-              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#9CA3AF]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Unexplored</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-mastery)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Mastered</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-progress)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Learning</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-struggle)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Struggling</span></div>
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[var(--state-neutral)]" /><span className="text-xs text-[var(--text-dim)] uppercase tracking-wide">Unexplored</span></div>
             </div>
           </div>
 
@@ -566,106 +580,35 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ═══ Features Section ═══ */}
       <div>
-        <section id="features" className="landing-section relative py-32 md:py-40 z-10 overflow-hidden">
-          <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
-            <div className="sapling-mesh-blob sapling-mesh-blob--3" style={{ top: '6%', left: '-10%', opacity: 0.32, width: '36vw', height: '36vw' }} />
-            <div className="sapling-mesh-blob sapling-mesh-blob--2" style={{ bottom: '10%', right: '-12%', opacity: 0.20, width: '32vw', height: '32vw' }} />
-          </div>
-          <div className="absolute top-0 left-0 w-full h-px landing-divider" />
+        <KnowledgeGraphDemo />
 
-          <div className="max-w-7xl mx-auto px-6 lg:px-12 relative z-[1]">
-            {/* Editorial heading: asymmetric split, breathing room. */}
-            <div className="grid md:grid-cols-12 gap-8 md:gap-12 mb-20 md:mb-28 landing-fade-up">
-              <div className="md:col-span-7">
-                <span className="font-jetbrains text-[0.7rem] tracking-[0.32em] text-[var(--brand-forest)] uppercase font-medium">In the Sapling kit</span>
-                <h2 className="font-playfair text-5xl md:text-7xl font-semibold text-[var(--text)] mt-5 leading-[1.02] tracking-tight">
-                  Tools that bend to <em className="not-italic text-[var(--brand-forest)]">your study</em>, not the other way around.
-                </h2>
-              </div>
-              <div className="md:col-span-4 md:col-start-9 md:pt-8 flex flex-col justify-end">
-                <p className="font-inter text-[var(--text-dim)] text-base leading-relaxed font-light">
-                  Six instruments, tuned to one another. Each is a verb you reach for; together they make a quiet system that learns you back.
-                </p>
-                <div className="mt-6 flex items-center gap-3">
-                  <span className="block h-px w-12 bg-[var(--brand-forest)]" />
-                  <span className="font-jetbrains text-[0.65rem] tracking-[0.3em] text-[var(--text-dim)] uppercase">Scroll the catalog</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Editorial feature catalog: hairline rows, no boxes. */}
-            <ol className="landing-feature-list border-t border-[var(--text-dim)]/15">
-              {[
-                { icon: Network,       title: 'Knowledge Graph',     desc: 'Every concept becomes a node in a living 3D network. Watch them glow as you master topics and see how everything connects.' },
-                { icon: Sparkles,      title: 'Adaptive Study Paths', desc: 'The AI reads your knowledge gaps and lays out the optimal sequence — so you always study the right thing at the right time.' },
-                { icon: FilePlus2,     title: 'Universal Upload',     desc: 'Drop in syllabi, textbooks, or notes. Sapling extracts every concept and maps it onto your graph automatically.' },
-                { icon: Brain,         title: 'Adaptive Quizzes',     desc: 'Questions that re-tune to your level in real time. They press where you are strong and meet you where you struggle.' },
-                { icon: CalendarClock, title: 'Spaced Repetition',    desc: 'Scientifically-timed reviews move concepts from short-term to long-term memory. Sapling handles the scheduling.' },
-                { icon: Users,         title: 'Live Study Rooms',     desc: 'Join classmates in shared rooms. Compare knowledge maps. Learn together, in real time, on the same canvas.' },
-              ].map((feature, i) => (
-                <li
-                  key={feature.title}
-                  className="landing-feature-row group relative border-b border-[var(--text-dim)]/15 landing-fade-up"
-                  style={{ transitionDelay: `${i * 70}ms` }}
-                >
-                  <div className="grid md:grid-cols-12 items-center gap-6 md:gap-8 py-9 md:py-12 px-2 md:px-4 transition-colors duration-500">
-                    {/* Index marker. */}
-                    <div className="md:col-span-1 font-jetbrains text-[0.7rem] tracking-[0.3em] text-[var(--text-dim)] transition-colors duration-500 group-hover:text-[var(--brand-forest)]">
-                      <span className="inline-block tabular-nums">0{i + 1}</span>
-                      <span className="hidden md:inline-block ml-3 align-middle h-px w-6 bg-[var(--text-dim)]/30 group-hover:bg-[var(--brand-forest)]/60 transition-colors duration-500" />
-                    </div>
-
-                    {/* Title with bare inline icon — no circle, no color. */}
-                    <div className="md:col-span-5 flex items-center gap-4 md:gap-5 min-w-0">
-                      <feature.icon
-                        aria-hidden
-                        className="landing-feature-icon shrink-0 w-5 h-5 md:w-6 md:h-6 text-[var(--text)] transition-transform duration-700 ease-out group-hover:scale-110 group-hover:-rotate-6"
-                        strokeWidth={1.5}
-                      />
-                      <h3 className="landing-feature-title font-playfair text-2xl md:text-3xl lg:text-4xl font-semibold text-[var(--text)] tracking-tight leading-[1.05]">
-                        {feature.title}
-                      </h3>
-                    </div>
-
-                    {/* Description: shifted left, generous width for body copy. */}
-                    <div className="md:col-span-6">
-                      <p className="font-inter text-[var(--text-dim)] text-[0.95rem] leading-relaxed font-light max-w-[52ch]">
-                        {feature.desc}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Hover-driven underline sweep, brand green. */}
-                  <span
-                    aria-hidden
-                    className="landing-feature-underline pointer-events-none absolute left-0 bottom-0 h-[2px] w-0 bg-[var(--brand-forest)] group-hover:w-full transition-[width] duration-[900ms] ease-out"
-                  />
-                </li>
-              ))}
-            </ol>
-
-            {/* Tail mark: editorial closing rule. */}
-            <div className="mt-10 flex items-center gap-4 landing-fade-up">
-              <span className="block h-px flex-1 bg-[var(--text-dim)]/15" />
-              <span className="font-jetbrains text-[0.65rem] tracking-[0.32em] text-[var(--text-dim)] uppercase">— end of catalog</span>
-            </div>
-          </div>
-        </section>
-
-        <HowItWorks />
+        {/* ═══ Feature bands + bento ═══
+            One arc — material in → practice → retention — with the bento of
+            built surfaces re-energising the middle. Band 3 is the closing
+            claim, so it (not a grid tile) hands off to the CTA; content and
+            side-alternation live in components/marketing/featureBands.tsx. */}
+        <FeatureBand {...FEATURE_BANDS[0]} />
+        <FeatureBand {...FEATURE_BANDS[1]} />
+        <SurfaceBento />
+        <FeatureBand {...FEATURE_BANDS[2]} />
 
         {/* ═══ Final CTA ═══ */}
         <section className="landing-section py-32 relative text-center z-10">
-          {/* Blend from HowItWorks' dark-green tint down to the mesh */}
+          {/* Soft green wash in the section's upper body.
+              This used to start at full strength on the very top edge, because
+              it was blending DOWN out of HowItWorks' dark-green scroll tint.
+              That section is gone, so a tint that starts at 0.08 on the
+              boundary now fades in from flat paper and reads as a hard seam.
+              Peak it below the edge and start from transparent instead. */}
           <div
             aria-hidden
             className="pointer-events-none absolute left-0 right-0 z-0"
             style={{
               top: 0,
               height: 'clamp(240px, 42vh, 480px)',
-              background: 'linear-gradient(to bottom, rgba(20,83,45,0.08) 0%, rgba(20,83,45,0.04) 45%, rgba(20,83,45,0) 100%)',
+              background:
+                'linear-gradient(to bottom, rgba(20,83,45,0) 0%, rgba(20,83,45,0.05) 35%, rgba(20,83,45,0) 100%)',
             }}
           />
           <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
