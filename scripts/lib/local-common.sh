@@ -24,6 +24,45 @@ if [ -z "${CONTAINER_CMD:-}" ]; then
   fi
 fi
 
+# Python interpreter inside backend/venv. A POSIX venv puts it in bin/, a
+# Windows venv (what `python -m venv` produces under Git Bash / MSYS) in
+# Scripts/python.exe. Resolve it once here so every caller — the three dev
+# scripts that source this file and e2e-up.sh's preflight — agrees on one
+# answer instead of hardcoding the POSIX layout. Empty means "no venv", which
+# callers report with the create-it instructions. $REPO_ROOT is set by the
+# caller before sourcing. An explicit $VENV_PY wins, so CI can pin one.
+if [ -z "${VENV_PY:-}" ]; then
+  if [ -x "$REPO_ROOT/backend/venv/bin/python" ]; then
+    VENV_PY="$REPO_ROOT/backend/venv/bin/python"
+  elif [ -x "$REPO_ROOT/backend/venv/Scripts/python.exe" ]; then
+    VENV_PY="$REPO_ROOT/backend/venv/Scripts/python.exe"
+  else
+    VENV_PY=""
+  fi
+fi
+
+# Point the Supabase CLI at the rootless podman socket, but ONLY when that
+# socket actually exists. Sourced by the callers that used to inline this.
+#
+# The old form was `export DOCKER_HOST="${DOCKER_HOST:-unix:///run/user/$(id -u)/podman/podman.sock}"`,
+# which exported the Linux socket path whenever the podman BINARY was present.
+# On Windows podman is present but the socket is not (podman runs in a VM the
+# CLI reaches through its own default connection), so that export pointed the
+# Supabase CLI at a nonexistent socket and every command failed with
+# "Cannot connect to the Docker daemon". Guarding on the socket file leaves
+# DOCKER_HOST unset there, which is exactly what the Windows setup needs.
+#
+# A DOCKER_HOST already in the environment always wins and is never recomputed
+# — .github/workflows/e2e.yml depends on that, because ubuntu-latest ships
+# podman alongside Docker and pre-sets DOCKER_HOST to the real Docker socket.
+set_docker_host_for_podman() {
+  [ -n "${DOCKER_HOST:-}" ] && return 0
+  command -v podman >/dev/null 2>&1 || return 0
+  local sock="unix:///run/user/$(id -u)/podman/podman.sock"
+  [ -S "/run/user/$(id -u)/podman/podman.sock" ] || return 0
+  export DOCKER_HOST="$sock"
+}
+
 # Ensure the Supabase Storage buckets the app expects exist locally, plus a
 # blunt LOCAL-ONLY RLS policy so anon-key frontend uploads work (#2).
 #
@@ -76,13 +115,14 @@ migrate_reload_seed() {
   # below shells out to backend/venv/bin/python, so without it the migrate step
   # dies with a confusing "venv/bin/python: No such file or directory" and leaves
   # the stack half-up. $REPO_ROOT is set by both caller scripts before sourcing.
-  if [ ! -x "$REPO_ROOT/backend/venv/bin/python" ]; then
+  if [ -z "${VENV_PY:-}" ]; then
     echo "✗ backend/venv not found. Create it first: python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt"
+    echo "  (on Windows the interpreter lands in backend/venv/Scripts/python.exe — both layouts are accepted)"
     return 1
   fi
 
   echo "▶ Applying pending migrations…"
-  ( cd backend && SUPABASE_DB_URL="$LOCAL_DB_URL" venv/bin/python -m db.migrate ) \
+  ( cd backend && SUPABASE_DB_URL="$LOCAL_DB_URL" "$VENV_PY" -m db.migrate ) \
     || { echo "✗ migrations failed"; exit 1; }
 
   echo "▶ Ensuring local Storage buckets…"
@@ -104,12 +144,12 @@ migrate_reload_seed() {
   done
 
   echo "▶ Seeding demo data…"
-  ( cd backend && venv/bin/python -m db.seed_staging ) || { echo "✗ seed failed"; exit 1; }
+  ( cd backend && "$VENV_PY" -m db.seed_staging ) || { echo "✗ seed failed"; exit 1; }
 
   # Optional rich local dataset (#363): opt-in via SEED_RICH=1.
   if [ "${SEED_RICH:-0}" = "1" ]; then
     echo "▶ Seeding rich local dataset (SEED_RICH=1)…"
-    ( cd backend && SUPABASE_DB_URL="$LOCAL_DB_URL" venv/bin/python -m db.seed_local_rich ) \
+    ( cd backend && SUPABASE_DB_URL="$LOCAL_DB_URL" "$VENV_PY" -m db.seed_local_rich ) \
       || { echo "✗ rich seed failed"; exit 1; }
   fi
 }
