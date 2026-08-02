@@ -38,6 +38,17 @@ def test_build_commit_ignores_blank_value(monkeypatch):
     assert build_commit() == "unknown"
 
 
+def test_build_commit_falls_back_when_railway_is_whitespace_only(monkeypatch):
+    """`A or B` alone would pick a whitespace-only RAILWAY_GIT_COMMIT_SHA over
+    a real GIT_COMMIT_SHA, because whitespace is truthy — then strip it down
+    to "" and report "unknown" despite a valid SHA being available. Each
+    candidate must be stripped BEFORE the fallback decision, not after.
+    """
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "   ")
+    monkeypatch.setenv("GIT_COMMIT_SHA", "abcdef1234567")
+    assert build_commit() == "abcdef1"
+
+
 def test_health_reports_commit(client, monkeypatch):
     monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "deadbeefcafe")
     body = client.get("/api/health").json()

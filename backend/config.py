@@ -114,5 +114,12 @@ def build_commit() -> str:
 
     Read at call time, not import time, so a test can set the env var.
     """
-    raw = os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT_SHA") or ""
-    return raw.strip()[:7].lower() or "unknown"
+    # Strip each candidate independently before picking one: `A or B` picks
+    # A whenever it is non-empty, and a whitespace-only string IS non-empty
+    # (truthy), so a blank RAILWAY_GIT_COMMIT_SHA would win over a real
+    # GIT_COMMIT_SHA and then strip down to "" — silently reporting
+    # "unknown" instead of the SHA that was actually available.
+    railway = (os.getenv("RAILWAY_GIT_COMMIT_SHA") or "").strip()
+    generic = (os.getenv("GIT_COMMIT_SHA") or "").strip()
+    raw = railway or generic
+    return raw[:7].lower() or "unknown"

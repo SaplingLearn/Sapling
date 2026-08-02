@@ -28,14 +28,24 @@ from promotion import preflight, smoke, snapshot
 from promotion.runner import Options, Ports, run
 
 
-def _run(cmd: list[str]) -> str:
+def _run(cmd: list[str], timeout: float = 120) -> str:
     """Run a subprocess and surface its real stderr on failure.
 
     `check=True` alone collapses every git/gh failure into "returned non-zero
     exit status 1" and throws away the one line (merge conflict, bad ref,
     auth expired, ...) that would tell the operator what actually happened.
+
+    Every caller of this is a network call (git fetch, gh pr create/view/
+    merge). Without a timeout, a stalled network or a `gh` sitting on an
+    interactive prompt hangs forever with no output — possibly AFTER the
+    migration has already applied. httpx_fetch bounds its calls at 25s and
+    the deploy poll bounds itself at wait_timeout; this is the same
+    discipline applied to subprocess calls.
     """
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"`{' '.join(cmd[:2])}` timed out after {timeout}s") from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(f"`{' '.join(cmd[:2])}` failed ({result.returncode}): {detail}")
@@ -107,10 +117,16 @@ def _staging_recorded() -> set[str] | None:
             cur.execute("SELECT filename FROM schema_migrations")
             return {row[0] for row in cur.fetchall()}
     except psycopg.Error as exc:
-        # Same wart _run() fixes for subprocesses: an unwrapped driver error
-        # would escape main()'s handler as a raw traceback instead of the one
-        # clean line an operator needs mid-promotion.
-        raise RuntimeError(f"could not read staging's migration ledger ({exc})") from exc
+        # NOT re-raised: a stale URI, a paused staging project, or a
+        # transient network fault here must not abort the whole run before
+        # the operator ever sees a preflight report — that would deny them
+        # the existence of --skip-staging-check at the exact moment they'd
+        # want it. Print the reason (so the degradation isn't silent) and
+        # return None, same as "the var is unset": preflight.evaluate turns
+        # that into its documented `staging-unknown` finding, whose own text
+        # says exactly this ("could not read staging's migration ledger").
+        print(f"WARNING: could not read staging's migration ledger ({exc})", file=sys.stderr)
+        return None
 
 
 def _preflight_data(conn) -> dict:
@@ -140,6 +156,27 @@ def _preflight_data(conn) -> dict:
     }
 
 
+def _confirm(prompt: str, auto_yes: bool) -> bool:
+    """The interactive confirmation gate — a plain function, not a closure
+    over `main()`'s locals, so it is directly testable.
+
+    `input()` raises `EOFError` on non-interactive stdin (no controlling
+    terminal, a closed pipe, CI invoking this without a tty). `str(EOFError())`
+    is empty, so letting it propagate would make `main()`'s handler print a
+    bare "ERROR: " — right after the migration has already applied, the exact
+    moment a clear message matters most. Treat it exactly like a typed "n"
+    instead: the runner's own "ABORTED before the merge" report already
+    explains the migrations are applied and returns EXIT_ABORTED, which is a
+    far clearer outcome.
+    """
+    if auto_yes:
+        return True
+    try:
+        return input(f"{prompt} [y/N] ").strip().lower() in {"y", "yes"}
+    except EOFError:
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="promotion")
     parser.add_argument("--allow-destructive", action="store_true")
@@ -167,9 +204,7 @@ def main() -> int:
         return 1
 
     def confirm(prompt: str) -> bool:
-        if args.yes:
-            return True
-        return input(f"{prompt} [y/N] ").strip().lower() in {"y", "yes"}
+        return _confirm(prompt, args.yes)
 
     ports = Ports(
         connect=lambda: psycopg.connect(db_url),

@@ -80,12 +80,15 @@ def _wait_for_deploy(ports: Ports, options: Options, target: str, out: Callable[
 def _run_smoke(
     ports: Ports, options: Options, out: Callable[[str], None], *, merged_this_run: bool = True
 ) -> int:
-    """`merged_this_run=False` is the migrations-only path (run()'s
-    `commits_ahead == 0` branch): no PR was merged, so production's git HEAD
-    is a PREVIOUS promotion's merge commit, unrelated to this run. The default
-    revert recipe below is only correct when THIS run merged something —
-    telling an operator to `git revert -m 1 HEAD` on that path would revert
-    an unrelated, previously-working deploy.
+    """`merged_this_run=False` covers every path where THIS run merged
+    nothing: the migrations-only path (run()'s `commits_ahead == 0` branch)
+    and `--verify-only` (which never merges by design). Either way,
+    production's git HEAD is a PREVIOUS promotion's merge commit — or, under
+    `--verify-only`, simply not something this invocation touched at all.
+    The default revert recipe below is only correct when THIS run itself
+    merged something; telling an operator to `git checkout production &&
+    git revert -m 1 HEAD` on either of those paths would revert an
+    unrelated, previously-working deploy.
     """
     results = smoke.run_checks(ports.fetch, options.api_base, options.web_base)
     out("\nSmoke:")
@@ -102,12 +105,12 @@ def _run_smoke(
             )
         else:
             out(
-                "\nSMOKE FAILED. No code was merged this run — production's schema "
-                "moved (the migration(s) applied above), but its code was NOT "
-                "touched, so there is no code to revert. Production's current git "
-                "HEAD is a PREVIOUS promotion's merge commit, unrelated to this "
-                "run; undoing it would revert an earlier, previously-working "
-                "deploy. Inspect the migration that just landed, not the code."
+                "\nSMOKE FAILED. No code was merged this run, so there is no code "
+                "to revert. Production's current git HEAD is a PREVIOUS "
+                "promotion's merge commit, unrelated to this run — acting on it "
+                "would undo an earlier, previously-working deploy. Inspect what "
+                "actually changed in THIS run (a migration, or nothing at all) "
+                "before doing anything else."
             )
         return EXIT_FAIL
 
@@ -115,10 +118,12 @@ def _run_smoke(
     return EXIT_OK
 
 
-def _wait_then_smoke(ports: Ports, options: Options, target: str, out: Callable[[str], None]) -> int:
+def _wait_then_smoke(
+    ports: Ports, options: Options, target: str, out: Callable[[str], None], *, merged_this_run: bool = True
+) -> int:
     if not _wait_for_deploy(ports, options, target, out):
         return EXIT_FAIL
-    return _run_smoke(ports, options, out)
+    return _run_smoke(ports, options, out, merged_this_run=merged_this_run)
 
 
 def run(ports: Ports, options: Options) -> int:
@@ -131,7 +136,11 @@ def run(ports: Ports, options: Options) -> int:
         ports.git.fetch()
         deploy_target = ports.git.head_sha("origin/production")
         out(f"--verify-only: waiting for the deploy to report {deploy_target[:7]}.")
-        return _wait_then_smoke(ports, options, deploy_target, out)
+        # --verify-only never merges by design (see Options.verify_only), so
+        # a smoke failure here must not hand out the git-revert recipe below
+        # either — see _run_smoke's docstring; this is the second door onto
+        # the same false-report bug the migrations-only path already fixed.
+        return _wait_then_smoke(ports, options, deploy_target, out, merged_this_run=False)
 
     # ---- Stage 1: preflight (read-only) --------------------------------
     ports.git.fetch()

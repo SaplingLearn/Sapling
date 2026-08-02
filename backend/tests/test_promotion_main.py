@@ -1,17 +1,21 @@
-"""Direct coverage for promotion/__main__.py's `gh` argv shape (#516).
+"""Direct coverage for promotion/__main__.py's real-IO glue (#516).
 
-Everything else in __main__.py is real-IO glue (subprocess/psycopg) that stays
+Most of __main__.py is real-IO glue (subprocess/psycopg) that stays
 deliberately untested per the coordinator's explicit deferral in
-task-5-report.md. This one seam is the exception: `Gh.ensure_pr`'s
-`--state open` filter is the exact line whose earlier regression
-(`--state all`) silently returned a PREVIOUS promotion's already-MERGED PR,
-which the runner then read as "resume here, skip the confirm" — bypassing the
-only human confirmation gate this tool has, with CI staying green the whole
-time. Nothing today would catch a future edit reverting that filter; this
-test does, by faking `_run` rather than shelling out to a real `gh`.
+task-5-report.md. Two seams are the exception, both faked rather than
+shelling/reading out to the real world:
+
+- `Gh.ensure_pr`'s `--state open` filter is the exact line whose earlier
+  regression (`--state all`) silently returned a PREVIOUS promotion's
+  already-MERGED PR, which the runner then read as "resume here, skip the
+  confirm" — bypassing the only human confirmation gate this tool has, with
+  CI staying green the whole time.
+- `_confirm`'s EOFError handling: `input()` raises EOFError on non-interactive
+  stdin, and `str(EOFError())` is empty, so letting it propagate used to make
+  `main()` print a bare "ERROR: " right after the migration had already
+  applied — the exact moment a clear message matters most.
 """
 import promotion.__main__ as promotion_main
-from promotion.__main__ import Gh
 
 
 def test_ensure_pr_only_ever_returns_an_open_pr_never_a_merged_one(monkeypatch):
@@ -43,10 +47,36 @@ def test_ensure_pr_only_ever_returns_an_open_pr_never_a_merged_one(monkeypatch):
 
     monkeypatch.setattr(promotion_main, "_run", fake_run)
 
-    number = Gh().ensure_pr("production", "main", "Promote staging to production")
+    number = promotion_main.Gh().ensure_pr("production", "main", "Promote staging to production")
 
     assert number == 999
     assert number != 515  # never the stale merged PR from a previous promotion
     assert created == [1]  # a new PR really was created, not silently skipped
     list_calls = [c for c in calls if c[:3] == ["gh", "pr", "list"]]
     assert len(list_calls) == 2  # one miss, one re-query after create — no recursion
+
+
+def test_confirm_treats_eof_as_declined(monkeypatch):
+    """Non-interactive stdin (no controlling terminal, a closed pipe, CI
+    running this without a tty) raises EOFError from input(). Must degrade
+    to a normal decline (False), not propagate and blank out the error
+    message main() would otherwise print.
+    """
+
+    def raise_eof(prompt):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", raise_eof)
+    assert promotion_main._confirm("Merge?", auto_yes=False) is False
+
+
+def test_confirm_auto_yes_never_touches_input(monkeypatch):
+    """--yes must short-circuit before input() is even called — including
+    under EOF conditions, which is exactly the CI scenario --yes exists for.
+    """
+
+    def raise_if_called(prompt):
+        raise AssertionError("input() must not be called when auto_yes is True")
+
+    monkeypatch.setattr("builtins.input", raise_if_called)
+    assert promotion_main._confirm("Merge?", auto_yes=True) is True

@@ -80,7 +80,7 @@ def make_ports(**over):
         return 200, "<html>"
 
     ports = dict(
-        connect=lambda: FakeConn(),
+        connect=FakeConn,
         migrate=lambda conn: ["0002_b.sql"],
         preflight_data=lambda conn: dict(
             ledger_exists=True,
@@ -533,6 +533,30 @@ def test_verify_only_skips_promotion_and_just_waits_and_smokes():
     # by the wait loop (which only ever calls /api/health) — its presence is
     # proof smoke genuinely executed too, not just the wait.
     assert any(u.endswith("/api/semesters") for u in fetch_urls)
+
+
+def test_verify_only_smoke_failure_does_not_print_revert_recipe():
+    """--verify-only never merges by design (see Options.verify_only), so a
+    smoke failure under it must not get _run_smoke's default
+    `git checkout production && git revert -m 1 HEAD` recipe either — that
+    would tell the operator to revert a PREVIOUS promotion's merge commit
+    that this invocation had nothing to do with. This is the second door
+    onto the same false-report bug the migrations-only path already fixed:
+    _wait_then_smoke must forward merged_this_run, not just _run_smoke's
+    other direct callers.
+    """
+
+    def fetch(method, url):
+        if url.endswith("/api/health"):
+            return 200, HEALTH_NEW
+        return 500, "boom"
+
+    lines = []
+    kwargs = make_ports(fetch=fetch, out=lines.append)
+    assert run(*build(kwargs, verify_only=True)) == 1
+    text = "\n".join(lines)
+    assert "git revert" not in text
+    assert "No code was merged this run" in text
 
 
 def test_unknown_live_commit_degrades_instead_of_hanging():
