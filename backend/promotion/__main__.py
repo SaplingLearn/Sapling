@@ -126,8 +126,12 @@ def _preflight_data(conn) -> dict:
     pending, _ = preflight.ledger_diff(files, recorded)
     pending_paths = [db_migrate.MIGRATIONS_DIR / name for name in pending]
     return {
-        "db_url": os.environ.get("SUPABASE_DB_URL", ""),
-        "supabase_url": os.environ.get("SUPABASE_URL", ""),
+        # .strip() to match the value main() actually connects with — an
+        # unstripped value with leading whitespace makes urlparse() (inside
+        # preflight.project_ref) yield no ref, which silently no-ops the
+        # target-mismatch guard instead of tripping it.
+        "db_url": os.environ.get("SUPABASE_DB_URL", "").strip(),
+        "supabase_url": os.environ.get("SUPABASE_URL", "").strip(),
         "ledger_exists": exists,
         "migration_files": files,
         "recorded": recorded,
@@ -186,7 +190,10 @@ def main() -> int:
     )
     try:
         return run(ports, options)
-    except RuntimeError as exc:
+    except Exception as exc:  # noqa: BLE001 — no path may exit as a raw traceback:
+        # this also covers psycopg errors from Git.commits_ahead_of's int()
+        # parse, psycopg.connect(), and anything else not already wrapped in
+        # a RuntimeError by _run()/_staging_recorded().
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

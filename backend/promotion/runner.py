@@ -146,84 +146,136 @@ def run(ports: Ports, options: Options) -> int:
 
         # ---- Stage 2-4: snapshot, migrate, snapshot --------------------
         before = ports.capture(conn)
+        out(f"Target: project {preflight.project_ref(data['db_url'])} ({before.get('host', 'unknown')})")
+
+        migrate_error: Exception | None = None
         if pending:
-            applied = ports.migrate(conn)
-            out(f"Applied {len(applied)} migration(s).")
-        after = ports.capture(conn)
+            try:
+                applied = ports.migrate(conn)
+                out(f"Applied {len(applied)} migration(s).")
+            except Exception as exc:  # noqa: BLE001 — reported as an honest partial-state report, never a traceback
+                migrate_error = exc
+
+        if migrate_error is None:
+            after = ports.capture(conn)
+
+    if migrate_error is not None:
+        # apply_migration commits per file, so whatever landed before the
+        # failure is durable. Reopen a FRESH connection rather than reuse
+        # `conn`: it may be left with an aborted transaction by the failed
+        # migration, which would raise again on the very query meant to
+        # report what actually happened.
+        with ports.connect() as conn2:
+            after = ports.capture(conn2)
+        changes = snapshot.diff(before, after)
+        landed = changes["new_migrations"]
+        # Ledger inserts are part of the same per-file transaction as the SQL,
+        # so `landed` is exact, not a guess — and apply order is `pending`'s
+        # order, so the first pending name NOT in `landed` is the one that
+        # raised.
+        failed_name = next((name for name in pending if name not in landed), "unknown")
+        out(
+            f"\nMIGRATION FAILED after {len(landed)} of {len(pending)} pending "
+            f"migration(s) landed.\n"
+            f"  Failed on: {failed_name}\n"
+            f"  Error: {migrate_error}"
+        )
+        if landed:
+            out("\nDatabase changes so far:")
+            out(snapshot.format_diff(changes))
+        out(
+            "\n  WARNING: production's schema is now PARTIALLY migrated and AHEAD "
+            "of production's code. Production's code was NOT touched. Do NOT "
+            f"re-run blindly — inspect {failed_name} and the database by hand "
+            "before continuing."
+        )
+        return EXIT_FAIL
 
     changes = snapshot.diff(before, after)
     out("\nDatabase changes:")
     out(snapshot.format_diff(changes))
 
+    if commits_ahead == 0:
+        # Migrations landed but there is no new code to promote — production's
+        # DB can trail its own code (a real, recurring state; see #316/#510).
+        # `gh pr create` would fail outright with "No commits between
+        # production and main", so skip PR/merge/deploy-wait entirely. Still
+        # smoke: a migration that broke the running app is exactly the
+        # failure this stage exists to catch.
+        out("\nMigrations applied; no code to promote (production and main are level).")
+        return _run_smoke(ports, options, out)
+
     # ---- The one pause ------------------------------------------------
     number = ports.gh.ensure_pr("production", "main", f"Promote staging to production — {commits_ahead} commits")
-    already_merged = ports.gh.state(number) == "MERGED"
 
-    if not already_merged:
-        prompt = (
-            f"\nMerge PR #{number} ({commits_ahead} commits, "
-            f"{len(changes['new_migrations'])} migrations applied) into production?"
+    prompt = (
+        f"\nMerge PR #{number} ({commits_ahead} commits, "
+        f"{len(changes['new_migrations'])} migrations applied) into production?"
+    )
+    if not ports.confirm(prompt):
+        out(
+            "\nABORTED before the merge.\n"
+            "  NOTE: the migrations above are ALREADY APPLIED. Production's "
+            "schema is now AHEAD of production's code.\n"
+            "  Re-run to resume at the merge, or revert deliberately."
         )
-        if not ports.confirm(prompt):
-            out(
-                "\nABORTED before the merge.\n"
-                "  NOTE: the migrations above are ALREADY APPLIED. Production's "
-                "schema is now AHEAD of production's code.\n"
-                "  Re-run to resume at the merge, or revert deliberately."
-            )
-            return EXIT_ABORTED
+        return EXIT_ABORTED
 
-        # The gh merge 502 wedge: `gh pr merge --merge` is known to return an
-        # error (observed: HTTP 502) while the merge actually lands. Never
-        # trust the first failure — re-read the PR state, and don't trust that
-        # read blindly either: a transient failure checking state right after
-        # a merge attempt is the worst possible moment to crash the runner.
-        #
-        # `current_state` is reassigned every iteration (None on a failed
-        # read), so by the time the loop exhausts it reflects only the LAST
-        # attempt's outcome, not "was any read ever successful". That matters:
-        # e.g. attempt 1 reads OPEN, attempts 2-5 all fail to read — the
-        # runner has NOT confirmed production is unchanged, because attempts
-        # 2-5's merge() calls could have landed with no way to know. A sticky
-        # "any read ever succeeded" flag would print the accurate-sounding but
-        # false "Production code unchanged" here; only the most recent read
-        # tells us what we currently know.
-        current_state = None
-        for attempt in range(5):
-            try:
-                ports.gh.merge(number)
-            except Exception as exc:  # noqa: BLE001 — any gh failure gets re-checked
-                out(f"  merge attempt {attempt + 1} errored ({exc}); re-checking PR state")
-            try:
-                current_state = ports.gh.state(number)
-            except Exception as exc:  # noqa: BLE001 — state-read is not trusted blindly either
-                out(f"  could not re-check PR state ({exc}); retrying")
-                current_state = None
-            if current_state == "MERGED":
-                break
-            ports.sleep(options.poll_interval)
-        else:
-            if current_state is not None:
-                # The LAST state read genuinely succeeded and said "not
-                # merged" — this claim is one this run actually knows to be
-                # true right now.
-                out(f"\nPR #{number} never reported MERGED. Production code unchanged.")
-            else:
-                # The last `gh pr view` read failed. `gh.merge` may have
-                # landed on this or an earlier attempt — this run cannot
-                # tell. Saying "production unchanged" here would be exactly
-                # the false report this tool exists to prevent.
-                out(
-                    f"\nPR #{number}'s merge outcome is UNKNOWN: the last `gh pr view` "
-                    "read failed, so this run cannot confirm whether the merge "
-                    "landed or not. Do not assume either way — check "
-                    f"`gh pr view {number}` by hand before doing anything else. "
-                    "The migrations applied earlier in this run are ALREADY "
-                    "APPLIED regardless of the merge outcome."
-                )
-            return EXIT_FAIL
+    # The gh merge 502 wedge: `gh pr merge --merge` is known to return an
+    # error (observed: HTTP 502) while the merge actually lands — the merge
+    # can land seconds AFTER a read that said OPEN, not just after a read
+    # that failed outright. Never trust the first failure — re-read the PR
+    # state, and don't trust that read blindly either: a transient failure
+    # checking state right after a merge attempt is the worst possible
+    # moment to crash the runner.
+    #
+    # `current_state` is reassigned every iteration (None on a failed read),
+    # so by the time the loop exhausts it reflects only the LAST attempt's
+    # outcome. But even a successful last read is a snapshot from BEFORE this
+    # point, not a guarantee about right now — gh's own 502-while-it-lands
+    # wedge means a merge triggered above can still land after every read
+    # this run performed. So neither branch below may assert "production is
+    # unchanged" as settled fact; both report what was OBSERVED and tell the
+    # operator to verify by hand.
+    current_state = None
+    for attempt in range(5):
+        try:
+            ports.gh.merge(number)
+        except Exception as exc:  # noqa: BLE001 — any gh failure gets re-checked
+            out(f"  merge attempt {attempt + 1} errored ({exc}); re-checking PR state")
+        try:
+            current_state = ports.gh.state(number)
+        except Exception as exc:  # noqa: BLE001 — state-read is not trusted blindly either
+            out(f"  could not re-check PR state ({exc}); retrying")
+            current_state = None
+        if current_state == "MERGED":
+            break
+        ports.sleep(options.poll_interval)
     else:
-        out(f"PR #{number} is already merged — resuming at the deploy wait.")
+        if current_state is not None:
+            out(
+                f"\nPR #{number} never reported MERGED after 5 attempts. As of "
+                f"the last check, it was {current_state}. A merge triggered by "
+                "this run may still be landing — gh is known to report an "
+                "error while a merge lands seconds later. Check "
+                f"`gh pr view {number}` before doing anything else, including "
+                "re-running this tool. The migrations applied earlier in this "
+                "run are ALREADY APPLIED regardless of the merge outcome."
+            )
+        else:
+            # The last `gh pr view` read failed. `gh.merge` may have landed on
+            # this or an earlier attempt — this run cannot tell. Saying
+            # "production unchanged" here would be exactly the false report
+            # this tool exists to prevent.
+            out(
+                f"\nPR #{number}'s merge outcome is UNKNOWN: the last `gh pr view` "
+                "read failed, so this run cannot confirm whether the merge "
+                "landed or not. Do not assume either way — check "
+                f"`gh pr view {number}` by hand before doing anything else. "
+                "The migrations applied earlier in this run are ALREADY "
+                "APPLIED regardless of the merge outcome."
+            )
+        return EXIT_FAIL
 
     # `gh pr merge --merge` creates a merge commit ON production; Railway
     # deploys production, not main. So the deploy target has to be read from

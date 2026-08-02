@@ -92,8 +92,12 @@ def make_ports(**over):
             supabase_url="https://ref1.supabase.co",
         ),
         snapshots=[
-            {"tables": {"users": 8}, "ledger": ["0001_a.sql"]},
-            {"tables": {"users": 8, "events": 0}, "ledger": ["0001_a.sql", "0002_b.sql"]},
+            {"host": "aws-0-us-west-2.pooler.supabase.com", "tables": {"users": 8}, "ledger": ["0001_a.sql"]},
+            {
+                "host": "aws-0-us-west-2.pooler.supabase.com",
+                "tables": {"users": 8, "events": 0},
+                "ledger": ["0001_a.sql", "0002_b.sql"],
+            },
         ],
         git=fake_git,
         gh=fake_gh,
@@ -164,8 +168,7 @@ def test_declining_the_prompt_stops_without_merging():
     gh = kwargs["gh"]
     assert run(*build(kwargs)) == 2
     # ensure_pr runs BEFORE the prompt on purpose — the prompt names the PR
-    # number, and an already-merged PR is how a re-run resumes. Declining must
-    # leave the PR open and unmerged, not uncreated.
+    # number. Declining must leave the PR open and unmerged, not uncreated.
     assert "merge" not in gh.calls
     assert gh.merged is False
 
@@ -250,14 +253,7 @@ def test_merge_state_unreadable_does_not_claim_production_unchanged():
     """
 
     class UnreadableStateGh(FakeGh):
-        def __init__(self):
-            super().__init__()
-            self.state_calls = 0
-
         def state(self, number):
-            self.state_calls += 1
-            if self.state_calls == 1:
-                return "OPEN"  # the pre-confirm already_merged check
             raise RuntimeError("gh: pr view failed (rate limited)")
 
         def merge(self, number):
@@ -288,10 +284,10 @@ def test_merge_state_stale_confirmation_does_not_claim_production_unchanged():
 
         def state(self, number):
             self.state_calls += 1
-            # call 1 = the pre-confirm already_merged check; call 2 = the
-            # FIRST retry-loop read. Both succeed and say OPEN. Every read
-            # after that (covering merge attempts 2-5) fails.
-            if self.state_calls <= 2:
+            # call 1 = the FIRST retry-loop read (after merge attempt 1),
+            # which succeeds and says OPEN. Every read after that (covering
+            # merge attempts 2-5) fails.
+            if self.state_calls == 1:
                 return "OPEN"
             raise RuntimeError("gh: pr view failed (rate limited)")
 
@@ -308,6 +304,32 @@ def test_merge_state_stale_confirmation_does_not_claim_production_unchanged():
     assert "gh pr view" in text
 
 
+def test_merge_stays_open_after_retries_is_reported_as_observation_not_fact():
+    """CRITICAL: rounds 2-3 fixed read FAILURE; this is read STALENESS. Even
+    when every post-merge read succeeds and consistently says OPEN, gh's own
+    documented squash/merge-502-while-it-lands wedge means a merge triggered
+    by this run can land seconds AFTER the last read this run performed.
+    "Error returned" does not mean "definitely nothing happened". The
+    exhaustion message must report what was OBSERVED, not assert "production
+    is unchanged" as a settled fact this run cannot actually know.
+    """
+
+    class NeverLandsGh(FakeGh):
+        def merge(self, number):
+            self.calls.append("merge")
+            # Deliberately never sets self.merged — every state() read below
+            # (inherited from FakeGh, keyed on self.merged) genuinely, and
+            # consistently, returns "OPEN".
+
+    lines = []
+    kwargs = make_ports(gh=NeverLandsGh(), out=lines.append)
+    assert run(*build(kwargs)) == 1
+    text = "\n".join(lines).lower()
+    assert "unchanged" not in text
+    assert "gh pr view" in text
+    assert "may still be landing" in text
+
+
 def test_nothing_to_promote_exits_clean():
     kwargs = make_ports()
     kwargs["git"].commits_ahead = 0
@@ -321,6 +343,106 @@ def test_nothing_to_promote_exits_clean():
         supabase_url="https://ref1.supabase.co",
     )
     assert run(*build(kwargs)) == 0
+
+
+def test_migration_failure_reports_partial_state_not_a_traceback():
+    """apply_migration commits per file (db/migrate.py), so a failure partway
+    through 3 pending migrations still leaves earlier ones durably applied
+    and recorded. This is exactly the moment the tool's whole purpose is an
+    honest state report: it must say how many landed and which file failed,
+    warn that the schema is now ahead of the code, and return EXIT_FAIL —
+    never let the exception propagate as a raw traceback.
+    """
+
+    def failing_migrate(conn):
+        raise RuntimeError('syntax error at or near "FOO" in 0003_c.sql')
+
+    lines = []
+    kwargs = make_ports(migrate=failing_migrate, out=lines.append)
+    kwargs["preflight_data"] = lambda conn: dict(
+        ledger_exists=True,
+        migration_files=["0001_a.sql", "0002_b.sql", "0003_c.sql"],
+        recorded={"0001_a.sql"},
+        staging_recorded={"0001_a.sql", "0002_b.sql", "0003_c.sql"},
+        destructive=[],
+        db_url="postgresql://postgres.ref1:p@aws-0-us-west-2.pooler.supabase.com:5432/postgres",
+        supabase_url="https://ref1.supabase.co",
+    )
+    # before: only 0001_a.sql recorded. after (re-captured on a FRESH
+    # connection post-failure): 0002_b.sql landed and committed; 0003_c.sql
+    # never did — that is what actually failed.
+    kwargs["snapshots"] = [
+        {"host": "aws-0-us-west-2.pooler.supabase.com", "tables": {"users": 8}, "ledger": ["0001_a.sql"]},
+        {
+            "host": "aws-0-us-west-2.pooler.supabase.com",
+            "tables": {"users": 8},
+            "ledger": ["0001_a.sql", "0002_b.sql"],
+        },
+    ]
+    gh = kwargs["gh"]
+    assert run(*build(kwargs)) == 1
+    assert gh.calls == []  # a migration failure must never reach the PR/merge stage
+    text = "\n".join(lines)
+    assert "1 of 2" in text  # 1 of the 2 pending migrations landed
+    assert "0003_c.sql" in text  # names the migration that actually failed
+    assert "syntax error" in text  # surfaces the real driver error
+    assert "ahead" in text.lower()  # schema-ahead-of-code warning, same as the decline path
+
+
+def test_target_line_printed_before_migrate_runs():
+    """Names the DB project about to receive DDL, before the DDL runs — the
+    only way an operator can catch a .env file pointing at the wrong project
+    (matching SUPABASE_DB_URL/SUPABASE_URL refs proves nothing if BOTH
+    consistently hold the wrong project's credentials) before, not after,
+    migrations actually apply.
+    """
+    order = []
+    kwargs = make_ports()
+    kwargs["out"] = lambda line: order.append(("out", line))
+    kwargs["migrate"] = lambda conn: order.append(("migrate", None)) or ["0002_b.sql"]
+    assert run(*build(kwargs)) == 0
+
+    target_idx = next(
+        i for i, (kind, line) in enumerate(order) if kind == "out" and line.startswith("Target:")
+    )
+    migrate_idx = next(i for i, (kind, _) in enumerate(order) if kind == "migrate")
+    assert target_idx < migrate_idx
+    _, target_line = order[target_idx]
+    assert "ref1" in target_line  # the project ref parsed out of db_url
+
+
+def test_migrations_only_promotion_skips_pr_and_still_smokes():
+    """Production's DB can trail its own code (a real, recurring state — see
+    #316/#510): commits_ahead can be 0 while a migration is still pending.
+    `gh pr create` would fail outright ("No commits between production and
+    main"), so this path must skip PR/merge/deploy-wait entirely — but still
+    smoke, since a migration that broke the running app is exactly the
+    failure that stage exists to catch.
+    """
+    lines = []
+    kwargs = make_ports(out=lines.append)
+    kwargs["git"].commits_ahead = 0
+    gh = kwargs["gh"]
+    assert run(*build(kwargs)) == 0
+    assert gh.calls == []  # no ensure_pr, no merge — nothing to promote via PR
+    text = "\n".join(lines).lower()
+    assert "migrations applied" in text and "no code to promote" in text
+
+
+def test_migrations_only_promotion_fails_if_smoke_fails():
+    """The EXIT_FAIL branch of the migrations-only path must be wired to a
+    real smoke result, not a stub that always reports success."""
+
+    def fetch(method, url):
+        if url.endswith("/api/health"):
+            return 200, HEALTH_NEW
+        return 500, "boom"
+
+    kwargs = make_ports(fetch=fetch)
+    kwargs["git"].commits_ahead = 0
+    gh = kwargs["gh"]
+    assert run(*build(kwargs)) == 1
+    assert gh.calls == []
 
 
 def test_verify_only_skips_promotion_and_just_waits_and_smokes():

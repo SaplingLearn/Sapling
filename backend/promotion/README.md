@@ -20,14 +20,22 @@ that shipped #515.
 1. **Preflight** (read-only): target-identity, ledger exists, no orphans,
    staging-ran-it-first, no destructive DDL, something to promote.
 2. **Snapshot** production.
-3. **Migrate** production (`db.migrate`).
+3. **Migrate** production (`db.migrate`) — this is the irreversible step.
 4. **Snapshot** again and print the diff.
-5. **Pause** — the only prompt, at the only irreversible step.
+5. **Pause** — the only prompt. By this point the migration in step 3 has
+   already run and cannot be undone; this confirms the merge, not the
+   database change.
 6. **Merge** `main` → `production`, retrying through the known `gh` 502.
 7. **Wait** until `/api/health` reports the merge commit now on
    `origin/production` — not main's tip, which is never what gets deployed
    (10 min timeout).
 8. **Smoke** the live surface.
+
+If there are pending migrations but no new commits to promote (production's
+code already matches main — see "Re-running" below), steps 5-7 are skipped
+entirely after step 4: `gh pr create` would fail outright with "No commits
+between production and main". Step 8 (smoke) still runs, since a migration
+that broke the running app is exactly the failure that stage exists to catch.
 
 Exit codes: `0` success or nothing to promote, `1` failure, `2` you declined.
 
