@@ -822,6 +822,25 @@ async def upload_document(
     # existed. The phases below still emit their usual events either way, so a
     # replayed upload is indistinguishable to the client apart from latency.
     replayed = twin.get("result") if twin else None
+    # Logged separately from the "reusing extracted text" line above because the
+    # two savings are independent and only one of them is visible in the event
+    # stream (neither is — the SSE sequence is identical either way). Without
+    # this, a duplicate that skipped OCR but still ran all four agents looks
+    # exactly like one that skipped everything, and the only way to tell them
+    # apart is counting generateContent calls in the httpx log.
+    if twin:
+        if replayed is not None:
+            logger.info(
+                "Replaying stored pipeline result from document %s for '%s' — "
+                "skipping the classifier and workers",
+                twin.get("id"), filename,
+            )
+        else:
+            logger.info(
+                "Duplicate document %s has no stored pipeline result — reusing "
+                "its text but re-running the agents for '%s'",
+                twin.get("id"), filename,
+            )
 
     async def event_stream():
         nonlocal extracted_text

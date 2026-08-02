@@ -104,6 +104,14 @@ def find_duplicate(file_hash: str) -> dict | None:
             filters={
                 "file_sha256": f"eq.{file_hash}",
                 "deleted_at": "is.null",
+                # Pushed into the query rather than left to the post-fetch check
+                # below, because `limit=1` makes the two behave differently: an
+                # unordered LIMIT 1 can hand back a text-less row while a
+                # perfectly good twin sits behind it, and the post-fetch check
+                # would then report "no duplicate" for a file that plainly has
+                # one. Filtering here means the row we get back is usable by
+                # construction, whatever order the planner returns.
+                "extracted_text": "not.is.null",
             },
             limit=1,
         )

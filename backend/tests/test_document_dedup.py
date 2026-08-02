@@ -109,6 +109,26 @@ class TestFindDuplicate:
 
             assert find_duplicate("cafe1234") is None
 
+    def test_the_query_itself_excludes_rows_with_no_extracted_text(self):
+        """Order-independence, enforced at the source rather than by scanning.
+
+        The lookup is `LIMIT 1` with no ORDER BY, so if text-less rows could
+        match, the planner would be free to hand back the useless one while a
+        perfectly good twin sat behind it — and the post-fetch check below would
+        then report "no duplicate" for a file that plainly has one. Filtering in
+        the query makes that unreachable: whichever single row comes back is
+        usable by construction, in any order.
+
+        Scanning client-side would not fix it — `LIMIT 1` means the database
+        only ever sends one row, so there is nothing to scan past.
+        """
+        with patch("services.document_dedup.table") as t:
+            t.return_value.select.return_value = []
+            find_duplicate("cafe1234")
+            filters = t.return_value.select.call_args.kwargs["filters"]
+
+        assert filters["extracted_text"] == "not.is.null"
+
     def test_returns_none_when_the_column_does_not_exist_yet(self):
         """Deployments ship code before migrations run. A missing
         file_sha256 column must degrade to 'no duplicate', never a 500."""
