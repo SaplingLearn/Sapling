@@ -12,7 +12,9 @@ can only find courses BU links from its own index. Two kinds of course escape it
 Both are invisible to a crawl but visible to a direct URL, because the course
 code determines the slug (`CAS CH 303` -> `/academics/cas/courses/cas-ch-303/`).
 This script takes every `courses` row absent from the scrape and fetches it
-directly, sorting each into: still-offered / exists-but-not-this-term / retired.
+directly, sorting each into: still-offered / exists-but-not-this-term / retired /
+unreachable (every candidate URL failed in transport, so no verdict was reached —
+never treat these as retired).
 
 Output is written to `data/unscraped_probe.json` so the offering sync can consume
 it, and so the retired list is available for a separate cleanup decision.
@@ -57,8 +59,12 @@ SLUG = {
     "KHC": "khc", "CGS": "cgs", "SHA": "sha", "WED": "wheelock", "CAMED": "camed",
     "MED": "camed", "HUB": "cas", "XC": "cas",
 }
-CONCURRENCY = int(os.getenv("BU_CONCURRENCY", "4"))
-DELAY = float(os.getenv("BU_PAGE_DELAY", "1.5"))
+# Same host and same robots.txt as the crawler, so the same policy applies:
+# bu.edu asks for `Crawl-delay: 15`, and scrape_bu_catalog.py honors it with one
+# worker. Override for a faster (less polite) probe, e.g.
+# BU_CONCURRENCY=4 BU_PAGE_DELAY=1.5 — the env var names are shared deliberately.
+CONCURRENCY = int(os.getenv("BU_CONCURRENCY", "1"))
+DELAY = float(os.getenv("BU_PAGE_DELAY", "15"))
 
 
 def _all_rows(name: str, columns: str) -> list[dict]:
@@ -91,11 +97,17 @@ async def probe(codes: list[str]) -> dict:
     offered: list[dict] = []
     exists_other: list[str] = []
     retired: list[str] = []
+    unreachable: list[str] = []
     done = 0
 
     async def one(client: httpx.AsyncClient, code: str) -> None:
         nonlocal done
         async with sem:
+            # A code is only "retired" if every candidate URL actually answered and
+            # none was a valid page for it. If every attempt died in transport we
+            # learned nothing, and calling that retired would invite a cleanup pass
+            # to delete courses over a flaky network.
+            answered = False
             for url in candidate_urls(code):
                 try:
                     r = await client.get(url, headers=HEADERS, timeout=20.0)
@@ -103,6 +115,7 @@ async def probe(codes: list[str]) -> dict:
                     continue
                 finally:
                     await asyncio.sleep(DELAY)
+                answered = True
                 if r.status_code != 200:
                     continue
                 parsed = parse_course(r.text, url, url.split("/")[4])
@@ -118,17 +131,23 @@ async def probe(codes: list[str]) -> dict:
                     exists_other.append(code)
                 break
             else:
-                retired.append(code)
+                (retired if answered else unreachable).append(code)
         done += 1
         if done % 50 == 0:
             print(f"  probed {done}/{len(codes)} — offered={len(offered)} "
-                  f"exists={len(exists_other)} retired={len(retired)}", flush=True)
+                  f"exists={len(exists_other)} retired={len(retired)} "
+                  f"unreachable={len(unreachable)}", flush=True)
 
     async with httpx.AsyncClient(follow_redirects=True,
                                  limits=httpx.Limits(max_connections=20)) as client:
         await asyncio.gather(*[one(client, c) for c in codes])
 
-    return {"offered": offered, "exists_other_term": exists_other, "retired": retired}
+    return {
+        "offered": offered,
+        "exists_other_term": exists_other,
+        "retired": retired,
+        "unreachable": unreachable,
+    }
 
 
 if __name__ == "__main__":
@@ -155,4 +174,7 @@ if __name__ == "__main__":
     print(f"  offered in {TARGET_LABEL} : {len(result['offered']):,}")
     print(f"  exists, other term      : {len(result['exists_other_term']):,}")
     print(f"  retired (404)           : {len(result['retired']):,}")
+    print(f"  unreachable (network)   : {len(result['unreachable']):,}")
+    if result["unreachable"]:
+        print("    ^ not a verdict — these never answered; re-probe before acting on them")
     print(f"  -> {OUT_FILE}")

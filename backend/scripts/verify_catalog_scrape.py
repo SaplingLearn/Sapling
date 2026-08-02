@@ -50,11 +50,10 @@ def structural(catalog: list[dict]) -> int:
     problems = 0
 
     codes = [c.get("course_code", "") for c in catalog]
-    dupes = {c for c in codes if codes.count(c) > 1} if len(codes) < 3000 else None
-    if dupes is None:
-        seen, dupes = set(), set()
-        for c in codes:
-            (dupes if c in seen else seen).add(c)
+    seen: set[str] = set()
+    dupes: set[str] = set()
+    for c in codes:
+        (dupes if c in seen else seen).add(c)
     if dupes:
         # Expected: BU cross-lists CAS graduate courses under GRS, so the same code
         # appears under two school slugs. Verified 2026-07-31 that all 436 dupes were
@@ -177,6 +176,11 @@ def _sections(catalog: list[dict]) -> int:
     return problems
 
 
+def _sec_order(v):
+    """Sort key that tolerates a missing section code (None) alongside strings."""
+    return (v is None, v or "")
+
+
 def spot_check(catalog: list[dict], n: int) -> int:
     """Re-fetch a random sample and diff against the stored records."""
     print(f"\n=== live spot-check — {n} random courses ===")
@@ -185,46 +189,54 @@ def spot_check(catalog: list[dict], n: int) -> int:
 
     with httpx.Client(timeout=30.0, follow_redirects=True) as client:
         for i, stored in enumerate(sample, 1):
-            url = stored["source_url"]
+            # The delay is owed for every request, not just the ones that compare
+            # cleanly. Every error path below `continue`s, and skipping the sleep
+            # there would hammer bu.edu hardest exactly when it's struggling.
             try:
-                r = client.get(url, headers=HEADERS)
-            except httpx.HTTPError as exc:
-                print(f"  [{i}] {stored['course_code']}: fetch failed — {exc}")
-                continue
-            if r.status_code != 200:
-                print(f"  [{i}] {stored['course_code']}: HTTP {r.status_code}")
-                continue
+                url = stored["source_url"]
+                try:
+                    r = client.get(url, headers=HEADERS)
+                except httpx.HTTPError as exc:
+                    print(f"  [{i}] {stored['course_code']}: fetch failed — {exc}")
+                    continue
+                if r.status_code != 200:
+                    print(f"  [{i}] {stored['course_code']}: HTTP {r.status_code}")
+                    continue
 
-            fresh = parse_course(r.text, url, stored["school"])
-            if fresh is None:
-                mismatches += 1
-                print(f"  [{i}] {stored['course_code']}: re-parse returned None")
-                continue
+                fresh = parse_course(r.text, url, stored["school"])
+                if fresh is None:
+                    mismatches += 1
+                    print(f"  [{i}] {stored['course_code']}: re-parse returned None")
+                    continue
 
-            diffs = [
-                f"{f}: stored={stored.get(f)!r} live={fresh.get(f)!r}"
-                for f in ("course_code", "title", "credits", "semester_offered")
-                if stored.get(f) != fresh.get(f)
-            ]
-            # Sections are compared by code only: instructor/room assignments churn
-            # on bu.edu mid-summer, and a re-import picks those up anyway. A
-            # different *set of sections* is the real signal of parser drift.
-            if {s.get("section") for s in stored.get("sections") or []} != \
-               {s.get("section") for s in fresh.get("sections") or []}:
-                diffs.append(
-                    f"sections: stored={sorted(s.get('section') for s in stored.get('sections') or [])} "
-                    f"live={sorted(s.get('section') for s in fresh.get('sections') or [])}"
-                )
-            if diffs:
-                mismatches += 1
-                print(f"  [{i}] {stored['course_code']} MISMATCH")
-                for d in diffs:
-                    print(f"        {d}")
-            else:
-                sem = ",".join(fresh.get("semester_offered") or []) or "-"
-                print(f"  [{i}] {stored['course_code']:14} ok  ({sem}, "
-                      f"{len(fresh.get('sections') or [])} sections)")
-            time.sleep(SPOT_DELAY)
+                diffs = [
+                    f"{f}: stored={stored.get(f)!r} live={fresh.get(f)!r}"
+                    for f in ("course_code", "title", "credits", "semester_offered")
+                    if stored.get(f) != fresh.get(f)
+                ]
+                # Sections are compared by code only: instructor/room assignments
+                # churn on bu.edu mid-summer, and a re-import picks those up anyway.
+                # A different *set of sections* is the real signal of parser drift.
+                stored_secs = {s.get("section") for s in stored.get("sections") or []}
+                fresh_secs = {s.get("section") for s in fresh.get("sections") or []}
+                if stored_secs != fresh_secs:
+                    # A missing section code is exactly what this check exists to
+                    # surface, so None must sort rather than raise against the strs.
+                    diffs.append(
+                        f"sections: stored={sorted(stored_secs, key=_sec_order)} "
+                        f"live={sorted(fresh_secs, key=_sec_order)}"
+                    )
+                if diffs:
+                    mismatches += 1
+                    print(f"  [{i}] {stored['course_code']} MISMATCH")
+                    for d in diffs:
+                        print(f"        {d}")
+                else:
+                    sem = ",".join(fresh.get("semester_offered") or []) or "-"
+                    print(f"  [{i}] {stored['course_code']:14} ok  ({sem}, "
+                          f"{len(fresh.get('sections') or [])} sections)")
+            finally:
+                time.sleep(SPOT_DELAY)
 
     print(f"\n  {len(sample) - mismatches}/{len(sample)} matched live bu.edu")
     return mismatches

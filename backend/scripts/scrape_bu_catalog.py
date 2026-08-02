@@ -16,7 +16,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import httpx
 from bs4 import BeautifulSoup
@@ -75,11 +75,18 @@ _errors: list[dict] = []
 # it" (timeout / retries exhausted -> FETCH_FAILED). The listing walk must not
 # treat a transient failure as the end of pagination — doing so silently truncated
 # the previous crawl at CAS page ~21 of 113 (416 courses instead of 2,253).
-FETCH_FAILED = object()
+class _FetchFailed:
+    """Sentinel type for `fetch`. Compared by identity against FETCH_FAILED."""
+    __slots__ = ()
+
+
+FETCH_FAILED = _FetchFailed()
+
+FetchResult = Union[str, _FetchFailed, None]
 
 # -- HTTP -----------------------------------------------------------------------
 
-async def fetch(client: httpx.AsyncClient, url: str, retries: int = 2) -> Optional[str]:
+async def fetch(client: httpx.AsyncClient, url: str, retries: int = 2) -> FetchResult:
     async with _sem:
         for attempt in range(retries + 1):
             try:
@@ -220,7 +227,14 @@ def _extract_sections(soup: BeautifulSoup) -> list[dict]:
     """
     sections: list[dict] = []
     for tbl in soup.find_all("table"):
-        headers = [th.get_text(" ", strip=True).lower() for th in tbl.find_all("th")]
+        # Headers come from the FIRST row that has any <th>, not from every <th> in
+        # the table. A table that repeats its header row mid-way would otherwise
+        # yield ["section", ..., "section", ...], and since a dict comprehension
+        # keeps the LAST index for a repeated key, every column would shift.
+        header_row = next((r for r in tbl.find_all("tr") if r.find("th")), None)
+        if header_row is None:
+            continue
+        headers = [th.get_text(" ", strip=True).lower() for th in header_row.find_all("th")]
         if "section" not in headers:
             continue
         col = {name: i for i, name in enumerate(headers)}
@@ -397,6 +411,18 @@ async def rescan(
         fresh = parse_course(html, url, rec.get("school", ""))
         if fresh is None:
             _errors.append({"url": url, "error": "rescan: parse failed"})
+            return None
+        # `fetch` follows redirects, so a retired slug can serve an unrelated
+        # course's page. parse_course stamps source_url from the URL we asked for,
+        # so the only tell is the code on the page. Overwriting the record here
+        # would replace one course's data with another's.
+        old_code = (rec.get("course_code") or "").strip()
+        new_code = (fresh.get("course_code") or "").strip()
+        if old_code and new_code != old_code:
+            _errors.append(
+                {"url": url, "error": f"rescan: redirected to {new_code!r}, expected {old_code!r}"}
+            )
+            return None
         return fresh
 
     for i in range(0, len(records), BATCH):

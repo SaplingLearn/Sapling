@@ -12,13 +12,17 @@ the exact fields #280 ingests. A regression here is invisible in the scrape outp
 (you get a plausible file with an empty operational layer), so it has to be caught
 at the parser.
 """
+import asyncio
 import sys
 from pathlib import Path
+
+import httpx
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from bs4 import BeautifulSoup  # noqa: E402
 
+import scrape_bu_catalog as scrape  # noqa: E402
 from scrape_bu_catalog import (  # noqa: E402
     _derive_schedule,
     _extract_sections,
@@ -143,6 +147,29 @@ def test_header_only_table_yields_nothing():
     assert _extract_sections(_soup(html)) == []
 
 
+def test_repeated_header_row_does_not_shift_columns():
+    """Some pages repeat the header row mid-table.
+
+    Headers are read from the first <th> row only. Collecting every <th> in the
+    table would map each name to its LAST index, shifting instructor into
+    location and silently corrupting every row below the repeat.
+    """
+    html = """
+    <h4>FALL 2026 Schedule</h4>
+    <table>
+      <tr><th>Section</th><th>Instructor</th><th>Location</th><th>Schedule</th><th>Notes</th></tr>
+      <tr><td>A1</td><td>Erdos</td><td>LSE B01</td><td>TR 2:00 pm-3:15 pm</td><td></td></tr>
+      <tr><th>Section</th><th>Instructor</th><th>Location</th><th>Schedule</th><th>Notes</th></tr>
+      <tr><td>B1</td><td>Naya</td><td>EPC 207</td><td>MWF 9:05 am-9:55 am</td><td></td></tr>
+    </table>
+    """
+    sections = _extract_sections(_soup(html))
+    assert [s["section"] for s in sections] == ["A1", "B1"]
+    assert sections[1]["instructor_name"] == "Naya"
+    assert sections[1]["location"] == "EPC 207"
+    assert sections[1]["meeting_times"] == "MWF 9:05 am-9:55 am"
+
+
 def test_page_with_no_schedule_is_not_offered():
     """A catalog page with no schedule block means the course isn't taught that term."""
     sections = _extract_sections(_soup("<h1>Some Course</h1><p>Description.</p>"))
@@ -193,3 +220,42 @@ def test_parse_course_carries_sections_and_rollups():
     assert rec["semester_offered"] == ["Fall 2026"]
     assert rec["instructors"] == ["Erdos"]
     assert "Effective Fall 2020" not in rec["description"]
+
+
+# ─── Truncated-crawl regression ──────────────────────────────────────────────
+
+
+class _TimeoutClient:
+    """Stands in for httpx.AsyncClient; every request times out."""
+
+    def __init__(self):
+        self.urls: list[str] = []
+
+    async def get(self, url, **kwargs):
+        self.urls.append(url)
+        raise httpx.TimeoutException("timed out", request=None)
+
+
+def test_listing_timeout_is_recorded_as_truncated_not_end_of_pagination(monkeypatch):
+    """A transient listing failure must not read as "past the last page".
+
+    Treating it that way is what silently truncated the previous crawl at CAS
+    page ~21 of 113 — 416 courses instead of 2,253, with no error surfaced. The
+    FETCH_FAILED sentinel exists to keep those two cases apart.
+    """
+    async def _no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(scrape.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(scrape, "_sem", asyncio.Semaphore(1))
+    monkeypatch.setattr(scrape, "_errors", [])
+
+    client = _TimeoutClient()
+    courses = asyncio.run(scrape.scrape_school(client, "cas", seen=set()))
+
+    assert courses == []
+    # Two records: the exhausted retries from fetch(), then the loud TRUNCATED
+    # marker from the listing walk that refused to call it end-of-pagination.
+    assert any("TRUNCATED" in e["error"] for e in scrape._errors)
+    # Every attempt was against page 1; the walk stopped instead of advancing.
+    assert all(u.endswith("/academics/cas/courses/") for u in client.urls)

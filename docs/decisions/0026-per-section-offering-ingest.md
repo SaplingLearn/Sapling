@@ -16,7 +16,7 @@ location. Courses could not behave like a registrar.
 Issue #280 ingests the operational layer for `fall-2026` from bu.edu, which
 publishes, per course, one table per section:
 
-```
+```text
 Section | Instructor | Location | Schedule | Notes
 A1      | Erdos      | LSE B01  | TR 2:00 pm-3:15 pm | ...
 ```
@@ -43,9 +43,10 @@ the same class.
 what these rows have always meant.
 
 **Status: already applied.** This shipped as
-`0033_offering_section_not_null.sql`. It reached staging out-of-band during the
-#280 work and was recovered into the repo by #510 (one of the three migrations
-that reconciliation covers, which is why the frozen `NNNN_` range runs to 48).
+`0033_offering_section_not_null.sql`. It reached staging out-of-band during
+the #280 work and was recovered into the repo by #510 (one of the three
+migrations that reconciliation covers, which is why the frozen `NNNN_` range
+runs to 48).
 `0036_offering_null_section_unique.sql` had meanwhile closed the same hole the
 other way, with a partial unique index on `WHERE section IS NULL`; that index
 became unreachable once `section` was NOT NULL and was dropped by

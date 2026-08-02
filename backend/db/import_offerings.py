@@ -86,13 +86,13 @@ BU_SCHOOL = {"id": "school-bu", "name": "Boston University", "slug": "boston-uni
 OWNED = ("instructor_name", "meeting_times", "location")
 
 
-def _all_rows(name: str, columns: str) -> list[dict]:
+def _all_rows(name: str, columns: str, filters: dict | None = None) -> list[dict]:
     """Read a whole table, paging past the PostgREST row cap."""
     out: list[dict] = []
     offset = 0
     while True:
         rows, total = table(name).select_with_count(
-            columns, order="id.asc", limit=PAGE, offset=offset
+            columns, filters=filters, order="id.asc", limit=PAGE, offset=offset
         )
         out.extend(rows)
         offset += len(rows)
@@ -144,9 +144,15 @@ def _merge_meetings(rows: list[dict]) -> dict:
     scrape have more than one, and keeping only the first loses a real meeting.
 
     Instructor is the first non-null: verified across the whole scrape that no
-    multi-meeting section lists two different instructors.
+    multi-meeting section lists two different instructors. That was a point-in-time
+    check against Fall 2026, not an invariant BU guarantees, so a disagreement warns
+    rather than passing silently.
     """
-    instructor = next((s.get("instructor_name") for s in rows if s.get("instructor_name")), None)
+    names = list(dict.fromkeys(s["instructor_name"] for s in rows if s.get("instructor_name")))
+    if len(names) > 1:
+        print(f"  [warn] section {rows[0].get('section')!r} lists {len(names)} instructors "
+              f"({names}); keeping {names[0]!r}")
+    instructor = names[0] if names else None
     times: list[str] = []
     locations: list[str] = []
     for s in rows:
@@ -320,11 +326,16 @@ def run(
             print(f"{len(missing):,} scraped codes have no catalog row and will be SKIPPED "
                   f"(pass --create-missing to add them): e.g. {missing[:5]}")
 
-    # Existing offerings in the target term, grouped by course.
+    # Existing offerings in the target term, grouped by course. Filtered
+    # server-side: the table spans every term, and pulling all of it to discard
+    # most of it is a lot of wire for nothing.
     existing: dict[str, list[dict]] = {}
-    for o in _all_rows("course_offerings", "id,course_id,term_id,section,instructor_name,meeting_times,location"):
-        if o.get("term_id") == term_id:
-            existing.setdefault(o["course_id"], []).append(o)
+    for o in _all_rows(
+        "course_offerings",
+        "id,course_id,term_id,section,instructor_name,meeting_times,location",
+        filters={"term_id": f"eq.{term_id}"},
+    ):
+        existing.setdefault(o["course_id"], []).append(o)
     print(f"{sum(len(v) for v in existing.values()):,} existing {label} offerings "
           f"across {len(existing):,} courses\n")
 
