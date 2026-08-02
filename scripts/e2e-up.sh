@@ -30,18 +30,32 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-# Point the Supabase CLI at the rootless podman socket only when podman exists;
-# under Docker leave DOCKER_HOST alone so the default daemon socket is used.
-if command -v podman >/dev/null 2>&1; then
-  export DOCKER_HOST="${DOCKER_HOST:-unix:///run/user/$(id -u)/podman/podman.sock}"
-fi
-
 LOCAL_DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 DB_CONTAINER="supabase_db_sapling"
 
 # Shared migrate → ensure buckets → reload PostgREST → seed sequence (#10),
-# plus $CONTAINER_CMD (podman/docker) detection.
+# plus $CONTAINER_CMD (podman/docker) detection, $VENV_PY resolution and
+# set_docker_host_for_podman.
 source "$REPO_ROOT/scripts/lib/local-common.sh"
+
+# Point the Supabase CLI at the rootless podman socket when there is one.
+# Moved below the source (and guarded on the socket existing) because the old
+# inline form exported the Linux socket path on any machine with the podman
+# binary — including Windows, where podman lives in a VM, the socket path does
+# not exist, and every supabase command then failed with "Cannot connect to the
+# Docker daemon". A pre-set DOCKER_HOST still always wins (e2e.yml relies on it).
+set_docker_host_for_podman
+
+# setsid makes each server its own process-group leader, so e2e-down.sh can
+# signal the whole tree with one group kill. Git Bash on Windows has no setsid;
+# there the servers are plain background jobs and teardown falls back to a
+# taskkill /T process-tree walk (see e2e-down.sh) to reach the same children.
+if command -v setsid >/dev/null 2>&1; then
+  DETACH="setsid"
+else
+  DETACH=""
+  echo "  ℹ setsid not found (Git Bash?) — servers start as plain background jobs; e2e-down falls back to a process-tree kill"
+fi
 
 E2E_DIR="$REPO_ROOT/.e2e"
 BACKEND_PORT="$(grep -E '^PORT=' backend/.env 2>/dev/null | head -n1 | cut -d= -f2-)"
@@ -144,7 +158,9 @@ command -v supabase >/dev/null 2>&1 \
   || { echo "✗ supabase CLI not found. Install it first (Arch: paru -S supabase-bin) — see docs/local-supabase.md"; exit 1; }
 [ -f backend/.env ] \
   || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in GEMINI_API_KEY)"; exit 1; }
-[ -x backend/venv/bin/python ] \
+# $VENV_PY is resolved in local-common.sh and accepts both the POSIX
+# (venv/bin/python) and Windows (venv/Scripts/python.exe) venv layouts.
+[ -n "${VENV_PY:-}" ] \
   || { echo "✗ backend/venv not found. Create it first: python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt"; exit 1; }
 [ -d frontend/node_modules ] \
   || { echo "✗ frontend/node_modules not found. Install first: cd frontend && npm ci"; exit 1; }
@@ -210,7 +226,7 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # would orphan the server.)
 (
   cd backend || exit 1
-  setsid venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" \
+  $DETACH "$VENV_PY" -m uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" \
     >"$E2E_DIR/backend.log" 2>&1 &
   echo $! >"$E2E_DIR/backend.pid"
 ) || { echo "✗ could not start backend"; exit 1; }
@@ -228,7 +244,7 @@ echo "▶ Starting frontend (next start on :$FRONTEND_PORT, log: .e2e/frontend.l
 # Same setsid-simple-command shape as the backend launch above.
 (
   cd frontend || exit 1
-  setsid npm run start:test >"$E2E_DIR/frontend.log" 2>&1 &
+  $DETACH npm run start:test >"$E2E_DIR/frontend.log" 2>&1 &
   echo $! >"$E2E_DIR/frontend.pid"
 ) || { echo "✗ could not start frontend"; exit 1; }
 
