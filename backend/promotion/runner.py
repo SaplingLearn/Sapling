@@ -77,19 +77,38 @@ def _wait_for_deploy(ports: Ports, options: Options, target: str, out: Callable[
     return False
 
 
-def _run_smoke(ports: Ports, options: Options, out: Callable[[str], None]) -> int:
+def _run_smoke(
+    ports: Ports, options: Options, out: Callable[[str], None], *, merged_this_run: bool = True
+) -> int:
+    """`merged_this_run=False` is the migrations-only path (run()'s
+    `commits_ahead == 0` branch): no PR was merged, so production's git HEAD
+    is a PREVIOUS promotion's merge commit, unrelated to this run. The default
+    revert recipe below is only correct when THIS run merged something —
+    telling an operator to `git revert -m 1 HEAD` on that path would revert
+    an unrelated, previously-working deploy.
+    """
     results = smoke.run_checks(ports.fetch, options.api_base, options.web_base)
     out("\nSmoke:")
     out(smoke.format_results(results))
 
     if any(not r.ok for r in results):
-        out(
-            "\nSMOKE FAILED. Production was NOT reverted — the applied migrations "
-            "cannot be rolled back, so reverting the code would leave old code "
-            "against a newer schema.\n"
-            "  To revert deliberately:\n"
-            "    git checkout production && git revert -m 1 HEAD && git push origin production"
-        )
+        if merged_this_run:
+            out(
+                "\nSMOKE FAILED. Production was NOT reverted — the applied migrations "
+                "cannot be rolled back, so reverting the code would leave old code "
+                "against a newer schema.\n"
+                "  To revert deliberately:\n"
+                "    git checkout production && git revert -m 1 HEAD && git push origin production"
+            )
+        else:
+            out(
+                "\nSMOKE FAILED. No code was merged this run — production's schema "
+                "moved (the migration(s) applied above), but its code was NOT "
+                "touched, so there is no code to revert. Production's current git "
+                "HEAD is a PREVIOUS promotion's merge commit, unrelated to this "
+                "run; undoing it would revert an earlier, previously-working "
+                "deploy. Inspect the migration that just landed, not the code."
+            )
         return EXIT_FAIL
 
     out("\nPROMOTION COMPLETE — all smoke checks passed.")
@@ -170,25 +189,36 @@ def run(ports: Ports, options: Options) -> int:
         changes = snapshot.diff(before, after)
         landed = changes["new_migrations"]
         # Ledger inserts are part of the same per-file transaction as the SQL,
-        # so `landed` is exact, not a guess — and apply order is `pending`'s
-        # order, so the first pending name NOT in `landed` is the one that
-        # raised.
-        failed_name = next((name for name in pending if name not in landed), "unknown")
-        out(
-            f"\nMIGRATION FAILED after {len(landed)} of {len(pending)} pending "
-            f"migration(s) landed.\n"
-            f"  Failed on: {failed_name}\n"
-            f"  Error: {migrate_error}"
-        )
+        # so `landed` is exact, not a guess — and when something DID land,
+        # apply order is `pending`'s order, so the first pending name NOT in
+        # `landed` is provably the one that raised. But when NOTHING landed,
+        # that is NOT necessarily pending[0]'s fault: db.migrate.run() has a
+        # prologue (SET maintenance_work_mem, ensure_tracking_table) that runs
+        # BEFORE any file, and a failure there is indistinguishable from here
+        # from a failure on the first file's own SQL. Don't guess a filename
+        # in that case.
+        failed_name = next((name for name in pending if name not in landed), "unknown") if landed else None
+        out(f"\nMIGRATION FAILED after {len(landed)} of {len(pending)} pending migration(s) landed.")
+        if failed_name is not None:
+            out(f"  Failed on: {failed_name}")
+        else:
+            out("  Failed before applying any migration (see Error below).")
+        out(f"  Error: {migrate_error}")
         if landed:
             out("\nDatabase changes so far:")
             out(snapshot.format_diff(changes))
-        out(
-            "\n  WARNING: production's schema is now PARTIALLY migrated and AHEAD "
-            "of production's code. Production's code was NOT touched. Do NOT "
-            f"re-run blindly — inspect {failed_name} and the database by hand "
-            "before continuing."
-        )
+            out(
+                "\n  WARNING: production's schema is now PARTIALLY migrated and "
+                "AHEAD of production's code. Production's code was NOT touched. "
+                f"Do NOT re-run blindly — inspect {failed_name} and the database "
+                "by hand before continuing."
+            )
+        else:
+            out(
+                "\n  Production's schema is UNCHANGED — nothing landed — and its "
+                "code was NOT touched. Do NOT re-run blindly — inspect the error "
+                "above before continuing."
+            )
         return EXIT_FAIL
 
     changes = snapshot.diff(before, after)
@@ -203,7 +233,7 @@ def run(ports: Ports, options: Options) -> int:
         # smoke: a migration that broke the running app is exactly the
         # failure this stage exists to catch.
         out("\nMigrations applied; no code to promote (production and main are level).")
-        return _run_smoke(ports, options, out)
+        return _run_smoke(ports, options, out, merged_this_run=False)
 
     # ---- The one pause ------------------------------------------------
     number = ports.gh.ensure_pr("production", "main", f"Promote staging to production — {commits_ahead} commits")

@@ -389,6 +389,34 @@ def test_migration_failure_reports_partial_state_not_a_traceback():
     assert "ahead" in text.lower()  # schema-ahead-of-code warning, same as the decline path
 
 
+def test_migration_failure_before_any_file_lands_does_not_blame_pending_zero():
+    """db.migrate.run() has a prologue (SET maintenance_work_mem,
+    ensure_tracking_table) that runs BEFORE any migration file — a failure
+    there is indistinguishable, from the runner's side, from a failure on
+    the first pending file's own SQL. Zero landed either way, so the runner
+    must not confidently name pending[0] as "the" failed migration, and must
+    not claim the schema is "PARTIALLY migrated" when nothing landed at all.
+    """
+
+    def failing_migrate(conn):
+        raise RuntimeError("connection reset by peer")  # e.g. the SET fails, not any file
+
+    lines = []
+    kwargs = make_ports(migrate=failing_migrate, out=lines.append)
+    # after (re-captured post-failure) matches before exactly: nothing landed.
+    kwargs["snapshots"] = [
+        {"host": "aws-0-us-west-2.pooler.supabase.com", "tables": {"users": 8}, "ledger": ["0001_a.sql"]},
+        {"host": "aws-0-us-west-2.pooler.supabase.com", "tables": {"users": 8}, "ledger": ["0001_a.sql"]},
+    ]
+    assert run(*build(kwargs)) == 1
+    text = "\n".join(lines)
+    assert "0 of 1" in text
+    assert "0002_b.sql" not in text  # never blames the one pending migration by name
+    assert "partially migrated" not in text.lower()  # nothing landed — it did not partially migrate
+    assert "unchanged" in text.lower()  # the honest claim: the schema did not move at all
+    assert "connection reset by peer" in text  # still surfaces the real error
+
+
 def test_target_line_printed_before_migrate_runs():
     """Names the DB project about to receive DDL, before the DDL runs — the
     only way an operator can catch a .env file pointing at the wrong project
@@ -431,18 +459,30 @@ def test_migrations_only_promotion_skips_pr_and_still_smokes():
 
 def test_migrations_only_promotion_fails_if_smoke_fails():
     """The EXIT_FAIL branch of the migrations-only path must be wired to a
-    real smoke result, not a stub that always reports success."""
+    real smoke result, not a stub that always reports success.
+
+    IMPORTANT: this path must NOT hand the operator `_run_smoke`'s default
+    `git revert -m 1 HEAD` recipe. No PR was merged this run, so
+    production's git HEAD is a PREVIOUS promotion's merge commit, unrelated
+    to this run — that instruction would revert an unrelated, previously
+    working deploy. There is no code to revert here in the first place; the
+    thing to inspect is the migration that just landed.
+    """
 
     def fetch(method, url):
         if url.endswith("/api/health"):
             return 200, HEALTH_NEW
         return 500, "boom"
 
-    kwargs = make_ports(fetch=fetch)
+    lines = []
+    kwargs = make_ports(fetch=fetch, out=lines.append)
     kwargs["git"].commits_ahead = 0
     gh = kwargs["gh"]
     assert run(*build(kwargs)) == 1
     assert gh.calls == []
+    text = "\n".join(lines)
+    assert "git revert" not in text
+    assert "No code was merged this run" in text
 
 
 def test_verify_only_skips_promotion_and_just_waits_and_smokes():
