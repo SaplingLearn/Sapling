@@ -328,8 +328,14 @@ def test_evaluate_destructive_can_be_allowed():
 
 
 def test_evaluate_reports_nothing_to_promote():
-    findings = _evaluate(commits_ahead=0)
+    findings = _evaluate(commits_ahead=0, recorded={"0001_a.sql", "0002_b.sql"})
     assert [f.kind for f in findings] == ["nothing-to-promote"]
+
+
+def test_evaluate_allows_a_migration_only_promotion():
+    """Code is level but the schema is behind — that is still work to do."""
+    findings = _evaluate(commits_ahead=0)  # default fixture leaves 0002_b.sql pending
+    assert findings == []
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
