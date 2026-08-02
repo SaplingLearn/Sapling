@@ -76,6 +76,16 @@ const eslintConfig = [
       "src/components/screens/AdminAnalytics.tsx",
       "src/components/screens/Tree.tsx",
       "src/components/marketing/graph/KnowledgeGraphDemo.tsx",
+      "src/components/marketing/FeatureBand.tsx",
+      "src/components/marketing/SurfaceBento.tsx",
+      "src/components/marketing/surfaces/GradebookSurface.tsx",
+      "src/components/marketing/surfaces/NotesSurface.tsx",
+      "src/components/marketing/surfaces/QuizSurface.tsx",
+      "src/components/marketing/surfaces/ReviewSurface.tsx",
+      "src/components/marketing/surfaces/RoomsSurface.tsx",
+      "src/components/marketing/surfaces/Surface.tsx",
+      "src/components/marketing/surfaces/TutorSurface.tsx",
+      "src/components/marketing/surfaces/UploadSurface.tsx",
     ],
     rules: {
       "no-restricted-syntax": [

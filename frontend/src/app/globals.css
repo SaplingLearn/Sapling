@@ -1001,3 +1001,629 @@ input[type="reset"]:disabled {
    hold WCAG AA 4.5:1 over the paper background, so the eyebrow isn't faded at
    all — see ENGAGED_HEADLINE_OPACITY in KnowledgeGraphDemo.tsx (#344). */
 .landing-page .landing-graph-headline { transition: opacity 600ms ease; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FEATURE BANDS + SURFACE BENTO (#344 step 2)
+
+   Everything here is scoped to `.landing-page` and ADDS classes only — no
+   token is defined or redefined below this line. The pre-auth page and the
+   app shell share token NAMES with different values, and leaking a
+   redefinition outward is the documented cause of the "get-started/beta feels
+   off" bug class (docs/frontend-rhythm-audit.md).
+
+   Two brand constraints shape the whole block:
+
+   1. NO glassmorphism. Every surface is solid warm paper (`--bg-panel` on the
+      page's `--bg`) with a hairline border. `.liquid-glass` is deliberately
+      not reused — even though #102 already emptied it out, the name is the
+      pattern the guide bans.
+   2. COLOUR IS STATE. The only hues below are `--state-*` (mastery) and
+      `--grade-*` (letter bands), plus `--brand-forest` for the brand anchor.
+      Every other surface colour is a warm neutral off the `--ink` ramp.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Shared mono micro-label — the section eyebrow. Matches the metrics the
+   knowledge-graph section sets inline one viewport above. */
+.landing-page .landing-eyebrow {
+  display: inline-block;
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--brand-forest);
+}
+
+/* ── Band layout ────────────────────────────────────────────────────────── */
+.landing-page .landing-band { padding: 5.5rem 0; overflow: hidden; }
+.landing-page .landing-bento { padding: 5.5rem 0 6rem; overflow: hidden; }
+
+.landing-page .landing-band-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2.5rem;
+  align-items: center;
+}
+
+@media (min-width: 900px) {
+  .landing-page .landing-band { padding: 7rem 0; }
+  .landing-page .landing-bento { padding: 7rem 0 8rem; }
+  .landing-page .landing-band-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 4.5rem;
+  }
+  /* The flip is a column assignment, not a source reorder: the DOM stays
+     copy-then-surface so the phone and the screen reader always get the claim
+     first. Only the wide layout crosses them over. */
+  .landing-page .landing-band--surface-left > .landing-band-copy {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .landing-page .landing-band--surface-left > .landing-band-surface {
+    grid-column: 1;
+    grid-row: 1;
+  }
+}
+
+.landing-page .landing-band-headline {
+  margin-top: 1.05rem;
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: clamp(1.95rem, 3.4vw, 3.1rem);
+  font-weight: 600;
+  line-height: 1.06;
+  letter-spacing: -0.022em;
+  color: var(--text);
+}
+
+.landing-page .landing-band-body {
+  margin-top: 1.15rem;
+  max-width: 38ch;
+  font-size: 1.02rem;
+  line-height: 1.72;
+  color: var(--text-dim);
+}
+
+/* ── Bento grid ─────────────────────────────────────────────────────────── */
+.landing-page .landing-bento-head { margin-bottom: 2.75rem; }
+.landing-page .landing-bento-head .landing-band-headline { max-width: 20ch; }
+
+.landing-page .landing-bento-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.35rem;
+}
+
+@media (min-width: 700px) {
+  .landing-page .landing-bento-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Asymmetry, not four equal boxes: 7/5 then 5/7, so the wide tile changes
+   sides between rows and the two conversation-shaped surfaces sit on the
+   opposite diagonal from the two document-shaped ones. */
+@media (min-width: 1024px) {
+  .landing-page .landing-bento-grid {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 1.5rem;
+  }
+  .landing-page .landing-bento-tile--tutor     { grid-column: span 7; }
+  .landing-page .landing-bento-tile--notes     { grid-column: span 5; }
+  .landing-page .landing-bento-tile--rooms     { grid-column: span 5; }
+  .landing-page .landing-bento-tile--gradebook { grid-column: span 7; }
+}
+
+.landing-page .landing-bento-tile { display: flex; }
+.landing-page .landing-bento-tile > * { width: 100%; }
+
+/* ── The surface frame ──────────────────────────────────────────────────── */
+.landing-page .landing-surface {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  font-family: var(--font-dm-sans), 'DM Sans', system-ui, sans-serif;
+  color: var(--text);
+}
+
+.landing-page .landing-surface-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 9px 15px;
+  background: var(--ink-50);
+  border-bottom: 1px solid var(--border);
+}
+
+.landing-page .landing-surface-title {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.landing-page .landing-surface-meta,
+.landing-page .landing-surface-mono {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.landing-page .landing-surface-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px 15px 15px;
+  flex: 1;
+}
+
+.landing-page .landing-surface-rule {
+  display: block;
+  height: 1px;
+  margin: 3px 0;
+  background: var(--border);
+}
+
+.landing-page .landing-surface-label {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.landing-page .landing-surface-headrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.landing-page .landing-surface-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.landing-page .landing-surface-name {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.landing-page .landing-surface-sub {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.landing-page .landing-surface-note {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.landing-page .landing-surface-footnote {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* Mastery status mark — the same four tokens the knowledge graph paints with. */
+.landing-page .landing-surface-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-full);
+  flex-shrink: 0;
+}
+
+/* ── Rows, chips ────────────────────────────────────────────────────────── */
+.landing-page .landing-surface-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.landing-page .landing-surface-doc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--r-xs);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  color: var(--brand-forest);
+}
+
+.landing-page .landing-surface-status {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: var(--ink-50);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+/* Ingest is a STATE: forest for landed, neutral for waiting. */
+.landing-page .landing-surface-status.is-done {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--brand-forest);
+}
+.landing-page .landing-surface-status.is-processing {
+  border-color: var(--border-strong);
+  color: var(--text-dim);
+}
+
+.landing-page .landing-surface-chiprow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.landing-page .landing-surface-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: var(--ink-50);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.landing-page .landing-surface-chip.is-count,
+.landing-page .landing-surface-chip.is-code,
+.landing-page .landing-surface-chip.is-hard {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ── Quiz ───────────────────────────────────────────────────────────────── */
+.landing-page .landing-surface-concept {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.landing-page .landing-surface-question {
+  margin: 2px 0 4px;
+  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  font-size: 0.98rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.landing-page .landing-surface-options {
+  display: grid;
+  gap: 7px;
+}
+
+.landing-page .landing-surface-option {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 8px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+/* The picked answer, in the panel's own selected treatment. */
+.landing-page .landing-surface-option.is-picked {
+  border-color: var(--brand-forest);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.landing-page .landing-surface-optionkey {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.landing-page .landing-surface-option.is-picked .landing-surface-optionkey {
+  color: var(--brand-forest);
+}
+
+/* "The next question moved" — a status, so it takes a status colour. */
+.landing-page .landing-surface-tune {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--state-progress);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* ── Study / spaced review ──────────────────────────────────────────────── */
+.landing-page .landing-surface-track {
+  display: block;
+  height: 5px;
+  border-radius: var(--r-full);
+  background: var(--ink-100);
+  overflow: hidden;
+}
+.landing-page .landing-surface-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand-forest);
+}
+
+.landing-page .landing-surface-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 16px 15px 18px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  min-height: 96px;
+  justify-content: center;
+}
+.landing-page .landing-surface-cardtext {
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: 1.18rem;
+  line-height: 1.28;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.landing-page .landing-surface-ratings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+/* Tint + hairline carry the verdict; the word stays `--text`. At 12px,
+   `--warn`-weight hues sit under the 4.5:1 AA bar as glyphs but clear the
+   3:1 non-text bar comfortably as a border. */
+.landing-page .landing-surface-rate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: var(--r-full);
+  border: 1.5px solid color-mix(in oklch, var(--tone) 55%, transparent);
+  background: color-mix(in oklch, var(--tone) 9%, var(--bg));
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text);
+}
+.landing-page .landing-surface-ratekey {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: color-mix(in oklch, var(--tone) 18%, transparent);
+  color: var(--text-dim);
+}
+
+/* ── Tutor / room conversation ──────────────────────────────────────────── */
+.landing-page .landing-surface-turn {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.landing-page .landing-surface-turn.is-student { justify-content: flex-end; }
+
+.landing-page .landing-surface-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.landing-page .landing-surface-sender {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.landing-page .landing-surface-bubble {
+  display: inline-block;
+  padding: 9px 13px;
+  border-radius: var(--r-lg);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+.landing-page .landing-surface-bubble.is-tutor {
+  max-width: 88%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  color: var(--text);
+}
+/* Forest, not `--accent`: #2D8F5C under white is 4.04:1, below the AA bar at
+   this size. Forest is 6.4:1. */
+.landing-page .landing-surface-bubble.is-student {
+  max-width: 80%;
+  background: var(--brand-forest);
+  color: #fff;
+}
+
+.landing-page .landing-surface-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  background: var(--ink-100);
+  border: 1px solid var(--border);
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+.landing-page .landing-surface-avatar.is-tutor {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--brand-forest);
+}
+
+.landing-page .landing-surface-stack-avatars { display: flex; }
+.landing-page .landing-surface-stack-avatars .landing-surface-avatar {
+  margin-right: -8px;
+  box-shadow: 0 0 0 2px var(--bg-panel);
+}
+
+/* `margin-top: auto` pins the quick actions to the bottom of the tile. The
+   bento stretches every tile in a row to the tallest one, and without this the
+   Tutor tile's actions floated in the middle with dead paper under them; pinned,
+   the slack reads as an empty conversation log — which is what it is. */
+.landing-page .landing-surface-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+.landing-page .landing-surface-action {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 11px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 0.74rem;
+  color: var(--text-dim);
+}
+
+/* ── Notetaker ──────────────────────────────────────────────────────────── */
+.landing-page .landing-surface-notetitle {
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  color: var(--text);
+}
+.landing-page .landing-surface-prose {
+  margin: 0 0 4px;
+  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+.landing-page .landing-surface-linkrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+/* ── Study Rooms ────────────────────────────────────────────────────────── */
+.landing-page .landing-surface-roomname {
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+
+/* ── Gradebook ──────────────────────────────────────────────────────────── */
+.landing-page .landing-surface-grade { display: flex; align-items: center; gap: 12px; }
+/* Display-size ⇒ WCAG "large text" (3:1), which is what lets the letter carry
+   `--grade-a` (4.56:1 on this paper) as a glyph. The per-row letters below
+   cannot, and don't. */
+.landing-page .landing-surface-letter {
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: 3.1rem;
+  font-weight: 600;
+  line-height: 0.9;
+  letter-spacing: -0.03em;
+  color: var(--grade-a);
+}
+.landing-page .landing-surface-pct {
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.landing-page .landing-surface-gradebookrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+  border-top: 1px solid var(--border);
+}
+.landing-page .landing-surface-assignment {
+  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text);
+}
+.landing-page .landing-surface-points {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.landing-page .landing-surface-slash { font-weight: 400; color: var(--text-muted); }
+
+/* Grade band on the border + dot, letter in `--text`: `--grade-b` (#a88020) is
+   3.39:1 on this paper — fine as a 3:1 non-text mark, not as a glyph. */
+.landing-page .landing-surface-gradepill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 44px;
+  justify-content: center;
+  padding: 3px 9px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--grade);
+  background: color-mix(in oklch, var(--grade) 8%, var(--bg));
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.landing-page .landing-surface-gradepill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--grade);
+}

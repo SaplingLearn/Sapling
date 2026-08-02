@@ -8,6 +8,9 @@ import { useScrollLock } from '@/lib/useScrollLock';
 import { Users, PenSquare } from 'lucide-react';
 import SignInModal from '@/components/marketing/SignInModal';
 import { HeroCard } from '@/components/marketing/HeroCard';
+import FeatureBand from '@/components/marketing/FeatureBand';
+import SurfaceBento from '@/components/marketing/SurfaceBento';
+import { FEATURE_BANDS } from '@/components/marketing/featureBands';
 import { BRAND_FOREST } from '@/lib/brand';
 import { Button } from "@/components/ui";
 import { IS_TEST_MODE, random, now } from '@/lib/testMode';
@@ -575,6 +578,16 @@ export default function LandingPage() {
 
       <div>
         <KnowledgeGraphDemo />
+
+        {/* ═══ Feature bands + bento ═══
+            One arc — material in → practice → retention — with the bento of
+            built surfaces re-energising the middle. Band 3 is the closing
+            claim, so it (not a grid tile) hands off to the CTA; content and
+            side-alternation live in components/marketing/featureBands.tsx. */}
+        <FeatureBand {...FEATURE_BANDS[0]} />
+        <FeatureBand {...FEATURE_BANDS[1]} />
+        <SurfaceBento />
+        <FeatureBand {...FEATURE_BANDS[2]} />
 
         {/* ═══ Final CTA ═══ */}
         <section className="landing-section py-32 relative text-center z-10">
