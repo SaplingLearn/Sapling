@@ -108,8 +108,9 @@ def test_scan_destructive_flags_wrapped_type_change(tmp_path):
 
 
 def test_scan_destructive_flags_wrapped_drop_column(tmp_path):
-    f = tmp_path / "0057_w.sql"
-    f.write_text("ALTER TABLE t\n  DROP COLUMN old;\n")
+    """The keywords themselves straddle the break — this fails under a line-oriented scan."""
+    f = tmp_path / "0057_wrapped.sql"
+    f.write_text("ALTER TABLE t\n  DROP\n  COLUMN old;\n")
     assert [x.kind for x in scan_destructive([f])] == ["DROP COLUMN"]
 
 
