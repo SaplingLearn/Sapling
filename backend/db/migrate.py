@@ -49,56 +49,10 @@ def applied_filenames(conn: psycopg.Connection) -> set[str]:
         return {row[0] for row in cur.fetchall()}
 
 
-def _split_statements(sql: str) -> list[str]:
-    """Split migration SQL into individual statements.
-
-    Splits on semicolons and filters out empty/whitespace-only statements and
-    full-line comments. Sufficient for simple DDL migrations in this repo.
-    """
-    statements = []
-    for stmt in sql.split(";"):
-        # Strip whitespace
-        stmt = stmt.strip()
-        # Skip empty statements
-        if not stmt:
-            continue
-        # Skip full-line comment-only statements
-        lines = [line.strip() for line in stmt.splitlines() if line.strip()]
-        if all(line.startswith("--") for line in lines):
-            continue
-        statements.append(stmt)
-    return statements
-
-
 def apply_migration(conn: psycopg.Connection, path: Path) -> None:
-    """Run one migration's SQL and record it, atomically.
-
-    Statements containing CONCURRENTLY are executed outside a transaction block
-    (in autocommit mode) as required by Postgres. All other statements run in
-    a single transaction as before.
-    """
-    statements = _split_statements(path.read_text())
-
-    # Execute each statement; CONCURRENTLY statements require autocommit
-    for stmt in statements:
-        if "CONCURRENTLY" in stmt.upper():
-            # Must run outside any transaction block
-            # Commit any open transaction first before switching to autocommit
-            conn.commit()
-            old_autocommit = conn.autocommit
-            conn.autocommit = True
-            try:
-                with conn.cursor() as cur:
-                    cur.execute(stmt)
-            finally:
-                conn.autocommit = old_autocommit
-        else:
-            # Normal statements run in the transaction
-            with conn.cursor() as cur:
-                cur.execute(stmt)
-
-    # Record the migration as applied
+    """Run one migration's SQL and record it, atomically."""
     with conn.cursor() as cur:
+        cur.execute(path.read_text())
         cur.execute("INSERT INTO schema_migrations (filename) VALUES (%s)", (path.name,))
     conn.commit()
 

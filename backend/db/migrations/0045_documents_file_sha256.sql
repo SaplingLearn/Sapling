@@ -27,6 +27,6 @@ ALTER TABLE documents
 -- Supports the equality lookup in document_dedup.find_duplicate, which runs on
 -- every upload before any work is done. Partial: rows without a fingerprint
 -- are never matched, so they do not belong in the index.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_documents_file_sha256
+CREATE INDEX IF NOT EXISTS idx_documents_file_sha256
     ON documents (file_sha256)
     WHERE file_sha256 IS NOT NULL;
