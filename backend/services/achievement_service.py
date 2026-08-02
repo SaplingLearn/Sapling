@@ -11,7 +11,28 @@ from services.xp_service import award_xp_safe
 
 
 def _count_rows(table_name: str, filters: dict) -> int:
-    rows = table(table_name).select("id", filters=filters)
+    """Count matching rows in `table_name`.
+
+    Selects `user_id`, NOT `id`. Two of the tables this is called with are
+    junction tables with a composite primary key and no `id` column at all:
+    `room_members` is PRIMARY KEY (room_id, user_id) (0001_baseline_schema.sql)
+    and `friendships` is PRIMARY KEY (user_id, friend_id)
+    (0043_gamification.sql). Asking PostgREST for a column that does not exist
+    is a 400 (`42703`), which `db/connection.py` raises — so with `id` the
+    `rooms_joined`, `owned_room_members` and `friends_count` stats did not
+    merely return a wrong number, they threw, and `study-circle`,
+    `room-leader`, `first-friend` and `popular` were unearnable.
+
+    `user_id` is present on every table this is called with (sessions,
+    documents, quiz_attempts, room_members, flashcards, room_messages,
+    graph_nodes, friendships), including the one call that filters by
+    `room_id` rather than `user_id`.
+
+    Every caller compares the result against a small `trigger_threshold`, so
+    PostgREST's `max_rows` cap is not a correctness problem here the way it is
+    in `_daily_totals` — a truncated 1000 still clears any real threshold.
+    """
+    rows = table(table_name).select("user_id", filters=filters)
     return len(rows) if rows else 0
 
 
