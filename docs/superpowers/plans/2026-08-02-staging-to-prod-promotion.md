@@ -647,8 +647,9 @@ def test_capture_collects_ledger_and_counts():
             ("to_regclass", [(True,)]),
             ("FROM schema_migrations", [("0001_a.sql",), ("0002_b.sql",)]),
             ("information_schema.tables", [("users",), ("notes",)]),
-            ("SELECT count(*) FROM public.users", [(8,)]),
-            ("SELECT count(*) FROM public.notes", [(0,)]),
+            # capture() quotes identifiers, so the fragment must too.
+            ('SELECT count(*) FROM public."users"', [(8,)]),
+            ('SELECT count(*) FROM public."notes"', [(0,)]),
         ]
     )
     snap = capture(conn)
@@ -663,7 +664,7 @@ def test_capture_handles_missing_ledger():
         [
             ("to_regclass", [(False,)]),
             ("information_schema.tables", [("users",)]),
-            ("SELECT count(*) FROM public.users", [(3,)]),
+            ('SELECT count(*) FROM public."users"', [(3,)]),
         ]
     )
     snap = capture(conn)
