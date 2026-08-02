@@ -3,8 +3,6 @@
 Every function here is pure — it takes plain data, so these tests need no
 database, no network and no credentials.
 """
-from pathlib import Path
-
 from promotion.preflight import (
     Finding,
     evaluate,
