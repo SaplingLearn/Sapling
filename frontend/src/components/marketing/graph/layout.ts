@@ -102,9 +102,9 @@ export function easeOutCubic(t: number): number {
  * undirected.
  *
  * The tree governs POSITION only. `AssemblingGraph` still draws every entry in
- * `graph.edges`, cross-edges included — `cs-sorting → cs-complexity` closes a
- * triangle back to the top of the frame and is a big part of why the picture
- * reads as a graph rather than a star.
+ * `graph.edges`, cross-edges included — `cs-sorting → cs-complexity` runs from
+ * the canopy's left tip back down to the middle shoot, closing a triangle, and
+ * is a big part of why the picture reads as a graph rather than a sprig.
  */
 function spanningTree(graph: CourseGraph): {
   depth: Map<string, number>;
@@ -133,63 +133,134 @@ function spanningTree(graph: CourseGraph): {
 }
 
 /**
- * Where the depth-1 ring's FIRST node sits, as an angle from 3 o'clock. SVG
- * angles run clockwise (y grows downward), so −π/2 is 12 o'clock.
+ * Number of nodes in each node's subtree of the spanning tree, itself included.
  *
- * THE INVARIANT, unchanged from the previous wave and for the same reason. The
- * ring starts a quarter of a slot FORWARD of 3 o'clock, so its angles are
- * `(4i + 1) · step/4` — ODD multiples of `step/4 = π/(2·count)`. An odd multiple
- * of `π/(2n)` is never a multiple of π (that would need `odd = 2kn`), so a ring
- * of ANY size lands no node on the horizontal axis through the centre. `−3` and
- * `+1` are both odd, so this is the same proof the `−3·step/4` rule carried;
- * the two differ only by one whole slot, i.e. by WHICH child gets which seat.
- *
- * WHY THE SEATS MOVED BY ONE. For count 3 the ring is 4, 8 and 12 o'clock
- * either way. What changed is that the layout below is now a tree: the two
- * children that carry subtrees (indices 0 and 1 in all three fixtures) grow a
- * second segment straight outward, and every label hangs BELOW its dot. Seated
- * at 4 and 8 o'clock those arms grow downward and their labels fall away from
- * the root; seated at 12 o'clock (the old `−3·step/4`) an arm grows straight up
- * and the drawing goes lopsided — measured, that phase puts the settled box
- * 10.4% of the frame off-centre and cannot be made collision-free at the phone
- * breakpoint at any radius (worst pair −2.7 units at `maxRadius` 200, still
- * negative). The childless third child takes the 12 o'clock seat, where its
- * label is the only object above the root.
- *
- * That does tie the composition to fixture declaration order — the third child
- * being the leaf. It is the same dependency the ring layout had, and it is
- * pinned by the collision suite rather than left to chance.
+ * Only used to decide WHICH depth-1 seat a child gets (see `fanSeats`). Walking
+ * the depths from the outside in means a node's children are always counted
+ * before the node is added to its own parent, so one pass is enough.
  */
-function ringPhase(count: number): number {
-  return (Math.PI * 2) / count / 4;
+function subtreeSizes(
+  graph: CourseGraph,
+  depth: Map<string, number>,
+  parent: Map<string, string>,
+): Map<string, number> {
+  const size = new Map(graph.nodes.map((n) => [n.id, 1]));
+  const deepestFirst = [...graph.nodes]
+    .map((n) => n.id)
+    .sort((a, b) => (depth.get(b) ?? 0) - (depth.get(a) ?? 0));
+  for (const id of deepestFirst) {
+    const p = parent.get(id);
+    if (p) size.set(p, (size.get(p) ?? 1) + (size.get(id) ?? 1));
+  }
+  return size;
 }
 
 /**
- * A RADIAL TREE. Root at the centre; depth-1 spread evenly around the full
- * circle at radius `ring`; every deeper node placed at radius `ring` from ITS
- * OWN PARENT, inside a wedge centred on the direction from the centre to that
- * parent. Siblings share (and subdivide) the wedge.
+ * The seat angles of the depth-1 fan, left to right, as angles from 3 o'clock.
+ * SVG angles run clockwise (y grows downward), so −π is 9 o'clock, −π/2 is 12
+ * and 0 is 3 — i.e. the open interval (−π, 0) is the UPWARD half-plane.
  *
- * THE BUG THIS FIXES. The layout used to be global concentric RINGS: a node's
- * angle came from its index within its depth, so it had no relationship to
- * where its parent sat. With the shipped 6-node fixtures that scatters the
- * graph — `cs-sorting` (a child of `cs-arrays`) landed 171 units from its
- * parent on a ring of radius 232, `cs-trees` was flung to the opposite corner,
- * and the result read as a lopsided diagonal smear rather than a tree. Tuning
- * the ring angles cannot fix it: the previous wave swept them, moved the
- * aspect metric from 0.436 to 1.006, and made the composition visibly worse.
- * Every tree edge is now exactly one `ring` long — max 170.9 → 116.0 desktop,
- * mean 128.5 → 116.0 — because a child is placed off its parent, not off the
- * centre.
+ * `count` children take the `count` interior gridlines of a (count + 1)-way
+ * split of that half-plane: `−π + (seat + 1) · π/(count + 1)`. For three
+ * children that is 45° / 90° / 135°, a canopy; for one it is straight up.
+ *
+ * WHY THE INTERIOR GRIDLINES and not slice centres (`(seat + ½) · π/count`,
+ * which would spread the same three children over 30° / 90° / 150°). Two
+ * reasons, both measured across all three fixtures × both views:
+ *
+ * - the horizon. Slice centres put the outermost child `π/(2·count)` off the
+ *   horizontal, which for a wide fan is a nearly flat arm whose second segment
+ *   runs level with the root; the gridlines put it `π/(count + 1)` off, which
+ *   is strictly further from the horizon for every `count > 1` and is why the
+ *   no-horizontal invariant below holds with room to spare (measured |sin| =
+ *   0.707 against a 0.5 floor).
+ * - shape. At 30° the settled drawing is 0.35 tall for every unit wide — a flat
+ *   candelabra. At 45° it is 0.51–0.56, which is the canopy the section's
+ *   "watch it grow" headline is describing.
+ *
+ * THE INVARIANT THIS KEEPS. No child ever lands on the horizontal axis through
+ * the root: the seat angles are `−π + k·π/(count+1)` for `k` in `1…count`, so
+ * `|sin θ| = sin(k·π/(count+1))`, which is zero only at `k = 0` or `k =
+ * count+1` — both outside the range. The previous wave proved the same property
+ * for a full-circle ring phased by an odd multiple of `π/(2·count)`; this is
+ * the half-plane version of it, and it is strictly stronger (the closest
+ * approach is `sin(π/(count+1))`, never worse than the old `sin(π/(2·count))`).
+ */
+function fanAngle(seat: number, count: number): number {
+  return -Math.PI + ((seat + 1) * Math.PI) / (count + 1);
+}
+
+/**
+ * The order the depth-1 seats are handed out in: OUTSIDE-IN — leftmost,
+ * rightmost, next-leftmost, next-rightmost, … — with the biggest subtrees
+ * going first (see the caller).
+ *
+ * The outer seats have open sky beyond them; the inner seats are hemmed in by a
+ * sibling on each side, so the branches that carry the most nodes get the room.
+ * With the shipped fixtures (two children carrying a grandchild, one leaf) that
+ * seats the two deep arms symmetrically about the vertical and leaves the leaf
+ * as a short central shoot — the sprout silhouette.
+ *
+ * The alternative — handing seats out left to right — was measured and
+ * rejected: it puts one two-step arm on the vertical axis and the one-step leaf
+ * beside it, so the drawing leans (its base lands 13% of the frame width off
+ * the centre, against 2% here) and cs210's `cs-sorting → cs-complexity`
+ * cross-edge runs straight through the middle node's label (−7.3 units at the
+ * desktop type scale; on the phone no combination of radius, type scale, dot
+ * size and label gap clears it while the labels still render at 11 CSS px).
+ */
+function fanSeats(count: number): number[] {
+  const seats: number[] = [];
+  let lo = 0;
+  let hi = count - 1;
+  while (lo <= hi) {
+    seats.push(lo);
+    if (lo !== hi) seats.push(hi);
+    lo += 1;
+    hi -= 1;
+  }
+  return seats;
+}
+
+/**
+ * A SAPLING. The root sits at the bottom-centre of the drawing; depth-1 fans
+ * upward across the half-plane above it at radius `ring`; every deeper node is
+ * placed at radius `ring` from ITS OWN PARENT, inside a wedge centred on the
+ * direction that parent itself grew in. Siblings share (and subdivide) the
+ * wedge. Because every depth-1 heading points upward, so does everything below
+ * it: the whole structure fans up.
+ *
+ * WHAT THIS WAVE CHANGED, and nothing else: the ANGULAR DOMAIN. The BFS
+ * spanning tree and the parent-relative placement are exactly as the previous
+ * wave left them, and every edge in `graph.edges` is still drawn, cross-edges
+ * included. What moved is that depth-1 used to be spread around the FULL circle
+ * with the root at the frame's centre, so the tree grew one arm up and two
+ * down — an inverted Y, or a root system. The product is called Sapling and the
+ * section headline is "Pick a course. Watch it grow."; a drawing that grows
+ * downward is the wrong picture, and no amount of ring phasing fixes a full
+ * circle.
+ *
+ * WHY THE ROOT IS NOT AT `(width/2, height/2)` ANY MORE. That point is the
+ * centre `helixEntry` spirals around and the point `fitViewBox` fits its frame
+ * about — the sweep is very nearly a disc centred there. Leaving the root on it
+ * while growing upward would put the whole drawing in the disc's top half and
+ * reserve the bottom half for nothing: measured, the settled box lands 15.7% of
+ * the frame height off centre and fills 0.41 of it (against 0.53 here), and the
+ * `<svg>` grows to 676px. So the skeleton is laid out with the root at the
+ * origin and then translated as a rigid body until ITS OWN bounding box is
+ * centred on `(width/2, height/2)`. The root ends up at the bottom-centre of
+ * the content, the sweep stays centred on the drawing, and the frame comes out
+ * centred on it too (measured ≤ 3.2% off on either axis, every fixture, both
+ * views).
  *
  * `maxRadius` is the spatial budget: `ring = maxRadius / maxDepth`, so a chain
- * of `maxDepth` collinear steps lands exactly on it. A node whose siblings push
- * it off its parent's outward direction sits INSIDE that radius, so `maxRadius`
- * is an upper bound rather than an exact outer ring. It defaults to the old
- * inscribed-circle-minus-48 rule so every existing caller and test is
- * unchanged, but each view passes it explicitly: the binding constraint is the
- * *fitted* frame, not the layout box, and `min(w, h) / 2 - pad` can't express
- * that.
+ * of `maxDepth` collinear steps spans exactly it. A node whose siblings push it
+ * off its parent's outward direction sits INSIDE that radius, so `maxRadius` is
+ * an upper bound rather than an exact outer ring. Its default is unchanged
+ * (`min(w, h)/2 − 48`) so every existing caller keeps working, but both shipped
+ * views pass it explicitly — the binding constraints are the fitted frame, the
+ * label clearances and the phone's legibility floor, none of which
+ * `min(w, h)/2 − pad` can express.
  *
  * Deterministic by construction: no randomness, no clock, no DOM read.
  */
@@ -209,13 +280,12 @@ export function radialLayout(
     byDepth.set(d, [...(byDepth.get(d) ?? []), n.id]);
   }
 
-  const cx = width / 2;
-  const cy = height / 2;
   const maxDepth = Math.max(...byDepth.keys(), 1);
   const ring = maxRadius / maxDepth;
 
+  /** Laid out with the root at the origin; translated to the frame at the end. */
   const out = new Map<string, Point>();
-  /** Direction from the CENTRE to this node — the axis its own wedge is built on. */
+  /** The direction this node GREW in — the axis its own wedge is built on. */
   const heading = new Map<string, number>();
   /** Angular span this node's subtree owns, subdivided among its children. */
   const wedge = new Map<string, number>();
@@ -225,18 +295,22 @@ export function radialLayout(
 
     // Depth 0 is the root — plus, defensively, anything the BFS never reached.
     if (d === 0) {
-      for (const id of ids) out.set(id, { x: cx, y: cy });
+      for (const id of ids) out.set(id, { x: 0, y: 0 });
       continue;
     }
 
     if (d === 1) {
-      const step = (Math.PI * 2) / ids.length;
-      const phase = ringPhase(ids.length);
-      ids.forEach((id, i) => {
-        const a = i * step + phase;
-        out.set(id, { x: cx + Math.cos(a) * ring, y: cy + Math.sin(a) * ring });
+      const gap = Math.PI / (ids.length + 1);
+      const seats = fanSeats(ids.length);
+      const size = subtreeSizes(graph, depth, parent);
+      // Biggest subtree first, ties in declaration order (Array#sort is stable),
+      // so the deep arms take the outer seats.
+      const seated = [...ids].sort((a, b) => (size.get(b) ?? 1) - (size.get(a) ?? 1));
+      seated.forEach((id, i) => {
+        const a = fanAngle(seats[i], ids.length);
+        out.set(id, { x: Math.cos(a) * ring, y: Math.sin(a) * ring });
         heading.set(id, a);
-        wedge.set(id, step);
+        wedge.set(id, gap);
       });
       continue;
     }
@@ -248,21 +322,42 @@ export function radialLayout(
     }
     for (const [p, kids] of siblings) {
       const anchor = out.get(p)!;
-      const base = heading.get(p) ?? Math.atan2(anchor.y - cy, anchor.x - cx);
-      const span = wedge.get(p) ?? Math.PI * 2;
+      // The parent's own outward direction. The fallback is the bearing from
+      // the root, which is where the root sits while this loop runs.
+      const base = heading.get(p) ?? Math.atan2(anchor.y, anchor.x);
+      const span = wedge.get(p) ?? Math.PI;
       const slice = span / kids.length;
       kids.forEach((id, i) => {
         // Centre of this child's slice — a lone child therefore lands exactly
-        // on the parent's outward direction, i.e. collinear with the centre.
+        // on the parent's outward direction, i.e. collinear with it.
         const a = base - span / 2 + (i + 0.5) * slice;
         const q = { x: anchor.x + Math.cos(a) * ring, y: anchor.y + Math.sin(a) * ring };
         out.set(id, q);
-        heading.set(id, Math.atan2(q.y - cy, q.x - cx));
+        heading.set(id, a);
         wedge.set(id, slice);
       });
     }
   }
-  return out;
+
+  // Rigid translation: centre the skeleton's own bounding box on the layout
+  // box's centre, which is the point the entry sweep spirals around. See the
+  // doc comment above for why this is not "put the root at the centre".
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of out.values()) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  const dx = width / 2 - (minX + maxX) / 2;
+  const dy = height / 2 - (minY + maxY) / 2;
+
+  const placed = new Map<string, Point>();
+  for (const [id, p] of out) placed.set(id, { x: p.x + dx, y: p.y + dy });
+  return placed;
 }
 
 /**
@@ -324,27 +419,22 @@ export function labelHalfWidth(label: string, geom: GraphGeometry): number {
 /**
  * Where a node's label baseline sits, relative to the node's drawn centre.
  *
- * On DESKTOP the root's label stays above it (#344 visual 4). Both halves are
- * collision-free under the tree, and the numbers moved: measured across all
- * three fixtures, above clears by 8.80 units — the binding neighbour is the
- * cross-edge that runs from an 8 o'clock child up to the 12 o'clock one
- * (`ma-matrices → ma-eigen`, `sm-dist → sm-testing`) — and below by 31.24, in
- * the open wedge between the two downward arms. So "below" is now the roomier
- * half, where the ring layout made it the tighter one. It is a one-line flip if
- * the composition ever wants it; it is not taken here because 8.80 units is
- * 6.6 CSS px at the rendered cap, and because flipping it would leave
- * `rootLabelAbove` false in every shipped view — a flag and a branch with no
- * caller.
+ * BOTH shipped views now put the root's label BELOW its circle, and that is a
+ * consequence of the root moving to the base of the drawing. "Above" used to be
+ * the open half — it was the direction with no graph in it. Under the upward
+ * fan it is the direction the whole plant grows in: the course code lands on
+ * the stem running from the root up to its middle child, where the halo has to
+ * cut the edge in two to stay legible, and it eats 20 units off the settled
+ * box's height (aspect 0.562 → 0.53, and the frame does not shrink with it, so
+ * the dead band grows). Below the root there is nothing but the frame edge, and
+ * the code reads as a caption at the ground line. Measured, below clears its
+ * nearest neighbour by 30.14 units on desktop and 5.40 on the phone; above
+ * clears by 9.83 and 2.71.
  *
- * On MOBILE it stays below, because there the geometry still forbids the
- * alternative outright. The childless third child sits `ring` straight above
- * the root with its own label hanging back down toward it, so an
- * above-the-root label only clears it when
- *
- *     ring ≥ rootR + nodeR + 2·labelGap + cap + descender
- *
- * — 84.1 units at the phone type scale, against an 81.5-unit ring. Measured,
- * "above" overlaps that label by 8.72 units; below clears everything by 14.53.
+ * `rootLabelAbove` is kept — it is part of `GraphGeometry`'s shape, it is what
+ * makes the choice a per-view geometry question rather than a hard-coded taste
+ * one, and `layout.test.ts` still exercises both branches — but no shipped view
+ * sets it today.
  *
  * Shared with `fitViewBox` and `layout.test.ts` so the frame can never be
  * fitted to a label position the component doesn't actually use.
@@ -394,13 +484,14 @@ const FIT_STEPS = 512;
  * THE THING TO NOT GET WRONG: fit to the HELIX SWEEP, not to the settled node
  * positions. `helixEntry` rotates a node up to 1.5 turns around the centre on
  * the way in, so every outer node passes through every direction on its way to
- * rest. Under the radial tree that gap is WIDER than it was under the rings,
- * because a tree is a wide object inside a circular sweep: on desktop the
- * settled drawing spans 280.5 units of height while the sweep spans 476.3, so a
- * box fitted to the settled positions would clip 91.1 units off the top and
- * 104.7 off the bottom — 121 and 139 CSS px at the rendered cap, in plain view.
- * That exact bug was found and fixed once already on this branch (#344 review
- * #4). The phone numbers are 63.6 and 73.5. `layout.test.ts` sweeps `t` across
+ * rest. Under the upward fan that gap is WIDER still than it was under the
+ * downward tree, because a canopy is a wide, short object inside a circular
+ * sweep: on desktop the settled drawing spans 284.3 units of height while the
+ * sweep spans 513.6, so a box fitted to the settled positions would clip 125.8
+ * units off the top and 103.6 off the bottom — 150 and 124 CSS px at the
+ * rendered cap, in plain view. That exact bug was found and fixed once already
+ * on this branch (#344 review #4). The phone numbers are 82.9 and 69.6, against
+ * 63.6 and 73.5 before. `layout.test.ts` sweeps `t` across
  * the full range to keep it fixed, and pins the overshoot itself so a
  * settled-fit implementation fails outright.
  *
@@ -464,91 +555,101 @@ function withFit(geom: GraphGeometry): GraphView {
 }
 
 /**
- * Untouched by the tree rewrite: `maxRadius: 232` is still `radialLayout`'s old
- * default (`min(900, 560) / 2 - 48`), so the spatial budget, the type scale and
- * the dot sizes are exactly what this branch was designed and reviewed against.
- * Only the arrangement inside that budget changed, and the frame re-fitted
- * around it: `165 48 541 498`, against `185 33 526 516` for the ring layout,
- * `159 42 578 498` for the flat ring before that, and the `0 0 900 560` the
- * demo shipped with.
+ * Retuned for the upward fan. Frame `161 17 603 534`, against `165 48 541 498`
+ * for the downward radial tree, `185 33 526 516` for the ring layout before it,
+ * and the `0 0 900 560` the demo shipped with.
  *
  * The component caps the rendered width (`md:max-w-[720px]`), so at the cap the
- * graph draws at 1.331 user units per CSS px: 16.0px labels, 37.3px concept
- * dots, a 69px root, and a 663px-tall `<svg>` — 43px SHORTER than the ring
- * layout's 706px and 74px shorter than the 737px the fixed box reserved.
+ * graph draws at 1.194 user units per CSS px: 16.7px labels, 33.4px concept
+ * dots, a 62px root, and a **637.6px-tall `<svg>` — 25px SHORTER** than the
+ * downward tree's 662.8 and 99px shorter than the 737px the fixed box reserved.
  *
- * The composition it buys, measured on cs210: the drawing is 448 × 281 units
- * (596 × 374 CSS px) inside a 541 × 498 frame, centred to within 18 units
- * horizontally and 7 vertically. It fills 83% of the frame's width against the
- * ring layout's 71%; it fills less of its height (56% against 73%) because a
- * three-branch tree is a wide object and the frame is fitted to a near-circular
- * entry sweep — see `fitViewBox`. That is the deliberate trade: symmetric
- * whitespace above and below a balanced drawing, rather than a taller drawing
- * whose children sit nowhere near their parents.
+ * WHY `maxRadius` LEFT 232, i.e. why it is no longer `radialLayout`'s
+ * inscribed-circle default. Under the upward fan the drawing wraps its own
+ * centre much more tightly than a full-circle spread does, so the same budget
+ * produced a 460-unit frame and a 19px type scale. The budget is now solved,
+ * not inherited, against three constraints that the layout box cannot express:
+ *
+ * - the rendered type scale (720 / `fit.w`), which sets label and dot sizes;
+ * - the label clearances, which improve as the ring grows against a fixed type
+ *   size — 320 buys 30.14 units (36 CSS px) on the worst pair, against the
+ *   8.80 units (6.6 px) the downward tree shipped;
+ * - the shape assertions, which are scale-free.
+ *
+ * The composition it buys, measured on cs210: the drawing is 506 × 284 units
+ * (604 × 339 CSS px) inside a 603 × 534 frame, centred to within 2.8% of the
+ * width and 2.1% of the height. It fills **0.839 of the frame's width** against
+ * the downward tree's 0.828 (ma242 0.916, sm275 0.881), and 0.53 of its height.
+ *
+ * The height share is the one number that did not improve, and it is worth
+ * being precise about why: `fitViewBox` fits the frame to the ENTRY SWEEP, and
+ * the sweep is very nearly a disc, so the frame is very nearly square whatever
+ * the drawing does. Dead vertical space is therefore ≈ (drawing width −
+ * drawing height) / 2 for any layout, and a canopy is by definition wider than
+ * tall. Measured: 149 CSS px of band above and below, against 145 for the
+ * downward tree — a wash. Making that band small needs a drawing with aspect
+ * ≈ 1, which is neither a canopy nor shorter (swept: a symmetric fan narrow
+ * enough to fill the height renders a 683px section). The lever that would
+ * actually shrink it is the sweep itself — `helixEntry`'s 1.5 turns — and that
+ * is an animation change, out of this wave's scope.
  */
 export const DESKTOP_VIEW: GraphView = withFit({
   w: 900,
   h: 560,
-  maxRadius: 232,
-  font: 12,
+  maxRadius: 320,
+  font: 14,
   rootR: 26,
   nodeR: 14,
-  labelGap: 16,
-  rootLabelAbove: true,
+  labelGap: 13,
+  rootLabelAbove: false,
   labelHalo: 3,
   edgeW: 1.4,
   fitPad: 10,
 });
 
 /**
- * The phone view, RETUNED for the tree — and the reason the retune was not
- * optional. Frame `-38 -11 414 356`; a ~332px content box (390 viewport − 48 of
- * `px-6` − the 10px scrollbar globals.css paints) renders it at 0.802, so
- * 14-unit labels land at 11.23 CSS px, concept dots at a 20.9px diameter, and
- * the `<svg>` is 285px tall — all three still over the E2E legibility gate
- * (≥11px labels, ≥20px dots, >260px tall), and all three tighter than the ring
- * layout's 12.8 / 25.5 / 301.
+ * The phone view, and the breakpoint that gains the most from the upward fan.
+ * Frame `-32 -25 443 365`; a ~332px content box (390 viewport − 48 of `px-6` −
+ * the 10px scrollbar globals.css paints) renders it at 0.7494, so 16-unit
+ * labels land at **11.99 CSS px**, concept dots at a **22.48px** diameter, and
+ * the `<svg>` is **273.5px** tall. All three clear the E2E legibility gate
+ * (≥11px labels, ≥20px dots, >260px tall), and all three are BETTER than the
+ * downward tree's 11.23 / 20.85 / 285.5 on the two that were nearly lost.
  *
- * WHY THE RING HAD TO GROW (132 → 163). Labels hang below their dots and are
- * `middle`-anchored, so a 13-character label ("Vector Spaces", "Distributions",
- * "Central Limit") is 3.9·font units wide on each side of its node. In a tree
- * the child of a depth-1 node sits `ring` away along that node's outward
- * direction, and with three children 120° apart the flattest arm is always 30°
- * off the horizontal — that is forced, not chosen: of two arms 120° apart, the
- * best achievable worst-case horizontal step is `ring·sin(60°)`. So the child's
- * dot lands inside its own parent's label unless
+ * THE CONSTRAINT THAT WAS RAZOR-THIN AND NO LONGER IS. Labels hang below their
+ * dots and are `middle`-anchored, so a 13-character label ("Vector Spaces",
+ * "Distributions", "Central Limit") reaches 3.9·font units to each side of its
+ * node. The downward tree put its two deep arms 120° apart, which forces one of
+ * them to within 30° of the horizontal, so a child's dot landed inside its own
+ * parent's label unless `0.866·ring > 3.9·font + labelHalo/2 + nodeR`; the
+ * shipped geometry met that by **+1.23 units (0.99 CSS px)** and the label gate
+ * by +0.23 CSS px, both inside the noise of whether Chromium paints a scrollbar
+ * at that viewport.
  *
- *   0.866 · ring  >  3.9 · font + labelHalo/2 + nodeR
+ * The fan changes the geometry that produces the number. Its two deep arms are
+ * 90° apart and symmetric about the vertical, so the worst horizontal step is
+ * `ring·sin 45°` on BOTH of them instead of `ring·sin 60°` on one and
+ * `ring·sin 30°` on the other, and the crowded pair moves from "a child's dot
+ * inside its parent's label" to "the middle shoot's label beside a depth-1
+ * dot". Measured worst pair over all three fixtures: **+5.40 units = 4.05 CSS
+ * px**, a 4× improvement, with the label gate now clearing by 0.99 CSS px
+ * instead of 0.23.
  *
- * — `ring ≥ 76` at this type scale, against the 66 the ring layout used. At
- * `ring = 66` the overlap measures −13.1 units on ma242 and sm275.
- *
- * WHAT BOUNDS IT FROM ABOVE is the same E2E gate, through the fitted frame:
- * `fit.w ≈ 3.65·ring + 7.8·font + labelHalo + 2·fitPad`, and legibility needs
- * `font · 332 / fit.w ≥ 11`. The two brackets leave a window about 4 units of
- * `ring` wide; 81.5 (`maxRadius` 163, halved by `maxDepth`) sits in it with
- * +1.23 units on the worst label pair — up from the +0.80 the ring layout
- * shipped — and +0.23 CSS px on the label gate. `nodeR` drops 14 → 13 and
- * `fitPad` 10 → 2 to buy that window; both are spent directly on the two
- * constraints above, and `fitPad` still has the fit's outward whole-unit snap
- * under it.
- *
- * The other constraint the previous wave tuned against — the root's label
- * versus the horizontal depth-1 chord — is GONE: with the branch-bearing
- * children at 4 and 8 o'clock, the only depth-1 edge any fixture draws
- * (`ma-matrices → ma-eigen`, `sm-dist → sm-testing`) runs from 8 o'clock to 12
- * o'clock and never crosses the root's label band. What survives unchanged is
- * the 12 o'clock child's label clearing the root's dot, which needs
- * `ring > nodeR + labelGap + 5.2 + rootR` — 59.2 here, with 22 units in hand.
+ * The window is still two-sided — the collision wants a bigger ring, the
+ * legibility gate wants a smaller frame (`font · 332 / fit.w ≥ 11`) — and the
+ * point below was picked by sweeping `maxRadius`, `font`, `rootR`, `nodeR` and
+ * `labelGap` against BOTH ends plus the shape assertions, maximising the worst
+ * normalised margin. `fitPad` stays at 2 (the fit's outward whole-unit snap
+ * sits under it); everything else moved.
  */
 export const MOBILE_VIEW: GraphView = withFit({
   w: 360,
   h: 300,
-  maxRadius: 163,
-  font: 14,
+  maxRadius: 212,
+  font: 16,
   rootR: 22,
-  nodeR: 13,
-  labelGap: 19,
+  nodeR: 15,
+  labelGap: 15,
   rootLabelAbove: false,
   labelHalo: 3.5,
   edgeW: 1.8,

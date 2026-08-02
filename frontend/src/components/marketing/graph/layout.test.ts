@@ -59,9 +59,58 @@ describe('radialLayout', () => {
     for (const n of G.nodes) expect(p.get(n.id)).toBeDefined();
   });
 
-  it('puts the root at the centre', () => {
+  /**
+   * CRITERION 1 — the whole point of this wave. The section is called "Pick a
+   * course. Watch it grow." and the product is called Sapling; the layout used
+   * to spread depth-1 around the FULL circle with the root at the frame's
+   * centre, so the drawing grew one arm up and two down and read as an inverted
+   * Y. Every node that is not the root now sits STRICTLY ABOVE it — smaller y,
+   * SVG coordinates — in every fixture, in every shipped view.
+   *
+   * Asserted as a margin rather than as `< rootY` so a layout that merely
+   * grazes the root's own line (the ring layout put two nodes exactly on it)
+   * cannot squeak through: the closest any node comes is `ring · sin(π/4)`,
+   * measured 113.1 units on desktop and 74.9 on the phone.
+   */
+  it('grows upward — every node sits strictly above the root', () => {
+    for (const graph of COURSE_GRAPHS) {
+      for (const view of GRAPH_VIEWS) {
+        const pts = radialLayout(graph, view.w, view.h, view.maxRadius);
+        const root = pts.get(graph.rootId)!;
+        for (const n of graph.nodes) {
+          if (n.id === graph.rootId) continue;
+          expect(
+            pts.get(n.id)!.y,
+            `${graph.id}/${n.id} at maxRadius ${view.maxRadius}`,
+          ).toBeLessThan(root.y - view.nodeR);
+        }
+      }
+    }
+  });
+
+  /**
+   * …and the other half of criterion 1: the root is at the BOTTOM-CENTRE of the
+   * content, not in the middle of it.
+   *
+   * `radialLayout` lays the skeleton out with the root at the origin and then
+   * translates it as a rigid body until the skeleton's own bounding box is
+   * centred on `(w/2, h/2)` — the point `helixEntry` spirals around and
+   * `fitViewBox` fits its frame about. So the root is the LOWEST node, it is
+   * horizontally centred in the drawing (the fan is mirror-symmetric), and it
+   * sits BELOW the layout centre rather than on it.
+   */
+  it('puts the root at the bottom-centre of the content', () => {
     const p = radialLayout(G, 800, 500);
-    expect(p.get(G.rootId)).toEqual({ x: 400, y: 250 });
+    const root = p.get(G.rootId)!;
+    const xs = [...p.values()].map((q) => q.x);
+    const ys = [...p.values()].map((q) => q.y);
+
+    expect(root.y).toBe(Math.max(...ys));
+    expect(root.x).toBeCloseTo((Math.min(...xs) + Math.max(...xs)) / 2, 6);
+    expect(root.x).toBeCloseTo(400, 6);
+    expect(root.y).toBeGreaterThan(250);
+    // The skeleton, not the root, is what is centred on the layout box.
+    expect((Math.min(...ys) + Math.max(...ys)) / 2).toBeCloseTo(250, 6);
   });
 
   it('is deterministic', () => {
@@ -196,27 +245,36 @@ describe('radialLayout', () => {
   });
 
   /**
-   * CRITERION 3 — the invariant the previous wave established, carried over
-   * unchanged. The ring phase used to be a half slot on alternate depths, which
-   * on a 2-node ring (`step = π`, every fixture at depth 2 back then) resolved
-   * to exactly {0, π}: both outer nodes dead on the horizontal axis.
+   * The no-horizontal invariant, carried over — RETARGETED AT THE ROOT, which
+   * is the only retarget in this file that changes what is measured rather than
+   * what the number is.
    *
-   * The tree only phases ONE ring — depth 1 — but deeper nodes inherit their
-   * parent's heading when they are lone children, so the invariant has to hold
-   * for them too. Asserted as an angle off the horizontal, not as a coordinate.
+   * It used to measure the angle from `(w/2, h/2)`, which was the root. It is
+   * not any more: the root sits at the bottom-centre of the content and
+   * `(w/2, h/2)` is the centre of the skeleton's bounding box — the point the
+   * entry sweep spirals around. The line that matters for the drawing has
+   * always been "the horizontal through the node everything radiates from", and
+   * that node is the root. Measured off `(w/2, h/2)` instead, the two outer
+   * depth-1 children now sit exactly ON it by construction (the fan's tips and
+   * the root define the box, so its mid-line runs through them) — which is
+   * geometrically meaningless and would fail a test whose subject no longer
+   * exists.
+   *
+   * Off the ROOT the invariant is stronger than it has ever been: the closest
+   * any node comes to the horizon is `sin(π/4)` = 0.707, against 0.5 for the
+   * downward tree and exactly 0 for the ring layout it replaced. The bar stays
+   * at the 0.4 the previous wave set.
    */
-  it('never lands a node on the horizontal axis through the centre', () => {
+  it('never lands a node on the horizontal axis through the root', () => {
     for (const graph of COURSE_GRAPHS) {
       for (const view of GRAPH_VIEWS) {
         const pts = radialLayout(graph, view.w, view.h, view.maxRadius);
+        const root = pts.get(graph.rootId)!;
         for (const n of graph.nodes) {
           if (n.id === graph.rootId) continue;
           const p = pts.get(n.id)!;
-          const dx = p.x - view.w / 2;
-          const dy = p.y - view.h / 2;
-          // |sin| of the angle off the horizontal axis. The old rule measured
-          // exactly 0 on both depth-2 nodes; every node now measures 0.5 — 30°
-          // off, the tightest angle either ring produces.
+          const dx = p.x - root.x;
+          const dy = p.y - root.y;
           expect(
             Math.abs(dy) / Math.hypot(dx, dy),
             `${graph.id}/${n.id} at maxRadius ${view.maxRadius}`,
@@ -227,15 +285,20 @@ describe('radialLayout', () => {
   });
 
   /**
-   * …and the invariant `ringPhase` actually claims, which is stronger than the
-   * three fixtures: for a ring of ANY size the angles are odd multiples of
-   * `π/(2·count)`, so the closest one can ever come to the horizontal axis is
-   * one such step. Swept over ring sizes 1…24 on synthetic star graphs — the
-   * cheapest way to build a ring of a given size — with the count-aware floor
-   * rather than a flat number, because a flat number is only meaningful for the
-   * ring sizes that happen to ship today.
+   * …and the invariant `fanAngle` actually claims, which is stronger than the
+   * three fixtures: for a fan of ANY size the seat angles are
+   * `−π + k·π/(count+1)` for `k` in `1…count`, so the closest one can ever come
+   * to the horizontal is `sin(π/(count+1))`. Swept over fan sizes 1…24 on
+   * synthetic star graphs, with the count-aware floor rather than a flat
+   * number, because a flat number is only meaningful for the fan sizes that
+   * happen to ship today.
+   *
+   * The floor is the one the previous wave's `ringPhase` guaranteed —
+   * `sin(π/(2·count))` — kept deliberately: `π/(count+1) ≥ π/(2·count)` for
+   * every `count ≥ 1`, so passing it proves the new rule is never worse than
+   * the old one at any size, not merely that it happens to pass its own bar.
    */
-  it('holds the no-horizontal invariant at any ring size', () => {
+  it('holds the no-horizontal invariant at any fan size', () => {
     const star = (count: number): CourseGraph => ({
       id: `star${count}`,
       code: 'X',
@@ -256,26 +319,41 @@ describe('radialLayout', () => {
 
     for (let count = 1; count <= 24; count++) {
       const pts = radialLayout(star(count), 900, 560, 232);
-      // Half a slot of the ring's own quarter-slot grid, minus float slop.
+      const root = pts.get('r')!;
+      // The bar the previous wave's ring phase guaranteed, minus float slop.
       const floor = Math.sin(Math.PI / (2 * count)) * 0.999;
       for (let i = 0; i < count; i++) {
         const p = pts.get(`n${i}`)!;
-        const sin = Math.abs(p.y - 280) / Math.hypot(p.x - 450, p.y - 280);
-        expect(sin, `ring of ${count}, node ${i}`).toBeGreaterThan(floor);
+        const sin = Math.abs(p.y - root.y) / Math.hypot(p.x - root.x, p.y - root.y);
+        expect(sin, `fan of ${count}, node ${i}`).toBeGreaterThan(floor);
+        // …and every one of them is above the root, at any fan size.
+        expect(p.y, `fan of ${count}, node ${i}`).toBeLessThan(root.y);
       }
     }
   });
 
   /**
    * The wedge rule, which no shipped fixture exercises — every parent below the
-   * root has exactly one child, so every arm is collinear with the centre. This
+   * root has exactly one child, so every arm is collinear with its parent. This
    * pins what happens when one doesn't: siblings SHARE their parent's angular
-   * span, evenly and symmetrically about the parent's own outward direction, so
-   * a branchy graph fans out instead of stacking on one ray.
+   * span, evenly and symmetrically about the direction that parent itself grew
+   * in, so a branchy graph fans out instead of stacking on one ray.
    *
-   * (It replaces the old "breaks radial spokes when two rings hold the same node
-   * count" test, whose subject — a half-slot rotation applied to the SECOND
-   * concentric ring — no longer exists: there are no rings past depth 1.)
+   * RETARGETED, not weakened. Two of its numbers moved with the angular domain,
+   * and both moves are the subject of this wave:
+   *
+   * - the axis. It used to be measured as the bearing from `(w/2, h/2)` to the
+   *   parent, which was the same thing as "the direction the parent grew" only
+   *   because the root sat at `(w/2, h/2)`. It no longer does, so the axis is
+   *   now read off the root — which is what "the parent's outward direction"
+   *   meant all along.
+   * - the span. Depth-1 used to own a full `2π/count` slot of a circle; it now
+   *   owns a `π/(count+1)` slot of the upward half-plane. With two children
+   *   that is π/3 rather than π, so three grandchildren land at −π/9, 0, +π/9
+   *   off the axis instead of −π/3, 0, +π/3. The RULE — even, symmetric
+   *   subdivision of exactly the parent's own span — is unchanged and is what
+   *   is asserted; the arithmetic is derived from `π/(count+1)` in the test so
+   *   it cannot drift from the implementation silently.
    */
   it('splits a parent’s wedge evenly between its children', () => {
     const graph: CourseGraph = {
@@ -300,33 +378,48 @@ describe('radialLayout', () => {
     };
     const pts = radialLayout(graph, 900, 560, 232);
     const a = pts.get('a')!;
-    // Direction from `a` to each child, measured off `a` — the wedge's own axis
-    // is the direction from the centre to `a`.
+    const root = pts.get('r')!;
+    // Direction from `a` to each child, measured off `a`. The wedge's own axis
+    // is the direction `a` itself grew in, i.e. the bearing from the ROOT.
     const bearing = (id: string) => Math.atan2(pts.get(id)!.y - a.y, pts.get(id)!.x - a.x);
-    const outward = Math.atan2(a.y - 280, a.x - 450);
-    // `a` and `b` split the circle in two, so `a` owns a π wedge; three children
-    // take the centres of three π/3 slices: −π/3, 0, +π/3 off the outward axis.
-    expect(bearing('a1') - outward).toBeCloseTo(-Math.PI / 3, 6);
+    const outward = Math.atan2(a.y - root.y, a.x - root.x);
+    // `a` and `b` take two of a 3-way split of the upward half-plane, so `a`
+    // owns a π/3 wedge; three children take the centres of three π/9 slices.
+    const slice = Math.PI / (2 + 1) / 3;
+    expect(bearing('a1') - outward).toBeCloseTo(-slice, 6);
     expect(bearing('a2') - outward).toBeCloseTo(0, 6);
-    expect(bearing('a3') - outward).toBeCloseTo(Math.PI / 3, 6);
+    expect(bearing('a3') - outward).toBeCloseTo(slice, 6);
     // Symmetric about the axis, and all still one ring step out.
     for (const id of ['a1', 'a2', 'a3']) {
       expect(Math.hypot(pts.get(id)!.x - a.x, pts.get(id)!.y - a.y), id).toBeCloseTo(116, 6);
     }
-    // A child pushed off its parent's outward direction lands INSIDE maxRadius.
+    // A child pushed off its parent's outward direction lands INSIDE maxRadius
+    // of the root — `maxRadius` is a budget, not an outer ring.
     for (const id of ['a1', 'a3']) {
-      expect(Math.hypot(pts.get(id)!.x - 450, pts.get(id)!.y - 280), id).toBeLessThan(232);
+      expect(Math.hypot(pts.get(id)!.x - root.x, pts.get(id)!.y - root.y), id).toBeLessThan(232);
     }
+    // The deeper subtree took an OUTER seat: `a` carries three children and `b`
+    // none, so `a` is further from the vertical through the root than `b` is.
+    const off = (id: string) => Math.abs(pts.get(id)!.x - root.x);
+    expect(off('a')).toBeGreaterThan(off('b') - 1e-9);
   });
 
   it('keeps the default maxRadius at the old inscribed-circle rule', () => {
     // The `maxRadius` parameter was added for the mobile view (#344 review #3).
-    // Its default has to reproduce the desktop geometry this branch was
-    // designed against byte-for-byte, or every existing frame shifts.
+    // Its DEFAULT is unchanged, so every caller that omits it — the two tests
+    // above, and anything outside this module — keeps the geometry it had.
     expect(radialLayout(G, 900, 560)).toEqual(
       radialLayout(G, 900, 560, Math.min(900, 560) / 2 - 48),
     );
-    expect(DESKTOP_VIEW.maxRadius).toBe(Math.min(DESKTOP_VIEW.w, DESKTOP_VIEW.h) / 2 - 48);
+    // DESKTOP_VIEW no longer takes that default (232 → 320), and the assertion
+    // that it did is gone rather than adjusted, because the identity was never
+    // the point: the layout box only fixes the entry sweep's centre, while the
+    // spatial budget is bracketed by the rendered type scale, the label
+    // clearances and the phone's legibility floor. Pinning the value is this
+    // test's job; pinning it to an arithmetic coincidence with `w`/`h` would
+    // just re-break the moment either is retuned.
+    expect(DESKTOP_VIEW.maxRadius).toBe(320);
+    expect(MOBILE_VIEW.maxRadius).toBe(212);
   });
 });
 
@@ -480,10 +573,11 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
    * The MARGIN is what this asserts, in units, on each side. It used to be
    * stated as a ratio ("the sweep needs ~2× the settled height"), which was only
    * ever a proxy for "a settled fit would clip" and moved for reasons that had
-   * nothing to do with clipping. Measured on each side: desktop 91.1 / 104.7,
-   * mobile 63.6 / 73.5 — wider under the radial tree than under the rings
-   * (59.0 / 59.3 and 33.5 / 33.5), because a three-branch tree is a wide, short
-   * object sitting inside a circular sweep.
+   * nothing to do with clipping. Measured on each side: desktop 125.8 / 103.6,
+   * mobile 82.9 / 69.6 — wider again under the upward fan than under the
+   * downward tree (91.1 / 104.7 and 63.6 / 73.5), which were themselves wider
+   * than the rings (59.0 / 59.3 and 33.5 / 33.5), because a canopy is a wide,
+   * short object sitting inside a circular sweep.
    */
   for (const view of GRAPH_VIEWS) {
     it(`the ${view.maxRadius}-radius sweep leaves the settled bounding box`, () => {
@@ -525,25 +619,36 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
   }
 
   /**
-   * CRITERION 4 — the settled drawing has to be a SANE SHAPE, sitting in the
+   * CRITERION 4/5 — the settled drawing has to be a SANE SHAPE, sitting in the
    * middle of the frame it is given.
    *
-   * The bar this replaces asked for aspect ≥ 0.60 and ≥ 0.70 of the frame
-   * height, which the ring layout met (0.91–1.01 / 0.73) while putting children
-   * nowhere near their parents. The radial tree cannot meet the height bar and
-   * should not be asked to: three children 120° apart, two of them carrying a
-   * second segment, make an object 1.73× as wide as it is tall, and the frame
-   * is fitted to a near-circular sweep. Measured: aspect 0.626 / 0.575 / 0.597
-   * desktop, 0.634 / 0.558 / 0.590 phone; 0.83–0.92 of the frame's WIDTH
-   * against the ring layout's 0.71–0.79, and 0.56–0.60 of its height.
+   * TWO BARS MOVED WITH THE UPWARD FAN, both deliberately, both downward.
    *
-   * So the assertions are: the aspect stays inside a stated window (a
-   * re-flattening to the old 0.40, or a tall skinny chain, still fails), the
-   * drawing fills a real share of the frame in EACH axis, and — the part the
-   * height bar was really standing in for — it is CENTRED, so whatever
-   * whitespace the sweep costs is spent symmetrically instead of shoved to one
-   * side. The ring-phase family that keeps children with their parents but
-   * seats a branch at 12 o'clock measures 10.4% off-centre and fails this.
+   * The ASPECT WINDOW goes 0.55–1.10 → 0.40–0.80. A canopy is legitimately
+   * wider than tall: three shoots leaving one base 45° apart, two of them
+   * carrying a second segment, make an object about twice as wide as it is
+   * high. Measured 0.562 / 0.515 / 0.535 desktop, 0.575 / 0.502 / 0.533 phone —
+   * comfortably inside. The new CEILING is the load-bearing half: it is what
+   * fails the "grow it straight up into a tall skinny chain" family, which is
+   * the way an upward layout goes wrong.
+   *
+   * The FRAME-HEIGHT SHARE goes 0.55 → 0.50 (measured 0.532 desktop, 0.569
+   * phone, against 0.563 / 0.599 for the downward tree). That is a real, small
+   * regression and it is geometric, not a tuning slip: `fitViewBox` fits to the
+   * ENTRY SWEEP, the sweep is very nearly a disc, so the frame is very nearly
+   * square whatever the drawing does, and dead vertical space is therefore
+   * ≈ (drawing width − drawing height) / 2 for ANY layout. Widening the drawing
+   * to fill more of the frame's width — which criterion 4 asks for and which
+   * this change delivers, 0.828 → 0.839 on cs210 — necessarily spends a little
+   * of its height share. The bar is kept as a floor with a stated number rather
+   * than deleted, so a future change that empties the frame still fails.
+   *
+   * What is asserted, then: the aspect stays inside a stated window, the
+   * drawing fills a real share of the frame on EACH axis, and it is CENTRED, so
+   * whatever whitespace the sweep costs is spent symmetrically instead of
+   * shoved to one side. The left-to-right seating family — which grows upward
+   * and keeps children with their parents, but puts a two-step arm on the
+   * vertical and the leaf beside it — measures 13% off-centre and fails this.
    */
   describe('the settled graph is a sane shape, centred in its frame', () => {
     for (const view of GRAPH_VIEWS) {
@@ -572,12 +677,12 @@ describe('helixEntry × radialLayout — nothing leaves the fitted viewBox', () 
             b = Math.max(b, e.bottom);
           }
           const aspect = (b - t) / (r - l);
-          expect(aspect, 'settled aspect').toBeGreaterThanOrEqual(0.55);
-          expect(aspect, 'settled aspect').toBeLessThanOrEqual(1.1);
-          // Measured: 0.81–0.92 wide, 0.56–0.60 tall.
+          expect(aspect, 'settled aspect').toBeGreaterThanOrEqual(0.4);
+          expect(aspect, 'settled aspect').toBeLessThanOrEqual(0.8);
+          // Measured: 0.815–0.934 wide, 0.532–0.569 tall.
           expect((r - l) / view.fit.w, 'share of the frame width').toBeGreaterThan(0.75);
-          expect((b - t) / view.fit.h, 'share of the frame height').toBeGreaterThan(0.55);
-          // Centred: measured ≤ 3.4% of the width, ≤ 1.4% of the height.
+          expect((b - t) / view.fit.h, 'share of the frame height').toBeGreaterThan(0.5);
+          // Centred: measured ≤ 3.2% of the width, ≤ 2.1% of the height.
           expect(
             Math.abs((l + r) / 2 - (view.fit.x + view.fit.w / 2)) / view.fit.w,
             'horizontal off-centre',
@@ -614,8 +719,8 @@ describe('fitViewBox — one stable frame for every course', () => {
     // The shipped bug: `viewBox="0 0 900 560"` around content 578 units wide.
     expect(DESKTOP_VIEW.fit.w).toBeLessThan(DESKTOP_VIEW.w);
     expect(DESKTOP_VIEW.fit.h).toBeLessThan(DESKTOP_VIEW.h);
-    expect(viewBoxAttr(DESKTOP_VIEW.fit)).toBe('165 48 541 498');
-    expect(viewBoxAttr(MOBILE_VIEW.fit)).toBe('-38 -11 414 356');
+    expect(viewBoxAttr(DESKTOP_VIEW.fit)).toBe('161 17 603 534');
+    expect(viewBoxAttr(MOBILE_VIEW.fit)).toBe('-32 -25 443 365');
   });
 });
 
@@ -725,15 +830,17 @@ describe('GraphView sizing at a 390px viewport', () => {
 
   it('renders legible labels and dots on a phone', () => {
     const scale = CONTENT_PX / MOBILE_VIEW.fit.w;
-    expect(scale).toBeCloseTo(0.8019, 4);
-    // 11.23 CSS px labels, 20.85 CSS px dot diameter, 285.5 CSS px of graph
-    // height. TIGHTER than the ring layout's 12.77 / 25.54 / 301.0, and
-    // deliberately so: see `MOBILE_VIEW`. A 13-character label at this type
-    // scale is 1.34× the ring step, so the phone geometry is bracketed from
-    // BELOW by the label-vs-child-dot collision (which wants a bigger ring) and
-    // from ABOVE by this gate (which wants a smaller frame), and the window
-    // between them is about four units of ring wide. There is no slack here to
-    // spend: any future type-scale nudge has to re-solve both at once.
+    expect(scale).toBeCloseTo(0.7494, 4);
+    // 11.99 CSS px labels, 22.48 CSS px dot diameter, 273.5 CSS px of graph
+    // height. The phone geometry is still bracketed from BELOW by a label
+    // collision (which wants a bigger ring) and from ABOVE by this gate (which
+    // wants a smaller frame), but the upward fan widened the window: its two
+    // deep arms are 90° apart and symmetric, so the worst horizontal step is
+    // `ring·sin 45°` on both instead of `ring·sin 60°` on one and `ring·sin 30°`
+    // on the other. The margins on the three bars are +0.99px / +2.48px /
+    // +13.5px, against the downward tree's +0.23px / +0.85px / +25.5px — the
+    // first two roughly quadrupled, and the first one was inside the noise of
+    // whether Chromium paints a scrollbar at this viewport.
     expect(MOBILE_VIEW.font * scale).toBeGreaterThanOrEqual(11);
     expect(2 * MOBILE_VIEW.nodeR * scale).toBeGreaterThanOrEqual(20);
     expect(MOBILE_VIEW.fit.h * scale).toBeGreaterThanOrEqual(260);

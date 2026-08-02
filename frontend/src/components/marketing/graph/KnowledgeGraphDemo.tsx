@@ -194,10 +194,9 @@ function AssemblingGraph({
           >
             <circle cx={h.x} cy={h.y} r={r * h.scale} fill={nodeFill(graph, n)} />
             {/*
-              Labels sit ON the edge mesh — under the radial tree the root's own
-              label and its 12 o'clock child's both straddle the vertical edge
-              between them, and every arm's label straddles the edge running out
-              to its child (#344 visual 4).
+              Labels sit ON the edge mesh — under the upward fan every arm's
+              label straddles the edge running out to its child, and the middle
+              shoot's label sits across the stem it hangs from (#344 visual 4).
               `paint-order: stroke` lays a halo in the section's own backdrop
               colour under the glyphs and paints the fill over it, so a line
               passing behind a word breaks around the letterforms instead of
@@ -376,13 +375,16 @@ export default function KnowledgeGraphDemo() {
           direction the rest of the section already uses, and it is the reversible
           half of the choice: no copy moves, no structure changes.
 
-          At the 720px cap the desktop graph draws at ~1.33 units per CSS px in
-          a 720×663 box, where the fixed viewBox reserved 1184×737 and drew the
-          graph across the middle 277px of it. The box is 43px SHORTER than the
-          720×706 the concentric-ring layout fitted to: a radial tree is a wide,
-          short object, so it fills 83% of the frame's width (up from 71%) and
-          56% of its height, centred, with the whitespace the circular entry
-          sweep costs spent symmetrically above and below.
+          At the 720px cap the desktop graph draws at ~1.19 units per CSS px in
+          a 720×638 box, where the fixed viewBox reserved 1184×737 and drew the
+          graph across the middle 277px of it. The box is 25px SHORTER than the
+          720×663 the downward radial tree fitted to and 68px shorter than the
+          concentric rings before it: the course sits at the base and its
+          concepts fan upward, which is both the brand's picture and a wider,
+          shorter object — it fills 84% of the frame's width (up from 83%, and
+          from 71% under the rings) and 53% of its height, centred, with the
+          whitespace the circular entry sweep costs spent symmetrically above
+          and below.
         */}
         <svg
           data-testid="landing-graph-svg"

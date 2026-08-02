@@ -605,21 +605,40 @@ describe('KnowledgeGraphDemo — node paint and label placement', () => {
     );
   });
 
-  it('places the root label above the node and concept labels below theirs', () => {
+  /**
+   * FLIPPED with the upward fan, and the flip is the point rather than a
+   * concession. This used to assert the root's label sat ABOVE its circle,
+   * which was right while the root sat in the middle of the frame with nothing
+   * over it. The root is now the BASE of the drawing and everything grows out
+   * of its top, so "above" means "on the stem running up to the middle shoot" —
+   * the halo has to cut that edge in two for the course code to stay legible,
+   * and the code stops reading as a caption for the whole picture. Below the
+   * base there is nothing but frame. Measured, below clears its nearest
+   * neighbour by 30.14 units against above's 9.83 (see `labelBaselineY`).
+   *
+   * The `rootLabelAbove` branch itself is untouched and still covered in
+   * `layout.test.ts`; what changed is which side the shipped views ask for.
+   */
+  it('places every label below its node, the root included', () => {
     render(<KnowledgeGraphDemo />);
     const g = COURSE_GRAPHS[0];
 
     const rootGroup = nodeGroup(g.rootId);
     const rootCy = Number(rootGroup.querySelector('circle')!.getAttribute('cy'));
     const rootBaseline = Number(rootGroup.querySelector('text')!.getAttribute('y'));
-    // Below the root is where the outer-ring → depth-1 edge crosses its x.
-    expect(rootBaseline).toBeLessThan(rootCy - DESKTOP_VIEW.rootR);
+    expect(rootBaseline).toBeGreaterThan(rootCy + DESKTOP_VIEW.rootR);
 
     const leaf = g.nodes.find((n) => n.id !== g.rootId)!;
     const leafGroup = nodeGroup(leaf.id);
     const leafCy = Number(leafGroup.querySelector('circle')!.getAttribute('cy'));
     const leafBaseline = Number(leafGroup.querySelector('text')!.getAttribute('y'));
     expect(leafBaseline).toBeGreaterThan(leafCy + DESKTOP_VIEW.nodeR);
+    // …and the root really is the base: every other node is drawn above it.
+    for (const n of g.nodes) {
+      if (n.id === g.rootId) continue;
+      const cy = Number(nodeGroup(n.id).querySelector('circle')!.getAttribute('cy'));
+      expect(cy, `${n.id} should sit above the root`).toBeLessThan(rootCy);
+    }
   });
 
   it('halos label text in the section backdrop so edges break around it', () => {
