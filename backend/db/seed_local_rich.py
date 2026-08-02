@@ -1,7 +1,8 @@
 """LOCAL-ONLY rich seed for E2E / manual testing (#363).
 
 Broad, idempotent, self-contained dataset layered on the canonical terms
-(fall-2025 / spring-2026 / summer-2026 from migration 0019). All ids namespaced
+(fall-2025 / spring-2026 / fall-2026 — 0019 seeds these and
+0032_retire_summer_2026 removes Summer). All ids namespaced
 `rich-*`. 🔒 columns via services.encryption so they decrypt with the LOCAL
 ENCRYPTION_KEY. Refuses to run against a non-local SUPABASE_URL.
 
@@ -45,7 +46,10 @@ COURSE_CHEM = "rich-course-chem121"
 
 TERM_FALL_2025 = "fall-2025"
 TERM_SPRING_2026 = "spring-2026"
-TERM_SUMMER_2026 = "summer-2026"
+# Fall 2026 absorbed the Summer 2026 window when 0032_retire_summer_2026
+# deleted that term. There is deliberately no TERM_SUMMER_2026: seeding an
+# offering against it fails the terms FK (PostgREST reports it as a 409).
+TERM_FALL_2026 = "fall-2026"
 
 OFF_CS_F25 = "rich-off-cs101-f25"
 OFF_CS_S26 = "rich-off-cs101-s26"
@@ -120,7 +124,13 @@ def seed_courses() -> None:
 _OFFERINGS = [
     (OFF_CS_F25, COURSE_CS, TERM_FALL_2025, "Dr. Ada Lovelace", "MWF 09:00", "Hall A"),
     (OFF_CS_S26, COURSE_CS, TERM_SPRING_2026, "Dr. Ada Lovelace", "MWF 11:00", "Hall A"),
-    (OFF_ENG_SU26, COURSE_ENG, TERM_SUMMER_2026, "Prof. Maya Angelou", "MTWTh 10:00", "Hall C"),
+    # Keeps its `su26` id: 0032 moved Summer offerings into Fall 2026, and the
+    # ids are opaque keys, not claims about the term. Renaming them would break
+    # an existing local database: this upsert conflicts on
+    # (course_id, term_id, section), so a new id does not insert a second row —
+    # it UPDATEs the existing one's `id`, and enrollments.offering_id references
+    # it with no ON UPDATE clause (so NO ACTION). The rename fails on that FK.
+    (OFF_ENG_SU26, COURSE_ENG, TERM_FALL_2026, "Prof. Maya Angelou", "MTWTh 10:00", "Hall C"),
     (OFF_MATH_S26, COURSE_MATH, TERM_SPRING_2026, "Dr. Emmy Noether", "TTh 10:00", "Hall B"),
     (OFF_BIO_F25, COURSE_BIO, TERM_FALL_2025, "Dr. Rosalind Franklin", "TTh 13:00", "Lab 2"),
     (OFF_HIST_F25, COURSE_HIST, TERM_FALL_2025, "Dr. Howard Zinn", "MWF 13:00", "Hall D"),

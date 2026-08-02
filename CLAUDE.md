@@ -31,7 +31,7 @@ A FastAPI + Supabase backend that ingests student documents, calls Gemini to cla
 - backend/services/auth_guard.py:68 — `require_self` / `require_admin` FastAPI dependencies.
 - backend/agents/note_summary.py, note_concepts.py, note_chat.py — Pydantic AI agents backing the `/api/notes` agent actions (model slots in `agents/_providers.py`).
 - backend/db/connection.py:102 — `table()` factory; the only sanctioned Supabase entry point (PostgREST, no DDL).
-- backend/db/migrate.py — raw-DDL migration runner (psycopg over `SUPABASE_DB_URL`); migrations are append-only `db/migrations/*.sql` (now at 0036).
+- backend/db/migrate.py — raw-DDL migration runner (psycopg over `SUPABASE_DB_URL`); migrations are append-only `db/migrations/*.sql`, named with a UTC timestamp prefix (`YYYYMMDDHHMMSS_description.sql`). See `db/migrations/README.md`.
 
 ## Commands
 
@@ -45,14 +45,18 @@ python -m pytest tests/ -q      # backend test suite
 Database (run from `backend/`; migrations are raw DDL, never dashboard SQL):
 
 ```
-python -m db.migrate              # apply pending migrations (needs SUPABASE_DB_URL = direct conn string)
+python -m db.migrate              # apply pending migrations (SUPABASE_DB_URL = SESSION-mode pooler URI, port 5432)
 python -m db.migrate --baseline   # record migrations as applied without running them
 python -m db.seed_staging         # idempotent fake demo dataset on the new schema
 ```
 
 The `db/` scripts read `.env` by default; for staging/prod ops run them under
 `dotenv -f .env.staging run -- python -m db.<script>` so they hit the right project.
-Migrations are immutable once applied — add a new numbered file, never edit an old one.
+Migrations are immutable once applied — add a new timestamp-prefixed file
+(`date -u +%Y%m%d%H%M%S`), never edit an old one. `SUPABASE_DB_URL` must be the
+SESSION-mode pooler URI (port 5432, user `postgres.<ref>`); the direct
+`db.<ref>.supabase.co` host is IPv6-only and unreachable from most networks, and
+port 6543 is transaction mode and breaks DDL. `scripts/pooler_url.py` builds it.
 
 Docker (full stack from repo root):
 
@@ -80,7 +84,7 @@ make explore                       # Chapter 2: bounded AI exploration of the ru
 ## Conventions
 
 - All Supabase access goes through `db/connection.py::table()`. Do not instantiate `httpx` clients or import `supabase` directly elsewhere. The one sanctioned exception is `db/migrate.py`, which connects with psycopg to run DDL.
-- Schema changes are append-only numbered migrations in `backend/db/migrations/` (applied via `python -m db.migrate`); never edit an applied migration or run DDL in the Supabase dashboard.
+- Schema changes are append-only migrations in `backend/db/migrations/` (applied via `python -m db.migrate`); never edit an applied migration or run DDL in the Supabase dashboard. **New migrations use a UTC timestamp prefix** — `date -u +%Y%m%d%H%M%S` — because sequential `NNNN_` numbers are claimed at write time and only validated at merge, so concurrent branches collide. The 48 existing `NNNN_` files are frozen and must never be renamed: the ledger keys on basename, so a rename re-runs the migration. The count is 48 rather than 45 because three migrations applied out-of-band to staging had to be recovered under the exact basenames the live ledger recorded — the only reconciliation that clears an orphan without hand-editing a production ledger. That is the sole reason a new `NNNN_` file is ever sanctioned; anything genuinely new uses a timestamp. Full rationale in `backend/db/migrations/README.md`.
 - Term/offering/enrollment resolution goes through `services/academics.py`. The HTTP boundary keeps the abstract `course_id`; the graph stays on the abstract course, gradebook keys on `enrollment_id`, and study/analytics key on `offering_id`.
 - Display names are resolved via `services/profiles.py` (`get_display_name`/`get_display_names`), which decrypts off `user_profiles` — don't read name columns off `users`.
 - All LLM calls are Pydantic AI agents in `backend/agents/` (model slots in `agents/_providers.py`); there is no other sanctioned LLM seam (ADR 0024). Exactly two raw `google.genai.Client` sites remain: `services/rag_service.py`'s embedding client (request-path, `model_mode()`-gated per #439) and `scripts/_raw_gemini.py` (offline benchmark baseline, outside the request path — its docstring forbids importing it from application code).

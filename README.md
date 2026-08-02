@@ -233,7 +233,7 @@ npm run dev                # → http://localhost:3000
 | `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
 | `SESSION_SECRET` | — | HMAC secret for session tokens (min 32 bytes) |
 | `ALLOWED_EMAIL_DOMAINS` | — | Comma-separated sign-in email-domain allowlist (default `bu.edu`). Empty value disables the check (any domain may sign in). |
-| `SUPABASE_DB_URL` | — | Supabase **direct** connection string (port 5432, not the pooler) — used only by the `db.migrate` migration runner, never at app runtime |
+| `SUPABASE_DB_URL` | — | Supabase **session-mode pooler** URI (port 5432, user `postgres.<ref>`) — used only by the `db.migrate` migration runner, never at app runtime. Not the direct `db.<ref>` host (IPv6-only, unreachable from most networks); not port 6543 (transaction mode, breaks DDL) |
 | `LOGFIRE_TOKEN` | — | If set, traces ship to logfire.pydantic.dev. Without it, Logfire stays local-only. The Sapling scrubber redacts prompt/output content before egress regardless. |
 | `SAPLING_MODEL_CLASSIFIER` | — | Override classifier-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_SUMMARY` | — | Override summary-agent model (default `gemini-2.5-flash-lite`) |
@@ -312,7 +312,7 @@ SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py  # refresh baselin
 
 ## Migrations
 
-Schema lives as ordered SQL files in `backend/db/migrations/` (numeric prefix = apply order, `0001`–`0030`). A minimal runner (`backend/db/migrate.py`) applies pending files in order and records each in a tracking table, so it's idempotent — re-running only applies what's new. The runner connects directly with `psycopg` over the Supabase **direct** connection string (`SUPABASE_DB_URL`, not the pooler); this is the one sanctioned exception to the `db/connection.py::table()`-only convention, since runtime PostgREST can't execute DDL.
+Schema lives as ordered SQL files in `backend/db/migrations/`, applied in filename order. New migrations use a UTC timestamp prefix (`date -u +%Y%m%d%H%M%S`); the legacy `NNNN_` files are frozen and must never be renamed, since the ledger keys on basename and a rename re-runs the migration. See `backend/db/migrations/README.md`. A minimal runner (`backend/db/migrate.py`) applies pending files in order and records each in a tracking table, so it's idempotent — re-running only applies what's new. The runner connects with `psycopg` over the **session-mode pooler** URI (`SUPABASE_DB_URL`, port 5432, user `postgres.<ref>`); this is the one sanctioned exception to the `db/connection.py::table()`-only convention, since runtime PostgREST can't execute DDL.
 
 ```bash
 cd backend

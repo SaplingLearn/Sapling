@@ -1,0 +1,34 @@
+-- Drop 0036's NULL-section partial unique index, which 0033 made unreachable.
+--
+-- 0036 created
+--     CREATE UNIQUE INDEX course_offerings_course_term_nullsec_uniq
+--         ON course_offerings (course_id, term_id) WHERE section IS NULL;
+-- to close a hole in 0020's UNIQUE (course_id, term_id, section): plain UNIQUE
+-- treats NULLs as distinct, so two NULL-section offerings for the same course
+-- and term both survived.
+--
+-- 0033_offering_section_not_null.sql closes that hole differently and more
+-- completely — by making `section` NOT NULL DEFAULT '', so "no section" has a
+-- single representation that 0020's existing constraint already covers. Once
+-- that lands, `WHERE section IS NULL` is a predicate no row can satisfy, and
+-- this index is a permanent no-op: it indexes nothing, enforces nothing, and
+-- costs a line in every reader's mental model of how offering uniqueness works.
+--
+-- Leaving it would be worse than untidy. It reads as the thing guaranteeing
+-- no-duplicate-offerings, so the next person to touch that invariant would
+-- reason about the wrong constraint — and services/academics.py::resolve_offering
+-- cites 0036 by number for exactly that guarantee (updated in this change to
+-- name course_offerings_unique instead).
+--
+-- 0036 is not edited: it has already been applied to local and CI databases,
+-- and applied migrations are immutable. On a fresh replay 0036 still runs and
+-- creates the index; this file removes it a moment later. Two operations
+-- instead of none, in exchange for a chain that is honest about its history.
+--
+-- Race-safety after this migration rests on 0020's constraint alone:
+--     course_offerings_unique  UNIQUE (course_id, term_id, section)
+-- With section NOT NULL, two concurrent resolve_offering(create=True) calls for
+-- the same course+term both write ('', ...) and the loser gets a 409, which
+-- that function already catches and re-selects on.
+
+DROP INDEX IF EXISTS course_offerings_course_term_nullsec_uniq;
