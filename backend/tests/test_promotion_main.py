@@ -1,9 +1,10 @@
 """Direct coverage for promotion/__main__.py's real-IO glue (#516).
 
-Most of __main__.py is real-IO glue (subprocess/psycopg) that stays
-deliberately untested per the coordinator's explicit deferral in
-task-5-report.md. Two seams are the exception, both faked rather than
-shelling/reading out to the real world:
+`__main__.py` wraps real IO (subprocess/psycopg), but every seam that
+matters is reachable hermetically by monkeypatching the ONE library call at
+the boundary (`subprocess.run`, `psycopg.connect`, `builtins.input`) rather
+than shelling/reading out to the real world. No process is spawned and no
+database is contacted by anything in this file.
 
 - `Gh.ensure_pr`'s `--state open` filter is the exact line whose earlier
   regression (`--state all`) silently returned a PREVIOUS promotion's
@@ -14,7 +15,20 @@ shelling/reading out to the real world:
   stdin, and `str(EOFError())` is empty, so letting it propagate used to make
   `main()` print a bare "ERROR: " right after the migration had already
   applied — the exact moment a clear message matters most.
+- `_run`'s subprocess timeout: every caller (`git fetch`, `gh pr
+  create`/`view`/`merge`) is a network call: a future edit that silently
+  drops the `timeout` kwarg reintroduces a hang that can strand a promotion
+  AFTER the migration has applied, with CI staying green throughout.
+- `_staging_recorded`'s degrade-not-abort behavior: a stale URI, a paused
+  staging project, or a transient network fault must produce the documented
+  `staging-unknown` preflight finding, not abort the whole run before the
+  operator ever sees a report.
 """
+import subprocess
+
+import psycopg
+import pytest
+
 import promotion.__main__ as promotion_main
 
 
@@ -80,3 +94,64 @@ def test_confirm_auto_yes_never_touches_input(monkeypatch):
 
     monkeypatch.setattr("builtins.input", raise_if_called)
     assert promotion_main._confirm("Merge?", auto_yes=True) is True
+
+
+def test_run_passes_a_timeout_to_subprocess(monkeypatch):
+    """A future edit that silently drops the `timeout` kwarg reintroduces the
+    hang this fix closes: a stalled git/gh network call, or `gh` sitting on
+    an interactive prompt, blocking forever — possibly AFTER the migration
+    has already applied, with CI staying green the whole time.
+    """
+    recorded_kwargs: dict = {}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        recorded_kwargs.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(promotion_main.subprocess, "run", fake_subprocess_run)
+
+    promotion_main._run(["git", "fetch"])
+
+    assert recorded_kwargs.get("timeout") is not None
+
+
+def test_run_converts_timeout_expired_to_a_clean_runtime_error(monkeypatch):
+    """A raw subprocess.TimeoutExpired must not propagate — every other
+    _run failure surfaces as a RuntimeError naming the command, and a
+    timeout is no exception to that discipline.
+    """
+
+    def fake_subprocess_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+    monkeypatch.setattr(promotion_main.subprocess, "run", fake_subprocess_run)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        promotion_main._run(["git", "fetch"])
+    text = str(exc_info.value).lower()
+    assert "git fetch" in text
+    assert "timed out" in text
+
+
+def test_staging_recorded_degrades_to_none_on_connection_failure(monkeypatch, capsys):
+    """A stale STAGING_SUPABASE_DB_URL, a paused staging project, or a
+    transient network fault must not abort the whole run before the operator
+    ever sees a preflight report — it must degrade to the same "unknown"
+    signal as the var being unset (None), not re-raise, and the reason must
+    still be surfaced (not silently swallowed).
+    """
+    monkeypatch.setenv(
+        "STAGING_SUPABASE_DB_URL",
+        "postgresql://postgres.stg:pw@aws-1-us-west-2.pooler.supabase.com:5432/postgres",
+    )
+
+    def fake_connect(url):
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr(promotion_main.psycopg, "connect", fake_connect)
+
+    result = promotion_main._staging_recorded()
+
+    assert result is None
+    captured = capsys.readouterr()
+    assert "connection refused" in captured.err
