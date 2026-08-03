@@ -948,6 +948,38 @@ input[type="reset"]:disabled {
 
 /* Spotlight card hover glow. */
 
+/* ── Hero beta CTA: the original pill, on the canonical forest fill ──
+ * Landing-scoped on purpose: .btn stays a 6px rectangle everywhere else, and
+ * Button.tsx's "pills are NOT a Button" rule still holds for the primitive.
+ * The shimmer sweep is inlined here rather than reusing .landing-btn-shimmer —
+ * #344 phase 1 deleted that class as orphaned, and resurrecting a shared class
+ * for a single consumer would just re-create the orphan. */
+.landing-page .landing-beta-cta {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-full);
+  padding: 16px 40px;
+  letter-spacing: 0.025em;
+  box-shadow: 0 4px 14px rgba(27,108,66,0.18);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), filter var(--dur-fast) var(--ease);
+}
+.landing-page .landing-beta-cta::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, transparent, rgba(255,255,255,0.3), transparent);
+  transform: translateX(-200%);
+  transition: transform 0.7s ease;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.landing-page .landing-beta-cta:hover::before { transform: translateX(200%); }
+.landing-page .landing-beta-cta:hover {
+  transform: scale(1.02);
+  box-shadow: 0 6px 20px rgba(27,108,66,0.28);
+}
+.landing-page .landing-beta-cta:active { transform: scale(0.98); }
+
 /* Landing scrollbar. */
 .landing-page ::-webkit-scrollbar       { width: 6px; }
 .landing-page ::-webkit-scrollbar-track { background: var(--bg-mesh); }

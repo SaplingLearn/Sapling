@@ -565,6 +565,7 @@ export default function LandingPage() {
               <Button
                 variant="primary"
                 size="xl"
+                className="landing-beta-cta"
                 onClick={() => { setBetaModalOpen(true); if (betaEverSubmitted) setBetaSubmitted(true); }}
               >
                 Sign up for Beta Testing
