@@ -38,8 +38,8 @@ WORKDIR /app
 # These are one and the same public origin in prod/staging (frontend/wrangler.toml);
 # they only diverge here. Setting NEXT_PUBLIC_API_URL=${BACKEND_URL} bakes the
 # internal hostname "backend" into the client bundle, which the host browser
-# cannot resolve -> sign-in (SignInModal) and the newsletter form both fail
-# with a DNS error.
+# cannot resolve -> sign-in (SignInModal), onboarding course search
+# (OnboardingFlow) and the newsletter form all fail with a DNS error.
 #
 # Defaults target compose (the only consumer of this image; prod/staging deploy
 # to Cloudflare Workers via wrangler, not from here).

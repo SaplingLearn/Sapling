@@ -1,5 +1,13 @@
 # Onboarding cutover: `/onboarding` becomes the signup flow, `OnboardingFlow.tsx` deleted (#292)
 
+> **SUPERSEDED (2026-08-02).** The cutover this spec describes shipped in `9adf8d8`
+> and has now been reverted: the animated landing choreography and
+> `OnboardingFlow.tsx` are back (see `components/marketing/OnboardingFlow.tsx` and
+> the phase machine in `app/(public)/page.tsx`). `/onboarding` survives as the
+> standalone fallback route, so the "unwire" analysis below is still accurate
+> history — but the end state it argues for is no longer where the code is.
+> Kept for the reasoning, not as a description of today.
+
 **Issue:** [#292 — frontend: delete dead OnboardingFlow.tsx](https://github.com/SaplingLearn/Sapling/issues/292)
 
 ## Problem

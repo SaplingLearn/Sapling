@@ -103,7 +103,8 @@ function CallbackInner() {
       if (onboardingCompleted) {
         router.replace('/dashboard');
       } else {
-        router.replace('/onboarding');
+        sessionStorage.setItem('sapling_onboarding_pending', '1');
+        router.replace('/');
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps

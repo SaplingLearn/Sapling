@@ -7,11 +7,13 @@ import { useUser } from '@/context/UserContext';
 import { useScrollLock } from '@/lib/useScrollLock';
 import { Users, PenSquare } from 'lucide-react';
 import SignInModal from '@/components/marketing/SignInModal';
+import OnboardingFlow from '@/components/marketing/OnboardingFlow';
 import { HeroCard } from '@/components/marketing/HeroCard';
 import FeatureBand from '@/components/marketing/FeatureBand';
 import SurfaceBento from '@/components/marketing/SurfaceBento';
 import { FEATURE_BANDS } from '@/components/marketing/featureBands';
 import { BRAND_FOREST } from '@/lib/brand';
+import { submitOnboardingProfile, type OnboardingProfilePayload } from '@/lib/api';
 import { Button } from "@/components/ui";
 import { IS_TEST_MODE, random, now } from '@/lib/testMode';
 
@@ -36,6 +38,10 @@ const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!<>-_\\/[]{}=+*^?#_"
 // fillStyle where CSS var() doesn't resolve. #3e6f8a mirrors --info in
 // globals.css — the muted blue chosen to de-neon the old #3B82F6 (#106).
 const CLUSTER_COLORS = ['#9CA3AF', '#D97706', '#3e6f8a', '#8A63D2', '#14B8A6', '#EF4444'];
+// One per onboarding step, in step order — the colour each step's knowledge-graph
+// cluster grows in. #3e6f8a rather than the original #3B82F6 for the same #106
+// de-neon reason as above; OnboardingFlow's STEPS array mirrors this list.
+const OB_STEP_COLORS = ['#D97706', '#8A63D2', '#3e6f8a', '#14B8A6', '#EF4444'];
 const CLUSTER_SEEDS_BG = [10.0, 11.3, 12.6, 13.9, 15.2, 16.5];
 const CLUSTER_INIT_POS = [
   { ox: -222, oy: -29, oz:  15 },
@@ -54,11 +60,17 @@ const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 
 export default function LandingPage() {
   const router = useRouter();
-  const { userReady, isAuthenticated } = useUser();
+  const { userId, userReady, isAuthenticated } = useUser();
 
   const [heroMounted, setHeroMounted] = useState(false);
   const [heroText1, setHeroText1] = useState('');
   const [heroText2, setHeroText2] = useState('');
+  const [onboardingPhase, setOnboardingPhase] = useState<'idle' | 'out' | 'active' | 'complete'>('idle');
+  const [introText, setIntroText] = useState<'hidden' | 'in' | 'out'>('hidden');
+  const [outroText, setOutroText] = useState<'hidden' | 'in' | 'out'>('hidden');
+  const [outroOverlay, setOutroOverlay] = useState(false);
+  const [activeStep, setActiveStep] = useState(0);
+  const [completed, setCompleted] = useState<Set<number>>(new Set());
   const [signInOpen, setSignInOpen] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
   const [betaModalOpen, setBetaModalOpen] = useState(false);
@@ -86,6 +98,124 @@ export default function LandingPage() {
   const parallaxYRef = useRef(0);
   const mouseRef = useRef({ x: 0, y: 0 });
 
+  // ── Onboarding choreography refs ──────────────────────────────────────
+  // Everything the canvas RAF needs lives in refs: the loop closes over its
+  // setup once and must not re-run (and re-seed every node) on a state change.
+  const onboardingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const introTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
+  const canvasZoomRef = useRef(1.0);
+  const zoomActiveRef = useRef(false);
+  const zoomOutroRef = useRef(false);
+  const onboardingPhaseRef = useRef<'idle' | 'out' | 'active' | 'complete'>('idle');
+  const clusterProgressRef = useRef(0);
+  const clusterActiveStepRef = useRef(0);
+  const clusterCompletedRef = useRef<Set<number>>(new Set());
+  const obNodesRef = useRef<Array<{
+    ox: number; oy: number; oz: number;
+    startOx: number; startOy: number; startOz: number;
+    migDelay: number; migDur: number;
+    color: string; radius: number; seed: number;
+    birthTime: number; stepIndex: number; isPreview: boolean;
+    dyingAt?: number;
+  }>>([]);
+  const obInitStepsRef = useRef<Set<number>>(new Set());
+  const obDoneStepsRef = useRef<Set<number>>(new Set());
+  // Set by the canvas effect so the choreography can wake a parked RAF loop
+  // (reduced motion / test mode park it after one deterministic frame).
+  const canvasAnimatingRef = useRef(true);
+
+  // Play the onboarding intro choreography: dim the hero, run the
+  // "Let's Learn About You…" intro text, then let the canvas lerp its zoom
+  // 1.0 → 2.5 and form the clusters before dropping into the form. Shared by
+  // the "Get Started" click (startOnboarding) and the post-Google-sign-in
+  // resume below, so both entry points animate identically instead of the
+  // resume path snapping straight to the zoomed-in form.
+  const playOnboardingIntro = useCallback(() => {
+    if (onboardingTimeoutRef.current) clearTimeout(onboardingTimeoutRef.current);
+    introTimeoutsRef.current.forEach(clearTimeout);
+    setHeroMounted(true);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    setActiveStep(0);
+    setCompleted(new Set());
+    setIntroText('hidden');
+    // Start from the un-zoomed state so the zoom-in actually animates rather
+    // than snapping (the bug: the resume path used to hard-set these to 2.5/1).
+    canvasZoomRef.current = 1.0;
+    clusterProgressRef.current = 0;
+    zoomActiveRef.current = false;
+    zoomOutroRef.current = false;
+
+    // Reduced motion / test mode: the canvas RAF is parked on one deterministic
+    // frame, so there is no zoom to watch and no timing to wait on. Skip the
+    // choreography and open the form — the flow still works, it just doesn't
+    // perform. (#111 / #383 both take this position for the hero loops.)
+    if (!canvasAnimatingRef.current) {
+      setOnboardingPhase('active');
+      return;
+    }
+
+    setOnboardingPhase('out');
+    introTimeoutsRef.current = [
+      setTimeout(() => setIntroText('in'), 450),
+      setTimeout(() => {
+        setIntroText('out');
+        zoomActiveRef.current = true;
+      }, 1900),
+      setTimeout(() => {
+        setIntroText('hidden');
+        setOnboardingPhase('active');
+      }, 2550),
+    ];
+  }, []);
+
+  // Resume onboarding if the auth callback stashed a pending flag.
+  // Don't auto-redirect signed-in visitors away from the landing page —
+  // they should be able to read it like anyone else.
+  useEffect(() => {
+    if (!userReady || !isAuthenticated) return;
+    if (!sessionStorage.getItem('sapling_onboarding_pending')) return;
+    // NB: the flag is intentionally NOT cleared here — it's cleared only once
+    // onboarding reaches the 'active' phase (effect below). Clearing it up front
+    // makes the intro un-replayable, and React 18 Strict Mode's dev mount
+    // double-invoke clears the intro's timeouts (via the unmount-cleanup effect)
+    // before they fire, stranding onboarding at the 'out' phase. Deferring the
+    // clear lets the second Strict-Mode setup replay the intro so it survives.
+    playOnboardingIntro();
+  }, [userReady, isAuthenticated, playOnboardingIntro]);
+
+  // Consume the pending flag only once the intro has actually reached the form
+  // ('active') — past the Strict-Mode mount double-invoke window. Harmless
+  // no-op for paths that never set the flag.
+  useEffect(() => {
+    if (onboardingPhase === 'active') {
+      sessionStorage.removeItem('sapling_onboarding_pending');
+    }
+  }, [onboardingPhase]);
+
+  // Popup sign-in signals onboarding directly (see SignInModal.onmessage). The
+  // landing page is already mounted and isAuthenticated may not change for a
+  // returning visitor, so the mount-time resume effect above can't fire — play
+  // the intro on the event instead. (Same-tab redirect uses the flag + resume
+  // effect; the two paths never both run for one sign-in, so no double-trigger.)
+  useEffect(() => {
+    const handler = () => playOnboardingIntro();
+    window.addEventListener('sapling:start-onboarding', handler);
+    return () => window.removeEventListener('sapling:start-onboarding', handler);
+  }, [playOnboardingIntro]);
+
+  // Sync the state the canvas RAF reads through refs.
+  useEffect(() => { onboardingPhaseRef.current = onboardingPhase; }, [onboardingPhase]);
+  useEffect(() => { clusterActiveStepRef.current = activeStep; }, [activeStep]);
+  useEffect(() => { clusterCompletedRef.current = completed; }, [completed]);
+
+  // Cleanup choreography timeouts on unmount.
+  useEffect(() => {
+    return () => {
+      if (onboardingTimeoutRef.current) clearTimeout(onboardingTimeoutRef.current);
+      introTimeoutsRef.current.forEach(clearTimeout);
+    };
+  }, []);
+
   useEffect(() => {
     if (betaSubmitted) {
       const t = setTimeout(() => closeModal(), 3200);
@@ -94,7 +224,7 @@ export default function LandingPage() {
   }, [betaSubmitted, closeModal]);
   // Pre-auth there is no app shell, so <body> is the real scroll container and
   // useScrollLock resolves to it.
-  useScrollLock(betaModalOpen);
+  useScrollLock(betaModalOpen || onboardingPhase !== 'idle');
 
   // Always start at the top of the landing page so the intro sequence plays
   // in order. Without this, browser scroll restoration on reload / hot
@@ -203,6 +333,32 @@ export default function LandingPage() {
     }));
     const nodes = [...bgNodes, ...clusterNodes];
 
+    // ── Onboarding knowledge graph ────────────────────────────────────────
+    // Cluster centre per onboarding step, in the left-hand third the form
+    // doesn't cover. Nodes migrate in from off-screen right as steps complete.
+    const OB_STEP_CENTERS = [
+      { ox: -230, oy: -80, oz:  25 },
+      { ox: -115, oy:-105, oz: -35 },
+      { ox: -270, oy:  65, oz: -15 },
+      { ox: -155, oy:  95, oz:  35 },
+      { ox: -215, oy: -25, oz: -55 },
+    ];
+    const OB_SPREAD = 58;
+    const OB_COUNT  = 15;
+    const easeInOutCubic = (x: number) =>
+      x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+    // Deterministic per (step, index) jitter — a hash, not a PRNG, so a node's
+    // position is identical on every replay of the same step. Independent of
+    // testMode's `random()` seam for that reason.
+    const stepRand = (si: number, idx: number) => {
+      const s = Math.sin(si * 9301 + idx * 49297 + 233) * 10000003;
+      return s - Math.floor(s);
+    };
+
+    // Publish whether the loop is live, so startOnboarding knows whether there
+    // is a zoom to watch or whether it should go straight to the form.
+    canvasAnimatingRef.current = animating;
+
     function resize() {
       width = window.innerWidth;
       height = window.innerHeight;
@@ -222,6 +378,77 @@ export default function LandingPage() {
       rotAngle += 0.0008;
       const fl = 1000, cx = width / 2, cy = height / 2, t = now() * 0.001;
       const mx = mouseRef.current.x, my = mouseRef.current.y;
+      const nowMs = now();
+
+      // ── OB graph: spawn this step's preview nodes ─────────────────────
+      if (onboardingPhaseRef.current === 'active') {
+        const asi = clusterActiveStepRef.current;
+        if (!obInitStepsRef.current.has(asi)) {
+          obInitStepsRef.current.add(asi);
+          const ctr = OB_STEP_CENTERS[asi];
+          for (let k = 0; k < 8; k++) {
+            const ox = ctr.ox + (stepRand(asi, k * 4    ) - 0.5) * OB_SPREAD * 0.9;
+            const oy = ctr.oy + (stepRand(asi, k * 4 + 1) - 0.5) * OB_SPREAD * 0.6;
+            const oz = ctr.oz + (stepRand(asi, k * 4 + 2) - 0.5) * OB_SPREAD * 0.9;
+            obNodesRef.current.push({
+              ox, oy, oz, startOx: ox, startOy: oy, startOz: oz,
+              migDelay: k * 60, migDur: 450,
+              color: OB_STEP_COLORS[asi],
+              radius: 1 + stepRand(asi, k * 4 + 3) * 1.5,
+              seed: stepRand(asi, k * 4 + 2) * 100,
+              birthTime: nowMs, stepIndex: asi, isPreview: true,
+            });
+          }
+        }
+      }
+      // ── OB graph: a completed step's preview dies, its real cluster flies in ──
+      if (onboardingPhaseRef.current === 'active' || onboardingPhaseRef.current === 'complete') {
+        clusterCompletedRef.current.forEach(si => {
+          if (obDoneStepsRef.current.has(si)) return;
+          obDoneStepsRef.current.add(si);
+          obNodesRef.current.forEach(n => {
+            if (n.stepIndex === si && n.isPreview) n.dyingAt = nowMs;
+          });
+          const ctr = OB_STEP_CENTERS[si];
+          for (let k = 0; k < OB_COUNT; k++) {
+            obNodesRef.current.push({
+              ox: ctr.ox + (stepRand(si, k * 4    ) - 0.5) * OB_SPREAD * 2,
+              oy: ctr.oy + (stepRand(si, k * 4 + 1) - 0.5) * OB_SPREAD * 1.5,
+              oz: ctr.oz + (stepRand(si, k * 4 + 2) - 0.5) * OB_SPREAD * 2,
+              startOx: 80 + stepRand(si, k * 4 + 10) * 260,
+              startOy: (stepRand(si, k * 4 + 11) - 0.5) * 220,
+              startOz: (stepRand(si, k * 4 + 12) - 0.5) * 220,
+              migDelay: k * 50, migDur: 580 + stepRand(si, k * 4 + 13) * 160,
+              color: OB_STEP_COLORS[si],
+              radius: 1.8 + stepRand(si, k * 4 + 3) * 3,
+              seed: stepRand(si, k * 4 + 2) * 100,
+              birthTime: nowMs, stepIndex: si, isPreview: false,
+            });
+          }
+        });
+      }
+      if (obNodesRef.current.length > 0) {
+        obNodesRef.current = obNodesRef.current.filter(n =>
+          !(n.dyingAt !== undefined && nowMs - n.dyingAt > 500)
+        );
+        if (onboardingPhaseRef.current === 'idle') {
+          obNodesRef.current = [];
+          obInitStepsRef.current = new Set();
+          obDoneStepsRef.current = new Set();
+        }
+      }
+
+      // Zoom 1.0 → 2.5 on entering the form, → 5.5 on the outro dive.
+      const zoomTarget = zoomOutroRef.current ? 5.5 : (zoomActiveRef.current ? 2.5 : 1.0);
+      canvasZoomRef.current += (zoomTarget - canvasZoomRef.current) * 0.025;
+      const zoom = canvasZoomRef.current;
+
+      // clusterProgress fades the ambient field back so the OB graph reads.
+      clusterProgressRef.current = zoomActiveRef.current
+        ? Math.min(1, clusterProgressRef.current + 0.01)
+        : Math.max(0, clusterProgressRef.current - 0.015);
+      const clusterProgress = clusterProgressRef.current;
+      const linkFade = Math.max(0, 1 - clusterProgress);
 
       const proj = nodes.map(n => {
         const ny = n.oy + Math.sin(t * 0.4 + n.seed) * 15;
@@ -230,7 +457,7 @@ export default function LandingPage() {
         x -= mx * (z + fl) * 0.02;
         const y2 = ny - my * (z + fl) * 0.02;
         const sc = fl / (fl + z);
-        return { x: x * sc + cx, y: y2 * sc + cy - parallaxYRef.current, z, sc, n };
+        return { x: x * sc * zoom + cx, y: y2 * sc * zoom + cy - parallaxYRef.current, z, sc: sc * zoom, n };
       }).sort((a, b) => b.z - a.z);
 
       ctx.globalCompositeOperation = 'source-over';
@@ -241,11 +468,13 @@ export default function LandingPage() {
       // out of the inner loop, reject on |dx|/|dy| before multiplying, and
       // compare squared distances so the sqrt only runs for pairs that
       // actually draw a link.
-      for (let i = 0; i < proj.length; i++) {
+      // Fully clustered (mid-onboarding) every link alpha is 0, so the whole
+      // pair walk is dead work — skip it rather than compute invisible lines.
+      for (let i = 0; linkFade > 0 && i < proj.length; i++) {
         const p1 = proj[i];
         const maxD = 70 * p1.sc;
         const maxD2 = maxD * maxD;
-        const aScale = 0.15 * Math.min(1, p1.sc);
+        const aScale = 0.15 * Math.min(1, p1.sc) * linkFade;
         for (let j = i + 1; j < proj.length; j++) {
           const p2 = proj[j];
           const dx = p1.x - p2.x;
@@ -266,7 +495,8 @@ export default function LandingPage() {
       proj.forEach(p => {
         if (p.z > -fl) {
           const breathe = 0.92 + 0.08 * Math.sin(t * 0.6 + p.n.seed);
-          const fogA = p.z > 500 ? Math.max(0, 1 - (p.z - 500) / 500) : 1;
+          let fogA = p.z > 500 ? Math.max(0, 1 - (p.z - 500) / 500) : 1;
+          if (clusterProgress > 0) fogA *= Math.max(0.12, 1 - clusterProgress * 0.82);
           const r = p.n.radius * p.sc * breathe;
           if (r > 0.1) {
             ctx.globalAlpha = fogA;
@@ -275,6 +505,85 @@ export default function LandingPage() {
         }
       });
       ctx.globalAlpha = 1;
+
+      // ── OB graph: migrate, link and draw the per-step clusters ─────────
+      if (obNodesRef.current.length > 0) {
+        const obProj = obNodesRef.current.flatMap(n => {
+          const elapsed = nowMs - n.birthTime;
+          const rawMigP = (elapsed - n.migDelay) / n.migDur;
+          if (rawMigP < 0) return [];
+          const migP = Math.min(1, rawMigP);
+          const easedM = easeInOutCubic(migP);
+          const curOx = n.startOx + (n.ox - n.startOx) * easedM;
+          const curOy = n.startOy + (n.oy - n.startOy) * easedM;
+          const curOz = n.startOz + (n.oz - n.startOz) * easedM;
+          const arrP = Math.min(1, Math.max(0, (elapsed - n.migDelay - n.migDur) / 400));
+          const popScale = migP < 1 ? 0.4 + 0.6 * migP : 1.0 + Math.sin(arrP * Math.PI) * 0.12;
+          const baseAlpha = migP < 1 ? easedM : 1.0;
+          const dyingFade = n.dyingAt !== undefined
+            ? 1.0 - easeInOutCubic(Math.min(1, (nowMs - n.dyingAt) / 350))
+            : 1.0;
+          const alpha = baseAlpha * dyingFade;
+          if (alpha < 0.005) return [];
+          const ny = curOy + Math.sin(t * 0.4 + n.seed) * 8 * migP;
+          const rx = curOx * Math.cos(rotAngle) - curOz * Math.sin(rotAngle);
+          const rz = curOz * Math.cos(rotAngle) + curOx * Math.sin(rotAngle);
+          const sc = fl / (fl + rz);
+          return [{
+            x: rx * sc * zoom + cx,
+            y: ny * sc * zoom + cy - parallaxYRef.current,
+            z: rz, sc, n, alpha, popScale, migP, arrP,
+          }];
+        }).sort((a, b) => b.z - a.z);
+
+        ctx.lineWidth = 0.7;
+        for (let i = 0; i < obProj.length; i++) {
+          const p1 = obProj[i];
+          if (p1.migP < 1 || p1.alpha < 0.1) continue;
+          const maxD = 90 * p1.sc * zoom;
+          const maxD2 = maxD * maxD;
+          const col = p1.n.color;
+          const cr = parseInt(col.slice(1, 3), 16);
+          const cg = parseInt(col.slice(3, 5), 16);
+          const cb = parseInt(col.slice(5, 7), 16);
+          for (let j = i + 1; j < obProj.length; j++) {
+            const p2 = obProj[j];
+            if (p2.migP < 1 || p2.alpha < 0.1) continue;
+            const dx = p1.x - p2.x;
+            if (dx > maxD || dx < -maxD) continue;
+            const dy = p1.y - p2.y;
+            if (dy > maxD || dy < -maxD) continue;
+            const d2 = dx * dx + dy * dy;
+            if (d2 >= maxD2) continue;
+            const a = (1 - Math.sqrt(d2) / maxD) * 0.35
+              * Math.min(p1.arrP, p2.arrP) * Math.min(p1.alpha, p2.alpha);
+            if (a > 0.003) {
+              ctx.strokeStyle = (p1.n.isPreview && p2.n.isPreview)
+                ? `rgba(200,210,200,${(a * 0.35).toFixed(4)})`
+                : `rgba(${cr},${cg},${cb},${a.toFixed(4)})`;
+              ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+            }
+          }
+        }
+
+        obProj.forEach(p => {
+          const breathe = 0.92 + 0.08 * Math.sin(t * 0.6 + p.n.seed);
+          const r = Math.max(0.1, p.n.radius * p.sc * zoom * breathe * p.popScale);
+          if (p.n.isPreview) {
+            ctx.globalAlpha = (0.25 + 0.2 * Math.sin(t * 3 + p.n.seed)) * p.alpha;
+            ctx.shadowBlur = 10;
+          } else {
+            ctx.globalAlpha = p.alpha;
+            ctx.shadowBlur = p.migP >= 1 ? 18 * (0.7 + 0.3 * Math.sin(t * 1.5 + p.n.seed * 0.3)) : 6;
+          }
+          ctx.shadowColor = p.n.color;
+          ctx.fillStyle = p.n.color;
+          ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+        });
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
+        ctx.globalAlpha = 1;
+      }
 
       if (animating) animId = requestAnimationFrame(draw);
     }
@@ -285,6 +594,7 @@ export default function LandingPage() {
       const next = !IS_TEST_MODE && !reduceMotion.matches;
       if (next === animating) return;
       animating = next;
+      canvasAnimatingRef.current = next;
       cancelAnimationFrame(animId);
       draw();
     };
@@ -421,18 +731,75 @@ export default function LandingPage() {
     return () => obs.disconnect();
   }, []);
 
-  // ── Onboarding entry ──────────────────────────────────────────────
-  // The signup flow lives at /onboarding (screens/Onboarding). Unauthenticated
-  // visitors sign in first; SignInModal routes them onward based on
-  // onboarding_completed.
+  // ── Onboarding entry / exit ───────────────────────────────────────
+  // Signup runs in-place on the landing page: the hero dims, the canvas dives
+  // into the knowledge graph, and OnboardingFlow rides on top of it. The
+  // standalone /onboarding route (screens/Onboarding) stays as the fallback the
+  // sign-in modal routes to when it isn't entered from here.
   function startOnboarding() {
     if (!userReady) return;
     if (!isAuthenticated) {
+      // Not signed in yet — just open the modal. After Google completes, the
+      // popup path fires the 'sapling:start-onboarding' event and the same-tab
+      // path sets the pending flag in the callback; either way onboarding
+      // resumes without this needing to pre-stash anything.
       setSignInError(null);
       setSignInOpen(true);
       return;
     }
-    router.push('/onboarding');
+    playOnboardingIntro();
+  }
+
+  function closeOnboarding() {
+    if (onboardingTimeoutRef.current) clearTimeout(onboardingTimeoutRef.current);
+    introTimeoutsRef.current.forEach(clearTimeout);
+    introTimeoutsRef.current = [];
+    zoomActiveRef.current = false;
+    zoomOutroRef.current = false;
+    setIntroText('hidden');
+    const t = now();
+    obNodesRef.current.forEach(n => { if (n.dyingAt === undefined) n.dyingAt = t; });
+    setOnboardingPhase('out');
+    onboardingTimeoutRef.current = setTimeout(() => setOnboardingPhase('idle'), 700);
+  }
+
+  async function handleOnboardingComplete(formData: { firstName: string; lastName: string; school: string; year: string; majors: string[]; minors: string[]; course_ids: string[]; style: string }) {
+    // Persist onboarding data via the shared same-origin helper. A raw fetch to
+    // NEXT_PUBLIC_API_URL (a cross-origin subdomain) drops the sapling_session
+    // cookie, so require_self 401s and onboarding_completed never flips —
+    // trapping the user in the "Get Started" flow on every sign-in.
+    // submitOnboardingProfile goes through fetchJSON (same-origin proxy +
+    // credentials + res.ok check).
+    try {
+      await submitOnboardingProfile({
+        user_id: userId,
+        first_name: formData.firstName,
+        last_name: formData.lastName,
+        year: formData.year,
+        majors: formData.majors,
+        minors: formData.minors,
+        course_ids: formData.course_ids,
+        learning_style: formData.style as OnboardingProfilePayload['learning_style'],
+      });
+    } catch (e) {
+      console.error('Failed to save onboarding profile:', e);
+    }
+
+    introTimeoutsRef.current.forEach(clearTimeout);
+    zoomActiveRef.current = true;
+    zoomOutroRef.current = false;
+    setOutroText('hidden');
+    setOutroOverlay(false);
+    setOnboardingPhase('complete');
+    introTimeoutsRef.current = [
+      setTimeout(() => setOutroText('in'), 1400),
+      setTimeout(() => {
+        setOutroText('out');
+        zoomOutroRef.current = true;
+      }, 3050),
+      setTimeout(() => setOutroOverlay(true), 3450),
+      setTimeout(() => { router.replace('/dashboard'); }, 4250),
+    ];
   }
 
   return (
@@ -472,7 +839,7 @@ export default function LandingPage() {
         style={{
           background: 'rgba(255,255,255,0)',
           borderBottomColor: 'transparent',
-          opacity: heroMounted ? 1 : 0,
+          opacity: onboardingPhase !== 'idle' ? 0 : (heroMounted ? 1 : 0),
           transform: heroMounted ? 'translateY(0)' : 'translateY(-30px)',
           transition: 'opacity 800ms cubic-bezier(0.22,1,0.36,1), transform 800ms cubic-bezier(0.22,1,0.36,1)',
         }}
@@ -499,8 +866,12 @@ export default function LandingPage() {
         </div>
         <canvas ref={canvasRef} className="absolute inset-0 z-0 w-full h-full pointer-events-auto opacity-100" />
 
-        {/* Floating Glass Accent Cards */}
-        <div ref={floatingCardsRef} className="absolute inset-0 z-10 hidden lg:block pointer-events-none">
+        {/* Floating Glass Accent Cards — dim with the rest of the hero once the
+            onboarding choreography takes over, or they hang over the form.
+            NB: no `transform` here; the parallax tick owns that per-card. */}
+        <div ref={floatingCardsRef} className="absolute inset-0 z-10 hidden lg:block pointer-events-none"
+          style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease' }}
+        >
           <div
             className="floating-card absolute w-52 liquid-glass rounded-2xl p-5"
             style={{ position: 'absolute', top: '24%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
@@ -538,8 +909,13 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Hero Content */}
-        <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6">
+        {/* Hero Content — dims out of the way for the onboarding choreography.
+            NB: no `transform` in this style object; the scroll handler owns
+            that property imperatively (heroContentRef), and React only diffs
+            the keys it is given. */}
+        <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6"
+          style={{ opacity: onboardingPhase !== 'idle' ? 0 : 1, transition: 'opacity 600ms ease' }}
+        >
           <h1 style={{
             opacity: heroMounted ? 1 : 0,
             transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
@@ -574,13 +950,17 @@ export default function LandingPage() {
         </div>
 
         {/* Scroll Indicator */}
-        <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 landing-animate-float-indicator flex flex-col items-center">
+        <div style={{ opacity: onboardingPhase !== 'idle' ? 0 : (heroMounted ? 1 : 0), transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 landing-animate-float-indicator flex flex-col items-center">
           <div className="w-px h-14 landing-divider-v" />
           <span className="font-jetbrains text-xs tracking-[0.4em] text-[var(--text-dim)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
         </div>
       </section>
 
-      <div>
+      <div style={{
+        opacity: onboardingPhase !== 'idle' ? 0 : 1,
+        transition: 'opacity 600ms ease',
+        pointerEvents: onboardingPhase !== 'idle' ? 'none' : 'auto',
+      }}>
         <KnowledgeGraphDemo />
 
         {/* ═══ Feature bands + bento ═══
@@ -865,6 +1245,96 @@ export default function LandingPage() {
             </div>
           </HeroCard>
         </div>
+      )}
+
+      {/* ═══ Onboarding intro: Let's Learn About You ═══ */}
+      {onboardingPhase !== 'idle' && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 75,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            pointerEvents: 'none',
+            opacity: introText === 'in' ? 1 : 0,
+            transition: 'opacity 650ms cubic-bezier(0.22,1,0.36,1)',
+          }}
+        >
+          <div style={{
+            position: 'absolute',
+            width: '680px', height: '260px',
+            background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.62) 0%, rgba(255,255,255,0.28) 45%, transparent 72%)',
+            pointerEvents: 'none',
+          }} />
+          <p style={{
+            position: 'relative',
+            fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif",
+            fontSize: 'clamp(26px, 4vw, 50px)',
+            fontWeight: 600,
+            color: '#0f172a',
+            textShadow: '0 1px 2px rgba(255,255,255,0.9)',
+            letterSpacing: '-0.02em',
+            textAlign: 'center',
+            lineHeight: 1.2,
+            margin: 0,
+          }}>
+            Let&apos;s Learn About You...
+          </p>
+        </div>
+      )}
+
+      {/* ═══ Outro: Welcome to Sapling ═══ */}
+      {onboardingPhase === 'complete' && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 76,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            pointerEvents: 'none',
+            opacity: outroText === 'in' ? 1 : 0,
+            transition: 'opacity 700ms cubic-bezier(0.22,1,0.36,1)',
+          }}
+        >
+          <div style={{
+            position: 'absolute',
+            width: '780px', height: '280px',
+            background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.65) 0%, rgba(255,255,255,0.28) 45%, transparent 72%)',
+            pointerEvents: 'none',
+          }} />
+          <p style={{
+            position: 'relative',
+            fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif",
+            fontSize: 'clamp(30px, 5vw, 62px)',
+            fontWeight: 600,
+            color: '#0f172a',
+            textShadow: '0 1px 2px rgba(255,255,255,0.9)',
+            letterSpacing: '-0.025em',
+            textAlign: 'center',
+            lineHeight: 1.1,
+            margin: 0,
+          }}>
+            Welcome to Sapling
+          </p>
+        </div>
+      )}
+
+      {/* ═══ Outro white overlay — covers the handoff to /dashboard ═══ */}
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 92,
+        background: 'white',
+        opacity: outroOverlay ? 1 : 0,
+        transition: 'opacity 900ms cubic-bezier(0.4,0,0.2,1)',
+        pointerEvents: 'none',
+      }} />
+
+      {/* ═══ Onboarding flow ═══ */}
+      {onboardingPhase !== 'idle' && (
+        <OnboardingFlow
+          visible={onboardingPhase === 'active'}
+          onClose={closeOnboarding}
+          onFinish={handleOnboardingComplete}
+          activeStep={activeStep}
+          completed={completed}
+          setActiveStep={setActiveStep}
+          setCompleted={setCompleted}
+        />
       )}
 
       {/* ═══ Sign-in modal ═══ */}
