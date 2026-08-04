@@ -212,6 +212,26 @@ export function useLanding(props: LandingProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── hero WebGL panel rig (own loop) ───────────────────────────────────
+  useEffect(() => {
+    const canvas = refs.glCanvas.current;
+    const engine = engineRef.current;
+    if (!canvas || !engine) return;
+    let rig: { stop(): void } | null = null;
+    let cancelled = false;
+    // three.js is heavy and browser-only; keep it out of the server bundle
+    // and off the critical path
+    import('@/lib/landing/hero3d').then(({ startHeroRig }) => {
+      if (cancelled) return;
+      rig = startHeroRig(canvas, () => engine.mouse, () => s.current.parallax);
+    });
+    return () => {
+      cancelled = true;
+      rig?.stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── mouse, nav auto-hide, escape ──────────────────────────────────────
   useEffect(() => {
     const onMouse = (e: MouseEvent) => {
