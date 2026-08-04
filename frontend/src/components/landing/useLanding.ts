@@ -26,19 +26,48 @@ const INTRO_MS = 1900;
 const EXPLORE_OUT_MS = 720;
 const SCRAMBLE_TICK_MS = 30;
 
-export interface LandingV4Props {
+/** One text slot scrambling into place during the intro cascade. */
+export interface ScrambleStep {
+  /** Which of the three hero text slots this step drives. */
+  slot: 0 | 1 | 2;
+  /** The string it settles on. */
+  text: string;
+  durationMs: number;
+  /** Offset from the moment the hero mounts. Defaults to 0. */
+  delayMs?: number;
+}
+
+/**
+ * v5's cascade — the tagline leads and the wordmark follows 260ms behind.
+ *
+ * This is the reverse of v4's order, and both durations are shorter. The
+ * v4 title screen it replaced has been deleted; the cascade stays a prop
+ * so the sequence is stated at the call site rather than buried here.
+ */
+const DEFAULT_CASCADE: ScrambleStep[] = [
+  { slot: 0, text: 'Grow Your Knowledge', durationMs: 760 },
+  { slot: 1, text: 'Sapling', durationMs: 1000, delayMs: 260 },
+];
+
+export interface LandingProps {
   /** Parallax intensity, 0..2. */
   parallax?: number;
   fireflies?: boolean;
   /** Bypass the intro entirely (0ms delay). */
   skipIntro?: boolean;
+  /** The intro scramble cascade. Defaults to v5's. */
+  cascade?: ScrambleStep[];
+  /** Run the `LOADING 000→100` counter behind the intro overlay. */
+  loadCounter?: boolean;
 }
 
-export interface LandingV4Refs {
+export interface LandingRefs {
   root: React.RefObject<HTMLDivElement | null>;
   nav: React.RefObject<HTMLElement | null>;
   heroContent: React.RefObject<HTMLDivElement | null>;
   heroCanvas: React.RefObject<HTMLCanvasElement | null>;
+  /** The WebGL canvas the v5 hero's three.js scene renders into. */
+  glCanvas: React.RefObject<HTMLCanvasElement | null>;
   actCanvas: React.RefObject<HTMLCanvasElement | null>;
   ambientCanvas: React.RefObject<HTMLCanvasElement | null>;
   plantCanvas: React.RefObject<HTMLCanvasElement | null>;
@@ -51,13 +80,21 @@ export interface LandingV4Refs {
   trackB: React.RefObject<HTMLDivElement | null>;
 }
 
-export function useLandingV4(props: LandingV4Props) {
-  const { parallax = 1, skipIntro = false } = props;
+export function useLanding(props: LandingProps) {
+  const {
+    parallax = 1, skipIntro = false,
+    cascade = DEFAULT_CASCADE, loadCounter = false,
+  } = props;
 
   // ── discrete state ────────────────────────────────────────────────────
   const [heroMounted, setHeroMounted] = useState(false);
+  const [heroText0, setHeroText0] = useState('');
   const [heroText1, setHeroText1] = useState('');
   const [heroText2, setHeroText2] = useState('');
+  /** Fake progress behind the intro overlay, 0..100. */
+  const [loadPct, setLoadPct] = useState(0);
+  /** True once the overlay has faded out and can leave the tree entirely. */
+  const [introGone, setIntroGone] = useState(false);
   const [tutorMode, setTutorMode] = useState(0);
   const [galIdx, setGalIdx] = useState(-1);
   const [modalAnim, setModalAnim] = useState(false);
@@ -80,6 +117,7 @@ export function useLandingV4(props: LandingV4Props) {
   const navRef = useRef<HTMLElement>(null);
   const heroContentRef = useRef<HTMLDivElement>(null);
   const heroCanvasRef = useRef<HTMLCanvasElement>(null);
+  const glCanvasRef = useRef<HTMLCanvasElement>(null);
   const actCanvasRef = useRef<HTMLCanvasElement>(null);
   const ambientCanvasRef = useRef<HTMLCanvasElement>(null);
   const plantCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -91,8 +129,9 @@ export function useLandingV4(props: LandingV4Props) {
   const trackARef = useRef<HTMLDivElement>(null);
   const trackBRef = useRef<HTMLDivElement>(null);
 
-  const refs: LandingV4Refs = {
+  const refs: LandingRefs = {
     root: rootRef, nav: navRef, heroContent: heroContentRef, heroCanvas: heroCanvasRef,
+    glCanvas: glCanvasRef,
     actCanvas: actCanvasRef, ambientCanvas: ambientCanvasRef, plantCanvas: plantCanvasRef,
     carousel: carouselRef, ingestScene: ingestSceneRef, ingestStage: ingestStageRef,
     cinema: cinemaRef, panel: panelRef, trackA: trackARef, trackB: trackBRef,
@@ -251,11 +290,18 @@ export function useLandingV4(props: LandingV4Props) {
       intervals.push(iv);
     };
 
+    const setters = [setHeroText0, setHeroText1, setHeroText2];
+
     timers.push(
       setTimeout(() => {
         setHeroMounted(true);
-        scramble(setHeroText1, 'Sapling', 1000);
-        timers.push(setTimeout(() => scramble(setHeroText2, 'Grow Your Knowledge', 1200), 200));
+        // the overlay fades over 700ms; drop it from the tree just after
+        timers.push(setTimeout(() => setIntroGone(true), 900));
+        cascade.forEach((step) => {
+          const run = () => scramble(setters[step.slot], step.text, step.durationMs);
+          if (step.delayMs) timers.push(setTimeout(run, step.delayMs));
+          else run();
+        });
       }, skipIntro ? 0 : INTRO_MS),
     );
 
@@ -263,7 +309,21 @@ export function useLandingV4(props: LandingV4Props) {
       timers.forEach(clearTimeout);
       intervals.forEach(clearInterval);
     };
-  }, [skipIntro]);
+  }, [skipIntro, cascade]);
+
+  // ── LOADING counter behind the overlay ────────────────────────────────
+  // Ticks every 62ms in ragged +4..+12 jumps, exactly as the source does —
+  // the unevenness is what makes it read as real work rather than a timer.
+  useEffect(() => {
+    if (!loadCounter) return;
+    const iv = setInterval(() => {
+      setLoadPct((p) => {
+        if (p >= 100) { clearInterval(iv); return 100; }
+        return Math.min(100, p + Math.ceil(Math.random() * 9) + 3);
+      });
+    }, 62);
+    return () => clearInterval(iv);
+  }, [loadCounter]);
 
   // ── [data-reveal] fade-ups ────────────────────────────────────────────
   useEffect(() => {
@@ -513,12 +573,13 @@ export function useLandingV4(props: LandingV4Props) {
   }, [plantVal]);
 
   return {
-    rootRef, navRef, heroContentRef, heroCanvasRef, actCanvasRef, ambientCanvasRef,
+    rootRef, navRef, heroContentRef, heroCanvasRef, glCanvasRef, actCanvasRef, ambientCanvasRef,
     plantCanvasRef, carouselRef, ingestSceneRef, ingestStageRef, cinemaRef,
     trackARef, trackBRef,
     engineRef,
     state: {
-      heroMounted, heroText1, heroText2, tutorMode, galIdx, modalAnim, jumpOpen,
+      heroMounted, heroText0, heroText1, heroText2, loadPct, introGone,
+      tutorMode, galIdx, modalAnim, jumpOpen,
       pastHero, navMenuOpen, exploring, expNode, openFaq, email, subscribed,
       plantVal, plantedCount, jumpDown,
     },

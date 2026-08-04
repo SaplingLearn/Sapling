@@ -3,7 +3,7 @@
 /**
  * Loading overlay — the hand-tuned intro lockup.
  *
- * Ported from `Sapling Landing v4.dc.html`. The sequence is causal and the
+ * Ported from `Sapling Landing v5.dc.html`. The sequence is causal and the
  * ordering is the whole point: the wordmark sets context first, the stem
  * draws upward, the bud pops the moment the stem tops out, then each leaf
  * unfurls from the joint the stem has already passed, and the rule sweeps
@@ -12,15 +12,30 @@
  * All six animations are 2.4s with `both` fill and differ only in their
  * keyframe offsets — see the s1* keyframes in globals.css, whose
  * per-keyframe timing functions give the leaves their weight.
+ *
+ * v5 adds the LOADING readout under the rule. It is honest about being
+ * decorative: nothing is actually being measured, and the counter is
+ * driven by `useLanding`'s ragged +4..+12 tick rather than real progress.
  */
 
-export function IntroOverlay({ heroMounted }: { heroMounted: boolean }) {
+export function IntroOverlay({
+  heroMounted,
+  introGone,
+  loadPct,
+}: {
+  heroMounted: boolean;
+  introGone: boolean;
+  loadPct: number;
+}) {
   return (
     <div
-      aria-hidden={heroMounted}
+      aria-hidden="true"
       style={{
         position: 'fixed', inset: 0, zIndex: 60,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        // dropped from the layout entirely once the fade has finished, so it
+        // can never intercept a pointer or cost a paint
+        display: introGone ? 'none' : 'flex',
+        alignItems: 'center', justifyContent: 'center',
         backgroundColor: '#f0f4f2',
         backgroundImage:
           'radial-gradient(ellipse 100% 70% at 50% 30%, rgba(255,255,255,0.9) 0%, transparent 62%)',
@@ -75,6 +90,18 @@ export function IntroOverlay({ heroMounted }: { heroMounted: boolean }) {
             animation: 's1Rule 2.4s cubic-bezier(0.22,1,0.36,1) both',
           }}
         />
+        <div
+          style={{
+            marginTop: 14, display: 'flex', alignItems: 'baseline', gap: 9,
+            fontFamily: "'JetBrains Mono',monospace", fontSize: 10,
+            letterSpacing: '0.3em', color: '#9AA5A0',
+            animation: 's1Word 2.4s cubic-bezier(0.22,1,0.36,1) both',
+          }}
+        >
+          <span>LOADING</span>
+          {/* zero-padded to three digits so the lockup never reflows as it counts */}
+          <span style={{ color: '#61726A' }}>{String(Math.min(100, loadPct)).padStart(3, '0')}</span>
+        </div>
       </div>
     </div>
   );
