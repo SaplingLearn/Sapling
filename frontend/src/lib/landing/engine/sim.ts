@@ -14,6 +14,7 @@
  */
 
 const OVERLAY_CLASS = 'drag-overlay';
+const SHELL_CLASS = 'drag-shell';
 
 interface SimNode {
   /** viewBox-derived bounds, so nodes can't be dragged out of their svg. */
@@ -44,6 +45,16 @@ interface SimLink {
   s: number;
 }
 
+/** A cluster's fixed offset inside its (often sticky) field. */
+interface ClusterAnchor {
+  el: HTMLElement;
+  field: HTMLElement;
+  /** The pinned act this field belongs to, if any — drives the scroll drift. */
+  sect: HTMLElement | null;
+  left: number;
+  top: number;
+}
+
 interface SimGroup {
   field: HTMLElement;
   clusters: HTMLElement[];
@@ -64,7 +75,36 @@ export interface SimController {
 export function createSim(): SimController {
   let groups: SimGroup[] | null = null;
   let overlay: HTMLDivElement | null = null;
+  const anchors: ClusterAnchor[] = [];
   const cleanups: (() => void)[] = [];
+
+  /**
+   * Re-seats every cluster against its field's live rect, once per frame.
+   *
+   * Cheap by construction: a handful of `getBoundingClientRect()` reads and
+   * one transform write each, all on elements parked in a fixed overlay, so
+   * nothing here can invalidate the page's layout.
+   *
+   * Inside a pinned act the cluster also drifts up to 150px against the
+   * scroll, which keeps the field from looking welded to the copy while the
+   * section is held still.
+   */
+  function syncClusters(): void {
+    for (const a of anchors) {
+      if (!a.field.isConnected) continue;
+      const r = a.field.getBoundingClientRect();
+      let drift = 0;
+      if (a.sect) {
+        const sr = a.sect.getBoundingClientRect();
+        const span = Math.max(1, sr.height - window.innerHeight);
+        const p = Math.max(0, Math.min(1, -sr.top / span));
+        drift = -p * 150;
+      }
+      a.el.style.transform =
+        'translate3d(' + (r.left + a.left).toFixed(1) + 'px,' +
+        (r.top + a.top + drift).toFixed(1) + 'px,0)';
+    }
+  }
 
   function ensureInit(root: HTMLElement): boolean {
     if (groups) return true;
@@ -74,12 +114,28 @@ export function createSim(): SimController {
     if (getComputedStyle(fields[0]).display === 'none') return false;
 
     if (!overlay) {
+      // Two elements, and the outer one is load-bearing.
+      //
+      // The shell is `position:fixed`, so the absolute overlay inside it is
+      // in viewport coordinates — which is the space `syncClusters()` writes
+      // its per-frame transforms in. It also clips (`overflow:hidden`), so a
+      // thrown node can never extend the page, and carries
+      // `touch-action:none` so dragging a node doesn't scroll instead.
+      const shell = document.createElement('div');
+      shell.className = SHELL_CLASS;
+      shell.setAttribute('aria-hidden', 'true');
+      shell.style.cssText =
+        'position:fixed; inset:0; overflow:hidden; z-index:45; pointer-events:none; touch-action:none;';
+
       overlay = document.createElement('div');
       overlay.className = OVERLAY_CLASS;
       overlay.setAttribute('aria-hidden', 'true');
       overlay.style.cssText =
-        'position:absolute; top:0; left:0; width:100%; height:0; z-index:45; pointer-events:none; overflow:visible;';
-      root.appendChild(overlay);
+        'position:absolute; top:0; left:0; width:100%; height:0; pointer-events:none; overflow:visible; will-change:transform;';
+
+      shell.appendChild(overlay);
+      root.appendChild(shell);
+      cleanups.push(() => shell.remove());
     }
 
     const built: SimGroup[] = [];
@@ -87,18 +143,32 @@ export function createSim(): SimController {
       const clusters = Array.from(field.querySelectorAll<HTMLElement>('[data-dragnode]'));
       if (!clusters.length) return;
 
-      // remember where each cluster sat on the page, then re-home it in the
-      // overlay so its parts can travel outside the section's bounds
+      // Re-home each cluster in the overlay so its parts can travel outside
+      // the section's bounds, remembering its offset WITHIN ITS FIELD.
+      //
+      // Field-relative, not page- or overlay-relative. Most of these fields
+      // are `position:sticky`, so their own rect moves as the page scrolls;
+      // `syncClusters()` re-applies `anchor + field.rect` every frame, which
+      // is what makes a cluster track the section it belongs to. Baking a
+      // one-shot absolute left/top here instead freezes every cluster at
+      // whatever the layout happened to be on the first frame.
+      const pinned = getComputedStyle(field).position === 'sticky';
+      const sect = pinned ? field.closest('section') : null;
       clusters.forEach((cl) => {
-        const ob = overlay!.getBoundingClientRect();
+        const fb = field.getBoundingClientRect();
         const b = cl.getBoundingClientRect();
-        const anchor = { left: b.left - ob.left, top: b.top - ob.top };
+        anchors.push({
+          el: cl, field, sect,
+          left: b.left - fb.left,
+          top: b.top - fb.top,
+        });
         cl.style.animation = 'none';
         cl.style.position = 'absolute';
-        cl.style.left = anchor.left.toFixed(1) + 'px';
-        cl.style.top = anchor.top.toFixed(1) + 'px';
+        cl.style.left = '0px';
+        cl.style.top = '0px';
         cl.style.right = 'auto';
         cl.style.bottom = 'auto';
+        cl.style.willChange = 'transform';
         overlay!.appendChild(cl);
       });
 
@@ -324,6 +394,9 @@ export function createSim(): SimController {
 
   function step(vh: number, t: number): void {
     if (!groups) return;
+    // must run before the visibility test below — that test reads cluster
+    // rects, which are only correct once this frame's transforms are applied
+    syncClusters();
     for (const f of groups) {
       let anyVisible = false;
       for (const cl of f.clusters) {
@@ -350,6 +423,7 @@ export function createSim(): SimController {
   function destroy(): void {
     cleanups.forEach((fn) => fn());
     cleanups.length = 0;
+    anchors.length = 0;
     groups = null;
     if (overlay && overlay.parentElement) overlay.parentElement.removeChild(overlay);
     overlay = null;

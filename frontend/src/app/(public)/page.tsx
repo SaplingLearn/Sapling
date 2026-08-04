@@ -14,6 +14,7 @@ import { useState } from 'react';
 import SignInModal from '@/components/marketing/SignInModal';
 import { ActGraph, RiseBand } from '@/components/landing-v5/ActGraph';
 import { ActIngest } from '@/components/landing-v5/ActIngest';
+import { ActTutor } from '@/components/landing-v5/ActTutor';
 import { Hero } from '@/components/landing-v5/Hero';
 import { IntroOverlay } from '@/components/landing-v5/IntroOverlay';
 import { Navbar } from '@/components/landing-v5/Navbar';
@@ -23,7 +24,7 @@ import { useLanding } from '@/components/landing/useLanding';
 export default function LandingPage() {
   const {
     rootRef, ambientCanvasRef, navRef, heroCanvasRef, glCanvasRef, heroContentRef,
-    actCanvasRef, cinemaRef, ingestSceneRef, ingestStageRef,
+    actCanvasRef, cinemaRef, ingestSceneRef, ingestStageRef, carouselRef,
     state, set, actions,
   } = useLanding({ loadCounter: true });
 
@@ -113,6 +114,8 @@ export default function LandingPage() {
       <RiseBand />
 
       <ActIngest ingestSceneRef={ingestSceneRef} ingestStageRef={ingestStageRef} />
+
+      <ActTutor carouselRef={carouselRef} tutorMode={state.tutorMode} onSetMode={set.setTutorMode} />
     </div>
   );
 }
