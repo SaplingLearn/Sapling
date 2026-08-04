@@ -90,7 +90,7 @@ export function Navbar({
           <button
             onClick={onToggleMenu}
             type="button"
-            className="nav-compact v4-navlink"
+            className="nav-compact ld-navlink"
             aria-haspopup="menu"
             aria-expanded={navMenuOpen}
             title="Pages"
@@ -111,14 +111,14 @@ export function Navbar({
 
           <div className="nav-tabs" style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'nowrap' }}>
             {PAGES.map((p) => (
-              <a key={p.href} href={p.href} className="v4-navlink" style={LINK}>
+              <a key={p.href} href={p.href} className="ld-navlink" style={LINK}>
                 {p.label}
               </a>
             ))}
             <a
               href="https://github.com/SaplingLearn/Sapling"
               target="_blank" rel="noopener noreferrer" title="Sapling on GitHub"
-              className="v4-navlink"
+              className="ld-navlink"
               style={{ ...LINK, display: 'flex', alignItems: 'center', gap: 7 }}
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ flexShrink: 0 }}>
@@ -129,7 +129,7 @@ export function Navbar({
             <a
               href="https://ko-fi.com/saplinglearn"
               target="_blank" rel="noopener noreferrer" title="Support Sapling on Ko-fi"
-              className="v4-kofi"
+              className="ld-kofi"
               style={{
                 display: 'flex', alignItems: 'center', gap: 7, padding: '6px 13px 6px 10px',
                 borderRadius: 99, border: '1px solid rgba(18,32,26,0.14)',
@@ -147,12 +147,12 @@ export function Navbar({
           </div>
 
           <span aria-hidden="true" style={{ width: 1, height: 16, background: 'rgba(18,32,26,0.14)', flex: '0 0 auto' }} />
-          <button className="v4-navlink" style={{ ...LINK, background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <button className="ld-navlink" style={{ ...LINK, background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
             Sign In
           </button>
           <button
             onClick={onGetStarted}
-            className="v4-btn-solid"
+            className="ld-btn-solid"
             style={{
               background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6,
               padding: '8px 16px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600,
@@ -181,7 +181,7 @@ export function Navbar({
         >
           {PAGES.map((p) => (
             <a
-              key={p.href} href={p.href} className="v4-navmenu-item"
+              key={p.href} href={p.href} className="ld-navmenu-item"
               style={{ padding: '9px 12px', borderRadius: 8, fontSize: 13.5, color: '#33443B' }}
             >
               {p.label}

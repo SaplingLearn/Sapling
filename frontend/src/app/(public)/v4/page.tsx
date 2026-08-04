@@ -24,7 +24,7 @@ export default function LandingV4Page() {
   return (
     <div
       ref={rootRef}
-      className="landing-v4"
+      className="landing-dc landing-v4"
       style={{
         fontFamily: "'DM Sans',system-ui,sans-serif", color: '#12201A', fontSize: 14,
         lineHeight: 1.6, backgroundColor: '#f0f4f2',

@@ -246,7 +246,7 @@ export function Hero({
         >
           <button
             onClick={onBeta}
-            className="v4-btn-solid"
+            className="ld-btn-solid"
             style={{
               background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6,
               padding: '14px 28px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600,
@@ -258,7 +258,7 @@ export function Hero({
           </button>
           <button
             onClick={onSeeHow}
-            className="v4-btn-ghost"
+            className="ld-btn-ghost"
             style={{
               background: 'rgba(253,252,249,0.8)', color: '#12201A',
               border: '1px solid rgba(18,32,26,0.16)', borderRadius: 6, padding: '14px 24px',
