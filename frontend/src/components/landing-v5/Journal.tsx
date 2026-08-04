@@ -143,11 +143,18 @@ export function Journal({
           })}
         </div>
 
+        {/*
+          The newsletter panel's gradient is the shared hero surface. The
+          source inlines the literal, but #288 consolidated that exact value
+          behind `--surface-hero` / `.hero-surface` after it had drifted at
+          four of its five paste sites — and HeroCard.test.tsx fails the build
+          if the literal reappears anywhere under src/. Same pixels, one owner.
+        */}
         <div
           data-reveal="1"
+          className="hero-surface"
           style={{
             marginTop: 56,
-            background: 'linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%)',
             border: '1px solid rgba(255,255,255,0.7)', borderRadius: 20,
             padding: 'clamp(28px,4vw,44px)', display: 'flex', alignItems: 'center',
             justifyContent: 'space-between', gap: 32, flexWrap: 'wrap',
