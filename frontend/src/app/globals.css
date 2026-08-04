@@ -2065,3 +2065,7 @@ input[type="reset"]:disabled {
    background rather than swapping it to a solid cream. */
 .landing-v5 .ld-kofi:hover      { border-color:#FF5E1A; background:rgba(255,94,26,0.14); }
 .landing-v5 .ld-ghost:hover     { border-color:#0C5638; color:#0C5638; }
+
+/* Gallery + feature lab hover states. */
+.landing-v5 .ld-galcard:hover  { transform: translateY(-5px); }
+.landing-v5 .ld-labclose:hover { background: #12201A; color: #FDFCF9; }

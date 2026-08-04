@@ -15,6 +15,8 @@ import SignInModal from '@/components/marketing/SignInModal';
 import { ActGraph, RiseBand } from '@/components/landing-v5/ActGraph';
 import { ActIngest } from '@/components/landing-v5/ActIngest';
 import { ActTutor } from '@/components/landing-v5/ActTutor';
+import { FeatureLab } from '@/components/landing-v5/FeatureLab';
+import { Gallery } from '@/components/landing-v5/Gallery';
 import { Hero } from '@/components/landing-v5/Hero';
 import { IntroOverlay } from '@/components/landing-v5/IntroOverlay';
 import { Navbar } from '@/components/landing-v5/Navbar';
@@ -24,7 +26,7 @@ import { useLanding } from '@/components/landing/useLanding';
 export default function LandingPage() {
   const {
     rootRef, ambientCanvasRef, navRef, heroCanvasRef, glCanvasRef, heroContentRef,
-    actCanvasRef, cinemaRef, ingestSceneRef, ingestStageRef, carouselRef,
+    actCanvasRef, cinemaRef, ingestSceneRef, ingestStageRef, carouselRef, trackARef, trackBRef,
     state, set, actions,
   } = useLanding({ loadCounter: true });
 
@@ -116,6 +118,15 @@ export default function LandingPage() {
       <ActIngest ingestSceneRef={ingestSceneRef} ingestStageRef={ingestStageRef} />
 
       <ActTutor carouselRef={carouselRef} tutorMode={state.tutorMode} onSetMode={set.setTutorMode} />
+
+      <Gallery trackARef={trackARef} trackBRef={trackBRef} onOpen={actions.openGal} />
+
+      <FeatureLab
+        index={state.galIdx}
+        panelRef={actions.registerPanel}
+        onClose={actions.closeGal}
+        onPick={(i) => actions.openGal(i, null)}
+      />
     </div>
   );
 }
