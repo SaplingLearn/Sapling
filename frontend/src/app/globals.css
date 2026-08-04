@@ -2002,3 +2002,18 @@ input[type="reset"]:disabled {
 @keyframes typingDot { 0%,60%,100% { opacity:0.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
 @keyframes ringPop { 0% { opacity:0; r:0; } 12% { opacity:1; } 88% { opacity:1; } 100% { opacity:0; } }
 @keyframes cursorDrift { 0%,100% { transform:translate(0,0); } 30% { transform:translate(38px,-22px); } 70% { transform:translate(-26px,16px); } }
+
+/* ── Hover states ──────────────────────────────────────────────────
+   The source expresses these with a `style-hover` attribute, which is a
+   design-canvas construct with no inline equivalent in React. Same values,
+   moved into real CSS.
+   ────────────────────────────────────────────────────────────────── */
+.landing-v4 .v4-navlink:hover      { color: var(--v4-ink); }
+.landing-v4 .v4-btn-solid:hover    { filter: brightness(1.12); }
+.landing-v4 .v4-btn-ghost:hover    { border-color: var(--v4-deep); color: var(--v4-deep); }
+.landing-v4 .v4-navmenu-item:hover { background: rgba(12,86,56,0.07); color: var(--v4-ink); }
+.landing-v4 .v4-kofi:hover {
+  color: var(--v4-ink);
+  border-color: #FF5E1A;  /* Ko-fi brand orange — not part of the Sapling palette */
+  background: #FFF3EC;
+}
