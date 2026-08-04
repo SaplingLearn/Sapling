@@ -2085,3 +2085,20 @@ input[type="reset"]:disabled {
 .cp-menuitem:hover { background: rgba(27,108,66,0.07); color: #1a1814; }
 .cp-kofi:hover     { border-color: #FF5E1A; background: #FFF3EC; }
 .cp-cta:hover      { filter: brightness(1.12); }
+
+/* ── Feature-lab demos ─────────────────────────────────────────────
+   Ported from `FeatureLab.dc.html`. `labIn` is its entrance, `labSpin`
+   the busy rings, `labDot` the typing indicator. `labFlash` is defined
+   by the source but never referenced by its markup — not ported.
+   ────────────────────────────────────────────────────────────────── */
+@keyframes labIn   { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@keyframes labSpin { to { transform:rotate(360deg); } }
+@keyframes labDot  { 0%,60%,100% { opacity:0.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
+
+.landing-v5 .ld-labprimary:hover { background: #0C5638; }
+.landing-v5 .ld-labrate:hover    { transform: translateY(-2px); }
+.landing-v5 .ld-labaction:hover  { background: #E6F2E8; }
+.landing-v5 .ld-labrecent:hover  { border-color: #0E9E5A; }
+.landing-v5 .ld-labsend:hover    { background: #0E9E5A; }
+.landing-v5 .ld-labupload:hover  { background: #DCE7DE; }
+.landing-v5 .ld-labreply:hover   { border-color: #0E9E5A; background: #E6F2E8; }

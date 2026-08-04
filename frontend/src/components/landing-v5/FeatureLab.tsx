@@ -11,15 +11,13 @@
  *
  * Escape and a scrim click both close it back down.
  *
- * The demo pane: the source mounts a separate `FeatureLab` design component
- * per `kind` via `<dc-import>`. That component is a distinct 75KB file which
- * the task did not scope in, so the pane shows the card's own miniature
- * enlarged instead — the layout, FLIP, rail and copy are all faithful, and
- * the interactive demo is the one deliberate gap.
+ * The demo pane mounts the real interactive demo for the open tool — see
+ * lab/, ported from the `FeatureLab` design component the source pulls in
+ * through `<dc-import>`.
  */
 
-import { GAL } from '@/lib/landing/content';
-import { GALLERY_MINIS } from './galleryMinis';
+import { GAL, LAB_KIND } from '@/lib/landing/content';
+import { FeatureLabDemo } from './lab';
 
 const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
 
@@ -83,17 +81,8 @@ export function FeatureLab({
 
           <div style={{ background: '#F1F4F0', padding: 'clamp(20px,3.4vh,40px) clamp(20px,2.6vw,44px)', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
             <div style={{ position: 'relative', width: '100%', height: '100%', maxHeight: 660, borderRadius: 20, overflow: 'hidden', border: '1px solid #E2E6DF', background: '#FDFCF9', boxShadow: '0 30px 70px -30px rgba(18,32,26,0.32)' }}>
-              <div
-                aria-hidden="true"
-                style={{
-                  position: 'absolute', inset: 0, display: 'flex',
-                  alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-                }}
-              >
-                {/* the 372x166 miniature, blown up to fill the pane */}
-                <div style={{ width: 372, height: 166, transform: 'scale(2.1)', transformOrigin: 'center', position: 'relative' }}>
-                  {GALLERY_MINIS[index]}
-                </div>
+              <div style={{ position: 'absolute', inset: 0 }}>
+                <FeatureLabDemo kind={LAB_KIND[g.kind]} />
               </div>
             </div>
           </div>
