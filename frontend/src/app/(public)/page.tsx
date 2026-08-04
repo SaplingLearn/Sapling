@@ -15,7 +15,10 @@ import SignInModal from '@/components/marketing/SignInModal';
 import { ActGraph, RiseBand } from '@/components/landing-v5/ActGraph';
 import { ActIngest } from '@/components/landing-v5/ActIngest';
 import { ActTutor } from '@/components/landing-v5/ActTutor';
+import { FinalCta, SectionNav, SiteFooter } from '@/components/landing-v5/Closing';
+import { Faq } from '@/components/landing-v5/Faq';
 import { FeatureLab } from '@/components/landing-v5/FeatureLab';
+import { Journal } from '@/components/landing-v5/Journal';
 import { Gallery } from '@/components/landing-v5/Gallery';
 import { Hero } from '@/components/landing-v5/Hero';
 import { IntroOverlay } from '@/components/landing-v5/IntroOverlay';
@@ -120,6 +123,26 @@ export default function LandingPage() {
       <ActTutor carouselRef={carouselRef} tutorMode={state.tutorMode} onSetMode={set.setTutorMode} />
 
       <Gallery trackARef={trackARef} trackBRef={trackBRef} onOpen={actions.openGal} />
+
+      <Faq openFaq={state.openFaq} onToggle={set.setOpenFaq} />
+
+      <Journal
+        email={state.email}
+        subscribed={state.subscribed}
+        onEmail={set.setEmail}
+        onSubscribe={actions.subscribe}
+      />
+
+      <FinalCta onGetStarted={() => actions.scrollToId('newsletter')} />
+
+      <SiteFooter />
+
+      <SectionNav
+        open={state.jumpOpen}
+        onToggle={() => set.setJumpOpen(!state.jumpOpen)}
+        onJump={actions.scrollToId}
+        onTop={actions.scrollTop}
+      />
 
       <FeatureLab
         index={state.galIdx}

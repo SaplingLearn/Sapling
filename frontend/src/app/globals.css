@@ -2069,3 +2069,7 @@ input[type="reset"]:disabled {
 /* Gallery + feature lab hover states. */
 .landing-v5 .ld-galcard:hover  { transform: translateY(-5px); }
 .landing-v5 .ld-labclose:hover { background: #12201A; color: #FDFCF9; }
+.landing-v5 .ld-post:hover      { border-color: rgba(18,32,26,0.16); }
+.landing-v5 .ld-jumpitem:hover  { background: rgba(12,86,56,0.07); color: #12201A; }
+.landing-v5 .ld-jumppill:hover  { opacity: 0.75; }
+.landing-v5 .ld-emailinput:focus { border-color: #0C5638; box-shadow: 0 0 0 3px rgba(12,86,56,0.12); }
