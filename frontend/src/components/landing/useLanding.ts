@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SCRAMBLE } from '@/lib/landing/content';
 import { LandingEngine } from '@/lib/landing/engine';
+import type { BuiltGraph } from '@/lib/landing/engine/graph';
 import { armFlip, flipClose, flipOpen } from '@/lib/landing/engine/flip';
 import {
   beginExitExplore, beginExplore, pickNode, settleExitExplore,
@@ -95,6 +96,15 @@ export function useLanding(props: LandingProps) {
   const [loadPct, setLoadPct] = useState(0);
   /** True once the overlay has faded out and can leave the tree entirely. */
   const [introGone, setIntroGone] = useState(false);
+  /**
+   * The engine's graph, published once it exists.
+   *
+   * Must be the engine's own instance, not a second `buildGraph()` — the
+   * builder seeds and shuffles with `Math.random`, so a separate call would
+   * produce different node ordering and the explore HUD would describe a
+   * different node than the one the canvas highlighted.
+   */
+  const [graph, setGraph] = useState<BuiltGraph | null>(null);
   const [tutorMode, setTutorMode] = useState(0);
   const [galIdx, setGalIdx] = useState(-1);
   const [modalAnim, setModalAnim] = useState(false);
@@ -182,6 +192,7 @@ export function useLanding(props: LandingProps) {
       },
     );
     engineRef.current = engine;
+    setGraph(engine.graph);
     engine.plant.restore(refs.plantCanvas.current);
     setPlantedCount(engine.plant.labels.length);
     engine.start();
@@ -598,7 +609,7 @@ export function useLanding(props: LandingProps) {
     trackARef, trackBRef,
     engineRef,
     state: {
-      heroMounted, heroText0, heroText1, heroText2, loadPct, introGone,
+      heroMounted, heroText0, heroText1, heroText2, loadPct, introGone, graph,
       tutorMode, galIdx, modalAnim, jumpOpen,
       pastHero, navMenuOpen, exploring, expNode, openFaq, email, subscribed,
       plantVal, plantedCount, jumpDown,

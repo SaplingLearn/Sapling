@@ -12,6 +12,7 @@
 
 import { useState } from 'react';
 import SignInModal from '@/components/marketing/SignInModal';
+import { ActGraph, RiseBand } from '@/components/landing-v5/ActGraph';
 import { Hero } from '@/components/landing-v5/Hero';
 import { IntroOverlay } from '@/components/landing-v5/IntroOverlay';
 import { Navbar } from '@/components/landing-v5/Navbar';
@@ -21,6 +22,7 @@ import { useLanding } from '@/components/landing/useLanding';
 export default function LandingPage() {
   const {
     rootRef, ambientCanvasRef, navRef, heroCanvasRef, glCanvasRef, heroContentRef,
+    actCanvasRef, cinemaRef,
     state, set, actions,
   } = useLanding({ loadCounter: true });
 
@@ -94,6 +96,20 @@ export default function LandingPage() {
             'linear-gradient(180deg, #F0F4F2 0%, #E4EEE7 10%, #CFE2D5 22%, #A8C9B5 34%, #74A288 46%, #46765C 58%, #2A5A40 68%, #143725 78%, #0A2417 87%, #081F14 94%, #081F14 100%)',
         }}
       />
+
+      <ActGraph
+        actCanvasRef={actCanvasRef}
+        cinemaRef={cinemaRef}
+        graph={state.graph}
+        exploring={state.exploring}
+        expNode={state.expNode}
+        onSelectNode={set.setExpNode}
+        onExitExplore={actions.exitExplore}
+        onQuiz={() => { actions.exitExplore(); setTimeout(() => actions.openGal(0, null), 260); }}
+        onLearn={() => { actions.exitExplore(); setTimeout(() => actions.openGal(2, null), 260); }}
+      />
+
+      <RiseBand />
     </div>
   );
 }
