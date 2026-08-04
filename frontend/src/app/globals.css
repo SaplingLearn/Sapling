@@ -2073,3 +2073,15 @@ input[type="reset"]:disabled {
 .landing-v5 .ld-jumpitem:hover  { background: rgba(12,86,56,0.07); color: #12201A; }
 .landing-v5 .ld-jumppill:hover  { opacity: 0.75; }
 .landing-v5 .ld-emailinput:focus { border-color: #0C5638; box-shadow: 0 0 0 3px rgba(12,86,56,0.12); }
+
+/* ── Companion pages (About, Team, Wiki, Gallery, News, FAQ) ───────
+   Ported from the sibling design components. These sit on the WARM
+   paper palette, not the landing's cool one — that difference is
+   intentional and matches the app's existing public pages.
+   ────────────────────────────────────────────────────────────────── */
+@keyframes fadeUp { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
+
+.cp-navlink:hover  { color: #1a1814; }
+.cp-menuitem:hover { background: rgba(27,108,66,0.07); color: #1a1814; }
+.cp-kofi:hover     { border-color: #FF5E1A; background: #FFF3EC; }
+.cp-cta:hover      { filter: brightness(1.12); }
