@@ -33,6 +33,7 @@ from agents._run import run_agent_sync
 from agents.flashcard import flashcard_agent
 from agents.usage import record_agent_usage
 from services import extraction_service
+from services.encryption import decrypt_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,9 @@ def dedup_against_existing(
         filters["topic"] = f"eq.{topic}"
 
     existing = table("flashcards").select("front", filters=filters) or []
-    existing_norm = [_normalize(r.get("front", "")) for r in existing]
+    existing_norm = [
+        _normalize(decrypt_if_present(r.get("front", "")) or "") for r in existing
+    ]
 
     keep: list[Card] = []
     skipped: list[Card] = []
