@@ -14,6 +14,7 @@ import { useState } from 'react';
 import SignInModal from '@/components/marketing/SignInModal';
 import { ActGraph, RiseBand } from '@/components/landing-v5/ActGraph';
 import { ActIngest } from '@/components/landing-v5/ActIngest';
+import { BetaModal } from '@/components/landing-v5/BetaModal';
 import { ActTutor } from '@/components/landing-v5/ActTutor';
 import { FinalCta, SectionNav, SiteFooter } from '@/components/landing-v5/Closing';
 import { Faq } from '@/components/landing-v5/Faq';
@@ -36,6 +37,9 @@ export default function LandingPage() {
   // Carried over from the page this replaced: the nav's Sign In still opens
   // the real OAuth modal rather than scrolling somewhere.
   const [signInOpen, setSignInOpen] = useState(false);
+  // Added by request. The design scrolls both beta CTAs down to the
+  // newsletter section instead; they open this dialog now.
+  const [betaOpen, setBetaOpen] = useState(false);
 
   // The source builds this table then pins it to light with `wantDark = false`.
   // Driven for real here — see navTheme.ts.
@@ -84,13 +88,22 @@ export default function LandingPage() {
 
       <SignInModal open={signInOpen} onClose={() => setSignInOpen(false)} />
 
+      <BetaModal
+        open={betaOpen}
+        email={state.email}
+        subscribed={state.subscribed}
+        onEmail={set.setEmail}
+        onSubscribe={actions.subscribe}
+        onClose={() => setBetaOpen(false)}
+      />
+
       <Hero
         heroCanvasRef={heroCanvasRef}
         glCanvasRef={glCanvasRef}
         heroContentRef={heroContentRef}
         heroText0={state.heroText0}
         heroText1={state.heroText1}
-        onBeta={() => actions.scrollToId('newsletter')}
+        onBeta={() => setBetaOpen(true)}
         onSeeHow={() => actions.scrollToId('gallery')}
       />
 
@@ -133,7 +146,7 @@ export default function LandingPage() {
         onSubscribe={actions.subscribe}
       />
 
-      <FinalCta onGetStarted={() => actions.scrollToId('newsletter')} />
+      <FinalCta onGetStarted={() => setBetaOpen(true)} />
 
       <SiteFooter />
 
