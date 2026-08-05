@@ -2102,3 +2102,4 @@ input[type="reset"]:disabled {
 .landing-v5 .ld-labsend:hover    { background: #0E9E5A; }
 .landing-v5 .ld-labupload:hover  { background: #DCE7DE; }
 .landing-v5 .ld-labreply:hover   { border-color: #0E9E5A; background: #E6F2E8; }
+.cp-newscard:hover { border-color: rgba(42,39,31,0.22); transform: translateY(-3px); }
