@@ -71,12 +71,6 @@ export function FeatureLab({
               ))}
             </div>
 
-            <div style={{ marginTop: 'auto', paddingTop: 28, display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 99, background: '#0E9E5A', animation: 'betaGlow 2.2s ease-in-out infinite' }} />
-              <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.24em', color: '#61726A' }}>
-                TRY IT · THIS ONE ACTUALLY WORKS
-              </span>
-            </div>
           </div>
 
           <div style={{ background: '#F1F4F0', padding: 'clamp(20px,3.4vh,40px) clamp(20px,2.6vw,44px)', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>

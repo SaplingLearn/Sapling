@@ -75,7 +75,7 @@ export const GAL: GalleryCard[] = [
   {
     kind: 'guide',
     num: '07',
-    kicker: 'Exam prep',
+    kicker: 'Exam Prep',
     title: 'A study guide built from your gaps.',
     desc: 'Before each exam, Sapling assembles a guide from your own uploaded materials, weighted toward the concepts you keep missing.',
     bullets: [
@@ -99,7 +99,7 @@ export const GAL: GalleryCard[] = [
   {
     kind: 'gradebook',
     num: '09',
-    kicker: 'Reality check',
+    kicker: 'Grade Calculator',
     title: 'Your real grade, always current.',
     desc: 'Categories and weights straight from your syllabus, per-assignment scores, and a live course grade that never lies to you.',
     bullets: [
@@ -123,7 +123,7 @@ export const GAL: GalleryCard[] = [
   {
     kind: 'tutor',
     num: '11',
-    kicker: 'AI tutor',
+    kicker: 'AI Tutor',
     title: 'It asks. You answer.',
     desc: 'Three modes on the same concept. Socratic questions you toward it, expository explains it from your own materials, teachback makes you do the explaining.',
     bullets: [
