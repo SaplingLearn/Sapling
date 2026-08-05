@@ -1019,6 +1019,21 @@ export const adminApproveUser = (userId: string) =>
 export const adminUnapproveUser = (userId: string) =>
   fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
 
+// Admin — feedback (#520; decrypted server-side, admin-only)
+export type AdminFeedbackEntry = {
+  id: string; user_id: string; user_name: string; type: string; rating: number;
+  selected_options: string[]; comment: string | null; session_id: string | null;
+  topic: string | null; created_at: string;
+};
+export type AdminIssueReport = {
+  id: string; user_id: string; user_name: string; topic: string;
+  description: string; screenshot_urls: string[]; created_at: string;
+};
+export const adminListFeedback = () =>
+  fetchJSON<{ feedback: AdminFeedbackEntry[] }>('/api/admin/feedback');
+export const adminListIssueReports = () =>
+  fetchJSON<{ reports: AdminIssueReport[] }>('/api/admin/issue-reports');
+
 // Admin — roles
 export const adminAssignRole = (userId: string, roleId: string) =>
   fetchJSON<{ assigned: boolean }>('/api/admin/roles/assign', {

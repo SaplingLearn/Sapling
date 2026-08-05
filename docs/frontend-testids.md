@@ -84,6 +84,7 @@ renders the element.
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
+| Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -385,6 +386,20 @@ vacuously and stays as a guard on anything added later.
 The `landing-surface-*` ids suffix the *surface* rather than a render index
 because each one mounts exactly once and the surface name is the stable
 domain id here.
+
+### `adminfb`
+
+Added with the #520 admin feedback tab. Reads the two decrypting admin
+endpoints (`GET /api/admin/feedback`, `GET /api/admin/issue-reports`) and
+renders them read-only — there are no interactive elements (no
+button/input/textarea), just the two list cards and their rows.
+
+| testid | element |
+| --- | --- |
+| `adminfb-feedback-card` | feedback list card root |
+| `adminfb-feedback-row` | one feedback entry (repeated, no suffix — read-only list, no per-row action to select) |
+| `adminfb-issues-card` | issue-report list card root |
+| `adminfb-issue-row` | one issue report (repeated, no suffix) |
 
 ## Enforcement
 
