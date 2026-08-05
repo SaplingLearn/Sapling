@@ -437,6 +437,14 @@ There is no lint coverage on `signin-trigger` in `src/app/(public)/page.tsx` —
 the landing page has dozens of buttons that are not part of any browser test, so
 that file stays out of the `files` list. The trigger is documented here instead.
 
+There is likewise no lint coverage on `adminfb-*` in `Admin.tsx`. `FeedbackTab`
+(the tab that owns them) has zero `<button>`/`<input>`/`<textarea>` elements,
+so nothing there needs the rule — but `Admin.tsx` as a whole stays out of the
+`files` list deliberately: enrolling it would flag 51 pre-existing untagged
+elements across the file's other tabs (Users, Roles, Achievements, Cosmetics,
+Allowlist, Audit), none of which have browser coverage today. Revisit when an
+admin journey lands.
+
 `screens/Dashboard.tsx` joined the `files` list with the `dashboard` surface
 (#386) carrying 25 pre-existing untagged intrinsic elements; those are
 baselined in `eslint-suppressions.json` (the repo's legacy-debt mechanism —
