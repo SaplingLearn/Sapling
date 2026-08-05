@@ -1,24 +1,43 @@
 'use client';
 
 /**
- * Beta signup dialog.
+ * Beta access + newsletter dialog.
  *
- * A departure from `Sapling Landing v5.dc.html`, added by request: the design
- * wires "Sign up for Beta Testing" to scroll down to the newsletter section
- * instead. Both entry points now open this.
+ * This is the modal the previous landing page shipped — recovered rather than
+ * reinvented, so what runs here is what has been on staging: a two-column
+ * card, brand and beta-tester panel on the left, newsletter pitch and signup
+ * on the right.
  *
- * It shares `email`/`subscribed` with the inline newsletter through
- * `useLanding`, so signing up here also settles that section into its
- * subscribed state — one signup, not two places to do it.
+ * A departure from `Sapling Landing v5.dc.html`, which wires both beta CTAs
+ * to scroll down to the newsletter section instead. Requested.
  *
- * Built on the shared `Dialog`, which brings the portal, scroll lock, Escape,
- * focus restore and aria wiring. Only the contents and palette are local.
+ * Not built on the shared `Dialog`: that caps at 760px (`size="xl"`) and this
+ * card is `min(1040px, 94vw)` with a two-column grid. The behaviour `Dialog`
+ * would have brought — scroll lock, Escape, focus move, `aria-modal` — is
+ * wired explicitly below instead.
+ *
+ * One behavioural change from the original: it POSTed and then showed success
+ * unconditionally, swallowing failures in an empty `catch`. Submission now
+ * goes through `useLanding`'s `subscribe`, which only reports success on a
+ * 2xx and surfaces a readable message otherwise.
  */
 
-import { useId, useRef } from 'react';
-import Dialog from '@/components/Dialog';
+import { useEffect, useId, useRef, useState } from 'react';
+import Image from 'next/image';
+import { HeroCard } from '@/components/marketing/HeroCard';
+import { useScrollLock } from '@/lib/useScrollLock';
 
-const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
+const PLAYFAIR = "var(--font-playfair), 'Playfair Display', Georgia, serif";
+const SPECTRAL = "var(--font-spectral), 'Spectral', Georgia, serif";
+const JETBRAINS = "var(--font-jetbrains), 'JetBrains Mono', monospace";
+const DM = "var(--font-dm-sans), 'DM Sans', sans-serif";
+
+/** The three newsletter perks, each with its own accent dot. */
+const PERKS = [
+  { dot: '#1B6C42', title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
+  { dot: '#D97706', title: 'Real notes from the team.', body: "What we're figuring out as we build. Honest, occasional, and worth opening." },
+  { dot: '#8A63D2', title: 'Your input shapes what we build.', body: 'Early polls, roadmap previews, and a direct line to the people building it.' },
+];
 
 export function BetaModal({
   open,
@@ -39,97 +58,234 @@ export function BetaModal({
   onSubscribe: () => void;
   onClose: () => void;
 }) {
+  const [closing, setClosing] = useState(false);
+  const [localError, setLocalError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-  const headingId = useId();
-  const valid = email.includes('@') && !subscribing;
+  const labelId = useId();
 
+  useScrollLock(open);
+
+  // play the exit animation before unmounting, and never close mid-request
+  const dismiss = () => {
+    if (subscribing) return;
+    setClosing(true);
+    setTimeout(() => { setClosing(false); setLocalError(''); onClose(); }, 200);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') dismiss(); };
+    document.addEventListener('keydown', onKey);
+    const t = setTimeout(() => inputRef.current?.focus(), 60);
+    return () => { document.removeEventListener('keydown', onKey); clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, subscribing]);
+
+  if (!open) return null;
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = email.trim();
+    const [local, domain] = trimmed.split('@');
+    if (!local || !domain || !domain.includes('.')) {
+      setLocalError('Enter a valid email (e.g. you@example.com)');
+      return;
+    }
+    setLocalError('');
+    onSubscribe();
+  };
+
+  // ── success ──
+  if (subscribed) {
+    return (
+      <div
+        className={`fixed inset-0 z-[100] flex items-center justify-center p-4 ${closing ? 'modal-backdrop-out' : 'modal-backdrop-in'}`}
+        style={{ background: 'rgba(12,18,26,0.45)' }}
+        onClick={dismiss}
+      >
+        <HeroCard
+          className={closing ? 'modal-card-out' : 'modal-card-in'}
+          style={{ padding: '40px 52px', textAlign: 'center' }}
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={labelId}
+        >
+          <h2 id={labelId} style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 32, lineHeight: 1.1, fontWeight: 600, letterSpacing: '-0.02em', color: '#1a1a1a' }}>
+            You&apos;re on the <span style={{ fontStyle: 'italic', color: 'var(--brand-forest)' }}>tree.</span>
+          </h2>
+          <p style={{ margin: '10px 0 0', fontSize: 17, color: '#4b5563', fontStyle: 'italic' }}>
+            See you in the inbox - The Team
+          </p>
+        </HeroCard>
+      </div>
+    );
+  }
+
+  // ── form ──
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      labelledBy={headingId}
-      size="md"
-      padding="34px"
-      // the field, not the close button, is what you came here to use
-      initialFocusRef={inputRef}
+    <div
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-4 ${closing ? 'modal-backdrop-out' : 'modal-backdrop-in'}`}
+      style={{ background: 'rgba(12,18,26,0.65)' }}
+      onClick={dismiss}
     >
-      {subscribed ? (
-        <div style={{ textAlign: 'center', padding: '10px 4px 6px' }}>
-          {/* carries headingId too — it is what `aria-labelledby` points at
-              once the form is replaced by this state */}
-          <h2 id={headingId} style={{ margin: 0, fontFamily: "'Playfair Display',serif", fontSize: 30, fontWeight: 600, color: '#12201A', lineHeight: 1.1 }}>
-            You&rsquo;re on the <em style={{ color: '#0C5638' }}>tree.</em>
-          </h2>
-          <p style={{ margin: '10px 0 0', fontSize: 14, color: '#61726A', fontStyle: 'italic' }}>
-            See you in the inbox · The Team
-          </p>
-          <button
-            onClick={onClose}
-            type="button"
-            className="ld-btn-solid"
-            style={{ marginTop: 22, background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6, padding: '13px 26px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600, fontSize: 14, cursor: 'pointer', transition: 'filter 200ms' }}
-          >
-            Close
-          </button>
+      <HeroCard
+        className={`relative w-full ${closing ? 'modal-card-out' : 'modal-card-in'}`}
+        style={{
+          maxWidth: 'min(1040px, 94vw)', width: '100%',
+          display: 'grid', gridTemplateColumns: '1fr 1px 1fr',
+          minHeight: 560, maxHeight: 'calc(100vh - 48px)', overflow: 'hidden',
+        }}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelId}
+      >
+        <button
+          onClick={dismiss}
+          aria-label="Close dialog"
+          className="ld-betaclose"
+          style={{
+            position: 'absolute', top: 18, right: 18, zIndex: 10,
+            width: 32, height: 32, borderRadius: 16,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#4b5563', fontSize: 20, lineHeight: 1,
+            background: 'none', border: 'none', cursor: 'pointer',
+            transition: 'background 0.15s',
+          }}
+        >
+          ×
+        </button>
+
+        {/* ── left: brand + beta tester role ── */}
+        <div className="hero-surface" style={{ padding: '36px 36px 32px', display: 'flex', flexDirection: 'column', gap: 22 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Image src="/sapling-icon.svg" alt="Sapling" width={22} height={22} />
+            <span style={{ fontFamily: SPECTRAL, fontWeight: 700, fontSize: 17, color: 'var(--brand-forest)', letterSpacing: '-0.02em' }}>Sapling</span>
+          </div>
+
+          <div>
+            <div style={{ fontFamily: JETBRAINS, fontSize: 10.5, color: '#6b7280', letterSpacing: '0.22em', marginBottom: 14, textTransform: 'uppercase', fontWeight: 600 }}>
+              Early access
+            </div>
+            <h2 style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 44, lineHeight: 1.05, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
+              Learn early.<br />
+              <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: PLAYFAIR }}>Grow</span> with us.
+            </h2>
+            <p style={{ margin: '14px 0 0', fontSize: 13.5, lineHeight: 1.55, color: '#4b5563', maxWidth: 360 }}>
+              Sapling is being built alongside the students who&apos;ll use it most. Join early and
+              help shape what it becomes.
+            </p>
+          </div>
+
+          <div style={{ height: 1, flexShrink: 0, background: 'rgba(107,114,128,0.15)' }} />
+
+          <div>
+            <h3 style={{ margin: '0 0 12px', fontFamily: PLAYFAIR, fontSize: 22, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
+              Beta Tester Role
+            </h3>
+            <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: '#EBE6DC', border: '1px solid #D6D1C6' }}>
+              <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#374151', fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: DM, letterSpacing: '0.02em' }}>
+                AK
+              </div>
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#111827', fontFamily: DM }}>Alex Kim</span>
+                  <span
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', padding: '3px 10px',
+                      borderRadius: 9999, fontSize: 10, fontWeight: 500, fontFamily: JETBRAINS,
+                      letterSpacing: '0.1em', textTransform: 'uppercase',
+                      background: 'rgba(212,175,55,0.08)', color: '#C9A227',
+                      border: '1.5px solid rgba(212,175,55,0.55)',
+                    }}
+                  >
+                    Beta Tester
+                  </span>
+                </div>
+                <span style={{ fontSize: 11, color: '#9CA3AF', fontFamily: DM }}>@alexkim</span>
+              </div>
+            </div>
+            <p style={{ margin: '10px 2px 0', fontSize: 12.5, color: '#6b7280', lineHeight: 1.5, fontStyle: 'italic' }}>
+              The first mark on your profile. A permanent record of showing up early.
+            </p>
+          </div>
         </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.3em', textTransform: 'uppercase', color: '#0C5638' }}>
-            Free through beta
-          </span>
 
-          <h2 id={headingId} style={{ margin: '14px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 30, fontWeight: 600, lineHeight: 1.1, letterSpacing: '-0.02em', color: '#12201A' }}>
-            Get a seat in the <em style={{ color: '#0C5638' }}>beta.</em>
-          </h2>
+        <div style={{ background: 'rgba(107,114,128,0.15)', alignSelf: 'stretch' }} />
 
-          <p style={{ margin: '14px 0 0', fontSize: 14.5, lineHeight: 1.7, color: '#33443B' }}>
-            Beta testers get every feature free while we build, and a say in what we build next.
-            One letter a month, no spam. We&rsquo;re students too.
+        {/* ── right: newsletter ── */}
+        <div className="hero-surface" style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ fontFamily: JETBRAINS, fontSize: 10, color: '#D97706', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 500, marginBottom: 10 }}>
+            ● Issue 001 dropping soon
+          </div>
+          <h1 id={labelId} style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
+            Join the<br />
+            <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: PLAYFAIR }}>Newsletter</span>
+          </h1>
+          <p style={{ margin: '14px 0 0', fontSize: 15, color: '#4b5563', lineHeight: 1.5 }}>
+            Hear fun stories from students like you.
           </p>
 
-          <form
-            onSubmit={(e) => { e.preventDefault(); if (valid) onSubscribe(); }}
-            style={{ marginTop: 24, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}
-          >
-            <input
-              ref={inputRef}
-              value={email}
-              onChange={(e) => onEmail(e.target.value)}
-              disabled={subscribing}
-              type="email"
-              placeholder="you@school.edu"
-              aria-label="Email address"
-              className="ld-emailinput"
-              style={{ flex: 1, minWidth: 200, background: '#fdfcf9', border: '1px solid rgba(18,32,26,0.14)', borderRadius: 6, padding: '13px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: '#12201A', outline: 'none' }}
-            />
+          <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {PERKS.map(({ dot, title, body }) => (
+              <div key={title} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 12, alignItems: 'start' }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: dot, boxShadow: `0 0 8px ${dot}55`, marginTop: 8, flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 14.5, fontWeight: 600, color: '#1a1a1a', marginBottom: 2, letterSpacing: '-0.005em' }}>{title}</div>
+                  <div style={{ fontSize: 12.5, color: '#4b5563', lineHeight: 1.5 }}>{body}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={submit} style={{ marginTop: 'auto', paddingTop: 28 }}>
+            <div style={{ position: 'relative', marginBottom: 10 }}>
+              <input
+                ref={inputRef}
+                type="text"
+                aria-label="Email address"
+                placeholder="you@example.com"
+                value={email}
+                disabled={subscribing}
+                onChange={(e) => { onEmail(e.target.value); setLocalError(''); }}
+                className="ld-betainput"
+                style={{
+                  width: '100%', padding: '14px 16px', fontSize: 14,
+                  background: 'rgba(255,255,255,0.6)',
+                  border: '1.5px solid rgba(107,114,128,0.25)', borderRadius: 10,
+                  transition: 'border-color 0.15s, box-shadow 0.15s',
+                  fontFamily: DM, color: '#1a1a1a', boxSizing: 'border-box',
+                }}
+              />
+              {(localError || error) && (
+                <p role="alert" style={{ margin: '6px 0 0', fontSize: 11.5, color: '#dc2626', fontFamily: DM }}>
+                  {localError || error}
+                </p>
+              )}
+            </div>
             <button
               type="submit"
-              disabled={!valid}
-              className="ld-btn-solid"
+              disabled={subscribing}
+              className="ld-betasubmit"
               style={{
-                background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6,
-                padding: '13px 22px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600,
-                fontSize: 14, whiteSpace: 'nowrap',
-                cursor: valid ? 'pointer' : 'not-allowed',
-                opacity: valid ? 1 : 0.5,
-                transition: 'filter 200ms, opacity 200ms',
+                width: '100%', padding: '14px 16px', borderRadius: 10,
+                background: subscribing ? '#4b5563' : 'var(--brand-forest)', color: '#fff',
+                fontSize: 14, fontWeight: 600, letterSpacing: '0.02em',
+                boxShadow: '0 8px 24px rgba(27,108,66,0.3)',
+                border: 'none', cursor: subscribing ? 'default' : 'pointer',
+                transition: 'all 0.18s', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', gap: 8, fontFamily: DM,
               }}
             >
-              {subscribing ? 'Signing you up…' : 'Join the list'}
+              {subscribing ? 'Planting your node…' : <>Sign Me Up <span style={{ opacity: 0.7 }}>→</span></>}
             </button>
-          </form>
-
-          {error && (
-            <p role="alert" style={{ margin: '12px 0 0', fontSize: 13, lineHeight: 1.5, color: '#9c4b48' }}>
-              {error}
+            <p style={{ margin: '12px 0 0', fontSize: 11.5, color: '#6b7280', textAlign: 'center', lineHeight: 1.5 }}>
+              By joining the newsletter, you&apos;ll also be added to the beta waitlist.
             </p>
-          )}
-
-          <p style={{ margin: '18px 0 0', ...MONO, fontSize: 10, letterSpacing: '0.15em', color: '#8B9A92' }}>
-            * AVAILABLE EXCLUSIVELY TO BOSTON UNIVERSITY STUDENTS
-          </p>
+          </form>
         </div>
-      )}
-    </Dialog>
+      </HeroCard>
+    </div>
   );
 }

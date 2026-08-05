@@ -2104,3 +2104,8 @@ input[type="reset"]:disabled {
 .landing-v5 .ld-labreply:hover   { border-color: #0E9E5A; background: #E6F2E8; }
 .cp-newscard:hover { border-color: rgba(42,39,31,0.22); transform: translateY(-3px); }
 @keyframes nodeDrift { 0%,100% { transform:translate(0,0); } 50% { transform:translate(10px,-13px); } }
+
+/* Beta modal — recovered from the previous landing page. */
+.ld-betaclose:hover  { background: rgba(107,114,128,0.1); }
+.ld-betasubmit:hover:not(:disabled) { background: var(--brand-forest-hover) !important; }
+.ld-betainput:focus  { border-color: var(--brand-forest); box-shadow: 0 0 0 3px rgba(27,108,66,0.12); outline: none; }
