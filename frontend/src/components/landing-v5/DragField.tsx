@@ -97,9 +97,38 @@ function Cluster({ c }: { c: DragCluster }) {
   );
 }
 
-/** The field for one section. Renders nothing if that section has no clusters. */
+/**
+ * The field for one section.
+ *
+ * Two shapes, and using the wrong one adds page height:
+ *
+ * - **Pinned acts** (`act-ingest`, `act-tutor`) hang a `height:100vh` layer
+ *   out of a `position:sticky; height:0` box, so the field tracks the pinned
+ *   stage without occupying space in it.
+ * - **Static sections** (`faq`, `newsletter`, `cta`) use `absolute; inset:0`
+ *   and hold the clusters directly. They must NOT get the 100vh layer: an
+ *   absolutely positioned child still extends the document's scrollHeight,
+ *   so on the last section it left a viewport's worth of dead scroll below
+ *   the footer.
+ */
+const PINNED = new Set<DragCluster['section']>(['act-ingest', 'act-tutor']);
+
 export function DragField({ section }: { section: DragCluster['section'] }) {
   const mine = DRAG_CLUSTERS.filter((c) => c.section === section);
+  const clusters = mine.map((c) => <Cluster key={c.id} c={c} />);
+
+  if (!PINNED.has(section)) {
+    return (
+      <div
+        className="drag-field"
+        aria-hidden="true"
+        style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', overflow: 'visible' }}
+      >
+        {clusters}
+      </div>
+    );
+  }
+
   return (
     <div
       className="drag-field"
@@ -107,7 +136,7 @@ export function DragField({ section }: { section: DragCluster['section'] }) {
       style={{ position: 'sticky', top: 0, height: 0, zIndex: 2, pointerEvents: 'none', overflow: 'visible' }}
     >
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '100vh', pointerEvents: 'none', overflow: 'visible' }}>
-        {mine.map((c) => <Cluster key={c.id} c={c} />)}
+        {clusters}
       </div>
     </div>
   );
