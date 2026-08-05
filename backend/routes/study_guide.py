@@ -24,7 +24,12 @@ from services.academics import (
 )
 from services.graph_service import get_courses as graph_get_courses
 from services.auth_guard import require_self
-from services.encryption import decrypt_if_present, decrypt_json
+from services.encryption import (
+    decrypt_if_present,
+    decrypt_json,
+    decrypt_json_column,
+    encrypt_json,
+)
 from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
 
@@ -198,7 +203,7 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
         "offering_id": offering_id,
         "exam_id": exam_id,
         "generated_at": now,
-        "content": content,
+        "content": encrypt_json(content),
     }
     table("study_guides").insert(row)
 
@@ -245,7 +250,7 @@ def get_cached_guides(user_id: str, request: Request):
 
     result = []
     for g in guides:
-        content = g.get("content") or {}
+        content = decrypt_json_column(g.get("content")) or {}
         course_id = offering_to_course.get(g.get("offering_id"))
         result.append({
             "id": g["id"],
@@ -330,7 +335,7 @@ def get_guide(
     )
     if cached:
         row = cached[0]
-        return {"guide": row["content"], "generated_at": row["generated_at"], "cached": True}
+        return {"guide": decrypt_json_column(row["content"]), "generated_at": row["generated_at"], "cached": True}
 
     result = _generate_and_insert(user_id, offering_id, exam_id)
     return {"guide": result["content"], "generated_at": result["generated_at"], "cached": False}
