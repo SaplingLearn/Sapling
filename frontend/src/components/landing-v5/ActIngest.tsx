@@ -21,6 +21,8 @@
  * The measure pass reads those rects; nothing here reads layout itself.
  */
 
+import { DragField } from './DragField';
+
 /** Syllabus lines. The bold span is the concept a chip carries away. */
 const DOC_LINES: [string, string, string][] = [
   ['Wk 1 · ', 'Binary search trees', ': insert, search'],
@@ -101,10 +103,8 @@ export function ActIngest({
 }) {
   return (
     <section id="act-ingest" data-act="2" style={{ height: '320vh', position: 'relative' }}>
-      {/* zero-height sticky layer: the field must never add page height */}
-      <div className="drag-field" aria-hidden="true" style={{ position: 'sticky', top: 0, height: 0, zIndex: 2, pointerEvents: 'none', overflow: 'visible' }}>
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '100vh', pointerEvents: 'none', overflow: 'visible' }} />
-      </div>
+      {/* holds no clusters, but the element has to exist — see DragField */}
+      <DragField section="act-ingest" />
 
       <div style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
         <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>

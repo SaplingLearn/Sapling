@@ -8,17 +8,27 @@
  * the physics and finds its targets through `[data-dragnode]`,
  * `[data-dragpuck]` and `[data-sim]`.
  *
- * Two constraints the markup has to honour, both easy to break by tidying:
+ * The field is decorative and must never add page height — see the two
+ * wrapper shapes on `DragField` below, which is the whole reason it takes a
+ * section rather than just rendering one box.
  *
- * - The wrapper is `height:0`. The field is decorative and must never add
- *   page height, so it hangs out of a zero-height sticky box.
- * - `touch-action:none` on each cluster. Without it, dragging a node on a
- *   touch device scrolls the page instead of moving the node.
+ * `touch-action:none` on each cluster is also load-bearing: without it,
+ * dragging a node on a touch device scrolls the page instead.
  *
  * Hidden below 1023px by the `.drag-field` rule in globals.css.
  */
 
 import { DRAG_CLUSTERS, type DragCluster } from '@/lib/landing/dragClusters';
+
+/**
+ * Every section that carries a field.
+ *
+ * Wider than `DragCluster['section']`: `act-ingest` has a field but no
+ * clusters in it, so it never appears in the data. It still needs the
+ * element, because `engine/sim.ts` discovers fields by class and the pinned
+ * shape is what keeps the act's motes off the page's height.
+ */
+export type FieldSection = DragCluster['section'] | 'act-ingest';
 
 function Cluster({ c }: { c: DragCluster }) {
   return (
@@ -111,9 +121,9 @@ function Cluster({ c }: { c: DragCluster }) {
  *   so on the last section it left a viewport's worth of dead scroll below
  *   the footer.
  */
-const PINNED = new Set<DragCluster['section']>(['act-ingest', 'act-tutor']);
+const PINNED = new Set<FieldSection>(['act-ingest', 'act-tutor']);
 
-export function DragField({ section }: { section: DragCluster['section'] }) {
+export function DragField({ section }: { section: FieldSection }) {
   const mine = DRAG_CLUSTERS.filter((c) => c.section === section);
   const clusters = mine.map((c) => <Cluster key={c.id} c={c} />);
 
