@@ -657,11 +657,25 @@ def seed_quiz() -> None:
                 "score": score,
                 "total": total,
                 "difficulty": difficulty,
-                "questions_json": questions,
-                "answers_json": answers,
+                # 🔒 questions_json / answers_json
+                "questions_json": encrypt_json(questions),
+                "answers_json": encrypt_json(answers) if answers is not None else None,
                 "completed_at": completed_at,
             },
         )
+
+    # #521: quiz_context is 🔒 — one row so the roundtrip test has a baseline.
+    h.insert_if_absent(
+        "quiz_context",
+        "rich-qc-cs-variables",
+        {
+            "user_id": USER_ACTIVE,
+            "concept_node_id": "rich-node-cs-variables",
+            "context_json": encrypt_json(
+                {"misconceptions": ["confuses = with =="], "asked": 2}
+            ),
+        },
+    )
 
 
 # #520: feedback/issue_reports are 🔒 (comment/topic/description) — seed them
@@ -752,8 +766,8 @@ _SUMMARY_ORDER = [
     "schools", "courses", "course_offerings", "users", "user_profiles", "user_roles",
     "enrollments", "graph_nodes", "graph_edges", "node_mastery_events",
     "gradebook_categories", "assignments", "rooms", "room_members", "room_messages",
-    "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "sessions",
-    "messages", "feedback", "issue_reports",
+    "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "quiz_context",
+    "sessions", "messages", "feedback", "issue_reports",
 ]
 
 

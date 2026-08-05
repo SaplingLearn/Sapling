@@ -288,6 +288,20 @@ def backfill_issue_reports(apply: bool) -> dict:
     )
 
 
+def backfill_quiz_attempts(apply: bool) -> dict:
+    q = _encrypt_json_column("quiz_attempts", "questions_json", pk="id", apply=apply)
+    a = _encrypt_json_column("quiz_attempts", "answers_json", pk="id", apply=apply)
+    return {
+        "scanned": q["scanned"],
+        "questions_json": q["questions_json"],
+        "answers_json": a["answers_json"],
+    }
+
+
+def backfill_quiz_context(apply: bool) -> dict:
+    return _encrypt_json_column("quiz_context", "context_json", pk="id", apply=apply)
+
+
 RUNNERS: dict[str, Callable[[bool], dict]] = {
     "users": backfill_users,
     "user_settings": backfill_user_settings,
@@ -299,6 +313,8 @@ RUNNERS: dict[str, Callable[[bool], dict]] = {
     "room_messages": backfill_room_messages,
     "feedback": backfill_feedback,
     "issue_reports": backfill_issue_reports,
+    "quiz_attempts": backfill_quiz_attempts,
+    "quiz_context": backfill_quiz_context,
 }
 
 

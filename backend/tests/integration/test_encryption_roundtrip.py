@@ -101,6 +101,28 @@ def test_sessions_summary_json_is_ciphertext_at_rest_and_decrypts(db_conn):
     assert "Discussed base cases" in decoded["bullets"]
 
 
+def test_quiz_attempts_questions_json_is_ciphertext_and_decrypts(db_conn):
+    """#521: quiz_attempts.questions_json needs the JSON pair too."""
+    raw = _raw(db_conn, "quiz_attempts", "id", "rich-qa-cs-variables-1", "questions_json")
+    assert raw is not None
+    assert isinstance(raw, str), "questions_json stored as PLAINTEXT JSONB — encryption regressed"
+    decoded = decrypt_json(raw)
+    assert decoded[0]["q"] == "What keyword declares a variable in Python?"
+
+
+def test_quiz_attempts_answers_json_is_ciphertext_and_decrypts(db_conn):
+    raw = _raw(db_conn, "quiz_attempts", "id", "rich-qa-cs-variables-1", "answers_json")
+    assert isinstance(raw, str)
+    assert decrypt_json(raw)[0]["correct"] is True
+
+
+def test_quiz_context_context_json_is_ciphertext_and_decrypts(db_conn):
+    raw = _raw(db_conn, "quiz_context", "id", "rich-qc-cs-variables", "context_json")
+    assert isinstance(raw, str)
+    decoded = decrypt_json(raw)
+    assert decoded["asked"] == 2
+
+
 def test_documents_concept_notes_uses_json_encryption(db_conn):
     """documents.concept_notes is stored via encrypt_json (a list of concepts)."""
     raw = _raw(db_conn, "documents", "id", "rich-doc-cs-syllabus", "concept_notes")
