@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { humanizeError } from '@/lib/errorMessage';
 import { SCRAMBLE } from '@/lib/landing/content';
 import { LandingEngine } from '@/lib/landing/engine';
 import type { BuiltGraph } from '@/lib/landing/engine/graph';
@@ -116,6 +117,10 @@ export function useLanding(props: LandingProps) {
   const [openFaq, setOpenFaq] = useState(0);
   const [email, setEmail] = useState('');
   const [subscribed, setSubscribed] = useState(false);
+  /** In flight, so the form can disable rather than double-post. */
+  const [subscribing, setSubscribing] = useState(false);
+  /** Null unless the last attempt failed; shown next to the field. */
+  const [subscribeError, setSubscribeError] = useState<string | null>(null);
   const [plantVal, setPlantVal] = useState('');
   const [plantedCount, setPlantedCount] = useState(0);
   const [jumpDown, setJumpDown] = useState(false);
@@ -578,6 +583,33 @@ export function useLanding(props: LandingProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── newsletter / beta list ────────────────────────────────────────────
+  /**
+   * POSTs to the real endpoint and only reports success on a 2xx.
+   *
+   * The backend upserts on `email`, so signing up twice is a no-op there and
+   * a second submit lands on the same success state rather than an error.
+   */
+  const subscribeNow = useCallback(async () => {
+    const value = email.trim();
+    if (!value.includes('@') || subscribing) return;
+    setSubscribing(true);
+    setSubscribeError(null);
+    try {
+      const { subscribeToNewsletter } = await import('@/lib/api');
+      await subscribeToNewsletter(value);
+      setSubscribed(true);
+    } catch (err) {
+      // `lib/api.ts` rejects with the raw response body, which is how
+      // "Internal Server Error" ends up rendered at a user. humanizeError
+      // keeps a server-supplied `detail` when there is one (a 422 on a bad
+      // address is worth reading) and swaps anything else for the fallback.
+      setSubscribeError(humanizeError(err, 'Could not sign you up just now. Please try again.'));
+    } finally {
+      setSubscribing(false);
+    }
+  }, [email, subscribing]);
+
   // ── navigation ────────────────────────────────────────────────────────
   const scrollToId = useCallback((id: string) => {
     const el = document.getElementById(id);
@@ -612,6 +644,7 @@ export function useLanding(props: LandingProps) {
       heroMounted, heroText0, heroText1, heroText2, loadPct, introGone, graph,
       tutorMode, galIdx, modalAnim, jumpOpen,
       pastHero, navMenuOpen, exploring, expNode, openFaq, email, subscribed,
+      subscribing, subscribeError,
       plantVal, plantedCount, jumpDown,
     },
     set: {
@@ -621,7 +654,8 @@ export function useLanding(props: LandingProps) {
     actions: {
       enterExplore, exitExplore, openGal, closeGal, registerPanel,
       scrollToId, scrollTop, plant,
-      subscribe: () => { if (email.includes('@')) setSubscribed(true); },
+      subscribe: subscribeNow,
+      resetSubscribeError: () => setSubscribeError(null),
     },
     mqDragged,
     expOut,

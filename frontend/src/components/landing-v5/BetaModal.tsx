@@ -24,6 +24,8 @@ export function BetaModal({
   open,
   email,
   subscribed,
+  subscribing,
+  error,
   onEmail,
   onSubscribe,
   onClose,
@@ -31,13 +33,15 @@ export function BetaModal({
   open: boolean;
   email: string;
   subscribed: boolean;
+  subscribing: boolean;
+  error: string | null;
   onEmail: (v: string) => void;
   onSubscribe: () => void;
   onClose: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const headingId = useId();
-  const valid = email.includes('@');
+  const valid = email.includes('@') && !subscribing;
 
   return (
     <Dialog
@@ -91,6 +95,7 @@ export function BetaModal({
               ref={inputRef}
               value={email}
               onChange={(e) => onEmail(e.target.value)}
+              disabled={subscribing}
               type="email"
               placeholder="you@school.edu"
               aria-label="Email address"
@@ -110,9 +115,15 @@ export function BetaModal({
                 transition: 'filter 200ms, opacity 200ms',
               }}
             >
-              Join the list
+              {subscribing ? 'Signing you up…' : 'Join the list'}
             </button>
           </form>
+
+          {error && (
+            <p role="alert" style={{ margin: '12px 0 0', fontSize: 13, lineHeight: 1.5, color: '#9c4b48' }}>
+              {error}
+            </p>
+          )}
 
           <p style={{ margin: '18px 0 0', ...MONO, fontSize: 10, letterSpacing: '0.15em', color: '#8B9A92' }}>
             * AVAILABLE EXCLUSIVELY TO BOSTON UNIVERSITY STUDENTS

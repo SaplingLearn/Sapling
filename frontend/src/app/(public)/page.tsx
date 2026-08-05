@@ -92,6 +92,8 @@ export default function LandingPage() {
         open={betaOpen}
         email={state.email}
         subscribed={state.subscribed}
+        subscribing={state.subscribing}
+        error={state.subscribeError}
         onEmail={set.setEmail}
         onSubscribe={actions.subscribe}
         onClose={() => setBetaOpen(false)}
@@ -142,6 +144,8 @@ export default function LandingPage() {
       <Journal
         email={state.email}
         subscribed={state.subscribed}
+        subscribing={state.subscribing}
+        error={state.subscribeError}
         onEmail={set.setEmail}
         onSubscribe={actions.subscribe}
       />

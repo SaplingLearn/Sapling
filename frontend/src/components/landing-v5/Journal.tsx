@@ -61,11 +61,15 @@ function GraphThumb() {
 export function Journal({
   email,
   subscribed,
+  subscribing,
+  error,
   onEmail,
   onSubscribe,
 }: {
   email: string;
   subscribed: boolean;
+  subscribing: boolean;
+  error: string | null;
   onEmail: (v: string) => void;
   onSubscribe: () => void;
 }) {
@@ -180,23 +184,32 @@ export function Journal({
               </p>
             </div>
           ) : (
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <input
-                value={email}
-                onChange={(e) => onEmail(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') onSubscribe(); }}
-                placeholder="you@school.edu"
-                aria-label="Email address"
-                className="ld-emailinput"
-                style={{ width: 250, background: '#fdfcf9', border: '1px solid rgba(18,32,26,0.14)', borderRadius: 6, padding: '13px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: '#12201A', outline: 'none' }}
-              />
-              <button
-                onClick={onSubscribe}
-                className="ld-btn-solid"
-                style={{ background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6, padding: '13px 22px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600, fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap', transition: 'filter 200ms' }}
-              >
-                Join the list
-              </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <form onSubmit={(e) => { e.preventDefault(); onSubscribe(); }} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input
+                  value={email}
+                  onChange={(e) => onEmail(e.target.value)}
+                  disabled={subscribing}
+                  type="email"
+                  placeholder="you@school.edu"
+                  aria-label="Email address"
+                  className="ld-emailinput"
+                  style={{ width: 250, background: '#fdfcf9', border: '1px solid rgba(18,32,26,0.14)', borderRadius: 6, padding: '13px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: '#12201A', outline: 'none' }}
+                />
+                <button
+                  type="submit"
+                  disabled={subscribing}
+                  className="ld-btn-solid"
+                  style={{ background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6, padding: '13px 22px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600, fontSize: 14, cursor: subscribing ? 'not-allowed' : 'pointer', opacity: subscribing ? 0.6 : 1, whiteSpace: 'nowrap', transition: 'filter 200ms, opacity 200ms' }}
+                >
+                  {subscribing ? 'Signing you up…' : 'Join the list'}
+                </button>
+              </form>
+              {error && (
+                <p role="alert" style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: '#9c4b48', maxWidth: 330 }}>
+                  {error}
+                </p>
+              )}
             </div>
           )}
         </div>
