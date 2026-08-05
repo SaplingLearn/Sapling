@@ -278,6 +278,16 @@ def backfill_room_messages(apply: bool) -> dict:
     return _encrypt_text_column("room_messages", ["text"], pk="id", apply=apply)
 
 
+def backfill_feedback(apply: bool) -> dict:
+    return _encrypt_text_column("feedback", ["comment", "topic"], pk="id", apply=apply)
+
+
+def backfill_issue_reports(apply: bool) -> dict:
+    return _encrypt_text_column(
+        "issue_reports", ["topic", "description"], pk="id", apply=apply
+    )
+
+
 RUNNERS: dict[str, Callable[[bool], dict]] = {
     "users": backfill_users,
     "user_settings": backfill_user_settings,
@@ -287,6 +297,8 @@ RUNNERS: dict[str, Callable[[bool], dict]] = {
     "sessions": backfill_sessions,
     "messages": backfill_messages,
     "room_messages": backfill_room_messages,
+    "feedback": backfill_feedback,
+    "issue_reports": backfill_issue_reports,
 }
 
 
