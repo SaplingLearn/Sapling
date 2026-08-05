@@ -2103,3 +2103,4 @@ input[type="reset"]:disabled {
 .landing-v5 .ld-labupload:hover  { background: #DCE7DE; }
 .landing-v5 .ld-labreply:hover   { border-color: #0E9E5A; background: #E6F2E8; }
 .cp-newscard:hover { border-color: rgba(42,39,31,0.22); transform: translateY(-3px); }
+@keyframes nodeDrift { 0%,100% { transform:translate(0,0); } 50% { transform:translate(10px,-13px); } }

@@ -143,12 +143,3 @@ export function CompanionShell({
     </div>
   );
 }
-
-/** The 880px reading column the text-led companion pages share. */
-export function CompanionBody({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ flex: 1, minWidth: 0, width: '100%', maxWidth: 880, margin: '0 auto', padding: '64px 32px', boxSizing: 'border-box' }}>
-      {children}
-    </div>
-  );
-}
