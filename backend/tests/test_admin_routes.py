@@ -655,6 +655,65 @@ class TestAuditLogRead:
         assert r.json()["page_size"] == 200
 
 
+# ── GET /api/admin/feedback + /api/admin/issue-reports (#520) ──────────────
+
+class TestAdminFeedbackReads:
+    def test_list_feedback_decrypts_and_names(self):
+        from services.encryption import encrypt
+        rows = [{
+            "id": "fb1", "user_id": "u1", "type": "global", "rating": 4,
+            "selected_options": ["tutor"], "comment": encrypt("wrong lecture"),
+            "session_id": None, "topic": encrypt("chat"),
+            "created_at": "2026-08-05T00:00:00Z",
+        }]
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_display_names", return_value={"u1": "Rich Active"}):
+            t.return_value.select.return_value = rows
+            r = client.get("/api/admin/feedback")
+        assert r.status_code == 200
+        entry = r.json()["feedback"][0]
+        assert entry["comment"] == "wrong lecture"
+        assert entry["topic"] == "chat"
+        assert entry["user_name"] == "Rich Active"
+        assert entry["rating"] == 4
+
+    def test_list_feedback_tolerates_legacy_plaintext_rows(self):
+        rows = [{
+            "id": "fb0", "user_id": "u1", "type": "global", "rating": 2,
+            "selected_options": [], "comment": "pre-backfill plaintext",
+            "session_id": None, "topic": None, "created_at": "2026-08-01T00:00:00Z",
+        }]
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_display_names", return_value={}):
+            t.return_value.select.return_value = rows
+            r = client.get("/api/admin/feedback")
+        assert r.status_code == 200
+        assert r.json()["feedback"][0]["comment"] == "pre-backfill plaintext"
+
+    def test_list_issue_reports_decrypts(self):
+        from services.encryption import encrypt
+        rows = [{
+            "id": "ir1", "user_id": "u1", "topic": encrypt("upload stuck"),
+            "description": encrypt("spins forever"),
+            "screenshot_urls": ["u1/a.png"], "created_at": "2026-08-05T00:00:00Z",
+        }]
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_display_names", return_value={"u1": "Rich Active"}):
+            t.return_value.select.return_value = rows
+            r = client.get("/api/admin/issue-reports")
+        assert r.status_code == 200
+        rep = r.json()["reports"][0]
+        assert rep["topic"] == "upload stuck"
+        assert rep["description"] == "spins forever"
+        assert rep["screenshot_urls"] == ["u1/a.png"]
+
+    def test_feedback_requires_admin(self):
+        with patch("routes.admin.require_admin",
+                   side_effect=HTTPException(status_code=403, detail="nope")):
+            assert client.get("/api/admin/feedback").status_code == 403
+            assert client.get("/api/admin/issue-reports").status_code == 403
+
+
 class TestAnalyticsOverview:
     def test_returns_totals_and_series(self):
         # Seed signup dates relative to "now" so they always land inside the
