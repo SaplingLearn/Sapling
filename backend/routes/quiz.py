@@ -381,10 +381,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         raise HTTPException(status_code=404, detail="Quiz not found")
     attempt = attempt_rows[0]
 
-    # #521: ciphertext str for new rows, plaintext JSONB for pre-backfill rows.
-    questions = decrypt_json_column(attempt["questions_json"])
     user_id = attempt["user_id"]
     require_self(user_id, request)
+
+    # #521: ciphertext str for new rows, plaintext JSONB for pre-backfill rows.
+    questions = decrypt_json_column(attempt["questions_json"])
 
     # #129: completed_at is written on the first successful submit. A re-POST
     # of the same quiz_id must not re-run apply_graph_update (double mastery
