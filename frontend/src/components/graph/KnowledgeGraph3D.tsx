@@ -27,6 +27,7 @@ import { IS_TEST_MODE } from "@/lib/testMode";
 import {
   baseNodeColor,
   buildAdjacency,
+  hexToRgbTriplet,
   labelSpec,
   nodeRadius,
   resolveGraphTheme,
@@ -300,18 +301,26 @@ export function KnowledgeGraph3D({
     [onNodeClick, nodesById],
   );
 
+  // Single source for the lit-link rgb: derived from theme.accent (the same
+  // token the focus halo uses), never a second hardcoded copy — otherwise
+  // the halo and its own lit edges can silently drift apart (found in the
+  // final-review pass: the halo already read theme.accent, but linkColor
+  // still hardcoded the retired sage rgb, so production rendered a forest
+  // halo next to sage-colored lit edges).
+  const litLinkRgbTriplet = React.useMemo(() => hexToRgbTriplet(theme.accent), [theme]);
+
   const linkColor = React.useCallback(
     (l: object) => {
       const link = l as FG3DLink;
       if (!hoverId) return `rgba(138, 131, 114, ${BASE_LINK_ALPHA})`;
       const lit = linkEndId(link.source) === hoverId || linkEndId(link.target) === hoverId;
-      // Lit links take the sage accent (rgb of #8a9a5b); dimmed links
-      // fade to near-invisible warm gray.
+      // Lit links take the theme accent; dimmed links fade to near-invisible
+      // warm gray.
       return lit
-        ? `rgba(138, 154, 91, ${LIT_LINK_ALPHA})`
+        ? `rgba(${litLinkRgbTriplet}, ${LIT_LINK_ALPHA})`
         : `rgba(138, 131, 114, ${DIM_LINK_ALPHA})`;
     },
-    [hoverId],
+    [hoverId, litLinkRgbTriplet],
   );
 
   const linkWidth = React.useCallback(
@@ -354,10 +363,18 @@ export function KnowledgeGraph3D({
   // poll start, and every scheduled frame re-checks it before doing
   // anything else, so a stale poll from the old dataset bails out instead
   // of firing zoomToFit and clobbering the fresh poll's correct fit.
+  //
+  // REDUCED MOTION (final-review pass): this is a SYSTEM-initiated camera
+  // fly, not a user gesture — under prefers-reduced-motion/test mode (the
+  // exact paths that zero cooldownTicks specifically to eliminate motion),
+  // an animated 400ms fly is itself a motion violation. Zero the duration
+  // there so the fit is instant; only the real animated path (a live user
+  // with no reduced-motion preference) gets the eased fly.
   const handleEngineStop = React.useCallback(() => {
     if (didFitRef.current) return;
     didFitRef.current = true;
     const epoch = pollEpochRef.current;
+    const durationMs = reducedMotion || IS_TEST_MODE ? 0 : 400;
     let prevBboxKey: string | null = null;
     let frame = 0;
     const MAX_FRAMES = 60; // ~1s safety net at 60fps; settles in ~3 frames in practice
@@ -367,14 +384,14 @@ export function KnowledgeGraph3D({
       const bbox = fgRef.current?.getGraphBbox();
       const key = bbox ? JSON.stringify(bbox) : null;
       if ((key !== null && key === prevBboxKey) || frame >= MAX_FRAMES) {
-        fgRef.current?.zoomToFit(400, 60);
+        fgRef.current?.zoomToFit(durationMs, 60);
         return;
       }
       prevBboxKey = key;
       pollRafIdRef.current = requestAnimationFrame(waitForStableBboxThenFit);
     };
     pollRafIdRef.current = requestAnimationFrame(waitForStableBboxThenFit);
-  }, []);
+  }, [reducedMotion]);
 
   return (
     <div style={{ width, height, position: "relative" }}>
@@ -430,7 +447,7 @@ export function KnowledgeGraph3D({
         className="btn btn--ghost btn--sm"
         title="Reset view"
         aria-label="Reset view"
-        onClick={() => fgRef.current?.zoomToFit(400, 40)}
+        onClick={() => fgRef.current?.zoomToFit(reducedMotion || IS_TEST_MODE ? 0 : 400, 60)}
         style={{
           position: "absolute",
           right: 12,

@@ -36,6 +36,7 @@ import * as THREE from "three";
 import SpriteText from "three-spritetext";
 import {
   baseNodeColor,
+  hexToRgbTriplet,
   labelSpec,
   nodeRadius,
   FALLBACK_THEME,
@@ -355,7 +356,7 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
     expect(items[1].textContent).toBe("Beta");
   });
 
-  it("sets cooldownTicks to 0 when prefers-reduced-motion is reduce", () => {
+  it("sets cooldownTicks to 0 and warmupTicks to 200 when prefers-reduced-motion is reduce", () => {
     // Override matchMedia to advertise reduced-motion preference for
     // the relevant query only.
     Object.defineProperty(window, "matchMedia", {
@@ -377,6 +378,23 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
 
     expect(lastProps).not.toBeNull();
     expect(lastProps!.cooldownTicks).toBe(0);
+    // warmupTicks mirrors KnowledgeGraph2D's sim.tick(200) precedent: run
+    // the simulation to a real settled layout synchronously instead of
+    // skipping it outright under reduced motion.
+    expect(lastProps!.warmupTicks).toBe(200);
+  });
+
+  it("uses the full animated cooldown and no synchronous warmup by default (no reduced-motion, not test mode)", () => {
+    // installDefaultMatchMedia() (beforeEach) already reports no
+    // reduced-motion preference, and this file never stubs
+    // NEXT_PUBLIC_TEST_MODE, so IS_TEST_MODE is false here — this is the
+    // real animated path a live user with no accessibility preference set
+    // actually sees.
+    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+
+    expect(lastProps).not.toBeNull();
+    expect(lastProps!.cooldownTicks).toBe(120);
+    expect(lastProps!.warmupTicks).toBe(0);
   });
 
   it("nodeThreeObject composes matte sphere + hidden halo + always-visible label", () => {
@@ -474,12 +492,17 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
       (lastProps!.onNodeHover as (n: object | null) => void)({ id: "a" });
     });
 
+    // Lit links derive from theme.accent (FALLBACK_THEME under jsdom) via
+    // hexToRgbTriplet — the same single source the focus halo uses, not a
+    // second hardcoded rgb copy that can drift from it (final-review fix:
+    // production used to render a forest halo next to sage-colored edges).
+    const litRgb = hexToRgbTriplet(FALLBACK_THEME.accent);
     linkColor = lastProps!.linkColor as (l: object) => string; // re-keyed accessor
-    expect(linkColor({ source: "a", target: "b" })).toBe(`rgba(138, 154, 91, ${LIT_LINK_ALPHA})`);
+    expect(linkColor({ source: "a", target: "b" })).toBe(`rgba(${litRgb}, ${LIT_LINK_ALPHA})`);
     expect(linkColor({ source: "b", target: "c" })).toBe(`rgba(138, 131, 114, ${DIM_LINK_ALPHA})`);
     // The library swaps ids for node-object refs once the simulation runs.
     expect(linkColor({ source: { id: "a" }, target: { id: "b" } })).toBe(
-      `rgba(138, 154, 91, ${LIT_LINK_ALPHA})`,
+      `rgba(${litRgb}, ${LIT_LINK_ALPHA})`,
     );
   });
 
@@ -495,11 +518,42 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
   });
 
   it("recenter button shares the 2D affordances and calls zoomToFit", () => {
+    // Default matchMedia (beforeEach) reports no reduced-motion preference,
+    // and this file never stubs NEXT_PUBLIC_TEST_MODE — the real animated
+    // path a live user with no accessibility preference set actually sees.
+    // Padding is unified to 60 across both zoomToFit call sites (auto-fit
+    // and this button) — it used to be 40 here (final-review ride-along).
     const { getByTestId } = render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
     const btn = getByTestId("graph-zoom-reset");
     expect(btn.getAttribute("title")).toBe("Reset view"); // globals.css hides by this title on the tutor rail
     fireEvent.click(btn);
-    expect(zoomToFitSpy).toHaveBeenCalledWith(400, 40);
+    expect(zoomToFitSpy).toHaveBeenCalledWith(400, 60);
+  });
+
+  it("recenter button fires an instant (0ms) fit under prefers-reduced-motion", () => {
+    // Round: this is a system-initiated camera fly even though the user
+    // clicked the button — under reduced motion an animated 400ms fly is
+    // itself a motion violation, so the duration must zero out exactly
+    // like the auto-fit's gating.
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query === "(prefers-reduced-motion: reduce)",
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const { getByTestId } = render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+    const btn = getByTestId("graph-zoom-reset");
+    fireEvent.click(btn);
+    expect(zoomToFitSpy).toHaveBeenCalledWith(0, 60);
   });
 
   it("auto-fits the camera once the graph bbox stabilizes across animation frames (onEngineStop)", () => {

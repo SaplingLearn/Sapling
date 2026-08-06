@@ -61,16 +61,17 @@ replaces "hover tooltip only" as the headline change.
 
 **Hover focus** — `onNodeHover`:
 
-- hovered node: soft sage focus halo — a slightly larger translucent
-  accent-colored (`#8a9a5b`) sphere behind the node — label full strength;
+- hovered node: soft focus halo — a slightly larger translucent sphere
+  behind the node, colored from the app accent token (`--accent`, currently
+  `#2d8f5c`), resolved at mount — label full strength;
 - 1-hop neighbors + connecting links: full color;
 - everything else: nodes → pale warm gray, links → near-invisible, labels →
   faded;
 - mouse-off restores everything.
 
 **Highlight prop** — the existing `highlightId` (tutor "currently discussing")
-renders the same sage emphasis persistently, replacing today's flat accent
-recolor.
+renders the same accent-token emphasis persistently, replacing today's flat
+accent recolor.
 
 **Links** — thin warm-gray lines (today's `rgba(138,131,114,…)` family), width
 subtly scaled by `strength` (unchanged formula). No particles/arrows.
@@ -80,6 +81,39 @@ subtly scaled by `strength` (unchanged formula). No particles/arrows.
 `IS_TEST_MODE`. One new ⌖ recenter button (bottom-right overlay) calling
 `zoomToFit`; it carries the same class as the 2D recenter control so the
 existing `globals.css` rule keeps hiding it on the tutor sidebar instance.
+
+Two justified deviations from that plain description, both found during
+Task 5 verification and fixed under review:
+
+- **Camera auto-fit on engine settle.** The library's default initial
+  camera distance never framed a freshly-loaded graph — every node
+  rendered as an illegible clump. `onEngineStop` now drives a one-shot
+  `zoomToFit`, but naively firing it synchronously (or even one animation
+  frame later) measures the scene before that tick's node positions have
+  actually landed on their Three.js objects, fitting the camera to a
+  stale/near-empty bounding box. The fix polls `getGraphBbox()` on
+  successive `requestAnimationFrame` callbacks until two consecutive reads
+  agree (frame-capped safety net) before fitting, and is idempotent per
+  dataset via a `didFitRef` guard plus an epoch counter that invalidates
+  any in-flight poll if `nodes`/`edges` change mid-poll (so a stale poll
+  from an abandoned dataset can never clobber the fresh poll's correct
+  fit). This is a system-initiated camera fly, not a user gesture, so it —
+  and the ⌖ recenter button's `zoomToFit` call, gated the same way — use an
+  **instant (`0`ms) duration under reduced-motion/`IS_TEST_MODE`** instead
+  of the normal 400ms eased fly; an animated system-initiated fly would
+  itself be a motion violation on those paths.
+- **`warmupTicks={200}` under reduced-motion/`IS_TEST_MODE`.** With
+  `cooldownTicks={0}` alone, the animated tick loop trips its stop
+  condition on the very first tick — before ever calling the physics
+  step — so the 3D force simulation never actually runs and nodes stay at
+  their raw, tightly-clustered pre-simulation positions. `KnowledgeGraph2D`
+  already solves the identical problem for its own reduced-motion path via
+  `sim.alpha(1).tick(200).alpha(0).stop()` (run the simulation to a real
+  settled layout synchronously, then skip the animated loop); `warmupTicks`
+  is the 3D library's equivalent knob, applied only on the reduced-motion/
+  test-mode paths — the normal animated path (`warmupTicks={0}`) keeps its
+  pleasant force-directed settling animation over the full 120 cooldown
+  ticks.
 
 **Click** — unchanged: whitelisted original `GraphNode` handed to
 `onNodeClick` (node detail aside / tutor deep-link per mount).

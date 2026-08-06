@@ -27,10 +27,17 @@ export type GraphTheme = {
 // Hex mirrors of the app-shell tokens (globals.css): --ink-600,
 // --ink-200, --accent. Used verbatim under SSR/jsdom where
 // getComputedStyle can't resolve them.
+//
+// --accent is currently var(--brand-forest-bright) = #2d8f5c (globals.css:69
+// — sage was retired in favor of a brighter forest for the highlight/focus
+// role). This is the ONE place that hex is allowed to be hardcoded; every
+// other consumer (the focus halo, the lit-link color) must derive from
+// `theme.accent` — never hardcode the accent hex/rgb a second time, or the
+// two will drift again the next time the token changes.
 export const FALLBACK_THEME: GraphTheme = {
   ink: "#3f3b31",
   dim: "#ddd6c6",
-  accent: "#8a9a5b",
+  accent: "#2d8f5c",
 };
 
 /** Resolve theme tokens to hex once per mount; hex fallbacks otherwise. */
@@ -46,6 +53,24 @@ export function resolveGraphTheme(): GraphTheme {
     dim: read("--ink-200", FALLBACK_THEME.dim),
     accent: read("--accent", FALLBACK_THEME.accent),
   };
+}
+
+/**
+ * #rrggbb -> "r, g, b" (e.g. "45, 143, 92") for building rgba(...) strings
+ * from a resolved hex theme token. Three.js's Color.setStyle can't resolve
+ * CSS var() and only accepts hex/comma-separated functional forms, so
+ * theme.accent is always pre-resolved to hex (resolveGraphTheme) — this is
+ * the single conversion point any caller needs to build a matching
+ * rgba(...) string (e.g. the lit-link color) instead of hand-copying a
+ * hardcoded rgb triplet that can drift from the actual token.
+ */
+export function hexToRgbTriplet(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return "0, 0, 0";
+  const r = parseInt(m[1].slice(0, 2), 16);
+  const g = parseInt(m[1].slice(2, 4), 16);
+  const b = parseInt(m[1].slice(4, 6), 16);
+  return `${r}, ${g}, ${b}`;
 }
 
 /* ── moved verbatim from KnowledgeGraph3D.tsx ─────────────────────── */
