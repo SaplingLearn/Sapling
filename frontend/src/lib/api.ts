@@ -47,6 +47,17 @@ async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// Newsletter / beta list
+//
+// Backed by backend/routes/newsletter.py, which upserts on `email` — so a
+// repeat signup is a no-op rather than an error, and the caller can treat
+// success as "you're on the list" regardless of whether it was already there.
+export const subscribeToNewsletter = (email: string) =>
+  fetchJSON<{ ok: boolean }>('/api/newsletter/subscribe', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+
 // Users
 export const getUsers = () =>
   fetchJSON<{ users: { id: string; name: string; room_id: string | null }[] }>('/api/users');
