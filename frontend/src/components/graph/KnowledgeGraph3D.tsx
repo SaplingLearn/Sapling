@@ -304,18 +304,43 @@ export function KnowledgeGraph3D({
   // Auto-fit the camera the first time the force engine settles for this
   // dataset — otherwise the initial camera distance never frames the graph
   // and every node renders as an illegible clump at the center of the
-  // canvas (found in the Task 5 visual pass). `onEngineStop` fires whether
-  // the sim cooled down naturally (120 ticks) or was cut short by
-  // `cooldownTicks={0}` under reduced-motion/test mode — 3d-force-graph's
-  // tickFrame trips its stop condition (`++cntTicks > cooldownTicks`) on
-  // the very first tick when cooldownTicks is 0, so onEngineStop still
-  // fires (immediately) rather than never firing. didFitRef makes this
+  // canvas (found in the Task 5 visual pass). didFitRef makes this
   // idempotent per dataset so a later re-settle (e.g. after a drag) can't
   // yank the camera back after the user has since panned/zoomed.
+  //
+  // ROOT CAUSE (confirmed via node_modules/3d-force-graph's tickFrame
+  // source plus live frame-by-frame logging against a running dev server —
+  // Task 5 round 2): onEngineStop fires synchronously *before* tickFrame's
+  // "update node positions" step writes that tick's x/y/z onto each node's
+  // Three.js object — both happen inside the same synchronous layoutTick()
+  // call, stop-callback first. Fitting synchronously (or even one rAF
+  // later) therefore measures the scene before the current tick's
+  // positions — and, under cooldownTicks={0} (test/reduced-motion mode),
+  // Three.js's matrixWorld propagation for those positions — have landed,
+  // so it fits the camera to a stale/near-empty bbox and ends up far too
+  // close once the real, spread-out layout appears moments later. Logging
+  // showed getGraphBbox() holding at that stale value for 1-2 frames, then
+  // jumping once to the real, stable bbox and holding it — so poll on rAF
+  // until two consecutive reads agree (with a frame cap as a safety net)
+  // before fitting, rather than fit on a fixed/guessed delay.
   const handleEngineStop = React.useCallback(() => {
     if (didFitRef.current) return;
     didFitRef.current = true;
-    fgRef.current?.zoomToFit(400, 60);
+    let prevBboxKey: string | null = null;
+    let frame = 0;
+    const MAX_FRAMES = 60; // ~1s safety net at 60fps; settles in ~3 frames in practice
+    const waitForStableBboxThenFit = () => {
+      frame += 1;
+      const bbox = fgRef.current?.getGraphBbox();
+      const key = bbox ? JSON.stringify(bbox) : null;
+      if ((key !== null && key === prevBboxKey) || frame >= MAX_FRAMES) {
+        fgRef.current?.zoomToFit(400, 60);
+        return;
+      }
+      prevBboxKey = key;
+      requestAnimationFrame(waitForStableBboxThenFit);
+    };
+    requestAnimationFrame(waitForStableBboxThenFit);
   }, []);
 
   return (
@@ -332,6 +357,16 @@ export function KnowledgeGraph3D({
         linkWidth={linkWidth}
         backgroundColor="rgba(0,0,0,0)"
         showNavInfo={false}
+        // Mirrors KnowledgeGraph2D's reduced-motion/test-mode path exactly
+        // (`sim.alpha(1).tick(200).alpha(0).stop()`): run the simulation to
+        // a real settled layout SYNCHRONOUSLY via warmupTicks, then skip the
+        // animated cooldown loop. Without warmupTicks, cooldownTicks={0}
+        // alone skips ALL physics ticks (3d-force-graph's tickFrame trips
+        // its stop condition on the very first animated tick, before ever
+        // calling layout.tick()) — nodes stay at d3-force-3d's raw
+        // pre-simulation initial positions, an overlapping cluster nothing
+        // like the settled layout 2D achieves the same way.
+        warmupTicks={reducedMotion || IS_TEST_MODE ? 200 : 0}
         cooldownTicks={reducedMotion || IS_TEST_MODE ? 0 : 120}
         enableNodeDrag={false}
         onNodeClick={handleNodeClick}

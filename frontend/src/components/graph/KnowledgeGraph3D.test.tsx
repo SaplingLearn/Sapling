@@ -51,12 +51,19 @@ import {
 // drive its callbacks. Reset in beforeEach.
 let lastProps: Record<string, any> | null = null;
 let zoomToFitSpy = vi.fn();
+// Drives the auto-fit's bbox-stabilization poll (see handleEngineStop in
+// KnowledgeGraph3D.tsx) — tests configure a per-call return sequence via
+// `getGraphBboxMock.mockReturnValueOnce(...)`/`mockReturnValue(...)`.
+let getGraphBboxMock = vi.fn<() => unknown>();
 
 vi.mock("react-force-graph-3d", () => ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   default: React.forwardRef((props: any, ref: React.Ref<unknown>) => {
     lastProps = props;
-    React.useImperativeHandle(ref, () => ({ zoomToFit: zoomToFitSpy }));
+    React.useImperativeHandle(ref, () => ({
+      zoomToFit: zoomToFitSpy,
+      getGraphBbox: getGraphBboxMock,
+    }));
     return null;
   }),
 }));
@@ -157,8 +164,32 @@ function installDefaultMatchMedia() {
 beforeEach(() => {
   lastProps = null;
   zoomToFitSpy = vi.fn();
+  getGraphBboxMock = vi.fn();
   installDefaultMatchMedia();
 });
+
+/** Capture rAF callbacks instead of letting jsdom schedule them on a timer
+ * (mirrors src/components/marketing/graph/KnowledgeGraphDemo.test.tsx). */
+function captureAnimationFrames() {
+  const queue: FrameRequestCallback[] = [];
+  const raf = vi
+    .spyOn(window, "requestAnimationFrame")
+    .mockImplementation((cb: FrameRequestCallback) => queue.push(cb));
+  const caf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+  return {
+    queue,
+    /** Run the next queued frame inside `act`. */
+    step() {
+      const cb = queue.shift();
+      expect(cb, "expected a queued animation frame").toBeTruthy();
+      act(() => cb!(0));
+    },
+    restore() {
+      raf.mockRestore();
+      caf.mockRestore();
+    },
+  };
+}
 
 afterEach(() => {
   cleanup();
@@ -471,21 +502,76 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
     expect(zoomToFitSpy).toHaveBeenCalledWith(400, 40);
   });
 
-  it("auto-fits the camera once when the force engine settles (onEngineStop)", () => {
+  it("auto-fits the camera once the graph bbox stabilizes across animation frames (onEngineStop)", () => {
+    // Pins the real mechanism (Task 5 round 2, #518 3D graph camera-framing
+    // bug): onEngineStop fires before the current tick's node positions are
+    // written to the scene, so getGraphBbox() reads a stale/placeholder
+    // value for the first frame or two — fitting on that stale value
+    // produces a camera far too close once the real layout lands. The fix
+    // polls on requestAnimationFrame until two consecutive bbox reads agree
+    // before calling zoomToFit, rather than fitting synchronously or after
+    // a fixed delay.
+    const staleBbox = { x: [-1, 1], y: [-1, 1], z: [-1, 1] };
+    const settledBbox = { x: [-50, 60], y: [-30, 40], z: [-40, 20] };
+    getGraphBboxMock
+      .mockReturnValueOnce(staleBbox) // frame 1: still the pre-layout placeholder
+      .mockReturnValueOnce(settledBbox) // frame 2: real layout has landed, differs from frame 1
+      .mockReturnValue(settledBbox); // frame 3+: stable — matches the previous read
+
+    const raf = captureAnimationFrames();
     render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
     expect(lastProps).not.toBeNull();
     const onEngineStop = lastProps!.onEngineStop as () => void;
     expect(typeof onEngineStop).toBe("function");
 
-    onEngineStop();
+    act(() => onEngineStop());
+    expect(zoomToFitSpy).not.toHaveBeenCalled(); // schedules a frame, doesn't fit synchronously
+
+    raf.step(); // frame 1 reads staleBbox — no prior read to compare against yet
+    expect(zoomToFitSpy).not.toHaveBeenCalled();
+
+    raf.step(); // frame 2 reads settledBbox — differs from frame 1, still not stable
+    expect(zoomToFitSpy).not.toHaveBeenCalled();
+
+    raf.step(); // frame 3 reads settledBbox again — matches frame 2: stable, fit now
     expect(zoomToFitSpy).toHaveBeenCalledTimes(1);
     expect(zoomToFitSpy).toHaveBeenCalledWith(400, 60);
+    expect(getGraphBboxMock).toHaveBeenCalledTimes(3);
 
     // Guarded to fire only once per dataset — a second settle (e.g. the
     // library re-triggering onEngineStop, or React re-invoking the
     // memoized callback) must not re-fit the camera out from under a
-    // user who has since panned/zoomed.
-    onEngineStop();
+    // user who has since panned/zoomed, and must not schedule new frames.
+    const framesScheduledBeforeSecondCall = raf.queue.length;
+    act(() => onEngineStop());
+    expect(raf.queue.length).toBe(framesScheduledBeforeSecondCall);
     expect(zoomToFitSpy).toHaveBeenCalledTimes(1);
+
+    raf.restore();
+  });
+
+  it("auto-fit stops polling and fits anyway once the frame cap is hit, if the bbox never stabilizes", () => {
+    // Safety net: a bbox that keeps changing every frame (never two
+    // consecutive equal reads) must not poll forever — it still fits once
+    // the frame cap trips, using whatever bbox was last read.
+    getGraphBboxMock.mockImplementation(() => ({ x: [0, Math.random()], y: [0, 0], z: [0, 0] }));
+
+    const raf = captureAnimationFrames();
+    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+    const onEngineStop = lastProps!.onEngineStop as () => void;
+
+    act(() => onEngineStop());
+    // Drain every frame the poll schedules (each step may enqueue the next
+    // one) until the queue empties — bounded well above the component's own
+    // internal frame cap so the test fails loudly instead of hanging if the
+    // cap regresses.
+    for (let i = 0; i < 200 && raf.queue.length > 0; i++) {
+      raf.step();
+    }
+    expect(zoomToFitSpy).toHaveBeenCalledTimes(1);
+    expect(zoomToFitSpy).toHaveBeenCalledWith(400, 60);
+    expect(raf.queue.length).toBe(0); // no frame scheduled after the cap-triggered fit
+
+    raf.restore();
   });
 });
