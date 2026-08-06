@@ -46,6 +46,13 @@ _TEXT_COLUMNS = [
      "Upload stuck"),
     ("issue_reports.description", "issue_reports", "id", "rich-issue-1",
      "description", "Syllabus upload spins forever."),
+    ("flashcards.front", "flashcards", "id", "rich-fc-cs-1", "front",
+     "What is a variable?"),
+    ("flashcards.back", "flashcards", "id", "rich-fc-cs-1", "back",
+     "A named storage location for a value."),
+    ("room_summaries.summary", "room_summaries", "room_id",
+     "rich-room-study-group", "summary",
+     "The group is reviewing recursion before the midterm."),
 ]
 
 # (label, id_value, column, expected_number)
@@ -121,6 +128,14 @@ def test_quiz_context_context_json_is_ciphertext_and_decrypts(db_conn):
     assert isinstance(raw, str)
     decoded = decrypt_json(raw)
     assert decoded["asked"] == 2
+
+
+def test_study_guides_content_is_ciphertext_and_decrypts(db_conn):
+    """#518: study_guides.content needs the JSON pair (encrypt_json/decrypt_json)."""
+    raw = _raw(db_conn, "study_guides", "id", "rich-guide-cs-f25-mid", "content")
+    assert isinstance(raw, str), "content stored as PLAINTEXT JSONB — encryption regressed"
+    decoded = decrypt_json(raw)
+    assert decoded["exam"] == "Midterm Exam"
 
 
 def test_documents_concept_notes_uses_json_encryption(db_conn):

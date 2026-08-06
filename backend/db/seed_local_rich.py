@@ -553,7 +553,7 @@ def seed_notes_documents() -> None:
         )
 
 
-# (fc_id, user_id, offering_id, topic, front, back) — plaintext, grouped by topic.
+# (fc_id, user_id, offering_id, topic, front, back) — 🔒 front/back, grouped by topic.
 _FLASHCARDS = [
     ("rich-fc-cs-1", USER_ACTIVE, OFF_CS_F25, "CS Basics",
      "What is a variable?", "A named storage location for a value."),
@@ -579,8 +579,9 @@ def seed_flashcards() -> None:
                 "user_id": user_id,
                 "offering_id": off_id,
                 "topic": topic,
-                "front": front,
-                "back": back,
+                # 🔒 front / back (#518)
+                "front": encrypt_if_present(front),
+                "back": encrypt_if_present(back),
             },
         )
 
@@ -625,9 +626,24 @@ def seed_study_guides() -> None:
                 "offering_id": off_id,
                 "exam_id": exam_id,
                 "generated_at": generated_at,
-                "content": content,
+                # 🔒 content (#518)
+                "content": encrypt_json(content),
             },
         )
+
+
+def seed_room_summaries() -> None:
+    # #518: room_summaries.summary is 🔒. PK is room_id (no id column), so this
+    # can't go through insert_if_absent.
+    if not table("room_summaries").select("room_id", filters={"room_id": f"eq.{ROOM_STUDY}"}):
+        table("room_summaries").insert({
+            "room_id": ROOM_STUDY,
+            "summary": encrypt_if_present("The group is reviewing recursion before the midterm."),
+            "member_hash": "rich-member-hash-v1",
+        })
+        h.record("room_summaries", created=True)
+    else:
+        h.record("room_summaries", created=False)
 
 
 # (qa_id, concept_node_id, difficulty, score, total, questions_json, answers_json, completed_at)
@@ -766,6 +782,7 @@ _SUMMARY_ORDER = [
     "schools", "courses", "course_offerings", "users", "user_profiles", "user_roles",
     "enrollments", "graph_nodes", "graph_edges", "node_mastery_events",
     "gradebook_categories", "assignments", "rooms", "room_members", "room_messages",
+    "room_summaries",
     "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "quiz_context",
     "sessions", "messages", "feedback", "issue_reports",
 ]
@@ -785,6 +802,7 @@ def main() -> None:
     seed_notes_documents()
     seed_flashcards()
     seed_study_guides()
+    seed_room_summaries()
     seed_quiz()
     seed_feedback()
     seed_sessions()
