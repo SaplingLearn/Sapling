@@ -58,6 +58,14 @@ SESSION-mode pooler URI (port 5432, user `postgres.<ref>`); the direct
 `db.<ref>.supabase.co` host is IPv6-only and unreachable from most networks, and
 port 6543 is transaction mode and breaks DDL. `scripts/pooler_url.py` builds it.
 
+Promotion (repo root; full runbook backend/promotion/README.md):
+
+```
+make promote                          # staging -> prod: preflight, migrate, confirm, merge, verify
+make promote ARGS="--verify-only"     # re-check the live deploy only (wait + smoke)
+make promote ARGS="--yes"             # skip the confirmation prompt (CI)
+```
+
 Docker (full stack from repo root):
 
 ```
