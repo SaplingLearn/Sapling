@@ -39,6 +39,13 @@ _TEXT_COLUMNS = [
     ("room_messages.text", "room_messages", "id",
      "11111111-1111-4111-8111-000000000001", "text",
      "Anyone up for reviewing recursion before the midterm?"),
+    ("feedback.comment", "feedback", "id", "rich-fb-1", "comment",
+     "The tutor cited the wrong lecture."),
+    ("feedback.topic", "feedback", "id", "rich-fb-1", "topic", "chat"),
+    ("issue_reports.topic", "issue_reports", "id", "rich-issue-1", "topic",
+     "Upload stuck"),
+    ("issue_reports.description", "issue_reports", "id", "rich-issue-1",
+     "description", "Syllabus upload spins forever."),
 ]
 
 # (label, id_value, column, expected_number)

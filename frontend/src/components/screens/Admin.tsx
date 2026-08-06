@@ -19,11 +19,13 @@ import {
   adminListRoleCosmetics, adminLinkRoleCosmetic, adminUnlinkRoleCosmetic,
   adminListAllowlist, adminApproveAllowlist, adminRevokeAllowlist,
   adminAuditLog, adminAnalyticsOverview,
+  adminListFeedback, adminListIssueReports,
+  type AdminFeedbackEntry, type AdminIssueReport,
 } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Role, Achievement, Cosmetic, CosmeticType, RarityTier, AchievementCategory, AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
 
-type Tab = "users" | "allowlist" | "roles" | "achievements" | "cosmetics" | "analytics" | "audit";
+type Tab = "users" | "allowlist" | "roles" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
 const ACH_CATS: AchievementCategory[] = ["activity", "social", "milestone", "special"];
@@ -55,7 +57,7 @@ export function Admin() {
     );
   }
 
-  const tabs: Tab[] = ["users", "allowlist", "roles", "achievements", "cosmetics", "analytics", "audit"];
+  const tabs: Tab[] = ["users", "allowlist", "roles", "achievements", "cosmetics", "analytics", "audit", "feedback"];
 
   return (
     <div>
@@ -92,6 +94,7 @@ export function Admin() {
         {tab === "cosmetics" && <CosmeticsTab />}
         {tab === "analytics" && <AnalyticsTab />}
         {tab === "audit" && <AuditTab />}
+        {tab === "feedback" && <FeedbackTab />}
       </div>
     </div>
   );
@@ -1479,6 +1482,84 @@ function AuditTab() {
             <button className="btn btn--sm btn--ghost" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
           </div>
         </div>
+      </div>
+    </>
+  );
+}
+
+// ── Feedback ─────────────────────────────────────────────────────────────────
+function FeedbackTab() {
+  const toast = useToast();
+  const [feedback, setFeedback] = React.useState<AdminFeedbackEntry[]>([]);
+  const [reports, setReports] = React.useState<AdminIssueReport[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  const load = React.useCallback(async () => {
+    try {
+      const [f, r] = await Promise.all([adminListFeedback(), adminListIssueReports()]);
+      setFeedback(f.feedback || []);
+      setReports(r.reports || []);
+    } catch (err) {
+      toast.error(`Load failed: ${String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  if (loading) return <AdminTableSkeleton />;
+
+  const when = (iso: string) => new Date(iso).toLocaleDateString();
+
+  return (
+    <>
+      <div className="card" style={{ padding: 0, marginBottom: 22 }} data-testid="adminfb-feedback-card">
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", fontWeight: 600 }}>
+          Feedback ({feedback.length})
+        </div>
+        {feedback.length === 0 && (
+          <div style={{ padding: 16, color: "var(--text-dim)" }}>No feedback yet.</div>
+        )}
+        {feedback.map((f) => {
+          const stars = Math.max(0, Math.min(5, f.rating));
+          return (
+          <div key={f.id} style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }} data-testid="adminfb-feedback-row">
+            <div style={{ display: "flex", gap: 12, color: "var(--text-dim)", fontSize: 13 }}>
+              <span>{when(f.created_at)}</span>
+              <span style={{ color: "var(--text)" }}>{f.user_name || f.user_id}</span>
+              <span>{f.type}</span>
+              <span>{"★".repeat(stars)}{"☆".repeat(5 - stars)}</span>
+              {f.topic && <span>{f.topic}</span>}
+            </div>
+            {f.comment && <div style={{ marginTop: 6 }}>{f.comment}</div>}
+            {f.selected_options.length > 0 && (
+              <div style={{ marginTop: 4, fontSize: 13, color: "var(--text-dim)" }}>
+                {f.selected_options.join(" · ")}
+              </div>
+            )}
+          </div>
+          );
+        })}
+      </div>
+      <div className="card" style={{ padding: 0 }} data-testid="adminfb-issues-card">
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", fontWeight: 600 }}>
+          Issue reports ({reports.length})
+        </div>
+        {reports.length === 0 && (
+          <div style={{ padding: 16, color: "var(--text-dim)" }}>No issue reports yet.</div>
+        )}
+        {reports.map((r) => (
+          <div key={r.id} style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }} data-testid="adminfb-issue-row">
+            <div style={{ display: "flex", gap: 12, color: "var(--text-dim)", fontSize: 13 }}>
+              <span>{when(r.created_at)}</span>
+              <span style={{ color: "var(--text)" }}>{r.user_name || r.user_id}</span>
+              <span>{r.topic}</span>
+              {r.screenshot_urls.length > 0 && <span>{r.screenshot_urls.length} screenshot(s)</span>}
+            </div>
+            <div style={{ marginTop: 6 }}>{r.description}</div>
+          </div>
+        ))}
       </div>
     </>
   );

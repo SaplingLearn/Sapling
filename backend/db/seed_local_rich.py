@@ -664,6 +664,33 @@ def seed_quiz() -> None:
         )
 
 
+# #520: feedback/issue_reports are 🔒 (comment/topic/description) — seed them
+# encrypted so the roundtrip test + ciphertext oracle have baseline rows.
+def seed_feedback() -> None:
+    h.insert_if_absent(
+        "feedback",
+        "rich-fb-1",
+        {
+            "user_id": USER_ACTIVE,
+            "type": "global",
+            "rating": 4,
+            "selected_options": ["tutor"],
+            "comment": encrypt_if_present("The tutor cited the wrong lecture."),
+            "topic": encrypt_if_present("chat"),
+        },
+    )
+    h.insert_if_absent(
+        "issue_reports",
+        "rich-issue-1",
+        {
+            "user_id": USER_ACTIVE,
+            "topic": encrypt_if_present("Upload stuck"),
+            "description": encrypt_if_present("Syllabus upload spins forever."),
+            "screenshot_urls": [],
+        },
+    )
+
+
 SESS_CS_RECURSION = "rich-sess-cs-recursion"
 SESS_MATH_VECTORS = "rich-sess-math-vectors"
 
@@ -726,7 +753,7 @@ _SUMMARY_ORDER = [
     "enrollments", "graph_nodes", "graph_edges", "node_mastery_events",
     "gradebook_categories", "assignments", "rooms", "room_members", "room_messages",
     "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "sessions",
-    "messages",
+    "messages", "feedback", "issue_reports",
 ]
 
 
@@ -745,6 +772,7 @@ def main() -> None:
     seed_flashcards()
     seed_study_guides()
     seed_quiz()
+    seed_feedback()
     seed_sessions()
     h.print_summary(_SUMMARY_ORDER, "Seed summary (rich local dataset):")
 

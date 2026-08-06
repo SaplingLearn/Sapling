@@ -27,6 +27,8 @@ from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
 from services.achievement_service import check_achievements
 from services.users_search import paginate_users
+from services.encryption import decrypt_if_present
+from services.profiles import get_display_names
 
 router = APIRouter()
 
@@ -503,6 +505,42 @@ def revoke_allowlist(body: AllowlistEmailBody, request: Request):
         payload={"email": body.email},
     )
     return {"email": rows[0]}
+
+
+# ── Feedback + issue reports (#520) ──────────────────────────────────────────
+# These tables are 🔒 at rest (comment/topic/description); the Supabase
+# dashboard shows ciphertext, so this is the only human-readable surface.
+
+@router.get("/feedback")
+def list_feedback(request: Request, limit: int = 200):
+    require_admin(request)
+    rows = table("feedback").select(
+        "id,user_id,type,rating,selected_options,comment,session_id,topic,created_at",
+        order="created_at.desc",
+        limit=max(1, min(int(limit), 500)),
+    ) or []
+    names = get_display_names([r["user_id"] for r in rows])
+    for r in rows:
+        r["comment"] = decrypt_if_present(r.get("comment"))
+        r["topic"] = decrypt_if_present(r.get("topic"))
+        r["user_name"] = names.get(r["user_id"], "")
+    return {"feedback": rows}
+
+
+@router.get("/issue-reports")
+def list_issue_reports(request: Request, limit: int = 200):
+    require_admin(request)
+    rows = table("issue_reports").select(
+        "id,user_id,topic,description,screenshot_urls,created_at",
+        order="created_at.desc",
+        limit=max(1, min(int(limit), 500)),
+    ) or []
+    names = get_display_names([r["user_id"] for r in rows])
+    for r in rows:
+        r["topic"] = decrypt_if_present(r.get("topic"))
+        r["description"] = decrypt_if_present(r.get("description"))
+        r["user_name"] = names.get(r["user_id"], "")
+    return {"reports": rows}
 
 
 # ── Audit log ────────────────────────────────────────────────────────────────
