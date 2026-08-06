@@ -83,6 +83,11 @@
       "count": 6
     }
   },
+  "src/components/graph/KnowledgeGraph3D.tsx": {
+    "react-hooks/refs": {
+      "count": 2
+    }
+  },
   "src/components/marketing/SignInModal.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1

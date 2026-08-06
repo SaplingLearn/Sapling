@@ -5,13 +5,11 @@
  * and the `react-force-graph-3d` library:
  *   1. Renders without crashing on empty data.
  *   2. `graphData` memo produces the {nodes, links:{source,target,strength}} shape.
- *   3. `nodeColor` returns the brand --accent for the highlighted node
- *      and a deterministic hex shade for everything else (hex, not
- *      `hsl(...)`, because Three.js's Color parser only accepts the
- *      comma-separated HSL form and silently renders space-separated
- *      HSL as black).
- *   4. `nodeVal` scales 4..10 with `mastery_score`, and course-root
- *      nodes (`is_subject_root: true`) render at a fixed larger size.
+ *   3. `nodeThreeObject` composes a matte sphere + hidden focus halo +
+ *      always-visible SpriteText label per node, sized/colored via the
+ *      Task-1 pure helpers (`baseNodeColor`, `nodeRadius`, `labelSpec`).
+ *   4. Subject-root nodes get the pinned-larger sphere and bold label;
+ *      `highlightId` renders that node's halo persistently.
  *   5. `onNodeClick` whitelists the original GraphNode by id so
  *      library-injected fields (x/y/z, vx/vy/vz, fx/fy/fz,
  *      __threeObj, ...) never leak to callers.
@@ -26,12 +24,23 @@
  * synchronously returns the (already-mocked) ForceGraph3D module —
  * vitest's hoisted `vi.mock` ensures the mock module is in place before
  * `next/dynamic`'s loader runs, so the component sees the mock at first
- * render without the eager-resolve dance.
+ * render without the eager-resolve dance. `three-spritetext` is mocked
+ * too: jsdom has no canvas 2D context, and the real SpriteText paints
+ * text onto a canvas texture at construction.
  */
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup, fireEvent } from "@testing-library/react";
+import * as THREE from "three";
+import SpriteText from "three-spritetext";
+import {
+  baseNodeColor,
+  labelSpec,
+  nodeRadius,
+  FALLBACK_THEME,
+  NODE_OPACITY,
+} from "./graph3dHelpers";
 
 // Capture the props the component passes to ForceGraph3D so tests can
 // drive its callbacks. Reset in beforeEach.
@@ -43,6 +52,26 @@ vi.mock("react-force-graph-3d", () => ({
     return null;
   },
 }));
+
+// jsdom has no canvas 2D context, and the real SpriteText paints text
+// onto a canvas texture at construction; extending the real
+// THREE.Object3D keeps `group.add(...)` happy.
+vi.mock("three-spritetext", async () => {
+  const three = await vi.importActual<typeof import("three")>("three");
+  class SpriteTextMock extends three.Object3D {
+    text: string;
+    textHeight = 2;
+    color = "";
+    fontFace = "";
+    fontWeight = "";
+    material = { opacity: 1, transparent: false };
+    constructor(text: string) {
+      super();
+      this.text = text;
+    }
+  }
+  return { default: SpriteTextMock };
+});
 
 // next/dynamic is used to client-only-load react-force-graph-3d. In
 // tests we want the mock module above to render synchronously, so we
@@ -84,6 +113,18 @@ function makeNode(over: Partial<GraphNode> = {}): GraphNode {
     course_id: "c1",
     ...over,
   };
+}
+
+function partsOf(group: THREE.Group) {
+  const meshes = group.children.filter(
+    (c): c is THREE.Mesh => (c as THREE.Mesh).isMesh === true,
+  );
+  const sphere = meshes.find((m) => m.material instanceof THREE.MeshLambertMaterial)!;
+  const halo = meshes.find((m) => m.material instanceof THREE.MeshBasicMaterial)!;
+  const label = group.children.find(
+    (c) => c instanceof SpriteText,
+  ) as InstanceType<typeof SpriteText>;
+  return { sphere, halo, label };
 }
 
 // Default `matchMedia` stub for jsdom — returns "no preference" for
@@ -151,46 +192,6 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
     // the caller's references — otherwise the lib's in-place mutation
     // of x/y/z poisons the parent's array.
     expect(graphData.nodes[0]).not.toBe(nodes[0]);
-  });
-
-  it("nodeColor returns the brand accent for the highlighted id and a hex shade otherwise", () => {
-    render(
-      <KnowledgeGraph3D
-        nodes={[makeNode({ id: "abc" })]}
-        edges={[]}
-        highlightId="abc"
-      />,
-    );
-
-    expect(lastProps).not.toBeNull();
-    const nodeColor = lastProps!.nodeColor as (n: object) => string;
-
-    // Highlight branch: brand --accent (#8a9a5b). Pure white disappears
-    // against the cream light theme; the accent pops on both themes.
-    expect(nodeColor({ id: "abc", color: "#88aa55" })).toBe("#8a9a5b");
-
-    // Non-highlight branch: deterministic 7-char hex from shadeFor.
-    // Hex (not hsl) because Three.js parses hex reliably; the modern
-    // space-separated `hsl(120 50% 50%)` syntax silently renders BLACK.
-    const other = nodeColor({ id: "xyz", color: "#88aa55" });
-    expect(other).toMatch(/^#[0-9a-f]{6}$/);
-    expect(other.startsWith("hsl(")).toBe(false);
-  });
-
-  it("nodeVal scales 4..10 with mastery_score and pins course-root nodes larger", () => {
-    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
-
-    expect(lastProps).not.toBeNull();
-    const nodeVal = lastProps!.nodeVal as (n: object) => number;
-
-    // Concept nodes scale linearly with mastery.
-    expect(nodeVal({ mastery_score: 0 })).toBe(4);
-    expect(nodeVal({ mastery_score: 1 })).toBe(10);
-
-    // Course-root nodes anchor the family — fixed larger size that
-    // dominates any concept node regardless of mastery.
-    expect(nodeVal({ is_subject_root: true, mastery_score: 0 })).toBe(22);
-    expect(nodeVal({ is_subject_root: true, mastery_score: 1 })).toBe(22);
   });
 
   it("onNodeClick whitelists the original GraphNode by id so lib-injected fields never leak", () => {
@@ -336,5 +337,50 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
 
     expect(lastProps).not.toBeNull();
     expect(lastProps!.cooldownTicks).toBe(0);
+  });
+
+  it("nodeThreeObject composes matte sphere + hidden halo + always-visible label", () => {
+    render(<KnowledgeGraph3D nodes={[makeNode({ id: "abc", name: "Chain Rule" })]} edges={[]} />);
+    expect(lastProps).not.toBeNull();
+    const build = lastProps!.nodeThreeObject as (n: object) => THREE.Group;
+    const group = build({ ...makeNode({ id: "abc", name: "Chain Rule" }) });
+    const { sphere, halo, label } = partsOf(group);
+
+    const mat = sphere.material as THREE.MeshLambertMaterial;
+    // jsdom resolves no CSS vars, so the component runs on FALLBACK_THEME.
+    expect(`#${mat.color.getHexString()}`).toBe(
+      baseNodeColor(makeNode({ id: "abc" }), FALLBACK_THEME),
+    );
+    expect(mat.transparent).toBe(true);
+    expect(mat.opacity).toBeCloseTo(NODE_OPACITY);
+
+    expect(halo.visible).toBe(false); // no hover, no highlight
+
+    expect(label.text).toBe("Chain Rule");
+    expect(label.textHeight).toBe(labelSpec(makeNode()).textHeight);
+    expect(label.fontWeight).toBe(labelSpec(makeNode()).fontWeight);
+    expect(label.color).toBe(FALLBACK_THEME.ink);
+    // Label hangs below the sphere, never occludes it.
+    expect(label.position.y).toBeLessThan(0);
+  });
+
+  it("subject-root nodes get the pinned-larger sphere and bold label", () => {
+    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+    const build = lastProps!.nodeThreeObject as (n: object) => THREE.Group;
+    const root = makeNode({ id: "r", is_subject_root: true });
+    const { sphere, label } = partsOf(build({ ...root }));
+    const geo = sphere.geometry as THREE.SphereGeometry;
+    expect(geo.parameters.radius).toBeCloseTo(nodeRadius(root));
+    expect(label.textHeight).toBe(5);
+    expect(label.fontWeight).toBe("700");
+  });
+
+  it("highlightId renders that node's halo persistently", () => {
+    render(
+      <KnowledgeGraph3D nodes={[makeNode({ id: "abc" })]} edges={[]} highlightId="abc" />,
+    );
+    const build = lastProps!.nodeThreeObject as (n: object) => THREE.Group;
+    expect(partsOf(build({ ...makeNode({ id: "abc" }) })).halo.visible).toBe(true);
+    expect(partsOf(build({ ...makeNode({ id: "other" }) })).halo.visible).toBe(false);
   });
 });
