@@ -127,3 +127,11 @@ def decrypt_json(value: str) -> dict | list:
             return json.loads(value)
         except Exception:
             raise e
+
+
+def decrypt_json_column(value: Any) -> Any:
+    """Read-boundary guard for JSON columns that may hold either legacy
+    plaintext JSONB (arrives as dict/list) or ciphertext (str). #521/#518."""
+    if value is None or isinstance(value, (dict, list)):
+        return value
+    return decrypt_json(value)

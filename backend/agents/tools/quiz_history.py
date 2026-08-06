@@ -25,6 +25,7 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from db.connection import table
+from services.encryption import decrypt_json_column
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ async def read_recent_quiz_attempts(
                 },
                 limit=1,
             )
-            return rows[0]["context_json"] if rows else None
+            return decrypt_json_column(rows[0]["context_json"]) if rows else None
         except Exception:
             logger.exception(
                 "read_recent_quiz_attempts: quiz_context fetch failed "

@@ -21,6 +21,7 @@ from routes.learn import _get_catalog_chunk
 from services import events_service
 from services.auth_guard import require_self
 from services.profiles import get_display_name
+from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.fingerprint import fingerprint
@@ -354,7 +355,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         "user_id": body.user_id,
         "concept_node_id": body.concept_node_id,
         "difficulty": body.difficulty,
-        "questions_json": questions,
+        "questions_json": encrypt_json(questions),
     })
     # #117: quiz.started once the attempt row exists. num_questions is the
     # actual generated count (the agent may return fewer than requested).
@@ -380,11 +381,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         raise HTTPException(status_code=404, detail="Quiz not found")
     attempt = attempt_rows[0]
 
-    questions = attempt["questions_json"]
-    if isinstance(questions, str):
-        questions = json.loads(questions)
     user_id = attempt["user_id"]
     require_self(user_id, request)
+
+    # #521: ciphertext str for new rows, plaintext JSONB for pre-backfill rows.
+    questions = decrypt_json_column(attempt["questions_json"])
 
     # #129: completed_at is written on the first successful submit. A re-POST
     # of the same quiz_id must not re-run apply_graph_update (double mastery
@@ -487,7 +488,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         {
             "score": score,
             "total": total,
-            "answers_json": [a.model_dump() for a in body.answers],
+            "answers_json": encrypt_json([a.model_dump() for a in body.answers]),
             # completed_at was already stamped by the atomic claim above.
         },
         filters={"id": f"eq.{body.quiz_id}"},

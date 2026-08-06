@@ -829,13 +829,20 @@ class TestQuizAgentSuccess:
             })
 
         assert r.status_code == 200
-        # quiz_attempts row stores the same legacy-shape questions list.
+        # quiz_attempts row stores the legacy-shape questions list, but
+        # #521 encrypts it at rest — the wire shape only reappears on
+        # decrypt. isinstance(..., str) fails again if encryption is
+        # ever reverted (a raw list, not ciphertext, would come back).
+        from services.encryption import decrypt_json_column
+
         payload = captured["payload"]
         assert payload["user_id"] == "user_andres"
         assert payload["concept_node_id"] == "node1"
         assert payload["difficulty"] == "easy"
-        assert isinstance(payload["questions_json"], list)
-        assert payload["questions_json"][0]["id"] == 1
+        assert isinstance(payload["questions_json"], str)
+        decrypted_questions = decrypt_json_column(payload["questions_json"])
+        assert isinstance(decrypted_questions, list)
+        assert decrypted_questions[0]["id"] == 1
 
 
 class TestQuizContextUpdate:
@@ -1347,6 +1354,155 @@ class TestSubmitQuizConcurrentClaim:
         data, filters = claim_calls[0]
         assert "completed_at" in data
         assert filters.get("completed_at") == "is.null"
+
+
+# ── #521: quiz JSON payloads encrypted at rest, plaintext in responses ──────
+
+
+class TestQuizEncryption:
+    """#521: quiz JSON payloads are ciphertext at rest, plaintext in responses."""
+
+    def test_generate_inserts_encrypted_questions(self):
+        """Mirrors TestQuizAgentSuccess.test_persists_to_quiz_attempts_table's
+        arrange, but asserts the captured insert payload's questions_json is
+        ciphertext that decrypts back to the wire-format question list."""
+        from services.encryption import decrypt_json_column
+
+        fake_quiz = Quiz(questions=[
+            QuizQuestion(
+                question="Q?",
+                type="multiple_choice",
+                difficulty="easy",
+                options=["a", "b", "c", "d"],
+                correct_answer="a",
+                explanation="ok",
+                concept="X",
+            ),
+        ])
+        captured = {}
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "graph_nodes":
+                mock.select.return_value = [{
+                    "id": "node1",
+                    "course_id": "course1",
+                    "concept_name": "X",
+                    "mastery_score": 0.5,
+                }]
+            elif name == "quiz_attempts":
+                def _capture(payload):
+                    captured["payload"] = payload
+                    return [{"id": payload["id"]}]
+                mock.insert.side_effect = _capture
+            return mock
+
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch(
+                "routes.quiz.quiz_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+            ),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 1,
+                "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200
+        row = captured["payload"]
+        assert isinstance(row["questions_json"], str)
+        decrypted = decrypt_json_column(row["questions_json"])
+        assert isinstance(decrypted, list) and decrypted
+        # Scalars stay plaintext:
+        assert row["difficulty"] in ("easy", "medium", "hard")
+
+    def test_submit_decrypts_encrypted_questions_and_encrypts_answers(self):
+        """Mirrors TestSubmitQuizMasteryWrite's arrange, but the stored
+        questions_json is ciphertext (encrypt_json(SAMPLE_QUESTIONS)) — the
+        post-backfill row shape. submit_quiz must decrypt it to score, and
+        the recorded answers_json update payload must itself be ciphertext."""
+        from services.encryption import encrypt_json, decrypt_json_column
+
+        update_calls: list = []
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "quiz_attempts":
+                mock.select.return_value = [{
+                    "id": "quiz1",
+                    "user_id": "user_andres",
+                    "concept_node_id": "node1",
+                    "difficulty": "medium",
+                    "questions_json": encrypt_json(SAMPLE_QUESTIONS),  # ciphertext at rest
+                }]
+
+                def _update(data, filters=None):
+                    update_calls.append(data)
+                    return [{"id": "updated"}]
+                mock.update.side_effect = _update
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "mastery_score": 0.5,
+                    "concept_name": "Loops",
+                    "course_id": "course1",
+                }]
+            elif name == "users":
+                mock.select.return_value = [{"name": "Andres"}]
+            else:
+                mock.select.return_value = []
+            return mock
+
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.apply_graph_update"),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+
+        assert r.status_code == 200
+        data = r.json()
+        # The response scores against the DECRYPTED questions.
+        assert data["score"] == 2
+        assert data["total"] == 2
+
+        answers_updates = [d for d in update_calls if "answers_json" in d]
+        assert len(answers_updates) == 1
+        row = answers_updates[0]
+        assert isinstance(row["answers_json"], str)
+        decrypted_answers = decrypt_json_column(row["answers_json"])
+        assert isinstance(decrypted_answers, list)
+        assert decrypted_answers[0]["question_id"] == 1
+        assert decrypted_answers[0]["selected_label"] == "A"
+
+    def test_submit_still_accepts_legacy_plaintext_questions(self):
+        """Pre-backfill quiz_attempts rows store questions_json as a raw
+        list (legacy JSONB), not ciphertext. decrypt_json_column must pass
+        those through unchanged and score identically to the ciphertext
+        path above."""
+        with _submit_quiz_mocks():  # SAMPLE_QUESTIONS stored as a plain list
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "D"},
+                ],
+            })
+        assert r.status_code == 200
+        data = r.json()
+        assert data["score"] == 2
+        assert data["total"] == 2
 
 
 # ── quiz_context_update.txt template hygiene (#306) ──────────────────────────
