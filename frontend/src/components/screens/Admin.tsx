@@ -1521,13 +1521,15 @@ function FeedbackTab() {
         {feedback.length === 0 && (
           <div style={{ padding: 16, color: "var(--text-dim)" }}>No feedback yet.</div>
         )}
-        {feedback.map((f) => (
+        {feedback.map((f) => {
+          const stars = Math.max(0, Math.min(5, f.rating));
+          return (
           <div key={f.id} style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }} data-testid="adminfb-feedback-row">
             <div style={{ display: "flex", gap: 12, color: "var(--text-dim)", fontSize: 13 }}>
               <span>{when(f.created_at)}</span>
               <span style={{ color: "var(--text)" }}>{f.user_name || f.user_id}</span>
               <span>{f.type}</span>
-              <span>{"★".repeat(f.rating)}{"☆".repeat(Math.max(0, 5 - f.rating))}</span>
+              <span>{"★".repeat(stars)}{"☆".repeat(5 - stars)}</span>
               {f.topic && <span>{f.topic}</span>}
             </div>
             {f.comment && <div style={{ marginTop: 6 }}>{f.comment}</div>}
@@ -1537,7 +1539,8 @@ function FeedbackTab() {
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
       <div className="card" style={{ padding: 0 }} data-testid="adminfb-issues-card">
         <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", fontWeight: 600 }}>
