@@ -5,13 +5,11 @@
  * and the `react-force-graph-3d` library:
  *   1. Renders without crashing on empty data.
  *   2. `graphData` memo produces the {nodes, links:{source,target,strength}} shape.
- *   3. `nodeColor` returns the brand --accent for the highlighted node
- *      and a deterministic hex shade for everything else (hex, not
- *      `hsl(...)`, because Three.js's Color parser only accepts the
- *      comma-separated HSL form and silently renders space-separated
- *      HSL as black).
- *   4. `nodeVal` scales 4..10 with `mastery_score`, and course-root
- *      nodes (`is_subject_root: true`) render at a fixed larger size.
+ *   3. `nodeThreeObject` composes a matte sphere + hidden focus halo +
+ *      always-visible SpriteText label per node, sized/colored via the
+ *      Task-1 pure helpers (`baseNodeColor`, `nodeRadius`, `labelSpec`).
+ *   4. Subject-root nodes get the pinned-larger sphere and bold label;
+ *      `highlightId` renders that node's halo persistently.
  *   5. `onNodeClick` whitelists the original GraphNode by id so
  *      library-injected fields (x/y/z, vx/vy/vz, fx/fy/fz,
  *      __threeObj, ...) never leak to callers.
@@ -26,23 +24,70 @@
  * synchronously returns the (already-mocked) ForceGraph3D module —
  * vitest's hoisted `vi.mock` ensures the mock module is in place before
  * `next/dynamic`'s loader runs, so the component sees the mock at first
- * render without the eager-resolve dance.
+ * render without the eager-resolve dance. `three-spritetext` is mocked
+ * too: jsdom has no canvas 2D context, and the real SpriteText paints
+ * text onto a canvas texture at construction.
  */
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, fireEvent } from "@testing-library/react";
+import { render, cleanup, fireEvent, act } from "@testing-library/react";
+import * as THREE from "three";
+import SpriteText from "three-spritetext";
+import {
+  baseNodeColor,
+  hexToRgbTriplet,
+  labelSpec,
+  nodeRadius,
+  FALLBACK_THEME,
+  NODE_OPACITY,
+  DIM_NODE_OPACITY,
+  DIM_LABEL_OPACITY,
+  LIT_LINK_ALPHA,
+  DIM_LINK_ALPHA,
+  BASE_LINK_ALPHA,
+} from "./graph3dHelpers";
 
 // Capture the props the component passes to ForceGraph3D so tests can
 // drive its callbacks. Reset in beforeEach.
 let lastProps: Record<string, any> | null = null;
+let zoomToFitSpy = vi.fn();
+// Drives the auto-fit's bbox-stabilization poll (see handleEngineStop in
+// KnowledgeGraph3D.tsx) — tests configure a per-call return sequence via
+// `getGraphBboxMock.mockReturnValueOnce(...)`/`mockReturnValue(...)`.
+let getGraphBboxMock = vi.fn<() => unknown>();
 
 vi.mock("react-force-graph-3d", () => ({
-  default: (props: any) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  default: React.forwardRef((props: any, ref: React.Ref<unknown>) => {
     lastProps = props;
+    React.useImperativeHandle(ref, () => ({
+      zoomToFit: zoomToFitSpy,
+      getGraphBbox: getGraphBboxMock,
+    }));
     return null;
-  },
+  }),
 }));
+
+// jsdom has no canvas 2D context, and the real SpriteText paints text
+// onto a canvas texture at construction; extending the real
+// THREE.Object3D keeps `group.add(...)` happy.
+vi.mock("three-spritetext", async () => {
+  const three = await vi.importActual<typeof import("three")>("three");
+  class SpriteTextMock extends three.Object3D {
+    text: string;
+    textHeight = 2;
+    color = "";
+    fontFace = "";
+    fontWeight = "";
+    material = { opacity: 1, transparent: false };
+    constructor(text: string) {
+      super();
+      this.text = text;
+    }
+  }
+  return { default: SpriteTextMock };
+});
 
 // next/dynamic is used to client-only-load react-force-graph-3d. In
 // tests we want the mock module above to render synchronously, so we
@@ -86,6 +131,18 @@ function makeNode(over: Partial<GraphNode> = {}): GraphNode {
   };
 }
 
+function partsOf(group: THREE.Group) {
+  const meshes = group.children.filter(
+    (c): c is THREE.Mesh => (c as THREE.Mesh).isMesh === true,
+  );
+  const sphere = meshes.find((m) => m.material instanceof THREE.MeshLambertMaterial)!;
+  const halo = meshes.find((m) => m.material instanceof THREE.MeshBasicMaterial)!;
+  const label = group.children.find(
+    (c) => c instanceof SpriteText,
+  ) as InstanceType<typeof SpriteText>;
+  return { sphere, halo, label };
+}
+
 // Default `matchMedia` stub for jsdom — returns "no preference" for
 // every query. Individual tests override it to flip reduced-motion on.
 function installDefaultMatchMedia() {
@@ -107,8 +164,33 @@ function installDefaultMatchMedia() {
 
 beforeEach(() => {
   lastProps = null;
+  zoomToFitSpy = vi.fn();
+  getGraphBboxMock = vi.fn();
   installDefaultMatchMedia();
 });
+
+/** Capture rAF callbacks instead of letting jsdom schedule them on a timer
+ * (mirrors src/components/marketing/graph/KnowledgeGraphDemo.test.tsx). */
+function captureAnimationFrames() {
+  const queue: FrameRequestCallback[] = [];
+  const raf = vi
+    .spyOn(window, "requestAnimationFrame")
+    .mockImplementation((cb: FrameRequestCallback) => queue.push(cb));
+  const caf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+  return {
+    queue,
+    /** Run the next queued frame inside `act`. */
+    step() {
+      const cb = queue.shift();
+      expect(cb, "expected a queued animation frame").toBeTruthy();
+      act(() => cb!(0));
+    },
+    restore() {
+      raf.mockRestore();
+      caf.mockRestore();
+    },
+  };
+}
 
 afterEach(() => {
   cleanup();
@@ -151,46 +233,6 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
     // the caller's references — otherwise the lib's in-place mutation
     // of x/y/z poisons the parent's array.
     expect(graphData.nodes[0]).not.toBe(nodes[0]);
-  });
-
-  it("nodeColor returns the brand accent for the highlighted id and a hex shade otherwise", () => {
-    render(
-      <KnowledgeGraph3D
-        nodes={[makeNode({ id: "abc" })]}
-        edges={[]}
-        highlightId="abc"
-      />,
-    );
-
-    expect(lastProps).not.toBeNull();
-    const nodeColor = lastProps!.nodeColor as (n: object) => string;
-
-    // Highlight branch: brand --accent (#8a9a5b). Pure white disappears
-    // against the cream light theme; the accent pops on both themes.
-    expect(nodeColor({ id: "abc", color: "#88aa55" })).toBe("#8a9a5b");
-
-    // Non-highlight branch: deterministic 7-char hex from shadeFor.
-    // Hex (not hsl) because Three.js parses hex reliably; the modern
-    // space-separated `hsl(120 50% 50%)` syntax silently renders BLACK.
-    const other = nodeColor({ id: "xyz", color: "#88aa55" });
-    expect(other).toMatch(/^#[0-9a-f]{6}$/);
-    expect(other.startsWith("hsl(")).toBe(false);
-  });
-
-  it("nodeVal scales 4..10 with mastery_score and pins course-root nodes larger", () => {
-    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
-
-    expect(lastProps).not.toBeNull();
-    const nodeVal = lastProps!.nodeVal as (n: object) => number;
-
-    // Concept nodes scale linearly with mastery.
-    expect(nodeVal({ mastery_score: 0 })).toBe(4);
-    expect(nodeVal({ mastery_score: 1 })).toBe(10);
-
-    // Course-root nodes anchor the family — fixed larger size that
-    // dominates any concept node regardless of mastery.
-    expect(nodeVal({ is_subject_root: true, mastery_score: 0 })).toBe(22);
-    expect(nodeVal({ is_subject_root: true, mastery_score: 1 })).toBe(22);
   });
 
   it("onNodeClick whitelists the original GraphNode by id so lib-injected fields never leak", () => {
@@ -314,7 +356,7 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
     expect(items[1].textContent).toBe("Beta");
   });
 
-  it("sets cooldownTicks to 0 when prefers-reduced-motion is reduce", () => {
+  it("sets cooldownTicks to 0 and warmupTicks to 200 when prefers-reduced-motion is reduce", () => {
     // Override matchMedia to advertise reduced-motion preference for
     // the relevant query only.
     Object.defineProperty(window, "matchMedia", {
@@ -336,5 +378,297 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
 
     expect(lastProps).not.toBeNull();
     expect(lastProps!.cooldownTicks).toBe(0);
+    // warmupTicks mirrors KnowledgeGraph2D's sim.tick(200) precedent: run
+    // the simulation to a real settled layout synchronously instead of
+    // skipping it outright under reduced motion.
+    expect(lastProps!.warmupTicks).toBe(200);
+  });
+
+  it("uses the full animated cooldown and no synchronous warmup by default (no reduced-motion, not test mode)", () => {
+    // installDefaultMatchMedia() (beforeEach) already reports no
+    // reduced-motion preference, and this file never stubs
+    // NEXT_PUBLIC_TEST_MODE, so IS_TEST_MODE is false here — this is the
+    // real animated path a live user with no accessibility preference set
+    // actually sees.
+    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+
+    expect(lastProps).not.toBeNull();
+    expect(lastProps!.cooldownTicks).toBe(120);
+    expect(lastProps!.warmupTicks).toBe(0);
+  });
+
+  it("nodeThreeObject composes matte sphere + hidden halo + always-visible label", () => {
+    render(<KnowledgeGraph3D nodes={[makeNode({ id: "abc", name: "Chain Rule" })]} edges={[]} />);
+    expect(lastProps).not.toBeNull();
+    const build = lastProps!.nodeThreeObject as (n: object) => THREE.Group;
+    const group = build({ ...makeNode({ id: "abc", name: "Chain Rule" }) });
+    const { sphere, halo, label } = partsOf(group);
+
+    const mat = sphere.material as THREE.MeshLambertMaterial;
+    // jsdom resolves no CSS vars, so the component runs on FALLBACK_THEME.
+    expect(`#${mat.color.getHexString()}`).toBe(
+      baseNodeColor(makeNode({ id: "abc" }), FALLBACK_THEME),
+    );
+    expect(mat.transparent).toBe(true);
+    expect(mat.opacity).toBeCloseTo(NODE_OPACITY);
+
+    expect(halo.visible).toBe(false); // no hover, no highlight
+
+    expect(label.text).toBe("Chain Rule");
+    expect(label.textHeight).toBe(labelSpec(makeNode()).textHeight);
+    expect(label.fontWeight).toBe(labelSpec(makeNode()).fontWeight);
+    expect(label.color).toBe(FALLBACK_THEME.ink);
+    // Label hangs below the sphere, never occludes it.
+    expect(label.position.y).toBeLessThan(0);
+  });
+
+  it("subject-root nodes get the pinned-larger sphere and bold label", () => {
+    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+    const build = lastProps!.nodeThreeObject as (n: object) => THREE.Group;
+    const root = makeNode({ id: "r", is_subject_root: true });
+    const { sphere, label } = partsOf(build({ ...root }));
+    const geo = sphere.geometry as THREE.SphereGeometry;
+    expect(geo.parameters.radius).toBeCloseTo(nodeRadius(root));
+    expect(label.textHeight).toBe(5);
+    expect(label.fontWeight).toBe("700");
+  });
+
+  it("highlightId renders that node's halo persistently", () => {
+    render(
+      <KnowledgeGraph3D nodes={[makeNode({ id: "abc" })]} edges={[]} highlightId="abc" />,
+    );
+    const build = lastProps!.nodeThreeObject as (n: object) => THREE.Group;
+    expect(partsOf(build({ ...makeNode({ id: "abc" }) })).halo.visible).toBe(true);
+    expect(partsOf(build({ ...makeNode({ id: "other" }) })).halo.visible).toBe(false);
+  });
+
+  it("hovering dims non-neighbors and restores everything on mouse-off", () => {
+    const nodes = [makeNode({ id: "a" }), makeNode({ id: "b" }), makeNode({ id: "c" })];
+    const edges: GraphEdge[] = [{ source: "a", target: "b", strength: 1 }];
+    render(<KnowledgeGraph3D nodes={nodes} edges={edges} />);
+
+    const build = lastProps!.nodeThreeObject as (n: object) => THREE.Group;
+    const gA = build({ ...nodes[0] });
+    const gB = build({ ...nodes[1] });
+    const gC = build({ ...nodes[2] });
+
+    act(() => {
+      (lastProps!.onNodeHover as (n: object | null) => void)({ id: "a" });
+    });
+
+    // hovered + neighbor stay lit; the stranger dims
+    expect((partsOf(gA).sphere.material as THREE.MeshLambertMaterial).opacity).toBeCloseTo(NODE_OPACITY);
+    expect((partsOf(gB).sphere.material as THREE.MeshLambertMaterial).opacity).toBeCloseTo(NODE_OPACITY);
+    expect((partsOf(gC).sphere.material as THREE.MeshLambertMaterial).opacity).toBeCloseTo(DIM_NODE_OPACITY);
+    expect(partsOf(gC).label.material.opacity).toBeCloseTo(DIM_LABEL_OPACITY);
+    expect(`#${(partsOf(gC).sphere.material as THREE.MeshLambertMaterial).color.getHexString()}`).toBe(
+      FALLBACK_THEME.dim,
+    );
+    expect(partsOf(gA).halo.visible).toBe(true);
+    expect(partsOf(gB).halo.visible).toBe(false);
+
+    act(() => {
+      (lastProps!.onNodeHover as (n: object | null) => void)(null);
+    });
+
+    expect((partsOf(gC).sphere.material as THREE.MeshLambertMaterial).opacity).toBeCloseTo(NODE_OPACITY);
+    expect(partsOf(gC).label.material.opacity).toBeCloseTo(1);
+    expect(partsOf(gA).halo.visible).toBe(false);
+  });
+
+  it("linkColor lights edges touching the hovered node and dims the rest", () => {
+    const nodes = [makeNode({ id: "a" }), makeNode({ id: "b" }), makeNode({ id: "c" })];
+    const edges: GraphEdge[] = [
+      { source: "a", target: "b", strength: 1 },
+      { source: "b", target: "c", strength: 1 },
+    ];
+    render(<KnowledgeGraph3D nodes={nodes} edges={edges} />);
+
+    // No hover: uniform base alpha.
+    let linkColor = lastProps!.linkColor as (l: object) => string;
+    expect(linkColor({ source: "a", target: "b" })).toBe(`rgba(138, 131, 114, ${BASE_LINK_ALPHA})`);
+
+    act(() => {
+      (lastProps!.onNodeHover as (n: object | null) => void)({ id: "a" });
+    });
+
+    // Lit links derive from theme.accent (FALLBACK_THEME under jsdom) via
+    // hexToRgbTriplet — the same single source the focus halo uses, not a
+    // second hardcoded rgb copy that can drift from it (final-review fix:
+    // production used to render a forest halo next to sage-colored edges).
+    const litRgb = hexToRgbTriplet(FALLBACK_THEME.accent);
+    linkColor = lastProps!.linkColor as (l: object) => string; // re-keyed accessor
+    expect(linkColor({ source: "a", target: "b" })).toBe(`rgba(${litRgb}, ${LIT_LINK_ALPHA})`);
+    expect(linkColor({ source: "b", target: "c" })).toBe(`rgba(138, 131, 114, ${DIM_LINK_ALPHA})`);
+    // The library swaps ids for node-object refs once the simulation runs.
+    expect(linkColor({ source: { id: "a" }, target: { id: "b" } })).toBe(
+      `rgba(${litRgb}, ${LIT_LINK_ALPHA})`,
+    );
+  });
+
+  it("keeps the highlightId halo lit while hovering elsewhere", () => {
+    const nodes = [makeNode({ id: "a" }), makeNode({ id: "hl" })];
+    render(<KnowledgeGraph3D nodes={nodes} edges={[]} highlightId="hl" />);
+    const build = lastProps!.nodeThreeObject as (n: object) => THREE.Group;
+    const gHl = build({ ...nodes[1] });
+    act(() => {
+      (lastProps!.onNodeHover as (n: object | null) => void)({ id: "a" });
+    });
+    expect(partsOf(gHl).halo.visible).toBe(true);
+  });
+
+  it("recenter button shares the 2D affordances and calls zoomToFit", () => {
+    // Default matchMedia (beforeEach) reports no reduced-motion preference,
+    // and this file never stubs NEXT_PUBLIC_TEST_MODE — the real animated
+    // path a live user with no accessibility preference set actually sees.
+    // Padding is unified to 60 across both zoomToFit call sites (auto-fit
+    // and this button) — it used to be 40 here (final-review ride-along).
+    const { getByTestId } = render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+    const btn = getByTestId("graph-zoom-reset");
+    expect(btn.getAttribute("title")).toBe("Reset view"); // globals.css hides by this title on the tutor rail
+    fireEvent.click(btn);
+    expect(zoomToFitSpy).toHaveBeenCalledWith(400, 60);
+  });
+
+  it("recenter button fires an instant (0ms) fit under prefers-reduced-motion", () => {
+    // Round: this is a system-initiated camera fly even though the user
+    // clicked the button — under reduced motion an animated 400ms fly is
+    // itself a motion violation, so the duration must zero out exactly
+    // like the auto-fit's gating.
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query === "(prefers-reduced-motion: reduce)",
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const { getByTestId } = render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+    const btn = getByTestId("graph-zoom-reset");
+    fireEvent.click(btn);
+    expect(zoomToFitSpy).toHaveBeenCalledWith(0, 60);
+  });
+
+  it("auto-fits the camera once the graph bbox stabilizes across animation frames (onEngineStop)", () => {
+    // Pins the real mechanism (Task 5 round 2, #518 3D graph camera-framing
+    // bug): onEngineStop fires before the current tick's node positions are
+    // written to the scene, so getGraphBbox() reads a stale/placeholder
+    // value for the first frame or two — fitting on that stale value
+    // produces a camera far too close once the real layout lands. The fix
+    // polls on requestAnimationFrame until two consecutive bbox reads agree
+    // before calling zoomToFit, rather than fitting synchronously or after
+    // a fixed delay.
+    const staleBbox = { x: [-1, 1], y: [-1, 1], z: [-1, 1] };
+    const settledBbox = { x: [-50, 60], y: [-30, 40], z: [-40, 20] };
+    getGraphBboxMock
+      .mockReturnValueOnce(staleBbox) // frame 1: still the pre-layout placeholder
+      .mockReturnValueOnce(settledBbox) // frame 2: real layout has landed, differs from frame 1
+      .mockReturnValue(settledBbox); // frame 3+: stable — matches the previous read
+
+    const raf = captureAnimationFrames();
+    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+    expect(lastProps).not.toBeNull();
+    const onEngineStop = lastProps!.onEngineStop as () => void;
+    expect(typeof onEngineStop).toBe("function");
+
+    act(() => onEngineStop());
+    expect(zoomToFitSpy).not.toHaveBeenCalled(); // schedules a frame, doesn't fit synchronously
+
+    raf.step(); // frame 1 reads staleBbox — no prior read to compare against yet
+    expect(zoomToFitSpy).not.toHaveBeenCalled();
+
+    raf.step(); // frame 2 reads settledBbox — differs from frame 1, still not stable
+    expect(zoomToFitSpy).not.toHaveBeenCalled();
+
+    raf.step(); // frame 3 reads settledBbox again — matches frame 2: stable, fit now
+    expect(zoomToFitSpy).toHaveBeenCalledTimes(1);
+    expect(zoomToFitSpy).toHaveBeenCalledWith(400, 60);
+    expect(getGraphBboxMock).toHaveBeenCalledTimes(3);
+
+    // Guarded to fire only once per dataset — a second settle (e.g. the
+    // library re-triggering onEngineStop, or React re-invoking the
+    // memoized callback) must not re-fit the camera out from under a
+    // user who has since panned/zoomed, and must not schedule new frames.
+    const framesScheduledBeforeSecondCall = raf.queue.length;
+    act(() => onEngineStop());
+    expect(raf.queue.length).toBe(framesScheduledBeforeSecondCall);
+    expect(zoomToFitSpy).toHaveBeenCalledTimes(1);
+
+    raf.restore();
+  });
+
+  it("auto-fit stops polling and fits anyway once the frame cap is hit, if the bbox never stabilizes", () => {
+    // Safety net: a bbox that keeps changing every frame (never two
+    // consecutive equal reads) must not poll forever — it still fits once
+    // the frame cap trips, using whatever bbox was last read.
+    getGraphBboxMock.mockImplementation(() => ({ x: [0, Math.random()], y: [0, 0], z: [0, 0] }));
+
+    const raf = captureAnimationFrames();
+    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+    const onEngineStop = lastProps!.onEngineStop as () => void;
+
+    act(() => onEngineStop());
+    // Drain every frame the poll schedules (each step may enqueue the next
+    // one) until the queue empties — bounded well above the component's own
+    // internal frame cap so the test fails loudly instead of hanging if the
+    // cap regresses.
+    for (let i = 0; i < 200 && raf.queue.length > 0; i++) {
+      raf.step();
+    }
+    expect(zoomToFitSpy).toHaveBeenCalledTimes(1);
+    expect(zoomToFitSpy).toHaveBeenCalledWith(400, 60);
+    expect(raf.queue.length).toBe(0); // no frame scheduled after the cap-triggered fit
+
+    raf.restore();
+  });
+
+  it("abandons a stale bbox poll when the dataset changes mid-poll (epoch guard)", () => {
+    // Round 3: the bbox-stabilization poll spans multiple frames (up to
+    // MAX_FRAMES). If nodes/edges change while an old poll is mid-flight,
+    // the stale closure must not fire zoomToFit and clobber the fresh
+    // poll's correct fit for the new dataset. A bbox that changes on every
+    // read never spontaneously stabilizes, so the stale poll only ever
+    // stops via either the epoch guard (fixed) or the MAX_FRAMES safety
+    // net (unfixed — proves this test is a real regression check, not a
+    // tautology).
+    let bboxCounter = 0;
+    getGraphBboxMock.mockImplementation(() => ({ x: [0, ++bboxCounter], y: [0, 0], z: [0, 0] }));
+
+    const raf = captureAnimationFrames();
+    const nodesA = [makeNode({ id: "a" })];
+    const nodesB = [makeNode({ id: "b" })];
+    const { rerender } = render(<KnowledgeGraph3D nodes={nodesA} edges={[]} />);
+    const onEngineStopA = lastProps!.onEngineStop as () => void;
+
+    act(() => onEngineStopA());
+    expect(raf.queue.length).toBe(1); // dataset A's poll scheduled its first frame
+
+    raf.step(); // frame 1 of A's poll — nothing to compare yet, schedules frame 2
+    expect(zoomToFitSpy).not.toHaveBeenCalled();
+    expect(raf.queue.length).toBe(1);
+
+    // Dataset change: a new nodes array re-triggers the [nodes, edges]
+    // reset effect, bumping pollEpochRef out from under A's in-flight poll.
+    rerender(<KnowledgeGraph3D nodes={nodesB} edges={[]} />);
+
+    // Drive every remaining frame the STALE (dataset-A) poll scheduled,
+    // bounded well above MAX_FRAMES so a regression fails loudly instead
+    // of hanging.
+    for (let i = 0; i < 100 && raf.queue.length > 0; i++) {
+      raf.step();
+    }
+
+    // The stale poll belonged to dataset A and must never fire zoomToFit —
+    // not even via the MAX_FRAMES safety net — once the epoch moved on.
+    expect(zoomToFitSpy).not.toHaveBeenCalled();
+
+    raf.restore();
   });
 });
