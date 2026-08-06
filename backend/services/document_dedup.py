@@ -1,0 +1,150 @@
+"""File-level duplicate detection for document uploads.
+
+Sapling's RAG corpus is shared per course, so the same lecture deck arrives
+many times under many different filenames. `rag_service.chunk_id` already
+collapses identical passages to one row, but only at the *end* of the
+pipeline — OCR, the classifier/summary/concepts agents, and embedding have all
+been paid for by then.
+
+These helpers catch the duplicate at the door instead, keyed on a SHA-256
+fingerprint of the raw uploaded bytes. The fingerprint covers the file contents
+only, never the filename, so `lec3.pdf` and `Lecture 3 Slides.pdf` are
+recognised as the same upload.
+"""
+import hashlib
+import logging
+
+from db.connection import table
+from services.encryption import decrypt_if_present, decrypt_json
+
+logger = logging.getLogger(__name__)
+
+# Columns copied onto the new row when a duplicate is found. `offering_id` is
+# not copied — it tells the caller which course the twin was indexed for, so it
+# can decide whether the shared chunks already exist.
+_TWIN_COLUMNS = (
+    "id,offering_id,category,extracted_text,summary,concept_notes,agent_result"
+)
+
+
+def file_sha256(file_bytes: bytes) -> str:
+    """Return the hex SHA-256 fingerprint of an uploaded file's bytes.
+
+    Deliberately takes only the bytes: the filename must never influence the
+    fingerprint, or two students' copies of the same deck would look distinct.
+    """
+    return hashlib.sha256(file_bytes).hexdigest()
+
+
+def decode_result(raw: str | None):
+    """Rebuild a DocumentProcessingResult from the JSON stored on a document.
+
+    Storing the whole result — rather than rebuilding one from the row's
+    category/summary/concept_notes — is what makes skipping the agents on a
+    duplicate lossless. A field-by-field reconstruction would have to invent
+    `Summary.headline`, three `Summary.key_points` (min_length=3), and each
+    `Concept.importance`, none of which are persisted, and would drop
+    `syllabus.assignments` entirely — the calendar import's only source.
+
+    Returns None when there is nothing stored (documents predating the column)
+    or when the stored shape no longer validates against the current models.
+    Both degrade to "run the agents", never to an error: a stale payload must
+    not be able to fail an upload.
+    """
+    if not raw:
+        return None
+    # Imported here, not at module scope: agents/document.py pulls in the whole
+    # agent stack, and this module is imported by the upload route at startup.
+    from agents.document import DocumentProcessingResult
+
+    try:
+        return DocumentProcessingResult.model_validate_json(raw)
+    except Exception:
+        logger.warning(
+            "Stored agent result no longer validates — re-running the agents",
+            exc_info=True,
+        )
+        return None
+
+
+def chunks_already_exist(twin: dict | None, offering_id: str) -> bool:
+    """True when this upload's RAG chunks are already in the shared corpus.
+
+    `rag_service.chunk_id` hashes the course code alongside the chunk text, so
+    identical text in a DIFFERENT course produces different ids and genuinely
+    needs its own embeddings. Reuse is therefore valid only within the course
+    the twin was indexed for — skipping across courses would leave the second
+    course with no retrievable material at all.
+    """
+    if not twin:
+        return False
+    return bool(offering_id) and twin.get("offering_id") == offering_id
+
+
+def find_duplicate(file_hash: str) -> dict | None:
+    """Return an already-processed document with this fingerprint, or None.
+
+    The lookup is deliberately **global** rather than course-scoped: the
+    extracted text, category, summary and concepts are pure functions of the
+    file's bytes (the classifier/summary/concepts agents carry static system
+    prompts and no user context), so a twin from any course is a valid source.
+    Whether the *chunks* can be reused is a separate, course-scoped question the
+    caller answers using the returned `offering_id`.
+
+    Returns the twin with its encrypted columns decrypted, ready to copy onto
+    the new row. Never raises: a missing `file_sha256` column — deployments ship
+    code before migrations run — degrades to "no duplicate" so uploads keep
+    working on the un-migrated schema.
+    """
+    if not file_hash:
+        return None
+    try:
+        rows = table("documents").select(
+            _TWIN_COLUMNS,
+            filters={
+                "file_sha256": f"eq.{file_hash}",
+                "deleted_at": "is.null",
+                # Pushed into the query rather than left to the post-fetch check
+                # below, because `limit=1` makes the two behave differently: an
+                # unordered LIMIT 1 can hand back a text-less row while a
+                # perfectly good twin sits behind it, and the post-fetch check
+                # would then report "no duplicate" for a file that plainly has
+                # one. Filtering here means the row we get back is usable by
+                # construction, whatever order the planner returns.
+                "extracted_text": "not.is.null",
+            },
+            limit=1,
+        )
+    except Exception:
+        logger.debug("file_sha256 duplicate lookup unavailable", exc_info=True)
+        return None
+    if not isinstance(rows, list) or not rows:
+        return None
+    first = rows[0]
+    if not isinstance(first, dict):
+        return None
+
+    extracted = decrypt_if_present(first.get("extracted_text"))
+    # A twin whose extraction never landed carries nothing worth reusing.
+    # Treating it as a duplicate would skip OCR and leave the new document
+    # empty, which is worse than simply re-processing the file.
+    if not extracted:
+        return None
+
+    notes = first.get("concept_notes")
+    if isinstance(notes, str):
+        try:
+            notes = decrypt_json(notes)
+        except Exception:
+            notes = []
+    return {
+        "id": first.get("id"),
+        "offering_id": first.get("offering_id"),
+        "category": first.get("category"),
+        "extracted_text": extracted,
+        "summary": decrypt_if_present(first.get("summary")),
+        "concept_notes": notes if isinstance(notes, list) else [],
+        # None for rows written before the column existed, or whose stored
+        # shape no longer validates. Callers treat that as "run the agents".
+        "result": decode_result(decrypt_if_present(first.get("agent_result"))),
+    }
