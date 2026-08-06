@@ -25,10 +25,11 @@ let lastProps: Record<string, any> | null = null;
 
 vi.mock("react-force-graph-3d", () => ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  default: (props: any) => {
+  default: React.forwardRef((props: any, ref: React.Ref<unknown>) => {
     lastProps = props;
+    React.useImperativeHandle(ref, () => ({ zoomToFit: () => {} }));
     return null;
-  },
+  }),
 }));
 
 vi.mock("next/dynamic", () => ({

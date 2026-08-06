@@ -21,6 +21,7 @@ import React from "react";
 import dynamic from "next/dynamic";
 import * as THREE from "three";
 import SpriteText from "three-spritetext";
+import type { ForceGraphMethods, ForceGraphProps } from "react-force-graph-3d";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import { IS_TEST_MODE } from "@/lib/testMode";
 import {
@@ -42,8 +43,21 @@ import {
 // module evaluation, so it can't be SSR'd. ssr: false ensures the
 // import only fires in the browser. The fallback renders nothing —
 // callers already wrap us in their own skeleton on first paint.
+//
+// next/dynamic can't forward refs, and we need the instance for
+// zoomToFit. The loader wraps the lib component so the ref rides in as
+// a regular `fgRef` prop. Type-only imports above are erased at
+// compile time — nothing here reaches the server bundle.
+type FGRefProp = { fgRef?: React.MutableRefObject<ForceGraphMethods | undefined> };
 const ForceGraph3D = dynamic(
-  () => import("react-force-graph-3d").then((m) => m.default),
+  () =>
+    import("react-force-graph-3d").then((m) => {
+      const FG = m.default;
+      const WithRef = ({ fgRef, ...rest }: ForceGraphProps & FGRefProp) => (
+        <FG {...rest} ref={fgRef} />
+      );
+      return WithRef;
+    }),
   { ssr: false, loading: () => null },
 );
 
@@ -130,6 +144,9 @@ export function KnowledgeGraph3D({
   // Mutable registry of every node's restylable parts. Hover/highlight
   // mutate materials through this map — never by rebuilding objects.
   const visualsRef = React.useRef<Map<string, NodeVisual>>(new Map());
+  // Imperative handle to the mounted lib instance — bridged in via the
+  // dynamic wrapper's `fgRef` prop (next/dynamic strips real refs).
+  const fgRef = React.useRef<ForceGraphMethods | undefined>(undefined);
   // Refs mirror hover/highlight state so nodeThreeObject (called by the
   // library outside React's render) sees current values without being
   // re-created — re-creating it would rebuild every node's geometry.
@@ -274,6 +291,7 @@ export function KnowledgeGraph3D({
   return (
     <div style={{ width, height, position: "relative" }}>
       <ForceGraph3D
+        fgRef={fgRef}
         width={width}
         height={height}
         graphData={graphData}
@@ -307,6 +325,28 @@ export function KnowledgeGraph3D({
           ),
         )}
       </ul>
+      <button
+        type="button"
+        data-testid="graph-zoom-reset"
+        className="btn btn--ghost btn--sm"
+        title="Reset view"
+        aria-label="Reset view"
+        onClick={() => fgRef.current?.zoomToFit(400, 40)}
+        style={{
+          position: "absolute",
+          right: 12,
+          bottom: 12,
+          padding: "2px 8px",
+          fontSize: 10,
+          background: "var(--bg-panel)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-sm)",
+          boxShadow: "var(--shadow-sm)",
+          zIndex: 5,
+        }}
+      >
+        ⟲
+      </button>
     </div>
   );
 }

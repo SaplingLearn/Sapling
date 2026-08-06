@@ -50,12 +50,15 @@ import {
 // Capture the props the component passes to ForceGraph3D so tests can
 // drive its callbacks. Reset in beforeEach.
 let lastProps: Record<string, any> | null = null;
+let zoomToFitSpy = vi.fn();
 
 vi.mock("react-force-graph-3d", () => ({
-  default: (props: any) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  default: React.forwardRef((props: any, ref: React.Ref<unknown>) => {
     lastProps = props;
+    React.useImperativeHandle(ref, () => ({ zoomToFit: zoomToFitSpy }));
     return null;
-  },
+  }),
 }));
 
 // jsdom has no canvas 2D context, and the real SpriteText paints text
@@ -153,6 +156,7 @@ function installDefaultMatchMedia() {
 
 beforeEach(() => {
   lastProps = null;
+  zoomToFitSpy = vi.fn();
   installDefaultMatchMedia();
 });
 
@@ -457,5 +461,13 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
       (lastProps!.onNodeHover as (n: object | null) => void)({ id: "a" });
     });
     expect(partsOf(gHl).halo.visible).toBe(true);
+  });
+
+  it("recenter button shares the 2D affordances and calls zoomToFit", () => {
+    const { getByTestId } = render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+    const btn = getByTestId("graph-zoom-reset");
+    expect(btn.getAttribute("title")).toBe("Reset view"); // globals.css hides by this title on the tutor rail
+    fireEvent.click(btn);
+    expect(zoomToFitSpy).toHaveBeenCalledWith(400, 40);
   });
 });
