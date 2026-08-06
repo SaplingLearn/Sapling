@@ -574,4 +574,47 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
 
     raf.restore();
   });
+
+  it("abandons a stale bbox poll when the dataset changes mid-poll (epoch guard)", () => {
+    // Round 3: the bbox-stabilization poll spans multiple frames (up to
+    // MAX_FRAMES). If nodes/edges change while an old poll is mid-flight,
+    // the stale closure must not fire zoomToFit and clobber the fresh
+    // poll's correct fit for the new dataset. A bbox that changes on every
+    // read never spontaneously stabilizes, so the stale poll only ever
+    // stops via either the epoch guard (fixed) or the MAX_FRAMES safety
+    // net (unfixed — proves this test is a real regression check, not a
+    // tautology).
+    let bboxCounter = 0;
+    getGraphBboxMock.mockImplementation(() => ({ x: [0, ++bboxCounter], y: [0, 0], z: [0, 0] }));
+
+    const raf = captureAnimationFrames();
+    const nodesA = [makeNode({ id: "a" })];
+    const nodesB = [makeNode({ id: "b" })];
+    const { rerender } = render(<KnowledgeGraph3D nodes={nodesA} edges={[]} />);
+    const onEngineStopA = lastProps!.onEngineStop as () => void;
+
+    act(() => onEngineStopA());
+    expect(raf.queue.length).toBe(1); // dataset A's poll scheduled its first frame
+
+    raf.step(); // frame 1 of A's poll — nothing to compare yet, schedules frame 2
+    expect(zoomToFitSpy).not.toHaveBeenCalled();
+    expect(raf.queue.length).toBe(1);
+
+    // Dataset change: a new nodes array re-triggers the [nodes, edges]
+    // reset effect, bumping pollEpochRef out from under A's in-flight poll.
+    rerender(<KnowledgeGraph3D nodes={nodesB} edges={[]} />);
+
+    // Drive every remaining frame the STALE (dataset-A) poll scheduled,
+    // bounded well above MAX_FRAMES so a regression fails loudly instead
+    // of hanging.
+    for (let i = 0; i < 100 && raf.queue.length > 0; i++) {
+      raf.step();
+    }
+
+    // The stale poll belonged to dataset A and must never fire zoomToFit —
+    // not even via the MAX_FRAMES safety net — once the epoch moved on.
+    expect(zoomToFitSpy).not.toHaveBeenCalled();
+
+    raf.restore();
+  });
 });

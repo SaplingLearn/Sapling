@@ -152,6 +152,18 @@ export function KnowledgeGraph3D({
   // later onEngineStop (the library re-settling, e.g. after a drag) would
   // re-fit the camera out from under a user who has since panned/zoomed.
   const didFitRef = React.useRef(false);
+  // Bumped alongside didFitRef.current = false whenever nodes/edges change.
+  // The bbox-stabilization poll (handleEngineStop, below) captures this
+  // value at poll start and every scheduled frame re-checks it against the
+  // live counter — a poll from a stale dataset bails out instead of firing
+  // zoomToFit and clobbering the fresh poll's correct fit for the new data
+  // (round 3 fix: a dataset change mid-poll, up to ~1s/MAX_FRAMES wide,
+  // otherwise let the old closure win the race).
+  const pollEpochRef = React.useRef(0);
+  // Tracks the currently-scheduled rAF id so an unmount mid-poll can cancel
+  // it (round 3 hygiene fix) instead of leaving up to MAX_FRAMES dangling
+  // no-op callbacks.
+  const pollRafIdRef = React.useRef<number | null>(null);
   // Refs mirror hover/highlight state so nodeThreeObject (called by the
   // library outside React's render) sees current values without being
   // re-created — re-creating it would rebuild every node's geometry.
@@ -176,10 +188,22 @@ export function KnowledgeGraph3D({
   // Reset the auto-fit once-guard whenever the dataset changes. Runs after
   // the render that produced the new graphData commits — well before the
   // library's next onEngineStop for these nodes/edges can fire — so the
-  // camera is re-fit exactly once for each new dataset.
+  // camera is re-fit exactly once for each new dataset. Bumping
+  // pollEpochRef here invalidates any in-flight poll from the PREVIOUS
+  // dataset — its stale closure checks this counter every frame and bails
+  // instead of firing zoomToFit against data that's no longer current.
   React.useEffect(() => {
     didFitRef.current = false;
+    pollEpochRef.current += 1;
   }, [nodes, edges]);
+
+  // Cancel any in-flight bbox-stabilization poll on unmount so it can't
+  // leave dangling rAF callbacks running against an unmounted instance.
+  React.useEffect(() => {
+    return () => {
+      if (pollRafIdRef.current !== null) cancelAnimationFrame(pollRafIdRef.current);
+    };
+  }, []);
 
   const adjacency = React.useMemo(() => buildAdjacency(edges), [edges]);
   // hoverId lives in state ONLY to re-key the link accessors below; the
@@ -323,13 +347,22 @@ export function KnowledgeGraph3D({
   // jumping once to the real, stable bbox and holding it — so poll on rAF
   // until two consecutive reads agree (with a frame cap as a safety net)
   // before fitting, rather than fit on a fixed/guessed delay.
+  //
+  // EPOCH GUARD (Task 5 round 3): the poll spans multiple frames (up to
+  // MAX_FRAMES/~1s). If nodes/edges change mid-poll, the [nodes, edges]
+  // reset effect bumps pollEpochRef — this closure captured the epoch at
+  // poll start, and every scheduled frame re-checks it before doing
+  // anything else, so a stale poll from the old dataset bails out instead
+  // of firing zoomToFit and clobbering the fresh poll's correct fit.
   const handleEngineStop = React.useCallback(() => {
     if (didFitRef.current) return;
     didFitRef.current = true;
+    const epoch = pollEpochRef.current;
     let prevBboxKey: string | null = null;
     let frame = 0;
     const MAX_FRAMES = 60; // ~1s safety net at 60fps; settles in ~3 frames in practice
     const waitForStableBboxThenFit = () => {
+      if (pollEpochRef.current !== epoch) return; // dataset changed mid-poll — stale, abandon
       frame += 1;
       const bbox = fgRef.current?.getGraphBbox();
       const key = bbox ? JSON.stringify(bbox) : null;
@@ -338,9 +371,9 @@ export function KnowledgeGraph3D({
         return;
       }
       prevBboxKey = key;
-      requestAnimationFrame(waitForStableBboxThenFit);
+      pollRafIdRef.current = requestAnimationFrame(waitForStableBboxThenFit);
     };
-    requestAnimationFrame(waitForStableBboxThenFit);
+    pollRafIdRef.current = requestAnimationFrame(waitForStableBboxThenFit);
   }, []);
 
   return (
