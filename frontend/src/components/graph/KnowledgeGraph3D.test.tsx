@@ -470,4 +470,22 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
     fireEvent.click(btn);
     expect(zoomToFitSpy).toHaveBeenCalledWith(400, 40);
   });
+
+  it("auto-fits the camera once when the force engine settles (onEngineStop)", () => {
+    render(<KnowledgeGraph3D nodes={[makeNode()]} edges={[]} />);
+    expect(lastProps).not.toBeNull();
+    const onEngineStop = lastProps!.onEngineStop as () => void;
+    expect(typeof onEngineStop).toBe("function");
+
+    onEngineStop();
+    expect(zoomToFitSpy).toHaveBeenCalledTimes(1);
+    expect(zoomToFitSpy).toHaveBeenCalledWith(400, 60);
+
+    // Guarded to fire only once per dataset — a second settle (e.g. the
+    // library re-triggering onEngineStop, or React re-invoking the
+    // memoized callback) must not re-fit the camera out from under a
+    // user who has since panned/zoomed.
+    onEngineStop();
+    expect(zoomToFitSpy).toHaveBeenCalledTimes(1);
+  });
 });

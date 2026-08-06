@@ -147,6 +147,11 @@ export function KnowledgeGraph3D({
   // Imperative handle to the mounted lib instance — bridged in via the
   // dynamic wrapper's `fgRef` prop (next/dynamic strips real refs).
   const fgRef = React.useRef<ForceGraphMethods | undefined>(undefined);
+  // Guards the initial camera auto-fit (below) to once per dataset — reset
+  // in the effect below whenever nodes/edges change. Without the guard, any
+  // later onEngineStop (the library re-settling, e.g. after a drag) would
+  // re-fit the camera out from under a user who has since panned/zoomed.
+  const didFitRef = React.useRef(false);
   // Refs mirror hover/highlight state so nodeThreeObject (called by the
   // library outside React's render) sees current values without being
   // re-created — re-creating it would rebuild every node's geometry.
@@ -166,6 +171,14 @@ export function KnowledgeGraph3D({
       strength: e.strength,
     }));
     return { nodes: fgNodes, links: fgLinks };
+  }, [nodes, edges]);
+
+  // Reset the auto-fit once-guard whenever the dataset changes. Runs after
+  // the render that produced the new graphData commits — well before the
+  // library's next onEngineStop for these nodes/edges can fire — so the
+  // camera is re-fit exactly once for each new dataset.
+  React.useEffect(() => {
+    didFitRef.current = false;
   }, [nodes, edges]);
 
   const adjacency = React.useMemo(() => buildAdjacency(edges), [edges]);
@@ -288,6 +301,23 @@ export function KnowledgeGraph3D({
     [hoverId],
   );
 
+  // Auto-fit the camera the first time the force engine settles for this
+  // dataset — otherwise the initial camera distance never frames the graph
+  // and every node renders as an illegible clump at the center of the
+  // canvas (found in the Task 5 visual pass). `onEngineStop` fires whether
+  // the sim cooled down naturally (120 ticks) or was cut short by
+  // `cooldownTicks={0}` under reduced-motion/test mode — 3d-force-graph's
+  // tickFrame trips its stop condition (`++cntTicks > cooldownTicks`) on
+  // the very first tick when cooldownTicks is 0, so onEngineStop still
+  // fires (immediately) rather than never firing. didFitRef makes this
+  // idempotent per dataset so a later re-settle (e.g. after a drag) can't
+  // yank the camera back after the user has since panned/zoomed.
+  const handleEngineStop = React.useCallback(() => {
+    if (didFitRef.current) return;
+    didFitRef.current = true;
+    fgRef.current?.zoomToFit(400, 60);
+  }, []);
+
   return (
     <div style={{ width, height, position: "relative" }}>
       <ForceGraph3D
@@ -306,6 +336,7 @@ export function KnowledgeGraph3D({
         enableNodeDrag={false}
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
+        onEngineStop={handleEngineStop}
       />
       {/* Same testid seam as the 2D variant (docs/frontend-testids.md, #395):
           only one of the two graph implementations mounts at a time, so the
