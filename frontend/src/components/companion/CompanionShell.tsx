@@ -37,6 +37,8 @@ const TAB: React.CSSProperties = {
   transition: 'color 300ms', whiteSpace: 'nowrap',
 };
 
+const FOOTER_LINK: React.CSSProperties = { fontSize: 14, color: '#6f6857' };
+
 export function CompanionShell({
   current,
   children,
@@ -47,16 +49,31 @@ export function CompanionShell({
 }) {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#f4f1ea', color: '#1a1814', fontFamily: SANS }}>
-      <header style={{ position: 'sticky', top: 0, zIndex: 50, padding: '16px 24px 34px', pointerEvents: 'none' }}>
+      {/* Geometry here is locked to the landing navbar: same horizontal
+          padding, same 16px/16px vertical padding, same 92px masked scrim.
+          The companion sources inset their bar to `min(1320px,92%)`, which
+          lands it ~32px further in than the landing bar and 18px taller — so
+          the mark visibly jumped when you navigated off `/`. Full-bleed wins;
+          if you change `max(4.2vw,22px)` here, change it in Navbar.tsx and the
+          hero grid too. Only the palette stays warm. */}
+      <header style={{ position: 'sticky', top: 0, zIndex: 50, padding: '16px max(4.2vw,22px)', pointerEvents: 'none' }}>
         <div
           aria-hidden="true"
           style={{
-            position: 'absolute', inset: 0,
+            position: 'absolute', left: 0, right: 0, top: 0, height: 92,
             backdropFilter: 'blur(9px)', WebkitBackdropFilter: 'blur(9px)',
-            background: 'linear-gradient(180deg, #f4f1ea 0%, #f4f1ea 55%, rgba(244,241,234,0) 100%)',
+            // gradient + mask ramps are the ones from `About Sapling.dc.html`,
+            // the most developed of the companion scrims — the others stop at a
+            // bare two-stop fade.
+            background:
+              'linear-gradient(180deg, #f4f1ea 0%, #f4f1ea 44%, rgba(244,241,234,0.82) 66%, rgba(244,241,234,0.45) 82%, rgba(244,241,234,0) 100%)',
+            maskImage:
+              'linear-gradient(180deg, #000 0%, #000 44%, rgba(0,0,0,0.78) 66%, rgba(0,0,0,0.42) 82%, rgba(0,0,0,0) 100%)',
+            WebkitMaskImage:
+              'linear-gradient(180deg, #000 0%, #000 44%, rgba(0,0,0,0.78) 66%, rgba(0,0,0,0.42) 82%, rgba(0,0,0,0) 100%)',
           }}
         />
-        <div style={{ maxWidth: 'min(1320px, 92%)', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, position: 'relative', pointerEvents: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, position: 'relative', pointerEvents: 'auto' }}>
           <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 4, flex: '0 0 auto' }}>
             <Image src="/sapling-icon.svg" alt="" width={26} height={26} style={{ flexShrink: 0, position: 'relative', top: -2 }} />
             <span style={{ fontFamily: "'Spectral',Georgia,serif", fontWeight: 700, fontSize: 20, color: '#1B6C42', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
@@ -137,6 +154,16 @@ export function CompanionShell({
             {COMPANION_NAV.map((n) => (
               <Link key={n.href} href={n.href} className="cp-navlink" style={{ fontSize: 14, color: '#6f6857' }}>{n.label}</Link>
             ))}
+            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="cp-navlink" style={FOOTER_LINK}>GitHub</a>
+            <a href={KOFI_URL} target="_blank" rel="noopener noreferrer" className="cp-navlink" style={FOOTER_LINK}>Ko-fi</a>
+            {/* The design's companion footer stops at the nav links. These three
+                are ours: /about used to be the only page linking them, so
+                folding it into this shell would otherwise orphan /careers
+                outright and leave the legal pages unreachable from any
+                companion page. */}
+            <Link href="/careers" className="cp-navlink" style={FOOTER_LINK}>Careers</Link>
+            <Link href="/terms" className="cp-navlink" style={FOOTER_LINK}>Terms of Service</Link>
+            <Link href="/privacy" className="cp-navlink" style={FOOTER_LINK}>Privacy Policy</Link>
           </div>
         </div>
       </footer>
