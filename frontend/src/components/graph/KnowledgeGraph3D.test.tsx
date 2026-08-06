@@ -31,7 +31,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, fireEvent } from "@testing-library/react";
+import { render, cleanup, fireEvent, act } from "@testing-library/react";
 import * as THREE from "three";
 import SpriteText from "three-spritetext";
 import {
@@ -40,6 +40,11 @@ import {
   nodeRadius,
   FALLBACK_THEME,
   NODE_OPACITY,
+  DIM_NODE_OPACITY,
+  DIM_LABEL_OPACITY,
+  LIT_LINK_ALPHA,
+  DIM_LINK_ALPHA,
+  BASE_LINK_ALPHA,
 } from "./graph3dHelpers";
 
 // Capture the props the component passes to ForceGraph3D so tests can
@@ -382,5 +387,75 @@ describe("KnowledgeGraph3D — adapter behavior", () => {
     const build = lastProps!.nodeThreeObject as (n: object) => THREE.Group;
     expect(partsOf(build({ ...makeNode({ id: "abc" }) })).halo.visible).toBe(true);
     expect(partsOf(build({ ...makeNode({ id: "other" }) })).halo.visible).toBe(false);
+  });
+
+  it("hovering dims non-neighbors and restores everything on mouse-off", () => {
+    const nodes = [makeNode({ id: "a" }), makeNode({ id: "b" }), makeNode({ id: "c" })];
+    const edges: GraphEdge[] = [{ source: "a", target: "b", strength: 1 }];
+    render(<KnowledgeGraph3D nodes={nodes} edges={edges} />);
+
+    const build = lastProps!.nodeThreeObject as (n: object) => THREE.Group;
+    const gA = build({ ...nodes[0] });
+    const gB = build({ ...nodes[1] });
+    const gC = build({ ...nodes[2] });
+
+    act(() => {
+      (lastProps!.onNodeHover as (n: object | null) => void)({ id: "a" });
+    });
+
+    // hovered + neighbor stay lit; the stranger dims
+    expect((partsOf(gA).sphere.material as THREE.MeshLambertMaterial).opacity).toBeCloseTo(NODE_OPACITY);
+    expect((partsOf(gB).sphere.material as THREE.MeshLambertMaterial).opacity).toBeCloseTo(NODE_OPACITY);
+    expect((partsOf(gC).sphere.material as THREE.MeshLambertMaterial).opacity).toBeCloseTo(DIM_NODE_OPACITY);
+    expect(partsOf(gC).label.material.opacity).toBeCloseTo(DIM_LABEL_OPACITY);
+    expect(`#${(partsOf(gC).sphere.material as THREE.MeshLambertMaterial).color.getHexString()}`).toBe(
+      FALLBACK_THEME.dim,
+    );
+    expect(partsOf(gA).halo.visible).toBe(true);
+    expect(partsOf(gB).halo.visible).toBe(false);
+
+    act(() => {
+      (lastProps!.onNodeHover as (n: object | null) => void)(null);
+    });
+
+    expect((partsOf(gC).sphere.material as THREE.MeshLambertMaterial).opacity).toBeCloseTo(NODE_OPACITY);
+    expect(partsOf(gC).label.material.opacity).toBeCloseTo(1);
+    expect(partsOf(gA).halo.visible).toBe(false);
+  });
+
+  it("linkColor lights edges touching the hovered node and dims the rest", () => {
+    const nodes = [makeNode({ id: "a" }), makeNode({ id: "b" }), makeNode({ id: "c" })];
+    const edges: GraphEdge[] = [
+      { source: "a", target: "b", strength: 1 },
+      { source: "b", target: "c", strength: 1 },
+    ];
+    render(<KnowledgeGraph3D nodes={nodes} edges={edges} />);
+
+    // No hover: uniform base alpha.
+    let linkColor = lastProps!.linkColor as (l: object) => string;
+    expect(linkColor({ source: "a", target: "b" })).toBe(`rgba(138, 131, 114, ${BASE_LINK_ALPHA})`);
+
+    act(() => {
+      (lastProps!.onNodeHover as (n: object | null) => void)({ id: "a" });
+    });
+
+    linkColor = lastProps!.linkColor as (l: object) => string; // re-keyed accessor
+    expect(linkColor({ source: "a", target: "b" })).toBe(`rgba(138, 154, 91, ${LIT_LINK_ALPHA})`);
+    expect(linkColor({ source: "b", target: "c" })).toBe(`rgba(138, 131, 114, ${DIM_LINK_ALPHA})`);
+    // The library swaps ids for node-object refs once the simulation runs.
+    expect(linkColor({ source: { id: "a" }, target: { id: "b" } })).toBe(
+      `rgba(138, 154, 91, ${LIT_LINK_ALPHA})`,
+    );
+  });
+
+  it("keeps the highlightId halo lit while hovering elsewhere", () => {
+    const nodes = [makeNode({ id: "a" }), makeNode({ id: "hl" })];
+    render(<KnowledgeGraph3D nodes={nodes} edges={[]} highlightId="hl" />);
+    const build = lastProps!.nodeThreeObject as (n: object) => THREE.Group;
+    const gHl = build({ ...nodes[1] });
+    act(() => {
+      (lastProps!.onNodeHover as (n: object | null) => void)({ id: "a" });
+    });
+    expect(partsOf(gHl).halo.visible).toBe(true);
   });
 });

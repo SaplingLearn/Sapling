@@ -25,10 +25,16 @@ import type { GraphEdge, GraphNode } from "@/lib/data";
 import { IS_TEST_MODE } from "@/lib/testMode";
 import {
   baseNodeColor,
+  buildAdjacency,
   labelSpec,
   nodeRadius,
   resolveGraphTheme,
   NODE_OPACITY,
+  BASE_LINK_ALPHA,
+  LIT_LINK_ALPHA,
+  DIM_LINK_ALPHA,
+  DIM_NODE_OPACITY,
+  DIM_LABEL_OPACITY,
   type GraphTheme,
 } from "./graph3dHelpers";
 
@@ -57,10 +63,15 @@ type FG3DNode = GraphNode & {
 };
 
 type FG3DLink = {
-  source: string;
-  target: string;
+  source: string | FG3DNode;
+  target: string | FG3DNode;
   strength: number;
 };
+
+// The library swaps string ids for node-object refs once the
+// simulation starts, so link accessors must accept either shape.
+const linkEndId = (v: unknown): string =>
+  typeof v === "object" && v !== null ? (v as FG3DNode).id : (v as string);
 
 const SR_ONLY: React.CSSProperties = {
   position: "absolute",
@@ -140,6 +151,41 @@ export function KnowledgeGraph3D({
     return { nodes: fgNodes, links: fgLinks };
   }, [nodes, edges]);
 
+  const adjacency = React.useMemo(() => buildAdjacency(edges), [edges]);
+  // hoverId lives in state ONLY to re-key the link accessors below; the
+  // node/label/halo restyle happens imperatively via visualsRef.
+  const [hoverId, setHoverId] = React.useState<string | null>(null);
+
+  const applyFocus = React.useCallback(
+    (hover: string | null) => {
+      hoverRef.current = hover;
+      const neighbors = hover ? adjacency.get(hover) : undefined;
+      for (const [id, v] of visualsRef.current) {
+        const lit = !hover || id === hover || (neighbors?.has(id) ?? false);
+        v.sphereMat.color.set(lit ? v.baseColor : theme.dim);
+        v.sphereMat.opacity = lit ? NODE_OPACITY : DIM_NODE_OPACITY;
+        v.label.material.opacity = lit ? 1 : DIM_LABEL_OPACITY;
+        v.halo.visible = id === hover || id === highlightRef.current;
+      }
+    },
+    [adjacency, theme],
+  );
+
+  const handleNodeHover = React.useCallback(
+    (raw: object | null) => {
+      const id = raw ? (raw as FG3DNode).id : null;
+      setHoverId(id);
+      applyFocus(id);
+    },
+    [applyFocus],
+  );
+
+  // Re-assert focus when highlightId/adjacency/theme change (e.g. the
+  // tutor moves the discussed node while the user isn't hovering).
+  React.useEffect(() => {
+    applyFocus(hoverRef.current);
+  }, [applyFocus, highlightId]);
+
   const nodeThreeObject = React.useCallback(
     (raw: object) => {
       const n = raw as FG3DNode;
@@ -200,6 +246,31 @@ export function KnowledgeGraph3D({
     [onNodeClick, nodesById],
   );
 
+  const linkColor = React.useCallback(
+    (l: object) => {
+      const link = l as FG3DLink;
+      if (!hoverId) return `rgba(138, 131, 114, ${BASE_LINK_ALPHA})`;
+      const lit = linkEndId(link.source) === hoverId || linkEndId(link.target) === hoverId;
+      // Lit links take the sage accent (rgb of #8a9a5b); dimmed links
+      // fade to near-invisible warm gray.
+      return lit
+        ? `rgba(138, 154, 91, ${LIT_LINK_ALPHA})`
+        : `rgba(138, 131, 114, ${DIM_LINK_ALPHA})`;
+    },
+    [hoverId],
+  );
+
+  const linkWidth = React.useCallback(
+    (l: object) => {
+      const link = l as FG3DLink;
+      const base = 0.4 + (link.strength || 0) * 0.6;
+      if (!hoverId) return base;
+      const lit = linkEndId(link.source) === hoverId || linkEndId(link.target) === hoverId;
+      return lit ? base + 0.6 : base;
+    },
+    [hoverId],
+  );
+
   return (
     <div style={{ width, height, position: "relative" }}>
       <ForceGraph3D
@@ -208,17 +279,15 @@ export function KnowledgeGraph3D({
         graphData={graphData}
         nodeId="id"
         nodeThreeObject={nodeThreeObject}
-        linkColor={() => "rgba(138, 131, 114, 0.45)"}
+        linkColor={linkColor}
         linkOpacity={0.4}
-        linkWidth={(l: object) => {
-          const link = l as FG3DLink;
-          return 0.4 + (link.strength || 0) * 0.6;
-        }}
+        linkWidth={linkWidth}
         backgroundColor="rgba(0,0,0,0)"
         showNavInfo={false}
         cooldownTicks={reducedMotion || IS_TEST_MODE ? 0 : 120}
         enableNodeDrag={false}
         onNodeClick={handleNodeClick}
+        onNodeHover={handleNodeHover}
       />
       {/* Same testid seam as the 2D variant (docs/frontend-testids.md, #395):
           only one of the two graph implementations mounts at a time, so the
