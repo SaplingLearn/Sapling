@@ -216,3 +216,39 @@ class TestReadsTolerateLegacyPlaintextDictRows:
         legacy_response = _run(dict(plaintext_content))
 
         assert encrypted_response == legacy_response
+
+
+class TestListDegradesCorruptContentPerRow:
+    """Finding 4: one corrupt study_guides.content row must not 500 the
+    whole /cached list — it degrades that row's content to {} (exam_title
+    "") while the other rows still decrypt normally. MUST fail if the
+    per-row try/except guard is reverted (verify via stash/run/pop)."""
+
+    def test_one_corrupt_row_degrades_without_500ing_the_list(self):
+        guides = [
+            {"id": "g_good", "offering_id": "off1", "exam_id": "e1",
+             "generated_at": "2026-04-01T00:00:00Z",
+             "content": encrypt_json({"exam": "Midterm", "overview": "Covers ch1-5"})},
+            {"id": "g_corrupt", "offering_id": "off1", "exam_id": "e2",
+             "generated_at": "2026-03-01T00:00:00Z",
+             "content": "corrupt-not-json-not-b64"},
+        ]
+
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "study_guides":
+                m.select.return_value = guides
+            else:
+                m.select.return_value = []
+            return m
+
+        with patch("routes.study_guide.table", side_effect=table_side_effect), \
+             patch("routes.study_guide.offering_course_id", return_value="c1"), \
+             patch("routes.study_guide.term_for_offering", return_value=None):
+            r = client.get(f"/api/study-guide/{USER_ID}/cached")
+
+        assert r.status_code == 200
+        out = {g["id"]: g for g in r.json()["guides"]}
+        assert out["g_good"]["exam_title"] == "Midterm"
+        assert out["g_good"]["overview"] == "Covers ch1-5"
+        assert out["g_corrupt"]["exam_title"] == ""

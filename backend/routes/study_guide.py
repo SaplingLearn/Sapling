@@ -4,6 +4,7 @@ backend/routes/study_guide.py
 Study guide generation and caching.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -32,6 +33,8 @@ from services.encryption import (
 )
 from services.http_cache import cached_json, conditional, make_etag
 from services.request_context import current_request_id
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -250,7 +253,14 @@ def get_cached_guides(user_id: str, request: Request):
 
     result = []
     for g in guides:
-        content = decrypt_json_column(g.get("content")) or {}
+        try:
+            content = decrypt_json_column(g.get("content")) or {}
+        except Exception:
+            logger.warning(
+                "get_cached_guides: content decrypt failed for guide %s; degrading",
+                g.get("id"),
+            )
+            content = {}
         course_id = offering_to_course.get(g.get("offering_id"))
         result.append({
             "id": g["id"],
