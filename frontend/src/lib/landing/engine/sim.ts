@@ -352,10 +352,29 @@ export function createSim(): SimController {
 
         const up = (e: PointerEvent) => {
           if (!f.drag) return;
-          const n = f.drag.n;
+          // The held cluster's svg, NOT this listener's. `up` is bound to
+          // window for every cluster, so the one that runs first is not
+          // necessarily the one holding the pointer, and converting the drop
+          // through the wrong svg puts the node somewhere else entirely.
+          const { n, svg: heldSvg } = f.drag;
           n.ring.setAttribute('stroke-opacity', '0.75');
           n.fx = null;
           n.fy = null;
+
+          // Land on the pointer before deciding anything.
+          //
+          // The sim samples the cursor once per frame, so a drag that ends
+          // between frames leaves the node wherever the last frame put it —
+          // which on a fast throw is a fraction of the way along, and can be
+          // inside the rejoin radius the visitor plainly dragged it out of.
+          // Measured at 22% of the distance on a 20-step drag released
+          // immediately. The pointerup carries the final position; use it.
+          const box = boxFor(heldSvg);
+          if (box) {
+            n.x = box.vbx + (e.clientX - box.left) / box.sx;
+            n.y = box.vby + (e.clientY - box.top) / box.sy;
+            clampHeldToViewport(n, box, window.innerHeight);
+          }
 
           // The drop is the point of the whole interaction: a node left
           // somewhere stays there. Dropped back where it came from, it
@@ -367,8 +386,8 @@ export function createSim(): SimController {
           n.vx = 0;
           n.vy = 0;
 
-          try { svg.releasePointerCapture(e.pointerId); } catch { /* already released */ }
-          svg.style.cursor = 'grab';
+          try { heldSvg.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+          heldSvg.style.cursor = 'grab';
           f.drag = null;
           f.target = 0;
         };
