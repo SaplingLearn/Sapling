@@ -10,6 +10,10 @@
  * drift plus an anchor spring back to each node's home. Same forces,
  * different settling — swapping in d3 changes how it feels.
  *
+ * One force is answerable to the visitor rather than the layout: a node
+ * dropped away from where it started is *placed*, and a placed node is out of
+ * the simulation for as long as it stays there. See `SimNode.placed`.
+ *
  * Writes `cx`/`cy` straight onto the SVG elements. No React, no canvas.
  */
 
@@ -40,6 +44,20 @@ const EDGE_BAND_PX = 110;
 /** Peak autoscroll speed in px/frame, reached at the very edge of the band. */
 const EDGE_SPEED_PX = 22;
 
+/**
+ * Drop a node back within this of its home and it rejoins its cluster instead
+ * of being left where it fell — the way out of a placement, so the toy stays
+ * reversible.
+ *
+ * Measured against the breathing drift rather than picked: a free node sits
+ * up to ~20px off its home at any moment (19.3px worst case over a full 15s
+ * period, across the six clusters on screen at once), so the visitor aiming
+ * at where the node *looks* like it belongs is already that far out before
+ * their own aim is counted. 40px left ~20px of slop and missed in practice;
+ * this leaves ~50px.
+ */
+const REJOIN_PX = 70;
+
 interface SimNode {
   x: number; y: number;
   vx: number; vy: number;
@@ -57,6 +75,16 @@ interface SimNode {
   ly: number;
   /** Home position, which the anchor spring pulls back toward. */
   hx: number; hy: number;
+  /**
+   * True once the visitor has dropped this node somewhere of their own
+   * choosing. A placed node holds that spot: it takes no part in its
+   * cluster's link, charge or collide forces, and stops breathing. Without
+   * that it is pulled straight back — the link spring alone wants its
+   * neighbours 34-86px away, which no amount of re-homing survives.
+   */
+  placed: boolean;
+  /** The layout's original home, so a node can be dropped back into it. */
+  ox: number; oy: number;
 }
 
 interface SimLink {
@@ -235,6 +263,7 @@ export function createSim(): SimController {
             ring, glow, label,
             ly: parseFloat(label.getAttribute('y') || '0') - parseFloat(ring.getAttribute('cy') || '0'),
             hx: 0, hy: 0,
+            placed: false, ox: 0, oy: 0,
           });
         });
 
@@ -261,7 +290,7 @@ export function createSim(): SimController {
         svg.style.overflow = 'visible';
       });
 
-      nodes.forEach((n) => { n.hx = n.x; n.hy = n.y; });
+      nodes.forEach((n) => { n.hx = n.x; n.hy = n.y; n.ox = n.x; n.oy = n.y; });
       built.push({ field, clusters, nodes, links, alpha: 1, target: 0, drag: null });
     });
 
@@ -323,9 +352,21 @@ export function createSim(): SimController {
 
         const up = (e: PointerEvent) => {
           if (!f.drag) return;
-          f.drag.n.ring.setAttribute('stroke-opacity', '0.75');
-          f.drag.n.fx = null;
-          f.drag.n.fy = null;
+          const n = f.drag.n;
+          n.ring.setAttribute('stroke-opacity', '0.75');
+          n.fx = null;
+          n.fy = null;
+
+          // The drop is the point of the whole interaction: a node left
+          // somewhere stays there. Dropped back where it came from, it
+          // rejoins the cluster instead, which is the only way back.
+          const home = Math.hypot(n.x - n.ox, n.y - n.oy) <= REJOIN_PX;
+          n.placed = !home;
+          n.hx = home ? n.ox : n.x;
+          n.hy = home ? n.oy : n.y;
+          n.vx = 0;
+          n.vy = 0;
+
           try { svg.releasePointerCapture(e.pointerId); } catch { /* already released */ }
           svg.style.cursor = 'grab';
           f.drag = null;
@@ -401,11 +442,13 @@ export function createSim(): SimController {
     const a = Math.max(f.alpha, 0.03);
     const held = f.drag ? boxFor(f.drag.svg) : null;
 
-    // link force — heavier strokes want to sit closer and pull harder
+    // link force — heavier strokes want to sit closer and pull harder.
+    // A placed node is out of it entirely: the edge still draws to wherever
+    // it was left, it just no longer reels it in.
     for (const l of L) {
       const s0 = n[l.a];
       const t0 = n[l.b];
-      if (!s0 || !t0) continue;
+      if (!s0 || !t0 || s0.placed || t0.placed) continue;
       let dx = t0.x - s0.x;
       let dy = t0.y - s0.y;
       const d = Math.hypot(dx, dy) || 0.001;
@@ -425,7 +468,7 @@ export function createSim(): SimController {
       for (let j = i + 1; j < n.length; j++) {
         const p = n[i];
         const q = n[j];
-        if (p.cluster !== q.cluster) continue;
+        if (p.cluster !== q.cluster || p.placed || q.placed) continue;
         let dx = q.x - p.x;
         let dy = q.y - p.y;
         let d2 = dx * dx + dy * dy;
@@ -444,8 +487,11 @@ export function createSim(): SimController {
     }
 
     for (const p of n) {
-      // a slow breathing drift keeps it alive when nothing is being dragged
-      const idle = f.drag ? 0 : 1;
+      // A slow breathing drift keeps it alive when nothing is being dragged.
+      // Not for a placed node: the drift is a ~20px excursion over its 15s
+      // period, which is exactly the amount of wandering "it stays where I
+      // put it" rules out.
+      const idle = f.drag || p.placed ? 0 : 1;
       p.vx += Math.sin(t * 0.00042 + p.hx * 0.05) * 0.06 * idle;
       p.vy += Math.cos(t * 0.00037 + p.hy * 0.05) * 0.06 * idle;
       p.vx += (p.hx - p.x) * 0.012 * a;

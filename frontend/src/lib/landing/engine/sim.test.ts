@@ -347,6 +347,86 @@ describe('drag reach', () => {
   });
 });
 
+describe('placement', () => {
+  /** Grab node `i`, drag it to a screen point, and let go. */
+  function dropAt(i: number, x: number, y: number): void {
+    const start = screenOf(ringLocal(i));
+    rings[i].dispatchEvent(pointer('pointerdown', start.x, start.y));
+    window.dispatchEvent(pointer('pointermove', x, y));
+    frames(3);
+    window.dispatchEvent(pointer('pointerup', x, y));
+  }
+
+  it('leaves a dropped node exactly where it was put', () => {
+    dropAt(1, 300, 200);
+    const dropped = ringLocal(1);
+
+    // Long enough for the link spring (34-86px rest length), the anchor
+    // spring and a full breathing period to have reeled it back in.
+    frames(1200);
+
+    expect(ringLocal(1).x).toBeCloseTo(dropped.x, 3);
+    expect(ringLocal(1).y).toBeCloseTo(dropped.y, 3);
+  });
+
+  it('stays put where the page put it, scrolling with its section', () => {
+    dropAt(1, 300, 200);
+    const onScreen = screenOf(ringLocal(1));
+    frames(600);
+    scrollTo(350);
+    frames(20);
+    // Moved with the page by exactly the scroll, and not a px more.
+    expect(screenOf(ringLocal(1)).y).toBeCloseTo(onScreen.y - 350, 1);
+    expect(screenOf(ringLocal(1)).x).toBeCloseTo(onScreen.x, 1);
+  });
+
+  it('does not drag the rest of the cluster along with it', () => {
+    dropAt(1, 300, 200);
+    frames(600);
+
+    // Node 1 is hundreds of px away; node 2 stays home, inside the ~20px
+    // envelope its breathing drift traces. A placed node that still pulled
+    // would have towed it across the field.
+    const placed = ringLocal(1);
+    expect(Math.hypot(placed.x - 106, placed.y - 104)).toBeGreaterThan(200);
+    const stayed = ringLocal(2);
+    expect(Math.hypot(stayed.x - 30, stayed.y - 110)).toBeLessThan(30);
+  });
+
+  it('rejoins the cluster when dropped back where it started', () => {
+    const start = screenOf(ringLocal(1));
+    dropAt(1, 300, 200);
+    frames(60);
+    expect(Math.hypot(ringLocal(1).x - 106, ringLocal(1).y - 104)).toBeGreaterThan(200);
+
+    // Pick it up and put it back inside the rejoin radius.
+    const held = screenOf(ringLocal(1));
+    rings[1].dispatchEvent(pointer('pointerdown', held.x, held.y));
+    window.dispatchEvent(pointer('pointermove', start.x + 8, start.y + 8));
+    frames(3);
+    window.dispatchEvent(pointer('pointerup', start.x + 8, start.y + 8));
+    frames(400);
+
+    // Back in the simulation. Not at its old coordinates — the cluster's
+    // equilibrium is the link rest lengths, not the layout it was authored
+    // with — but back among its neighbours, and moving again.
+    const settled = ringLocal(1);
+    expect(Math.hypot(settled.x - 106, settled.y - 104)).toBeLessThan(80);
+    frames(200);
+    expect(Math.hypot(ringLocal(1).x - settled.x, ringLocal(1).y - settled.y)).toBeGreaterThan(0);
+  });
+
+  it('still draws its edges to wherever it was left', () => {
+    dropAt(1, 300, 200);
+    frames(120);
+    const line = svg.querySelector('line')!;
+    const at = ringLocal(1);
+    // The first line runs root -> node 1; its far end tracks the placed node.
+    expect(parseFloat(line.getAttribute('x2')!)).toBeCloseTo(at.x, 1);
+    expect(parseFloat(line.getAttribute('y2')!)).toBeCloseTo(at.y, 1);
+  });
+});
+
 describe('edge autoscroll', () => {
   it('leaves the page alone when the node is held away from the edges', () => {
     const start = screenOf(ringLocal(0));
