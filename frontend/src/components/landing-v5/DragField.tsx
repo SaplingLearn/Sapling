@@ -112,14 +112,27 @@ function Cluster({ c }: { c: DragCluster }) {
  *
  * Two shapes, and using the wrong one adds page height:
  *
- * - **Pinned acts** (`act-ingest`, `act-tutor`) hang a `height:100vh` layer
- *   out of a `position:sticky; height:0` box, so the field tracks the pinned
- *   stage without occupying space in it.
+ * - **Pinned acts** (`act-ingest`, `act-tutor`) put the field inside an
+ *   `absolute; inset:0` box — out of flow, so it occupies no space in the
+ *   act — and make the field itself `sticky; top:0; height:100vh`.
  * - **Static sections** (`faq`, `newsletter`, `cta`) use `absolute; inset:0`
  *   and hold the clusters directly. They must NOT get the 100vh layer: an
  *   absolutely positioned child still extends the document's scrollHeight,
  *   so on the last section it left a viewport's worth of dead scroll below
  *   the footer.
+ *
+ * **The `100vh` on the pinned shape is load-bearing, and it is not about
+ * size.** Every act is a `position:relative` section holding one
+ * `sticky; top:0; height:100vh` stage, and that height is what decides when
+ * the stage stops sticking: it releases once the section's bottom reaches a
+ * viewport-height above the fold. An earlier version of this component hung
+ * a `100vh` layer out of a `sticky; height:0` box instead. A zero-height
+ * sticky releases a whole viewport LATER, so for the last 100vh of every
+ * act the copy scrolled away while the clusters stayed welded to the top of
+ * the screen — measured at 882px of divergence through `act-tutor`. Matching
+ * the stage's geometry is what keeps the two moving as one, through the
+ * pin and through the release. If an act's stage ever stops being
+ * `sticky; top:0; height:100vh`, this has to follow it.
  */
 const PINNED = new Set<FieldSection>(['act-ingest', 'act-tutor']);
 
@@ -141,11 +154,13 @@ export function DragField({ section }: { section: FieldSection }) {
 
   return (
     <div
-      className="drag-field"
       aria-hidden="true"
-      style={{ position: 'sticky', top: 0, height: 0, zIndex: 2, pointerEvents: 'none', overflow: 'visible' }}
+      style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', overflow: 'visible' }}
     >
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '100vh', pointerEvents: 'none', overflow: 'visible' }}>
+      <div
+        className="drag-field"
+        style={{ position: 'sticky', top: 0, height: '100vh', pointerEvents: 'none', overflow: 'visible' }}
+      >
         {clusters}
       </div>
     </div>
