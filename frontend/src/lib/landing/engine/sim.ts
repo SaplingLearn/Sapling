@@ -16,9 +16,31 @@
 const OVERLAY_CLASS = 'drag-overlay';
 const SHELL_CLASS = 'drag-shell';
 
+/**
+ * How long after the last scroll event the sim stays frozen.
+ *
+ * While the page is scrolling the clusters must read as part of the page:
+ * `syncClusters()` keeps translating them with their section, and nothing
+ * else may move. Integrating during a scroll is what made a node visibly
+ * swim against the copy it belongs to — the idle breathing drift and the
+ * anchor spring are both a few px/frame, which is invisible on a still page
+ * and obvious as independent motion once everything around it is moving.
+ *
+ * A held node is exempt: it has to keep tracking the pointer.
+ */
+const SCROLL_QUIET_MS = 140;
+
+/**
+ * Autoscroll band at the top and bottom of the viewport, active only while a
+ * node is held. Dragging into it scrolls the page, which is what lets a node
+ * be carried out of its own section and across the whole document — without
+ * it, "drag down" ends at the bottom of the screen.
+ */
+const EDGE_BAND_PX = 110;
+/** Peak autoscroll speed in px/frame, reached at the very edge of the band. */
+const EDGE_SPEED_PX = 22;
+
 interface SimNode {
-  /** viewBox-derived bounds, so nodes can't be dragged out of their svg. */
-  bx: number; by: number; xMax: number; yMax: number;
   x: number; y: number;
   vx: number; vy: number;
   /** Non-null while pinned to the pointer. */
@@ -49,10 +71,19 @@ interface SimLink {
 interface ClusterAnchor {
   el: HTMLElement;
   field: HTMLElement;
-  /** The pinned act this field belongs to, if any — drives the scroll drift. */
-  sect: HTMLElement | null;
   left: number;
   top: number;
+}
+
+/**
+ * One cluster's svg mapped into viewport space, so a held node can be clamped
+ * to what the visitor can actually see.
+ */
+interface ClusterBox {
+  left: number; top: number;
+  /** px per viewBox unit. */
+  sx: number; sy: number;
+  vbx: number; vby: number;
 }
 
 interface SimGroup {
@@ -77,6 +108,8 @@ export function createSim(): SimController {
   let overlay: HTMLDivElement | null = null;
   const anchors: ClusterAnchor[] = [];
   const cleanups: (() => void)[] = [];
+  /** Timestamp of the last scroll event, on the same clock as the rAF `t`. */
+  let lastScrollAt = -Infinity;
 
   /**
    * Re-seats every cluster against its field's live rect, once per frame.
@@ -85,25 +118,33 @@ export function createSim(): SimController {
    * one transform write each, all on elements parked in a fixed overlay, so
    * nothing here can invalidate the page's layout.
    *
-   * Inside a pinned act the cluster also drifts up to 150px against the
-   * scroll, which keeps the field from looking welded to the copy while the
-   * section is held still.
+   * Strictly `field.rect + anchor`, with nothing added: the cluster is welded
+   * to the section it belongs to and translates with it 1:1. An earlier
+   * version drifted a cluster up to 150px against the scroll inside a pinned
+   * act, on the theory that it kept the field from looking stuck to the copy.
+   * It reads as the cluster sliding under the page instead — the one thing a
+   * decorative overlay must never do — so the drift is gone.
    */
   function syncClusters(): void {
     for (const a of anchors) {
       if (!a.field.isConnected) continue;
       const r = a.field.getBoundingClientRect();
-      let drift = 0;
-      if (a.sect) {
-        const sr = a.sect.getBoundingClientRect();
-        const span = Math.max(1, sr.height - window.innerHeight);
-        const p = Math.max(0, Math.min(1, -sr.top / span));
-        drift = -p * 150;
-      }
       a.el.style.transform =
         'translate3d(' + (r.left + a.left).toFixed(1) + 'px,' +
-        (r.top + a.top + drift).toFixed(1) + 'px,0)';
+        (r.top + a.top).toFixed(1) + 'px,0)';
     }
+  }
+
+  /** The held cluster's svg in viewport space, or null if it isn't laid out. */
+  function boxFor(svg: SVGSVGElement): ClusterBox | null {
+    const r = svg.getBoundingClientRect();
+    const vb = svg.viewBox?.baseVal;
+    if (!r.width || !r.height || !vb || !vb.width || !vb.height) return null;
+    return {
+      left: r.left, top: r.top,
+      sx: r.width / vb.width, sy: r.height / vb.height,
+      vbx: vb.x, vby: vb.y,
+    };
   }
 
   function ensureInit(root: HTMLElement): boolean {
@@ -152,13 +193,11 @@ export function createSim(): SimController {
       // is what makes a cluster track the section it belongs to. Baking a
       // one-shot absolute left/top here instead freezes every cluster at
       // whatever the layout happened to be on the first frame.
-      const pinned = getComputedStyle(field).position === 'sticky';
-      const sect = pinned ? field.closest('section') : null;
       clusters.forEach((cl) => {
         const fb = field.getBoundingClientRect();
         const b = cl.getBoundingClientRect();
         anchors.push({
-          el: cl, field, sect,
+          el: cl, field,
           left: b.left - fb.left,
           top: b.top - fb.top,
         });
@@ -185,10 +224,7 @@ export function createSim(): SimController {
           const r = parseFloat(ring.getAttribute('r') || '0');
           const glow = ring.previousElementSibling as SVGCircleElement;
           const label = ring.nextElementSibling as SVGTextElement;
-          const vbn = svg.viewBox.baseVal;
           nodes.push({
-            bx: vbn ? -vbn.x : 150, by: vbn ? -vbn.y : 400,
-            xMax: vbn ? vbn.x + vbn.width : 300, yMax: vbn ? vbn.y + vbn.height : 300,
             x: parseFloat(ring.getAttribute('cx') || '0'),
             y: parseFloat(ring.getAttribute('cy') || '0'),
             vx: 0, vy: 0, fx: null, fy: null, r,
@@ -232,6 +268,12 @@ export function createSim(): SimController {
     if (!built.length) return false;
     groups = built;
     bindDrag();
+
+    // Passive, and the only thing it does is stamp a time — the freeze itself
+    // is decided in `step()` so it stays on the frame clock.
+    const onScroll = () => { lastScrollAt = performance.now(); };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    cleanups.push(() => window.removeEventListener('scroll', onScroll));
     return true;
   }
 
@@ -311,10 +353,53 @@ export function createSim(): SimController {
     });
   }
 
-  function stepGroup(f: SimGroup, t: number): void {
+  /**
+   * Keeps the held node inside the viewport, and nothing else.
+   *
+   * This replaced a clamp to the svg's own viewBox, which put invisible walls
+   * ~900px sideways and ~1600px up/down of a cluster's home: a node dragged
+   * toward the far edge of a wide viewport simply stopped, and a node carried
+   * across the page (see `edgeAutoscroll`) stopped a screen and a half in.
+   * The viewBox is a paint box, not a play area, so it has no business
+   * bounding the drag.
+   *
+   * Only the pointer-pinned node is clamped. Free nodes are left unbounded on
+   * purpose — the anchor spring already pulls every one of them home, so a
+   * bound there can only do harm: it would snap a node the moment it was
+   * dropped somewhere the spring hadn't reached yet.
+   */
+  function clampHeldToViewport(p: SimNode, b: ClusterBox, vh: number): void {
+    const pad = p.r + 4;
+    const xLo = b.vbx + (pad - b.left) / b.sx;
+    const xHi = b.vbx + (window.innerWidth - pad - b.left) / b.sx;
+    const yLo = b.vby + (pad - b.top) / b.sy;
+    const yHi = b.vby + (vh - pad - b.top) / b.sy;
+    if (xLo <= xHi) p.x = Math.min(Math.max(p.x, xLo), xHi);
+    if (yLo <= yHi) p.y = Math.min(Math.max(p.y, yLo), yHi);
+  }
+
+  /**
+   * Scrolls the page while a node is dragged into the top or bottom band.
+   *
+   * Runs before `syncClusters()` so the rects read this frame already include
+   * the scroll — deferring it a frame shows up as the cluster juddering
+   * against the page.
+   */
+  function edgeAutoscroll(f: SimGroup, vh: number): void {
+    if (!f.drag) return;
+    const y = f.drag.cy;
+    let k = 0;
+    if (y < EDGE_BAND_PX) k = -(1 - y / EDGE_BAND_PX);
+    else if (y > vh - EDGE_BAND_PX) k = 1 - (vh - y) / EDGE_BAND_PX;
+    if (!k) return;
+    window.scrollBy(0, Math.max(-1, Math.min(1, k)) * EDGE_SPEED_PX);
+  }
+
+  function stepGroup(f: SimGroup, vh: number, t: number): void {
     const n = f.nodes;
     const L = f.links;
     const a = Math.max(f.alpha, 0.03);
+    const held = f.drag ? boxFor(f.drag.svg) : null;
 
     // link force — heavier strokes want to sit closer and pull harder
     for (const l of L) {
@@ -368,8 +453,7 @@ export function createSim(): SimController {
       if (p.fx != null) { p.x = p.fx; p.vx = 0; } else { p.vx *= 0.6; p.x += p.vx; }
       if (p.fy != null) { p.y = p.fy; p.vy = 0; } else { p.vy *= 0.6; p.y += p.vy; }
       if (!isFinite(p.x) || !isFinite(p.y)) { p.x = p.hx; p.y = p.hy; p.vx = 0; p.vy = 0; }
-      p.x = Math.max(-p.bx + p.r, Math.min(p.xMax - p.r, p.x));
-      p.y = Math.max(-p.by + p.r, Math.min(p.yMax - p.r, p.y));
+      if (held && f.drag && p === f.drag.n) clampHeldToViewport(p, held, vh);
       p.ring.setAttribute('cx', p.x.toFixed(1));
       p.ring.setAttribute('cy', p.y.toFixed(1));
       p.glow.setAttribute('cx', p.x.toFixed(1));
@@ -394,9 +478,15 @@ export function createSim(): SimController {
 
   function step(vh: number, t: number): void {
     if (!groups) return;
+    // before syncClusters(), so this frame's rects already carry the scroll
+    for (const f of groups) edgeAutoscroll(f, vh);
     // must run before the visibility test below — that test reads cluster
     // rects, which are only correct once this frame's transforms are applied
     syncClusters();
+    // The clock can run backwards by a frame here: a scroll event that lands
+    // after `t` was stamped makes this negative, which still reads as
+    // scrolling. That is the safe direction to be wrong in.
+    const scrolling = t - lastScrollAt < SCROLL_QUIET_MS;
     for (const f of groups) {
       let anyVisible = false;
       for (const cl of f.clusters) {
@@ -416,7 +506,11 @@ export function createSim(): SimController {
           f.drag.n.fy = (vb ? vb.y : 0) + (f.drag.cy - r.top) * ky;
         }
       }
-      if (anyVisible || f.drag) stepGroup(f, t);
+      // Frozen mid-scroll unless this group holds the pointer: `syncClusters()`
+      // has already translated it with its section, and any integration on top
+      // of that is motion the page didn't ask for.
+      if (scrolling && !f.drag) continue;
+      if (anyVisible || f.drag) stepGroup(f, vh, t);
     }
   }
 
@@ -425,6 +519,7 @@ export function createSim(): SimController {
     cleanups.length = 0;
     anchors.length = 0;
     groups = null;
+    lastScrollAt = -Infinity;
     if (overlay && overlay.parentElement) overlay.parentElement.removeChild(overlay);
     overlay = null;
   }
