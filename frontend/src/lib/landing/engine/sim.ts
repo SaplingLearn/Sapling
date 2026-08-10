@@ -581,7 +581,39 @@ export function createSim(): SimController {
       }
     }
 
+    // A held puck carries its concepts rigidly, at the offsets they had when
+    // it was grabbed — not on a spring.
+    //
+    // The link force alone cannot do this. It is a spring, so it only ever
+    // closes a fraction of the gap per frame, and a drag held in the edge
+    // band scrolls the page under the cluster for as long as the visitor
+    // keeps it there. The concepts are welded to their field and travel with
+    // the page, so the gap is refilled every frame faster than the spring
+    // drains it and grows without bound: 50/48/51px at rest to 224/439/188px
+    // through a single autoscroll, drawing one edge clean across the screen.
+    //
+    // Rigid also matches what the drop already does, so releasing the puck
+    // changes nothing about the picture. A concept dragged on its own is not
+    // in `carry` and still travels alone.
+    const ride = f.drag && f.drag.n.root ? f.drag : null;
+
     for (const p of n) {
+      const seat = ride ? ride.carry.find((c) => c.q === p) : undefined;
+      if (ride && seat) {
+        // The puck is earlier in `n` than its own concepts, so its position
+        // for this frame — clamp included — is already final.
+        p.x = ride.n.x + seat.dx;
+        p.y = ride.n.y + seat.dy;
+        p.vx = 0;
+        p.vy = 0;
+        p.ring.setAttribute('cx', p.x.toFixed(1));
+        p.ring.setAttribute('cy', p.y.toFixed(1));
+        p.glow.setAttribute('cx', p.x.toFixed(1));
+        p.glow.setAttribute('cy', p.y.toFixed(1));
+        p.label.setAttribute('x', p.x.toFixed(1));
+        p.label.setAttribute('y', (p.y + p.ly).toFixed(1));
+        continue;
+      }
       // A slow breathing drift keeps it alive when nothing is being dragged.
       // Not for a placed node: the drift is a ~20px excursion over its 15s
       // period, which is exactly the amount of wandering "it stays where I

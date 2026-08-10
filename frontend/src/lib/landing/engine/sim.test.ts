@@ -454,6 +454,51 @@ describe('placement', () => {
     expect(screenOf(ringLocal(1)).x).toBeCloseTo(onScreen.x, 1);
   });
 
+  it('holds the cluster together while the puck is still being dragged', () => {
+    // Not just at the drop. The link force that tows the concepts is a
+    // spring, and a drag that runs into the edge band scrolls the page under
+    // them for as long as it is held — so the spring never catches up and the
+    // gap grows without bound. Measured in a browser at 50/48/51px at rest
+    // going to 224/439/188px through one autoscroll, which is the edge
+    // stretched across the screen.
+    const root0 = ringLocal(0);
+    const sat0 = ringLocal(1);
+    const dx = sat0.x - root0.x;
+    const dy = sat0.y - root0.y;
+
+    const start = screenOf(root0);
+    rings[0].dispatchEvent(pointer('pointerdown', start.x, start.y));
+    window.dispatchEvent(pointer('pointermove', start.x + 260, start.y + 180));
+    frames(30);
+
+    // Still held — no pointerup anywhere in this test.
+    const root = ringLocal(0);
+    const sat = ringLocal(1);
+    expect(sat.x - root.x).toBeCloseTo(dx, 1);
+    expect(sat.y - root.y).toBeCloseTo(dy, 1);
+  });
+
+  it('holds the cluster together while the page scrolls under the drag', () => {
+    const root0 = ringLocal(0);
+    const sat0 = ringLocal(1);
+    const dx = sat0.x - root0.x;
+    const dy = sat0.y - root0.y;
+
+    const start = screenOf(root0);
+    rings[0].dispatchEvent(pointer('pointerdown', start.x, start.y));
+    window.dispatchEvent(pointer('pointermove', start.x + 60, start.y + 200));
+
+    // The autoscroll case: the page keeps moving while the node is held.
+    for (const y of [200, 500, 900, 1500]) {
+      scrollTo(y);
+      frames(20);
+      const root = ringLocal(0);
+      const sat = ringLocal(1);
+      expect(sat.x - root.x).toBeCloseTo(dx, 1);
+      expect(sat.y - root.y).toBeCloseTo(dy, 1);
+    }
+  });
+
   it('carries its satellites when the course puck is placed', () => {
     // Dropping the puck used to strand its concepts: the link force that
     // towed them during the drag is skipped once the puck is placed, so the
