@@ -11,8 +11,13 @@
  * different settling — swapping in d3 changes how it feels.
  *
  * One force is answerable to the visitor rather than the layout: a node
- * dropped away from where it started is *placed*, and a placed node is out of
- * the simulation for as long as it stays there. See `SimNode.placed`.
+ * dropped somewhere is *placed*, and holds that spot. See `SimNode.placed`.
+ *
+ * Above all of it sits `holdArms()`, a hard ceiling on every arm's length.
+ * The forces decide how a cluster settles and breathes; the ceiling decides
+ * what it can never do, which is stretch. That split is deliberate — a spring
+ * can only ever answer a gap with a fraction of the correction, so no amount
+ * of tuning makes one promise a maximum.
  *
  * Writes `cx`/`cy` straight onto the SVG elements. No React, no canvas.
  */
@@ -98,10 +103,17 @@ interface SimNode {
   hx: number; hy: number;
   /**
    * True once the visitor has dropped this node somewhere of their own
-   * choosing. A placed node holds that spot: it takes no part in its
-   * cluster's link, charge or collide forces, and stops breathing. Without
-   * that it is pulled straight back — the link spring alone wants its
-   * neighbours 34-86px away, which no amount of re-homing survives.
+   * choosing.
+   *
+   * A placed node holds that spot: it takes no recoil from the link, charge
+   * or collide forces, and breathes at a reduced amplitude around it. It is
+   * not removed from those forces — it still acts on its neighbours, which is
+   * what makes a cluster react to one of its nodes being moved.
+   *
+   * Nor is it immovable. `holdArms()` will drag a placed node to keep an arm
+   * within its length, because two nodes placed further apart than their arm
+   * is long is a request that cannot be met, and a stretched arm is the more
+   * visible wrong answer.
    */
   placed: boolean;
 }
@@ -112,6 +124,14 @@ interface SimLink {
   el: SVGLineElement;
   /** Normalised stroke weight, 0..1 — heavier links sit closer. */
   s: number;
+  /**
+   * The arm's length as the cluster was drawn, and the length it keeps.
+   *
+   * Both the spring's rest length and the hard ceiling `holdArms()` enforces.
+   * Taken from the authored geometry rather than computed from stroke weight
+   * so a cluster holds the shape it was designed with.
+   */
+  len: number;
 }
 
 /** A cluster's fixed offset inside its (often sticky) field. */
@@ -146,6 +166,10 @@ interface SimGroup {
   clusters: HTMLElement[];
   nodes: SimNode[];
   links: SimLink[];
+  /** Scratch for `holdArms()`: node positions before the solve. Preallocated
+   *  so the constraint stays allocation-free on the frame path. */
+  armX: number[];
+  armY: number[];
   alpha: number;
   target: number;
   drag: {
@@ -337,7 +361,11 @@ export function createSim(): SimController {
           };
           const a = near(parseFloat(ln.getAttribute('x1') || '0'), parseFloat(ln.getAttribute('y1') || '0'));
           const b = near(parseFloat(ln.getAttribute('x2') || '0'), parseFloat(ln.getAttribute('y2') || '0'));
-          links.push({ a, b, el: ln, s: (parseFloat(ln.getAttribute('stroke-width') || '0.5') - 0.5) / 1.2 });
+          links.push({
+            a, b, el: ln,
+            s: (parseFloat(ln.getAttribute('stroke-width') || '0.5') - 0.5) / 1.2,
+            len: Math.hypot(nodes[b].x - nodes[a].x, nodes[b].y - nodes[a].y) || 1,
+          });
         });
 
         // the cluster no longer floats as a unit; the sim moves its parts
@@ -348,7 +376,11 @@ export function createSim(): SimController {
       });
 
       nodes.forEach((n) => { n.hx = n.x; n.hy = n.y; });
-      built.push({ field, clusters, nodes, links, alpha: 1, target: 0, drag: null });
+      built.push({
+        field, clusters, nodes, links, alpha: 1, target: 0, drag: null,
+        armX: new Array<number>(nodes.length).fill(0),
+        armY: new Array<number>(nodes.length).fill(0),
+      });
     });
 
     if (!built.length) return false;
@@ -443,10 +475,25 @@ export function createSim(): SimController {
           // to rest length around wherever it landed instead of being frozen
           // into position.
           n.placed = true;
-          n.hx = n.x;
-          n.hy = n.y;
           n.vx = 0;
           n.vy = 0;
+
+          // The cluster's rest position is wherever the drag left it.
+          //
+          // Only this node is placed — its neighbours stay free, and keep
+          // their full sway — but every one of them is re-homed here. Without
+          // that their anchor springs still point at the layout the page
+          // loaded with, so the cluster walks back to it and, since the arms
+          // are hard-capped, hauls the node the visitor just placed along
+          // with it: measured dragging a dropped node 515px back across the
+          // field over 1200 frames. The arm ceiling and a home the cluster
+          // has already left cannot both be honoured; the drop is the more
+          // recent instruction.
+          for (const q of f.nodes) {
+            if (q.cluster !== n.cluster) continue;
+            q.hx = q.x;
+            q.hy = q.y;
+          }
 
           try { heldSvg.releasePointerCapture(e.pointerId); } catch { /* already released */ }
           heldSvg.style.cursor = 'grab';
@@ -525,6 +572,163 @@ export function createSim(): SimController {
     window.scrollBy(0, Math.max(-1, Math.min(1, k)) * EDGE_SPEED_PX);
   }
 
+/**
+ * Number of times the arm constraint is swept per frame.
+ *
+ * One pass fixes each arm in isolation and immediately breaks its neighbour,
+ * so a chain of them only converges over several: pulling the far end of
+ * `ME 218 - Free-body - Statics` has to travel two arms to reach the puck.
+ * Three sweeps left 0.23px on the table dragging a concept, and six left
+ * 0.51px with two placed nodes on one arm — invisible either way, but
+ * the ceiling is worth stating exactly. Twelve clears it with room to spare
+ * and costs nothing: a handful of links, no allocation, no DOM.
+ */
+const ARM_SWEEPS = 12;
+
+/**
+ * Where the link spring rests, as a fraction of the arm's hard ceiling.
+ *
+ * The two must not coincide. Resting the spring exactly at the ceiling leaves
+ * a dragged-out cluster pinned against it: every arm at its limit, every
+ * outward breath clipped by `holdArms()` the same frame, and the node sitting
+ * dead still however much it is breathing. Resting a little inside gives the
+ * sway somewhere to happen — the cluster settles off the ceiling after a drag
+ * and only touches it again when something is actually pulling.
+ */
+const ARM_REST = 0.88;
+
+/**
+ * How much of an arm correction is handed back to the node as velocity.
+ *
+ * `holdArms()` moves positions, and a position moved is a position with no
+ * memory: the node is where the arm needs it and travelling at whatever speed
+ * it had before, which is usually none. A cluster dragged that way arrives
+ * rather than swings — it snaps to the pointer in place, with no follow-
+ * through when the pointer stops. Feeding the correction back as velocity is
+ * what puts the momentum in, and is the standard closing step of a
+ * position-based solve.
+ *
+ * Well under 1: the full correction reads as overshoot, since the same
+ * displacement is then applied twice, once as position and again as the
+ * velocity that carries into the next frame.
+ */
+const ARM_MOMENTUM = 0.55;
+
+/**
+ * Share of an arm correction a placed node takes when the other end is free.
+ *
+ * Small, so a dropped node holds the spot it was left on: splitting the
+ * correction evenly hauled one 40px back toward its cluster the moment an arm
+ * was over length. Not zero, because an end that never moves cannot resolve
+ * an infeasible cluster and leaves an arm stretched instead.
+ */
+const PLACED_YIELD = 0.12;
+
+  /**
+   * Hard ceiling on every arm's length, applied to positions after the forces.
+   *
+   * The link spring cannot promise this and never could. It is a spring: it
+   * answers a gap with a fraction of the correction, so the faster a node is
+   * pulled the further the arm gives, and an arm under continuous load just
+   * keeps opening. Dragging a concept out of `ME 218` drew its two arms into
+   * a line right across the section.
+   *
+   * A position constraint promises it outright. After integrating, any arm
+   * longer than the length it was drawn at is shortened back to it, moving
+   * whichever ends are free to move. That is also what carries the cluster:
+   * pull one node and the arm reaches its limit, so its neighbour is dragged
+   * bodily along, and the sweep passes that on down the chain. It is the same
+   * for a concept as for the puck — the constraint has no idea which is which.
+   *
+   * Only ever shortens. An arm is free to fold up as far as the charge and
+   * collide forces allow, which is what leaves the sway intact.
+   */
+  function holdArms(f: SimGroup): void {
+    const n = f.nodes;
+    for (let i = 0; i < n.length; i++) { f.armX[i] = n[i].x; f.armY[i] = n[i].y; }
+    for (let sweep = 0; sweep < ARM_SWEEPS; sweep++) {
+      for (const l of f.links) {
+        const s0 = n[l.a];
+        const t0 = n[l.b];
+        if (!s0 || !t0) continue;
+        // Only the node under the pointer is immovable, and the whole
+        // correction falls on the other end.
+        //
+        // A placed node is NOT exempt, though it reads like it should be.
+        // Every drop places a node, so after a couple of drags most of a
+        // cluster is placed, and an arm between two of them was skipped
+        // entirely — nothing could ever shorten it. That is a stretched arm
+        // that never recovers: `CS 112 - Memoize` drawn clean across the FAQ
+        // while the rest of the cluster sat together at the far end.
+        //
+        // Two nodes placed further apart than their arm is long is a request
+        // that cannot be met. The arm wins: a placed node yields to it rather
+        // than holding a shape that was never drawable.
+        // How pinned each end is: held by the pointer beats placed by the
+        // visitor beats free. The correction falls on the LESS pinned end,
+        // entirely — split it and a dropped node gets hauled halfway back to
+        // its cluster by every arm that was over length at the drop, 40px off
+        // the spot it was left on. Equally pinned ends share it, which is
+        // what lets two placed nodes still be pulled together.
+        const rs = s0.fx != null ? 2 : (s0.placed ? 1 : 0);
+        const rt = t0.fx != null ? 2 : (t0.placed ? 1 : 0);
+        if (rs === 2 && rt === 2) continue;
+        const dx = t0.x - s0.x;
+        const dy = t0.y - s0.y;
+        const d = Math.hypot(dx, dy);
+        if (d <= l.len || d < 0.001) continue;
+        const over = (d - l.len) / d;
+        // The correction falls on the less pinned end. A held node never
+        // yields at all; a placed one RESISTS rather than refuses, taking
+        // PLACED_YIELD of it. Refusing outright looks right and is not:
+        // three nodes cannot always satisfy two arms — drag one far enough
+        // and the geometry is simply infeasible — and an end that never
+        // moves resolves that by leaving an arm stretched, which is the one
+        // outcome ruled out. Yielding a little settles it over a few sweeps
+        // while still holding the spot for every reachable arrangement.
+        let ws: number;
+        let wt: number;
+        if (rs === rt) {
+          ws = 0.5;
+          wt = 0.5;
+        } else {
+          const give = (rs > rt ? s0 : t0).fx != null ? 0 : PLACED_YIELD;
+          ws = rs > rt ? give : 1 - give;
+          wt = rs > rt ? 1 - give : give;
+        }
+        // A placed node's home comes with it. Leaving the home behind puts
+        // its anchor spring against the constraint every frame — the spring
+        // hauling it back to a spot the arm cannot reach — and the node sits
+        // shuddering between the two.
+        if (ws) {
+          s0.x += dx * over * ws;
+          s0.y += dy * over * ws;
+          if (s0.placed) { s0.hx += dx * over * ws; s0.hy += dy * over * ws; }
+        }
+        if (wt) {
+          t0.x -= dx * over * wt;
+          t0.y -= dy * over * wt;
+          if (t0.placed) { t0.hx -= dx * over * wt; t0.hy -= dy * over * wt; }
+        }
+      }
+    }
+
+    // Hand the solve's displacement back as velocity, so a node dragged by
+    // its arm carries on moving instead of arriving dead. See ARM_MOMENTUM.
+    //
+    // Free nodes only. The held one is pinned and about to have its velocity
+    // cleared anyway; a placed one is supposed to hold its spot, and follow-
+    // through is the opposite of that — handing it momentum walked a dropped
+    // node 32px off the point it was left on, well outside its sway. It still
+    // yields to the arm, it just does not coast afterwards.
+    for (let i = 0; i < n.length; i++) {
+      const p = n[i];
+      if (p.fx != null || p.placed) continue;
+      p.vx += (p.x - f.armX[i]) * ARM_MOMENTUM;
+      p.vy += (p.y - f.armY[i]) * ARM_MOMENTUM;
+    }
+  }
+
   function stepGroup(f: SimGroup, vh: number, t: number): void {
     const n = f.nodes;
     const L = f.links;
@@ -551,11 +755,13 @@ export function createSim(): SimController {
       let dx = t0.x - s0.x;
       let dy = t0.y - s0.y;
       const d = Math.hypot(dx, dy) || 0.001;
-      // Rest length and strength are the real graph's, verbatim:
-      // `components/graph/KnowledgeGraph2D.tsx` builds the same d3 force with
-      // `.distance(40 + (1 - strength) * 90)` and
-      // `.strength(0.15 + strength * 0.4)`.
-      const want = 40 + (1 - l.s) * 90;
+      // Strength is the real graph's, verbatim — `KnowledgeGraph2D` builds the
+      // same d3 force with `.strength(0.15 + strength * 0.4)`. The rest length
+      // is NOT: the graph derives one from stroke weight because it lays its
+      // own nodes out, while these clusters were drawn by hand and the arm
+      // lengths are the drawing. It rests just inside the ceiling `holdArms()`
+      // enforces, never at it — see ARM_REST.
+      const want = l.len * ARM_REST;
       const k = ((d - want) / d) * a * (0.15 + l.s * 0.4);
       dx *= k;
       dy *= k;
@@ -623,6 +829,11 @@ export function createSim(): SimController {
       if (p.fx != null) { p.x = p.fx; p.vx = 0; } else { p.vx *= 0.6; p.x += p.vx; }
       if (p.fy != null) { p.y = p.fy; p.vy = 0; } else { p.vy *= 0.6; p.y += p.vy; }
       if (!isFinite(p.x) || !isFinite(p.y)) { p.x = p.hx; p.y = p.hy; p.vx = 0; p.vy = 0; }
+    }
+
+    holdArms(f);
+
+    for (const p of n) {
       p.ring.setAttribute('cx', p.x.toFixed(1));
       p.ring.setAttribute('cy', p.y.toFixed(1));
       p.glow.setAttribute('cx', p.x.toFixed(1));

@@ -49,11 +49,23 @@ interface World {
 const SECTION_H = 3000;
 
 /**
- * The envelope a placed node's breathing stays inside. Measured at 3.7-7.7px
- * across these fixtures at `PLACED_SWAY = 0.33`; the bound is what separates
- * "alive where I left it" from "wandered off".
+ * The envelope a dropped node stays inside: its breathing, plus the small
+ * share of an arm correction it yields (`PLACED_YIELD`). Measured at 3.7-14px
+ * across these fixtures. The bound is what separates "alive where I left it"
+ * from "wandered off"; it is deliberately not zero, because a node that
+ * refused to yield at all would hold an arm stretched instead.
  */
-const SWAY_PX = 12;
+const SWAY_PX = 18;
+
+/**
+ * Transient headroom on the arm ceiling while a placed node is being towed.
+ *
+ * Only during a drag, and only when the resisting end is itself placed:
+ * `PLACED_YIELD` is deliberately small, so the solve walks such a node along
+ * over a few frames rather than in one. Measured peaking ~4px over. Every
+ * settled assertion uses the strict ceiling.
+ */
+const TOW_SLACK_PX = 12;
 
 let world: World;
 let root: HTMLDivElement;
@@ -650,5 +662,90 @@ describe('edge autoscroll', () => {
     window.dispatchEvent(pointer('pointerup', 700, VIEW_H - 10));
     frames(30);
     expect(world.scrollY).toBe(moved);
+  });
+});
+
+describe('arm length', () => {
+  /** Every rendered arm, measured off the <line> elements the sim writes. */
+  function armLengths(): number[] {
+    return Array.from(svg.querySelectorAll('line')).map((l) => Math.hypot(
+      parseFloat(l.getAttribute('x2') || '0') - parseFloat(l.getAttribute('x1') || '0'),
+      parseFloat(l.getAttribute('y2') || '0') - parseFloat(l.getAttribute('y1') || '0'),
+    ));
+  }
+
+  // Pulling a concept has to behave exactly like pulling the puck. It did
+  // not: the link spring answers a gap with a fraction of the correction, so
+  // an arm under continuous load keeps opening, and dragging a concept out of
+  // a cluster drew its arms into a line across the section. The constraint
+  // has no idea which node is which, so both cases are the same test.
+  it.each([['the puck', 0], ['a concept', 1]] as const)(
+    'holds every arm to its drawn length while %s is dragged',
+    (_what, ring) => {
+      // Read before any frame runs: still the authored geometry.
+      const drawn = armLengths();
+      expect(drawn.every((d) => d > 0)).toBe(true);
+
+      const start = screenOf(ringLocal(ring));
+      rings[ring].dispatchEvent(pointer('pointerdown', start.x, start.y));
+
+      // Yank it right across the viewport, sampling every frame — a fast drag
+      // is exactly what outran the spring.
+      for (let i = 1; i <= 40; i++) {
+        window.dispatchEvent(pointer('pointermove', start.x - 20 * i, start.y + 12 * i));
+        frames(1);
+        armLengths().forEach((len, k) => {
+          expect(len).toBeLessThanOrEqual(drawn[k] + 0.5);
+        });
+      }
+
+
+      // And it still holds once everything settles after the drop.
+      window.dispatchEvent(pointer('pointerup', start.x - 800, start.y + 480));
+      frames(300);
+      armLengths().forEach((len, k) => {
+        expect(len).toBeLessThanOrEqual(drawn[k] + 0.5);
+      });
+    },
+  );
+
+  it('holds arms between two already-placed nodes', () => {
+    // The case that survived the first ceiling. Every drop places a node, so
+    // after a couple of drags most of a cluster is placed — and an arm with a
+    // placed node at BOTH ends was skipped as immovable, which meant nothing
+    // could ever shorten it. Seen as `CS 112 - Memoize` drawn clean across
+    // the FAQ while the rest of that cluster sat together at the far end.
+    const drawn = armLengths();
+
+    // Place one node, then drag a second one a long way off.
+    const first = screenOf(ringLocal(2));
+    rings[2].dispatchEvent(pointer('pointerdown', first.x, first.y));
+    window.dispatchEvent(pointer('pointermove', first.x - 260, first.y - 160));
+    frames(5);
+    window.dispatchEvent(pointer('pointerup', first.x - 260, first.y - 160));
+    frames(30);
+
+    const second = screenOf(ringLocal(1));
+    rings[1].dispatchEvent(pointer('pointerdown', second.x, second.y));
+    for (let i = 1; i <= 30; i++) {
+      window.dispatchEvent(pointer('pointermove', second.x + 24 * i, second.y + 16 * i));
+      frames(1);
+      // A placed node resists rather than refuses (PLACED_YIELD), so towing
+      // one takes a few frames and the ceiling can be a hair over mid-drag.
+      // TOW_SLACK_PX is that transient; the steady state below is strict.
+      armLengths().forEach((len, k) => expect(len).toBeLessThanOrEqual(drawn[k] + TOW_SLACK_PX));
+    }
+    window.dispatchEvent(pointer('pointerup', second.x + 720, second.y + 480));
+    frames(300);
+    armLengths().forEach((len, k) => expect(len).toBeLessThanOrEqual(drawn[k] + 0.5));
+  });
+
+  it('lets an arm fold up, so the sway survives', () => {
+    // The ceiling only ever shortens. An arm that could not compress would
+    // pin the cluster into a rigid frame and take the life out of it.
+    const drawn = armLengths();
+    frames(600);
+    const now = armLengths();
+    expect(now.some((len, k) => len < drawn[k] - 1)).toBe(true);
   });
 });
