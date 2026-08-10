@@ -17,7 +17,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CARRY_MAX_LAG_PX, createSim, type SimController } from './sim';
+import { createSim, type SimController } from './sim';
 
 const VIEW_W = 1440;
 const VIEW_H = 900;
@@ -455,109 +455,96 @@ describe('placement', () => {
     expect(screenOf(ringLocal(1)).x).toBeCloseTo(onScreen.x, 1);
   });
 
-  it('holds the cluster together while the puck is still being dragged', () => {
-    // Not just at the drop. The link force that tows the concepts is a
-    // spring, and a drag that runs into the edge band scrolls the page under
-    // them for as long as it is held — so the spring never catches up and the
-    // gap grows without bound. Measured in a browser at 50/48/51px at rest
-    // going to 224/439/188px through one autoscroll, which is the edge
-    // stretched across the screen.
+  it('drags the whole cluster after a moved puck, not just the puck', () => {
+    // The cluster must react, and it must react through the forces rather
+    // than being carried at a fixed offset. Both halves matter: an earlier
+    // fix seated the concepts rigidly on the puck, which held the shape and
+    // killed every bit of life in it.
     const root0 = ringLocal(0);
     const sat0 = ringLocal(1);
-    const dx = sat0.x - root0.x;
-    const dy = sat0.y - root0.y;
 
     const start = screenOf(root0);
     rings[0].dispatchEvent(pointer('pointerdown', start.x, start.y));
-    // Mid-viewport, clear of the edge band, so nothing autoscrolls and the
-    // puck really does come to rest.
+    // Mid-viewport, clear of the edge band, so nothing autoscrolls.
     window.dispatchEvent(pointer('pointermove', start.x + 260, VIEW_H / 2));
 
-    // One frame in, mid-yank: it is towed, not welded, so it should still be
-    // behind where the puck wants it. A rigid offset would already be exact.
+    // One frame in: the concept is towed by a spring, so it trails rather
+    // than arriving. A fixed offset would already be exact.
     frames(1);
-    const lagged = ringLocal(1);
-    const lagRoot = ringLocal(0);
-    expect(Math.hypot(lagged.x - lagRoot.x - dx, lagged.y - lagRoot.y - dy))
-      .toBeGreaterThan(1);
+    const lag = Math.hypot(ringLocal(1).x - sat0.x, ringLocal(1).y - sat0.y);
+    expect(lag).toBeLessThan(Math.hypot(ringLocal(0).x - root0.x, ringLocal(0).y - root0.y));
 
-    // ...and once the puck stops, the pull closes it up again. A spring
-    // converges asymptotically, so this is "settled", not "identical".
-    frames(90);
+    // ...and it does follow: it ends up near the puck, at roughly the link's
+    // rest length, not stranded back where it started.
+    frames(240);
     const root = ringLocal(0);
     const sat = ringLocal(1);
-    expect(Math.hypot(sat.x - root.x - dx, sat.y - root.y - dy)).toBeLessThan(1);
+    expect(Math.hypot(sat.x - sat0.x, sat.y - sat0.y)).toBeGreaterThan(100);
+    expect(Math.hypot(sat.x - root.x, sat.y - root.y)).toBeLessThan(200);
   });
 
-  it('keeps the branch on its leash while the page scrolls under the drag', () => {
+  it('treats a scroll under the drag as a camera move, not a force', () => {
+    // The cluster is welded to its field and travels with the page, while the
+    // held node is pinned to a pointer that has not moved. Left uncancelled
+    // that difference lands on the link spring every frame and diverges:
+    // measured stretching 59/104/60px to 243/488/207px through one autoscroll.
     const root0 = ringLocal(0);
     const sat0 = ringLocal(1);
-    const dx = sat0.x - root0.x;
-    const dy = sat0.y - root0.y;
-    const rest = Math.hypot(dx, dy);
+    const rest = Math.hypot(sat0.x - root0.x, sat0.y - root0.y);
 
     const start = screenOf(root0);
     rings[0].dispatchEvent(pointer('pointerdown', start.x, start.y));
-    window.dispatchEvent(pointer('pointermove', start.x + 60, start.y + 200));
+    window.dispatchEvent(pointer('pointermove', start.x, start.y));
 
-    // The autoscroll case: the page keeps moving for as long as it is held,
-    // which is what used to let the gap grow without bound.
+    // Scroll a long way under a pointer that never moves. Nothing the visitor
+    // did should change the cluster's shape.
     for (const y of [200, 500, 900, 1500, 2600, 4000]) {
       scrollTo(y);
       frames(20);
-      const root = ringLocal(0);
-      const sat = ringLocal(1);
-      // Never further from the puck than its rest offset plus the leash.
-      expect(Math.hypot(sat.x - root.x, sat.y - root.y))
-        .toBeLessThanOrEqual(rest + CARRY_MAX_LAG_PX + 0.5);
+      const gap = Math.hypot(ringLocal(1).x - ringLocal(0).x, ringLocal(1).y - ringLocal(0).y);
+      expect(Math.abs(gap - rest)).toBeLessThan(20);
     }
-
-    // Held in the band it rides the leash for as long as the visitor keeps it
-    // there — that is the guarantee, and the settling half of the contract is
-    // covered by the test above, where the puck can actually come to rest.
   });
 
-
-  it('carries its satellites when the course puck is placed', () => {
-    // Dropping the puck used to strand its concepts: the link force that
-    // towed them during the drag is skipped once the puck is placed, so the
-    // only pull left was each satellite's own spring back to the original
-    // layout. They crawled home and left one long edge stretched across the
-    // field to a puck sitting somewhere else entirely.
-    const rootBefore = ringLocal(0);
+  it('gathers a cluster back around its placed puck', () => {
+    // Dropping the puck used to strand its concepts: the link force was
+    // skipped the moment either end was placed, so the only pull left was
+    // each concept's own spring back to the original layout. They crawled
+    // home and left one long edge stretched across the field. A placed node
+    // anchors the link now instead of leaving it, so the cluster re-forms
+    // around wherever the puck was put.
     const satBefore = ringLocal(1);
-    const gap = Math.hypot(satBefore.x - rootBefore.x, satBefore.y - rootBefore.y);
 
-    // Three frames of tow, i.e. a flick the link spring cannot keep up with.
-    // Freezing the concepts where they physically were at the drop strands
-    // them 613px behind; the grab-time offsets are what survive this.
     dropAt(0, 520, 380);
-    frames(1);
+    frames(400);
 
     const root = ringLocal(0);
     const sat = ringLocal(1);
-    // It travelled with the puck...
-    expect(Math.hypot(sat.x - satBefore.x, sat.y - satBefore.y)).toBeGreaterThan(200);
-    // ...holding the formation it had when the puck was grabbed.
-    expect(Math.hypot(sat.x - root.x, sat.y - root.y)).toBeCloseTo(gap, 1);
-
-    // And the whole cluster is placed, so none of it drifts afterwards.
-    frames(900);
-    expect(ringLocal(1).x).toBeCloseTo(sat.x, 3);
-    expect(ringLocal(1).y).toBeCloseTo(sat.y, 3);
+    // It came along...
+    expect(Math.hypot(sat.x - satBefore.x, sat.y - satBefore.y)).toBeGreaterThan(100);
+    // ...and sits at the link's rest length, not on a long branch. The real
+    // graph's distance is `40 + (1 - strength) * 90`, so 130px is its ceiling.
+    expect(Math.hypot(sat.x - root.x, sat.y - root.y)).toBeLessThan(200);
   });
 
-  it('does not drag the rest of the cluster along with it', () => {
-    dropAt(1, 300, 200);
-    frames(600);
+  it('moves the rest of the cluster when one concept is taken', () => {
+    // This replaces the opposite assertion. A placed node used to drop out of
+    // every force, so a concept could be parked anywhere and its cluster
+    // would not notice — which is the behaviour that reads as dead. Moving
+    // one node is supposed to move the whole cluster, exactly as it does in
+    // the real knowledge graph.
+    const rootBefore = ringLocal(0);
+    const otherBefore = ringLocal(2);
 
-    // Node 1 is hundreds of px away; node 2 stays home, inside the ~20px
-    // envelope its breathing drift traces. A placed node that still pulled
-    // would have towed it across the field.
-    const placed = ringLocal(1);
-    expect(Math.hypot(placed.x - 106, placed.y - 104)).toBeGreaterThan(200);
-    const stayed = ringLocal(2);
-    expect(Math.hypot(stayed.x - 30, stayed.y - 110)).toBeLessThan(30);
+    dropAt(1, 300, 200);
+    frames(400);
+
+    // The puck is linked to the concept that was taken, so it follows...
+    expect(Math.hypot(ringLocal(0).x - rootBefore.x, ringLocal(0).y - rootBefore.y))
+      .toBeGreaterThan(50);
+    // ...and the sibling, linked to the puck, comes with it.
+    expect(Math.hypot(ringLocal(2).x - otherBefore.x, ringLocal(2).y - otherBefore.y))
+      .toBeGreaterThan(50);
   });
 
   it('holds a short drag instead of springing back to its home', () => {

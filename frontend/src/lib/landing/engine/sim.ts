@@ -44,34 +44,6 @@ const EDGE_BAND_PX = 110;
 /** Peak autoscroll speed in px/frame, reached at the very edge of the band. */
 const EDGE_SPEED_PX = 22;
 
-/**
- * How a held puck's concepts follow it: a pull, with a leash.
- *
- * They are NOT seated at a fixed offset. The cluster should read as a thing
- * being towed — the concepts swing out behind the puck, then catch up and
- * settle when it stops — which a rigid offset kills entirely.
- *
- * The plain link force cannot do the towing. It is a spring, so it closes
- * only a fraction of the gap per frame, while a drag parked in the edge band
- * refills that gap every frame for as long as it is held: measured stretching
- * 50/48/51px to 224/439/188px through one autoscroll. `CARRY_PULL` is roughly
- * twenty times the link force's gain, which keeps up with a hand-speed drag on
- * its own.
- *
- * `CARRY_MAX_LAG_PX` is the leash, and it is what makes the guarantee. Under a
- * constant speed V the spring settles at a lag of `0.4V / (0.6 * CARRY_PULL)`
- * — about 2.2V — so hand speed trails ~20px and rides free, while autoscroll's
- * 22px/frame would reach ~49px and is held at 34px instead. The branch can
- * never draw further than that, however long the page scrolls.
- */
-const CARRY_PULL = 0.3;
-/** Velocity retained per frame, matching the sim's own 0.6 damping. */
-const CARRY_DAMP = 0.6;
-/**
- * The leash: furthest a concept may sit from where the puck wants it.
- * Exported so the test asserts the real bound rather than a copy of it.
- */
-export const CARRY_MAX_LAG_PX = 34;
 
 /*
  * There is deliberately no rejoin radius.
@@ -156,12 +128,8 @@ interface SimGroup {
   target: number;
   drag: {
     n: SimNode; id: number; svg: SVGSVGElement; cx: number; cy: number;
-    /**
-     * Where the puck and its concepts sat the moment it was grabbed, so the
-     * drop can rebuild that formation around wherever it lands. Empty unless
-     * a course puck is the node being dragged.
-     */
-    carry: { q: SimNode; dx: number; dy: number; vx: number; vy: number }[];
+    /** The held svg's screen top last frame, for scroll compensation. */
+    boxTop: number | null;
   } | null;
 }
 
@@ -398,17 +366,7 @@ export function createSim(): SimController {
           const n = f.nodes.find((x) => x.ring === ring);
           if (!n) return;
           const p = local(e);
-          // Snapshot the cluster's shape now, not at the drop. The link force
-          // tows the concepts along during the drag, but it is a spring and a
-          // fast flick outruns it — leaving them strung out behind the puck,
-          // which is the shape a drop would otherwise freeze. Offsets taken
-          // here are the settled formation the visitor actually grabbed.
-          const carry = n.root
-            ? f.nodes
-              .filter((q) => q !== n && q.cluster === n.cluster)
-              .map((q) => ({ q, dx: q.x - n.x, dy: q.y - n.y, vx: 0, vy: 0 }))
-            : [];
-          f.drag = { n, id: e.pointerId, svg, cx: e.clientX, cy: e.clientY, carry };
+          f.drag = { n, id: e.pointerId, svg, cx: e.clientX, cy: e.clientY, boxTop: null };
           n.fx = p.x;
           n.fy = p.y;
           f.target = 0.3;
@@ -433,7 +391,7 @@ export function createSim(): SimController {
           // window for every cluster, so the one that runs first is not
           // necessarily the one holding the pointer, and converting the drop
           // through the wrong svg puts the node somewhere else entirely.
-          const { n, svg: heldSvg, carry } = f.drag;
+          const { n, svg: heldSvg } = f.drag;
           n.ring.setAttribute('stroke-opacity', '0.75');
           n.fx = null;
           n.fy = null;
@@ -455,40 +413,16 @@ export function createSim(): SimController {
           // The drop is the point of the whole interaction: a node left
           // somewhere stays there, however short the drag was.
           //
-          // The puck carries its concepts. The link force tows them while the
-          // drag is live, then stops the instant the puck is placed — so
-          // without this their springs walked them back to the original
-          // layout and left one edge stretched across the field to a puck
-          // that had moved on. A satellite dragged on its own still moves
-          // alone; only the puck takes the cluster with it.
-          //
-          // Rebuilt from the grab-time offsets, NOT from the authored layout
-          // and NOT from wherever the tow left them.
-          //
-          // The authored svg is the wrong picture: the link force's 34-86px
-          // rest lengths settle a cluster tighter than it was drawn — 48/48/
-          // 50px on screen against 67/130/64px authored — so re-seating the
-          // concepts on their home coordinates pops the cluster open at the
-          // instant of the drop. Their live positions are the wrong picture
-          // too, because a flick outruns the tow.
-          //
-          // Placing them is what makes it hold. An unplaced concept is still
-          // in the charge and collide loops with its siblings but has lost
-          // the link force that used to balance them, so it creeps outward —
-          // measured drifting 74/113/72px to 96/135/120px over 5s. Placed,
-          // the whole cluster is out of the simulation and simply stays.
+          // ONLY this node. Placing its whole cluster held the shape, but it
+          // took every one of them out of the simulation, so after a single
+          // drag the field was dead — no sway, no reaction to anything. The
+          // cluster keeps its shape now because a placed node still anchors
+          // the link force (see `stepGroup`), so its concepts are drawn back
+          // to rest length around wherever it landed instead of being frozen
+          // into position.
           n.placed = true;
           n.hx = n.x;
           n.hy = n.y;
-          for (const c of carry) {
-            c.q.placed = true;
-            c.q.x = n.x + c.dx;
-            c.q.y = n.y + c.dy;
-            c.q.hx = c.q.x;
-            c.q.hy = c.q.y;
-            c.q.vx = 0;
-            c.q.vy = 0;
-          }
           n.vx = 0;
           n.vy = 0;
 
@@ -520,44 +454,36 @@ export function createSim(): SimController {
   }
 
   /**
-   * Keeps the held node inside the viewport, and nothing else.
+   * Cancel the page's scroll out of the held cluster's coordinates.
    *
-   * This replaced a clamp to the svg's own viewBox, which put invisible walls
-   * ~900px sideways and ~1600px up/down of a cluster's home: a node dragged
-   * toward the far edge of a wide viewport simply stopped, and a node carried
-   * across the page (see `edgeAutoscroll`) stopped a screen and a half in.
-   * The viewBox is a paint box, not a play area, so it has no business
-   * bounding the drag.
+   * A scroll is a camera move and must not read as a force. The cluster is
+   * welded to its field, so it travels with the page, while the held node is
+   * pinned to a pointer that may not have moved at all — and the difference
+   * lands on the link spring as relative motion the visitor never made. The
+   * edge-band autoscroll pushes 22px of it per frame, every frame, for as
+   * long as the node is held there: the spring does not settle at a lag, it
+   * diverges. Measured stretching a cluster from 59/104/60px to 243/488/207px
+   * over one continuous autoscroll, which is the long branch itself.
    *
-   * Only the pointer-pinned node is clamped. Free nodes are left unbounded on
-   * purpose — the anchor spring already pulls every one of them home, so a
-   * bound there can only do harm: it would snap a node the moment it was
-   * dropped somewhere the spring hadn't reached yet.
+   * The delta is read from the cluster's own screen movement rather than from
+   * the scroll call, so it is right whoever did the scrolling and whatever
+   * order the frame ran in. With it cancelled, the simulation answers only for
+   * motion made with the pointer — which is all the real graph ever sees.
    */
-  /**
-   * Re-pin the held node under the pointer, in this frame's coordinates.
-   *
-   * This replaces a clamp that held the dragged node inside the viewport.
-   * The clamp was there for a real reason — `fx`/`fy` are local svg coords
-   * written only on pointermove, so a page that scrolls under a held node
-   * (the edge-band autoscroll does exactly that, with the pointer parked)
-   * leaves it pinned to coordinates that slide away underneath the cursor.
-   * The clamp dragged it back onto the screen, and in doing so put a wall
-   * around where a node could be taken.
-   *
-   * Recomputing from the live client position is what the real graph does —
-   * `KnowledgeGraph2D` maps `clientX/clientY` back through its current view
-   * transform on every move — and it needs no wall: the node is wherever the
-   * pointer is, and the pointer cannot leave the window. Scroll the document
-   * under it and it stays under the cursor, which is what the clamp was
-   * approximating, without bounding the drag.
-   */
-  function repinHeld(f: SimGroup): void {
+  function compensateScroll(f: SimGroup): void {
     if (!f.drag) return;
     const b = boxFor(f.drag.svg);
     if (!b) return;
-    f.drag.n.fx = b.vbx + (f.drag.cx - b.left) / b.sx;
-    f.drag.n.fy = b.vby + (f.drag.cy - b.top) / b.sy;
+    const prev = f.drag.boxTop;
+    f.drag.boxTop = b.top;
+    if (prev == null) return;
+    const d = (prev - b.top) / b.sy;
+    if (!d) return;
+    for (const q of f.nodes) {
+      if (q === f.drag.n || q.cluster !== f.drag.n.cluster) continue;
+      q.y += d;
+      q.hy += d;
+    }
   }
 
   /**
@@ -581,34 +507,43 @@ export function createSim(): SimController {
     const n = f.nodes;
     const L = f.links;
     const a = Math.max(f.alpha, 0.03);
-    // Before any force runs: the held node belongs under the pointer, in this
-    // frame's coordinates, however far the page has scrolled since the last
-    // pointermove.
-    repinHeld(f);
+    // Before any force runs: take the page's own scroll back out of the held
+    // cluster, so the springs only see what the pointer did.
+    compensateScroll(f);
 
     // link force — heavier strokes want to sit closer and pull harder.
-    // A placed node is out of it entirely: the edge still draws to wherever
-    // it was left, it just no longer reels it in.
+    //
+    // A placed node ANCHORS rather than dropping out: it still pulls on the
+    // other end, it just never moves itself. That is the whole reason a
+    // cluster reacts to one of its nodes being moved — drag a concept and the
+    // puck and its siblings swing after it, drop the puck and its concepts
+    // gather back to rest length around wherever it landed. Skipping the link
+    // entirely, as this used to, is what left a placed node trailing a long
+    // dead edge and the rest of the cluster sitting perfectly still.
     for (const l of L) {
       const s0 = n[l.a];
       const t0 = n[l.b];
-      if (!s0 || !t0 || s0.placed || t0.placed) continue;
+      if (!s0 || !t0) continue;
+      // Two anchors have nothing to say to each other.
+      if (s0.placed && t0.placed) continue;
       let dx = t0.x - s0.x;
       let dy = t0.y - s0.y;
       const d = Math.hypot(dx, dy) || 0.001;
-      // Rest length and strength are the real graph's, verbatim — see the
-      // note on CARRY_PULL and `components/graph/KnowledgeGraph2D.tsx`, which
-      // builds the same d3 force with `.distance(40 + (1 - strength) * 90)`
-      // and `.strength(0.15 + strength * 0.4)`.
+      // Rest length and strength are the real graph's, verbatim:
+      // `components/graph/KnowledgeGraph2D.tsx` builds the same d3 force with
+      // `.distance(40 + (1 - strength) * 90)` and
+      // `.strength(0.15 + strength * 0.4)`.
       const want = 40 + (1 - l.s) * 90;
       const k = ((d - want) / d) * a * (0.15 + l.s * 0.4);
       dx *= k;
       dy *= k;
-      // split the correction by inverse radius, so big nodes move less
-      const ws = t0.r / (s0.r + t0.r);
-      const wt = s0.r / (s0.r + t0.r);
-      t0.vx -= dx * wt; t0.vy -= dy * wt;
-      s0.vx += dx * ws; s0.vy += dy * ws;
+      // Split the correction by inverse radius, so big nodes move less —
+      // except against an anchor, which absorbs none of it, so the free end
+      // takes the whole correction and actually closes the gap.
+      const ws = t0.placed ? 1 : t0.r / (s0.r + t0.r);
+      const wt = s0.placed ? 1 : s0.r / (s0.r + t0.r);
+      if (!t0.placed) { t0.vx -= dx * wt; t0.vy -= dy * wt; }
+      if (!s0.placed) { s0.vx += dx * ws; s0.vy += dy * ws; }
     }
 
     // charge + collide, within a cluster only
@@ -616,72 +551,36 @@ export function createSim(): SimController {
       for (let j = i + 1; j < n.length; j++) {
         const p = n[i];
         const q = n[j];
-        if (p.cluster !== q.cluster || p.placed || q.placed) continue;
+        // Same anchor rule as the link force: a placed node still pushes on
+        // its neighbours, it just does not take the recoil.
+        if (p.cluster !== q.cluster || (p.placed && q.placed)) continue;
         let dx = q.x - p.x;
         let dy = q.y - p.y;
         let d2 = dx * dx + dy * dy;
         if (d2 < 1) { d2 = 1; dx = 0.6; dy = 0.6; }
         const f2 = ((p.charge + q.charge) * 0.5 * a) / d2;
-        q.vx += dx * f2; q.vy += dy * f2;
-        p.vx -= dx * f2; p.vy -= dy * f2;
+        if (!q.placed) { q.vx += dx * f2; q.vy += dy * f2; }
+        if (!p.placed) { p.vx -= dx * f2; p.vy -= dy * f2; }
         const d = Math.sqrt(d2);
         const min = p.collide + q.collide;
         if (d < min) {
           const push = ((min - d) / d) * 0.35;
-          q.vx += dx * push; q.vy += dy * push;
-          p.vx -= dx * push; p.vy -= dy * push;
+          if (!q.placed) { q.vx += dx * push; q.vy += dy * push; }
+          if (!p.placed) { p.vx -= dx * push; p.vy -= dy * push; }
         }
       }
     }
 
-    // A held puck tows its concepts: they chase the offsets they had when it
-    // was grabbed, on a spring stiff enough to keep up, and on a leash so the
-    // branch can never draw out. See CARRY_PULL above for why the ordinary
-    // link force cannot do this on its own.
-    const ride = f.drag && f.drag.n.root ? f.drag : null;
-
     for (const p of n) {
-      const seat = ride ? ride.carry.find((c) => c.q === p) : undefined;
-      if (ride && seat) {
-        // The puck is earlier in `n` than its own concepts, so its position
-        // for this frame — clamp included — is already final.
-        const tx = ride.n.x + seat.dx;
-        const ty = ride.n.y + seat.dy;
-        // The tow keeps its own velocity, deliberately. `p.vx` at this point
-        // already carries this frame's charge and collide impulses from the
-        // concept's siblings, and inheriting them puts the spring in a tug of
-        // war it only half wins: the lag settles at 6-12px and creeps instead
-        // of closing. Integrating separately, and clearing `p.vx` so nothing
-        // downstream inherits a stale tow, leaves a clean pull.
-        seat.vx = (seat.vx + (tx - p.x) * CARRY_PULL) * CARRY_DAMP;
-        seat.vy = (seat.vy + (ty - p.y) * CARRY_PULL) * CARRY_DAMP;
-        p.x += seat.vx;
-        p.y += seat.vy;
-        p.vx = 0;
-        p.vy = 0;
-        // The leash. Everything above is what it looks like; this is what
-        // stops a long enough scroll from turning the lag into a branch.
-        const lx = p.x - tx;
-        const ly2 = p.y - ty;
-        const lag = Math.hypot(lx, ly2);
-        if (lag > CARRY_MAX_LAG_PX) {
-          const k = CARRY_MAX_LAG_PX / lag;
-          p.x = tx + lx * k;
-          p.y = ty + ly2 * k;
-        }
-        p.ring.setAttribute('cx', p.x.toFixed(1));
-        p.ring.setAttribute('cy', p.y.toFixed(1));
-        p.glow.setAttribute('cx', p.x.toFixed(1));
-        p.glow.setAttribute('cy', p.y.toFixed(1));
-        p.label.setAttribute('x', p.x.toFixed(1));
-        p.label.setAttribute('y', (p.y + p.ly).toFixed(1));
-        continue;
-      }
-      // A slow breathing drift keeps it alive when nothing is being dragged.
+      // A slow breathing drift keeps every free node alive — the sway.
+      //
       // Not for a placed node: the drift is a ~20px excursion over its 15s
       // period, which is exactly the amount of wandering "it stays where I
-      // put it" rules out.
-      const idle = f.drag || p.placed ? 0 : 1;
+      // put it" rules out. It IS for the rest of a cluster while one of its
+      // nodes is being dragged; suppressing it there froze the whole field
+      // for the length of every interaction, which is the one moment the
+      // thing is being looked at closely.
+      const idle = p.placed || (f.drag && p === f.drag.n) ? 0 : 1;
       p.vx += Math.sin(t * 0.00042 + p.hx * 0.05) * 0.06 * idle;
       p.vy += Math.cos(t * 0.00037 + p.hy * 0.05) * 0.06 * idle;
       p.vx += (p.hx - p.x) * 0.012 * a;
