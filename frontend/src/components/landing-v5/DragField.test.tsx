@@ -24,6 +24,7 @@ import { describe, expect, it } from 'vitest';
 import { ActIngest } from './ActIngest';
 import { ActTutor } from './ActTutor';
 import { DragField } from './DragField';
+import { Faq } from './Faq';
 
 /** The act's stage: the sticky child of the section that carries the copy. */
 function stageOf(section: HTMLElement): HTMLElement {
@@ -102,6 +103,34 @@ describe('static sections', () => {
       expect(field.style.height).toBe('');
     },
   );
+
+  it('welds faq\'s clusters to the copy that pins inside it', () => {
+    const { container } = render(<DragField section="faq" />);
+    // The section's own rect is the right box for PLACING these clusters and
+    // the wrong one for MOVING them: the question column pins 375px inside a
+    // section that never stops scrolling. Naming it is what closes the gap.
+    expect(fieldOf(container).dataset.dragTrack).toBe('[data-drag-anchor="faq"]');
+  });
+
+  it.each(['newsletter', 'cta'] as const)(
+    'leaves %s untracked, since nothing pins inside it',
+    (section) => {
+      const { container } = render(<DragField section={section} />);
+      expect(fieldOf(container).dataset.dragTrack).toBeUndefined();
+    },
+  );
+
+  it('finds exactly one sticky column behind faq\'s selector', () => {
+    // The coupling this file exists to catch, in its static-section form:
+    // DragField names a selector, Faq owns the element, and nothing else
+    // fails if the two drift apart.
+    const { container } = render(<Faq openFaq={-1} onToggle={() => {}} />);
+    const tracked = container.querySelectorAll<HTMLElement>('[data-drag-anchor="faq"]');
+    expect(tracked).toHaveLength(1);
+    expect(tracked[0].style.position).toBe('sticky');
+    // A static tracked element would make the whole mechanism a no-op.
+    expect(tracked[0].style.top).toBe('110px');
+  });
 
   it('still hands every cluster to the sim', () => {
     const { container } = render(<DragField section="faq" />);

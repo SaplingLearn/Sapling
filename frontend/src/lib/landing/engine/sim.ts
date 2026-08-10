@@ -44,19 +44,17 @@ const EDGE_BAND_PX = 110;
 /** Peak autoscroll speed in px/frame, reached at the very edge of the band. */
 const EDGE_SPEED_PX = 22;
 
-/**
- * Drop a node back within this of its home and it rejoins its cluster instead
- * of being left where it fell — the way out of a placement, so the toy stays
- * reversible.
+/*
+ * There is deliberately no rejoin radius.
  *
- * Measured against the breathing drift rather than picked: a free node sits
- * up to ~20px off its home at any moment (19.3px worst case over a full 15s
- * period, across the six clusters on screen at once), so the visitor aiming
- * at where the node *looks* like it belongs is already that far out before
- * their own aim is counted. 40px left ~20px of slop and missed in practice;
- * this leaves ~50px.
+ * A drop used to count as "put back" if it landed within 70px of the node's
+ * home, which re-floated it: the spring retargeted to the original spot and
+ * the ambient breathing restarted. That made every short drag spring back —
+ * measured at 14px of travel still climbing 4s after a 40px drag, against 0px
+ * for a 90px one — and short drags are most of them. A drop now always places
+ * the node, at any distance. The cost is that there is no way to put a node
+ * back in its cluster short of a reload; that is the intended trade.
  */
-const REJOIN_PX = 70;
 
 interface SimNode {
   x: number; y: number;
@@ -83,8 +81,6 @@ interface SimNode {
    * neighbours 34-86px away, which no amount of re-homing survives.
    */
   placed: boolean;
-  /** The layout's original home, so a node can be dropped back into it. */
-  ox: number; oy: number;
 }
 
 interface SimLink {
@@ -101,6 +97,14 @@ interface ClusterAnchor {
   field: HTMLElement;
   left: number;
   top: number;
+  /**
+   * The copy this cluster travels with, when that copy pins independently of
+   * the field. Null for the ordinary case, where the field's own rect already
+   * carries every movement the cluster needs.
+   */
+  track: HTMLElement | null;
+  /** `track.top - field.top` at build time, i.e. before either has pinned. */
+  trackTop: number;
 }
 
 /**
@@ -152,14 +156,29 @@ export function createSim(): SimController {
    * act, on the theory that it kept the field from looking stuck to the copy.
    * It reads as the cluster sliding under the page instead — the one thing a
    * decorative overlay must never do — so the drift is gone.
+   *
+   * The one sanctioned addition is `track`, and it exists to preserve that
+   * same 1:1 rule rather than break it. A field's rect only speaks for its
+   * copy while the two move together; where the copy pins on its own — the
+   * FAQ's sticky question column against a static section — the field keeps
+   * scrolling and the clusters slide out from under the words. Measured at
+   * 374px through `faq`, which is exactly that column's sticky travel
+   * (`grid 733px - column 358px`). Re-adding the tracked element's own travel
+   * puts the cluster back on the copy for every frame of the pin and the
+   * release. A field with no tracked copy is untouched by this.
    */
   function syncClusters(): void {
     for (const a of anchors) {
       if (!a.field.isConnected) continue;
       const r = a.field.getBoundingClientRect();
+      // How far the copy has pinned away from its field since build time.
+      let dy = 0;
+      if (a.track?.isConnected) {
+        dy = a.track.getBoundingClientRect().top - r.top - a.trackTop;
+      }
       a.el.style.transform =
         'translate3d(' + (r.left + a.left).toFixed(1) + 'px,' +
-        (r.top + a.top).toFixed(1) + 'px,0)';
+        (r.top + a.top + dy).toFixed(1) + 'px,0)';
     }
   }
 
@@ -221,6 +240,13 @@ export function createSim(): SimController {
       // is what makes a cluster track the section it belongs to. Baking a
       // one-shot absolute left/top here instead freezes every cluster at
       // whatever the layout happened to be on the first frame.
+      // Opt-in, and resolved once: the copy this field's clusters belong to,
+      // when it pins independently of the field. See `syncClusters()`.
+      const sel = field.dataset.dragTrack;
+      const track = sel
+        ? (field.closest('section') ?? document).querySelector<HTMLElement>(sel)
+        : null;
+
       clusters.forEach((cl) => {
         const fb = field.getBoundingClientRect();
         const b = cl.getBoundingClientRect();
@@ -228,6 +254,8 @@ export function createSim(): SimController {
           el: cl, field,
           left: b.left - fb.left,
           top: b.top - fb.top,
+          track,
+          trackTop: track ? track.getBoundingClientRect().top - fb.top : 0,
         });
         cl.style.animation = 'none';
         cl.style.position = 'absolute';
@@ -263,7 +291,7 @@ export function createSim(): SimController {
             ring, glow, label,
             ly: parseFloat(label.getAttribute('y') || '0') - parseFloat(ring.getAttribute('cy') || '0'),
             hx: 0, hy: 0,
-            placed: false, ox: 0, oy: 0,
+            placed: false,
           });
         });
 
@@ -290,7 +318,7 @@ export function createSim(): SimController {
         svg.style.overflow = 'visible';
       });
 
-      nodes.forEach((n) => { n.hx = n.x; n.hy = n.y; n.ox = n.x; n.oy = n.y; });
+      nodes.forEach((n) => { n.hx = n.x; n.hy = n.y; });
       built.push({ field, clusters, nodes, links, alpha: 1, target: 0, drag: null });
     });
 
@@ -361,14 +389,14 @@ export function createSim(): SimController {
           n.fx = null;
           n.fy = null;
 
-          // Land on the pointer before deciding anything.
+          // Land on the pointer before placing.
           //
           // The sim samples the cursor once per frame, so a drag that ends
           // between frames leaves the node wherever the last frame put it —
-          // which on a fast throw is a fraction of the way along, and can be
-          // inside the rejoin radius the visitor plainly dragged it out of.
-          // Measured at 22% of the distance on a 20-step drag released
-          // immediately. The pointerup carries the final position; use it.
+          // on a fast throw a fraction of the way along, measured at 22% of
+          // the distance on a 20-step drag released immediately. The node is
+          // placed exactly where it is dropped, so that shortfall would be
+          // permanent. The pointerup carries the final position; use it.
           const box = boxFor(heldSvg);
           if (box) {
             n.x = box.vbx + (e.clientX - box.left) / box.sx;
@@ -377,12 +405,10 @@ export function createSim(): SimController {
           }
 
           // The drop is the point of the whole interaction: a node left
-          // somewhere stays there. Dropped back where it came from, it
-          // rejoins the cluster instead, which is the only way back.
-          const home = Math.hypot(n.x - n.ox, n.y - n.oy) <= REJOIN_PX;
-          n.placed = !home;
-          n.hx = home ? n.ox : n.x;
-          n.hy = home ? n.oy : n.y;
+          // somewhere stays there, however short the drag was.
+          n.placed = true;
+          n.hx = n.x;
+          n.hy = n.y;
           n.vx = 0;
           n.vy = 0;
 

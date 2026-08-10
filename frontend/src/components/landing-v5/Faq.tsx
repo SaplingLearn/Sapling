@@ -52,7 +52,12 @@ export function Faq({
       </div>
 
       <div style={{ maxWidth: 1150, margin: '0 auto', display: 'grid', gridTemplateColumns: '4fr 7fr', gap: 72, alignItems: 'start' }}>
-        <div data-reveal="1" style={{ position: 'sticky', top: 110 }}>
+        {/*
+          Sticky, so it holds while the accordion scrolls past — and named,
+          because `DragField`'s `TRACKS` welds CS 112 and PH 150 to this
+          column. If it stops being sticky, drop the entry there too.
+        */}
+        <div data-reveal="1" data-drag-anchor="faq" style={{ position: 'sticky', top: 110 }}>
           <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
             Honest answers
           </span>

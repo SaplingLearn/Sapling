@@ -238,6 +238,80 @@ describe('cluster anchoring', () => {
       expect(clusterOrigin().y).toBeCloseTo(pinnedAt.y, 1);
     }
   });
+
+  describe('copy that pins inside a static field', () => {
+    // The FAQ shape: the section (and its field) scroll all the way through,
+    // but the question column is `sticky; top:110` and holds for
+    // `grid - column` = 375px. The field's rect cannot see that, so CS 112 and
+    // PH 150 slid 374px out from under the words. `data-drag-track` names the
+    // column so the sim can add its travel back.
+    const TRACK_OFFSET = 120;   // the column starts one section-padding down
+    const STICKY_TOP = 110;
+    const TRAVEL = 375;
+
+    /** A real sticky child: free, then pinned, then free again. */
+    function trackTop(): number {
+      const natural = FIELD_DOC_TOP + TRACK_OFFSET - world.scrollY;
+      if (natural >= STICKY_TOP) return natural;
+      return Math.max(natural, Math.min(STICKY_TOP, natural + TRAVEL));
+    }
+
+    let track: HTMLElement;
+
+    beforeEach(() => {
+      sim.destroy();
+      root.remove();
+      world = { scrollY: 0, fieldSticky: false };
+      buildFixture();
+
+      track = document.createElement('div');
+      track.setAttribute('data-drag-anchor', 'faq');
+      rect(track, () => ({ left: 0, top: trackTop(), width: 392, height: 358 }));
+      section.appendChild(track);
+      field.dataset.dragTrack = '[data-drag-anchor="faq"]';
+
+      sim = createSim();
+      expect(sim.ensureInit(root)).toBe(true);
+    });
+
+    it('holds the cluster still for exactly as long as the copy pins', () => {
+      frames(1);
+      const gap = clusterOrigin().y - trackTop();
+
+      // Through the approach, the whole pin, and out the far side.
+      for (const y of [0, 200, 600, 1000, 1400, 1800, 2400, 3200]) {
+        scrollTo(y);
+        frames(1);
+        expect(clusterOrigin().y - trackTop()).toBeCloseTo(gap, 1);
+      }
+    });
+
+    it('still translates 1:1 before the copy has pinned at all', () => {
+      frames(1);
+      const before = clusterOrigin();
+      scrollTo(100); // well short of the 110px sticky threshold
+      frames(1);
+      expect(clusterOrigin().y).toBeCloseTo(before.y - 100, 1);
+    });
+
+    it('leaves an untracked field alone', () => {
+      // The mechanism is opt-in; newsletter and cta must keep the old maths.
+      // Rebuilt rather than re-inited: destroy() takes the overlay the
+      // clusters were re-homed into, so a second ensureInit finds none.
+      sim.destroy();
+      root.remove();
+      world = { scrollY: 0, fieldSticky: false };
+      buildFixture();
+      sim = createSim();
+      expect(sim.ensureInit(root)).toBe(true);
+
+      frames(1);
+      const before = clusterOrigin();
+      scrollTo(1400); // deep inside where the copy would be pinned
+      frames(1);
+      expect(clusterOrigin().y).toBeCloseTo(before.y - 1400, 1);
+    });
+  });
 });
 
 describe('scroll freeze', () => {
@@ -393,27 +467,38 @@ describe('placement', () => {
     expect(Math.hypot(stayed.x - 30, stayed.y - 110)).toBeLessThan(30);
   });
 
-  it('rejoins the cluster when dropped back where it started', () => {
-    const start = screenOf(ringLocal(1));
-    dropAt(1, 300, 200);
-    frames(60);
-    expect(Math.hypot(ringLocal(1).x - 106, ringLocal(1).y - 104)).toBeGreaterThan(200);
+  it('holds a short drag instead of springing back to its home', () => {
+    // The regression this replaces: a drop within 70px of home counted as
+    // "put back", so the node re-floated — spring retargeted to the original
+    // spot and the breathing restarted. Short drags are most drags, so most
+    // drags crawled home. Measured in a browser at 14px of travel still
+    // climbing 4s after a 40px drag, against 0px for a 90px one.
+    const start = ringLocal(1);
+    const to = screenOf({ x: start.x + 18, y: start.y + 14 });
+    dropAt(1, to.x, to.y);
+    const dropped = ringLocal(1);
 
-    // Pick it up and put it back inside the rejoin radius.
-    const held = screenOf(ringLocal(1));
-    rings[1].dispatchEvent(pointer('pointerdown', held.x, held.y));
-    window.dispatchEvent(pointer('pointermove', start.x + 8, start.y + 8));
-    frames(3);
-    window.dispatchEvent(pointer('pointerup', start.x + 8, start.y + 8));
-    frames(400);
+    // It really was a short one — well inside the radius that used to reel
+    // it in — and it moved.
+    expect(Math.hypot(dropped.x - start.x, dropped.y - start.y)).toBeLessThan(70);
+    expect(Math.hypot(dropped.x - start.x, dropped.y - start.y)).toBeGreaterThan(1);
 
-    // Back in the simulation. Not at its old coordinates — the cluster's
-    // equilibrium is the link rest lengths, not the layout it was authored
-    // with — but back among its neighbours, and moving again.
-    const settled = ringLocal(1);
-    expect(Math.hypot(settled.x - 106, settled.y - 104)).toBeLessThan(80);
-    frames(200);
-    expect(Math.hypot(ringLocal(1).x - settled.x, ringLocal(1).y - settled.y)).toBeGreaterThan(0);
+    // Long enough for the anchor spring and a full breathing period.
+    frames(1200);
+    expect(ringLocal(1).x).toBeCloseTo(dropped.x, 3);
+    expect(ringLocal(1).y).toBeCloseTo(dropped.y, 3);
+  });
+
+  it('stops breathing once dropped, however short the drag', () => {
+    const start = ringLocal(1);
+    const to = screenOf({ x: start.x + 6, y: start.y + 6 });
+    dropAt(1, to.x, to.y);
+    const dropped = ringLocal(1);
+
+    // A rejoined node wanders ~20px over its 15s period; a placed one is out
+    // of the sim entirely and must not move at all.
+    frames(900);
+    expect(Math.hypot(ringLocal(1).x - dropped.x, ringLocal(1).y - dropped.y)).toBe(0);
   });
 
   it('still draws its edges to wherever it was left', () => {

@@ -136,6 +136,25 @@ function Cluster({ c }: { c: DragCluster }) {
  */
 const PINNED = new Set<FieldSection>(['act-ingest', 'act-tutor']);
 
+/**
+ * Static sections whose copy pins on its own, and the element it pins in.
+ *
+ * A static field gets the section's rect, which is the right box for placing
+ * clusters but says nothing about a child that sticks inside it. `faq` is
+ * exactly that case: the question column is `sticky; top:110`, so it holds
+ * still for `grid 733px - column 358px` = 375px while the section — and with
+ * it the field, and with it CS 112 and PH 150 — keeps scrolling. The clusters
+ * slid 374px out from under the words they belong to.
+ *
+ * Naming the copy here lets `engine/sim.ts` add back its travel, so the two
+ * move as one through the pin and the release. This is the static-section
+ * counterpart to `PINNED` above: that one matches a field to a stage it lives
+ * beside, this one matches clusters to copy that pins beneath them.
+ */
+const TRACKS: Partial<Record<FieldSection, string>> = {
+  faq: '[data-drag-anchor="faq"]',
+};
+
 export function DragField({ section }: { section: FieldSection }) {
   const mine = DRAG_CLUSTERS.filter((c) => c.section === section);
   const clusters = mine.map((c) => <Cluster key={c.id} c={c} />);
@@ -145,6 +164,7 @@ export function DragField({ section }: { section: FieldSection }) {
       <div
         className="drag-field"
         aria-hidden="true"
+        data-drag-track={TRACKS[section]}
         style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', overflow: 'visible' }}
       >
         {clusters}

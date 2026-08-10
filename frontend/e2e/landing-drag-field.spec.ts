@@ -344,29 +344,29 @@ test("a dropped node stays where it was put, and scrolls with the page", async (
   expect(scrolled.x).toBeCloseTo(settled.x, 0);
 });
 
-test("dropping a node back where it started returns it to the cluster", async ({ page }) => {
+test("a short drag stays put instead of crawling home", async ({ page }) => {
+  // There is no rejoin radius any more. A drop within 70px of a node's home
+  // used to re-float it, so most drags — which are short — crept back to
+  // where they started: 14px of travel still climbing 4s after a 40px drag,
+  // against 0px for a 90px one. Every drop places the node now.
   await openLanding(page);
   await centreCluster(page);
   const ring = await ringOf(page);
+
   await page.mouse.move(ring.x, ring.y);
   await page.mouse.down();
-  await page.mouse.move(400, 300, { steps: 20 });
+  await page.mouse.move(ring.x + 34, ring.y - 22, { steps: 15 });
   await page.mouse.up();
   await page.waitForTimeout(500);
 
-  const held = await probe(page);
-  await page.mouse.move(held.x, held.y);
-  await page.mouse.down();
-  await page.mouse.move(ring.x + 6, ring.y + 6, { steps: 20 });
-  await page.mouse.up();
-  await page.waitForTimeout(2_500);
+  const dropped = await probe(page);
+  // Short enough that the old radius would have reeled it in, and it moved.
+  const moved = Math.hypot(dropped.x - ring.x, dropped.y - ring.y);
+  expect(moved).toBeLessThan(70);
+  expect(moved).toBeGreaterThan(2);
 
-  // Back among its neighbours...
-  const home = await probe(page);
-  expect(Math.hypot(home.x - ring.x, home.y - ring.y)).toBeLessThan(120);
-  // ...and breathing again, which is what says it rejoined rather than being
-  // placed a second time.
-  await page.waitForTimeout(4_000);
+  // Past a full breathing period: a placed node does not move at all.
+  await page.waitForTimeout(5_000);
   const later = await probe(page);
-  expect(Math.hypot(later.x - home.x, later.y - home.y)).toBeGreaterThan(0.5);
+  expect(Math.hypot(later.x - dropped.x, later.y - dropped.y)).toBeLessThan(1);
 });
