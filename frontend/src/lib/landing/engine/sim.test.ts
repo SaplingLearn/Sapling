@@ -17,7 +17,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSim, type SimController } from './sim';
+import { CARRY_MAX_LAG_PX, createSim, type SimController } from './sim';
 
 const VIEW_W = 1440;
 const VIEW_H = 900;
@@ -468,36 +468,54 @@ describe('placement', () => {
 
     const start = screenOf(root0);
     rings[0].dispatchEvent(pointer('pointerdown', start.x, start.y));
-    window.dispatchEvent(pointer('pointermove', start.x + 260, start.y + 180));
-    frames(30);
+    // Mid-viewport, clear of the edge band, so nothing autoscrolls and the
+    // puck really does come to rest.
+    window.dispatchEvent(pointer('pointermove', start.x + 260, VIEW_H / 2));
 
-    // Still held — no pointerup anywhere in this test.
+    // One frame in, mid-yank: it is towed, not welded, so it should still be
+    // behind where the puck wants it. A rigid offset would already be exact.
+    frames(1);
+    const lagged = ringLocal(1);
+    const lagRoot = ringLocal(0);
+    expect(Math.hypot(lagged.x - lagRoot.x - dx, lagged.y - lagRoot.y - dy))
+      .toBeGreaterThan(1);
+
+    // ...and once the puck stops, the pull closes it up again. A spring
+    // converges asymptotically, so this is "settled", not "identical".
+    frames(90);
     const root = ringLocal(0);
     const sat = ringLocal(1);
-    expect(sat.x - root.x).toBeCloseTo(dx, 1);
-    expect(sat.y - root.y).toBeCloseTo(dy, 1);
+    expect(Math.hypot(sat.x - root.x - dx, sat.y - root.y - dy)).toBeLessThan(1);
   });
 
-  it('holds the cluster together while the page scrolls under the drag', () => {
+  it('keeps the branch on its leash while the page scrolls under the drag', () => {
     const root0 = ringLocal(0);
     const sat0 = ringLocal(1);
     const dx = sat0.x - root0.x;
     const dy = sat0.y - root0.y;
+    const rest = Math.hypot(dx, dy);
 
     const start = screenOf(root0);
     rings[0].dispatchEvent(pointer('pointerdown', start.x, start.y));
     window.dispatchEvent(pointer('pointermove', start.x + 60, start.y + 200));
 
-    // The autoscroll case: the page keeps moving while the node is held.
-    for (const y of [200, 500, 900, 1500]) {
+    // The autoscroll case: the page keeps moving for as long as it is held,
+    // which is what used to let the gap grow without bound.
+    for (const y of [200, 500, 900, 1500, 2600, 4000]) {
       scrollTo(y);
       frames(20);
       const root = ringLocal(0);
       const sat = ringLocal(1);
-      expect(sat.x - root.x).toBeCloseTo(dx, 1);
-      expect(sat.y - root.y).toBeCloseTo(dy, 1);
+      // Never further from the puck than its rest offset plus the leash.
+      expect(Math.hypot(sat.x - root.x, sat.y - root.y))
+        .toBeLessThanOrEqual(rest + CARRY_MAX_LAG_PX + 0.5);
     }
+
+    // Held in the band it rides the leash for as long as the visitor keeps it
+    // there — that is the guarantee, and the settling half of the contract is
+    // covered by the test above, where the puck can actually come to rest.
   });
+
 
   it('carries its satellites when the course puck is placed', () => {
     // Dropping the puck used to strand its concepts: the link force that

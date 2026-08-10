@@ -44,6 +44,35 @@ const EDGE_BAND_PX = 110;
 /** Peak autoscroll speed in px/frame, reached at the very edge of the band. */
 const EDGE_SPEED_PX = 22;
 
+/**
+ * How a held puck's concepts follow it: a pull, with a leash.
+ *
+ * They are NOT seated at a fixed offset. The cluster should read as a thing
+ * being towed — the concepts swing out behind the puck, then catch up and
+ * settle when it stops — which a rigid offset kills entirely.
+ *
+ * The plain link force cannot do the towing. It is a spring, so it closes
+ * only a fraction of the gap per frame, while a drag parked in the edge band
+ * refills that gap every frame for as long as it is held: measured stretching
+ * 50/48/51px to 224/439/188px through one autoscroll. `CARRY_PULL` is roughly
+ * twenty times the link force's gain, which keeps up with a hand-speed drag on
+ * its own.
+ *
+ * `CARRY_MAX_LAG_PX` is the leash, and it is what makes the guarantee. Under a
+ * constant speed V the spring settles at a lag of `0.4V / (0.6 * CARRY_PULL)`
+ * — about 2.2V — so hand speed trails ~20px and rides free, while autoscroll's
+ * 22px/frame would reach ~49px and is held at 34px instead. The branch can
+ * never draw further than that, however long the page scrolls.
+ */
+const CARRY_PULL = 0.3;
+/** Velocity retained per frame, matching the sim's own 0.6 damping. */
+const CARRY_DAMP = 0.6;
+/**
+ * The leash: furthest a concept may sit from where the puck wants it.
+ * Exported so the test asserts the real bound rather than a copy of it.
+ */
+export const CARRY_MAX_LAG_PX = 34;
+
 /*
  * There is deliberately no rejoin radius.
  *
@@ -132,7 +161,7 @@ interface SimGroup {
      * drop can rebuild that formation around wherever it lands. Empty unless
      * a course puck is the node being dragged.
      */
-    carry: { q: SimNode; dx: number; dy: number }[];
+    carry: { q: SimNode; dx: number; dy: number; vx: number; vy: number }[];
   } | null;
 }
 
@@ -375,7 +404,7 @@ export function createSim(): SimController {
           const carry = n.root
             ? f.nodes
               .filter((q) => q !== n && q.cluster === n.cluster)
-              .map((q) => ({ q, dx: q.x - n.x, dy: q.y - n.y }))
+              .map((q) => ({ q, dx: q.x - n.x, dy: q.y - n.y, vx: 0, vy: 0 }))
             : [];
           f.drag = { n, id: e.pointerId, svg, cx: e.clientX, cy: e.clientY, carry };
           n.fx = p.x;
@@ -581,20 +610,10 @@ export function createSim(): SimController {
       }
     }
 
-    // A held puck carries its concepts rigidly, at the offsets they had when
-    // it was grabbed — not on a spring.
-    //
-    // The link force alone cannot do this. It is a spring, so it only ever
-    // closes a fraction of the gap per frame, and a drag held in the edge
-    // band scrolls the page under the cluster for as long as the visitor
-    // keeps it there. The concepts are welded to their field and travel with
-    // the page, so the gap is refilled every frame faster than the spring
-    // drains it and grows without bound: 50/48/51px at rest to 224/439/188px
-    // through a single autoscroll, drawing one edge clean across the screen.
-    //
-    // Rigid also matches what the drop already does, so releasing the puck
-    // changes nothing about the picture. A concept dragged on its own is not
-    // in `carry` and still travels alone.
+    // A held puck tows its concepts: they chase the offsets they had when it
+    // was grabbed, on a spring stiff enough to keep up, and on a leash so the
+    // branch can never draw out. See CARRY_PULL above for why the ordinary
+    // link force cannot do this on its own.
     const ride = f.drag && f.drag.n.root ? f.drag : null;
 
     for (const p of n) {
@@ -602,10 +621,30 @@ export function createSim(): SimController {
       if (ride && seat) {
         // The puck is earlier in `n` than its own concepts, so its position
         // for this frame — clamp included — is already final.
-        p.x = ride.n.x + seat.dx;
-        p.y = ride.n.y + seat.dy;
+        const tx = ride.n.x + seat.dx;
+        const ty = ride.n.y + seat.dy;
+        // The tow keeps its own velocity, deliberately. `p.vx` at this point
+        // already carries this frame's charge and collide impulses from the
+        // concept's siblings, and inheriting them puts the spring in a tug of
+        // war it only half wins: the lag settles at 6-12px and creeps instead
+        // of closing. Integrating separately, and clearing `p.vx` so nothing
+        // downstream inherits a stale tow, leaves a clean pull.
+        seat.vx = (seat.vx + (tx - p.x) * CARRY_PULL) * CARRY_DAMP;
+        seat.vy = (seat.vy + (ty - p.y) * CARRY_PULL) * CARRY_DAMP;
+        p.x += seat.vx;
+        p.y += seat.vy;
         p.vx = 0;
         p.vy = 0;
+        // The leash. Everything above is what it looks like; this is what
+        // stops a long enough scroll from turning the lag into a branch.
+        const lx = p.x - tx;
+        const ly2 = p.y - ty;
+        const lag = Math.hypot(lx, ly2);
+        if (lag > CARRY_MAX_LAG_PX) {
+          const k = CARRY_MAX_LAG_PX / lag;
+          p.x = tx + lx * k;
+          p.y = ty + ly2 * k;
+        }
         p.ring.setAttribute('cx', p.x.toFixed(1));
         p.ring.setAttribute('cy', p.y.toFixed(1));
         p.glow.setAttribute('cx', p.x.toFixed(1));
