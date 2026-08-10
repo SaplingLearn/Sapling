@@ -48,6 +48,13 @@ interface World {
 /** Tall enough to pin for several viewports, like a real act. */
 const SECTION_H = 3000;
 
+/**
+ * The envelope a placed node's breathing stays inside. Measured at 3.7-7.7px
+ * across these fixtures at `PLACED_SWAY = 0.33`; the bound is what separates
+ * "alive where I left it" from "wandered off".
+ */
+const SWAY_PX = 12;
+
 let world: World;
 let root: HTMLDivElement;
 let section: HTMLElement;
@@ -432,16 +439,19 @@ describe('placement', () => {
     window.dispatchEvent(pointer('pointerup', x, y));
   }
 
-  it('leaves a dropped node exactly where it was put', () => {
+  it('leaves a dropped node where it was put, inside its sway', () => {
     dropAt(1, 300, 200);
     const dropped = ringLocal(1);
 
-    // Long enough for the link spring (34-86px rest length), the anchor
-    // spring and a full breathing period to have reeled it back in.
+    // Long enough for the link spring, the anchor spring and a full breathing
+    // period to have reeled it back in if any of them were going to.
     frames(1200);
 
-    expect(ringLocal(1).x).toBeCloseTo(dropped.x, 3);
-    expect(ringLocal(1).y).toBeCloseTo(dropped.y, 3);
+    // Not identical: a placed node keeps a third of the breathing drift, so
+    // it breathes around the drop point rather than freezing on it. SWAY_PX
+    // is the envelope that buys — anything beyond it is a walk, not a sway.
+    expect(Math.hypot(ringLocal(1).x - dropped.x, ringLocal(1).y - dropped.y))
+      .toBeLessThan(SWAY_PX);
   });
 
   it('stays put where the page put it, scrolling with its section', () => {
@@ -450,9 +460,11 @@ describe('placement', () => {
     frames(600);
     scrollTo(350);
     frames(20);
-    // Moved with the page by exactly the scroll, and not a px more.
-    expect(screenOf(ringLocal(1)).y).toBeCloseTo(onScreen.y - 350, 1);
-    expect(screenOf(ringLocal(1)).x).toBeCloseTo(onScreen.x, 1);
+    // Moved with the page by the scroll, and not a px more than its sway.
+    expect(Math.hypot(
+      screenOf(ringLocal(1)).x - onScreen.x,
+      screenOf(ringLocal(1)).y - (onScreen.y - 350),
+    )).toBeLessThan(SWAY_PX);
   });
 
   it('drags the whole cluster after a moved puck, not just the puck', () => {
@@ -565,20 +577,24 @@ describe('placement', () => {
 
     // Long enough for the anchor spring and a full breathing period.
     frames(1200);
-    expect(ringLocal(1).x).toBeCloseTo(dropped.x, 3);
-    expect(ringLocal(1).y).toBeCloseTo(dropped.y, 3);
+    expect(Math.hypot(ringLocal(1).x - dropped.x, ringLocal(1).y - dropped.y))
+      .toBeLessThan(SWAY_PX);
   });
 
-  it('stops breathing once dropped, however short the drag', () => {
+  it('keeps breathing once dropped, but only just', () => {
     const start = ringLocal(1);
     const to = screenOf({ x: start.x + 6, y: start.y + 6 });
     dropAt(1, to.x, to.y);
     const dropped = ringLocal(1);
 
-    // A rejoined node wanders ~20px over its 15s period; a placed one is out
-    // of the sim entirely and must not move at all.
+    // A free node wanders ~20px over its 15s period. A placed one keeps a
+    // third of that: enough that it is visibly alive, little enough that it
+    // is still sitting where it was left. Dead still is the bug this pins —
+    // a dropped node used to stop moving entirely.
     frames(900);
-    expect(Math.hypot(ringLocal(1).x - dropped.x, ringLocal(1).y - dropped.y)).toBe(0);
+    const moved = Math.hypot(ringLocal(1).x - dropped.x, ringLocal(1).y - dropped.y);
+    expect(moved).toBeGreaterThan(0);
+    expect(moved).toBeLessThan(SWAY_PX);
   });
 
   it('still draws its edges to wherever it was left', () => {

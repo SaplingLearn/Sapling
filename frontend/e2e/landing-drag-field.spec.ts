@@ -32,6 +32,13 @@ import { expect, test, type Page } from "@playwright/test";
 
 test.use({ storageState: { cookies: [], origins: [] }, viewport: { width: 1440, height: 900 } });
 
+/**
+ * The envelope a placed node's breathing stays inside — `PLACED_SWAY` is a
+ * third of the free amplitude. Wide enough for the sway, far short of the
+ * distance that would mean it had wandered off the spot it was left on.
+ */
+const SWAY_PX = 12;
+
 /** Where a ring sits on screen, and what the page is doing underneath it. */
 interface Probe {
   x: number;
@@ -334,14 +341,17 @@ test("a dropped node stays where it was put, and scrolls with the page", async (
   const dropped = await probe(page);
   await page.waitForTimeout(4_000);
   const settled = await probe(page);
-  expect(Math.hypot(settled.x - dropped.x, settled.y - dropped.y)).toBeLessThan(1);
+  // Inside its sway, not frozen on the spot: a placed node keeps a third of
+  // the breathing drift, so it lives where it was left rather than dying
+  // there. SWAY_PX is the envelope that buys.
+  expect(Math.hypot(settled.x - dropped.x, settled.y - dropped.y)).toBeLessThan(SWAY_PX);
 
   // Placed, not detached: it belongs to the page and moves with it.
   await page.evaluate(() => window.scrollBy(0, 300));
   await page.waitForTimeout(600);
   const scrolled = await probe(page);
-  expect(scrolled.y).toBeCloseTo(settled.y - 300, 0);
-  expect(scrolled.x).toBeCloseTo(settled.x, 0);
+  expect(Math.hypot(scrolled.x - settled.x, scrolled.y - (settled.y - 300)))
+    .toBeLessThan(SWAY_PX);
 });
 
 test("a short drag stays put instead of crawling home", async ({ page }) => {
@@ -365,8 +375,9 @@ test("a short drag stays put instead of crawling home", async ({ page }) => {
   expect(moved).toBeLessThan(70);
   expect(moved).toBeGreaterThan(2);
 
-  // Past a full breathing period: a placed node does not move at all.
+  // Past a full breathing period: still there, still breathing. Dead still
+  // was the other bug — a dropped node used to stop moving entirely.
   await page.waitForTimeout(5_000);
   const later = await probe(page);
-  expect(Math.hypot(later.x - dropped.x, later.y - dropped.y)).toBeLessThan(1);
+  expect(Math.hypot(later.x - dropped.x, later.y - dropped.y)).toBeLessThan(SWAY_PX);
 });

@@ -44,6 +44,28 @@ const EDGE_BAND_PX = 110;
 /** Peak autoscroll speed in px/frame, reached at the very edge of the band. */
 const EDGE_SPEED_PX = 22;
 
+/**
+ * How much of the idle breathing drift a placed node keeps.
+ *
+ * A free node traces a ~20px excursion over its 15s period. A node the
+ * visitor put somewhere should still be breathing — dropping one used to kill
+ * it stone dead, which reads as a bug rather than as precision — but at the
+ * full amplitude it looks like it is wandering off rather than sitting where
+ * it was left. A third is the compromise: a few px of life, well inside the
+ * radius anyone would call "where I put it".
+ */
+const PLACED_SWAY = 0.33;
+
+/**
+ * Anchor-spring gain for a placed node, holding it to the spot it was left.
+ *
+ * Fixed rather than scaled by alpha, and ~8x the free spring's settled gain.
+ * The two numbers work together: `PLACED_SWAY` decides how hard the node is
+ * pushed, this decides how far that push gets it, and their ratio is the
+ * excursion. Around 7px at these values.
+ */
+const PLACED_ANCHOR = 0.003;
+
 
 /*
  * There is deliberately no rejoin radius.
@@ -572,19 +594,32 @@ export function createSim(): SimController {
     }
 
     for (const p of n) {
-      // A slow breathing drift keeps every free node alive — the sway.
+      // A slow breathing drift keeps every node alive — the sway.
       //
-      // Not for a placed node: the drift is a ~20px excursion over its 15s
-      // period, which is exactly the amount of wandering "it stays where I
-      // put it" rules out. It IS for the rest of a cluster while one of its
-      // nodes is being dragged; suppressing it there froze the whole field
-      // for the length of every interaction, which is the one moment the
-      // thing is being looked at closely.
-      const idle = p.placed || (f.drag && p === f.drag.n) ? 0 : 1;
+      // A placed node breathes too, at `PLACED_SWAY` of the amplitude. It
+      // used to be cut to nothing, on the reading that "it stays where I put
+      // it" ruled out any wandering at all; what that actually bought was a
+      // node that went dead the instant it was dropped, which is worse. The
+      // anchor spring still holds it to the spot it was put — the sway is an
+      // excursion around that point, not a walk away from it — so at a third
+      // of the free amplitude it reads as alive and still lands where it was
+      // left. Only the node under the pointer is held perfectly still, and
+      // only while it is held.
+      const idle = f.drag && p === f.drag.n ? 0 : (p.placed ? PLACED_SWAY : 1);
       p.vx += Math.sin(t * 0.00042 + p.hx * 0.05) * 0.06 * idle;
       p.vy += Math.cos(t * 0.00037 + p.hy * 0.05) * 0.06 * idle;
-      p.vx += (p.hx - p.x) * 0.012 * a;
-      p.vy += (p.hy - p.y) * 0.012 * a;
+      // A placed node is tethered harder than a free one, and at a fixed gain
+      // rather than one that fades with alpha.
+      //
+      // Its excursion is roughly `breathing impulse / spring gain`, and the
+      // free spring settles to `0.012 * 0.03` — weak enough that the same
+      // breathing walks a placed node right off its spot: measured drifting
+      // 3.6px to 17px over 8.4s and still climbing, which is not a sway, it
+      // is a departure. PLACED_ANCHOR holds the excursion near 7px, so the
+      // node breathes around where it was left instead of leaving.
+      const springK = p.placed ? PLACED_ANCHOR : 0.012 * a;
+      p.vx += (p.hx - p.x) * springK;
+      p.vy += (p.hy - p.y) * springK;
       if (p.fx != null) { p.x = p.fx; p.vx = 0; } else { p.vx *= 0.6; p.x += p.vx; }
       if (p.fy != null) { p.y = p.fy; p.vy = 0; } else { p.vy *= 0.6; p.y += p.vy; }
       if (!isFinite(p.x) || !isFinite(p.y)) { p.x = p.hx; p.y = p.hy; p.vx = 0; p.vy = 0; }
