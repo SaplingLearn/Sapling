@@ -322,8 +322,10 @@ export function createSim(): SimController {
             y: parseFloat(ring.getAttribute('cy') || '0'),
             vx: 0, vy: 0, fx: null, fy: null, r,
             root: ri === 0, cluster: ci,
-            // the root sits heavier and pushes harder than its satellites
-            collide: ri === 0 ? 30 : 15 + r * 0.5,
+            // the root sits heavier and pushes harder than its satellites.
+            // Radii mirror the real graph's forceCollide: 36 for a subject
+            // root, 18 upward for everything else.
+            collide: ri === 0 ? 36 : 18 + r * 0.5,
             charge: ri === 0 ? -400 : -120,
             ring, glow, label,
             ly: parseFloat(label.getAttribute('y') || '0') - parseFloat(ring.getAttribute('cy') || '0'),
@@ -448,7 +450,6 @@ export function createSim(): SimController {
           if (box) {
             n.x = box.vbx + (e.clientX - box.left) / box.sx;
             n.y = box.vby + (e.clientY - box.top) / box.sy;
-            clampHeldToViewport(n, box, window.innerHeight);
           }
 
           // The drop is the point of the whole interaction: a node left
@@ -533,14 +534,30 @@ export function createSim(): SimController {
    * bound there can only do harm: it would snap a node the moment it was
    * dropped somewhere the spring hadn't reached yet.
    */
-  function clampHeldToViewport(p: SimNode, b: ClusterBox, vh: number): void {
-    const pad = p.r + 4;
-    const xLo = b.vbx + (pad - b.left) / b.sx;
-    const xHi = b.vbx + (window.innerWidth - pad - b.left) / b.sx;
-    const yLo = b.vby + (pad - b.top) / b.sy;
-    const yHi = b.vby + (vh - pad - b.top) / b.sy;
-    if (xLo <= xHi) p.x = Math.min(Math.max(p.x, xLo), xHi);
-    if (yLo <= yHi) p.y = Math.min(Math.max(p.y, yLo), yHi);
+  /**
+   * Re-pin the held node under the pointer, in this frame's coordinates.
+   *
+   * This replaces a clamp that held the dragged node inside the viewport.
+   * The clamp was there for a real reason — `fx`/`fy` are local svg coords
+   * written only on pointermove, so a page that scrolls under a held node
+   * (the edge-band autoscroll does exactly that, with the pointer parked)
+   * leaves it pinned to coordinates that slide away underneath the cursor.
+   * The clamp dragged it back onto the screen, and in doing so put a wall
+   * around where a node could be taken.
+   *
+   * Recomputing from the live client position is what the real graph does —
+   * `KnowledgeGraph2D` maps `clientX/clientY` back through its current view
+   * transform on every move — and it needs no wall: the node is wherever the
+   * pointer is, and the pointer cannot leave the window. Scroll the document
+   * under it and it stays under the cursor, which is what the clamp was
+   * approximating, without bounding the drag.
+   */
+  function repinHeld(f: SimGroup): void {
+    if (!f.drag) return;
+    const b = boxFor(f.drag.svg);
+    if (!b) return;
+    f.drag.n.fx = b.vbx + (f.drag.cx - b.left) / b.sx;
+    f.drag.n.fy = b.vby + (f.drag.cy - b.top) / b.sy;
   }
 
   /**
@@ -564,7 +581,10 @@ export function createSim(): SimController {
     const n = f.nodes;
     const L = f.links;
     const a = Math.max(f.alpha, 0.03);
-    const held = f.drag ? boxFor(f.drag.svg) : null;
+    // Before any force runs: the held node belongs under the pointer, in this
+    // frame's coordinates, however far the page has scrolled since the last
+    // pointermove.
+    repinHeld(f);
 
     // link force — heavier strokes want to sit closer and pull harder.
     // A placed node is out of it entirely: the edge still draws to wherever
@@ -576,7 +596,11 @@ export function createSim(): SimController {
       let dx = t0.x - s0.x;
       let dy = t0.y - s0.y;
       const d = Math.hypot(dx, dy) || 0.001;
-      const want = 34 + (1 - l.s) * 52;
+      // Rest length and strength are the real graph's, verbatim — see the
+      // note on CARRY_PULL and `components/graph/KnowledgeGraph2D.tsx`, which
+      // builds the same d3 force with `.distance(40 + (1 - strength) * 90)`
+      // and `.strength(0.15 + strength * 0.4)`.
+      const want = 40 + (1 - l.s) * 90;
       const k = ((d - want) / d) * a * (0.15 + l.s * 0.4);
       dx *= k;
       dy *= k;
@@ -665,7 +689,6 @@ export function createSim(): SimController {
       if (p.fx != null) { p.x = p.fx; p.vx = 0; } else { p.vx *= 0.6; p.x += p.vx; }
       if (p.fy != null) { p.y = p.fy; p.vy = 0; } else { p.vy *= 0.6; p.y += p.vy; }
       if (!isFinite(p.x) || !isFinite(p.y)) { p.x = p.hx; p.y = p.hy; p.vx = 0; p.vy = 0; }
-      if (held && f.drag && p === f.drag.n) clampHeldToViewport(p, held, vh);
       p.ring.setAttribute('cx', p.x.toFixed(1));
       p.ring.setAttribute('cy', p.y.toFixed(1));
       p.glow.setAttribute('cx', p.x.toFixed(1));

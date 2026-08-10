@@ -377,7 +377,11 @@ describe('drag reach', () => {
     expect(screenOf(ringLocal(0)).x).toBeLessThan(60);
   });
 
-  it('keeps a held node inside the viewport however far the pointer goes', () => {
+  it('follows the pointer anywhere, with no wall around the drag', () => {
+    // This used to clamp the held node into the visible box. The clamp was
+    // solving a real problem — see `repinHeld` — but it did it by walling off
+    // where a node could be taken. The node now goes wherever the pointer
+    // goes, which is what the real graph does.
     const start = screenOf(ringLocal(0));
     rings[0].dispatchEvent(pointer('pointerdown', start.x, start.y));
 
@@ -385,10 +389,7 @@ describe('drag reach', () => {
       window.dispatchEvent(pointer('pointermove', px, py));
       frames(3);
       const at = screenOf(ringLocal(0));
-      expect(at.x).toBeGreaterThanOrEqual(0);
-      expect(at.x).toBeLessThanOrEqual(VIEW_W);
-      expect(at.y).toBeGreaterThanOrEqual(0);
-      expect(at.y).toBeLessThanOrEqual(VIEW_H);
+      expect(Math.hypot(at.x - px, at.y - py)).toBeLessThan(2);
     }
   });
 
