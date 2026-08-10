@@ -454,6 +454,35 @@ describe('placement', () => {
     expect(screenOf(ringLocal(1)).x).toBeCloseTo(onScreen.x, 1);
   });
 
+  it('carries its satellites when the course puck is placed', () => {
+    // Dropping the puck used to strand its concepts: the link force that
+    // towed them during the drag is skipped once the puck is placed, so the
+    // only pull left was each satellite's own spring back to the original
+    // layout. They crawled home and left one long edge stretched across the
+    // field to a puck sitting somewhere else entirely.
+    const rootBefore = ringLocal(0);
+    const satBefore = ringLocal(1);
+    const gap = Math.hypot(satBefore.x - rootBefore.x, satBefore.y - rootBefore.y);
+
+    // Three frames of tow, i.e. a flick the link spring cannot keep up with.
+    // Freezing the concepts where they physically were at the drop strands
+    // them 613px behind; the grab-time offsets are what survive this.
+    dropAt(0, 520, 380);
+    frames(1);
+
+    const root = ringLocal(0);
+    const sat = ringLocal(1);
+    // It travelled with the puck...
+    expect(Math.hypot(sat.x - satBefore.x, sat.y - satBefore.y)).toBeGreaterThan(200);
+    // ...holding the formation it had when the puck was grabbed.
+    expect(Math.hypot(sat.x - root.x, sat.y - root.y)).toBeCloseTo(gap, 1);
+
+    // And the whole cluster is placed, so none of it drifts afterwards.
+    frames(900);
+    expect(ringLocal(1).x).toBeCloseTo(sat.x, 3);
+    expect(ringLocal(1).y).toBeCloseTo(sat.y, 3);
+  });
+
   it('does not drag the rest of the cluster along with it', () => {
     dropAt(1, 300, 200);
     frames(600);

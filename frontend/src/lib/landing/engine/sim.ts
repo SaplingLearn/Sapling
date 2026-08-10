@@ -125,7 +125,15 @@ interface SimGroup {
   links: SimLink[];
   alpha: number;
   target: number;
-  drag: { n: SimNode; id: number; svg: SVGSVGElement; cx: number; cy: number } | null;
+  drag: {
+    n: SimNode; id: number; svg: SVGSVGElement; cx: number; cy: number;
+    /**
+     * Where the puck and its concepts sat the moment it was grabbed, so the
+     * drop can rebuild that formation around wherever it lands. Empty unless
+     * a course puck is the node being dragged.
+     */
+    carry: { q: SimNode; dx: number; dy: number }[];
+  } | null;
 }
 
 export interface SimController {
@@ -359,7 +367,17 @@ export function createSim(): SimController {
           const n = f.nodes.find((x) => x.ring === ring);
           if (!n) return;
           const p = local(e);
-          f.drag = { n, id: e.pointerId, svg, cx: e.clientX, cy: e.clientY };
+          // Snapshot the cluster's shape now, not at the drop. The link force
+          // tows the concepts along during the drag, but it is a spring and a
+          // fast flick outruns it — leaving them strung out behind the puck,
+          // which is the shape a drop would otherwise freeze. Offsets taken
+          // here are the settled formation the visitor actually grabbed.
+          const carry = n.root
+            ? f.nodes
+              .filter((q) => q !== n && q.cluster === n.cluster)
+              .map((q) => ({ q, dx: q.x - n.x, dy: q.y - n.y }))
+            : [];
+          f.drag = { n, id: e.pointerId, svg, cx: e.clientX, cy: e.clientY, carry };
           n.fx = p.x;
           n.fy = p.y;
           f.target = 0.3;
@@ -384,7 +402,7 @@ export function createSim(): SimController {
           // window for every cluster, so the one that runs first is not
           // necessarily the one holding the pointer, and converting the drop
           // through the wrong svg puts the node somewhere else entirely.
-          const { n, svg: heldSvg } = f.drag;
+          const { n, svg: heldSvg, carry } = f.drag;
           n.ring.setAttribute('stroke-opacity', '0.75');
           n.fx = null;
           n.fy = null;
@@ -406,9 +424,41 @@ export function createSim(): SimController {
 
           // The drop is the point of the whole interaction: a node left
           // somewhere stays there, however short the drag was.
+          //
+          // The puck carries its concepts. The link force tows them while the
+          // drag is live, then stops the instant the puck is placed — so
+          // without this their springs walked them back to the original
+          // layout and left one edge stretched across the field to a puck
+          // that had moved on. A satellite dragged on its own still moves
+          // alone; only the puck takes the cluster with it.
+          //
+          // Rebuilt from the grab-time offsets, NOT from the authored layout
+          // and NOT from wherever the tow left them.
+          //
+          // The authored svg is the wrong picture: the link force's 34-86px
+          // rest lengths settle a cluster tighter than it was drawn — 48/48/
+          // 50px on screen against 67/130/64px authored — so re-seating the
+          // concepts on their home coordinates pops the cluster open at the
+          // instant of the drop. Their live positions are the wrong picture
+          // too, because a flick outruns the tow.
+          //
+          // Placing them is what makes it hold. An unplaced concept is still
+          // in the charge and collide loops with its siblings but has lost
+          // the link force that used to balance them, so it creeps outward —
+          // measured drifting 74/113/72px to 96/135/120px over 5s. Placed,
+          // the whole cluster is out of the simulation and simply stays.
           n.placed = true;
           n.hx = n.x;
           n.hy = n.y;
+          for (const c of carry) {
+            c.q.placed = true;
+            c.q.x = n.x + c.dx;
+            c.q.y = n.y + c.dy;
+            c.q.hx = c.q.x;
+            c.q.hy = c.q.y;
+            c.q.vx = 0;
+            c.q.vy = 0;
+          }
           n.vx = 0;
           n.vy = 0;
 
