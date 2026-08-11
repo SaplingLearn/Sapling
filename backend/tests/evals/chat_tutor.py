@@ -401,9 +401,10 @@ CASES: list[Case[ChatInput, ChatReply]] = [
         # enrichment, never a limit on what may be taught.
         #
         # Lite-tier (gemini-2.5-flash-lite) confirmation, run ad hoc against
-        # this exact input during task 5 (not committed as a cassette — see
-        # .superpowers/sdd/2026-08-10-tutor-course-scope/task-5-report.md
-        # Step 6 for the full method) and preserved here so it survives:
+        # this exact input via the harness's own deps/message assembly with
+        # SAPLING_MODEL_CHAT_TUTOR overridden. Not committed as a cassette —
+        # the harness has no tier-scoped case slot — so the reply is preserved
+        # verbatim here instead:
         #
         #   Yes, we can!
         #
