@@ -75,3 +75,45 @@ class TestScopeRule:
 
         assert set(_PROMPT_HASHES) == set(_PROMPTS)
         assert len(set(_PROMPT_HASHES.values())) == 3
+
+
+class TestFormattingToolkit:
+    """2026-08-10 tutor-course-scope spec: restore the preamble.txt formatting guidance the agent rewrite
+    dropped. The renderer (frontend MarkdownChat.tsx) still supports all of
+    it — only the prompt guidance was lost."""
+
+    MARKERS = (
+        "$$",            # display math
+        "\\norm",        # predefined KaTeX macro
+        "mermaid",       # diagram fence
+        "plot",          # function-plot fence
+        ":::theorem",    # container directive
+        "\\ce{",         # mhchem
+        "geogebra",      # interactive embed
+        "Be deliberate, not decorative",
+    )
+
+    def test_toolkit_present_in_every_mode(self):
+        from agents.chat_tutor import _PROMPTS
+
+        for mode, prompt in _PROMPTS.items():
+            for marker in self.MARKERS:
+                assert marker in prompt, f"{mode} missing {marker!r}"
+
+    def test_mermaid_escape_rule_included(self):
+        """Unquoted punctuation in Mermaid labels is a parser error; the
+        legacy prompt called this out and replies broke without it."""
+        from agents.chat_tutor import _PROMPTS
+
+        for prompt in _PROMPTS.values():
+            assert "MUST be wrapped in double quotes" in prompt
+
+    def test_obsolete_graph_update_contract_not_restored(self):
+        """apply_graph_update_tool / update_mastery_tool do this now. Bringing
+        the legacy JSON block back would make the model both call tools AND
+        emit raw JSON at the student."""
+        from agents.chat_tutor import _PROMPTS
+
+        for prompt in _PROMPTS.values():
+            assert "<graph_update>" not in prompt
+            assert "new_nodes" not in prompt
