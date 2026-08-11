@@ -140,6 +140,38 @@ _SYSTEM_PROMPT = (
     "   AND the adaptive-difficulty rules above.\n\n"
     "Honor the requested num_questions. Don't invent concepts the "
     "student doesn't have."
+    # Quizzes skewed conceptual ("what IS a Markov chain?") when what
+    # actually builds competence in a quantitative course is working the
+    # problem. Enforced in the prompt rather than the schema: the
+    # QuizQuestion note above records that Gemini's constrained decoding
+    # blew past "too many states for serving" on the Lite tier, so adding a
+    # question-kind enum would cost us the cheap models.
+    "\n\nPRACTICAL vs CONCEPTUAL mix:\n"
+    "- For QUANTITATIVE concepts — mathematics, physics, chemistry, "
+    "statistics, engineering, and the computational parts of CS — "
+    "AT LEAST TWO THIRDS of the questions must be WORKED PROBLEMS: pose "
+    "  concrete values (a specific matrix, transition table, sample, "
+    "  circuit, reaction, or code fragment) and require the student to "
+    "  compute, derive, or apply a procedure to reach the answer.\n"
+    "- Ask 'what is the steady-state distribution of THIS chain', not "
+    "  'what is a steady-state distribution'. Ask 'find the eigenvalues "
+    "  of THIS matrix', not 'what does an eigenvalue represent'.\n"
+    "- Keep the remaining third conceptual — definitions, intuition, when "
+    "  a method applies or breaks down. Both kinds matter; the balance is "
+    "  what changes.\n"
+    "- Options for a worked problem are candidate RESULTS, and the "
+    "  distractors must be the answers a student actually reaches by "
+    "  making a specific mistake — a sign slip, a transposed matrix, an "
+    "  unnormalised vector, an off-by-one index, the right method applied "
+    "  to the wrong quantity. Never pad with arbitrary numbers.\n"
+    "- Show the work in `explanation`: the steps to the correct result, "
+    "  and where a tempting distractor goes wrong.\n"
+    "- For NON-QUANTITATIVE concepts — history, literature, philosophy, "
+    "  law — 'practical' means applied analysis over recall: give a "
+    "  passage, case, or scenario and ask the student to interpret it, "
+    "  rather than asking them to name a term.\n"
+    "- A worked problem must still be answerable from the four options "
+    "  alone; keep the arithmetic tractable without a calculator."
     "\n\nCOURSE MATERIAL grounding:\n"
     "- If the user message contains a `COURSE MATERIAL` block, treat it as "
     "  the PRIMARY source of truth for question content. The MAJORITY of "
