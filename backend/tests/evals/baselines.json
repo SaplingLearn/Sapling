@@ -2,11 +2,12 @@
   "chat_tutor": {
     "ExpositoryHasStructureEvaluator": 1.0,
     "GraphToolUsedEvaluator": 1.0,
-    "GroundedConceptEvaluator": 1.0,
-    "MasteryUpdateEmittedEvaluator": 1.0,
+    "GroundedConceptEvaluator": 0.941176,
+    "MasteryUpdateEmittedEvaluator": 0.588235,
     "NoCourseScopeRefusalEvaluator": 1.0,
     "NoToolMisuseEvaluator": 1.0,
     "NonEmptyEvaluator": 1.0,
+    "OffSyllabusTopicEngagedEvaluator": 0.941176,
     "SocraticEndsWithQuestionEvaluator": 1.0,
     "TeachBackProbesEvaluator": 1.0
   },

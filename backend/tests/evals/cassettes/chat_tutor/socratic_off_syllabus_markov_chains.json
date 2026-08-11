@@ -1,10 +1,12 @@
 {
-  "text": "Of course. To get started, what comes to mind when you hear the term \"Markov chain\"? Have you encountered it in a specific context, like in a math class or when reading about AI?",
+  "text": "Of course. A **Markov chain** is a mathematical model for a sequence of events, where the probability of the next event depends *only* on the current state. This \"memoryless\" property is its defining feature.\n\nLet's use a simple weather example. Suppose the weather can be in one of two states: **Sunny** or **Rainy**.\n\nThe transition probabilities are:\n*   If it's sunny today, there's a 90% chance it will be sunny tomorrow and a 10% chance it will be rainy.\n*   If it's rainy today, there's a 50% chance it will be sunny tomorrow and a 50% chance it will be rainy.\n\nWe can draw this as a state diagram:\n\n```mermaid\ngraph TD\n    A(Sunny);\n    B(Rainy);\n    A -->|\"0.9\"| A;\n    A -->|\"0.1\"| B;\n    B -->|\"0.5\"| B;\n    B -->|\"0.5\"| A;\n```\n\nTo predict the weather for tomorrow, what's the only piece of information you need to know?",
   "tool_calls": [
     {
       "args": {
         "concepts": [
-          "Markov Chains"
+          "Markov Chains",
+          "State (Markov Chains)",
+          "Transition Probability"
         ]
       },
       "tool_name": "apply_graph_update_tool"

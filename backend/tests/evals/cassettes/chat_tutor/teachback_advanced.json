@@ -1,31 +1,4 @@
 {
-  "text": "You've got the main components right! The Pumping Lemma is indeed a tool to prove a language *isn't* regular, and it involves splitting a string and repeating (or \"pumping\") the middle part.\n\nThere's a subtle but crucial point you've inverted. The lemma states that for a regular language, there exists a pumping length `p` such that any string `s` with length at least `p` *can* be pumped and remain in the language.\n\nTo prove a language is *not* regular, we use this by contradiction. We show that for a given language, this property fails.\n\nSo, for the proof to work, what are we hoping to show when we pump the middle section of a chosen string?",
-  "tool_calls": [
-    {
-      "args": {
-        "concepts": [
-          "Pumping Lemma",
-          "Regular Languages"
-        ]
-      },
-      "tool_name": "apply_graph_update_tool"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Pumping Lemma",
-            "mastery_delta": 0.1,
-            "reason": "Partially correct explanation."
-          },
-          {
-            "concept_name": "Regular Languages",
-            "mastery_delta": 0.1,
-            "reason": "Used term correctly in context."
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    }
-  ]
+  "text": "Nice, that's the right idea. You've got the core concept: the Pumping Lemma is a tool we use to prove a language is **not regular**.\n\nYou're also right that it involves splitting a string and repeating (or \"pumping\") a middle section.\n\nThere are a few crucial details missing from your description, though. For any regular language, there's a special number `p` called the **pumping length**. Any string `s` in the language that is at least as long as `p` can be split into three parts, `s = xyz`, subject to three conditions:\n\n1.  `|y| > 0` (the part you pump can't be empty)\n2.  `|xy| \u2264 p` (the part you pump must be found within the first `p` characters of the string)\n3.  For every `i \u2265 0`, the string `xy^iz` is also in the language.\n\nTo prove a language is *not* regular, we use this as a proof by contradiction. We assume the language *is* regular, which means a pumping length `p` must exist. Then we find a specific string (that's longer than `p`) that violates one of those conditions when pumped.\n\nYour explanation was:\n> The Pumping Lemma proves a language isn't regular by showing that strings of length ~~p~~ **at least `p`** can be split such that the middle can be repeated and stay in the language. **(This must hold for *any* split that meets the lemma's conditions).**\n\nYou're very close. Why do you think the second condition, `|xy| \u2264 p`, is so important? What does it tell us about where the `y` part must be?",
+  "tool_calls": []
 }
