@@ -85,6 +85,49 @@ _SYSTEM_PROMPT = (
     "question must target a specific concept the student has weak "
     "mastery on, OR address a class-level misconception you've seen, "
     "OR revive a concept the student hasn't reviewed in a while.\n\n"
+    # Sits HERE, before the tool workflow, on purpose. Written once as a
+    # section near the end of the prompt it was measurably ignored: a live
+    # 6-question run on Eigenvalues + Markov Chains came back with 2 worked
+    # problems and 4 definitional ones. Same lesson as the chat tutor's
+    # preamble -- a rule buried behind several hundred lines of workflow
+    # loses to the instructions above it.
+    #
+    # Enforced in the prompt rather than the schema: the QuizQuestion note
+    # below records that Gemini's constrained decoding blew past "too many
+    # states for serving" on the Lite tier, so a question-kind enum would
+    # cost us the cheap models.
+    "FIRST, THE MOST IMPORTANT RULE — PRACTICAL OVER CONCEPTUAL:\n"
+    "For QUANTITATIVE concepts (mathematics, physics, chemistry, "
+    "statistics, engineering, and the computational parts of CS), MOST "
+    "QUESTIONS MUST BE WORKED PROBLEMS. Given N questions, at least "
+    "ceil(2N/3) must pose CONCRETE VALUES — a specific matrix, transition "
+    "table, sample, circuit, reaction, or code fragment — and require the "
+    "student to compute, derive, or apply a procedure to reach the "
+    "answer. For 6 questions that is at least 4 worked problems; for 3, "
+    "at least 2.\n"
+    "Ask 'what is the steady-state distribution of THIS chain', never "
+    "'what is a steady-state distribution'. Ask 'find the eigenvalues of "
+    "THIS matrix', never 'what does an eigenvalue represent'. A question "
+    "answerable from a definition alone is NOT a worked problem.\n"
+    "Before you return, COUNT your worked problems. If the count is below "
+    "ceil(2N/3), rewrite definitional questions into problems with "
+    "concrete numbers until it is met.\n"
+    "Keep the remainder conceptual — definitions, intuition, when a "
+    "method applies or breaks down. Both kinds matter; the balance is "
+    "what changes.\n"
+    "Options for a worked problem are candidate RESULTS, and the "
+    "distractors must be answers a student actually reaches by making a "
+    "specific mistake — a sign slip, a transposed matrix, an "
+    "unnormalised vector, an off-by-one index, the right method applied "
+    "to the wrong quantity. Never pad with arbitrary numbers. Show the "
+    "steps in `explanation`, including where a tempting distractor goes "
+    "wrong.\n"
+    "For NON-QUANTITATIVE concepts (history, literature, philosophy, "
+    "law), 'practical' means applied analysis over recall: give a "
+    "passage, case, or scenario and ask the student to interpret it "
+    "rather than to name a term.\n"
+    "A worked problem must still be answerable from the four options "
+    "alone — keep the arithmetic tractable without a calculator.\n\n"
     "Workflow:\n"
     "1. Call `read_concepts_for_user` to see the student's mastery per "
     "   concept for this course (returned sorted by mastery ASC — "
@@ -140,38 +183,6 @@ _SYSTEM_PROMPT = (
     "   AND the adaptive-difficulty rules above.\n\n"
     "Honor the requested num_questions. Don't invent concepts the "
     "student doesn't have."
-    # Quizzes skewed conceptual ("what IS a Markov chain?") when what
-    # actually builds competence in a quantitative course is working the
-    # problem. Enforced in the prompt rather than the schema: the
-    # QuizQuestion note above records that Gemini's constrained decoding
-    # blew past "too many states for serving" on the Lite tier, so adding a
-    # question-kind enum would cost us the cheap models.
-    "\n\nPRACTICAL vs CONCEPTUAL mix:\n"
-    "- For QUANTITATIVE concepts — mathematics, physics, chemistry, "
-    "statistics, engineering, and the computational parts of CS — "
-    "AT LEAST TWO THIRDS of the questions must be WORKED PROBLEMS: pose "
-    "  concrete values (a specific matrix, transition table, sample, "
-    "  circuit, reaction, or code fragment) and require the student to "
-    "  compute, derive, or apply a procedure to reach the answer.\n"
-    "- Ask 'what is the steady-state distribution of THIS chain', not "
-    "  'what is a steady-state distribution'. Ask 'find the eigenvalues "
-    "  of THIS matrix', not 'what does an eigenvalue represent'.\n"
-    "- Keep the remaining third conceptual — definitions, intuition, when "
-    "  a method applies or breaks down. Both kinds matter; the balance is "
-    "  what changes.\n"
-    "- Options for a worked problem are candidate RESULTS, and the "
-    "  distractors must be the answers a student actually reaches by "
-    "  making a specific mistake — a sign slip, a transposed matrix, an "
-    "  unnormalised vector, an off-by-one index, the right method applied "
-    "  to the wrong quantity. Never pad with arbitrary numbers.\n"
-    "- Show the work in `explanation`: the steps to the correct result, "
-    "  and where a tempting distractor goes wrong.\n"
-    "- For NON-QUANTITATIVE concepts — history, literature, philosophy, "
-    "  law — 'practical' means applied analysis over recall: give a "
-    "  passage, case, or scenario and ask the student to interpret it, "
-    "  rather than asking them to name a term.\n"
-    "- A worked problem must still be answerable from the four options "
-    "  alone; keep the arithmetic tractable without a calculator."
     "\n\nCOURSE MATERIAL grounding:\n"
     "- If the user message contains a `COURSE MATERIAL` block, treat it as "
     "  the PRIMARY source of truth for question content. The MAJORITY of "
@@ -184,6 +195,15 @@ _SYSTEM_PROMPT = (
     "  mastery / misconception / quiz-history tools.\n"
     "- If there is no COURSE MATERIAL block, use general knowledge of the "
     "  concept as before."
+    # Restated at the end as well as the top. With the rule stated only
+    # once at the top, a live 6-question run produced 3 worked problems
+    # against a bar of 4; models weight the first and last instructions
+    # most heavily, so this claims the last slot before the safety guard.
+    "\n\nFINAL CHECK before returning: for quantitative concepts, count the "
+    "questions that pose concrete values and require computation. That "
+    "count must be at least ceil(2N/3) of N total. If it is not, rewrite "
+    "definitional questions into concrete problems until it is. A quiz "
+    "that is mostly definitions has failed its job."
     # #150: course material / misconception / quiz-history content is
     # student- or peer-derived — data for question writing, never
     # instructions. Single source of truth in services/prompt_safety.py.

@@ -49,15 +49,15 @@ class TestPracticalQuestionMix:
     def test_prompt_requires_a_majority_of_worked_problems(self):
         from agents.quiz import _SYSTEM_PROMPT
 
-        assert "PRACTICAL vs CONCEPTUAL mix" in _SYSTEM_PROMPT
-        assert "AT LEAST TWO THIRDS" in _SYSTEM_PROMPT
-        assert "WORKED PROBLEMS" in _SYSTEM_PROMPT
+        assert "PRACTICAL OVER CONCEPTUAL" in _SYSTEM_PROMPT
+        assert "ceil(2N/3)" in _SYSTEM_PROMPT
+        assert "MOST QUESTIONS MUST BE WORKED PROBLEMS" in _SYSTEM_PROMPT
 
     def test_prompt_keeps_a_conceptual_remainder(self):
         """Practical-only would be an overcorrection -- the ask was a mix."""
         from agents.quiz import _SYSTEM_PROMPT
 
-        assert "remaining third conceptual" in _SYSTEM_PROMPT
+        assert "Keep the remainder conceptual" in _SYSTEM_PROMPT
 
     def test_distractors_must_be_plausible_wrong_results(self):
         from agents.quiz import _SYSTEM_PROMPT
