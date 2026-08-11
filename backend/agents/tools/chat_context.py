@@ -45,6 +45,7 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from db.connection import table
+from services.academics import user_offering_ids_for_course
 from services.encryption import decrypt_if_present, decrypt_json
 
 # Shared tokenizer (#149): factored to services/token_overlap.py so the
@@ -142,12 +143,28 @@ async def search_course_materials(
 
     def _fetch() -> list[dict[str, Any]]:
         try:
+            # `documents` is keyed on offering_id, NOT course_id — the
+            # abstract course lives one level up (CLAUDE.md: "study/analytics
+            # key on offering_id"). Filtering on documents.course_id asked
+            # PostgREST for a column that does not exist, so this tool
+            # answered 400 on every call and — because failures degrade
+            # silently to [] below — looked to the model like "this course
+            # has no materials". The model then told students their topic
+            # wasn't in the course. routes/flashcards.py:141 already used
+            # the offering-based idiom; this now matches it.
+            offering_ids = user_offering_ids_for_course(user_id, course_id)
+            if not offering_ids:
+                return []
+            joined = ",".join(offering_ids)
             return (
                 table("documents").select(
                     "id,file_name,summary,concept_notes",
                     filters={
-                        "course_id": f"eq.{course_id}",
+                        "offering_id": f"in.({joined})",
                         "user_id": f"eq.{user_id}",
+                        # Soft-deleted documents must not be resurrected into
+                        # the tutor's context (the previous query omitted this).
+                        "deleted_at": "is.null",
                     },
                     order="created_at.desc",
                 )
