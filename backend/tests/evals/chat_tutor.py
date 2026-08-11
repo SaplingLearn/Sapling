@@ -175,6 +175,38 @@ class NoCourseScopeRefusalEvaluator(Evaluator[ChatInput, ChatReply]):
         return 1.0
 
 
+@dataclass
+class OffSyllabusTopicEngagedEvaluator(Evaluator[ChatInput, ChatReply]):
+    """Positive counterpart to NoCourseScopeRefusalEvaluator.
+
+    The banned-substring check only catches the BLUNT form of the CS132
+    bug ("not in the course description"). It scores 1.0 on the polite
+    deflection observed pre-fix on `socratic_history_themes` — "That's a
+    fascinating historical question. However, it seems like we're focused
+    on topics like Calculus, Computer Science, and Biology in this
+    course... would you like to tackle one of the concepts we're
+    tracking?" — which redirects to course material without using any
+    banned phrase. A substring blocklist can always be walked around by a
+    newer model's phrasing; this evaluator instead asserts the reply
+    actually engages the topic asked, which is much harder to evade.
+
+    Cases tagged `off_syllabus` must carry `expected_topic_terms` in their
+    metadata (a tuple of lowercase strings); the reply must contain at
+    least one. Untagged cases pass vacuously (score 1.0)."""
+
+    def evaluate(self, ctx: EvaluatorContext[ChatInput, ChatReply]) -> float:
+        metadata = ctx.metadata or {}
+        if not metadata.get("off_syllabus"):
+            return 1.0
+        terms = metadata.get("expected_topic_terms") or ()
+        if not terms:
+            # Fail closed: an off_syllabus case with no expected terms is a
+            # test-authoring bug, not something that should silently pass.
+            return 0.0
+        reply = (ctx.output.text if ctx.output else "").lower()
+        return 1.0 if any(term.lower() in reply for term in terms) else 0.0
+
+
 # ── #149 tool-behavior evaluators (scored off cassette tool_calls) ──────────
 
 # The two read-only graph tools' wire names (chat_tutor._build_tools).
@@ -300,7 +332,18 @@ CASES: list[Case[ChatInput, ChatReply]] = [
             "socratic",
             "Why did the Roman Empire fall?",
         ),
-        metadata={"mode": "socratic"},
+        # Task 5 report / final-review Finding 2: under the old prompt this
+        # case deflected in polite form ("it seems like we're focused on
+        # topics like Calculus, Computer Science, and Biology in this
+        # course... would you like to tackle one of the concepts we're
+        # tracking?") — no banned substring, so NoCourseScopeRefusalEvaluator
+        # scored it 1.0 anyway. off_syllabus + expected_topic_terms lets
+        # OffSyllabusTopicEngagedEvaluator catch that polite form too.
+        metadata={
+            "mode": "socratic",
+            "off_syllabus": True,
+            "expected_topic_terms": ("rome", "roman"),
+        },
     ),
     Case(
         name="socratic_open_followup",
@@ -329,12 +372,29 @@ CASES: list[Case[ChatInput, ChatReply]] = [
         # Task 5 / CS132 regression: a topic genuinely outside the course
         # catalog. The tutor must teach it anyway — course context is
         # enrichment, never a limit on what may be taught.
+        #
+        # Lite-tier (gemini-2.5-flash-lite) confirmation, run ad hoc against
+        # this exact input during task 5 (not committed as a cassette — see
+        # .superpowers/sdd/2026-08-10-tutor-course-scope/task-5-report.md
+        # Step 6 for the full method) and preserved here so it survives:
+        #
+        #   Yes, we can!
+        #
+        #   To start, what do you already know about Markov chains, or what
+        #   makes you curious about them?
+        #
+        # No tool calls, no course/syllabus mention, engages the topic by
+        # name — the fix holds on the weakest tier, not just Pro.
         name="socratic_off_syllabus_markov_chains",
         inputs=(
             "socratic",
             "can we talk about markov chains",
         ),
-        metadata={"mode": "socratic", "off_syllabus": True},
+        metadata={
+            "mode": "socratic",
+            "off_syllabus": True,
+            "expected_topic_terms": ("markov",),
+        },
     ),
 
     # ── EXPOSITORY ──────────────────────────────────────────────────────────
@@ -616,6 +676,7 @@ def make_dataset() -> Dataset[ChatInput, ChatReply]:
             TeachBackProbesEvaluator(),
             NoToolMisuseEvaluator(),
             NoCourseScopeRefusalEvaluator(),
+            OffSyllabusTopicEngagedEvaluator(),
             GraphToolUsedEvaluator(),
             MasteryUpdateEmittedEvaluator(),
             GroundedConceptEvaluator(),
