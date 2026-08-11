@@ -1000,3 +1000,61 @@ class TestFallbackWriteStateStamp:
                     use_shared_context=True, request_id="r1", model_pref=None,
                 ))
         assert getattr(excinfo.value, "sapling_wrote", None) is False
+
+
+class TestChatContextBlockFraming:
+    """2026-08-10 tutor-course-scope spec: the injected blocks must state their purpose and their fallback.
+
+    Before this, the catalog block read as an authoritative boundary and the
+    model refused off-syllabus questions ("Markov chains are not in the
+    course description") instead of teaching them.
+    """
+
+    def _prepare(self, user_message, catalog="Geometric algorithms.", chunks=None):
+        from unittest.mock import MagicMock, patch
+
+        import routes.learn as learn_routes
+
+        with (
+            patch("routes.learn.agent_for_mode", return_value=MagicMock()),
+            patch("routes.learn._get_course_info", return_value={"course_code": "CASCS132"}),
+            patch("routes.learn._get_catalog_chunk", return_value=catalog),
+            patch("services.rag_service.retrieve_chunks", return_value=chunks or []),
+            patch("services.graph_context.build_graph_context_block", return_value=""),
+        ):
+            _agent, message, _kwargs, _deps = learn_routes._prepare_chat_run(
+                user_id="u1",
+                session_id="s1",
+                course_id="c1",
+                mode="socratic",
+                user_message=user_message,
+                message_history=[],
+                use_shared_context=True,
+                request_id="r1",
+            )
+        return message
+
+    def test_catalog_block_states_it_is_not_a_topic_limit(self):
+        message = self._prepare("can we talk about markov chains")
+        assert "COURSE REFERENCE" in message
+        assert "COURSE CATALOG INFO" not in message
+        assert "Never use it to decide whether a topic may be discussed." in message
+
+    def test_catalog_text_still_injected(self):
+        """Framing changed; the catalog itself is still unconditionally present
+        so 'what are the prerequisites?' works without clearing RAG's threshold."""
+        message = self._prepare("what are the prereqs for this class?")
+        assert "Geometric algorithms." in message
+
+    def test_rag_block_tells_the_model_to_fall_back(self):
+        message = self._prepare(
+            "can we talk about markov chains",
+            chunks=[{"chunk_text": "convex hull", "similarity": 0.9}],
+        )
+        assert "COURSE MATERIAL" in message
+        assert "RETRIEVED COURSE CONTEXT" not in message
+        assert "answer from your own knowledge" in message
+
+    def test_student_question_marker_preserved(self):
+        message = self._prepare("can we talk about markov chains")
+        assert "[STUDENT QUESTION]\ncan we talk about markov chains" in message
