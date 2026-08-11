@@ -124,7 +124,7 @@ def test_every_tool_honors_injected_retrieval():
     assert fake.calls[2] == ("progress", "u1", "c1")
     assert fake.calls[3] == ("concept_mastery", "u1", "c1")
     assert fake.calls[4] == ("graph_neighborhood", "u1", "c1", ("C1",), 7)
-    assert mats[0].document_id == "d1"
+    assert mats.materials[0].document_id == "d1"
     assert hist[0].content == "hi"
     assert prog.total_concepts == 1
     assert len(conc) == 3, "wrapper caps concept_mastery at the LLM-chosen limit"
@@ -165,7 +165,7 @@ def test_none_retrieval_falls_back_to_supabase_functions():
         patch("agents.tools.graph_read.read_concepts_for_user", fake_concepts),
         patch("agents.tools.graph_read.read_graph_neighborhood", fake_hood),
     ):
-        assert _run(search_course_materials_tool(ctx, "q")) == []
+        assert _run(search_course_materials_tool(ctx, "q")).materials == []
         assert _run(read_session_history_tool(ctx)) == []
         assert _run(read_user_progress_tool(ctx)).total_concepts == 0
         assert _run(read_concepts_for_user_tool(ctx)) == []

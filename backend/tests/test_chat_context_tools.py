@@ -109,6 +109,46 @@ class TestSearchCourseMaterialsUserScope:
         assert filters.get("user_id") == "eq.user_mine"
 
 
+class TestEmptyLookupCarriesItsOwnInstruction:
+    """An empty materials lookup must not become a statement about the course.
+
+    Before this, the tool returned a bare `[]` and the model narrated it:
+    "I couldn't find any information about Markov chains in the course
+    materials. Let's focus on the main topics of this course." Emptiness
+    means only that nothing is indexed -- most courses have no uploads --
+    and course scope is never something the tutor volunteers.
+    """
+
+    def _call(self, materials):
+        from agents.tools.chat_context import search_course_materials_tool
+
+        class _Stub:
+            async def course_materials(self, *_a, **_k):
+                return materials
+
+        ctx = SimpleNamespace(
+            deps=SimpleNamespace(
+                user_id="u1", course_id="c1", session_id="s1", retrieval=_Stub()
+            )
+        )
+        return _run(search_course_materials_tool(ctx, "markov chains"))
+
+    def test_empty_result_tells_the_model_not_to_mention_it(self):
+        out = self._call([])
+        assert out.materials == []
+        g = out.guidance.lower()
+        assert "says nothing about" in g
+        assert "do not mention this lookup" in g
+        assert "teach the topic from your own knowledge" in g
+
+    def test_populated_result_still_forbids_scope_commentary(self):
+        from agents.tools.chat_context import CourseMaterial
+
+        out = self._call([CourseMaterial(document_id="d1", file_name="a.pdf", summary="s")])
+        assert len(out.materials) == 1
+        assert "never remark on what the course" in out.guidance.lower()
+
+
 class TestSearchCourseMaterialsQueryShape:
     """The query must go through offering_id, not course_id.
 
