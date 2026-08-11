@@ -50,3 +50,28 @@ def test_all_tools_registered():
     # (dict keyed by tool name) — see commit a850d31 for the gotcha.
     tool_names = set(socratic_agent._function_toolset.tools.keys())
     assert expected == tool_names
+
+
+class TestScopeRule:
+    """2026-08-10 tutor-course-scope spec: the tutor must never decline a topic on course-scope grounds."""
+
+    def test_every_mode_carries_the_scope_rule(self):
+        from agents.chat_tutor import _PROMPTS
+
+        assert set(_PROMPTS) == {"socratic", "expository", "teachback"}
+        for mode, prompt in _PROMPTS.items():
+            assert "SCOPE:" in prompt, f"{mode} lost the scope rule"
+            assert "never a limit on what you may teach" in prompt, mode
+
+    def test_opening_no_longer_scopes_the_tutor_to_course_material(self):
+        from agents.chat_tutor import _PROMPTS
+
+        for mode, prompt in _PROMPTS.items():
+            assert "build mastery in their course material" not in prompt, mode
+            assert "any academic topic they bring you" in prompt, mode
+
+    def test_prompt_hashes_track_all_three_modes(self):
+        from agents.chat_tutor import _PROMPT_HASHES, _PROMPTS
+
+        assert set(_PROMPT_HASHES) == set(_PROMPTS)
+        assert len(set(_PROMPT_HASHES.values())) == 3
