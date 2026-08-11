@@ -144,6 +144,37 @@ class NoToolMisuseEvaluator(Evaluator[ChatInput, ChatReply]):
         return 1.0
 
 
+@dataclass
+class NoCourseScopeRefusalEvaluator(Evaluator[ChatInput, ChatReply]):
+    """The tutor must never decline a topic on course-scope grounds.
+
+    Regression for the CS132 report: asked about Markov chains, the tutor
+    answered "I can only find information about geometric algorithms.
+    Markov chains are not in the course description." Course context is
+    enrichment, never a limit on what may be taught.
+    """
+
+    BANNED_SUBSTRINGS = (
+        "not in the course description",
+        "not in the course",
+        "not part of the course",
+        "not covered in the course",
+        "outside the course",
+        "not in the syllabus",
+        "i can only find information about",
+        "i can only discuss",
+        "i can only help with",
+        "i can only assist with",
+    )
+
+    def evaluate(self, ctx: EvaluatorContext[ChatInput, ChatReply]) -> float:
+        reply = (ctx.output.text if ctx.output else "").lower()
+        for banned in self.BANNED_SUBSTRINGS:
+            if banned in reply:
+                return 0.0
+        return 1.0
+
+
 # ── #149 tool-behavior evaluators (scored off cassette tool_calls) ──────────
 
 # The two read-only graph tools' wire names (chat_tutor._build_tools).
@@ -294,6 +325,17 @@ CASES: list[Case[ChatInput, ChatReply]] = [
         ),
         metadata={"mode": "socratic", "grounded": True, "expects_graph_read": True},
     ),
+    Case(
+        # Task 5 / CS132 regression: a topic genuinely outside the course
+        # catalog. The tutor must teach it anyway — course context is
+        # enrichment, never a limit on what may be taught.
+        name="socratic_off_syllabus_markov_chains",
+        inputs=(
+            "socratic",
+            "can we talk about markov chains",
+        ),
+        metadata={"mode": "socratic", "off_syllabus": True},
+    ),
 
     # ── EXPOSITORY ──────────────────────────────────────────────────────────
     Case(
@@ -386,14 +428,18 @@ CASES: list[Case[ChatInput, ChatReply]] = [
     ),
 ]
 
-assert len(CASES) == 16, f"Expected 16 cases (5/5/5 + the #149 graph-read case), got {len(CASES)}"
+assert len(CASES) == 17, (
+    f"Expected 17 cases (5/5/5 + the #149 graph-read case + the Task 5 "
+    f"off-syllabus case), got {len(CASES)}"
+)
 
-# Per-mode breakdown sanity check (6 / 5 / 5 — #149 added a socratic case).
+# Per-mode breakdown sanity check (7 / 5 / 5 — #149 and Task 5 both added a
+# socratic case).
 _MODE_COUNTS: dict[str, int] = {"socratic": 0, "expository": 0, "teachback": 0}
 for _c in CASES:
     _MODE_COUNTS[_c.inputs[0]] = _MODE_COUNTS.get(_c.inputs[0], 0) + 1
-assert _MODE_COUNTS == {"socratic": 6, "expository": 5, "teachback": 5}, (
-    f"Expected 6/5/5 cases per mode, got {_MODE_COUNTS}"
+assert _MODE_COUNTS == {"socratic": 7, "expository": 5, "teachback": 5}, (
+    f"Expected 7/5/5 cases per mode, got {_MODE_COUNTS}"
 )
 
 
@@ -569,6 +615,7 @@ def make_dataset() -> Dataset[ChatInput, ChatReply]:
             ExpositoryHasStructureEvaluator(),
             TeachBackProbesEvaluator(),
             NoToolMisuseEvaluator(),
+            NoCourseScopeRefusalEvaluator(),
             GraphToolUsedEvaluator(),
             MasteryUpdateEmittedEvaluator(),
             GroundedConceptEvaluator(),
