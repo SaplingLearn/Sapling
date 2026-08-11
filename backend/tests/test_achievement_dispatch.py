@@ -372,7 +372,7 @@ class TestGradebookDispatch:
 
 _MIGRATION = (
     Path(__file__).resolve().parent.parent
-    / "db" / "migrations" / "0044_achievement_catalog.sql"
+    / "db" / "migrations" / "20260731194102_achievement_catalog.sql"
 )
 
 # Fired somewhere other than a `check_achievements(...)` literal: account_age_days

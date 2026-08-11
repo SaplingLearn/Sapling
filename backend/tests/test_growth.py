@@ -96,7 +96,7 @@ class TestStageForLevel:
         assert stage_for_level(50)["slug"] == "old"
 
 
-# sort_order and min_level are independent columns (0043_gamification.sql has no
+# sort_order and min_level are independent columns (20260731193214_gamification.sql has no
 # constraint tying them) that merely happen to agree in the current seed. These rows
 # are fetched in sort_order order (soil before bare) but disagree with min_level rank
 # (soil's min_level=5 is greater than bare's min_level=1). Band lookups must be

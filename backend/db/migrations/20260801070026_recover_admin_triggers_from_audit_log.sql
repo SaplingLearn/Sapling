@@ -1,6 +1,10 @@
 -- 0046: supersede 0045's guidance and actually repair the trigger loss 0044
 -- caused on admin-created achievements.
 --
+-- Formerly 0046_recover_admin_triggers_from_audit_log.sql, renamed at the timestamp
+-- cutover (#509). Bare 0043/0044/0045/0046 references in this file and
+-- its siblings are those original sequential numbers.
+--
 -- ── Correcting the record ───────────────────────────────────────────────────
 -- 0045 states:
 --

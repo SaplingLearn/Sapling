@@ -1,6 +1,10 @@
 -- 0045: detect (and document) the trigger loss 0044 can cause on a catalog
 -- that holds admin-created achievements.
 --
+-- Formerly 0045_restore_admin_created_triggers.sql, renamed at the timestamp
+-- cutover (#509). Bare 0043/0044/0045/0046 references in this file and
+-- its siblings are those original sequential numbers.
+--
 -- ── The hazard ──────────────────────────────────────────────────────────────
 -- 0044 rebuilds triggers with:
 --

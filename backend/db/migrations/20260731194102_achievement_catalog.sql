@@ -1,6 +1,10 @@
 -- 0044: bring in the 30 badges from the Achievements.dc.html design as the
 -- live catalog, and demote the 10 pre-existing seeds to drafts.
 --
+-- Formerly 0044_achievement_catalog.sql, renamed at the timestamp
+-- cutover (#509). Bare 0043/0044/0045/0046 references in this file and
+-- its siblings are those original sequential numbers.
+--
 -- Deliberately non-destructive: the old rows keep their slugs, triggers and
 -- earned rows, so nobody loses a badge. Concepts overlap across the two sets
 -- (Week Warrior/draft and On Fire/live are both a 7-day streak) — harmless,

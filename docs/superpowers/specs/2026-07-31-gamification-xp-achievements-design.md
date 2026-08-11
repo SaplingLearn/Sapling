@@ -65,7 +65,7 @@ v1; the tile reads "Study streak · longest N days" instead.
 
 ## Data model
 
-One migration, `0043_gamification.sql`.
+One migration, `20260731193214_gamification.sql`.
 
 ### New tables
 

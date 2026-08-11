@@ -1,5 +1,9 @@
 -- 0043: gamification — XP ledger, level curve, friends.
 --
+-- Formerly 0043_gamification.sql, renamed at the timestamp
+-- cutover (#509). Bare 0043/0044/0045/0046 references in this file and
+-- its siblings are those original sequential numbers.
+--
 -- xp_events is append-only and authoritative; users.total_xp/level are caches
 -- recomputed by services/xp_service.py and always rederivable from it.
 

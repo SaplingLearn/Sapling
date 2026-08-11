@@ -39,7 +39,7 @@ def _bands() -> list[dict]:
     """Stages annotated with the span and per-level cost of each band.
 
     Sorted explicitly by min_level: sort_order and min_level are independent
-    columns (0043_gamification.sql ties neither to the other), so the query's
+    columns (20260731193214_gamification.sql ties neither to the other), so the query's
     sort_order.asc ordering is not guaranteed to match ascending min_level.
     _band_for_level's early-exit scan — and this function's own span
     computation, which looks at the *next* row's min_level — both depend on

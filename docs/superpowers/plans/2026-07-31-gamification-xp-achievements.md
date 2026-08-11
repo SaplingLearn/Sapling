@@ -31,8 +31,8 @@
 ## File Structure
 
 **Backend — created**
-- `backend/db/migrations/0043_gamification.sql` — schema: `xp_events`, `xp_rules`, `growth_stages`, `friendships`, `friend_requests`, and the `users`/`achievements` column additions.
-- `backend/db/migrations/0044_achievement_catalog.sql` — data: slug remaps, the five deletions, the 25 inserts, triggers.
+- `backend/db/migrations/20260731193214_gamification.sql` — schema: `xp_events`, `xp_rules`, `growth_stages`, `friendships`, `friend_requests`, and the `users`/`achievements` column additions.
+- `backend/db/migrations/20260731194102_achievement_catalog.sql` — data: slug remaps, the five deletions, the 25 inserts, triggers.
 - `backend/services/growth.py` — pure level/stage maths over `growth_stages`. No writes.
 - `backend/services/xp_service.py` — the one award path.
 - `backend/services/streak_service.py` — the only writer of `streak_count` / `longest_streak`.
@@ -70,7 +70,7 @@
 ### Task 1: Schema migration
 
 **Files:**
-- Create: `backend/db/migrations/0043_gamification.sql`
+- Create: `backend/db/migrations/20260731193214_gamification.sql`
 
 **Interfaces:**
 - Produces: tables `xp_events`, `xp_rules`, `growth_stages`, `friendships`, `friend_requests`; columns `users.total_xp`, `users.level`, `users.daily_goal_xp`, `users.longest_streak`, `achievements.xp_reward`, `achievements.icon_url`, `achievements.sort_order`.
@@ -180,7 +180,7 @@ CREATE INDEX IF NOT EXISTS idx_achievements_status ON achievements(status);
 - [ ] **Step 2: Apply it against local Supabase**
 
 Run from `backend/`: `python -m db.migrate`
-Expected: `0043_gamification.sql` reported applied, no errors.
+Expected: `20260731193214_gamification.sql` reported applied, no errors.
 
 - [ ] **Step 3: Verify the seed landed**
 
@@ -193,7 +193,7 @@ Expected: `11 6`
 - [ ] **Step 4: Commit**
 
 ```bash
-git add backend/db/migrations/0043_gamification.sql
+git add backend/db/migrations/20260731193214_gamification.sql
 git commit -m "feat(db): gamification schema — XP ledger, level curve, friends"
 ```
 
@@ -202,7 +202,7 @@ git commit -m "feat(db): gamification schema — XP ledger, level curve, friends
 ### Task 2: Achievement catalog migration
 
 **Files:**
-- Create: `backend/db/migrations/0044_achievement_catalog.sql`
+- Create: `backend/db/migrations/20260731194102_achievement_catalog.sql`
 
 **Interfaces:**
 - Consumes: `achievements.xp_reward` / `sort_order` / `status` from Task 1.
@@ -335,7 +335,7 @@ Expected: the same count as before the migration — nothing was deleted or rema
 - [ ] **Step 4: Commit**
 
 ```bash
-git add backend/db/migrations/0044_achievement_catalog.sql
+git add backend/db/migrations/20260731194102_achievement_catalog.sql
 git commit -m "feat(db): add the design's 30 badges as live, demote the seeded 10 to draft"
 ```
 

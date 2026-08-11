@@ -17,7 +17,7 @@ def _count_rows(table_name: str, filters: dict) -> int:
     junction tables with a composite primary key and no `id` column at all:
     `room_members` is PRIMARY KEY (room_id, user_id) (0001_baseline_schema.sql)
     and `friendships` is PRIMARY KEY (user_id, friend_id)
-    (0043_gamification.sql). Asking PostgREST for a column that does not exist
+    (20260731193214_gamification.sql). Asking PostgREST for a column that does not exist
     is a 400 (`42703`), which `db/connection.py` raises — so with `id` the
     `rooms_joined`, `owned_room_members` and `friends_count` stats did not
     merely return a wrong number, they threw, and `study-circle`,

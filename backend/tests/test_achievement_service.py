@@ -447,7 +447,7 @@ class TestCountRowsSelectsAnExistingColumn:
 
     Column sets below are transcribed from the migrations:
       room_members  PRIMARY KEY (room_id, user_id)   0001_baseline_schema.sql
-      friendships   PRIMARY KEY (user_id, friend_id) 0043_gamification.sql
+      friendships   PRIMARY KEY (user_id, friend_id) 20260731193214_gamification.sql
     """
 
     # PostgREST's error for an unknown column.
