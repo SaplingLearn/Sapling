@@ -191,8 +191,17 @@ class OffSyllabusTopicEngagedEvaluator(Evaluator[ChatInput, ChatReply]):
     actually engages the topic asked, which is much harder to evade.
 
     Cases tagged `off_syllabus` must carry `expected_topic_terms` in their
-    metadata (a tuple of lowercase strings); the reply must contain at
-    least one. Untagged cases pass vacuously (score 1.0)."""
+    metadata (a tuple of lowercase strings); the reply text OR the
+    concept args of any tool call the model made must contain at least
+    one. The tool-call args count as engagement too: on
+    `socratic_history_themes` the reply itself says "the collapse" (never
+    "Rome"/"Roman" literally) but `apply_graph_update_tool` is called with
+    concepts=["Fall of the Roman Empire", "Barbarian invasions", ...] and
+    `update_mastery_tool` tracks "Fall of the Roman Empire" — that's the
+    model demonstrably engaging and grounding the real topic, just not in
+    the prose. Checking only `ctx.output.text` made this evaluator blind
+    on the one case it was written to catch. Untagged cases pass
+    vacuously (score 1.0)."""
 
     def evaluate(self, ctx: EvaluatorContext[ChatInput, ChatReply]) -> float:
         metadata = ctx.metadata or {}
@@ -204,7 +213,25 @@ class OffSyllabusTopicEngagedEvaluator(Evaluator[ChatInput, ChatReply]):
             # test-authoring bug, not something that should silently pass.
             return 0.0
         reply = (ctx.output.text if ctx.output else "").lower()
-        return 1.0 if any(term.lower() in reply for term in terms) else 0.0
+        if any(term.lower() in reply for term in terms):
+            return 1.0
+        tool_calls = (ctx.output.tool_calls if ctx.output else []) or []
+        args_text = " ".join(_flatten_strings(call.args) for call in tool_calls).lower()
+        return 1.0 if any(term.lower() in args_text for term in terms) else 0.0
+
+
+def _flatten_strings(value: object) -> str:
+    """Recursively collect every string found in a (possibly nested)
+    tool-call args structure into one space-joined haystack, so an
+    evaluator can substring-match against concept names, reasons, etc.
+    regardless of which arg key they live under."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(_flatten_strings(v) for v in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return " ".join(_flatten_strings(v) for v in value)
+    return ""
 
 
 # ── #149 tool-behavior evaluators (scored off cassette tool_calls) ──────────

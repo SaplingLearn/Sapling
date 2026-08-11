@@ -7,7 +7,7 @@
     "NoCourseScopeRefusalEvaluator": 1.0,
     "NoToolMisuseEvaluator": 1.0,
     "NonEmptyEvaluator": 1.0,
-    "OffSyllabusTopicEngagedEvaluator": 0.941176,
+    "OffSyllabusTopicEngagedEvaluator": 1.0,
     "SocraticEndsWithQuestionEvaluator": 1.0,
     "TeachBackProbesEvaluator": 1.0
   },
