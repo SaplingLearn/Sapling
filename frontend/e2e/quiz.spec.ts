@@ -352,8 +352,9 @@ test("selects mirror /api/quiz/config; adaptive reports its resolved difficulty 
   // value here is the #540 regression.
   await page.getByRole("button", { name: "Number of questions" }).click();
   const countOptions = page.getByRole("option");
+  // The selected option carries a trailing ✓ marker — match on the label.
   await expect(countOptions).toHaveText(
-    cfg.num_questions.options.map((n: number) => `${n} questions`),
+    cfg.num_questions.options.map((n: number) => new RegExp(`^${n} questions`)),
   );
   // Close by committing the current default (5 questions).
   await page.getByRole("option", { name: "5 questions" }).click();
