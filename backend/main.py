@@ -315,6 +315,45 @@ def gemini_test(request: Request):
         return {"ok": False, "error": str(e)}
 
 
+def _refuse_if_port_taken(port: int) -> None:
+    """Fail loudly when something already serves PORT.
+
+    Windows lets a second process bind a port another process is already
+    listening on (no SO_EXCLUSIVEADDRUSE), and it does NOT hand the new
+    socket the traffic — the first binder keeps answering. The second
+    server starts, logs "Application startup complete", passes a health
+    check, and serves nobody.
+
+    That cost a long debugging session: a backend left running from a
+    different worktree kept answering the browser, so a route that existed
+    in the checked-out code 404'd in the app, and every "restart" appeared
+    to succeed. Whoever hits this next should be told, not left to infer it
+    from an impossible 404.
+
+    Dev-entrypoint only (`python main.py`). Containers and Railway import
+    `main:app` directly and never reach this.
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.4)
+        if probe.connect_ex(("127.0.0.1", port)) != 0:
+            return
+
+    raise SystemExit(
+        f"\nPort {port} is already serving.\n\n"
+        f"On Windows a second bind SUCCEEDS but receives no traffic — this\n"
+        f"process would start, look healthy, and serve nobody, while the\n"
+        f"existing server (possibly from another worktree, on older code)\n"
+        f"keeps answering your browser.\n\n"
+        f"Stop the other server first:\n"
+        f"  Windows:  Get-NetTCPConnection -LocalPort {port} -State Listen |\n"
+        f"              ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force }}\n"
+        f"  macOS/Linux:  lsof -ti tcp:{port} | xargs kill\n"
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
+    _refuse_if_port_taken(PORT)
     uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=True)
