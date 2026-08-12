@@ -29,12 +29,14 @@ export const TEAM_MEMBERS = [
           body:'Builds the interface you actually study in, and the motion and layout that keep it out of your way.', delay:'160ms' },
         { name:'Luke Cooper', role:'API integration', slot:'team-luke', hint:'Drop a photo of Luke',
           body:'Wires Sapling to the services your course already lives in, so your calendar, grades, and files arrive on their own.', delay:'240ms' },
+        { name:'Hang Nguyen', role:'Marketing intern', slot:'team-hang', hint:'Drop a photo of Hang',
+          body:'Runs the social side and the short-form video, and carries Sapling to the student groups and classmates we would never reach on our own.', delay:'320ms' },
       ] as const;
 
 export const TEAM_WAYS = [
         'We use Sapling for our own courses before anyone else sees a feature. If it does not help us pass, it does not ship.',
         'Every feature has to feed the graph. A tool that knows nothing about what you already understand is a tool we would not add.',
-        'We read every piece of beta feedback ourselves. There is no support queue between you and the four of us.',
+        'We read every piece of beta feedback ourselves. There is no support queue between you and the people who built it.',
       ] as const;
 
 export const FAQ_GROUPS = [

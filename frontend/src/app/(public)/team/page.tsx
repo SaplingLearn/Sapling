@@ -18,7 +18,7 @@ import { TEAM_MEMBERS, TEAM_WAYS } from '@/lib/landing/companionContent';
 export const metadata: Metadata = {
   title: 'Meet the team',
   description:
-    'Four Boston University students who got tired of study tools that did not know what they were studying.',
+    'A small team out of Boston University who got tired of study tools that did not know what they were studying.',
 };
 
 const MONO = "'JetBrains Mono',monospace";
@@ -47,9 +47,9 @@ export default function TeamPage() {
           Meet the team
         </h1>
         <p style={{ margin: '24px 0 0', fontFamily: SERIF, fontWeight: 400, fontSize: 16, lineHeight: 1.6, color: '#3f3b31', maxWidth: '62ch', animation: 'fadeUp 700ms ease 140ms both' }}>
-          Four Boston University students who got tired of study tools that did not know what they
-          were studying. We build Sapling between problem sets, and we use it for our own classes
-          first.
+          A small team out of Boston University who got tired of study tools that did not know what
+          they were studying. We build Sapling between problem sets, and we use it for our own
+          classes first.
         </p>
 
         <div style={{ marginTop: 44, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px,1fr))', gap: 20 }}>
