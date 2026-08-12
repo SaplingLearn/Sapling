@@ -1,6 +1,8 @@
 from typing import Optional, Union, List, Literal
 from pydantic import BaseModel, Field
 
+from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
+
 
 # ── Learn ─────────────────────────────────────────────────────────────────────
 
@@ -46,7 +48,10 @@ class ActionBody(BaseModel):
 class GenerateQuizBody(BaseModel):
     user_id: str = "user_andres"
     concept_node_id: str
-    num_questions: int = Field(default=5, ge=1, le=10)
+    # Bounds come from services/quiz_config.py — the same constants
+    # GET /api/quiz/config serves, so the client can't offer a value
+    # this model rejects (#540 A2).
+    num_questions: int = Field(default=5, ge=QUIZ_MIN_QUESTIONS, le=QUIZ_MAX_QUESTIONS)
     difficulty: str = "medium"
     use_shared_context: bool = True
     # Mirrors the Learn-route fast/smart toggle so quiz generation has

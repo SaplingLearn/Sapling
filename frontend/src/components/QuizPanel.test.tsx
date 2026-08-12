@@ -42,6 +42,9 @@ vi.mock("./CustomSelect", () => ({
 vi.mock("@/lib/api", () => ({
   generateQuiz: vi.fn(),
   submitQuiz: vi.fn(),
+  // Reject so the panel exercises its static fallback lists — the
+  // config fetch is best-effort by design (#540 A2).
+  fetchQuizConfig: vi.fn().mockRejectedValue(new Error("offline")),
 }));
 
 import { generateQuiz } from "@/lib/api";

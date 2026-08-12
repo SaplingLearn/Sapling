@@ -429,8 +429,19 @@ export const resumeSession = (sessionId: string) =>
   }>(`/api/learn/sessions/${sessionId}/resume`);
 
 // Quiz
+export interface QuizConfig {
+  num_questions: { min: number; max: number; options: number[] };
+  difficulties: string[];
+  question_types: string[];
+}
+
+// #540 A2: the backend is the single source of truth for selector values —
+// QuizPanel builds its count/difficulty selects from this so the UI can
+// never again offer a value the route rejects (e.g. the old "15 questions").
+export const fetchQuizConfig = () => fetchJSON<QuizConfig>('/api/quiz/config');
+
 export const generateQuiz = (userId: string, conceptNodeId: string, numQuestions: number, difficulty: string, useSharedContext = true) =>
-  fetchJSON<{ quiz_id: string; questions: any[] }>('/api/quiz/generate', {
+  fetchJSON<{ quiz_id: string; questions: any[]; requested_difficulty?: string; resolved_difficulty?: string }>('/api/quiz/generate', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, concept_node_id: conceptNodeId, num_questions: numQuestions, difficulty, use_shared_context: useSharedContext }),
   });

@@ -26,6 +26,7 @@ from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.newsletter import router as newsletter_router
+from services import quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services.request_context import RequestIDMiddleware, current_request_id
 from services.storage_service import (
@@ -186,9 +187,22 @@ app.add_middleware(RequestIDMiddleware)
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    if quiz_errors.is_quiz_path(request.url.path):
+        # #540 A3: quiz routes speak the coded envelope. QuizAPIError raise
+        # sites carry a precise code; plain HTTPExceptions (require_self,
+        # etc.) fall back to a status-derived one.
+        content = quiz_errors.quiz_error_body(
+            exc.status_code,
+            exc.detail,
+            rid,
+            code=getattr(exc, "code", None),
+            machine_detail=getattr(exc, "machine_detail", None),
+        )
+    else:
+        content = {"detail": exc.detail, "request_id": rid}
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.detail, "request_id": rid},
+        content=content,
         headers={"X-Request-ID": rid} if rid else {},
     )
 
@@ -196,9 +210,29 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    if quiz_errors.is_quiz_path(request.url.path):
+        # A bad num_questions is the one validation failure the old UI could
+        # actually produce (it offered 15 against le=10) — give it a precise
+        # code + a sentence; everything else is generic QUIZ_VALIDATION_ERROR.
+        locs = {str(part) for e in exc.errors() for part in e.get("loc", ())}
+        if "num_questions" in locs:
+            code = quiz_errors.QuizErrorCode.QUIZ_COUNT_OUT_OF_RANGE
+            message = (
+                f"Quizzes can have between {quiz_config.QUIZ_MIN_QUESTIONS} "
+                f"and {quiz_config.QUIZ_MAX_QUESTIONS} questions."
+            )
+        else:
+            code = quiz_errors.QuizErrorCode.QUIZ_VALIDATION_ERROR
+            message = "That quiz request wasn't valid — please try again."
+        content = quiz_errors.quiz_error_body(
+            422, exc.errors(), rid, code=code, message=message,
+            machine_detail=exc.errors(),
+        )
+    else:
+        content = {"detail": exc.errors(), "request_id": rid}
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "request_id": rid},
+        content=content,
         headers={"X-Request-ID": rid} if rid else {},
     )
 
@@ -207,9 +241,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.getLogger("main").exception("Unhandled exception")
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    if quiz_errors.is_quiz_path(request.url.path):
+        content = quiz_errors.quiz_error_body(
+            500, "Internal server error.", rid,
+            code=quiz_errors.QuizErrorCode.QUIZ_INTERNAL_ERROR,
+        )
+    else:
+        content = {"detail": "Internal server error.", "request_id": rid}
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error.", "request_id": rid},
+        content=content,
         headers={"X-Request-ID": rid} if rid else {},
     )
 

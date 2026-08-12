@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CustomSelect } from "./CustomSelect";
 import { useToast } from "./ToastProvider";
-import { generateQuiz, submitQuiz } from "@/lib/api";
+import { fetchQuizConfig, generateQuiz, submitQuiz, type QuizConfig } from "@/lib/api";
 import {
   conceptOptionsForCourse,
   courseOptions,
@@ -55,18 +55,43 @@ interface QuizPanelProps {
   onExit: () => void;
 }
 
-const COUNT_OPTIONS = [
+// #540 A2: the backend's GET /api/quiz/config is the source of truth for
+// these selects; the static lists below are only the pre-fetch fallback and
+// mirror backend/services/quiz_config.py. The old list offered "15
+// questions" against a 10-question cap (guaranteed 422) and the route used
+// to reject "adaptive" — both fixed server-side in #540.
+const FALLBACK_COUNT_OPTIONS = [
+  { value: "3", label: "3 questions" },
   { value: "5", label: "5 questions" },
   { value: "10", label: "10 questions" },
-  { value: "15", label: "15 questions" },
 ];
 
-const DIFFICULTY_OPTIONS = [
-  { value: "easy", label: "Easy" },
-  { value: "medium", label: "Medium" },
-  { value: "hard", label: "Hard" },
-  { value: "adaptive", label: "Adaptive" },
-];
+const DIFFICULTY_LABELS: Record<string, string> = {
+  easy: "Easy",
+  medium: "Medium",
+  hard: "Hard",
+  adaptive: "Adaptive",
+};
+
+const FALLBACK_DIFFICULTY_OPTIONS = Object.entries(DIFFICULTY_LABELS).map(
+  ([value, label]) => ({ value, label }),
+);
+
+function countOptionsFrom(config: QuizConfig | null) {
+  if (!config?.num_questions?.options?.length) return FALLBACK_COUNT_OPTIONS;
+  return config.num_questions.options.map(n => ({
+    value: String(n),
+    label: `${n} questions`,
+  }));
+}
+
+function difficultyOptionsFrom(config: QuizConfig | null) {
+  if (!config?.difficulties?.length) return FALLBACK_DIFFICULTY_OPTIONS;
+  return config.difficulties.map(d => ({
+    value: d,
+    label: DIFFICULTY_LABELS[d] ?? d.charAt(0).toUpperCase() + d.slice(1),
+  }));
+}
 
 export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit }: QuizPanelProps) {
   const router = useRouter();
@@ -97,6 +122,19 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
   const [conceptId, setConceptId] = useState<string | null>(initial.conceptId);
   const [count, setCount] = useState("5");
   const [difficulty, setDifficulty] = useState("medium");
+
+  // Selector values come from the backend (#540 A2); fall back to the
+  // static mirror until the fetch lands (or if it fails).
+  const [quizConfig, setQuizConfig] = useState<QuizConfig | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetchQuizConfig()
+      .then(cfg => { if (!cancelled) setQuizConfig(cfg); })
+      .catch(() => { /* fallback lists stay in place */ });
+    return () => { cancelled = true; };
+  }, []);
+  const countOptions = useMemo(() => countOptionsFrom(quizConfig), [quizConfig]);
+  const difficultyOptions = useMemo(() => difficultyOptionsFrom(quizConfig), [quizConfig]);
 
   const [quizId, setQuizId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
@@ -249,11 +287,11 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>Count</div>
-              <CustomSelect value={count} options={COUNT_OPTIONS} onChange={setCount} style={{ width: "100%" }} />
+              <CustomSelect value={count} options={countOptions} onChange={setCount} style={{ width: "100%" }} />
             </div>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>Difficulty</div>
-              <CustomSelect value={difficulty} options={DIFFICULTY_OPTIONS} onChange={setDifficulty} style={{ width: "100%" }} />
+              <CustomSelect value={difficulty} options={difficultyOptions} onChange={setDifficulty} style={{ width: "100%" }} />
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
