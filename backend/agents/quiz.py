@@ -33,7 +33,15 @@ logger = logging.getLogger(__name__)
 
 # Output-validation retry budget, read back by _on_final_attempt so the
 # gates below know when they are out of moves.
-_OUTPUT_RETRIES = 3
+#
+# Stays at the codebase-wide OUTPUT_RETRY_BUDGET (tests/
+# test_agent_output_schemas.py pins every structured agent to it).
+# Raising it to 3 to give the three gates more room was tried and
+# reverted: ORCHESTRATOR_LIMITS caps the quiz run at 8 model requests,
+# and a tool-calling run plus four generation attempts sits right on that
+# ceiling — trading "quiz is a bit definitional" for "UsageLimitExceeded
+# 502" is a bad trade. The gates degrade on the last attempt instead.
+_OUTPUT_RETRIES = 2
 
 
 # Difficulty + question type are Literals so Gemini's enum constraint
@@ -276,13 +284,6 @@ quiz_agent = Agent[SaplingDeps, Quiz](
     model=model_for("quiz"),
     deps_type=SaplingDeps,
     output_type=Quiz,
-    # 3, not 2: there are now three output gates (count, answerable,
-    # ratio) and a 15-question run can trip more than one in sequence.
-    # With 2 an observed 15-question generation exhausted the budget and
-    # raised UnexpectedModelBehavior instead of returning a quiz.
-    # _on_final_attempt reads the same budget back off RunContext, so
-    # this number is stated once.
-    #
     # #153: bounded output-validation retry budget. `output_retries=`
     # (not `retries=`) so the three read tools keep their default tool-
     # retry budget. NB: pydantic-ai 1.107+ deprecates this kwarg for

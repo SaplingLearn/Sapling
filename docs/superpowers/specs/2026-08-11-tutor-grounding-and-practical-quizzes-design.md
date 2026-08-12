@@ -175,8 +175,37 @@ A 15-question run tripped gate after gate and exhausted the retry budget,
 raising `UnexpectedModelBehavior` — a 502, i.e. no quiz at all rather than
 a quiz with two definitions in it. `_on_final_attempt` reads `ctx.retry`
 against `ctx.max_retries`, and on the last attempt every gate accepts what
-it has and logs the shortfall. `output_retries` went 2 → 3 to give three
-gates room to fire in sequence.
+it has and logs the shortfall.
+
+Raising `output_retries` 2 → 3 to give three gates room was tried and
+reverted. `OUTPUT_RETRY_BUDGET = 2` is pinned for every structured agent,
+and `ORCHESTRATOR_LIMITS` caps the quiz run at 8 model requests — a
+tool-calling run plus four generation attempts sits on that ceiling, so
+the bump trades "somewhat definitional quiz" for `UsageLimitExceeded`.
+Degradation is the cheaper guarantee.
+
+### What this actually buys, measured
+
+Seven live 10-question runs on the real course concept, after:
+
+| worked problems | runs |
+|---|---|
+| 10 | 1 |
+| 9 (the bar) | 4 |
+| 8 | 1 |
+| 7 | 1 |
+
+Five of seven meet the bar, against a pre-change baseline of 7/10 twice.
+Ten questions were delivered in six of seven; the seventh lost one to a
+genuinely unanswerable question that survived its retries.
+
+So: much better, not guaranteed. The gates retry while budget lasts and
+then serve what they have, which is the right failure direction but means
+a bad run degrades quietly rather than erroring. If the residual matters,
+the next lever is over-generation — ask for N+2 and select N preferring
+`kind == "worked_problem"` — which converts persuasion into selection and
+needs no retries. Not built: it costs two extra questions per quiz on
+every run to fix roughly two runs in seven.
 
 ## Known limits
 
