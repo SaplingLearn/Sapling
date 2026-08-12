@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
+from typing import Callable
 
 import psycopg
 
@@ -62,8 +64,59 @@ class Git:
     def commits_ahead_of(self, base: str, head: str) -> int:
         return int(_run(["git", "rev-list", "--count", f"{base}..{head}"]))
 
+    def migrations_drift(self) -> str:
+        """How the LOCAL migrations dir differs from origin/main; "" = clean.
+
+        Preflight's file listing and db_migrate.run() both read the local
+        working tree, but the thing being promoted is origin/main — so the
+        runner blocks on any mismatch. Two complementary reads, because
+        neither alone covers both failure directions: `git diff --name-status
+        origin/main` catches tracked files differing in content or presence
+        (either direction — including a stale checkout missing an origin/main
+        file) but is blind to untracked strays; `git status --porcelain`
+        catches the strays but reports nothing for a merely-old checkout.
+        Absolute pathspec, so the check is correct regardless of the cwd the
+        tool was launched from.
+        """
+        migrations = str(db_migrate.MIGRATIONS_DIR)
+        tracked = _run(["git", "diff", "--name-status", "origin/main", "--", migrations])
+        untracked = _run(["git", "status", "--porcelain", "--", migrations])
+        return "\n".join(part for part in (tracked, untracked) if part)
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        """`git merge-base --is-ancestor`: exit 0 = yes, 1 = no.
+
+        Not routed through _run, which reads every non-zero exit as failure —
+        here exit 1 is a valid answer. Any OTHER exit (bad ref, not a repo) is
+        a real error and raises: the caller treats this guard as fail-closed,
+        so an unreadable answer must block, never pass as either boolean.
+        Same 120s no-hang discipline as _run.
+        """
+        cmd = ["git", "merge-base", "--is-ancestor", ancestor, descendant]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("`git merge-base` timed out after 120s") from exc
+        if result.returncode == 0:
+            return True
+        if result.returncode == 1:
+            return False
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"`git merge-base` failed ({result.returncode}): {detail}")
+
+
+# The created PR's number is the trailing path segment of the URL `gh pr
+# create` prints; anchored on /pull/ so compare/commit URLs mixed into the
+# same output never match.
+_PR_URL_RE = re.compile(r"https://\S+/pull/(\d+)\b")
+
 
 class Gh:
+    def __init__(self, sleep: Callable[[float], None] = time.sleep) -> None:
+        # Injected like runner.Ports.sleep so ensure_pr's fallback retry is
+        # testable without wall-clock waits.
+        self._sleep = sleep
+
     def ensure_pr(self, base: str, head: str, title: str) -> int:
         # --state open ONLY. `--state all` was the bug: it can return a PREVIOUS
         # promotion's already-MERGED PR (this repo's real history returns
@@ -77,29 +130,51 @@ class Gh:
         if existing:
             return int(existing)
 
-        _run([
+        created = _run([
             "gh", "pr", "create", "--base", base, "--head", head,
             "--title", title, "--body", "Automated promotion (#516).",
         ])
-        # Re-query once, not recursively: a second miss means `gh pr create`
-        # did something other than what we expect, and guessing again would
-        # just create PRs in a loop.
-        existing = _run([
-            "gh", "pr", "list", "--base", base, "--head", head, "--state", "open",
-            "--limit", "1", "--json", "number", "--jq", ".[0].number // empty",
-        ])
-        if not existing:
-            raise RuntimeError(
-                f"gh pr create for {head} -> {base} did not produce a discoverable "
-                "open PR. Check `gh pr list` manually."
-            )
-        return int(existing)
+        # `gh pr create`'s own stdout (the new PR's URL) is the one
+        # immediately-consistent source of the number: the list endpoint can
+        # lag creation by seconds, and a miss there fails the run AFTER the
+        # migration has already applied. Last match wins — gh mixes progress
+        # and warning lines into the same output.
+        urls = _PR_URL_RE.findall(created)
+        if urls:
+            return int(urls[-1])
+
+        # Fallback for an unparseable output shape: bounded list re-queries
+        # (with a pause for list-endpoint lag), never a second create —
+        # guessing again would just open PRs in a loop.
+        for attempt in range(3):
+            if attempt:
+                self._sleep(2)
+            existing = _run([
+                "gh", "pr", "list", "--base", base, "--head", head, "--state", "open",
+                "--limit", "1", "--json", "number", "--jq", ".[0].number // empty",
+            ])
+            if existing:
+                return int(existing)
+        raise RuntimeError(
+            f"gh pr create for {head} -> {base} did not produce a discoverable "
+            "open PR. Check `gh pr list` manually."
+        )
 
     def state(self, number: int) -> str:
         return _run(["gh", "pr", "view", str(number), "--json", "state", "--jq", ".state"])
 
-    def merge(self, number: int) -> None:
-        _run(["gh", "pr", "merge", str(number), "--merge"])
+    def merge(self, number: int, match_head_commit: str) -> None:
+        # Pinned to the SHA preflight audited. Unpinned, `gh pr merge --merge`
+        # merges whatever origin/main's tip is AT MERGE TIME, so commits
+        # landing while the operator sat at the confirm prompt would be
+        # promoted with their migrations never scanned nor applied. Flag
+        # verified against the gh CLI in PATH: `gh pr merge --help` documents
+        # `--match-head-commit SHA` ("Commit SHA that the pull request head
+        # must match to allow merge") — GitHub itself rejects a moved head.
+        _run([
+            "gh", "pr", "merge", str(number), "--merge",
+            "--match-head-commit", match_head_commit,
+        ])
 
 
 def _staging_recorded() -> set[str] | None:
@@ -113,9 +188,8 @@ def _staging_recorded() -> set[str] | None:
     if not url:
         return None
     try:
-        with psycopg.connect(url) as conn, conn.cursor() as cur:
-            cur.execute("SELECT filename FROM schema_migrations")
-            return {row[0] for row in cur.fetchall()}
+        with psycopg.connect(url) as conn:
+            return preflight.recorded_filenames(conn)
     except psycopg.Error as exc:
         # NOT re-raised: a stale URI, a paused staging project, or a
         # transient network fault here must not abort the whole run before
@@ -131,13 +205,11 @@ def _staging_recorded() -> set[str] | None:
 
 def _preflight_data(conn) -> dict:
     files = [p.name for p in db_migrate.discover_migrations(db_migrate.MIGRATIONS_DIR)]
-    with conn.cursor() as cur:
-        cur.execute("SELECT to_regclass('public.schema_migrations') IS NOT NULL")
-        exists = bool(cur.fetchone()[0])
-        recorded: set[str] = set()
-        if exists:
-            cur.execute("SELECT filename FROM schema_migrations")
-            recorded = {row[0] for row in cur.fetchall()}
+    # The shared ledger primitives (preflight.ledger_exists/recorded_filenames/
+    # ledger_diff) — the same ones scripts/migration_drift_report.py consumes,
+    # so this preflight and that report can never diff the ledger differently.
+    exists = preflight.ledger_exists(conn)
+    recorded: set[str] = preflight.recorded_filenames(conn) if exists else set()
 
     pending, _ = preflight.ledger_diff(files, recorded)
     pending_paths = [db_migrate.MIGRATIONS_DIR / name for name in pending]
@@ -167,13 +239,20 @@ def _confirm(prompt: str, auto_yes: bool) -> bool:
     moment a clear message matters most. Treat it exactly like a typed "n"
     instead: the runner's own "ABORTED before the merge" report already
     explains the migrations are applied and returns EXIT_ABORTED, which is a
-    far clearer outcome.
+    far clearer outcome. Ctrl-C at the prompt gets the same treatment:
+    KeyboardInterrupt is a BaseException that `main()`'s `except Exception`
+    never catches, so propagating it would skip that report for a raw
+    traceback.
     """
     if auto_yes:
         return True
     try:
         return input(f"{prompt} [y/N] ").strip().lower() in {"y", "yes"}
     except EOFError:
+        return False
+    except KeyboardInterrupt:
+        # The newline keeps the terminal's ^C echo off the report's first line.
+        print()
         return False
 
 

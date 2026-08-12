@@ -8,12 +8,22 @@ Every side effect is an injected port, so the whole sequence is testable.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from promotion import preflight, smoke, snapshot
 
 EXIT_OK, EXIT_FAIL, EXIT_ABORTED = 0, 1, 2
+
+# The one partial-state NOTE every post-migrate failure path shares: by the
+# time the PR/merge stage runs, the migrations are durable no matter what else
+# goes wrong. One constant, not three copies, so the wording can never drift
+# between the decline, gh-failure and moved-head reports.
+MIGRATIONS_ALREADY_APPLIED_NOTE = (
+    "  NOTE: the migrations above are ALREADY APPLIED. Production's "
+    "schema is now AHEAD of production's code."
+)
 
 
 @dataclass
@@ -28,6 +38,10 @@ class Ports:
     confirm: Callable[[str], bool]
     out: Callable[[str], None]
     sleep: Callable[[float], None]
+    # Wall-clock source for the deploy-wait budget. Defaulted — the only field
+    # that may be — so __main__.py's Ports(...) construction needs no change;
+    # tests inject a fake clock that advances with each fetch/sleep.
+    monotonic: Callable[[], float] = time.monotonic
 
 
 @dataclass
@@ -46,41 +60,69 @@ class Options:
     verify_only: bool = False
 
 
-def _wait_for_deploy(ports: Ports, options: Options, target: str, out: Callable[[str], None]) -> bool:
-    """Poll /api/health until it reports `target`. True on success (or a
-    degraded-but-proceeding 'unknown'), False on timeout."""
-    waited = 0
-    # Advance by at least 1 per iteration. poll_interval is 0 in tests (so they
-    # don't actually sleep), and incrementing by it directly would leave `waited`
-    # pinned at 0 — an infinite loop on the very timeout path the tests exist to
-    # cover.
-    tick = max(options.poll_interval, 1)
-    while waited < options.wait_timeout:
+def _wait_for_deploy(ports: Ports, options: Options, target: str, out: Callable[[str], None]) -> str:
+    """Poll /api/health until it reports `target`. Returns "verified" when the
+    target commit is confirmed live, "timeout" when the window elapsed without
+    it, and "unverified" when the ENTIRE window produced only 'unknown' — the
+    host injects no commit SHA, so confirming the deploy is impossible and the
+    caller degrades to smoke without claiming verification.
+
+    'unknown' must never satisfy the wait early: the first polls land while
+    the OLD deploy is still serving, so an early 'unknown' proves nothing
+    about the new one — smoke would run against the previous deploy under a
+    verified-sounding report. But a window that ever produced a REAL SHA
+    proves the host does inject commits, so all-'unknown'-degrade must not
+    swallow that case: it times out like any other missing target.
+    """
+    saw_unknown = saw_real_sha = False
+    # Budget on real elapsed time, never on nominal ticks: each health fetch
+    # can itself take up to 25s (httpx_fetch's timeout), so `waited +=
+    # poll_interval` accounting would let a 600s budget run ~35 minutes of
+    # wall clock during an incident. Termination therefore depends on the
+    # clock advancing — time.monotonic always does; tests must inject a fake
+    # that advances with each fetch/sleep (a frozen clock loops forever).
+    start = ports.monotonic()
+    while ports.monotonic() - start < options.wait_timeout:
         live = smoke.live_commit(ports.fetch, options.api_base)
         if live == target[:7]:
             out(f"  deploy is live ({live}).")
-            return True
+            return "verified"
         if live == "unknown":
-            out(
-                "  WARNING: /api/health reports commit 'unknown' — the host is not "
-                "injecting a commit SHA, so the deploy cannot be confirmed. "
-                "Proceeding to smoke anyway."
-            )
-            return True
+            saw_unknown = True
+        elif live:  # a real, non-matching SHA ("" = unreachable, proves nothing)
+            saw_real_sha = True
         ports.sleep(options.poll_interval)
-        waited += tick
+    if saw_unknown and not saw_real_sha:
+        out(
+            f"\nUNVERIFIED: /api/health reported commit 'unknown' for the whole "
+            f"{options.wait_timeout}s window — the host is not injecting a "
+            "commit SHA, so the deploy cannot be confirmed at all. Proceeding "
+            "to smoke, but the checks may exercise the PREVIOUS deploy."
+        )
+        return "unverified"
     out(
         f"\nTIMEOUT: the deploy never reported {target[:7]} after "
         f"{options.wait_timeout}s. NOT running smoke — a deploy failure must "
         "not look like a smoke failure. Check the Railway build."
     )
-    return False
+    return "timeout"
 
 
 def _run_smoke(
-    ports: Ports, options: Options, out: Callable[[str], None], *, merged_this_run: bool = True
+    ports: Ports,
+    options: Options,
+    out: Callable[[str], None],
+    *,
+    merged_this_run: bool = True,
+    deploy_verified: bool = True,
 ) -> int:
-    """`merged_this_run=False` covers every path where THIS run merged
+    """`deploy_verified=False` is the all-'unknown' degrade from
+    _wait_for_deploy: smoke still runs, but the completion line must not claim
+    the deploy was verified — the checks may have exercised the PREVIOUS
+    deploy, and a clean "PROMOTION COMPLETE" would be the exact false report
+    this tool exists to prevent.
+
+    `merged_this_run=False` covers every path where THIS run merged
     nothing: the migrations-only path (run()'s `commits_ahead == 0` branch)
     and `--verify-only` (which never merges by design). Either way,
     production's git HEAD is a PREVIOUS promotion's merge commit — or, under
@@ -114,16 +156,99 @@ def _run_smoke(
             )
         return EXIT_FAIL
 
-    out("\nPROMOTION COMPLETE — all smoke checks passed.")
+    if deploy_verified:
+        out("\nPROMOTION COMPLETE — all smoke checks passed.")
+    else:
+        out(
+            "\nSMOKE PASSED, but the deploy itself was NEVER VERIFIED — "
+            "/api/health reports no commit SHA, so the checks may have run "
+            "against the PREVIOUS deploy. Confirm the new deploy actually "
+            "landed (Railway dashboard) before treating this promotion as "
+            "complete."
+        )
     return EXIT_OK
 
 
 def _wait_then_smoke(
     ports: Ports, options: Options, target: str, out: Callable[[str], None], *, merged_this_run: bool = True
 ) -> int:
-    if not _wait_for_deploy(ports, options, target, out):
+    outcome = _wait_for_deploy(ports, options, target, out)
+    if outcome == "timeout":
         return EXIT_FAIL
-    return _run_smoke(ports, options, out, merged_this_run=merged_this_run)
+    return _run_smoke(
+        ports, options, out, merged_this_run=merged_this_run, deploy_verified=outcome == "verified"
+    )
+
+
+def _report_migration_failure(
+    ports: Ports, out: Callable[[str], None], before: dict, pending: list[str], error: Exception
+) -> None:
+    """The honest partial-state report for a failed migrate stage.
+
+    apply_migration commits per file, so whatever landed before the failure
+    is durable. Reopen a FRESH connection rather than reuse the migrate
+    stage's: it may be left with an aborted transaction by the failed
+    migration, which would raise again on the very query meant to report what
+    actually happened. And the reconnect itself may fail — the likely cause
+    of the migrate failure is a dead database — so a capture failure here
+    degrades the report (no landed count), never discards it.
+    """
+    after: dict | None = None
+    capture_error: Exception | None = None
+    try:
+        with ports.connect() as conn:
+            after = ports.capture(conn)
+    except Exception as exc:  # noqa: BLE001 — a dead DB must not cost the operator this report
+        capture_error = exc
+
+    if after is None:
+        out(f"\nMIGRATION FAILED with {len(pending)} migration(s) pending.")
+        out(f"  Error: {error}")
+        out(
+            f"  The post-failure snapshot could not be captured ({capture_error}), "
+            "so it is UNKNOWN how many of the pending migrations landed."
+        )
+        out(
+            "\n  WARNING: production's schema may be PARTIALLY migrated and "
+            "AHEAD of production's code. Production's code was NOT touched. "
+            "Do NOT re-run blindly — inspect the database by hand before "
+            "continuing."
+        )
+        return
+
+    changes = snapshot.diff(before, after)
+    landed = changes["new_migrations"]
+    # Ledger inserts are part of the same per-file transaction as the SQL,
+    # so `landed` is exact, not a guess — and when something DID land,
+    # apply order is `pending`'s order, so the first pending name NOT in
+    # `landed` is provably the one that raised. But when NOTHING landed,
+    # that is NOT necessarily pending[0]'s fault: db.migrate.run() has a
+    # prologue (SET maintenance_work_mem, ensure_tracking_table) that runs
+    # BEFORE any file, and a failure there is indistinguishable from here
+    # from a failure on the first file's own SQL. Don't guess a filename
+    # in that case.
+    failed_name = next((name for name in pending if name not in landed), "unknown") if landed else None
+    out(f"\nMIGRATION FAILED after {len(landed)} of {len(pending)} pending migration(s) landed.")
+    if failed_name is not None:
+        out(f"  Failed on: {failed_name}")
+    else:
+        out("  Failed before applying any migration (see Error below).")
+    out(f"  Error: {error}")
+    if landed:
+        out("\nDatabase changes so far:")
+        out(snapshot.format_diff(changes))
+        out(
+            "\n  WARNING: production's schema is now PARTIALLY migrated and "
+            "AHEAD of production's code. Production's code was NOT touched. "
+            f"Do NOT re-run blindly — inspect {failed_name} and the database "
+            "by hand before continuing."
+        )
+    else:
+        out(
+            "\n  Production's schema is UNCHANGED — nothing landed — and its "
+            "code was NOT touched. Do NOT re-run blindly — inspect the error "
+            "above before continuing."
+        )
 
 
 def run(ports: Ports, options: Options) -> int:
@@ -144,13 +269,28 @@ def run(ports: Ports, options: Options) -> int:
 
     # ---- Stage 1: preflight (read-only) --------------------------------
     ports.git.fetch()
+    # `head` is the audited SHA: everything preflight vouches for below —
+    # commits_ahead, the migration listing, the destructive scan — is anchored
+    # to origin/main AS OF THIS FETCH. The merge stage pins to this same SHA
+    # (gh --match-head-commit) so commits landing after this moment can never
+    # ride along unscanned.
     head = ports.git.head_sha("origin/main")
     commits_ahead = ports.git.commits_ahead_of("origin/production", "origin/main")
+    # Git-side guard facts, resolved AFTER the fetch and BEFORE any DDL can
+    # apply. Both are blocking in preflight.evaluate: a migrations dir that
+    # differs from origin/main (content, presence, or untracked strays), and
+    # an origin/production that is not an ancestor of origin/main. is_ancestor
+    # fails CLOSED — a git error raises here, caught by __main__'s catch-all,
+    # and nothing has been migrated yet.
+    migrations_drift = ports.git.migrations_drift()
+    production_is_ancestor = ports.git.is_ancestor("origin/production", "origin/main")
 
     with ports.connect() as conn:
         data = ports.preflight_data(conn)
         findings = preflight.evaluate(
             commits_ahead=commits_ahead,
+            migrations_drift=migrations_drift,
+            production_is_ancestor=production_is_ancestor,
             allow_destructive=options.allow_destructive,
             skip_staging_check=options.skip_staging_check,
             **data,
@@ -162,6 +302,9 @@ def run(ports: Ports, options: Options) -> int:
                 out(f"  [{finding.kind}] {finding.detail}")
             if not blocking:
                 out("Nothing to promote — production already matches main.")
+                # This is also where a plain re-run lands after a promotion
+                # that merged but then failed before verify/smoke.
+                out("  (To re-check the live deploy, re-run with --verify-only.)")
                 return EXIT_OK
             out("\nPREFLIGHT FAILED — production was not touched.")
             return EXIT_FAIL
@@ -183,51 +326,16 @@ def run(ports: Ports, options: Options) -> int:
                 out(f"Applied {len(applied)} migration(s).")
             except Exception as exc:  # noqa: BLE001 — reported as an honest partial-state report, never a traceback
                 migrate_error = exc
+                # Report from INSIDE the with-block: if the connection died,
+                # `conn.__exit__`'s commit can itself raise on the way out,
+                # and that second exception must find the MIGRATION FAILED
+                # report already emitted — not mask it.
+                _report_migration_failure(ports, out, before, pending, exc)
 
         if migrate_error is None:
             after = ports.capture(conn)
 
     if migrate_error is not None:
-        # apply_migration commits per file, so whatever landed before the
-        # failure is durable. Reopen a FRESH connection rather than reuse
-        # `conn`: it may be left with an aborted transaction by the failed
-        # migration, which would raise again on the very query meant to
-        # report what actually happened.
-        with ports.connect() as conn2:
-            after = ports.capture(conn2)
-        changes = snapshot.diff(before, after)
-        landed = changes["new_migrations"]
-        # Ledger inserts are part of the same per-file transaction as the SQL,
-        # so `landed` is exact, not a guess — and when something DID land,
-        # apply order is `pending`'s order, so the first pending name NOT in
-        # `landed` is provably the one that raised. But when NOTHING landed,
-        # that is NOT necessarily pending[0]'s fault: db.migrate.run() has a
-        # prologue (SET maintenance_work_mem, ensure_tracking_table) that runs
-        # BEFORE any file, and a failure there is indistinguishable from here
-        # from a failure on the first file's own SQL. Don't guess a filename
-        # in that case.
-        failed_name = next((name for name in pending if name not in landed), "unknown") if landed else None
-        out(f"\nMIGRATION FAILED after {len(landed)} of {len(pending)} pending migration(s) landed.")
-        if failed_name is not None:
-            out(f"  Failed on: {failed_name}")
-        else:
-            out("  Failed before applying any migration (see Error below).")
-        out(f"  Error: {migrate_error}")
-        if landed:
-            out("\nDatabase changes so far:")
-            out(snapshot.format_diff(changes))
-            out(
-                "\n  WARNING: production's schema is now PARTIALLY migrated and "
-                "AHEAD of production's code. Production's code was NOT touched. "
-                f"Do NOT re-run blindly — inspect {failed_name} and the database "
-                "by hand before continuing."
-            )
-        else:
-            out(
-                "\n  Production's schema is UNCHANGED — nothing landed — and its "
-                "code was NOT touched. Do NOT re-run blindly — inspect the error "
-                "above before continuing."
-            )
         return EXIT_FAIL
 
     changes = snapshot.diff(before, after)
@@ -245,7 +353,24 @@ def run(ports: Ports, options: Options) -> int:
         return _run_smoke(ports, options, out, merged_this_run=False)
 
     # ---- The one pause ------------------------------------------------
-    number = ports.gh.ensure_pr("production", "main", f"Promote staging to production — {commits_ahead} commits")
+    # From here to the confirm prompt, the migrations above are already
+    # durable. A gh failure (expired auth, network) must not surface as
+    # __main__'s bare one-line ERROR with none of the partial-state reporting
+    # the decline/migrate-failed paths emit: report first, then re-raise —
+    # the catch-all's ERROR line supplements the report instead of replacing it.
+    try:
+        number = ports.gh.ensure_pr(
+            "production", "main", f"Promote staging to production — {commits_ahead} commits"
+        )
+    except Exception:
+        out(
+            "\nFAILED before the merge (could not create/find the promotion PR — "
+            "see Error below).\n"
+            + MIGRATIONS_ALREADY_APPLIED_NOTE
+            + "\n  Fix the gh failure (auth, network) and re-run to resume at the "
+            "merge, or revert deliberately."
+        )
+        raise
 
     prompt = (
         f"\nMerge PR #{number} ({commits_ahead} commits, "
@@ -254,9 +379,8 @@ def run(ports: Ports, options: Options) -> int:
     if not ports.confirm(prompt):
         out(
             "\nABORTED before the merge.\n"
-            "  NOTE: the migrations above are ALREADY APPLIED. Production's "
-            "schema is now AHEAD of production's code.\n"
-            "  Re-run to resume at the merge, or revert deliberately."
+            + MIGRATIONS_ALREADY_APPLIED_NOTE
+            + "\n  Re-run to resume at the merge, or revert deliberately."
         )
         return EXIT_ABORTED
 
@@ -279,7 +403,12 @@ def run(ports: Ports, options: Options) -> int:
     current_state = None
     for attempt in range(5):
         try:
-            ports.gh.merge(number)
+            # Pinned to `head`, the SHA stage-1 preflight audited: GitHub
+            # itself (gh --match-head-commit) rejects the merge if main's tip
+            # moved while the operator sat at the confirm prompt — commits in
+            # that window were never destructive-scanned and their migrations
+            # never applied, so they must not ride along.
+            ports.gh.merge(number, head)
         except Exception as exc:  # noqa: BLE001 — any gh failure gets re-checked
             out(f"  merge attempt {attempt + 1} errored ({exc}); re-checking PR state")
         try:
@@ -289,6 +418,33 @@ def run(ports: Ports, options: Options) -> int:
             current_state = None
         if current_state == "MERGED":
             break
+        # A --match-head-commit rejection is DETERMINISTIC — retrying can
+        # never make a moved main match again — so it must not burn the
+        # transient-502 retry budget above. Detect it by re-reading
+        # origin/main rather than by matching gh's error text (which gh does
+        # not guarantee), but only when the PR state was READ and says
+        # non-merged: an unreadable state keeps the loop's careful
+        # unknown-outcome reporting below, and a failed re-read here falls
+        # through to the transient path rather than guessing.
+        if current_state is not None:
+            try:
+                ports.git.fetch()
+                main_now = ports.git.head_sha("origin/main")
+            except Exception as exc:  # noqa: BLE001 — can't tell; treat as transient
+                out(f"  could not re-read origin/main ({exc}); treating as transient")
+                main_now = None
+            if main_now is not None and main_now != head:
+                out(
+                    f"\nMERGE REJECTED — origin/main moved since preflight "
+                    f"(audited {head[:7]}, now {main_now[:7]}). The merge is "
+                    "pinned to the audited SHA, so the new commits — never "
+                    "destructive-scanned, their migrations never applied — "
+                    "were NOT promoted. Re-run `make promote` to audit and "
+                    "promote the new tip."
+                )
+                if changes["new_migrations"]:
+                    out(MIGRATIONS_ALREADY_APPLIED_NOTE)
+                return EXIT_FAIL
         ports.sleep(options.poll_interval)
     else:
         if current_state is not None:
@@ -320,8 +476,21 @@ def run(ports: Ports, options: Options) -> int:
     # deploys production, not main. So the deploy target has to be read from
     # origin/production AFTER a fresh fetch, never from main's tip — main's SHA
     # will never appear in production's history once a merge commit exists.
-    ports.git.fetch()
-    deploy_target = ports.git.head_sha("origin/production")
+    try:
+        ports.git.fetch()
+        deploy_target = ports.git.head_sha("origin/production")
+    except Exception as exc:  # noqa: BLE001 — a transient git failure must not strand a landed merge
+        # A plain re-run from here would see commits_ahead == 0 and exit 0
+        # "Nothing to promote" — the promoted deploy would never be verified
+        # or smoked. Point at the flag that actually resumes.
+        out(
+            f"\nThe MERGE HAS LANDED (PR #{number} reports MERGED), but reading "
+            f"production's new tip failed ({exc}), so the deploy was never "
+            "verified and smoke never ran. Re-run with --verify-only to check "
+            "the live deploy — a plain re-run would report nothing to promote "
+            "and exit clean without verifying anything."
+        )
+        return EXIT_FAIL
     out(f"Merged. Waiting for the deploy to report {deploy_target[:7]}.")
 
     return _wait_then_smoke(ports, options, deploy_target, out)
