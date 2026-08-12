@@ -38,6 +38,7 @@ import {
   deleteGraphNode,
   describeConcept,
   shouldFallBackToJson,
+  ApiError,
   type Session,
   type SessionSummaryData,
   type EnrolledCourse,
@@ -1242,11 +1243,23 @@ function LearnInner() {
         setFocusedNodeId(cur => (cur === id || cur === streamId ? res.node.id : cur));
         if (res.already_existed) toast.success(`Merged into your existing “${label}” node.`);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         setGraphNodes(prev => dropOptimisticConcept(prev, [], id).nodes);
         setGraphEdges(prev => dropOptimisticConcept([], prev, id).edges);
         setFocusedNodeId(cur => (cur === id ? null : cur));
-        toast.error("Couldn't save the concept — it was removed.");
+        // Say WHY. The bare "it was removed" swallowed the ApiError and left
+        // the same message for a 401, a 500 and a dead backend — three
+        // different problems with three different fixes, none of them
+        // guessable from the toast. The status is what makes this
+        // actionable; the request_id in the body is what ties it to a log.
+        console.error("[addConcept] failed", { concept: label, courseId, err });
+        const reason =
+          err instanceof ApiError
+            ? `${err.status}${err.message ? ` — ${err.message.slice(0, 160)}` : ""}`
+            : err instanceof Error && err.message
+              ? err.message.slice(0, 160)
+              : "the request never completed";
+        toast.error(`Couldn't save “${label}” (${reason}).`);
       });
   };
 
@@ -1265,7 +1278,8 @@ function LearnInner() {
     setGraphEdges(prev => prev.filter(e => e.source !== nodeId && e.target !== nodeId));
     setFocusedNodeId(cur => (cur === nodeId ? null : cur));
     if (!userId) return;
-    deleteGraphNode(userId, nodeId).catch(() => {
+    deleteGraphNode(userId, nodeId).catch((err: unknown) => {
+      console.error("[removeConcept] failed", { nodeId, err });
       // Optimistic ids never reached the server, so there is nothing to
       // restore and nothing the user can act on — only a real row's delete
       // failing is worth surfacing.
@@ -1277,7 +1291,8 @@ function LearnInner() {
           e => !prev.some(p => p.source === e.source && p.target === e.target),
         ),
       ]);
-      toast.error(`Couldn't delete “${removedNode.name}” — it's still on your map.`);
+      const reason = err instanceof ApiError ? ` (${err.status})` : "";
+      toast.error(`Couldn't delete “${removedNode.name}”${reason} — it's still on your map.`);
     });
   };
 
