@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 120 120" width="100%" height="100%" style="display:block;overflow:visible">
+      <defs>
+        <radialGradient id="sky-seedling" cx="42%" cy="26%" r="84%">
+          <stop offset="0%" stop-color="#eaf5ea"/><stop offset="100%" stop-color="#d3e9d7"/>
+        </radialGradient>
+        <linearGradient id="soil-seedling" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#7a5a39" stop-opacity="1"/><stop offset="45%" stop-color="#5e4126"/><stop offset="100%" stop-color="#3d2b18"/>
+        </linearGradient>
+        <linearGradient id="turf-seedling" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#67a758"/><stop offset="100%" stop-color="#3d7f45"/>
+        </linearGradient>
+        <clipPath id="clip-seedling"><circle cx="60" cy="60" r="55"/></clipPath>
+      </defs>
+      <circle cx="60" cy="62.5" r="55" fill="rgba(19,38,16,0.20)"/>
+      <g clip-path="url(#clip-seedling)">
+        <rect x="0" y="0" width="120" height="120" fill="url(#sky-seedling)"/>
+        
+        <path d="M-6 93 Q60 84 126 93 L126 126 L-6 126 Z" fill="url(#soil-seedling)"/>
+        <path d="M-6 93 Q60 84 126 93 L126 103 Q60 94 -6 103 Z" fill="url(#turf-seedling)"/>
+        <path d="M-6 93 Q60 84 126 93 L126 94.6 Q60 85.6 -6 94.6 Z" fill="rgba(255,255,255,0.16)"/>
+        <defs><clipPath id="wdseedling1"><path d="M57.6 94.1Q57.6 84.0 58.2 78.9Q58.8 73.9 59.2 69.4L59.5 65.0L61.7 65.0Q62.0 74.1 61.8 79.1Q61.6 84.0 62.0 89.0L62.4 93.9Z"/></clipPath>
+      <linearGradient id="wdseedling1g" x1="0" y1="1" x2="0" y2="0">
+        <stop offset="0%" stop-color="#1d1108" stop-opacity="0.42"/>
+        <stop offset="42%" stop-color="#1d1108" stop-opacity="0.06"/>
+        <stop offset="100%" stop-color="#ffe9c2" stop-opacity="0.16"/>
+      </linearGradient></defs><path d="M57.6 94.1Q57.6 84.0 58.2 78.9Q58.8 73.9 59.2 69.4L59.5 65.0L61.7 65.0Q62.0 74.1 61.8 79.1Q61.6 84.0 62.0 89.0L62.4 93.9Z" fill="#0f5b39"/><path d="M57.6 94.1Q57.6 84.0 58.2 78.9Q58.8 73.9 59.2 69.4L59.5 65.0L61.3 65.0Q61.5 74.1 61.2 79.1Q60.9 84.0 61.3 89.0L61.6 93.9Z" fill="#2D8F5C"/><path d="M58.3 94.0Q58.2 84.0 58.7 79.0Q59.2 74.0 59.5 69.5L59.8 65.0L60.4 65.0Q60.1 74.0 59.7 79.0Q59.3 84.0 59.4 89.0L59.6 94.0Z" fill="#57AF77"/><g clip-path="url(#wdseedling1)"><rect x="0" y="0" width="120" height="120" fill="url(#wdseedling1g)"/></g>
+        <g transform="translate(60 80) rotate(-4) scale(0.62) translate(-32 -38)"><path d="M32 38 C32 38 18 34 16 22 C16 22 30 20 32 38Z" fill="#0A4630"/><g transform="translate(32 38) scale(0.78) translate(-32 -38)"><path d="M32 38 C32 38 18 34 16 22 C16 22 30 20 32 38Z" fill="#1B6C42"/></g><g transform="translate(32 38) scale(0.44) translate(-32 -38)"><path d="M32 38 C32 38 18 34 16 22 C16 22 30 20 32 38Z" fill="#3F9663" opacity="0.9"/></g></g>
+        <g transform="translate(60.5 72) rotate(8) scale(0.58) translate(-32 -30)"><path d="M32 30 C32 30 46 24 50 12 C50 12 36 12 32 30Z" fill="#0E5537"/><g transform="translate(32 30) scale(0.78) translate(-32 -30)"><path d="M32 30 C32 30 46 24 50 12 C50 12 36 12 32 30Z" fill="#22794C"/></g><g transform="translate(32 30) scale(0.44) translate(-32 -30)"><path d="M32 30 C32 30 46 24 50 12 C50 12 36 12 32 30Z" fill="#4FA36D" opacity="0.9"/></g></g>
+        <g transform="translate(60.4 71) rotate(-18) scale(0.4) translate(-32 -38)"><path d="M32 38 C32 38 18 34 16 22 C16 22 30 20 32 38Z" fill="#12603C"/><g transform="translate(32 38) scale(0.78) translate(-32 -38)"><path d="M32 38 C32 38 18 34 16 22 C16 22 30 20 32 38Z" fill="#2D8F5C"/></g><g transform="translate(32 38) scale(0.44) translate(-32 -38)"><path d="M32 38 C32 38 18 34 16 22 C16 22 30 20 32 38Z" fill="#63B77F" opacity="0.9"/></g></g>
+        <g transform="translate(60.6 66) rotate(14) scale(0.36) translate(-32 -30)"><path d="M32 30 C32 30 46 24 50 12 C50 12 36 12 32 30Z" fill="#12603C"/><g transform="translate(32 30) scale(0.78) translate(-32 -30)"><path d="M32 30 C32 30 46 24 50 12 C50 12 36 12 32 30Z" fill="#2D8F5C"/></g><g transform="translate(32 30) scale(0.44) translate(-32 -30)"><path d="M32 30 C32 30 46 24 50 12 C50 12 36 12 32 30Z" fill="#63B77F" opacity="0.9"/></g></g>
+        <circle cx="60.6" cy="63.4" r="2.6" fill="#0A4630"/><circle cx="59.8" cy="62.6" r="1.2" fill="#63B77F"/>
+        <g transform="translate(47 94)"><path d="M-2.0 0 Q-1.2 -1.5 -2.8 -2.5" stroke="#63B77F" stroke-width="0.84" fill="none" stroke-linecap="round"/><path d="M-1.0 0 Q-0.6 -2.3 -0.7 -3.8" stroke="#2D8F5C" stroke-width="0.84" fill="none" stroke-linecap="round"/><path d="M0.1 0 Q0.1 -2.7 0.8 -4.4" stroke="#63B77F" stroke-width="0.84" fill="none" stroke-linecap="round"/><path d="M1.2 0 Q0.7 -2.2 2.2 -3.6" stroke="#2D8F5C" stroke-width="0.84" fill="none" stroke-linecap="round"/><path d="M2.2 0 Q1.3 -1.4 2.9 -2.4" stroke="#63B77F" stroke-width="0.84" fill="none" stroke-linecap="round"/></g><g transform="translate(74 95)"><path d="M-2.1 0 Q-1.3 -1.6 -2.9 -2.6" stroke="#63B77F" stroke-width="0.87" fill="none" stroke-linecap="round"/><path d="M-1.0 0 Q-0.6 -2.4 -0.7 -4.0" stroke="#2D8F5C" stroke-width="0.87" fill="none" stroke-linecap="round"/><path d="M0.1 0 Q0.1 -2.8 0.9 -4.6" stroke="#63B77F" stroke-width="0.87" fill="none" stroke-linecap="round"/><path d="M1.2 0 Q0.7 -2.2 2.2 -3.7" stroke="#2D8F5C" stroke-width="0.87" fill="none" stroke-linecap="round"/><path d="M2.2 0 Q1.3 -1.5 3.0 -2.5" stroke="#63B77F" stroke-width="0.87" fill="none" stroke-linecap="round"/></g><g transform="translate(66 96)"><path d="M-1.4 0 Q-0.9 -1.1 -1.9 -1.8" stroke="#63B77F" stroke-width="0.59" fill="none" stroke-linecap="round"/><path d="M-0.7 0 Q-0.4 -1.6 -0.5 -2.7" stroke="#2D8F5C" stroke-width="0.59" fill="none" stroke-linecap="round"/><path d="M0.1 0 Q0.1 -1.9 0.6 -3.1" stroke="#63B77F" stroke-width="0.59" fill="none" stroke-linecap="round"/><path d="M0.8 0 Q0.5 -1.5 1.5 -2.5" stroke="#2D8F5C" stroke-width="0.59" fill="none" stroke-linecap="round"/><path d="M1.5 0 Q0.9 -1.0 2.0 -1.7" stroke="#63B77F" stroke-width="0.59" fill="none" stroke-linecap="round"/></g>
+      </g>
+      <circle cx="60" cy="60" r="55" fill="none" stroke="#4FA574" stroke-width="2.6"/>
+      <circle cx="60" cy="60" r="51.5" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1"/>
+    </svg>

@@ -30,23 +30,52 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
-# Point the Supabase CLI at the rootless podman socket only when podman exists;
-# under Docker leave DOCKER_HOST alone so the default daemon socket is used.
-if command -v podman >/dev/null 2>&1; then
-  export DOCKER_HOST="${DOCKER_HOST:-unix:///run/user/$(id -u)/podman/podman.sock}"
-fi
-
-LOCAL_DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+# Overridable to match supabase/config.toml when a machine cannot use the
+# default ports. Windows reserves whole bands of the ephemeral range for
+# WinNAT/Hyper-V — on this project's dev box TCP 54288-54788 is excluded, which
+# swallows the API (54321), DB (54322) and Studio (54323) ports, and binding
+# them fails with "An attempt was made to access a socket in a way forbidden by
+# its access permissions" even though every container is healthy. Shifting
+# config.toml's ports and exporting these two is the no-admin way out.
+# Defaults are the documented contract, so Linux and CI are unaffected.
+SUPABASE_DB_PORT="${SUPABASE_DB_PORT:-54322}"
+SUPABASE_API_PORT="${SUPABASE_API_PORT:-54321}"
+LOCAL_DB_URL="postgresql://postgres:postgres@127.0.0.1:$SUPABASE_DB_PORT/postgres"
 DB_CONTAINER="supabase_db_sapling"
 
 # Shared migrate → ensure buckets → reload PostgREST → seed sequence (#10),
-# plus $CONTAINER_CMD (podman/docker) detection.
+# plus $CONTAINER_CMD (podman/docker) detection, $VENV_PY resolution and
+# set_docker_host_for_podman.
 source "$REPO_ROOT/scripts/lib/local-common.sh"
+
+# Point the Supabase CLI at the rootless podman socket when there is one.
+# Moved below the source (and guarded on the socket existing) because the old
+# inline form exported the Linux socket path on any machine with the podman
+# binary — including Windows, where podman lives in a VM, the socket path does
+# not exist, and every supabase command then failed with "Cannot connect to the
+# Docker daemon". A pre-set DOCKER_HOST still always wins (e2e.yml relies on it).
+set_docker_host_for_podman
+
+# setsid makes each server its own process-group leader, so e2e-down.sh can
+# signal the whole tree with one group kill. Git Bash on Windows has no setsid;
+# there the servers are plain background jobs and teardown falls back to a
+# taskkill /T process-tree walk (see e2e-down.sh) to reach the same children.
+if command -v setsid >/dev/null 2>&1; then
+  DETACH="setsid"
+else
+  DETACH=""
+  echo "  ℹ setsid not found (Git Bash?) — servers start as plain background jobs; e2e-down falls back to a process-tree kill"
+fi
 
 E2E_DIR="$REPO_ROOT/.e2e"
 BACKEND_PORT="$(grep -E '^PORT=' backend/.env 2>/dev/null | head -n1 | cut -d= -f2-)"
 BACKEND_PORT="${BACKEND_PORT:-5000}"
-FRONTEND_PORT=3000
+# Overridable so a machine whose :3000 is already taken (another worktree's
+# `next dev`, say) can still boot the lane without stopping that server. The
+# Playwright harness follows via E2E_FRONTEND_URL (frontend/e2e/support/stack.ts);
+# nothing else hardcodes the frontend's own port — build:test only bakes
+# BACKEND_URL, and the browser reaches the API same-origin through Next.
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 
 # Poll a URL until it returns HTTP 200 (same curl style as local-common.sh),
 # failing the boot if it never comes up — with a log tail when the caller has
@@ -144,7 +173,9 @@ command -v supabase >/dev/null 2>&1 \
   || { echo "✗ supabase CLI not found. Install it first (Arch: paru -S supabase-bin) — see docs/local-supabase.md"; exit 1; }
 [ -f backend/.env ] \
   || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in GEMINI_API_KEY)"; exit 1; }
-[ -x backend/venv/bin/python ] \
+# $VENV_PY is resolved in local-common.sh and accepts both the POSIX
+# (venv/bin/python) and Windows (venv/Scripts/python.exe) venv layouts.
+[ -n "${VENV_PY:-}" ] \
   || { echo "✗ backend/venv not found. Create it first: python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt"; exit 1; }
 [ -d frontend/node_modules ] \
   || { echo "✗ frontend/node_modules not found. Install first: cd frontend && npm ci"; exit 1; }
@@ -210,7 +241,7 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # would orphan the server.)
 (
   cd backend || exit 1
-  setsid venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" \
+  $DETACH "$VENV_PY" -m uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" \
     >"$E2E_DIR/backend.log" 2>&1 &
   echo $! >"$E2E_DIR/backend.pid"
 ) || { echo "✗ could not start backend"; exit 1; }
@@ -228,33 +259,50 @@ echo "▶ Starting frontend (next start on :$FRONTEND_PORT, log: .e2e/frontend.l
 # Same setsid-simple-command shape as the backend launch above.
 (
   cd frontend || exit 1
-  setsid npm run start:test >"$E2E_DIR/frontend.log" 2>&1 &
+  $DETACH npm run start:test -- --port "$FRONTEND_PORT" >"$E2E_DIR/frontend.log" 2>&1 &
   echo $! >"$E2E_DIR/frontend.pid"
 ) || { echo "✗ could not start frontend"; exit 1; }
 
 # ── Health-check all four services ───────────────────────────────────────────
 echo "▶ Health-checking all services…"
 if "$CONTAINER_CMD" exec "$DB_CONTAINER" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
-  echo "  ✓ Postgres (:54322)"
+  echo "  ✓ Postgres (:$SUPABASE_DB_PORT)"
 else
   echo "✗ Postgres health check failed ($CONTAINER_CMD exec $DB_CONTAINER pg_isready)"
   exit 1
 fi
 KEY="$(grep -E '^SUPABASE_SERVICE_KEY=' backend/.env | head -n1 | cut -d= -f2-)"
-wait_for_http "Supabase REST / PostgREST (:54321)" \
-  "http://127.0.0.1:54321/rest/v1/terms?select=id&limit=1" 30 "" \
+wait_for_http "Supabase REST / PostgREST (:$SUPABASE_API_PORT)" \
+  "http://127.0.0.1:$SUPABASE_API_PORT/rest/v1/terms?select=id&limit=1" 30 "" \
   -H "apikey: $KEY" -H "Authorization: Bearer $KEY"
 wait_for_http "backend (uvicorn :$BACKEND_PORT)" \
   "http://127.0.0.1:$BACKEND_PORT/api/health" 15 "$E2E_DIR/backend.log"
 wait_for_http "frontend (next start :$FRONTEND_PORT)" \
   "http://127.0.0.1:$FRONTEND_PORT/" 60 "$E2E_DIR/frontend.log" -L
 
+# Without setsid, $! is the `npm` wrapper, and npm EXITS once next-server is
+# spawned. e2e-down then finds a dead PID, skips (kill -0 fails, so even the
+# taskkill fallback never runs), and next-server survives holding the port —
+# observed exactly once, orphaning :3001 through a clean `e2e-down`.
+#
+# The server is healthy by this line, so the process listening on the port is
+# unambiguously ours: record THAT pid instead. Only on the no-setsid path —
+# under setsid the recorded pid leads the process group and is already right.
+if [ -z "$DETACH" ] && command -v netstat >/dev/null 2>&1; then
+  owner="$(netstat -ano -p tcp 2>/dev/null \
+    | awk -v p=":$FRONTEND_PORT" '$2 ~ p"$" && $4 == "LISTENING" {print $5; exit}')"
+  if [ -n "$owner" ]; then
+    echo "$owner" >"$E2E_DIR/frontend.pid"
+    echo "  ↳ tracking frontend by port owner (pid $owner); npm wrapper has exited"
+  fi
+fi
+
 cat <<DONE
 
 ✅ E2E stack is up.
      frontend  http://localhost:$FRONTEND_PORT   (test-profile production build)
      backend   http://localhost:$BACKEND_PORT   (health: /api/health)
-     Supabase  http://127.0.0.1:54321  (Studio: http://127.0.0.1:54323)
+     Supabase  http://127.0.0.1:$SUPABASE_API_PORT  (Studio: see supabase/config.toml [studio])
    PIDs + logs: .e2e/          Tear down: make e2e-down
    Harness sign-in: POST /api/auth/test-login with a seeded rich-* user (#381).
 DONE

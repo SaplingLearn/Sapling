@@ -287,6 +287,18 @@ body { font-size: 14px; line-height: 1.5; }
 @keyframes slide-up { from { opacity: 0; transform: translateY(12px);} to { opacity: 1; transform: none; } }
 .fade-in { animation: fade-in var(--dur) var(--ease); }
 .slide-up { animation: slide-up var(--dur-slow) var(--ease); }
+
+/* Leaf-burst — the small flourish behind an achievement badge in BadgeModal
+   when it's earned. Each span carries its own rotation as a static inline
+   transform; this keyframe only handles scale + fade so many spans can
+   share it without clobbering each other's angle. Covered by the app-wide
+   prefers-reduced-motion reset above (the `*, *::before, *::after` rule),
+   so no separate media query is needed here. */
+@keyframes sap-burst {
+  0%   { opacity: 0; transform: scale(0.3) translateY(6px); }
+  35%  { opacity: 1; }
+  100% { opacity: 0; transform: scale(1) translateY(-16px); }
+}
 .fade-up { animation: fade-in 0.5s var(--ease); animation-fill-mode: both; }
 /* Study mode-switch enter fade (#111/#490): CSS stand-in for the old
    framer-motion crossfade so pane content never waits on the motion chunk. */

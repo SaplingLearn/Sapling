@@ -96,11 +96,20 @@ class TestCreateAchievement:
 
 class TestGrantAchievement:
     def test_grants_achievement_to_user(self):
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = [
+                    {"id": "a1", "slug": "live_badge", "status": "live"}
+                ]
+            elif name == "user_achievements":
+                m.select.return_value = []
+                m.insert.return_value = [{}]
+            return m
+
         with _mock_admin(), \
-             patch("routes.admin.table") as t, \
+             patch("routes.admin.table", side_effect=by_name), \
              patch("routes.admin.check_achievements", return_value=[]):
-            t.return_value.select.return_value = []
-            t.return_value.insert.return_value = [{}]
             r = client.post("/api/admin/achievements/grant", json={
                 "user_id": "u1", "achievement_id": "a1",
             })
@@ -108,14 +117,202 @@ class TestGrantAchievement:
         assert r.status_code == 200
         assert r.json()["granted"] is True
 
+    def test_pays_the_badge_xp_reward(self):
+        """check_achievements pays xp_reward when a badge is earned; the admin
+        grant path inserted the row and awarded nothing. `mentor`, `comeback`,
+        `secret` and `methuselah` are manual-grant-only, so they paid 0 instead
+        of 980 XP and two users with identical badge sets ended up with
+        different totals."""
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = [
+                    {"id": "a1", "slug": "mentor", "status": "live",
+                     "xp_reward": 280}
+                ]
+            elif name == "user_achievements":
+                m.select.return_value = []
+                m.insert.return_value = [{}]
+            return m
+
+        with _mock_admin(),              patch("routes.admin.table", side_effect=by_name),              patch("routes.admin.check_achievements", return_value=[]),              patch("routes.admin.award_xp_safe") as award:
+            r = client.post("/api/admin/achievements/grant", json={
+                "user_id": "u1", "achievement_id": "a1",
+            })
+
+        assert r.status_code == 200
+        award.assert_called_once()
+        args, kwargs = award.call_args
+        assert args[0] == "u1"
+        # Same rule_key + source_id as the earned path, so the shared
+        # xp_events idempotency key makes a re-grant a clean no-op instead of
+        # a double payout.
+        assert args[1] == "achievement_unlocked"
+        assert kwargs["amount"] == 280
+        assert kwargs["source_type"] == "achievement"
+        assert kwargs["source_id"] == "a1"
+
+    def test_unlocks_the_badges_linked_cosmetics(self):
+        """The earned path unlocks linked cosmetics; the admin path relied on
+        check_achievements("manual_admin_grant") to do it, which cannot:
+        _get_user_stat returns a hard-coded 0 for that trigger type and every
+        manual_admin_grant trigger in the catalog has a threshold of 1, so the
+        `current_value < threshold` skip fires on all of them. `mentor`,
+        `comeback`, `secret` and `methuselah` are manual-grant-only, so their
+        cosmetics could never be unlocked at all."""
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = [
+                    {"id": "a1", "slug": "mentor", "status": "live",
+                     "xp_reward": 0}
+                ]
+            elif name == "user_achievements":
+                m.select.return_value = []
+                m.insert.return_value = [{}]
+            return m
+
+        with _mock_admin(), \
+             patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.admin.check_achievements", return_value=[]), \
+             patch("routes.admin.award_xp_safe"), \
+             patch("routes.admin.grant_linked_cosmetics") as cosmetics:
+            r = client.post("/api/admin/achievements/grant", json={
+                "user_id": "u1", "achievement_id": "a1",
+            })
+
+        assert r.status_code == 200
+        cosmetics.assert_called_once_with("u1", "a1")
+
+    def test_a_failing_cosmetic_unlock_does_not_fail_the_grant(self):
+        """Post-commit side effect: the badge row and its XP are already
+        written by the time cosmetics are unlocked."""
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = [
+                    {"id": "a1", "slug": "mentor", "status": "live",
+                     "xp_reward": 0}
+                ]
+            elif name == "user_achievements":
+                m.select.return_value = []
+                m.insert.return_value = [{}]
+            return m
+
+        with _mock_admin(), \
+             patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.admin.check_achievements", return_value=[]), \
+             patch("routes.admin.award_xp_safe"), \
+             patch("routes.admin.grant_linked_cosmetics",
+                   side_effect=RuntimeError("storage down")):
+            r = client.post("/api/admin/achievements/grant", json={
+                "user_id": "u1", "achievement_id": "a1",
+            })
+
+        assert r.status_code == 200
+        assert r.json()["granted"] is True
+
+    def test_a_zero_reward_badge_awards_nothing(self):
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = [
+                    {"id": "a1", "slug": "b", "status": "live", "xp_reward": 0}
+                ]
+            elif name == "user_achievements":
+                m.select.return_value = []
+                m.insert.return_value = [{}]
+            return m
+
+        with _mock_admin(),              patch("routes.admin.table", side_effect=by_name),              patch("routes.admin.check_achievements", return_value=[]),              patch("routes.admin.award_xp_safe") as award:
+            r = client.post("/api/admin/achievements/grant", json={
+                "user_id": "u1", "achievement_id": "a1",
+            })
+
+        assert r.status_code == 200
+        award.assert_not_called()
+
     def test_409_if_already_earned(self):
-        with _mock_admin(), patch("routes.admin.table") as t:
-            t.return_value.select.return_value = [{"achievement_id": "a1"}]
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = [
+                    {"id": "a1", "slug": "live_badge", "status": "live"}
+                ]
+            elif name == "user_achievements":
+                m.select.return_value = [{"achievement_id": "a1"}]
+            return m
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name):
             r = client.post("/api/admin/achievements/grant", json={
                 "user_id": "u1", "achievement_id": "a1",
             })
 
         assert r.status_code == 409
+
+    def test_404_if_achievement_missing(self):
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = []
+            return m
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name) as t:
+            r = client.post("/api/admin/achievements/grant", json={
+                "user_id": "u1", "achievement_id": "missing",
+            })
+
+        assert r.status_code == 404
+        # A missing achievement must never reach the user_achievements table
+        # at all -- not just fail to insert, but never even be queried.
+        called_names = [c.args[0] for c in t.call_args_list]
+        assert "user_achievements" not in called_names
+
+    def test_409_if_achievement_is_draft(self):
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = [
+                    {"id": "a1", "slug": "secret_badge", "status": "draft"}
+                ]
+            return m
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name) as t:
+            r = client.post("/api/admin/achievements/grant", json={
+                "user_id": "u1", "achievement_id": "a1",
+            })
+
+        assert r.status_code == 409
+        detail = r.json()["detail"]
+        assert "secret_badge" in detail
+        assert "draft" in detail.lower()
+        assert "publish" in detail.lower()
+        # A draft achievement must never be written to user_achievements,
+        # even transiently -- the 409 must come from a gate, not a rollback.
+        called_names = [c.args[0] for c in t.call_args_list]
+        assert "user_achievements" not in called_names
+
+    def test_grants_when_achievement_is_live(self):
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = [
+                    {"id": "a1", "slug": "live_badge", "status": "live"}
+                ]
+            elif name == "user_achievements":
+                m.select.return_value = []
+                m.insert.return_value = [{}]
+            return m
+
+        with _mock_admin(), \
+             patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.admin.check_achievements", return_value=[]):
+            r = client.post("/api/admin/achievements/grant", json={
+                "user_id": "u1", "achievement_id": "a1",
+            })
+
+        assert r.status_code == 200
+        assert r.json()["granted"] is True
 
 
 # ── POST /api/admin/cosmetics ──────────────────────────────────────────────
@@ -469,12 +666,21 @@ class TestAchievementAudits:
         assert audit.call_args.kwargs["action"] == "achievement.delete"
 
     def test_grant_logs_audit(self):
-        with _mock_admin(), patch("routes.admin.table") as t, \
+        def by_name(name):
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = [
+                    {"id": "a1", "slug": "live_badge", "status": "live"}
+                ]
+            elif name == "user_achievements":
+                m.select.return_value = []
+                m.insert.return_value = [{}]
+            return m
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name), \
              patch("routes.admin.get_session_user_id", return_value="u1"), \
              patch("routes.admin.log_admin_action") as audit, \
              patch("routes.admin.check_achievements", return_value=[]):
-            t.return_value.select.return_value = []
-            t.return_value.insert.return_value = [{}]
             r = client.post("/api/admin/achievements/grant", json={
                 "user_id": "u2", "achievement_id": "a1",
             })

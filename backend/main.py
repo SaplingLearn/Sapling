@@ -21,14 +21,18 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics
+from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.newsletter import router as newsletter_router
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services.request_context import RequestIDMiddleware, current_request_id
-from services.storage_service import ALLOWED_CONTENT_TYPES, ensure_bucket_exists
+from services.storage_service import (
+    ALLOWED_CONTENT_TYPES,
+    ICON_CONTENT_TYPES,
+    ensure_bucket_exists,
+)
 from services.durable import init_dbos, shutdown_dbos
 
 try:
@@ -71,6 +75,12 @@ logfire.instrument_pydantic_ai()
 # Creating it on startup makes new environments self-bootstrap and
 # protects against the same class of "code expects a Supabase resource
 # that no migration ever made" bugs.
+#
+# OPERATOR NOTE: ensure_bucket_exists treats a 409 (bucket already exists) as
+# success and deliberately DOES NOT overwrite settings, so widening the MIME
+# list below only takes effect on buckets this code creates. Environments whose
+# bucket predates the change (staging/prod) need a one-off bucket update to add
+# image/svg+xml before SVG icon uploads will work there.
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     # #174: fail loudly at startup if required secrets are missing, before
@@ -80,7 +90,13 @@ async def _lifespan(_app: FastAPI):
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
         file_size_limit=MAX_AVATAR_SIZE,
-        allowed_mime_types=sorted(ALLOWED_CONTENT_TYPES),
+        # The bucket holds BOTH avatars/cosmetics (ALLOWED_CONTENT_TYPES) and
+        # admin-uploaded achievement icons (ICON_CONTENT_TYPES, which adds
+        # image/svg+xml). Supabase Storage enforces the bucket's MIME list even
+        # for service-role writes, so a bootstrap list missing svg+xml means
+        # storage_service.validate_icon passes and the PUT then 400s — the
+        # admin sees "502 Icon upload failed (Supabase 400)". Union both.
+        allowed_mime_types=sorted(ALLOWED_CONTENT_TYPES | ICON_CONTENT_TYPES),
     )
     # #116/#118: start the fire-and-forget observability drain thread so LLM
     # usage + event rows flush off the request path.
@@ -218,6 +234,7 @@ app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")
 app.include_router(notes.router,       prefix="/api/notes")
 app.include_router(academics.router,   prefix="/api", tags=["academics"])
+app.include_router(gamification.router, prefix="/api/gamification")
 
 
 @app.get("/api/health")

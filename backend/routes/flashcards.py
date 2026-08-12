@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
@@ -28,6 +29,8 @@ from services.flashcard_import_service import (
     gemini_cloze,
     generate_flashcards as _generate,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -353,6 +356,19 @@ def rate_card(body: FlashcardRatingBody, request: Request):
         },
         filters={"id": f"eq.{body.card_id}"},
     )
+
+    # The review counter is the only thing that advances `flashcards_reviewed`
+    # (Quick Draw: review 100 cards), so this is its only possible dispatch
+    # point. Post-commit: the review is already recorded, so a failing check
+    # must not fail the rating.
+    try:
+        check_achievements(body.user_id, "flashcards_reviewed", {})
+    except Exception:
+        logger.exception(
+            "achievement dispatch failed after card rating user=%s card=%s",
+            body.user_id, body.card_id,
+        )
+
     return {"ok": True}
 
 

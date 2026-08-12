@@ -176,6 +176,11 @@ class ToggleReactionBody(BaseModel):
     emoji: str
 
 
+class FriendRequestBody(BaseModel):
+    from_user_id: str
+    to_user_id: str
+
+
 class ExportBody(BaseModel):
     # No default — caller must always supply the real user_id.
     # Prevents accidental exports under the wrong account.
@@ -365,6 +370,16 @@ class LinkAchievementCosmeticBody(BaseModel):
 class LinkRoleCosmeticBody(BaseModel):
     role_id: str
     cosmetic_id: str
+
+
+class AchievementIconBody(BaseModel):
+    file_base64: str
+    content_type: str
+
+
+class UpdateXpRuleBody(BaseModel):
+    amount: Optional[int] = None
+    enabled: Optional[bool] = None
 
 
 # ── Cosmetics (Admin) ────────────────────────────────────────────────────────
