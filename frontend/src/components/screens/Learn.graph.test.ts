@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deltaPlaceholderEdges, mergeGraphDelta, mergeGraphEdges, resolveAddConceptCourseId, resolveCardCourseId } from './Learn';
+import { deltaPlaceholderEdges, mergeGraphDelta, mergeGraphEdges, quizHref, resolveAddConceptCourseId, resolveCardCourseId } from './Learn';
 import type { GraphDelta } from '@/lib/api';
 import type { GraphEdge, GraphNode } from '@/lib/data';
 
@@ -165,5 +165,42 @@ describe('delete a concept, then add it back under the same name', () => {
 
   it('returns null only when no course has EVER resolved — the one case worth an error', () => {
     expect(resolveAddConceptCourseId(null, '')).toBeNull();
+  });
+});
+
+describe('quiz deep link from the tutor', () => {
+  /**
+   * The tutor page had no quiz entry point at all — the only routes in were
+   * the nav's Quiz item, the dashboard, the knowledge map and the notetaker,
+   * all of which drop the session's context and make the student re-pick the
+   * concept on the other side. Both new buttons (focus card + session
+   * toolbar) hand /quiz the concept it should already know about.
+   */
+  it('prefers the concept id, which Quiz.tsx uses directly', () => {
+    expect(quizHref('node-abc', 'Markov Chains')).toBe('/quiz?concept=node-abc');
+  });
+
+  it('falls back to the topic name when there is no focused concept', () => {
+    expect(quizHref(null, 'Markov Chains')).toBe('/quiz?topic=Markov%20Chains');
+  });
+
+  it('does NOT pass an optimistic id — the server has never seen it', () => {
+    // `node-new-<ts>` (manual add, pre-reconcile) and `stream-<name>` (a live
+    // tutor turn's placeholder) are client-side ids. As ?concept= they would
+    // preselect something the quiz page cannot resolve; by name it resolves
+    // as soon as the real row lands.
+    expect(quizHref('node-new-1723459200000-3', 'Eigenvalues')).toBe('/quiz?topic=Eigenvalues');
+    expect(quizHref('stream-eigenvalues', 'Eigenvalues')).toBe('/quiz?topic=Eigenvalues');
+  });
+
+  it('encodes names that need it', () => {
+    expect(quizHref(null, 'Bayes\u2019 Rule & Priors')).toBe(
+      '/quiz?topic=Bayes%E2%80%99%20Rule%20%26%20Priors',
+    );
+  });
+
+  it('degrades to the bare quiz page rather than emitting an empty param', () => {
+    expect(quizHref(null, null)).toBe('/quiz');
+    expect(quizHref(undefined, '   ')).toBe('/quiz');
   });
 });

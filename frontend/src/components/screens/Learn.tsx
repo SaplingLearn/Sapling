@@ -273,6 +273,29 @@ export function resolveCardCourseId(
   return topicNode?.course_id || selectedCourseId || null;
 }
 
+// Deep link from the tutor into a quiz on what the student is actually
+// working on. /quiz reads `concept` (a node id, used directly) and falls back
+// to `topic` (a name it resolves against the concept list) — see
+// screens/Quiz.tsx::initialConceptId.
+//
+// The placeholder guard matters: an optimistically-added concept carries a
+// client-side id (`node-new-<ts>`) and a streamed one carries
+// `stream-<name>`, neither of which exists server-side. Handing either to
+// `?concept=` would preselect an id the quiz page can't resolve, so those
+// fall through to the NAME, which resolves fine once the row lands.
+//
+// Exported for Learn.graph.test.ts, like the resolvers above.
+export function quizHref(
+  conceptId: string | null | undefined,
+  topic: string | null | undefined,
+): string {
+  if (conceptId && !/^(node-new-|stream-)/.test(conceptId)) {
+    return `/quiz?concept=${encodeURIComponent(conceptId)}`;
+  }
+  const name = (topic ?? "").trim();
+  return name ? `/quiz?topic=${encodeURIComponent(name)}` : "/quiz";
+}
+
 // Course for a manually-added concept. Strictly weaker than
 // `resolveCardCourseId`: it accepts the last course we managed to resolve
 // when nothing resolves right now.
@@ -1419,6 +1442,19 @@ function LearnInner() {
               actions={
                 <>
                   <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
+                  {/* Quiz on what this session is about. Prefers the rail's
+                      focused concept (an exact node id) and falls back to the
+                      session topic by name — the tutor always knows which of
+                      the two it has, so the student never re-picks it. */}
+                  <button
+                    data-testid="tutor-session-quiz"
+                    className="btn btn--sm"
+                    onClick={() => router.push(quizHref(focusConcept?.id, topic))}
+                    title={`Quiz me on ${focusConcept?.name ?? topic}`}
+                  >
+                    <Icon name="flask" size={12} />
+                    Quiz me
+                  </button>
                   <button
                     className={endConfirm.armed ? "btn btn--danger btn--sm" : "btn btn--sm"}
                     onClick={endConfirm.trigger}
@@ -1597,6 +1633,33 @@ function LearnInner() {
                           {focusHasSession ? "Resume session" : "Start session"}
                         </button>
                       )}
+                      {/* Quiz on the concept the rail is anchored to. The
+                          nav's Quiz item drops that context and makes the
+                          student re-pick the concept on the other side; this
+                          hands the id straight over. */}
+                      <button
+                        data-testid="tutor-focus-quiz"
+                        onClick={() => router.push(quizHref(focusConcept.id, focusConcept.name))}
+                        title={`Quiz me on ${focusConcept.name}`}
+                        style={{
+                          flex: focusIsCurrent ? 1 : undefined,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 6,
+                          padding: "8px 12px",
+                          borderRadius: "var(--r-sm)",
+                          fontSize: 12.5,
+                          fontWeight: 500,
+                          border: "1px solid var(--border)",
+                          background: "var(--bg-panel)",
+                          color: "var(--text)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <Icon name="flask" size={12} />
+                        Quiz me
+                      </button>
                       <button
                         onClick={() => removeConcept(focusConcept.id)}
                         title="Remove concept"
