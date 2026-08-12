@@ -139,6 +139,33 @@
   --pad-xl: 32px;
   --row-h: 40px;
 
+  /* Type scale (#289).
+     DERIVED, not invented: every step is a size the app already uses, counted
+     across screens/ and components/ — 13px is the true body size (107 uses),
+     12/11/10 carry chrome and micro-labels, 14-16 body copy, 18-26 headings,
+     30 is TopBar's screen title, 32 the display numeral on Dashboard.
+
+     Deliberately NOT density-aware, unlike --pad-*. Retuning the whole type
+     ramp with the density preference is a real product decision — it changes
+     how much text fits on every screen — and this scale's job right now is to
+     give one source of truth for sizes that are currently inline literals at
+     ~300 call sites. Making it density-aware later is additive; making it
+     density-aware now would ship a behaviour change disguised as a refactor.
+
+     Adopted by Onboarding first. The rest of the app keeps its inline sizes
+     until each screen is converted deliberately. */
+  --fs-2xs:  10px;
+  --fs-xs:   11px;
+  --fs-sm:   12px;
+  --fs-md:   13px;   /* body */
+  --fs-base: 14px;
+  --fs-lg:   16px;
+  --fs-xl:   18px;
+  --fs-2xl:  22px;
+  --fs-3xl:  26px;
+  --fs-4xl:  30px;   /* screen title — matches TopBar */
+  --fs-5xl:  32px;
+
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --dur-fast: 140ms;
   --dur: 220ms;
@@ -212,6 +239,43 @@ body { font-size: 14px; line-height: 1.5; }
   border-radius: var(--r-lg); box-shadow: var(--shadow-sm);
 }
 
+/* ── Hero surface (#288) ──────────────────────────────────────────────────
+   The warm marketing gradient behind the sign-in and beta modals. It was
+   inlined as a literal at five sites and had already drifted apart there
+   (three different shadow alphas, two radii, one missing inset), while the
+   --surface-hero / --surface-hero-shadow tokens sat further down this file
+   with zero consumers. These two classes are the only consumers now.
+
+   One value here is a correction rather than a de-drift, and is worth naming:
+   the shadow's base COLOUR was consistent across all five sites at
+   rgba(15,23,42) — Tailwind slate-900, which nothing else in this app uses.
+   The token is rgba(19,38,16) = --sap-900, the same base as --shadow-sm/md/lg.
+   So adopting it re-tints these shadows from cool slate to the warm green the
+   rest of the surface language already casts. Deliberate; the token had no
+   consumers, so this is the first time that value renders.
+
+   `.hero-surface` is the gradient ALONE — for panels nested inside a
+   `.card--hero`, which must not restate its border, radius or shadow.
+   `.card--hero` is the full surface, and is used together with `.card`
+   (`class="card card--hero"`), so it has to be declared after it to win.
+
+   The literal fallbacks are deliberate. The tokens are scoped to
+   `.public-surface, .landing-page`, so a `.card--hero` mounted anywhere
+   outside the pre-auth subtree would otherwise render with no background at
+   all. Every consumer is inside that subtree today — this is the guard for
+   the day one of them isn't, which for a shared component is a matter of
+   time rather than of chance. */
+.hero-surface,
+.card--hero {
+  background: var(--surface-hero, linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%));
+}
+
+.card--hero {
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 24px;
+  box-shadow: var(--surface-hero-shadow, 0 20px 60px rgba(19, 38, 16, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.5));
+}
+
 .divider { height: 1px; background: var(--border); }
 
 .label-micro {
@@ -224,6 +288,52 @@ body { font-size: 14px; line-height: 1.5; }
 .fade-in { animation: fade-in var(--dur) var(--ease); }
 .slide-up { animation: slide-up var(--dur-slow) var(--ease); }
 .fade-up { animation: fade-in 0.5s var(--ease); animation-fill-mode: both; }
+/* Study mode-switch enter fade (#111/#490): CSS stand-in for the old
+   framer-motion crossfade so pane content never waits on the motion chunk. */
+@keyframes study-mode-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.study-mode-enter { animation: study-mode-enter 0.22s cubic-bezier(0.2, 0.85, 0.35, 1); }
+
+/* Approval gate (#290) — the "you're in" beat.
+   The sapling draws itself once and the message steps in behind it; the
+   whole sequence settles by ~560ms. Finite by construction: every rule runs
+   a single pass, and `both` holds each step at its start frame so a delayed
+   element never flashes at its resting value first. Declared ABOVE the
+   .anim-d* utilities on purpose — the `animation` shorthand resets
+   animation-delay, so the delay utilities have to come later to win.
+   animation-fill-mode is split out of the shorthand for the same reason
+   .fade-up does it (f4ac696): the combination of a var()-based timing slot
+   and a trailing keyword in one shorthand is what broke stagger there.
+   The global prefers-reduced-motion reset collapses the whole sequence. */
+@keyframes pending-draw  { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes pending-swell { from { opacity: 0; transform: scale(0.7); } to { opacity: 0.2; transform: none; } }
+.pending-card {
+  animation: slide-up var(--dur-slow) var(--ease);
+  animation-fill-mode: both;
+}
+.pending-sprout-body {
+  transform-box: fill-box; transform-origin: 50% 100%;
+  animation: pending-swell 340ms var(--ease) 60ms;
+  animation-fill-mode: both;
+}
+/* Stem and veins are SEPARATE paths, not subpaths of one. A dash pattern
+   restarts its phase at every `M`, so subpaths of a single path all draw at
+   once — two paths on staggered delays is what actually makes the stem lead
+   and the leaves follow. */
+.pending-sprout-stem,
+.pending-sprout-veins { stroke-dasharray: 1; }
+.pending-sprout-stem {
+  animation: pending-draw 260ms var(--ease) 120ms;
+  animation-fill-mode: both;
+}
+.pending-sprout-veins {
+  animation: pending-draw 240ms var(--ease) 320ms;
+  animation-fill-mode: both;
+}
+.pending-step {
+  animation: fade-in var(--dur) var(--ease);
+  animation-fill-mode: both;
+}
+
 .anim-d0 { animation-delay:   0ms; }
 .anim-d1 { animation-delay:  80ms; }
 .anim-d2 { animation-delay: 160ms; }
@@ -307,7 +417,6 @@ body { font-size: 14px; line-height: 1.5; }
   .assignment-row:hover { background: var(--accent-soft); }
 }
 
-
 /* Course-detail two-column shell: assignment list (primary action surface)
  * on the left, sticky projection sidebar on the right. Collapses to a
  * single column below 1100px so the sidebar stacks above the list. */
@@ -328,6 +437,79 @@ body { font-size: 14px; line-height: 1.5; }
   }
   .gradebook-course-sidebar {
     position: static;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   RESPONSIVE LAYOUT PRIMITIVES (#109)
+
+   Inline styles can't express a media query, so the app's fixed
+   multi-column shells live here instead. Doing it in CSS rather than
+   branching on `useIsMobile` also means the *first* paint is already
+   correct — the hook can only flip after hydration (#110).
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Admin's master/detail panes: an editor rail beside a table.
+   `minmax(0, 1fr)` on the content track — a bare `1fr` floors at
+   min-content, which is what let the wide tables push the grid past the
+   viewport instead of scrolling inside their own column. */
+.pane-split {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.pane-split--wide {
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+}
+@media (max-width: 899px) {
+  .pane-split,
+  .pane-split--wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Admin overview's metric row. */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 899px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Pre-hydration shell guard (#110).
+   `ShellFrame` picks TopNav vs SideNav from `useIsMobile`, which reports
+   desktop on the server and on the hydrating render — it has to, or server
+   and client markup disagree. So a phone is served the sidebar shell and
+   would paint a 232px desktop rail until hydration swaps it out. The rail is
+   desktop-only by definition, so hide it below the hook's own breakpoint,
+   where CSS reaches the very first frame and JS can't. After hydration React
+   has already unmounted it and this rule is moot. Keep the width in sync with
+   MOBILE_BREAKPOINT in lib/useIsMobile.ts. */
+@media (max-width: 767px) {
+  [data-app-sidenav] {
+    display: none;
+  }
+}
+
+/* Settings' "label on the left, control on the right" profile rows. */
+.settings-field-row {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+@media (max-width: 599px) {
+  .settings-field-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    align-items: stretch;
   }
 }
 
@@ -468,19 +650,12 @@ body { font-size: 14px; line-height: 1.5; }
   transition: opacity 0.5s ease, background 0.8s ease;
 }
 
-/* ── Slow pulse ────────────────────────────────────────────────── */
-@keyframes landing-pulse-slow {
-  0%, 100% { transform: scale(0.98); }
-  50%      { transform: scale(1.02); }
-}
-.landing-animate-pulse-slow { animation: landing-pulse-slow 4s ease-in-out infinite; }
-
 /* ── Float indicator ───────────────────────────────────────────── */
 @keyframes landing-float-indicator {
   0%, 100% { transform: translateY(0) translateX(-50%); }
   50%      { transform: translateY(6px) translateX(-50%); }
 }
-.landing-animate-float-indicator { animation: landing-float-indicator 2.5s ease-in-out infinite; }
+.landing-animate-float-indicator { animation: landing-float-indicator 2.5s ease-in-out 3 forwards; }
 
 /* ── Initial load / intro overlay ───────────────────────────────── */
 .landing-intro-overlay {
@@ -518,7 +693,7 @@ body { font-size: 14px; line-height: 1.5; }
   inset: 18px;
   border-radius: inherit;
   border: 1px dashed rgba(148,163,184,0.35);
-  animation: landing-intro-orbit 14s linear infinite;
+  animation: landing-intro-orbit 2.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .landing-intro-orbit-node {
@@ -534,65 +709,10 @@ body { font-size: 14px; line-height: 1.5; }
 .landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
 
 /* ── Button shimmer ────────────────────────────────────────────── */
-.landing-btn-shimmer { position: relative; overflow: hidden; }
-.landing-btn-shimmer::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to right, transparent, rgba(255,255,255,0.3), transparent);
-  transform: translateX(-200%);
-  transition: transform 0.7s ease;
-  border-radius: 9999px;
-  pointer-events: none;
-}
-.landing-btn-shimmer:hover::before { transform: translateX(200%); }
 
 /* ── Spotlight card (mouse-follow glow) ────────────────────────── */
-.landing-spotlight-card {
-  position: relative;
-  overflow: hidden;
-}
-.landing-spotlight-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 1rem;
-  background: radial-gradient(250px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(27,108,66,0.04) 0%, transparent 70%);
-  opacity: 0;
-  transition: opacity 0.5s ease;
-  pointer-events: none;
-  z-index: 0;
-}
-.landing-spotlight-card:hover::before { opacity: 1; }
 
 /* ── Feature card icon hover ───────────────────────────────────── */
-.landing-icon-container {
-  transition: transform 0.4s var(--ease);
-}
-.landing-spotlight-card:hover .landing-icon-container {
-  transform: scale(1.1) rotate(5deg);
-}
-
-/* ── Feature card float ────────────────────────────────────────── */
-@keyframes landing-card-float {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-8px); }
-}
-.landing-card-float-1 { animation: landing-card-float 5.0s ease-in-out infinite; }
-.landing-card-float-2 { animation: landing-card-float 5.5s ease-in-out infinite 0.4s; }
-.landing-card-float-3 { animation: landing-card-float 4.8s ease-in-out infinite 0.8s; }
-.landing-card-float-4 { animation: landing-card-float 5.3s ease-in-out infinite 1.2s; }
-.landing-card-float-5 { animation: landing-card-float 5.1s ease-in-out infinite 0.6s; }
-.landing-card-float-6 { animation: landing-card-float 4.6s ease-in-out infinite 1.0s; }
-
-.landing-card-float-1:hover,
-.landing-card-float-2:hover,
-.landing-card-float-3:hover,
-.landing-card-float-4:hover,
-.landing-card-float-5:hover,
-.landing-card-float-6:hover {
-  animation-play-state: paused;
-}
 
 /* ── Landing scrollbar ─────────────────────────────────────────── */
 .landing-page ::-webkit-scrollbar       { width: 6px; }
@@ -694,7 +814,6 @@ input[type="reset"]:disabled {
   transition: box-shadow 150ms ease, border-color 150ms ease;
 }
 
-
 /* ══════════════════════════════════════════════════════════════════
    PRE-AUTH (sign-in / landing) THEME — scoped to .landing-page only.
    This block themes the public, pre-auth surface (currently rendered
@@ -746,17 +865,16 @@ input[type="reset"]:disabled {
 }
 .landing-page .sapling-mesh-blob {
   position: absolute; border-radius: 50%; filter: blur(100px); opacity: 0.7;
-  animation: sapling-blob 10s ease-in-out infinite;
-  will-change: transform; transform: translateZ(0);
+  /* One purposeful entrance: blobs bloom into their resting position once,
+     then hold still. No perpetual loop — the calm is the point (#291). */
+  animation: sapling-blob-settle 2.4s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .landing-page .sapling-mesh-blob--1 { top: -10%; left: -10%; width: 50vw; height: 50vw; max-width: 900px; max-height: 900px; background: rgba(46, 125, 82, 0.22); }
-.landing-page .sapling-mesh-blob--2 { top: 20%; right: -10%; width: 40vw; height: 40vw; max-width: 720px; max-height: 720px; background: rgba(43, 140, 150, 0.2); animation-delay: -2.5s; }
-.landing-page .sapling-mesh-blob--3 { bottom: -20%; left: 20%; width: 60vw; height: 60vw; max-width: 1000px; max-height: 1000px; background: rgba(232, 163, 58, 0.18); opacity: 0.6; animation-delay: -5s; }
-@keyframes sapling-blob {
-  0%   { transform: translate(0, 0) scale(1); }
-  33%  { transform: translate(30px, -50px) scale(1.1); }
-  66%  { transform: translate(-20px, 20px) scale(0.9); }
-  100% { transform: translate(0, 0) scale(1); }
+.landing-page .sapling-mesh-blob--2 { top: 20%; right: -10%; width: 40vw; height: 40vw; max-width: 720px; max-height: 720px; background: rgba(43, 140, 150, 0.2); animation-delay: 0.12s; }
+.landing-page .sapling-mesh-blob--3 { bottom: -20%; left: 20%; width: 60vw; height: 60vw; max-width: 1000px; max-height: 1000px; background: rgba(232, 163, 58, 0.18); opacity: 0.6; animation-delay: 0.24s; }
+@keyframes sapling-blob-settle {
+  from { transform: translate(26px, -34px) scale(1.12); }
+  to   { transform: translate(0, 0) scale(1); }
 }
 
 /* Landing floating-card surfaces — solid (glass removed, #102). */
@@ -788,17 +906,14 @@ input[type="reset"]:disabled {
   transition: opacity 0.5s ease, background 0.8s ease;
 }
 
-/* Slow pulse + float indicator. */
-@keyframes landing-pulse-slow {
-  0%, 100% { transform: scale(0.98); }
-  50%      { transform: scale(1.02); }
-}
-.landing-page .landing-animate-pulse-slow { animation: landing-pulse-slow 4s ease-in-out infinite; }
+/* Scroll cue. A finite nudge that hints "scroll", then settles — the
+   translateX(-50%) in the keyframe also centers it, so `forwards` holds it
+   centered at rest once the bobs finish (#291). */
 @keyframes landing-float-indicator {
   0%, 100% { transform: translateY(0) translateX(-50%); }
   50%      { transform: translateY(6px) translateX(-50%); }
 }
-.landing-page .landing-animate-float-indicator { animation: landing-float-indicator 2.5s ease-in-out infinite; }
+.landing-page .landing-animate-float-indicator { animation: landing-float-indicator 2.5s ease-in-out 3 forwards; }
 
 /* Intro overlay + orbit animation. */
 .landing-page .landing-intro-overlay {
@@ -821,7 +936,9 @@ input[type="reset"]:disabled {
 .landing-page .landing-intro-orbit-ring {
   position: absolute; inset: 18px; border-radius: inherit;
   border: 1px dashed rgba(148,163,184,0.35);
-  animation: landing-intro-orbit 14s linear infinite;
+  /* A single decelerating rotation as the brand mark reveals, then rest —
+     not a perpetual loader spinning forever behind the faded overlay (#291). */
+  animation: landing-intro-orbit 2.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 .landing-page .landing-intro-orbit-node { position: absolute; width: 10px; height: 10px; border-radius: 999px; }
 .landing-page .landing-intro-orbit-node--green  { background: var(--brand-forest);  top: -3px;  left: 50%; transform: translateX(-50%); }
@@ -829,46 +946,7 @@ input[type="reset"]:disabled {
 .landing-page .landing-intro-orbit-node--blue   { background: var(--info);  bottom: -3px; left: 35%; transform: translateX(-50%); }
 .landing-page .landing-intro-orbit-node--purple { background: #8A63D2;  left: -3px; top: 30%; transform: translateY(-50%); }
 
-/* Button shimmer. */
-.landing-page .landing-btn-shimmer { position: relative; overflow: hidden; }
-.landing-page .landing-btn-shimmer::before {
-  content: ''; position: absolute; inset: 0;
-  background: linear-gradient(to right, transparent, rgba(255,255,255,0.3), transparent);
-  transform: translateX(-200%); transition: transform 0.7s ease;
-  border-radius: 9999px; pointer-events: none;
-}
-.landing-page .landing-btn-shimmer:hover::before { transform: translateX(200%); }
-
 /* Spotlight card hover glow. */
-.landing-page .landing-spotlight-card { position: relative; overflow: hidden; }
-.landing-page .landing-spotlight-card::before {
-  content: ""; position: absolute; inset: 0; border-radius: 1rem;
-  background: radial-gradient(250px circle at var(--mouse-x, 0) var(--mouse-y, 0), rgba(27,108,66,0.04) 0%, transparent 70%);
-  opacity: 0; transition: opacity 0.5s ease; pointer-events: none; z-index: 0;
-}
-.landing-page .landing-spotlight-card:hover::before { opacity: 1; }
-.landing-page .landing-icon-container { transition: transform 0.4s var(--ease); }
-.landing-page .landing-spotlight-card:hover .landing-icon-container { transform: scale(1.1) rotate(5deg); }
-
-/* Feature card float. */
-@keyframes landing-card-float {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-8px); }
-}
-.landing-page .landing-card-float-1 { animation: landing-card-float 5.0s ease-in-out infinite; }
-.landing-page .landing-card-float-2 { animation: landing-card-float 5.5s ease-in-out infinite 0.4s; }
-.landing-page .landing-card-float-3 { animation: landing-card-float 4.8s ease-in-out infinite 0.8s; }
-.landing-page .landing-card-float-4 { animation: landing-card-float 5.3s ease-in-out infinite 1.2s; }
-.landing-page .landing-card-float-5 { animation: landing-card-float 5.1s ease-in-out infinite 0.6s; }
-.landing-page .landing-card-float-6 { animation: landing-card-float 4.6s ease-in-out infinite 1.0s; }
-.landing-page .landing-card-float-1:hover,
-.landing-page .landing-card-float-2:hover,
-.landing-page .landing-card-float-3:hover,
-.landing-page .landing-card-float-4:hover,
-.landing-page .landing-card-float-5:hover,
-.landing-page .landing-card-float-6:hover {
-  animation-play-state: paused;
-}
 
 /* Landing scrollbar. */
 .landing-page ::-webkit-scrollbar       { width: 6px; }
@@ -898,36 +976,1136 @@ input[type="reset"]:disabled {
 .modal-card-in      { animation: modal-card-in      300ms cubic-bezier(0.22,1,0.36,1) forwards; }
 .modal-card-out     { animation: modal-card-out     200ms cubic-bezier(0.4,0,1,1)     forwards; }
 
-/* ── Beta button border glow pulse ── */
-@keyframes beta-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(74,158,92,0), 0 4px 20px rgba(74,158,92,0.15); }
-  50%       { box-shadow: 0 0 0 5px rgba(74,158,92,0.6), 0 4px 28px rgba(74,158,92,0.3); }
+/* ── Knowledge graph demo (#344) ── */
+.landing-page .landing-graph-chip {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  padding: 7px 16px;
+  border-radius: 9999px;
+  border: 1px solid rgba(107, 114, 128, 0.28);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
-.beta-glow-btn { animation: beta-glow 2.2s ease-in-out infinite; }
+.landing-page .landing-graph-chip:hover { border-color: var(--brand-forest); }
+.landing-page .landing-graph-chip.is-active {
+  background: var(--brand-forest);
+  border-color: var(--brand-forest);
+  color: #fff;
+}
+/* The engagement fade lives on the headline, not the copy block: CSS opacity
+   on the wrapper would group the eyebrow into it, and a child can never be
+   more opaque than its group. `--brand-forest` at 0.7rem needs α ≥ 0.86 to
+   hold WCAG AA 4.5:1 over the paper background, so the eyebrow isn't faded at
+   all — see ENGAGED_HEADLINE_OPACITY in KnowledgeGraphDemo.tsx (#344). */
+.landing-page .landing-graph-headline { transition: opacity 600ms ease; }
 
-/* ── Editorial feature rows (no boxes, hairline dividers, hover sweep) ── */
-.landing-page .landing-feature-row { transition: background-color 600ms ease, padding 500ms ease; }
-.landing-page .landing-feature-row > div { position: relative; z-index: 1; }
-.landing-page .landing-feature-row::before {
-  content: ""; position: absolute; inset: 0;
-  background: linear-gradient(90deg, rgba(27,108,66,0.07) 0%, transparent 70%);
-  opacity: 0; transition: opacity 600ms ease; pointer-events: none; z-index: 0;
+/* ══════════════════════════════════════════════════════════════════════════
+   KNOWLEDGE GRAPH SCREEN (#344 step 3)
+
+   The graph used to float naked on the page background — six dots and six
+   words, left-aligned in a 1184px container with the right 40% of the field
+   empty, one viewport above four bento tiles that each recreate a whole
+   product screen. It now wears the same chrome as everything else here, and it
+   uses the `.landing-surface*` recipe below rather than a parallel one: same
+   solid warm paper, same hairlines, same mono micro-labels, no glass anywhere.
+
+   Everything is scoped to `.landing-page` and ADDS classes only — no token is
+   defined or redefined (docs/frontend-rhythm-audit.md).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* This surface's chrome carries a longer status than the bento's ("MA 242 · 19
+   concepts · 50% mastery"), which on a phone broke the two-word title across
+   two lines. Wrap the BAR instead: the title keeps its line and the status
+   drops under it. */
+.landing-page .landing-graph-chrome { flex-wrap: wrap; row-gap: 2px; }
+.landing-page .landing-graph-chrome .landing-surface-title { white-space: nowrap; }
+
+/* Canvas + inspector, split the way the app's own Tree screen is split. The
+   rail is a fixed 320px so the canvas takes the remainder — a fractional rail
+   would rescale the drawing at every viewport width, and the drawing's
+   rendered scale is what three waves of #344 arithmetic were fitted to. */
+.landing-page .landing-graph-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
-.landing-page .landing-feature-row:hover::before { opacity: 1; }
-.landing-page .landing-feature-title {
-  transition: transform 700ms cubic-bezier(0.22,1,0.36,1), color 500ms ease, letter-spacing 700ms ease;
+@media (min-width: 900px) {
+  .landing-page .landing-graph-split {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+}
+
+/* THE CANVAS IS PAINTED `--bg-mesh`, and that is a requirement, not a taste
+   call: every node label is stroked with a `--bg-mesh` halo so the edge mesh
+   breaks around its letterforms instead of running through them. On the
+   panel's own paper each halo would show as a pale rectangle behind a word.
+
+   NO HORIZONTAL PADDING, ever. The phone legibility gate
+   (e2e/landing-graph.spec.ts) measures label size, dot diameter and drawing
+   height in CSS px off the rendered `<svg>` width; at 390px the content box is
+   ~332px and every unit renders at 0.769px, so 30px of side padding would take
+   the drawing under the bar. Vertical padding costs nothing (the height
+   follows the width) and is where the breathing room goes. */
+.landing-page .landing-graph-canvas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 14px 0 10px;
+  background: var(--bg-mesh);
+}
+.landing-page .landing-graph-canvas > svg { display: block; }
+
+/* The rail is a PANE of this surface, not a card sitting on top of one: the
+   nested `SurfaceFrame` keeps the product's title/meta chrome strip and gives
+   up its border, radius, shadow and paper, so the two halves read as one
+   screen divided by a hairline rather than as a card inside a card. */
+.landing-page .landing-graph-rail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-top: 1px solid var(--border);
+}
+.landing-page .landing-graph-rail > .landing-surface {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+@media (min-width: 900px) {
+  .landing-page .landing-graph-rail {
+    border-top: 0;
+    border-left: 1px solid var(--border);
+  }
+}
+
+.landing-page .landing-graph-detailhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 1.6rem;
+}
+.landing-page .landing-graph-detailname {
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Same recipe as `.landing-surface-gradepill`: band and mark in the state
+   colour, lettering in `--text`. `--state-progress` (#c89b5e) is 2.2:1 as a
+   glyph on this paper and never has to be one. */
+.landing-page .landing-graph-tierchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--tier);
+  background: color-mix(in oklch, var(--tier) 8%, var(--bg));
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+  white-space: nowrap;
+}
+.landing-page .landing-graph-tierchip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--tier);
+}
+
+/* RESERVED HEIGHT, both of them. The blurb and the link list swap on every
+   hover and unhover; a one-line blurb replacing a two-line one would shift
+   everything under it on every pass of the mouse. Two lines is the tallest any
+   fixture blurb reaches at the narrowest column this panel renders in, and
+   three link rows is the widest link set any fixture node has — so the floor
+   is also the ceiling and the panel's height is CONSTANT across every node of
+   every course, at every width, hovered or not. */
+.landing-page .landing-graph-blurb {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--text-dim);
+  min-height: 2.6rem;
+}
+
+.landing-page .landing-graph-links {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  /* Three rows at 30px plus two 5px gaps. Measured, not guessed: a node with
+     two neighbours must reserve the same box as one with three, or the
+     stacked layout (where the grid is not stretching this rail to the
+     canvas's height) shifts the page on every hover. */
+  min-height: 6.25rem;
+}
+.landing-page .landing-graph-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 9px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 0.76rem;
+  color: var(--text-dim);
+}
+.landing-page .landing-graph-linkname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Legend ──────────────────────────────────────────────────────────────
+   Not decoration: four `--state-*` hues were carrying the entire meaning of
+   this picture and nothing on the page said what any of them meant. The counts
+   make it a readout rather than a key, and the note explains the ring the
+   nodes now draw. Pinned to the foot of the rail. */
+.landing-page .landing-graph-legend {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 15px 14px;
+  background: var(--ink-50);
+  border-top: 1px solid var(--border);
+}
+.landing-page .landing-graph-legenditems {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+.landing-page .landing-graph-legenditem {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+/* One legend entry per line once the rail is a rail, so it reads as a table of
+   counts; a wrapped row at every width instead. */
+@media (min-width: 900px) {
+  .landing-page .landing-graph-legenditems { flex-direction: column; align-items: stretch; gap: 7px; }
+  .landing-page .landing-graph-legendname { flex: 1; }
+}
+/* A hairline round every legend swatch. `--state-progress` and
+   `--state-neutral` are both under the 3:1 non-text bar on this paper; the
+   tier NAME beside each one is what actually carries the meaning (colour is
+   never the sole channel here), and the ring keeps the swatch's shape legible
+   regardless of how washed its fill is. */
+.landing-page .landing-graph-legenditem .landing-surface-dot {
+  width: 9px;
+  height: 9px;
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+.landing-page .landing-graph-legendnote { color: var(--text-muted); }
+
+/* ── Node dial + ambient drift ───────────────────────────────────────────
+   The brand guide's atmosphere is "a barely-there field of colourful orbs
+   drifting slowly in 3D — like the glow under water"; the hero does exactly
+   that and this section was frozen the instant its assembly landed.
+
+   A CSS animation rather than a rAF loop: it composites off the main thread,
+   costs zero React re-renders, is neutralised for free by the global
+   prefers-reduced-motion reset above — and, decisively, it stays out of the
+   assembly's rAF budget, which the unit suite counts frame by frame to prove
+   the helix neither fires early nor replays. The per-node direction, distance,
+   period and (negative, so nothing starts in phase) delay arrive as custom
+   properties hashed off the node id in KnowledgeGraphDemo.tsx. */
+@keyframes landing-graph-drift {
+  0%, 100% { transform: translate(0, 0); }
+  50%      { transform: translate(var(--drift-x, 0), var(--drift-y, 0)); }
+}
+
+.landing-page .landing-graph-node { cursor: pointer; }
+.landing-page .landing-graph-node.is-drifting {
+  animation: landing-graph-drift var(--drift-dur, 15s) ease-in-out var(--drift-delay, 0s) infinite;
   will-change: transform;
 }
-.landing-page .landing-feature-row:hover .landing-feature-title {
-  transform: translateX(8px);
+/* Only the two properties HOVER owns. `stroke-opacity` is deliberately not in
+   the list: the assembly drives it every frame from `progress`, and a 220ms
+   transition on a per-frame value damps and delays the whole entry fade. */
+.landing-page .landing-graph-edge { transition: stroke 200ms ease, stroke-width 200ms ease; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FEATURE BANDS + SURFACE BENTO (#344 step 2)
+
+   Everything here is scoped to `.landing-page` and ADDS classes only — no
+   token is defined or redefined below this line. The pre-auth page and the
+   app shell share token NAMES with different values, and leaking a
+   redefinition outward is the documented cause of the "get-started/beta feels
+   off" bug class (docs/frontend-rhythm-audit.md).
+
+   Two brand constraints shape the whole block:
+
+   1. NO glassmorphism. Every surface is solid warm paper (`--bg-panel` on the
+      page's `--bg`) with a hairline border. `.liquid-glass` is deliberately
+      not reused — even though #102 already emptied it out, the name is the
+      pattern the guide bans.
+   2. COLOUR IS STATE. The only hues below are `--state-*` (mastery) and
+      `--grade-*` (letter bands), plus `--brand-forest` for the brand anchor.
+      Every other surface colour is a warm neutral off the `--ink` ramp.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Shared mono micro-label — the section eyebrow. Matches the metrics the
+   knowledge-graph section sets inline one viewport above. */
+.landing-page .landing-eyebrow {
+  display: inline-block;
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
   color: var(--brand-forest);
-  letter-spacing: -0.012em;
 }
-@media (prefers-reduced-motion: reduce) {
-  .landing-page .landing-feature-row::before,
-  .landing-page .landing-feature-title,
-  .landing-page .landing-feature-icon,
-  .landing-page .landing-feature-underline { transition: none !important; }
-  .landing-page .landing-feature-row:hover .landing-feature-title { transform: none; }
-  .landing-page .landing-feature-row:hover .landing-feature-icon { transform: none; }
+
+/* ── Band layout ────────────────────────────────────────────────────────── */
+.landing-page .landing-band { padding: 5.5rem 0; overflow: hidden; }
+.landing-page .landing-bento { padding: 5.5rem 0 6rem; overflow: hidden; }
+
+.landing-page .landing-band-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2.5rem;
+  align-items: center;
 }
+
+@media (min-width: 900px) {
+  .landing-page .landing-band { padding: 7rem 0; }
+  .landing-page .landing-bento { padding: 7rem 0 8rem; }
+  .landing-page .landing-band-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 4.5rem;
+  }
+  /* The flip is a column assignment, not a source reorder: the DOM stays
+     copy-then-surface so the phone and the screen reader always get the claim
+     first. Only the wide layout crosses them over. */
+  .landing-page .landing-band--surface-left > .landing-band-copy {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .landing-page .landing-band--surface-left > .landing-band-surface {
+    grid-column: 1;
+    grid-row: 1;
+  }
+}
+
+.landing-page .landing-band-headline {
+  margin-top: 1.05rem;
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: clamp(1.95rem, 3.4vw, 3.1rem);
+  font-weight: 600;
+  line-height: 1.06;
+  letter-spacing: -0.022em;
+  color: var(--text);
+}
+
+.landing-page .landing-band-body {
+  margin-top: 1.15rem;
+  max-width: 38ch;
+  font-size: 1.02rem;
+  line-height: 1.72;
+  color: var(--text-dim);
+}
+
+/* ── Bento grid ─────────────────────────────────────────────────────────── */
+.landing-page .landing-bento-head { margin-bottom: 2.75rem; }
+.landing-page .landing-bento-head .landing-band-headline { max-width: 20ch; }
+
+.landing-page .landing-bento-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.35rem;
+}
+
+@media (min-width: 700px) {
+  .landing-page .landing-bento-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Asymmetry, not four equal boxes: 7/5 then 5/7, so the wide tile changes
+   sides between rows and the two conversation-shaped surfaces sit on the
+   opposite diagonal from the two document-shaped ones. */
+@media (min-width: 1024px) {
+  .landing-page .landing-bento-grid {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 1.5rem;
+  }
+  .landing-page .landing-bento-tile--tutor     { grid-column: span 7; }
+  .landing-page .landing-bento-tile--notes     { grid-column: span 5; }
+  .landing-page .landing-bento-tile--rooms     { grid-column: span 5; }
+  .landing-page .landing-bento-tile--gradebook { grid-column: span 7; }
+}
+
+.landing-page .landing-bento-tile { display: flex; }
+.landing-page .landing-bento-tile > * { width: 100%; }
+
+/* ── The surface frame ──────────────────────────────────────────────────── */
+.landing-page .landing-surface {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  font-family: var(--font-dm-sans), 'DM Sans', system-ui, sans-serif;
+  color: var(--text);
+}
+
+.landing-page .landing-surface-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 9px 15px;
+  background: var(--ink-50);
+  border-bottom: 1px solid var(--border);
+}
+
+.landing-page .landing-surface-title {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.landing-page .landing-surface-meta,
+.landing-page .landing-surface-mono {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.landing-page .landing-surface-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px 15px 15px;
+  flex: 1;
+}
+
+.landing-page .landing-surface-rule {
+  display: block;
+  height: 1px;
+  margin: 3px 0;
+  background: var(--border);
+}
+
+.landing-page .landing-surface-label {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.landing-page .landing-surface-headrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.landing-page .landing-surface-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.landing-page .landing-surface-name {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.landing-page .landing-surface-sub {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.landing-page .landing-surface-note {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.landing-page .landing-surface-footnote {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* Mastery status mark — the same four tokens the knowledge graph paints with. */
+.landing-page .landing-surface-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-full);
+  flex-shrink: 0;
+}
+
+/* ── Rows, chips ────────────────────────────────────────────────────────── */
+.landing-page .landing-surface-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.landing-page .landing-surface-doc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--r-xs);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  color: var(--brand-forest);
+}
+
+.landing-page .landing-surface-status {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: var(--ink-50);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+/* Ingest is a STATE: forest for landed, neutral for waiting. */
+.landing-page .landing-surface-status.is-done {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--brand-forest);
+}
+.landing-page .landing-surface-status.is-processing {
+  border-color: var(--border-strong);
+  color: var(--text-dim);
+}
+
+.landing-page .landing-surface-chiprow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.landing-page .landing-surface-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: var(--ink-50);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.landing-page .landing-surface-chip.is-count,
+.landing-page .landing-surface-chip.is-code,
+.landing-page .landing-surface-chip.is-hard {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ── Quiz ───────────────────────────────────────────────────────────────── */
+.landing-page .landing-surface-concept {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.landing-page .landing-surface-question {
+  margin: 2px 0 4px;
+  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  font-size: 0.98rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.landing-page .landing-surface-options {
+  display: grid;
+  gap: 7px;
+}
+
+.landing-page .landing-surface-option {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 8px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+/* The picked answer, in the panel's own selected treatment. */
+.landing-page .landing-surface-option.is-picked {
+  border-color: var(--brand-forest);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.landing-page .landing-surface-optionkey {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.landing-page .landing-surface-option.is-picked .landing-surface-optionkey {
+  color: var(--brand-forest);
+}
+
+/* "The next question moved" — a status, so it takes a status colour. */
+.landing-page .landing-surface-tune {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--state-progress);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* ── Study / spaced review ──────────────────────────────────────────────── */
+.landing-page .landing-surface-track {
+  display: block;
+  height: 5px;
+  border-radius: var(--r-full);
+  background: var(--ink-100);
+  overflow: hidden;
+}
+.landing-page .landing-surface-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand-forest);
+}
+
+.landing-page .landing-surface-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 16px 15px 18px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  min-height: 96px;
+  justify-content: center;
+}
+.landing-page .landing-surface-cardtext {
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: 1.18rem;
+  line-height: 1.28;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.landing-page .landing-surface-ratings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+/* Tint + hairline carry the verdict; the word stays `--text`. At 12px,
+   `--warn`-weight hues sit under the 4.5:1 AA bar as glyphs but clear the
+   3:1 non-text bar comfortably as a border. */
+.landing-page .landing-surface-rate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: var(--r-full);
+  border: 1.5px solid color-mix(in oklch, var(--tone) 55%, transparent);
+  background: color-mix(in oklch, var(--tone) 9%, var(--bg));
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text);
+}
+.landing-page .landing-surface-ratekey {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: color-mix(in oklch, var(--tone) 18%, transparent);
+  color: var(--text-dim);
+}
+
+/* ── Tutor / room conversation ──────────────────────────────────────────── */
+.landing-page .landing-surface-turn {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.landing-page .landing-surface-turn.is-student { justify-content: flex-end; }
+
+.landing-page .landing-surface-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.landing-page .landing-surface-sender {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.landing-page .landing-surface-bubble {
+  display: inline-block;
+  padding: 9px 13px;
+  border-radius: var(--r-lg);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+.landing-page .landing-surface-bubble.is-tutor {
+  max-width: 88%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  color: var(--text);
+}
+/* Forest, not `--accent`: #2D8F5C under white is 4.04:1, below the AA bar at
+   this size. Forest is 6.4:1. */
+.landing-page .landing-surface-bubble.is-student {
+  max-width: 80%;
+  background: var(--brand-forest);
+  color: #fff;
+}
+
+.landing-page .landing-surface-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  background: var(--ink-100);
+  border: 1px solid var(--border);
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+.landing-page .landing-surface-avatar.is-tutor {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--brand-forest);
+}
+
+.landing-page .landing-surface-stack-avatars { display: flex; }
+.landing-page .landing-surface-stack-avatars .landing-surface-avatar {
+  margin-right: -8px;
+  box-shadow: 0 0 0 2px var(--bg-panel);
+}
+
+/* `margin-top: auto` pins the quick actions to the bottom of the tile. The
+   bento stretches every tile in a row to the tallest one, and without this the
+   Tutor tile's actions floated in the middle with dead paper under them; pinned,
+   the slack reads as an empty conversation log — which is what it is. */
+.landing-page .landing-surface-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+.landing-page .landing-surface-action {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 11px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 0.74rem;
+  color: var(--text-dim);
+}
+
+/* ── Notetaker ──────────────────────────────────────────────────────────── */
+.landing-page .landing-surface-notetitle {
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  color: var(--text);
+}
+.landing-page .landing-surface-prose {
+  margin: 0 0 4px;
+  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+.landing-page .landing-surface-linkrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+/* ── Study Rooms ────────────────────────────────────────────────────────── */
+.landing-page .landing-surface-roomname {
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+
+/* ── Gradebook ──────────────────────────────────────────────────────────── */
+.landing-page .landing-surface-grade { display: flex; align-items: center; gap: 12px; }
+/* Display-size ⇒ WCAG "large text" (3:1), which is what lets the letter carry
+   `--grade-a` (4.56:1 on this paper) as a glyph. The per-row letters below
+   cannot, and don't. */
+.landing-page .landing-surface-letter {
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: 3.1rem;
+  font-weight: 600;
+  line-height: 0.9;
+  letter-spacing: -0.03em;
+  color: var(--grade-a);
+}
+.landing-page .landing-surface-pct {
+  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.landing-page .landing-surface-gradebookrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+  border-top: 1px solid var(--border);
+}
+.landing-page .landing-surface-assignment {
+  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text);
+}
+.landing-page .landing-surface-points {
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.landing-page .landing-surface-slash { font-weight: 400; color: var(--text-muted); }
+
+/* Grade band on the border + dot, letter in `--text`: `--grade-b` (#a88020) is
+   3.39:1 on this paper — fine as a 3:1 non-text mark, not as a glyph. */
+.landing-page .landing-surface-gradepill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 44px;
+  justify-content: center;
+  padding: 3px 9px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--grade);
+  background: color-mix(in oklch, var(--grade) 8%, var(--bg));
+  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.landing-page .landing-surface-gradepill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--grade);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   LANDING (design-component ports) — shared foundation
+   Ported from the `Sapling Landing *.dc.html` design components.
+
+   Scoped to .landing-dc, worn by every ported landing route (/v4, /v5),
+   so these sit alongside the existing .landing-page surface above rather
+   than replacing it in-place.
+
+   Fonts reuse the app's next/font variables: DM Sans, Spectral, Playfair
+   Display and JetBrains Mono are exactly the four families the source
+   pulls from Google Fonts, so no extra webfont request is needed.
+
+   prefers-reduced-motion is deliberately NOT repeated here — the global
+   block near the top of this file already collapses animation and
+   transition durations to 0.01ms, a superset of the source's rule.
+   ══════════════════════════════════════════════════════════════════ */
+
+.landing-dc {
+  /* Core palette, literal source values.
+     These are NOT the app's brand tokens and must not be consolidated into
+     them: #0C5638 / #0E9E5A are their own scale, distinct from
+     --brand-forest (#1B6C42) / --brand-forest-bright (#2D8F5C). */
+  --ld-deep:       #0C5638;
+  --ld-bright:     #0E9E5A;
+  --ld-mid:        #4FA574;
+  --ld-pale:       #8FD9A8;
+  --ld-coral:      #E27A63;
+  --ld-ink:        #12201A;
+  --ld-muted:      #61726A;
+  --ld-page:       #f0f4f2;
+  --ld-stage:      #081F14;
+  --ld-stage-deep: #061710;
+
+  /* Mastery tiers — mirrored by XTIER in lib/landing/course.ts.
+     --ld-tier-unexplored is byte-identical to --state-neutral today but is
+     kept literal for the same reason --fallback-muted is: distinct concept,
+     so a future neutral-state change can't silently move a landing tier. */
+  --ld-tier-mastered:   #0E9E5A;
+  --ld-tier-learning:   #4FA574;
+  --ld-tier-struggling: #E27A63;
+  --ld-tier-unexplored: #9a9a9a;
+
+  /* The source uses Spectral for the wordmark + display serif and Playfair
+     as the secondary serif — the reverse of the app's --font-display /
+     --font-serif roles, so bind to the concrete families, not the roles. */
+  --ld-font-sans:    var(--font-dm-sans), 'DM Sans', system-ui, sans-serif;
+  --ld-font-display: var(--font-spectral), 'Spectral', georgia, serif;
+  --ld-font-serif:   var(--font-playfair), 'Playfair Display', georgia, serif;
+  --ld-font-mono:    var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace;
+
+  background: var(--ld-page);
+  color: var(--ld-ink);
+  font-family: var(--ld-font-sans);
+  overflow-x: clip;
+}
+
+.landing-dc a       { color: var(--ld-deep); text-decoration: none; }
+.landing-dc a:hover { color: var(--ld-bright); }
+
+/* Three responsive rules carry the whole layout. */
+@media (max-width: 1023px) {
+  .landing-dc .floating-card { display: none !important; }
+  .landing-dc .drag-field    { display: none !important; }
+}
+@media (max-width: 1180px) {
+  .landing-dc .nav-tabs    { display: none !important; }
+  .landing-dc .nav-compact { display: flex !important; }
+}
+
+.landing-dc ::-webkit-scrollbar       { width: 6px; }
+.landing-dc ::-webkit-scrollbar-track { background: var(--ld-page); }
+.landing-dc ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
+.landing-dc .gal-rail                     { scrollbar-width: none; }
+.landing-dc .gal-rail::-webkit-scrollbar  { display: none; }
+
+/* ── Intro lockup ──────────────────────────────────────────────────
+   A hand-tuned causal sequence, 2.4s, played once with `both`. The stem
+   passes each joint before that part grows; the leaves then settle under
+   their own weight. The per-keyframe animation-timing-function
+   declarations ARE the effect — collapsing them onto one shared curve
+   destroys it. Do not "simplify" these.
+   ────────────────────────────────────────────────────────────────── */
+@keyframes s1Stem   { 0%,15% { stroke-dashoffset:27; } 34%,100% { stroke-dashoffset:0; } }
+@keyframes s1LeafLo {
+  0%,27% { transform:scale(0.05) rotate(9deg);  opacity:0; animation-timing-function:cubic-bezier(0.16,0.9,0.3,1); }
+  36%    { transform:scale(1.03) rotate(5deg);  opacity:1; animation-timing-function:cubic-bezier(0.5,0,0.85,0.3); }
+  42%    { transform:scale(1) rotate(-4.5deg);  opacity:1; animation-timing-function:cubic-bezier(0.4,0,0.6,1); }
+  46%    { transform:scale(1) rotate(-0.4deg);  opacity:1; animation-timing-function:cubic-bezier(0.4,0,0.6,1); }
+  51%,100% { transform:scale(1) rotate(-2.4deg); opacity:1; } }
+@keyframes s1LeafHi {
+  0%,33% { transform:scale(0.05) rotate(-9deg); opacity:0; animation-timing-function:cubic-bezier(0.16,0.9,0.3,1); }
+  42%    { transform:scale(1.03) rotate(-5deg); opacity:1; animation-timing-function:cubic-bezier(0.5,0,0.85,0.3); }
+  48%    { transform:scale(1) rotate(5.4deg);   opacity:1; animation-timing-function:cubic-bezier(0.4,0,0.6,1); }
+  52%    { transform:scale(1) rotate(0.8deg);   opacity:1; animation-timing-function:cubic-bezier(0.4,0,0.6,1); }
+  57%,100% { transform:scale(1) rotate(3.2deg); opacity:1; } }
+@keyframes s1Bud    { 0%,29% { transform:scale(0); } 35%,100% { transform:scale(1); } }
+@keyframes s1Word   { 0%,2%  { opacity:0; transform:translateY(8px); } 14%,100% { opacity:1; transform:translateY(0); } }
+@keyframes s1Rule   { 0%,60% { transform:scaleX(0); } 74%,100% { transform:scaleX(1); } }
+
+/* ── Ambient / hero ────────────────────────────────────────────────── */
+@keyframes saplingBlob { 0% { transform:translate(0,0) scale(1); } 33% { transform:translate(30px,-50px) scale(1.1); } 66% { transform:translate(-20px,20px) scale(0.9); } 100% { transform:translate(0,0) scale(1); } }
+@keyframes introOrbit { to { transform:rotate(360deg); } }
+@keyframes floatIndicator { 0%,100% { transform:translateY(0) translateX(-50%); } 50% { transform:translateY(6px) translateX(-50%); } }
+@keyframes betaGlow { 0%,100% { box-shadow:0 0 0 0 rgba(14,158,90,0), 0 4px 20px rgba(14,158,90,0.15); } 50% { box-shadow:0 0 0 5px rgba(14,158,90,0.45), 0 4px 28px rgba(14,158,90,0.3); } }
+@keyframes nodeFloatA { 0%,100% { transform:translate(0,0); } 33% { transform:translate(16px,-24px); } 66% { transform:translate(-12px,14px); } }
+@keyframes nodeFloatB { 0%,100% { transform:translate(0,0); } 40% { transform:translate(-18px,18px); } 75% { transform:translate(10px,-12px); } }
+
+/* ── Gallery card miniatures ───────────────────────────────────────── */
+@keyframes popHold { 0% { opacity:0; transform:translateY(-10px) scale(0.94); } 6% { opacity:1; transform:translateY(0) scale(1); } 86% { opacity:1; } 96% { opacity:0; } 100% { opacity:0; } }
+@keyframes chipSwapA { 0%,42% { opacity:1; transform:translateY(0); } 50%,92% { opacity:0; transform:translateY(-8px); } 100% { opacity:1; transform:translateY(0); } }
+@keyframes chipSwapB { 0%,42% { opacity:0; transform:translateY(8px); } 50%,92% { opacity:1; transform:translateY(0); } 100% { opacity:0; transform:translateY(8px); } }
+@keyframes flipLoop { 0%,38% { transform:rotateY(0deg); } 50%,88% { transform:rotateY(180deg); } 100% { transform:rotateY(360deg); } }
+@keyframes lineReveal { 0% { clip-path:inset(0 100% 0 0); } 12% { clip-path:inset(0 -4px 0 0); } 90% { clip-path:inset(0 -4px 0 0); } 100% { clip-path:inset(0 100% 0 0); } }
+@keyframes underSweep { 0%,8% { transform:scaleX(0); } 18% { transform:scaleX(1); } 88% { transform:scaleX(1); } 100% { transform:scaleX(0); } }
+@keyframes barGrow { 0% { transform:scaleY(0.08); } 14% { transform:scaleY(1); } 86% { transform:scaleY(1); } 100% { transform:scaleY(0.08); } }
+@keyframes coverRise { 0% { transform:translateY(46px) rotate(-1deg); opacity:0; } 16% { transform:translateY(0) rotate(-1deg); opacity:1; } 84% { transform:translateY(0) rotate(-1deg); opacity:1; } 100% { transform:translateY(46px) rotate(-1deg); opacity:0; } }
+@keyframes ringDraw { 0% { stroke-dashoffset:100; } 30%,85% { stroke-dashoffset:8.8; } 100% { stroke-dashoffset:100; } }
+@keyframes gaugeFloat { 0%,100% { transform:translateY(0); } 30% { transform:translateY(-52px); } 65% { transform:translateY(20px); } }
+@keyframes answerTick { 0%,55% { box-shadow:0 0 0 0 rgba(14,158,90,0); } 62% { box-shadow:0 0 0 7px rgba(14,158,90,0.22); } 72%,100% { box-shadow:0 0 0 0 rgba(14,158,90,0); } }
+@keyframes waveBar { 0%,100% { transform:scaleY(0.25); } 50% { transform:scaleY(1); } }
+@keyframes gaugeMini { 0%,100% { transform:translate(-50%,0); } 30% { transform:translate(-50%,-32px); } 65% { transform:translate(-50%,12px); } }
+@keyframes coverMini { 0% { transform:translateY(30px); opacity:0; } 16% { transform:translateY(0); opacity:1; } 84% { transform:translateY(0); opacity:1; } 100% { transform:translateY(30px); opacity:0; } }
+@keyframes cursorMini { 0%,100% { transform:translate(0,0); } 30% { transform:translate(22px,-14px); } 70% { transform:translate(-16px,10px); } }
+@keyframes cardFloat { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-9px); } }
+@keyframes scanSweep { 0% { transform:translateY(-14px); opacity:0; } 8% { opacity:1; } 92% { opacity:1; } 100% { transform:translateY(212px); opacity:0; } }
+@keyframes ocrBlink { 0%,100% { opacity:0.35; } 50% { opacity:1; } }
+@keyframes panelFade { from { opacity:0; } to { opacity:1; } }
+@keyframes fillX { 0% { transform:scaleX(0); } 18% { transform:scaleX(1); } 86% { transform:scaleX(1); } 100% { transform:scaleX(0); } }
+@keyframes typingDot { 0%,60%,100% { opacity:0.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
+@keyframes ringPop { 0% { opacity:0; r:0; } 12% { opacity:1; } 88% { opacity:1; } 100% { opacity:0; } }
+@keyframes cursorDrift { 0%,100% { transform:translate(0,0); } 30% { transform:translate(38px,-22px); } 70% { transform:translate(-26px,16px); } }
+
+/* ── Hover states ──────────────────────────────────────────────────
+   The source expresses these with a `style-hover` attribute, which is a
+   design-canvas construct with no inline equivalent in React. Same values,
+   moved into real CSS.
+   ────────────────────────────────────────────────────────────────── */
+.landing-dc .ld-navlink:hover      { color: var(--ld-ink); }
+.landing-dc .ld-btn-solid:hover    { filter: brightness(1.12); }
+.landing-dc .ld-btn-ghost:hover    { border-color: var(--ld-deep); color: var(--ld-deep); }
+.landing-dc .ld-navmenu-item:hover { background: rgba(12,86,56,0.07); color: var(--ld-ink); }
+.landing-dc .ld-kofi:hover {
+  color: var(--ld-ink);
+  border-color: #FF5E1A;  /* Ko-fi brand orange — not part of the Sapling palette */
+  background: #FFF3EC;
+}
+
+/* ── Landing v5 additions ──────────────────────────────────────────
+   Ported from `Sapling Landing v5.dc.html`. The v5 hero is a ground-up
+   rebuild, not a v4 tweak: the wordmark is Playfair 600 in brand forest
+   (not Archivo 800 in ink), it arrives via a character scramble rather
+   than a wipe, and the DOM `.floating-card` rig is replaced by a WebGL
+   scene. Everything above this comment is shared with v4.
+   ────────────────────────────────────────────────────────────────── */
+
+/* The cascade that walks the hero in, ~1.9s–3.4s after mount. */
+@keyframes heroRise { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+/* Scroll cue, 2.2s loop. */
+@keyframes cueDrop  { 0%,100% { transform:translateY(0); opacity:0.55; } 50% { transform:translateY(5px); opacity:1; } }
+/* heroWipe and heroChar are defined by the source but never referenced by
+   its markup — the wordmark scrambles instead. Kept out deliberately;
+   see components/landing-v5/Hero.tsx. */
+
+/* v5 hero responsive rules. The bottom band collapses before the mid row,
+   and the two height rules trim the top padding on short viewports. */
+@media (max-width: 1180px) {
+  .landing-v5 .hero-bottom   { grid-template-columns:1fr !important; gap:20px !important; }
+  .landing-v5 .hero-info     { justify-self:start !important; }
+  .landing-v5 .hero-cue      { justify-self:start !important; align-items:flex-start !important; }
+  .landing-v5 .hero-scrollcue { display:none !important; }
+}
+@media (max-width: 860px) {
+  .landing-v5 .hero-mid { grid-template-columns:1fr !important; justify-items:start !important; gap:24px !important; }
+}
+@media (max-width: 820px) {
+  .landing-v5 .hero-keys { flex-direction:column !important; gap:14px !important; }
+  .landing-v5 .hero-info { max-width:none !important; }
+  .landing-v5 .hero-lede { max-width:38ch !important; }
+}
+@media (max-height: 800px) {
+  .landing-v5 .hero-grid    { padding-top:96px !important; gap:14px !important; }
+  .landing-v5 .hero-info p  { font-size:12.5px !important; }
+}
+@media (max-height: 680px) {
+  .landing-v5 .hero-grid   { padding-top:84px !important; }
+  .landing-v5 .hero-keys p { display:none !important; }
+}
+
+/* v5 hover states (the source's `style-hover` attribute has no inline
+   React equivalent). The Ko-fi pill differs from v4: v5 tints the
+   background rather than swapping it to a solid cream. */
+.landing-v5 .ld-kofi:hover      { border-color:#FF5E1A; background:rgba(255,94,26,0.14); }
+.landing-v5 .ld-ghost:hover     { border-color:#0C5638; color:#0C5638; }
+
+/* Gallery + feature lab hover states. */
+.landing-v5 .ld-galcard:hover  { transform: translateY(-5px); }
+.landing-v5 .ld-labclose:hover { background: #12201A; color: #FDFCF9; }
+.landing-v5 .ld-post:hover      { border-color: rgba(18,32,26,0.16); }
+.landing-v5 .ld-jumpitem:hover  { background: rgba(12,86,56,0.07); color: #12201A; }
+.landing-v5 .ld-jumppill:hover  { opacity: 0.75; }
+.landing-v5 .ld-emailinput:focus { border-color: #0C5638; box-shadow: 0 0 0 3px rgba(12,86,56,0.12); }
+
+/* ── Companion pages (About, Team, Wiki, Gallery, News, FAQ) ───────
+   Ported from the sibling design components. These sit on the WARM
+   paper palette, not the landing's cool one — that difference is
+   intentional and matches the app's existing public pages.
+   ────────────────────────────────────────────────────────────────── */
+@keyframes fadeUp { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
+
+.cp-navlink:hover  { color: #1a1814; }
+.cp-menuitem:hover { background: rgba(27,108,66,0.07); color: #1a1814; }
+.cp-kofi:hover     { border-color: #FF5E1A; background: #FFF3EC; }
+.cp-cta:hover      { filter: brightness(1.12); }
+
+/* ── Feature-lab demos ─────────────────────────────────────────────
+   Ported from `FeatureLab.dc.html`. `labIn` is its entrance, `labSpin`
+   the busy rings, `labDot` the typing indicator. `labFlash` is defined
+   by the source but never referenced by its markup — not ported.
+   ────────────────────────────────────────────────────────────────── */
+@keyframes labIn   { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@keyframes labSpin { to { transform:rotate(360deg); } }
+@keyframes labDot  { 0%,60%,100% { opacity:0.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
+
+.landing-v5 .ld-labprimary:hover { background: #0C5638; }
+.landing-v5 .ld-labrate:hover    { transform: translateY(-2px); }
+.landing-v5 .ld-labaction:hover  { background: #E6F2E8; }
+.landing-v5 .ld-labrecent:hover  { border-color: #0E9E5A; }
+.landing-v5 .ld-labsend:hover    { background: #0E9E5A; }
+.landing-v5 .ld-labupload:hover  { background: #DCE7DE; }
+.landing-v5 .ld-labreply:hover   { border-color: #0E9E5A; background: #E6F2E8; }
+.cp-newscard:hover { border-color: rgba(42,39,31,0.22); transform: translateY(-3px); }
+@keyframes nodeDrift { 0%,100% { transform:translate(0,0); } 50% { transform:translate(10px,-13px); } }
+
+/* Beta modal — recovered from the previous landing page. */
+.ld-betaclose:hover  { background: rgba(107,114,128,0.1); }
+.ld-betasubmit:hover:not(:disabled) { background: var(--brand-forest-hover) !important; }
+.ld-betainput:focus  { border-color: var(--brand-forest); box-shadow: 0 0 0 3px rgba(27,108,66,0.12); outline: none; }
