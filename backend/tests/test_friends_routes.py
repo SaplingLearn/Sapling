@@ -162,6 +162,27 @@ class TestAccept:
         handles["friend_requests"].update.assert_called_once()
         assert handles["friend_requests"].update.call_args[0][0]["status"] == "accepted"
 
+    def test_accepting_a_declined_request_is_409_not_a_phantom_accept(self):
+        """`already` used to be `status != "pending" or _are_friends(...)`,
+        which lumped `declined` in with `accepted`. Accepting a declined
+        request then skipped the friendships upsert, still stamped the row
+        `accepted`, and returned success — a request recorded as accepted with
+        no friendship behind it. Only an existing friendship makes this
+        idempotent; anything else resolved must be rejected."""
+        handles = {"friend_requests": MagicMock(), "friendships": MagicMock()}
+        handles["friend_requests"].select.return_value = [
+            {"id": "r1", "from_user_id": "u1", "to_user_id": "u2",
+             "status": "declined"}
+        ]
+        handles["friendships"].select.return_value = []  # not friends
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.check_achievements"):
+            r = client.post("/api/social/friends/requests/r1/accept?user_id=u2")
+        assert r.status_code == 409
+        handles["friendships"].upsert.assert_not_called()
+        # Critically, the declined row is NOT rewritten to accepted.
+        handles["friend_requests"].update.assert_not_called()
+
     def test_the_friendship_write_is_conflict_safe(self):
         """Two simultaneous accepts (a genuine double-click fires both before
         either has updated the status) both read `pending`, so the status

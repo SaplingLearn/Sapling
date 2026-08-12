@@ -1,3 +1,4 @@
+import logging
 import uuid
 import random
 import string
@@ -21,6 +22,8 @@ from services import academics
 from services.matching_service import find_study_matches
 from services.request_context import current_request_id
 from services.social_cache_service import get_cached_summary, save_summary, invalidate as invalidate_summary
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -62,7 +65,13 @@ def create_room(body: CreateRoomBody, request: Request):
         from services.achievement_service import check_achievements
         check_achievements(body.user_id, "owned_room_members", {})
     except Exception:
-        pass
+        # Post-commit: the room already exists, so a failing badge check must
+        # not fail the create. Logged, never swallowed — a silent `pass` here
+        # is how the `friendships.id` 400 stayed invisible for a whole wave.
+        logger.exception(
+            "achievement dispatch failed after room create user=%s room=%s",
+            body.user_id, room_id,
+        )
 
     return {"room_id": room_id, "invite_code": invite_code}
 
@@ -142,7 +151,10 @@ def join_public_room(room_id: str, body: PublicJoinBody, request: Request):
         if owner:
             check_achievements(owner, "owned_room_members", {})
     except Exception:
-        pass
+        logger.exception(
+            "achievement dispatch failed after public room join user=%s room=%s",
+            body.user_id, room_id,
+        )
 
     return {"joined": True, "room_id": room_id}
 
@@ -183,7 +195,10 @@ def join_room(body: JoinRoomBody, request: Request):
         if owner:
             check_achievements(owner, "owned_room_members", {})
     except Exception:
-        pass
+        logger.exception(
+            "achievement dispatch failed after room join user=%s room=%s",
+            body.user_id, room["id"],
+        )
 
     return {"room": {**room, "member_count": len(members)}}
 
@@ -516,7 +531,10 @@ def send_room_message(room_id: str, body: SendMessageBody, request: Request):
         check_achievements(body.user_id, "room_replies", {})
         check_achievements(body.user_id, "rooms_active", {})
     except Exception:
-        pass
+        logger.exception(
+            "achievement dispatch failed after room message user=%s room=%s",
+            body.user_id, room_id,
+        )
 
     return {"message": row[0] if row else {}}
 
@@ -731,7 +749,19 @@ def accept_friend_request(request_id: str, user_id: str, request: Request):
     # Case (1) is the status check, case (2) is the _are_friends check. Both
     # still resolve the request row so a stale `pending` stops surfacing as an
     # actionable incoming request forever.
-    already = req.get("status") != "pending" or _are_friends(a, b)
+    #
+    # "Already friends" is the ONLY thing that makes this idempotent, though —
+    # NOT "not pending" on its own. Folding the two together
+    # (`status != "pending" or _are_friends(...)`) meant accepting a DECLINED
+    # request skipped the friendships upsert, still stamped the row
+    # `accepted`, and returned {"accepted": True}: a request recorded as
+    # accepted with no friendship behind it, and the sender left to work out
+    # that they have to send again. A resolved request that produced no
+    # friendship is not an accept to replay, it's a stale one to reject.
+    friends_already = _are_friends(a, b)
+    if req.get("status") != "pending" and not friends_already:
+        raise HTTPException(status_code=409, detail="Request is no longer pending")
+    already = friends_already
 
     if not already:
         # Symmetric rows: "my friends" stays a plain equality filter.
@@ -760,7 +790,9 @@ def accept_friend_request(request_id: str, user_id: str, request: Request):
         check_achievements(a, "friends_count")
         check_achievements(b, "friends_count")
     except Exception:
-        pass
+        logger.exception(
+            "achievement dispatch failed after friend accept from=%s to=%s", a, b,
+        )
     return {"accepted": True}
 
 

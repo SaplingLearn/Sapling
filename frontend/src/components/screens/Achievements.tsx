@@ -241,10 +241,18 @@ export function Achievements() {
               <span style={{ color: "var(--text-muted)" }}>{featuredIds.length} / {MAX_FEATURED}</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${MAX_FEATURED}, 1fr)`, gap: 10, marginBottom: 30 }}>
-              {featuredIds.map((id) => {
+              {featuredIds.map((id, idx) => {
                 const ua = earnedById.get(id);
                 if (!ua) return null;
                 const c = rarityVar(ua.achievement.rarity);
+                // Drag events fire for pointers only, so without these the
+                // showcase order is unreachable by keyboard or touch-assistive
+                // tech. `reorder` moves the source to the target's index, so
+                // handing it the neighbour is exactly a one-slot move.
+                const move = (delta: -1 | 1) => {
+                  const neighbour = featuredIds[idx + delta];
+                  if (neighbour) reorder(id, neighbour);
+                };
                 return (
                   <div
                     key={id}
@@ -280,6 +288,28 @@ export function Achievements() {
                     <div style={{ fontSize: 11, fontWeight: 600 }}>{ua.achievement.name}</div>
                     <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: 2 }}>
                       {ua.achievement.rarity}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "center", gap: 4, marginTop: 6 }}>
+                      <button
+                        data-testid={`achievements-showcase-left-${id}`}
+                        className="btn btn--sm btn--ghost"
+                        aria-label={`Move ${ua.achievement.name} earlier in the showcase`}
+                        disabled={idx === 0}
+                        onClick={() => move(-1)}
+                        style={{ padding: "0 6px", fontSize: 11, lineHeight: "18px" }}
+                      >
+                        ←
+                      </button>
+                      <button
+                        data-testid={`achievements-showcase-right-${id}`}
+                        className="btn btn--sm btn--ghost"
+                        aria-label={`Move ${ua.achievement.name} later in the showcase`}
+                        disabled={idx === featuredIds.length - 1}
+                        onClick={() => move(1)}
+                        style={{ padding: "0 6px", fontSize: 11, lineHeight: "18px" }}
+                      >
+                        →
+                      </button>
                     </div>
                   </div>
                 );

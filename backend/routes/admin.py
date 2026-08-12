@@ -4,6 +4,7 @@ All routes require admin role.
 """
 
 import base64
+import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -28,12 +29,14 @@ from models import (
 )
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
-from services.achievement_service import check_achievements
+from services.achievement_service import check_achievements, grant_linked_cosmetics
 from services.users_search import paginate_users
 from services.encryption import decrypt_if_present
 from services.profiles import get_display_names
 from services.storage_service import upload_achievement_icon
 from services.xp_service import award_xp_safe
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -339,7 +342,25 @@ def grant_achievement(body: GrantAchievementBody, request: Request):
             amount=reward,
         )
 
-    # Trigger linked cosmetics via achievement service
+    # Unlock the badge's linked cosmetics, exactly as the earned path does.
+    # This must be the direct call, NOT check_achievements: _get_user_stat
+    # returns a hard-coded 0 for `manual_admin_grant` and every such trigger
+    # in the catalog has a threshold of 1, so the dispatch below skips every
+    # trigger and grants nothing. `mentor`, `comeback`, `secret` and
+    # `methuselah` are manual-grant-only, so their cosmetics were unreachable.
+    # Post-commit: the badge row and its XP are already written, so a failure
+    # here must not 500 a grant that did succeed.
+    try:
+        grant_linked_cosmetics(body.user_id, body.achievement_id)
+    except Exception:
+        logger.exception(
+            "linked cosmetics failed after admin grant user=%s achievement=%s",
+            body.user_id, body.achievement_id,
+        )
+
+    # Kept for the cosmetics linked to OTHER achievements this grant may now
+    # qualify the user for (check_achievements re-evaluates every
+    # manual_admin_grant trigger they haven't earned).
     check_achievements(body.user_id, "manual_admin_grant", {})
 
     return {"granted": True}

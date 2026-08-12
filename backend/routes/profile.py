@@ -27,7 +27,7 @@ from services.academics import school_peer_user_ids
 from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
 from services.storage_service import upload_avatar
-from services.achievement_service import get_user_stat
+from services.achievement_service import LOWER_IS_BETTER, get_user_stat
 
 router = APIRouter()
 
@@ -634,6 +634,13 @@ def get_achievements(user_id: str, request: Request):
         for t in ts:
             tt = t["trigger_type"]
             if tt == "manual_admin_grant":
+                continue
+            # LOWER_IS_BETTER stats (session_before_hour) count DOWN to their
+            # threshold — it's a wall-clock hour, not a target to accumulate
+            # towards. "5 of 7" would be nonsense, and the `min(stat, target)`
+            # clamp below would render the unearned badge as 100% complete.
+            # These badges are pass/fail, so they carry no progress bar.
+            if tt in LOWER_IS_BETTER:
                 continue
             target = int(t.get("trigger_threshold") or 0)
             if target <= 0:

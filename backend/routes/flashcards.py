@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
@@ -28,6 +29,8 @@ from services.flashcard_import_service import (
     gemini_cloze,
     generate_flashcards as _generate,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -361,7 +364,10 @@ def rate_card(body: FlashcardRatingBody, request: Request):
     try:
         check_achievements(body.user_id, "flashcards_reviewed", {})
     except Exception:
-        pass
+        logger.exception(
+            "achievement dispatch failed after card rating user=%s card=%s",
+            body.user_id, body.card_id,
+        )
 
     return {"ok": True}
 

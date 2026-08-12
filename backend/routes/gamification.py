@@ -184,7 +184,21 @@ def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
     hidden = _private_ids() - {user_id} if scope in ("everyone", "school") else set()
 
     ids = [k for k in weekly if k not in hidden]
-    etag = make_etag(user_id, scope, len(ids), sum(weekly.get(i, 0) for i in ids))
+    ranked = sorted(ids, key=lambda i: (-weekly.get(i, 0), i))
+
+    # The ETag has to key on the ranking ITSELF, not on (count, total). Those
+    # two summary numbers are preserved by any reshuffle that keeps the same
+    # people and the same overall XP — u1:100/u2:200 becoming u1:150/u2:150
+    # scores identically — so first and second place could swap and every
+    # viewer would keep getting a 304 for the stale order until someone's
+    # award happened to move the total. Ranked (id, xp) pairs change whenever
+    # the board does.
+    #
+    # Still NOT covered, same caveat as daily_goal_xp on /me above: level,
+    # streak_count and display name are rendered here but aren't etag inputs,
+    # so a rename alone won't bust the cache. `no-cache` keeps that to one
+    # stale revalidation rather than a 30s blind window.
+    etag = make_etag(user_id, scope, *[f"{i}:{weekly.get(i, 0)}" for i in ranked])
     not_mod = conditional(request, etag, REVALIDATE_CACHE_CONTROL)
     if not_mod:
         return not_mod
@@ -194,8 +208,6 @@ def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
     ) if ids else []
     names = get_display_names(ids) if ids else {}
     by_id = {u["id"]: u for u in users or []}
-
-    ranked = sorted(ids, key=lambda i: (-weekly.get(i, 0), i))
     rows, you = [], None
     for rank, uid in enumerate(ranked, start=1):
         u = by_id.get(uid, {})

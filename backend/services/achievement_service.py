@@ -150,16 +150,37 @@ def _parse_ts(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+# Trigger types where a LOWER stat is better, so qualifying is
+# `value < threshold` instead of the usual `value >= threshold`.
+#
+# `session_before_hour` is the only one: its threshold IS the wall-clock hour
+# in the badge text ('early-bird' = 7 = "finish before 7am"), which is what
+# keeps it meaningful when an admin retunes it from the wiki. Encoding it as an
+# inverted `24 - hour` score instead — so a plain `>=` could be reused — is
+# what made any session ending 07:00-11:59 UTC clear a threshold of 7 and earn
+# "Early Bird" for finishing at lunchtime.
+LOWER_IS_BETTER = {"session_before_hour"}
+
+# What a lower-is-better stat reports when there is nothing to report. Above
+# any real hour, so it never qualifies.
+NO_QUALIFYING_VALUE = 99
+
+
 def _session_stat(user_id: str, trigger_type: str) -> int:
     """Longest session in minutes, or whether one ended in a given window.
 
     Timestamps are UTC — sessions carry no timezone, so 'before 7am' means
     07:00 UTC. Documented rather than guessed at per-user.
+
+    `session_before_hour` is LOWER_IS_BETTER: it reports the earliest UTC hour
+    any session finished at (NO_QUALIFYING_VALUE when none has), and
+    check_achievements compares it with `<`.
     """
     rows = table("sessions").select(
         "started_at,ended_at", filters={"user_id": f"eq.{user_id}"}
     ) or []
-    best = 0
+    lower_is_better = trigger_type in LOWER_IS_BETTER
+    best = NO_QUALIFYING_VALUE if lower_is_better else 0
     for r in rows:
         started, ended = _parse_ts(r.get("started_at")), _parse_ts(r.get("ended_at"))
         if not ended:
@@ -168,10 +189,7 @@ def _session_stat(user_id: str, trigger_type: str) -> int:
             if started:
                 best = max(best, int((ended - started).total_seconds() // 60))
         elif trigger_type == "session_before_hour":
-            # Report the earliest finish as "hours before 24" so a plain
-            # `value >= threshold` comparison still works for an "earlier is
-            # better" stat: finishing at 05:00 yields 19, which clears 7.
-            best = max(best, 24 - ended.hour if ended.hour < 12 else 0)
+            best = min(best, ended.hour)
         elif trigger_type == "session_after_midnight":
             best = max(best, 1 if 0 <= ended.hour < 4 else 0)
     return best
@@ -351,8 +369,13 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
         if achievement_id in existing_ids:
             continue
 
-        # Check threshold
-        if current_value < trigger["trigger_threshold"]:
+        # Check threshold. Most stats count upwards; LOWER_IS_BETTER ones
+        # (session_before_hour) qualify by coming in UNDER their threshold,
+        # which is a wall-clock hour rather than a count.
+        if event_type in LOWER_IS_BETTER:
+            if current_value >= trigger["trigger_threshold"]:
+                continue
+        elif current_value < trigger["trigger_threshold"]:
             continue
 
         # Resolve the badge BEFORE granting: a 'draft' achievement is
@@ -382,16 +405,32 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
             )
         newly_earned.append({"slug": row["slug"], "name": row["name"], "xp": reward})
 
-        # Grant linked cosmetics
-        linked_cosmetics = table("achievement_cosmetics").select(
-            "cosmetic_id", filters={"achievement_id": f"eq.{achievement_id}"}
-        )
-        if linked_cosmetics:
-            for lc in linked_cosmetics:
-                table("user_cosmetics").insert({
-                    "user_id": user_id,
-                    "cosmetic_id": lc["cosmetic_id"],
-                    "unlocked_at": datetime.now(timezone.utc).isoformat(),
-                })
+        grant_linked_cosmetics(user_id, achievement_id)
 
     return newly_earned
+
+
+def grant_linked_cosmetics(user_id: str, achievement_id: str) -> None:
+    """Unlock every cosmetic linked to `achievement_id` for `user_id`.
+
+    Shared by the two ways a badge can land on an account: earned above, and
+    granted by an admin (routes/admin.py::grant_achievement).
+
+    The admin path cannot reach this through check_achievements, which is why
+    it's a function rather than an inline loop. `_get_user_stat` returns a
+    hard-coded 0 for `manual_admin_grant` and every manual_admin_grant trigger
+    in the catalog has a threshold of 1, so the `current_value < threshold`
+    skip fires every time — the dispatch admin.py makes after granting is a
+    guaranteed no-op. `mentor`, `comeback`, `secret` and `methuselah` are
+    manual-grant-only, so their linked cosmetics could never be unlocked at
+    all.
+    """
+    linked_cosmetics = table("achievement_cosmetics").select(
+        "cosmetic_id", filters={"achievement_id": f"eq.{achievement_id}"}
+    )
+    for lc in linked_cosmetics or []:
+        table("user_cosmetics").insert({
+            "user_id": user_id,
+            "cosmetic_id": lc["cosmetic_id"],
+            "unlocked_at": datetime.now(timezone.utc).isoformat(),
+        })

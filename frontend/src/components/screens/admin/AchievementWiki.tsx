@@ -230,6 +230,13 @@ function AchievementCard({
 
   const [triggers, setTriggers] = React.useState<AchievementTrigger[]>([]);
   const [newTrigger, setNewTrigger] = React.useState({ trigger_type: "", trigger_threshold: 1 });
+  // Uncommitted per-trigger edits, keyed by trigger id. Present only while a
+  // field is being typed in; commitTrigger clears the entry on blur so the
+  // inputs fall back to the server's value.
+  const [triggerDrafts, setTriggerDrafts] = React.useState<
+    Record<string, { trigger_type?: string; trigger_threshold?: number }>
+  >({});
+  const [addingTrigger, setAddingTrigger] = React.useState(false);
 
   const [cosmetics, setCosmetics] = React.useState<Cosmetic[]>([]);
   const [linkedCosmeticIds, setLinkedCosmeticIds] = React.useState<string[]>([]);
@@ -367,7 +374,9 @@ function AchievementCard({
   };
 
   const addTrigger = async () => {
+    if (addingTrigger) return;   // a double-click would create two triggers
     if (!newTrigger.trigger_type.trim()) { toast.warn("Trigger type required."); return; }
+    setAddingTrigger(true);
     try {
       await adminCreateTrigger({
         achievement_id: achievement.id,
@@ -378,14 +387,36 @@ function AchievementCard({
       await reloadTriggers();
       toast.success("Trigger added");
     } catch (err) { toast.error(`Add failed: ${String(err)}`); }
+    finally { setAddingTrigger(false); }
   };
 
-  const updateTriggerInline = async (tid: string, patch: Partial<AchievementTrigger>) => {
+  // Commit a trigger edit on blur, never on keystroke.
+  //
+  // These inputs used to PATCH straight from onChange, so typing a 12-char
+  // trigger_type fired 12 writes and 12 full reloadTriggers() calls — and
+  // because reloadTriggers replaces `triggers` (and therefore each input's
+  // `value`), a response for an early keystroke landing after a later one
+  // rewrote the field mid-typing and characters vanished. Same draft/onBlur
+  // shape XpRulesPanel already uses below.
+  const commitTrigger = async (tid: string) => {
+    const draft = triggerDrafts[tid];
+    if (!draft) return;
+    setTriggerDrafts(prev => { const next = { ...prev }; delete next[tid]; return next; });
+
+    const current = triggers.find(t => t.id === tid);
+    if (!current) return;
+    const patch: { trigger_type?: string; trigger_threshold?: number } = {};
+    if (draft.trigger_type !== undefined && draft.trigger_type !== current.trigger_type) {
+      if (!draft.trigger_type.trim()) { toast.warn("Trigger type required."); return; }
+      patch.trigger_type = draft.trigger_type.trim();
+    }
+    if (draft.trigger_threshold !== undefined && draft.trigger_threshold !== current.trigger_threshold) {
+      patch.trigger_threshold = draft.trigger_threshold;
+    }
+    if (!Object.keys(patch).length) return;   // blurred without changing anything
+
     try {
-      await adminUpdateTrigger(tid, {
-        ...(patch.trigger_type !== undefined ? { trigger_type: patch.trigger_type } : {}),
-        ...(patch.trigger_threshold !== undefined ? { trigger_threshold: patch.trigger_threshold } : {}),
-      });
+      await adminUpdateTrigger(tid, patch);
       await reloadTriggers();
     } catch (err) { toast.error(`Update failed: ${String(err)}`); }
   };
@@ -541,14 +572,23 @@ function AchievementCard({
             {triggers.map(t => (
               <div key={t.id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
                 <input
-                  value={t.trigger_type}
-                  onChange={e => updateTriggerInline(t.id, { trigger_type: e.target.value })}
+                  value={triggerDrafts[t.id]?.trigger_type ?? t.trigger_type}
+                  onChange={e => setTriggerDrafts(prev => ({
+                    ...prev, [t.id]: { ...prev[t.id], trigger_type: e.target.value },
+                  }))}
+                  onBlur={() => commitTrigger(t.id)}
+                  onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                   style={{ ...fieldStyle, flex: 1 }}
                 />
                 <input
                   type="number"
-                  value={t.trigger_threshold}
-                  onChange={e => updateTriggerInline(t.id, { trigger_threshold: Number(e.target.value) || 0 })}
+                  value={triggerDrafts[t.id]?.trigger_threshold ?? t.trigger_threshold}
+                  onChange={e => setTriggerDrafts(prev => ({
+                    ...prev,
+                    [t.id]: { ...prev[t.id], trigger_threshold: Number(e.target.value) || 0 },
+                  }))}
+                  onBlur={() => commitTrigger(t.id)}
+                  onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                   style={{ ...fieldStyle, width: 80 }}
                 />
                 <button className="btn btn--sm btn--ghost" onClick={() => deleteTriggerInline(t.id)}>×</button>
@@ -567,7 +607,13 @@ function AchievementCard({
                 onChange={e => setNewTrigger(v => ({ ...v, trigger_threshold: Number(e.target.value) || 0 }))}
                 style={{ ...fieldStyle, width: 80 }}
               />
-              <button className="btn btn--sm btn--primary" onClick={addTrigger}>Add</button>
+              <button
+                className="btn btn--sm btn--primary"
+                onClick={addTrigger}
+                disabled={addingTrigger}
+              >
+                {addingTrigger ? "Adding…" : "Add"}
+              </button>
             </div>
           </div>
 

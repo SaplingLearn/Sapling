@@ -289,21 +289,33 @@ class TestBucketBootstrapCoversIcons:
     PUT then 400d, surfacing to the admin as "502 Icon upload failed
     (Supabase 400)". The bootstrap list has to be the union."""
 
-    def test_the_bootstrap_mime_list_is_the_union(self):
-        import main
-        from services.storage_service import (
-            ALLOWED_CONTENT_TYPES, ICON_CONTENT_TYPES,
-        )
-        expected = sorted(ALLOWED_CONTENT_TYPES | ICON_CONTENT_TYPES)
-        assert "image/svg+xml" in expected
-        assert sorted(main.ALLOWED_CONTENT_TYPES | main.ICON_CONTENT_TYPES) == expected
+    def test_every_icon_content_type_reaches_the_bucket_bootstrap(self):
+        """Every MIME type validate_icon will ACCEPT must be one the bucket
+        was created willing to STORE.
 
-    def test_every_icon_content_type_is_bootstrapped(self):
-        from services.storage_service import (
-            ALLOWED_CONTENT_TYPES, ICON_CONTENT_TYPES,
+        Asserted against the list the lifespan actually hands
+        ensure_bucket_exists. Rebuilding the union from the same two constants
+        here instead — `ICON <= (ALLOWED | ICON)`, or comparing
+        `main.ALLOWED | main.ICON` against `ALLOWED | ICON` when main.py
+        imports those very objects — is true by construction: it holds no
+        matter what main.py passes, so it would still pass if the bootstrap
+        dropped icons entirely, which is the exact regression this class
+        exists to catch.
+        """
+        from unittest.mock import AsyncMock
+        from services.storage_service import ICON_CONTENT_TYPES
+
+        # Patched in main.py's namespace: the import is hoisted to module
+        # level there. AsyncMock so the `await` inside the lifespan resolves.
+        with patch("main.ensure_bucket_exists", new=AsyncMock()) as m:
+            from fastapi.testclient import TestClient
+            from main import app
+            with TestClient(app):
+                pass
+
+        bootstrap = set(m.call_args.kwargs["allowed_mime_types"])
+        missing = ICON_CONTENT_TYPES - bootstrap
+        assert not missing, (
+            f"validate_icon accepts {sorted(missing)} but the bucket bootstrap "
+            "does not allow them — every such upload 400s at runtime"
         )
-        assert ICON_CONTENT_TYPES <= (ALLOWED_CONTENT_TYPES | ICON_CONTENT_TYPES)
-        # The real regression guard: anything validate_icon will accept must be
-        # something the bucket was created willing to store.
-        bootstrap = set(ALLOWED_CONTENT_TYPES | ICON_CONTENT_TYPES)
-        assert not (ICON_CONTENT_TYPES - bootstrap)

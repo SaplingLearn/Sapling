@@ -108,6 +108,43 @@ class TestLeaderboard:
         assert rows[0]["user_id"] == "u2"
         assert rows[1]["is_you"] is True
 
+    def test_the_etag_changes_when_only_the_ORDER_changes(self):
+        """The ETag keyed on (viewer, scope, row count, total XP). A reshuffle
+        that preserves both — u1:100/u2:200 becoming u1:150/u2:150 — produced
+        a byte-identical ETag, so first and second place could swap and every
+        viewer kept getting a 304 for the stale order."""
+        now = datetime.now(timezone.utc).isoformat()
+
+        def etag_for(events):
+            handles = {"xp_events": MagicMock(), "users": MagicMock(),
+                       "user_settings": MagicMock(), "friendships": MagicMock()}
+            _one_page(handles["xp_events"], events)
+            handles["users"].select.return_value = [
+                {"id": "u1", "level": 5, "total_xp": 900, "streak_count": 3},
+                {"id": "u2", "level": 9, "total_xp": 2000, "streak_count": 12},
+            ]
+            handles["user_settings"].select.return_value = []
+            with patch("routes.gamification.table", side_effect=_tables(handles)), \
+                 patch("routes.gamification.stage_for_level", return_value=STAGE), \
+                 patch("routes.gamification.get_display_names",
+                       return_value={"u1": "A", "u2": "B"}):
+                r = client.get("/api/gamification/leaderboard?user_id=u1&scope=everyone")
+            return r.headers["etag"], r.json()["rows"]
+
+        before_etag, before_rows = etag_for([
+            {"user_id": "u1", "amount": 100, "created_at": now},
+            {"user_id": "u2", "amount": 200, "created_at": now},
+        ])
+        after_etag, after_rows = etag_for([
+            {"user_id": "u1", "amount": 150, "created_at": now},
+            {"user_id": "u2", "amount": 150, "created_at": now},
+        ])
+
+        # Same two people, same 300 XP total — but the board genuinely changed.
+        assert before_rows[0]["user_id"] == "u2"
+        assert after_rows[0]["user_id"] == "u1"
+        assert before_etag != after_etag
+
     def test_private_users_are_hidden_but_still_see_themselves(self):
         handles = {"xp_events": MagicMock(), "users": MagicMock(),
                    "user_settings": MagicMock(), "friendships": MagicMock()}

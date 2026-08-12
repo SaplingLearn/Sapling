@@ -231,23 +231,71 @@ class TestNewTriggerTypes:
             from services.achievement_service import _get_user_stat
             assert _get_user_stat("u1", "xp_in_day") == 350
 
-    def test_session_before_hour_inverts_earlier_is_better(self):
-        """Pins the counter-intuitive 'hours before 24' encoding: a session
-        ending at 05:00 UTC clears an early-bird threshold of 7 (24-5=19), one
-        ending at 13:00 (afternoon, not "before hour") scores 0."""
-        from services.achievement_service import _session_stat
+    def test_session_before_hour_reports_the_earliest_finish_hour(self):
+        """session_before_hour is LOWER_IS_BETTER: it reports the earliest UTC
+        hour a session finished at, so the trigger_threshold stays the literal
+        hour in the badge text ('before 7am' = 7)."""
+        from services.achievement_service import NO_QUALIFYING_VALUE, _session_stat
 
         with patch("services.achievement_service.table") as t:
             t.return_value.select.return_value = [
                 {"started_at": "2026-07-01T04:00:00+00:00", "ended_at": "2026-07-01T05:00:00+00:00"},
+                {"started_at": "2026-07-02T12:00:00+00:00", "ended_at": "2026-07-02T13:00:00+00:00"},
             ]
-            assert _session_stat("u1", "session_before_hour") == 19
+            # The earliest finish wins, not the latest.
+            assert _session_stat("u1", "session_before_hour") == 5
 
         with patch("services.achievement_service.table") as t:
             t.return_value.select.return_value = [
                 {"started_at": "2026-07-01T12:00:00+00:00", "ended_at": "2026-07-01T13:00:00+00:00"},
             ]
-            assert _session_stat("u1", "session_before_hour") == 0
+            assert _session_stat("u1", "session_before_hour") == 13
+
+        # No finished session at all must never qualify.
+        with patch("services.achievement_service.table") as t:
+            t.return_value.select.return_value = [
+                {"started_at": "2026-07-01T04:00:00+00:00", "ended_at": None},
+            ]
+            assert _session_stat("u1", "session_before_hour") == NO_QUALIFYING_VALUE
+
+    def test_late_morning_session_does_not_earn_early_bird(self):
+        """Regression: the old `24 - hour` encoding scored an 11:00 finish as
+        13, which cleared early-bird's threshold of 7 — so "finish a study
+        session before 7am" was granted for finishing at lunchtime. Anything
+        at or after the threshold hour must not qualify; 06:00 still must."""
+        from services import achievement_service
+
+        def run(end_hour: str) -> list:
+            def table_side_effect(name):
+                m = MagicMock()
+                if name == "achievement_triggers":
+                    m.select.return_value = [{
+                        "id": "t1", "achievement_id": "a1",
+                        "trigger_type": "session_before_hour", "trigger_threshold": 7,
+                    }]
+                elif name == "user_achievements":
+                    m.select.return_value = []
+                elif name == "sessions":
+                    m.select.return_value = [{
+                        "started_at": f"2026-07-01T0{0}:00:00+00:00",
+                        "ended_at": f"2026-07-01T{end_hour}:00:00+00:00",
+                    }]
+                elif name == "achievements":
+                    m.select.return_value = [{
+                        "slug": "early-bird", "name": "Early Bird",
+                        "xp_reward": 60, "status": "live",
+                    }]
+                elif name == "achievement_cosmetics":
+                    m.select.return_value = []
+                return m
+
+            with patch.object(achievement_service, "table", side_effect=table_side_effect), \
+                 patch.object(achievement_service, "award_xp_safe"):
+                return achievement_service.check_achievements("u1", "session_before_hour", {})
+
+        assert run("11") == []          # 11:00 — the bug: used to be granted
+        assert run("07") == []          # 07:00 — the boundary, "before 7" is exclusive
+        assert [a["slug"] for a in run("06")] == ["early-bird"]
 
     def test_course_grade_a_counts_enrollments_computing_to_an_a(self):
         # e1 grades to 95% (an A); e2 grades to 70% (a C-). Each enrollment

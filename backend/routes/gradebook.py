@@ -17,6 +17,7 @@ course in that term) and key categories/assignments on ``enrollment_id``.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -35,6 +36,8 @@ from services import academics, gradebook_service
 from services.achievement_service import check_achievements
 from services.auth_guard import require_self
 from services.encryption import encrypt_if_present, decrypt_if_present, decrypt_numeric
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -376,7 +379,9 @@ def _check_grade_achievements(user_id: str) -> None:
     try:
         check_achievements(user_id, "course_grade_a", {})
     except Exception:
-        pass
+        logger.exception(
+            "achievement dispatch failed after grade write user=%s", user_id,
+        )
 
 
 @router.post("/assignments")
