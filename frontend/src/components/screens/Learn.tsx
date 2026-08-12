@@ -272,6 +272,26 @@ export function resolveCardCourseId(
   return topicNode?.course_id || selectedCourseId || null;
 }
 
+// Course for a manually-added concept. Strictly weaker than
+// `resolveCardCourseId`: it accepts the last course we managed to resolve
+// when nothing resolves right now.
+//
+// The focus card wants the live answer and should go blank when focus is
+// lost. `addConcept` must NOT — for anyone who hasn't touched the optional
+// course picker, `cardCourseId` comes entirely from the focused node, and
+// deleting a concept clears the focus. That made "delete a concept, then add
+// it back under the same name" impossible: the delete removed the only
+// source of the course id and the add then bailed out silently.
+//
+// Exported (like resolveCardCourseId) so Learn.graph.test.ts exercises the
+// resolution `addConcept` actually calls, rather than a mirror of it.
+export function resolveAddConceptCourseId(
+  cardCourseId: string | null,
+  lastResolvedCourseId: string,
+): string | null {
+  return cardCourseId || lastResolvedCourseId || null;
+}
+
 // The actual call-site assembly `applyGraphDelta` (LearnInner, below) runs on
 // every streamed `graph_update`. Extracted to a standalone, exported function
 // — rather than left inline in the `useCallback` body — specifically so
@@ -417,6 +437,20 @@ function LearnInner() {
   // to a top-level function (rather than an inline expression) so it's
   // directly testable — see Learn.graph.test.ts.
   const cardCourseId = resolveCardCourseId(topicNode, selectedCourseId);
+
+  // Last course we could actually resolve, kept so `addConcept` survives
+  // losing its focus. The picker is "Course (optional)" and defaults to ""
+  // ("No course"), so for anyone who hasn't chosen one, `cardCourseId` comes
+  // ENTIRELY from the focused node — and deleting a concept clears the focus.
+  // That made "delete a concept, add it back" impossible: the delete removed
+  // the only thing supplying the course id, and addConcept's `!cardCourseId`
+  // guard then returned silently, leaving the composer sitting there with the
+  // typed name and no error. A ref, not state: this is read at click time and
+  // must never itself trigger a re-render or re-order the focus card.
+  const lastCourseIdRef = useRef<string>("");
+  useEffect(() => {
+    if (cardCourseId) lastCourseIdRef.current = cardCourseId;
+  }, [cardCourseId]);
 
   // Streamed graph_update handler (#74) — see mergeGraphDelta above for why
   // the match key falls back to concept name. The course fallback is
@@ -1159,8 +1193,18 @@ function LearnInner() {
   // rolled back with a toast when the write fails.
   const addConcept = (name: string) => {
     const label = name.trim();
-    if (!label || !cardCourseId) return;
-    const root = graphNodes.find(n => n.is_subject_root && n.course_id === cardCourseId);
+    if (!label) return;
+    // Falls back to the last course we resolved (see lastCourseIdRef) so the
+    // add still works right after a delete has cleared the focus. Only when
+    // there has never been one — no focus, no picker choice, nothing added
+    // this session — is there genuinely nothing to attach the concept to,
+    // and then we SAY so rather than no-op'ing.
+    const courseId = resolveAddConceptCourseId(cardCourseId, lastCourseIdRef.current);
+    if (!courseId) {
+      toast.error("Pick a course first — a concept has to belong to one.");
+      return;
+    }
+    const root = graphNodes.find(n => n.is_subject_root && n.course_id === courseId);
     const anchorId = focusConcept?.id ?? root?.id;
     // Monotonic suffix: Date.now() alone is ms-resolution, and this path has
     // no in-flight guard (Enter key-repeat can fire twice before the composer
@@ -1174,7 +1218,7 @@ function LearnInner() {
       color: root?.color ?? "var(--c-sage)",
       mastery_tier: "unexplored",
       mastery_score: 0,
-      course_id: cardCourseId,
+      course_id: courseId,
     };
     setGraphNodes(prev => [...prev, newNode]);
     if (anchorId) setGraphEdges(prev => [...prev, { source: anchorId, target: id, strength: 0.4 }]);
@@ -1184,7 +1228,7 @@ function LearnInner() {
     if (!userId) return;
     addGraphNode(userId, {
       concept_name: label,
-      course_id: cardCourseId,
+      course_id: courseId,
       anchor_node_id: anchorId || undefined,
     })
       .then((res) => {
@@ -1207,12 +1251,34 @@ function LearnInner() {
   };
 
   // Remove a concept: drop the node + its edges and clear focus if it was
-  // focused. Best-effort persistence via the delete endpoint on real backends.
+  // focused, then persist.
+  //
+  // The failure path used to be `.catch(() => {})`. That is not "best
+  // effort", it is a lie to the user: the node vanishes from the map while
+  // the row survives, so re-adding the same name quietly MERGES into the
+  // undeleted row and toasts "Merged into your existing X" for a concept
+  // they watched themselves delete. Put the node back and say what happened.
   const removeConcept = (nodeId: string) => {
+    const removedNode = graphNodes.find(n => n.id === nodeId);
+    const removedEdges = graphEdges.filter(e => e.source === nodeId || e.target === nodeId);
     setGraphNodes(prev => prev.filter(n => n.id !== nodeId));
     setGraphEdges(prev => prev.filter(e => e.source !== nodeId && e.target !== nodeId));
     setFocusedNodeId(cur => (cur === nodeId ? null : cur));
-    if (userId) deleteGraphNode(userId, nodeId).catch(() => {});
+    if (!userId) return;
+    deleteGraphNode(userId, nodeId).catch(() => {
+      // Optimistic ids never reached the server, so there is nothing to
+      // restore and nothing the user can act on — only a real row's delete
+      // failing is worth surfacing.
+      if (!removedNode || /^(node-new-|stream-)/.test(nodeId)) return;
+      setGraphNodes(prev => (prev.some(n => n.id === nodeId) ? prev : [...prev, removedNode]));
+      setGraphEdges(prev => [
+        ...prev,
+        ...removedEdges.filter(
+          e => !prev.some(p => p.source === e.source && p.target === e.target),
+        ),
+      ]);
+      toast.error(`Couldn't delete “${removedNode.name}” — it's still on your map.`);
+    });
   };
 
   // ────────── Entry screen (no active session) ──────────

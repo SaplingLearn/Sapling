@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deltaPlaceholderEdges, mergeGraphDelta, mergeGraphEdges, resolveCardCourseId } from './Learn';
+import { deltaPlaceholderEdges, mergeGraphDelta, mergeGraphEdges, resolveAddConceptCourseId, resolveCardCourseId } from './Learn';
 import type { GraphDelta } from '@/lib/api';
 import type { GraphEdge, GraphNode } from '@/lib/data';
 
@@ -120,5 +120,50 @@ describe('Finding B — placeholder course fallback (task-9 fix pass 2)', () => 
     const nodesFallback = mergeGraphDelta([root('chem')], newNodeDelta('Enzymes'), 'chem');
     const placeholder = nodesFallback.find(n => n.id === 'stream-enzymes');
     expect(placeholder?.course_id).toBe('chem');
+  });
+});
+
+describe('delete a concept, then add it back under the same name', () => {
+  /**
+   * Reported: "when deleting a concept node, i should be able to add it back
+   * of the same name by add concept".
+   *
+   * The backend was never the problem — add → delete → add of the same name
+   * creates a fresh row every time (graph_nodes has no soft delete, and
+   * delete_node hard-deletes the row plus its edges). The break was here:
+   *
+   *   cardCourseId = topicNode?.course_id || selectedCourseId || null
+   *
+   * The course picker is "Course (optional)" and starts at "" ("No course"),
+   * so for anyone who hasn't chosen one, cardCourseId comes ENTIRELY from the
+   * focused node. Deleting a concept clears the focus, so cardCourseId went
+   * null, and addConcept's `if (!label || !cardCourseId) return` bailed out
+   * before doing anything at all — no request, no toast, no rollback. The
+   * composer just sat there with the name typed in.
+   */
+  it('still resolves a course when focus was just cleared by the delete', () => {
+    // Before the delete: the focused node supplies the course.
+    const focused: GraphNode = {
+      id: 'n1', name: 'Markov Chains', subject: 'CS 132', color: '#000',
+      mastery_tier: 'unexplored', mastery_score: 0, course_id: 'cs132',
+    };
+    const live = resolveCardCourseId(focused, '');
+    expect(live).toBe('cs132');
+
+    // After the delete: focus is gone and the picker is still "No course",
+    // so the live resolution has nothing left.
+    const afterDelete = resolveCardCourseId(undefined, '');
+    expect(afterDelete).toBeNull();
+
+    // The add path remembers the last course that did resolve.
+    expect(resolveAddConceptCourseId(afterDelete, live!)).toBe('cs132');
+  });
+
+  it('prefers the live resolution over the remembered one', () => {
+    expect(resolveAddConceptCourseId('bio', 'chem')).toBe('bio');
+  });
+
+  it('returns null only when no course has EVER resolved — the one case worth an error', () => {
+    expect(resolveAddConceptCourseId(null, '')).toBeNull();
   });
 });
