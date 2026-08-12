@@ -25,10 +25,10 @@ export const TEAM_MEMBERS = [
           body:'Works end to end, from the database up through the screens, and keeps the two halves speaking the same language.', delay:'0ms' },
         { name:'Jack He', role:'AI architecture and new features', slot:'team-jack', hint:'Drop a photo of Jack',
           body:'Designs how the agents, the graph, and your own materials fit together, and builds what Sapling does next.', delay:'80ms' },
-        { name:'Luke Cooper', role:'API integration', slot:'team-luke', hint:'Drop a photo of Luke',
-          body:'Wires Sapling to the services your course already lives in, so your calendar, grades, and files arrive on their own.', delay:'160ms' },
         { name:'Jose Gael Cruz-Lopez', role:'Frontend', slot:'team-jose', hint:'Drop a photo of Jose',
-          body:'Builds the interface you actually study in, and the motion and layout that keep it out of your way.', delay:'240ms' },
+          body:'Builds the interface you actually study in, and the motion and layout that keep it out of your way.', delay:'160ms' },
+        { name:'Luke Cooper', role:'API integration', slot:'team-luke', hint:'Drop a photo of Luke',
+          body:'Wires Sapling to the services your course already lives in, so your calendar, grades, and files arrive on their own.', delay:'240ms' },
       ] as const;
 
 export const TEAM_WAYS = [
