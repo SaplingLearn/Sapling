@@ -246,11 +246,15 @@ def health():
     # here vouches for the agent stages, not every byte of egress.) Not a
     # secret: it names a mode, not a key.
     from agents._providers import _model_mode
+    from config import build_commit
 
     return {
         "status": "ok",
         "service": "sapling-backend",
         "model_mode": _model_mode(),
+        # The deployed commit, so a promotion can verify the code it merged is
+        # actually the code answering (#516). "unknown" off Railway.
+        "commit": build_commit(),
     }
 
 
