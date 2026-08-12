@@ -14,6 +14,7 @@ line over a new #117 event — the frozen taxonomy stays untouched).
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -162,4 +163,72 @@ def test_quiz_route_degrades_to_typed_502_after_bounded_retries(monkeypatch):
 
     assert r.status_code == 502, r.text
     assert "temporarily unavailable" in r.json()["detail"]
+    # Still ONE run here: 1 initial request + 2 bounded output retries.
+    #
+    # routes/quiz.py does retry a guardrail trip on gemini-2.5-flash — an
+    # empty `finish_reason=error` response from flash-lite is not fixable by
+    # re-asking the same model — but that escalation goes through
+    # _resolve_model_pref, which returns None outside real model mode (#391)
+    # rather than constructing a live GoogleModel. So the function-mode seam
+    # deliberately gets no second attempt, and this test keeps measuring the
+    # in-run budget it was written for.
     assert calls["n"] == 3, "expected 1 initial request + 2 bounded retries"
+
+
+def test_quiz_route_recovers_when_a_fresh_run_succeeds(monkeypatch):
+    """A guardrail trip on the FIRST run must not reach the student.
+
+    flash-lite intermittently completes its tool calls and then never emits
+    a valid output; pydantic-ai spends both output retries and raises
+    UnexpectedModelBehavior. Sampled live, that hit roughly one generation
+    in four — and re-running the same request succeeded, because the failure
+    is in the run's own exchange, not in the request. The route re-runs once.
+    """
+    from agents.quiz import Quiz, QuizQuestion
+
+    calls = {"n": 0}
+    good = Quiz(questions=[
+        QuizQuestion(
+            question="P = [[0.7, 0.3], [0.4, 0.6]]; what is P[0][1]?",
+            type="multiple_choice", difficulty="medium",
+            options=["0.3", "0.7", "0.4", "0.6"], correct_answer="0.3",
+            explanation="Row 0, column 1.", concept="Derivatives",
+            kind="worked_problem",
+        )
+    ])
+
+    async def flaky_run(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise UnexpectedModelBehavior("Exceeded maximum output retries (2)")
+        return SimpleNamespace(output=good, usage=lambda: None)
+
+    def factory(name):
+        mock = MagicMock()
+        if name == "graph_nodes":
+            mock.select.return_value = [{
+                "id": "node1", "user_id": "user_andres", "course_id": "course1",
+                "concept_name": "Derivatives", "mastery_score": 0.4,
+            }]
+        else:
+            mock.select.return_value = []
+            mock.insert.return_value = []
+        return mock
+
+    with (
+        patch("routes.quiz.table", side_effect=factory),
+        patch("routes.quiz._course_material_block", return_value=""),
+        patch("routes.quiz.quiz_agent.run", new=flaky_run),
+        patch("routes.quiz.record_agent_usage", side_effect=lambda r, **k: r),
+    ):
+        r = client.post("/api/quiz/generate", json={
+            "user_id": "user_andres",
+            "concept_node_id": "node1",
+            "num_questions": 1,
+            "difficulty": "medium",
+            "use_shared_context": False,
+        })
+
+    assert r.status_code == 200, r.text
+    assert calls["n"] == 2, "expected exactly one fresh re-run, not more"
+    assert len(r.json()["questions"]) == 1

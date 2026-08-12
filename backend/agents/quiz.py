@@ -17,8 +17,10 @@ import logging
 from difflib import SequenceMatcher
 from typing import Literal
 
+from google.genai.types import ThinkingConfig
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.google import GoogleModelSettings
 
 from agents._providers import model_for, model_mode
 from agents.deps import SaplingDeps
@@ -56,18 +58,6 @@ _OUTPUT_RETRIES = 2
 QuizDifficulty = Literal["easy", "medium", "hard"]
 QuizQuestionType = Literal["multiple_choice"]
 
-# Self-declared per question so the practical/conceptual ratio can be
-# COUNTED rather than merely requested. Three prompt revisions asked for
-# the ratio and none of them held it: the bar of 9-of-10 worked problems
-# came back 7-of-10 twice running. A declared label turns an unverifiable
-# instruction into an arithmetic check in _enforce_requested_count.
-#
-# "worked_problem" means the question hands the student concrete material
-# to operate on — a matrix, a transition table, a sample, a passage, a
-# case — and cannot be answered from a definition. That phrasing is
-# deliberately not maths-specific: a history question quoting a source and
-# asking what it implies is a worked problem too.
-QuestionKind = Literal["worked_problem", "conceptual"]
 
 
 class QuizQuestion(BaseModel):
@@ -98,33 +88,33 @@ class QuizQuestion(BaseModel):
     # concept_names per the prompt. Used by the route to award mastery
     # on a correct answer.
     concept: str
-    # Defaulted, not required, for two reasons: every existing quiz
-    # cassette in tests/evals/cassettes/quiz_generation/ predates the
-    # field and must still validate on replay, and the default decides
-    # what an omission means. "conceptual" is the conservative choice —
-    # a model that skips the label can only ever undercount worked
-    # problems, i.e. trigger a retry, never quietly pass a definitional
-    # quiz off as practical.
-    kind: QuestionKind = "conceptual"
 
 
 class Quiz(BaseModel):
     """The agent's structured output."""
 
-    # No upper bound, deliberately. The UI offers 5 / 10 / 15
-    # (QuizPanel's COUNT_OPTIONS) but this was capped at 10, so every
-    # 15-question request was silently truncated — the cap, not the
-    # model, was answering.
+    # Bounded at 10, and the bound is load-bearing. Removing it (to let a
+    # 15-question quiz through) made gemini-2.5-flash-lite answer roughly
+    # half of all requests with an EMPTY response — no parts,
+    # `finish_reason=error`, zero output tokens — which pydantic-ai retries
+    # into `UnexpectedModelBehavior` and the route reports as a 502.
     #
-    # Raising the cap to 15 is NOT the fix: a *bounded* array needs a
-    # counting automaton per repetition, and `max_length=15` puts
-    # gemini-2.5-flash-lite back over "too many states for serving"
-    # (verified — 400 INVALID_ARGUMENT). An unbounded list is a plain
-    # repeat and costs fewer states than the bounded form it replaces.
+    # A/B measured over 5 rounds each, same prompt, schema the only variable:
     #
-    # The count is enforced instead by `_enforce_requested_count` below,
-    # which is exact where a schema bound could only ever be a ceiling.
-    questions: list[QuizQuestion] = Field(min_length=1)
+    #     kind + unbounded            1/5 ok
+    #     kind + max_length=10        3/5 ok
+    #     no kind + max_length=10     5/5 ok   <- this
+    #     no kind + unbounded         3/5 ok
+    #
+    # So the response schema has a complexity budget that Gemini enforces
+    # by failing the GENERATION, not by rejecting the request — unlike the
+    # explicit "too many states for serving" 400 that a `max_length=15`
+    # produces. Both of the fields this quiz agent grew (an unbounded array,
+    # a per-question enum) spent that budget; together they broke it.
+    #
+    # Consequence, deliberately accepted: a quiz cannot exceed 10 questions.
+    # See models/__init__.py, where num_questions is bounded to match.
+    questions: list[QuizQuestion] = Field(min_length=1, max_length=10)
 
 
 _SYSTEM_PROMPT = (
@@ -161,12 +151,9 @@ _SYSTEM_PROMPT = (
     "AT MOST ONE question may be purely conceptual when N is 10 or "
     "fewer; AT MOST TWO when N is 11 to 15. Everything else is a worked "
     "problem. Concretely: 4 of 5, 9 of 10, 13 of 15.\n"
-    "Label every question with `kind`: 'worked_problem' if it hands the "
-    "student concrete material to operate on and cannot be answered from "
-    "a definition, 'conceptual' otherwise. This label is COUNTED — go "
-    "over the conceptual allowance and the whole quiz is rejected and "
-    "sent back to you for rewriting. Label honestly; mislabelling a "
-    "definition as a worked problem cheats the student, not the check.\n"
+    "A question that poses no concrete values is a definition question, "
+    "however it is phrased. Count those as you write, and keep the count "
+    "inside the allowance above.\n"
     "Ask 'what is the steady-state distribution of THIS chain', never "
     "'what is a steady-state distribution'. Ask 'find the eigenvalues of "
     "THIS matrix', never 'what does an eigenvalue represent'. A question "
@@ -265,10 +252,10 @@ _SYSTEM_PROMPT = (
     "1. COUNT YOUR QUESTIONS. Is it exactly the N the user asked for? A "
     "short quiz is rejected and regenerated, so returning N-1 costs the "
     "student a wait for no reason.\n"
-    "2. COUNT THE QUESTIONS YOU MARKED kind='conceptual'. At most one "
-    "for N up to 10, at most two for N of 11-15. If you are over, "
-    "rewrite the excess into problems with concrete numbers and relabel "
-    "them. A quiz that is mostly definitions has failed its job.\n"
+    "2. COUNT THE QUESTIONS THAT POSE NO CONCRETE VALUES. At most one of "
+    "those in a quiz of 10 or fewer. If you are over, rewrite the excess "
+    "into problems with real numbers. A quiz that is mostly definitions "
+    "has failed its job.\n"
     "Also confirm each `correct_answer` is a character-for-character copy "
     "of one of that question's `options` — retype it from the option, "
     "don't paraphrase it."
@@ -280,8 +267,32 @@ _SYSTEM_PROMPT = (
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 
 
+# Quiz generation ran on GoogleModel's DEFAULTS, which enable dynamic
+# thinking. On a request that emits a dozen-plus structured questions —
+# each with four options and an explanation — flash-lite would think its
+# way into runs of 361s and 424s that ended as a 502, exactly the "it
+# generates for a long time and then errors" report. The same request with
+# thinking off returns in ~18s.
+#
+# There is nothing for thinking to do here: the workflow is fixed by the
+# system prompt, the concept selection comes from tool results, and the
+# output shape is constrained by the schema. flash-lite accepts
+# thinking_budget=0 (unlike Pro). 8192 is the cap flashcard.py has used
+# in production and comfortably fits the largest quiz the UI can ask for
+# (15 requested → 17 generated, a few hundred tokens each); a truncated
+# structured output would fail validation and cost a whole retry.
+#
+# Mirrors agents/flashcard.py, which pinned the same settings for the same
+# reason. temperature stays at the provider default — quiz variety is
+# wanted, and it was never the cost problem.
+_QUIZ_SETTINGS = GoogleModelSettings(
+    max_tokens=8192,
+    google_thinking_config=ThinkingConfig(thinking_budget=0),
+)
+
 quiz_agent = Agent[SaplingDeps, Quiz](
     model=model_for("quiz"),
+    model_settings=_QUIZ_SETTINGS,
     deps_type=SaplingDeps,
     output_type=Quiz,
     # #153: bounded output-validation retry budget. `output_retries=`
@@ -380,117 +391,143 @@ def conceptual_allowance(n: int) -> int:
     return 1 if n <= 10 else 2
 
 
-def _on_final_attempt(ctx: RunContext[SaplingDeps]) -> bool:
-    """True when raising ModelRetry again would fail the run outright.
+def quiz_ask_size(wanted: int) -> int:
+    """How many questions to ASK for when the student wants `wanted`.
 
-    Every check below is a quality gate, and a quality gate that can 502
-    is worse than the flaw it guards: a student asking for 15 questions
-    would rather have 15 with two definitions in them than an error page.
-    Observed for real — a 15-question run burned all three attempts and
-    raised UnexpectedModelBehavior, i.e. no quiz at all.
+    Deliberate over-generation. The ratio used to be enforced by sending a
+    non-compliant quiz back with ModelRetry, and that is what broke quiz
+    generation outright: each retry re-runs the WHOLE generation, and the
+    route caps a quiz run at ORCHESTRATOR_LIMITS (8 model requests,
+    100k tokens). A tool-calling run plus three full generations walks
+    straight through both — measured, a 10-question request spent 43s and
+    still served 5 conceptual questions, and another spent 361s before
+    dying as a 502.
 
-    So the gates push while there is budget to push with, then accept
-    what they have and log the shortfall.
+    Asking for a surplus once costs a fraction of one extra generation and
+    lets the ratio be SELECTED rather than negotiated.
+
+    Clamped to the schema's own ceiling. `Quiz.questions` is capped at 10
+    because removing that cap made Gemini fail generation outright (see the
+    A/B in the Quiz docstring), so a 10-question quiz gets no surplus at
+    all and its ratio rests on the prompt. Smaller quizzes still get one.
     """
-    retry = getattr(ctx, "retry", 0) or 0
-    budget = getattr(ctx, "max_retries", None)
-    if budget is None:
-        budget = _OUTPUT_RETRIES
-    return retry >= budget
+    return min(wanted + 2, 10)
 
 
-def _enforce_answerable(quiz: Quiz, *, final: bool) -> None:
-    """Every question's `correct_answer` must identify one of its options.
+def is_worked_problem(question: QuizQuestion) -> bool:
+    """Does this question hand the student something concrete to work on?
 
-    The route has always enforced this, but the only move available there
-    is to DROP the question — which is how a 10-question request came back
-    as 9 with a note in the logs and nothing said to the student. Here the
-    model can be asked to fix it, which is what you actually want: the
-    observed failure was a question whose computed answer,
-    'vP = [0.25, 0.75]', was absent from its own four options. That is a
-    broken question, not a formatting slip, and it deserves a rewrite.
+    Read off the question text, because the schema cannot carry the answer.
+    A self-declared `kind` field was tried and reverted: adding that enum
+    took gemini-2.5-flash-lite from 5/5 successful generations to 3/5,
+    because it spends the same schema-complexity budget the response array
+    does (see the A/B in the Quiz docstring). A heuristic that is sometimes
+    wrong beats a label that makes one generation in three fail.
 
-    routes/quiz.py keeps its drop as the last-resort net for when the
-    retry budget is exhausted.
+    "Concrete" means digits the student has to compute WITH, so a lone
+    reference like "a 3-state chain" doesn't qualify — the threshold is
+    three digits, which a matrix, a probability, or a distribution clears
+    immediately and a definition question does not. Symbolic problems
+    ("P = [[p, 1-p], [q, 1-q]]") are the known false negative; they cost a
+    worked problem its preference in the ordering, never its place in the
+    quiz.
     """
-    broken = [
-        i for i, q in enumerate(quiz.questions, start=1)
-        if resolve_correct_index(q.correct_answer, q.options) is None
+    stem = question.question
+    digits = sum(c.isdigit() for c in stem)
+    return digits >= 3 or "[[" in stem
+
+
+def select_quiz_questions(
+    questions: list[QuizQuestion], wanted: int
+) -> tuple[list[QuizQuestion], list[str]]:
+    """Pick the `wanted` questions to serve, best-first. Never raises.
+
+    Order of business:
+
+    1. drop anything unanswerable — a `correct_answer` that identifies no
+       option (see resolve_correct_index). The surplus is what makes this
+       affordable: it used to cost the student a question, or a retry;
+    2. RESERVE the conceptual slot(s) — `conceptual_allowance(wanted)` of
+       them, when the model produced any. The ask was "9 worked problems
+       and one conceptual question about the concept", so the allowance is
+       a place setting, not merely a ceiling: with enough worked problems
+       to fill the quiz outright, taking worked-only would quietly drop the
+       one question that checks whether the student knows what they are
+       computing;
+    3. fill the rest with worked problems, in the model's own order;
+    4. if that still falls short, take the remaining conceptual questions
+       rather than serve a short quiz. A quiz that is one question light is
+       a worse failure than one that is a little definitional.
+
+    Returns the selection plus human-readable notes for the caller to log,
+    so the compromises are visible instead of silent.
+    """
+    notes: list[str] = []
+
+    answerable = [
+        q for q in questions
+        if resolve_correct_index(q.correct_answer, q.options) is not None
     ]
-    if broken and final:
-        # routes/quiz.py drops these; the student gets a shorter quiz
-        # rather than an unanswerable one.
-        logger.warning(
-            "quiz: %d question(s) still unanswerable after retries — "
-            "the route will drop them", len(broken),
-        )
-        return
-    if broken:
-        raise ModelRetry(
-            f"Question(s) {', '.join(str(i) for i in broken)}: the "
-            f"`correct_answer` you gave is not one of that question's "
-            f"`options`. Either the computation is wrong or the right "
-            f"result was never offered. Recompute the answer, make sure "
-            f"it appears as one of the four options character-for-"
-            f"character, and return all {len(quiz.questions)} questions."
+    if len(answerable) != len(questions):
+        notes.append(
+            f"dropped {len(questions) - len(answerable)} unanswerable "
+            f"question(s) (correct_answer matched no option)"
         )
 
+    worked = [q for q in answerable if is_worked_problem(q)]
+    conceptual = [q for q in answerable if not is_worked_problem(q)]
 
-def _enforce_worked_ratio(quiz: Quiz, wanted: int, *, final: bool) -> Quiz:
-    """Hold the practical/conceptual balance, or send it back.
-
-    Prompt-only enforcement was measured and failed: with the ratio
-    stated twice, at the top and in a FINAL CHECK, two consecutive live
-    10-question runs returned 7 worked problems against a bar of 9.
-
-    Counting `kind` makes it decidable. The model still chooses the
-    label, so this is not proof — but a question the model itself calls
-    conceptual is not one we have to argue about.
-    """
     allowance = conceptual_allowance(wanted)
-    conceptual = [
-        i for i, q in enumerate(quiz.questions, start=1) if q.kind == "conceptual"
-    ]
-    if len(conceptual) <= allowance:
-        return quiz
-    if final:
-        logger.warning(
-            "quiz: serving %d conceptual questions of %d (allowance %d) — "
-            "retry budget spent", len(conceptual), wanted, allowance,
+    reserved = min(allowance, len(conceptual), wanted)
+    chosen = worked[: wanted - reserved]
+    chosen += conceptual[:reserved]
+
+    if len(chosen) < wanted:
+        shortfall = wanted - len(chosen)
+        extra = [q for q in conceptual if q not in chosen][:shortfall]
+        chosen += extra
+        if extra:
+            notes.append(
+                f"only {len(worked)} worked problem(s) available for a "
+                f"{wanted}-question quiz — served {len(extra)} conceptual "
+                f"question(s) over the allowance of {allowance}"
+            )
+
+    if len(chosen) < wanted:
+        notes.append(
+            f"served {len(chosen)} of {wanted} requested questions — the "
+            f"model returned too few usable ones"
         )
-        return quiz
-    # Keep the earliest conceptual questions within allowance; the rest
-    # are the ones to rewrite. Naming them beats "try harder".
-    rewrite = conceptual[allowance:]
-    raise ModelRetry(
-        f"{len(conceptual)} of your {wanted} questions are marked "
-        f"kind='conceptual', but at most {allowance} may be. Rewrite "
-        f"question(s) {', '.join(str(i) for i in rewrite)} into worked "
-        f"problems: give each one concrete values to operate on (a "
-        f"specific matrix, transition table, sample, or code fragment), "
-        f"make the four options candidate RESULTS of that computation, "
-        f"and set kind='worked_problem'. Keep the other questions as "
-        f"they are, and return all {wanted}."
-    )
+
+    # Back to the model's original ordering: the selection above groups by
+    # kind, which would otherwise front-load every worked problem and park
+    # the conceptual one at the end of every quiz.
+    order = {id(q): i for i, q in enumerate(questions)}
+    chosen.sort(key=lambda q: order.get(id(q), 0))
+    return chosen, notes
 
 
 @quiz_agent.output_validator
-def _enforce_requested_count(ctx: RunContext[SaplingDeps], quiz: Quiz) -> Quiz:
-    """Make `num_questions` mean what it says.
+def _select_requested_quiz(ctx: RunContext[SaplingDeps], quiz: Quiz) -> Quiz:
+    """Turn whatever the model produced into the quiz asked for.
 
-    The count lived only in the prompt, and the model quietly under-
-    delivered: asked for 10 on a real course concept, one run returned 6.
-    The route then served a 6-question quiz for a 10-question request with
-    nothing logged, because a short list is a perfectly valid `Quiz`.
+    Selection, never negotiation. THIS VALIDATOR MUST NOT RAISE. Every
+    version that could was measured causing the failure it meant to
+    prevent:
 
-    Over-delivery is trimmed here (free). Under-delivery raises ModelRetry,
-    which hands the model its own short output plus the shortfall and asks
-    for the rest; `output_retries=2` bounds that to two extra attempts
-    before the run fails and the route degrades to a 502.
+    - raising on a bad ratio re-ran the whole generation twice, taking a
+      10-question request from ~18s to 43s (and 361s in one case) and
+      still serving 5 conceptual questions;
+    - raising on a shortfall was worse. flash-lite intermittently returns
+      almost nothing — one sampled run produced a single usable question —
+      and re-asking produced the same, so the run died as
+      `UnexpectedModelBehavior: Exceeded maximum output retries (2)` and
+      the route turned it into a 502. That was 1 request in 5.
 
-    Deliberately NOT a schema constraint: `max_length` is a ceiling, never
-    a floor, and a *bounded* array is what pushed gemini-2.5-flash-lite
-    over "too many states for serving" at 15. See the Quiz note above.
+    A short or slightly definitional quiz is a bad quiz. An exception is no
+    quiz at all, after two minutes of waiting. The notes above are logged so
+    the compromise is visible; pydantic-ai's own schema retries still cover
+    genuinely malformed output, which is the one case a retry does fix.
     """
     wanted = getattr(ctx.deps, "num_questions", None)
     if not wanted or wanted < 1:
@@ -503,29 +540,8 @@ def _enforce_requested_count(ctx: RunContext[SaplingDeps], quiz: Quiz) -> Quiz:
         # frontend/e2e/quiz.spec.ts, and the journey's mastery arithmetic.
         # The seam is the fixture; it is not the model's output to police.
         return quiz
-    final = _on_final_attempt(ctx)
-    got = len(quiz.questions)
-    if got > wanted:
-        quiz = Quiz(questions=quiz.questions[:wanted])
-        got = wanted
-    if got == wanted:
-        _enforce_answerable(quiz, final=final)
-        return _enforce_worked_ratio(quiz, wanted, final=final)
-    if got < wanted and final:
-        logger.warning(
-            "quiz: serving %d questions for a request of %d — retry "
-            "budget spent", got, wanted,
-        )
-        return quiz
-    if got < wanted:
-        allowance = conceptual_allowance(wanted)
-        raise ModelRetry(
-            f"You returned {got} questions but exactly {wanted} were "
-            f"requested. Keep every question you already wrote and add "
-            f"{wanted - got} more on the same concept, using different "
-            f"concrete values (a new matrix, new probabilities, a "
-            f"different starting state). Respect the worked-problem "
-            f"ratio: at most {allowance} conceptual question(s) across "
-            f"all {wanted}."
-        )
-    return quiz
+
+    chosen, notes = select_quiz_questions(quiz.questions, wanted)
+    for note in notes:
+        logger.warning("quiz: %s", note)
+    return Quiz(questions=chosen) if chosen else quiz

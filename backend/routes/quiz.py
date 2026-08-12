@@ -10,7 +10,10 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from agents import ORCHESTRATOR_LIMITS
-from agents.quiz import quiz_agent, Quiz, QuizQuestion, resolve_correct_index
+from agents.quiz import (
+    quiz_agent, Quiz, QuizQuestion, conceptual_allowance, quiz_ask_size,
+    resolve_correct_index,
+)
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
@@ -235,8 +238,20 @@ async def _quiz_via_agent(
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
     # needs and trust the prompt to drive tool calls.
+    # Ask for MORE than the student wants. quiz_agent's output validator
+    # then selects `num_questions` from them, preferring worked problems and
+    # dropping unanswerable ones. The ratio used to be enforced by bouncing
+    # a non-compliant quiz back with ModelRetry, which re-ran the whole
+    # generation and walked through ORCHESTRATOR_LIMITS — a measured 43s for
+    # a quiz that still missed the ratio, and 361s for one that 502'd. One
+    # slightly larger generation costs a fraction of that and lets the ratio
+    # be selected instead of argued for.
+    ask_for = quiz_ask_size(num_questions)
+    allowance = conceptual_allowance(num_questions)
     routing_msg = (
-        f"Generate {num_questions} {difficulty} questions for the student. "
+        f"Generate {ask_for} {difficulty} questions for the student. "
+        f"At most {allowance} of them may be kind='conceptual' — the rest "
+        f"must be worked problems with concrete values. "
         f"The target concept is '{concept_name}' "
         f"(concept_node_id={concept_node_id}). Follow the workflow in your "
         f"system prompt; pass concept_node_id='{concept_node_id}' to "
@@ -266,10 +281,49 @@ async def _quiz_via_agent(
     run_kwargs: dict = {"deps": deps, "usage_limits": ORCHESTRATOR_LIMITS}
     if model_override is not None:
         run_kwargs["model"] = model_override
-    result = record_agent_usage(
-        await quiz_agent.run(user_message, **run_kwargs),
-        feature="quiz", task="quiz", user_id=deps.user_id,
-    )
+
+    # On a guardrail trip, retry ONCE on a different model.
+    #
+    # gemini-2.5-flash-lite intermittently answers this request with an
+    # empty response: `finish_reason=error`, zero output tokens, no parts.
+    # Not malformed output — nothing at all. pydantic-ai spends both output
+    # retries re-asking, gets the identical empty response each time
+    # (identical input_tokens too), and raises UnexpectedModelBehavior,
+    # which this route turns into a 502. Sampled live it hit roughly one
+    # generation in four.
+    #
+    # The retry therefore has to CHANGE something. Re-running the same
+    # payload on the same model reproduces the failure exactly — measured:
+    # a plain fresh re-run failed both times, at 137s and 144s. Escalating
+    # to gemini-2.5-flash is the smallest change that leaves the failing
+    # input behind, and it is the same model the "fast" preference already
+    # uses, so it is a supported path rather than a special case.
+    #
+    # Cost is bounded and only paid on failure: the ~75% of requests that
+    # succeed on flash-lite never build the second model.
+    last_error: Exception | None = None
+    result = None
+    attempts: list = [run_kwargs]
+    fallback = _resolve_model_pref("fast")
+    if fallback is not None and model_override is None:
+        attempts.append({**run_kwargs, "model": fallback})
+    for attempt, kwargs in enumerate(attempts, start=1):
+        try:
+            result = record_agent_usage(
+                await quiz_agent.run(user_message, **kwargs),
+                feature="quiz", task="quiz", user_id=deps.user_id,
+            )
+            break
+        except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
+            last_error = exc
+            logger.warning(
+                "quiz: generation attempt %d/%d tripped a guardrail (%s); %s",
+                attempt, len(attempts), type(exc).__name__,
+                "retrying on gemini-2.5-flash"
+                if attempt < len(attempts) else "giving up",
+            )
+    if result is None:
+        raise last_error  # generate_quiz maps this to its typed 502
     quiz: Quiz = result.output
     # Filter out questions where the agent's correct_answer didn't match
     # any option verbatim — _agent_question_to_wire returns None for those.

@@ -32,10 +32,6 @@ def test_quiz_question_fields_align_with_route_contract():
         "correct_answer",
         "explanation",
         "concept",
-        # Not on the wire — the route never emits it. It exists so the
-        # practical/conceptual ratio can be counted in the output
-        # validator instead of merely asked for in the prompt.
-        "kind",
     }
     assert fields == expected
 
@@ -73,7 +69,7 @@ class TestPracticalQuestionMix:
 
         head, _, tail = _SYSTEM_PROMPT.partition("FINAL CHECK")
         assert tail, "FINAL CHECK block went missing"
-        assert "COUNT THE QUESTIONS YOU MARKED kind='conceptual'" in tail
+        assert "COUNT THE QUESTIONS THAT POSE NO CONCRETE VALUES" in tail
         assert "COUNT YOUR QUESTIONS" in tail
         assert "PRACTICAL OVER CONCEPTUAL" in head
 
@@ -100,24 +96,137 @@ class TestPracticalQuestionMix:
         assert [m for m in opts.metadata if getattr(m, "min_length", None) == 4]
 
 
-class TestRequestedCountIsExact:
-    """`num_questions` was prompt-only and the model under-delivered: asked
-    for 10 on a real concept, one live run returned 6 and the route served
-    all 6 without a word. A short list is a valid Quiz, so nothing caught it.
+def _q(name: str, kind: str = "worked_problem", correct: str = "a"):
+    """A question whose TEXT makes it worked or conceptual.
+
+    `kind` was a schema field until it was measured making Gemini fail
+    generation (see the A/B in agents/quiz.py). Classification is read
+    off the stem now, so the fixture produces a realistic stem rather
+    than setting a flag.
+    """
+    from agents.quiz import QuizQuestion
+
+    stem = (
+        f"{name}: P = [[0.7, 0.3], [0.4, 0.6]] - compute the next state."
+        if kind == "worked_problem"
+        else f"{name}: what does an absorbing state mean?"
+    )
+    return QuizQuestion(
+        question=stem, type="multiple_choice", difficulty="medium",
+        options=["a", "b", "c", "d"], correct_answer=correct,
+        explanation="because", concept="Markov Chains",
+    )
+
+
+class TestOverGenerateAndSelect:
+    """The ratio is SELECTED from a surplus, not negotiated by retrying.
+
+    Enforcing it with ModelRetry is what broke quiz generation outright:
+    every retry re-runs the whole generation, and the route caps a run at
+    ORCHESTRATOR_LIMITS (8 model requests / 100k tokens). Measured on the
+    real route: a 10-question request took 43s and STILL served 5
+    conceptual questions; another ran 361s before dying as a 502. After
+    switching to selection the same request is 17.8s / 200.
     """
 
-    def _quiz(self, n: int, kind: str = "worked_problem"):
-        from agents.quiz import Quiz, QuizQuestion
+    def test_asks_for_a_surplus_so_there_is_something_to_select_from(self):
+        from agents.quiz import quiz_ask_size
 
-        return Quiz(questions=[
-            QuizQuestion(
-                question=f"q{i}", type="multiple_choice", difficulty="medium",
-                options=["a", "b", "c", "d"], correct_answer="a",
-                explanation="because", concept="Markov Chains", kind=kind,
-            )
-            for i in range(n)
-        ])
+        for wanted in (3, 5, 8):
+            assert quiz_ask_size(wanted) > wanted
+        # Bounded, and deliberately small: a bigger ask is a likelier flake.
+        # Asking flash-lite for 20 produced noticeably more short and
+        # malformed returns than asking for 17.
+        assert quiz_ask_size(5) == 7
+        assert quiz_ask_size(10) == 10
 
+    def test_prefers_worked_problems_and_keeps_one_conceptual(self):
+        from agents.quiz import is_worked_problem, select_quiz_questions
+
+        questions = [_q(f"w{i}") for i in range(9)] + [
+            _q(f"c{i}", kind="conceptual") for i in range(3)
+        ]
+        chosen, notes = select_quiz_questions(questions, 10)
+        assert len(chosen) == 10
+        assert sum(1 for q in chosen if not is_worked_problem(q)) == 1
+        assert notes == []
+
+    def test_drops_unanswerable_questions_using_the_surplus(self):
+        from agents.quiz import is_worked_problem, select_quiz_questions
+
+        # correct_answer matches no option — the 'vP = [0.25, 0.75]' case.
+        broken = _q("broken", correct="zzz-not-an-option")
+        questions = [broken] + [_q(f"w{i}") for i in range(11)]
+        chosen, notes = select_quiz_questions(questions, 10)
+        assert len(chosen) == 10
+        assert broken not in chosen
+        assert any("unanswerable" in n for n in notes)
+
+    def test_serves_a_full_quiz_over_a_perfect_ratio(self):
+        """A quiz one question short is a worse failure than a slightly
+        definitional one — so the allowance yields before the count does."""
+        from agents.quiz import is_worked_problem, select_quiz_questions
+
+        questions = [_q(f"w{i}") for i in range(6)] + [
+            _q(f"c{i}", kind="conceptual") for i in range(6)
+        ]
+        chosen, notes = select_quiz_questions(questions, 10)
+        assert len(chosen) == 10
+        assert sum(1 for q in chosen if not is_worked_problem(q)) == 4
+        assert any("over the allowance" in n for n in notes)
+
+    def test_reports_a_genuine_shortfall_instead_of_padding(self):
+        from agents.quiz import is_worked_problem, select_quiz_questions
+
+        chosen, notes = select_quiz_questions([_q("w1"), _q("w2")], 10)
+        assert len(chosen) == 2
+        assert any("served 2 of 10" in n for n in notes)
+
+    def test_keeps_the_model_s_ordering(self):
+        """Selection groups by kind; without restoring order every quiz would
+        front-load the worked problems and park the definition last."""
+        from agents.quiz import is_worked_problem, select_quiz_questions
+
+        questions = [
+            _q("w1"), _q("c1", kind="conceptual"), _q("w2"), _q("w3"),
+            _q("w4"), _q("w5"),
+        ]
+        chosen, _ = select_quiz_questions(questions, 5)
+        assert [q.question.split(":")[0] for q in chosen] == [
+            "w1", "c1", "w2", "w3", "w4",
+        ]
+
+    def test_reserves_the_conceptual_slot_rather_than_merely_allowing_it(self):
+        """"9 worked problems AND one conceptual question" — so with plenty of
+        worked problems to fill the quiz outright, the conceptual one is still
+        included. Taking worked-only would drop the question that checks
+        whether the student knows what they are computing."""
+        from agents.quiz import is_worked_problem, select_quiz_questions
+
+        questions = [_q(f"w{i}") for i in range(12)] + [
+            _q("c1", kind="conceptual")
+        ]
+        chosen, notes = select_quiz_questions(questions, 10)
+        assert len(chosen) == 10
+        assert sum(1 for q in chosen if not is_worked_problem(q)) == 1
+        assert notes == []
+
+    def test_no_conceptual_available_is_not_an_error(self):
+        from agents.quiz import is_worked_problem, select_quiz_questions
+
+        chosen, notes = select_quiz_questions([_q(f"w{i}") for i in range(11)], 10)
+        assert len(chosen) == 10
+        assert all(is_worked_problem(q) for q in chosen)
+        assert notes == []
+
+    def test_allowance_is_one_up_to_ten_and_two_through_fifteen(self):
+        from agents.quiz import conceptual_allowance
+
+        assert [conceptual_allowance(n) for n in (3, 5, 10)] == [1, 1, 1]
+        assert [conceptual_allowance(n) for n in (11, 15)] == [2, 2]
+
+
+class TestSelectionValidator:
     def _ctx(self, wanted, *, retry=0):
         from agents.deps import SaplingDeps
         from agents.quiz import _OUTPUT_RETRIES
@@ -131,178 +240,71 @@ class TestRequestedCountIsExact:
         _Ctx.max_retries = _OUTPUT_RETRIES
         return _Ctx()
 
-    def test_questions_list_has_no_upper_bound(self):
-        """A *bounded* array is what pushed flash-lite over 'too many states
-        for serving' at 15 (verified 400). The floor stays."""
-        from agents.quiz import Quiz
+    def test_trims_the_surplus_to_the_requested_count(self):
+        from agents.quiz import Quiz, _select_requested_quiz
 
-        meta = Quiz.model_fields["questions"].metadata
-        assert not [m for m in meta if getattr(m, "max_length", None) is not None]
-        assert [m for m in meta if getattr(m, "min_length", None) == 1]
+        quiz = Quiz(questions=[_q(f"w{i}") for i in range(10)])
+        assert len(_select_requested_quiz(self._ctx(10), quiz).questions) == 10
 
-    def test_short_output_is_retried_with_the_shortfall(self):
-        from pydantic_ai import ModelRetry
-        from agents.quiz import _enforce_requested_count
-        import pytest
+    def test_a_shortfall_is_served_short_never_raised(self):
+        """The validator must never be the reason a student gets no quiz.
 
-        with pytest.raises(ModelRetry) as exc:
-            _enforce_requested_count(self._ctx(10), self._quiz(6))
-        msg = str(exc.value)
-        assert "6 questions" in msg and "10 were" in msg
-        assert "add 4 more" in msg
+        Raising here is precisely what produced the reported 500s:
+        flash-lite intermittently returns almost nothing (one sampled run:
+        a single usable question), re-asking produced the same, and the run
+        died as UnexpectedModelBehavior -> 502. One request in five.
+        """
+        from agents.quiz import Quiz, _select_requested_quiz
 
-    def test_long_output_is_trimmed_not_retried(self):
-        from agents.quiz import _enforce_requested_count
+        quiz = Quiz(questions=[_q("w1"), _q("w2")])
+        out = _select_requested_quiz(self._ctx(10), quiz)
+        assert len(out.questions) == 2
 
-        out = _enforce_requested_count(self._ctx(5), self._quiz(8))
-        assert len(out.questions) == 5
+    def test_the_validator_never_raises_on_any_shape(self):
+        """Belt and braces: no input shape may turn into an exception."""
+        from agents.quiz import Quiz, _select_requested_quiz
 
-    def test_exact_output_passes_through(self):
-        from agents.quiz import _enforce_requested_count
+        shapes = [
+            [_q("w1")],
+            [_q("c1", kind="conceptual")],
+            [_q("broken", correct="zzz")],
+            [_q(f"w{i}") for i in range(10)],
+            [_q(f"c{i}", kind="conceptual") for i in range(10)],
+        ]
+        for questions in shapes:
+            out = _select_requested_quiz(self._ctx(10), Quiz(questions=questions))
+            assert len(out.questions) >= 1
 
-        quiz = self._quiz(10)
-        assert _enforce_requested_count(self._ctx(10), quiz) is quiz
-
-    def test_no_requested_count_is_a_no_op(self):
-        """Non-quiz callers and eval harnesses leave num_questions unset."""
-        from agents.quiz import _enforce_requested_count
-
-        quiz = self._quiz(3)
-        assert _enforce_requested_count(self._ctx(None), quiz) is quiz
-        assert _enforce_requested_count(self._ctx(0), quiz) is quiz
-
-    def test_too_many_conceptual_questions_is_retried(self):
-        """The ratio is counted, not requested. Prompt-only enforcement was
-        measured at 7 worked problems of 10 against a bar of 9, twice."""
-        from pydantic_ai import ModelRetry
-        from agents.quiz import Quiz, _enforce_requested_count
-        import pytest
-
-        mixed = Quiz(questions=(
-            self._quiz(7, kind="worked_problem").questions
-            + self._quiz(3, kind="conceptual").questions
-        ))
-        with pytest.raises(ModelRetry) as exc:
-            _enforce_requested_count(self._ctx(10), mixed)
-        msg = str(exc.value)
-        assert "3 of your 10" in msg
-        # Names the questions to rewrite — the ones over allowance, not all.
-        assert "question(s) 9, 10" in msg
-
-    def test_ratio_at_the_allowance_passes(self):
-        from agents.quiz import Quiz, _enforce_requested_count
-
-        ok = Quiz(questions=(
-            self._quiz(9, kind="worked_problem").questions
-            + self._quiz(1, kind="conceptual").questions
-        ))
-        assert _enforce_requested_count(self._ctx(10), ok) is ok
-
-    def test_allowance_is_one_up_to_ten_and_two_through_fifteen(self):
-        from agents.quiz import conceptual_allowance
-
-        assert [conceptual_allowance(n) for n in (3, 5, 10)] == [1, 1, 1]
-        assert [conceptual_allowance(n) for n in (11, 15)] == [2, 2]
-
-    def test_unanswerable_question_is_retried_not_silently_dropped(self):
-        """A correct_answer absent from its own options used to cost the
-        student a question: the route dropped it and served N-1. The model
-        gets a chance to fix it first."""
-        from pydantic_ai import ModelRetry
-        from agents.quiz import Quiz, QuizQuestion, _enforce_requested_count
-        import pytest
-
-        broken = QuizQuestion(
-            question="vP?", type="multiple_choice", difficulty="medium",
-            options=["vP = [0.55, 0.45]", "vP = [0.45, 0.55]",
-                     "vP = [0.7, 0.3]", "vP = [0.6, 0.4]"],
-            correct_answer="vP = [0.25, 0.75]",  # matches none of them
-            explanation="...", concept="Markov Chains", kind="worked_problem",
-        )
-        quiz = Quiz(questions=[*self._quiz(2).questions, broken])
-        with pytest.raises(ModelRetry) as exc:
-            _enforce_requested_count(self._ctx(3), quiz)
-        assert "Question(s) 3" in str(exc.value)
-
-    def test_retry_message_scales_the_conceptual_allowance(self):
-        from pydantic_ai import ModelRetry
-        from agents.quiz import _enforce_requested_count
-        import pytest
-
-        with pytest.raises(ModelRetry) as small:
-            _enforce_requested_count(self._ctx(10), self._quiz(2))
-        assert "at most 1 conceptual" in str(small.value)
-        with pytest.raises(ModelRetry) as large:
-            _enforce_requested_count(self._ctx(15), self._quiz(2))
-        assert "at most 2 conceptual" in str(large.value)
-
-
-class TestGatesDegradeRatherThanFailTheRun:
-    """A quality gate that can 502 is worse than the flaw it guards.
-
-    Measured: a 15-question run tripped gate after gate and exhausted the
-    retry budget, raising UnexpectedModelBehavior — the student got an
-    error page instead of a quiz with two definitions in it. On the final
-    attempt every gate accepts what it has and logs the shortfall.
-    """
-
-    def _ctx_final(self, wanted):
-        return TestRequestedCountIsExact()._ctx(
-            wanted, retry=__import__(
-                "agents.quiz", fromlist=["_OUTPUT_RETRIES"]
-            )._OUTPUT_RETRIES
-        )
-
-    def _mk(self, n, kind="worked_problem", **over):
-        return TestRequestedCountIsExact()._quiz(n, kind=kind)
-
-    def test_short_quiz_is_served_on_the_final_attempt(self):
-        from agents.quiz import _enforce_requested_count
-
-        out = _enforce_requested_count(self._ctx_final(10), self._mk(6))
-        assert len(out.questions) == 6
-
-    def test_over_allowance_ratio_is_served_on_the_final_attempt(self):
-        from agents.quiz import Quiz, _enforce_requested_count
+    def test_an_imperfect_ratio_never_retries(self):
+        """This is the regression that caused the 502s: a ratio miss used to
+        re-run the whole generation, twice."""
+        from agents.quiz import Quiz, _select_requested_quiz
 
         quiz = Quiz(questions=(
-            self._mk(5).questions + self._mk(5, kind="conceptual").questions
+            [_q(f"w{i}") for i in range(4)]
+            + [_q(f"c{i}", kind="conceptual") for i in range(6)]
         ))
-        out = _enforce_requested_count(self._ctx_final(10), quiz)
+        out = _select_requested_quiz(self._ctx(10), quiz)  # must not raise
         assert len(out.questions) == 10
 
-    def test_unanswerable_question_is_left_for_the_route_to_drop(self):
-        from agents.quiz import Quiz, QuizQuestion, _enforce_requested_count
-        from routes.quiz import _agent_question_to_wire
+    def test_no_requested_count_is_a_no_op(self):
+        from agents.quiz import Quiz, _select_requested_quiz
 
-        broken = QuizQuestion(
-            question="vP?", type="multiple_choice", difficulty="medium",
-            options=["0.55", "0.45", "0.7", "0.6"],
-            correct_answer="0.25", explanation="...",
-            concept="Markov Chains", kind="worked_problem",
-        )
-        quiz = Quiz(questions=[*self._mk(2).questions, broken])
-        out = _enforce_requested_count(self._ctx_final(3), quiz)
-        assert len(out.questions) == 3
-        # The net still catches it downstream rather than mis-marking.
-        assert _agent_question_to_wire(out.questions[2], qid=3) is None
+        quiz = Quiz(questions=[_q("w1")])
+        assert _select_requested_quiz(self._ctx(None), quiz) is quiz
 
     def test_function_mode_fixture_is_left_alone(self):
         """The E2E seam's fixed 3-question quiz answers a request for 2 on
-        purpose (E2E_QUIZ_CORRECT_LABELS, quiz.spec.ts clicks, mastery
-        arithmetic all depend on the 3). Trimming it would break the lane."""
+        purpose; trimming it would break quiz.spec.ts and the mastery math."""
         from unittest.mock import patch
-        from agents.quiz import _enforce_requested_count
+        from agents.quiz import Quiz, _select_requested_quiz
 
-        quiz = self._mk(3)
+        quiz = Quiz(questions=[_q("w1"), _q("w2"), _q("w3")])
         with patch("agents.quiz.model_mode", return_value="function"):
-            out = _enforce_requested_count(
-                TestRequestedCountIsExact()._ctx(2), quiz
-            )
+            out = _select_requested_quiz(self._ctx(2), quiz)
         assert out is quiz and len(out.questions) == 3
 
     def test_budget_is_read_from_the_run_context(self):
-        """The gates must not hardcode a second copy of the retry budget."""
         from agents.quiz import _OUTPUT_RETRIES, quiz_agent
 
         assert quiz_agent._max_output_retries == _OUTPUT_RETRIES

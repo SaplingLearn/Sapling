@@ -544,7 +544,7 @@ class TestGenerateQuizDifficultyEnum:
 
 
 class TestGenerateQuizNumQuestionsBound:
-    """num_questions must be bounded to 1-15 inclusive. Requests outside
+    """num_questions must be bounded to 1-10 inclusive. Requests outside
     this range should return HTTP 422 (validation error) instead of
     silently truncating. This regression test prevents the bug where an
     over-cap num_questions silently returned fewer questions than asked.
@@ -555,7 +555,7 @@ class TestGenerateQuizNumQuestionsBound:
     """
 
     def test_num_questions_over_cap_rejected(self):
-        """POST with num_questions=16 should return 422, not silently truncate."""
+        """POST with num_questions=11 should return 422, not silently truncate."""
         agent_run = AsyncMock()
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
@@ -564,7 +564,7 @@ class TestGenerateQuizNumQuestionsBound:
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_andres",
                 "concept_node_id": "node1",
-                "num_questions": 16,  # exceeds the 15 the UI can request
+                "num_questions": 11,  # exceeds the 10 the schema can serve
                 "difficulty": "medium",
                 "use_shared_context": False,
             })
@@ -573,12 +573,12 @@ class TestGenerateQuizNumQuestionsBound:
         agent_run.assert_not_called()
 
     def test_the_largest_count_the_ui_offers_is_accepted(self):
-        """QuizPanel's COUNT_OPTIONS tops out at 15; the API must take it."""
+        """QuizPanel's COUNT_OPTIONS tops out at 10 (the agent's schema cap); the API must take it."""
         from models import GenerateQuizBody
 
         assert GenerateQuizBody(
-            concept_node_id="node1", num_questions=15
-        ).num_questions == 15
+            concept_node_id="node1", num_questions=10
+        ).num_questions == 10
 
     def test_num_questions_at_cap_accepted(self):
         """POST with num_questions=10 (at the max) should succeed."""

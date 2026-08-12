@@ -46,11 +46,15 @@ class ActionBody(BaseModel):
 class GenerateQuizBody(BaseModel):
     user_id: str = "user_andres"
     concept_node_id: str
-    # Upper bound tracks the largest count the UI offers (QuizPanel's
-    # COUNT_OPTIONS: 5 / 10 / 15). It sat at 10 while the agent's Quiz
-    # schema was capped there, which made the "15 questions" option a
-    # guaranteed 422 — the picker offered a value the API refused.
-    num_questions: int = Field(default=5, ge=1, le=15)
+    # Matches the agent's Quiz schema cap exactly. Both were briefly raised
+    # to 15 so the UI's largest option could work; that meant removing
+    # `max_length` from Quiz.questions, which made gemini-2.5-flash-lite
+    # answer roughly half of all generations with an empty
+    # `finish_reason=error` response (A/B in agents/quiz.py). 15-question
+    # quizzes are not available at this schema complexity — QuizPanel's
+    # COUNT_OPTIONS drops to 5 / 10 to match, so the picker never offers a
+    # value the API refuses.
+    num_questions: int = Field(default=5, ge=1, le=10)
     difficulty: str = "medium"
     use_shared_context: bool = True
     # Mirrors the Learn-route fast/smart toggle so quiz generation has
