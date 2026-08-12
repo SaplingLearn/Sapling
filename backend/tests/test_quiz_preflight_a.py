@@ -11,6 +11,8 @@ Covers:
 """
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from main import app
@@ -82,7 +84,10 @@ class TestQuizConfigEndpoint:
         assert isinstance(nq["options"], list) and nq["options"]
         assert all(nq["min"] <= v <= nq["max"] for v in nq["options"])
         assert data["difficulties"] == ["easy", "medium", "hard", "adaptive"]
-        assert data["question_types"] == ["mcq"]
+        # Same token as the agent schema (agents/quiz.py::QuizQuestionType) —
+        # inventing a parallel "mcq" vocabulary would recreate the exact
+        # client-offers-what-the-server-rejects class this endpoint fixes.
+        assert data["question_types"] == ["multiple_choice"]
 
     def test_config_matches_pydantic_model_bounds(self):
         """The Pydantic cap and the config endpoint must read the same named
@@ -154,6 +159,15 @@ class TestGenerateAdaptiveDifficulty:
         ]
         # The attempt row records what the student asked for.
         assert captured["payload"]["difficulty"] == "adaptive"
+
+    def test_prompt_defines_stored_adaptive_history_rows(self):
+        """quiz_attempts.difficulty can now hold 'adaptive'; that value flows
+        verbatim into recent_attempts via the quiz-history tool, so the
+        system prompt must define what it means (judge by accuracy) or the
+        stepping rules operate on an undefined token."""
+        from agents.quiz import _SYSTEM_PROMPT
+
+        assert "may carry difficulty 'adaptive'" in _SYSTEM_PROMPT
 
     def test_adaptive_routing_message_instructs_agent(self):
         """The agent must be told to pick the mix itself — and that every
@@ -293,6 +307,66 @@ class TestQuizErrorEnvelope:
         r = client.get("/api/does-not-exist")
         assert r.status_code == 404
         assert "error" not in r.json()
+
+    def test_type_error_on_num_questions_is_not_the_count_code(self):
+        """A non-numeric num_questions fails int parsing, not the bounds —
+        labelling it QUIZ_COUNT_OUT_OF_RANGE would send a clamping client
+        into a retry loop on the identical 422."""
+        r = _generate({"difficulty": "medium", "num_questions": "five"})
+        assert r.status_code == 422
+        assert r.json()["error"]["code"] == "QUIZ_VALIDATION_ERROR"
+
+    def test_router_404_gets_generic_code_not_attempt_not_found(self):
+        """A no-such-endpoint 404 under /api/quiz/ must not impersonate
+        QUIZ_ATTEMPT_NOT_FOUND — a code-branching client would discard its
+        active quiz state over a version-skewed route."""
+        r = client.get("/api/quiz/definitely-not-a-route")
+        assert r.status_code == 404
+        assert r.json()["error"]["code"] == "QUIZ_HTTP_ERROR"
+
+    def test_method_not_allowed_gets_generic_code(self):
+        r = client.get("/api/quiz/generate")  # POST-only route
+        assert r.status_code == 405
+        assert r.json()["error"]["code"] == "QUIZ_HTTP_ERROR"
+
+    def test_uncoded_403_maps_to_not_authorized(self):
+        """The status-fallback path for shared deps: a plain, code-less
+        HTTPException(403) — exactly what require_self raises (conftest's
+        autouse auth stub replaces the real guard, so we raise the same
+        exception through the route body) — must come out enveloped as
+        QUIZ_NOT_AUTHORIZED with the legacy detail preserved."""
+        boom = HTTPException(status_code=403, detail="Forbidden: not your account")
+
+        def factory(name):
+            mock = MagicMock()
+            mock.select.side_effect = boom
+            return mock
+
+        with patch("routes.quiz.table", side_effect=factory):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1", "answers": [],
+            })
+        body = _assert_envelope(r, 403, "QUIZ_NOT_AUTHORIZED")
+        assert body["detail"] == "Forbidden: not your account"
+
+    def test_non_enum_code_attribute_does_not_crash_the_handler(self):
+        """An HTTPException subclass carrying a non-QuizErrorCode `code`
+        (int, plain string) must fall back to a status code — not raise
+        AttributeError inside the handler and mask the error as a bare 500."""
+        boom = HTTPException(status_code=404, detail="library says no")
+        boom.code = 123  # not a QuizErrorCode
+
+        def factory(name):
+            mock = MagicMock()
+            mock.select.side_effect = boom
+            return mock
+
+        with patch("routes.quiz.table", side_effect=factory):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1", "answers": [],
+            })
+        assert r.status_code == 404
+        assert r.json()["error"]["code"] == "QUIZ_HTTP_ERROR"
 
     def test_error_codes_are_a_single_enum(self):
         from services.quiz_errors import QuizErrorCode

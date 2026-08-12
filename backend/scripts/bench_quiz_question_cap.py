@@ -87,7 +87,10 @@ def _agent_for_cap(cap: int) -> Agent:
     )
 
 
-async def bench_cap(cap: int) -> None:
+async def bench_cap(cap: int) -> int:
+    """Run the bench for one cap; returns the number of successful runs
+    (a serving rejection is a legitimate *result* for the >10 caps, but
+    the caller treats zero successes at the baseline cap as failure)."""
     agent = _agent_for_cap(cap)
     latencies, in_tokens, out_tokens, counts = [], [], [], []
     for run in range(RUNS_PER_CAP):
@@ -117,11 +120,21 @@ async def bench_cap(cap: int) -> None:
         )
     else:
         print(f"cap={cap} SUMMARY: no successful runs (schema likely rejected)")
+    return len(latencies)
 
 
-async def main() -> None:
-    for cap in CAPS:
-        await bench_cap(cap)
+async def main() -> int:
+    successes = {cap: await bench_cap(cap) for cap in CAPS}
+    # The baseline cap (the one we ship) must have measured something —
+    # otherwise this run produced no data (bad key, outage) and must not
+    # exit 0 as if the RESULTS block could be refreshed from it. The >10
+    # caps legitimately measure zero successes (serving rejection IS the
+    # result), so only the baseline gates the exit code.
+    baseline = CAPS[0]
+    if successes[baseline] == 0:
+        print(f"BENCH FAILED: baseline cap={baseline} measured no successful runs")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

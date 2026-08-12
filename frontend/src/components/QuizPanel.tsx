@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { CustomSelect } from "./CustomSelect";
 import { useToast } from "./ToastProvider";
 import { fetchQuizConfig, generateQuiz, submitQuiz, type QuizConfig } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
 import {
   conceptOptionsForCourse,
   courseOptions,
@@ -137,6 +138,7 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
   const difficultyOptions = useMemo(() => difficultyOptionsFrom(quizConfig), [quizConfig]);
 
   const [quizId, setQuizId] = useState<string | null>(null);
+  const [resolvedDifficulty, setResolvedDifficulty] = useState<string | null>(null);
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [answers, setAnswers] = useState<QuizAnswer[]>([]);
   const [qIndex, setQIndex] = useState(0);
@@ -165,13 +167,18 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
       }
       setQuizId(res.quiz_id);
       setQuestions(nextQuestions);
+      // #540 A1: what generation actually chose — shown when the student
+      // asked for "adaptive" so the pick isn't a black box.
+      setResolvedDifficulty(res.resolved_difficulty ?? null);
       setAnswers([]);
       setQIndex(0);
       setCurrentSelection(null);
       setLastCorrect(null);
       setPhase("active");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to generate quiz.");
+      // The quiz routes return the #540 A3 envelope; humanizeError digs the
+      // readable sentence out of the thrown body instead of dumping JSON.
+      toast.error(humanizeError(err, "Failed to generate quiz."));
     } finally {
       setLoading(false);
     }
@@ -204,7 +211,7 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
       setResults(res);
       setPhase("results");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to submit quiz.");
+      toast.error(humanizeError(err, "Failed to submit quiz."));
     } finally {
       setLoading(false);
     }
@@ -287,11 +294,11 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>Count</div>
-              <CustomSelect value={count} options={countOptions} onChange={setCount} style={{ width: "100%" }} />
+              <CustomSelect value={count} options={countOptions} onChange={setCount} ariaLabel="Number of questions" style={{ width: "100%" }} />
             </div>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>Difficulty</div>
-              <CustomSelect value={difficulty} options={difficultyOptions} onChange={setDifficulty} style={{ width: "100%" }} />
+              <CustomSelect value={difficulty} options={difficultyOptions} onChange={setDifficulty} ariaLabel="Difficulty" style={{ width: "100%" }} />
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -307,7 +314,19 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
         <>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div className="label-micro">Question {qIndex + 1} of {questions.length}</div>
-            <div className="chip" style={{ textTransform: "uppercase" }}>{currentQuestion.difficulty}</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {difficulty === "adaptive" && resolvedDifficulty && (
+                <div
+                  data-testid="quiz-resolved-difficulty"
+                  className="chip"
+                  style={{ textTransform: "uppercase" }}
+                  title="Adaptive mode picked this overall difficulty for you"
+                >
+                  Adaptive · {resolvedDifficulty}
+                </div>
+              )}
+              <div className="chip" style={{ textTransform: "uppercase" }}>{currentQuestion.difficulty}</div>
+            </div>
           </div>
           <div style={{ fontSize: 16, lineHeight: 1.55 }}>{currentQuestion.question}</div>
           <div data-testid="quiz-answer-options" role="radiogroup" aria-label="Answer choices" style={{ display: "grid", gap: 8 }}>

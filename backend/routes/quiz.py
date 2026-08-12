@@ -21,6 +21,7 @@ from routes.learn import _get_catalog_chunk
 from services import events_service
 from services.auth_guard import require_self
 from services.quiz_config import (
+    CONCRETE_DIFFICULTIES,
     REQUESTED_DIFFICULTIES,
     quiz_config_payload,
 )
@@ -69,8 +70,10 @@ def _load_prompt(name: str) -> str:
 
 _OPTION_LABELS = ["A", "B", "C", "D", "E", "F"]
 
-# Rank order for tie-breaking the overall difficulty report.
-_DIFFICULTY_RANK = {"easy": 0, "medium": 1, "hard": 2}
+# Rank order for tie-breaking the overall difficulty report — derived from
+# the config tuple so a difficulty added there can't be silently dropped by
+# _resolved_difficulty's counting.
+_DIFFICULTY_RANK = {d: i for i, d in enumerate(CONCRETE_DIFFICULTIES)}
 
 
 def _resolved_difficulty(wire_questions: list[dict]) -> str:

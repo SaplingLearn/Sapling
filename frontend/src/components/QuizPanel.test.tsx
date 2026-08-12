@@ -12,7 +12,7 @@
  */
 
 import React from "react";
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { beforeEach, describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 
 // Captured toast spies — hoisted so the vi.mock factory can close over them.
@@ -34,23 +34,44 @@ vi.mock("next/navigation", () => ({
 // course + concept (via the real quizSelection helpers), so a passive stub is
 // enough and keeps the DOM simple.
 vi.mock("./CustomSelect", () => ({
-  CustomSelect: ({ value }: { value?: string }) => (
-    <div data-testid="custom-select">{value}</div>
+  CustomSelect: ({
+    value,
+    options,
+    ariaLabel,
+  }: {
+    value?: string;
+    options?: { value: string; label: string }[];
+    ariaLabel?: string;
+  }) => (
+    // Expose the option values so tests can assert what the panel would
+    // actually offer (the #540 config-driven lists), not just the selection.
+    <div
+      data-testid="custom-select"
+      aria-label={ariaLabel}
+      data-options={(options ?? []).map(o => o.value).join(",")}
+    >
+      {value}
+    </div>
   ),
 }));
 
 vi.mock("@/lib/api", () => ({
   generateQuiz: vi.fn(),
   submitQuiz: vi.fn(),
-  // Reject so the panel exercises its static fallback lists — the
-  // config fetch is best-effort by design (#540 A2).
-  fetchQuizConfig: vi.fn().mockRejectedValue(new Error("offline")),
+  fetchQuizConfig: vi.fn(),
 }));
 
-import { generateQuiz } from "@/lib/api";
+import { fetchQuizConfig, generateQuiz } from "@/lib/api";
 import { QuizPanel } from "./QuizPanel";
 
 const mockGenerateQuiz = vi.mocked(generateQuiz);
+const mockFetchQuizConfig = vi.mocked(fetchQuizConfig);
+
+beforeEach(() => {
+  // Default: config unavailable → the panel exercises its static fallback
+  // lists. The config-driven test overrides this per-test (#540 A2).
+  mockFetchQuizConfig.mockRejectedValue(new Error("offline"));
+});
 
 const CONCEPTS = [
   { id: "c1", name: "Gradient Descent", course_id: "course-1", course_code: "CS101" },
@@ -129,5 +150,39 @@ describe("QuizPanel — start() happy path", () => {
     expect(screen.getByTestId("quiz-exit")).toBeInTheDocument();
     expect(toast.warn).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
+  });
+});
+
+describe("QuizPanel — config-driven selectors (#540 A2)", () => {
+  it("builds the count and difficulty selects from the fetched config", async () => {
+    // Non-default values so a fallback-list render can't accidentally pass.
+    mockFetchQuizConfig.mockResolvedValue({
+      num_questions: { min: 1, max: 10, options: [2, 4] },
+      difficulties: ["easy", "adaptive"],
+      question_types: ["multiple_choice"],
+    });
+    renderPanel();
+
+    await waitFor(() => expect(mockFetchQuizConfig).toHaveBeenCalledTimes(1));
+    const counts = await screen.findByLabelText("Number of questions");
+    await waitFor(() => expect(counts).toHaveAttribute("data-options", "2,4"));
+    expect(screen.getByLabelText("Difficulty")).toHaveAttribute(
+      "data-options",
+      "easy,adaptive",
+    );
+  });
+
+  it("falls back to the static mirror when the config fetch fails", async () => {
+    // beforeEach already rejects the fetch.
+    renderPanel();
+    await waitFor(() => expect(mockFetchQuizConfig).toHaveBeenCalledTimes(1));
+    expect(screen.getByLabelText("Number of questions")).toHaveAttribute(
+      "data-options",
+      "3,5,10",
+    );
+    expect(screen.getByLabelText("Difficulty")).toHaveAttribute(
+      "data-options",
+      "easy,medium,hard,adaptive",
+    );
   });
 });

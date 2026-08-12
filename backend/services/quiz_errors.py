@@ -37,17 +37,23 @@ class QuizErrorCode(str, Enum):
     QUIZ_NOT_AUTHORIZED = "QUIZ_NOT_AUTHORIZED"
     QUIZ_GENERATION_FAILED = "QUIZ_GENERATION_FAILED"
     QUIZ_INTERNAL_ERROR = "QUIZ_INTERNAL_ERROR"
+    # Uncoded HTTP errors that aren't one of the semantic states above —
+    # router 404s/405s on version-skewed clients, library-raised
+    # HTTPExceptions, anything without an explicit QuizErrorCode. A client
+    # must never mistake these for a domain state like "attempt not found".
+    QUIZ_HTTP_ERROR = "QUIZ_HTTP_ERROR"
 
 
 # Fallback code when an ordinary HTTPException (no explicit code) escapes a
-# quiz route — e.g. require_self's 401/403.
+# quiz route. Deliberately narrow: only statuses whose meaning is unambiguous
+# regardless of which code path raised them (auth guards, Pydantic). Domain
+# states (404 concept/attempt, 409 replay, 502 generation) are NOT here —
+# their raise sites all carry explicit codes, and a router-level 404/405 must
+# come out as the generic QUIZ_HTTP_ERROR, not impersonate a domain state.
 _STATUS_FALLBACK: dict[int, QuizErrorCode] = {
     401: QuizErrorCode.QUIZ_NOT_AUTHORIZED,
     403: QuizErrorCode.QUIZ_NOT_AUTHORIZED,
-    404: QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
-    409: QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
     422: QuizErrorCode.QUIZ_VALIDATION_ERROR,
-    502: QuizErrorCode.QUIZ_GENERATION_FAILED,
 }
 
 
@@ -84,17 +90,23 @@ def quiz_error_body(
     machine_detail=None,
 ) -> dict:
     """Build the enveloped payload; keeps the legacy top-level keys."""
-    resolved_code = code or _STATUS_FALLBACK.get(
-        status_code,
-        QuizErrorCode.QUIZ_INTERNAL_ERROR,
-    )
+    if not isinstance(code, QuizErrorCode):
+        # The handler duck-types `code` off the exception; a library
+        # exception could carry an int or arbitrary string there. Treat
+        # anything that isn't ours as absent — never crash the handler.
+        code = None
+    if code is None:
+        if status_code >= 500:
+            code = QuizErrorCode.QUIZ_INTERNAL_ERROR
+        else:
+            code = _STATUS_FALLBACK.get(status_code, QuizErrorCode.QUIZ_HTTP_ERROR)
     resolved_message = message or (
         legacy_detail
         if isinstance(legacy_detail, str)
         else "Something went wrong with this quiz request."
     )
     error: dict = {
-        "code": resolved_code.value,
+        "code": code.value,
         "message": resolved_message,
         "request_id": request_id,
     }
@@ -105,3 +117,43 @@ def quiz_error_body(
         "detail": legacy_detail,
         "request_id": request_id,
     }
+
+
+def error_content(
+    path: str,
+    status_code: int,
+    legacy_detail,
+    request_id: str | None,
+    code: QuizErrorCode | None = None,
+    message: str | None = None,
+    machine_detail=None,
+) -> dict:
+    """The one branch point between the quiz envelope and the legacy
+    ``{detail, request_id}`` shape — main.py's three exception handlers all
+    call this so the contract lives in exactly one place."""
+    if is_quiz_path(path):
+        return quiz_error_body(
+            status_code, legacy_detail, request_id,
+            code=code, message=message, machine_detail=machine_detail,
+        )
+    return {"detail": legacy_detail, "request_id": request_id}
+
+
+def validation_error_code(errors: list[dict]) -> tuple["QuizErrorCode", str | None]:
+    """Pick the (code, message) for a quiz-route RequestValidationError.
+
+    QUIZ_COUNT_OUT_OF_RANGE only for an actual bounds violation on
+    num_questions — a type error ("five", 5.5) on the same field is NOT
+    out-of-range, and mislabelling it would send a clamping client into a
+    retry loop on the identical 422. The message is filled by the caller
+    (it owns the min/max constants).
+    """
+    for e in errors:
+        if "num_questions" in {str(part) for part in e.get("loc", ())}:
+            etype = str(e.get("type", ""))
+            if etype.startswith(("greater_than", "less_than")):
+                return QuizErrorCode.QUIZ_COUNT_OUT_OF_RANGE, None
+    return (
+        QuizErrorCode.QUIZ_VALIDATION_ERROR,
+        "That quiz request wasn't valid — please try again.",
+    )

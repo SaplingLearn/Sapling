@@ -36,9 +36,11 @@ CONCRETE_DIFFICULTIES = ("easy", "medium", "hard")
 # `resolved_difficulty`.
 REQUESTED_DIFFICULTIES = CONCRETE_DIFFICULTIES + ("adaptive",)
 
-# MCQ-only today — mirrors agents/quiz.py::QuizQuestionType. Grows when
-# the #537 revamp adds real short-answer grading.
-QUIZ_QUESTION_TYPES = ("mcq",)
+# MCQ-only today — the SAME token as agents/quiz.py::QuizQuestionType and
+# the per-question wire `type` field, so a client keying on this config can
+# compare against real payloads. Grows when the #537 revamp adds real
+# short-answer grading.
+QUIZ_QUESTION_TYPES = ("multiple_choice",)
 
 
 def quiz_config_payload() -> dict:
