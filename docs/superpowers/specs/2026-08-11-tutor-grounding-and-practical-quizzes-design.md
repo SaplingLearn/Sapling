@@ -107,11 +107,86 @@ complies, which is why each change was also checked live:
   det = 1·(−2)·3 = −6; `[0.5,0.5]P = [0.55,0.45]`; `πP = π → [1/3,2/3]`) and
   distractors that are real error-results.
 
+## 4. The counts were never honoured (2026-08-12)
+
+Reported as "why did it generate 9 questions when I asked for 10". Two
+independent causes, plus a third bug sitting behind them.
+
+**The model simply returns fewer than N.** `num_questions` reached the
+agent only as prose in the routing message, and `Quiz.questions` allowed
+1..10, so a short list was a perfectly valid output. Reproduced against
+the real course concept: one run returned **6 of 10**. Nothing logged,
+because nothing was wrong as far as the types were concerned.
+
+**A retyping slip threw a question away.** `_agent_question_to_wire`
+required `correct_answer` to appear in `options` verbatim and dropped the
+question otherwise — right instinct, since mis-marking an answer is worse
+than a short quiz, but it fired on cosmetic drift. Observed: an option
+reading "…depends only on the current state, not on the sequence of
+events…" came back as "…not on **the on the** sequence of events…". One
+stuttered word, whole question gone.
+
+**"15 questions" could never have worked.** `QuizPanel`'s picker offers
+5 / 10 / 15; `GenerateQuizBody` bounded `num_questions` to `le=10`, so
+picking 15 was an unconditional 422 before any of this was reached.
+
+### Fixes
+
+`resolve_correct_index` (moved to `agents/quiz.py`, shared with the route)
+resolves the answer in three passes — verbatim, normalized, then a
+near-miss requiring both ≥0.90 similarity and a ≥0.10 margin over the
+runner-up. Ambiguity still drops: when the model computed
+`vP = [0.25, 0.75]` for a question offering `[0.55,0.45]` / `[0.45,0.55]`
+/ `[0.7,0.3]` / `[0.6,0.4]`, no answer is recoverable and guessing would
+be worse than dropping.
+
+The count, the answerability, and the ratio are now **output validators**
+on `quiz_agent`, reading `num_questions` off `SaplingDeps`. Each raises
+`ModelRetry` naming exactly what to fix. This is the same lesson as §3 one
+notch further along: placement got the ratio from 2/6 to 5/6, but the
+tighter bar this section introduces needed enforcement, not wording.
+
+The array bound is **gone**, not raised. `max_length=15` puts
+gemini-2.5-flash-lite back over "too many states for serving" (verified,
+400 INVALID_ARGUMENT) because a *bounded* array needs a counting
+automaton; an unbounded one is a plain repeat and costs less than the
+`max_length=10` it replaces. The floor a schema can't express — "at least
+N" — is exactly what the validator does express.
+
+### The ratio is now counted, not requested
+
+The user asked for 4/5, 9/10, 13/15. Restating that in the prompt, at
+both the first and last position, was measured at **7 worked problems of
+10, twice running** — worse than the looser `ceil(2N/3)` bar it replaced.
+
+So `QuizQuestion` gained `kind: "worked_problem" | "conceptual"`,
+self-declared, and `_enforce_worked_ratio` counts it. The field is
+**defaulted**, not required: every cassette in
+`tests/evals/cassettes/quiz_generation/` predates it and must still
+validate on replay. The default is `"conceptual"` so that an omission can
+only ever trigger a retry, never pass a definitional quiz off as
+practical.
+
+Live, after: **10/10 worked at N=10, 14/15 at N=15, 5/5 at N=5.**
+
+### Gates degrade instead of failing
+
+A 15-question run tripped gate after gate and exhausted the retry budget,
+raising `UnexpectedModelBehavior` — a 502, i.e. no quiz at all rather than
+a quiz with two definitions in it. `_on_final_attempt` reads `ctx.retry`
+against `ctx.max_retries`, and on the last attempt every gate accepts what
+it has and logs the shortfall. `output_retries` went 2 → 3 to give three
+gates room to fire in sequence.
+
 ## Known limits
 
-- Quiz compliance is high but not guaranteed — it is prompt-enforced, not
-  schema-enforced. If it regresses, the next step is a deterministic
-  post-generation count in `routes/quiz.py` with a single revision pass,
-  which trades latency for a hard guarantee.
+- The ratio is enforced against a label the model assigns itself. It can
+  mislabel a definition as a worked problem, and no check would notice.
+  The next rung is a heuristic cross-check (does the stem carry concrete
+  values?), deliberately not built yet — it misfires on symbolic problems
+  like `P = [[p, 1-p], [q, 1-q]]`, which are worked problems with no
+  digits in them.
+- A generation can still fail outright on a transient provider error
+  (seen once at N=5, clean on rerun); the route degrades to 502 as before.
 - Nothing gates `search_course_materials` *usage* in CI, so a future drop to
   zero calls would again be invisible. See the drift finding in #533.

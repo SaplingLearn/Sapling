@@ -10,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 from agents import ORCHESTRATOR_LIMITS
-from agents.quiz import quiz_agent, Quiz, QuizQuestion
+from agents.quiz import quiz_agent, Quiz, QuizQuestion, resolve_correct_index
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
@@ -61,31 +61,27 @@ def _load_prompt(name: str) -> str:
 _OPTION_LABELS = ["A", "B", "C", "D", "E", "F"]
 
 
+
 def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
     """Map an agent QuizQuestion to the legacy wire-format dict, or
     return None if the question violates the contract.
 
     The agent must produce `correct_answer` as one of the strings in
-    `q.options` verbatim. If that invariant is broken (LLM drift), we
-    DROP the question rather than silently mark an arbitrary option
-    correct — emitting an unverifiable question to the user is worse
-    than a slightly shorter quiz.
+    `q.options`. `_resolve_correct_index` decides which one, tolerating
+    retyping slips but refusing to guess between two plausible options.
+    When it can't tell, we DROP the question rather than silently mark an
+    arbitrary option correct — emitting an unverifiable question to the
+    user is worse than a slightly shorter quiz.
 
     Returning None lets the caller filter questions out cleanly.
     """
-    options: list[dict] = []
-    matched = False
-    canonical = q.correct_answer.strip()
-    for i, text in enumerate(q.options[: len(_OPTION_LABELS)]):
-        is_correct = (not matched) and (text.strip() == canonical)
-        if is_correct:
-            matched = True
-        options.append({
-            "label": _OPTION_LABELS[i],
-            "text": text,
-            "correct": is_correct,
-        })
-    if not matched:
+    texts = q.options[: len(_OPTION_LABELS)]
+    correct_i = resolve_correct_index(q.correct_answer, texts)
+    options: list[dict] = [
+        {"label": _OPTION_LABELS[i], "text": text, "correct": i == correct_i}
+        for i, text in enumerate(texts)
+    ]
+    if correct_i is None:
         # Generation drift: agent's correct_answer doesn't match any
         # option verbatim. Surface in logs (Logfire span carries the
         # question_id correlation) and drop. Caller filters None.
@@ -231,6 +227,10 @@ async def _quiz_via_agent(
         course_id=course_id,
         supabase=None,
         request_id=request_id,
+        # Read by quiz_agent's _enforce_requested_count output validator.
+        # Without it the count is prompt-only, and the model under-delivers
+        # (asked 10, returned 6) with nothing to catch it.
+        num_questions=num_questions,
     )
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it

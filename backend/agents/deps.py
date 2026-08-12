@@ -33,6 +33,11 @@ class SaplingDeps:
         mastery_changes: Accumulates the real before/after mastery deltas
             returned by apply_graph_update so the route can surface them in
             the chat response for parity with the legacy path.
+        num_questions: How many questions the caller asked the quiz agent
+            for. Read by quiz_agent's output validator, which is the only
+            thing that makes the count exact — the prompt asks for N and
+            the model routinely returns fewer (observed: 6 of 10). None
+            outside the quiz path, where the validator no-ops.
         retrieval: Optional TutorRetrieval implementation (ADR 0023). When
             None (production), the tutor's read tools fall back to the
             Supabase-backed impl in agents/tools/retrieval.py — byte-
@@ -46,6 +51,7 @@ class SaplingDeps:
     supabase: Any
     request_id: str
     session_id: str | None = None
+    num_questions: int | None = None
     graph_updates: list = field(default_factory=list)
     mastery_changes: list = field(default_factory=list)
     retrieval: Any = None

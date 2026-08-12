@@ -46,7 +46,11 @@ class ActionBody(BaseModel):
 class GenerateQuizBody(BaseModel):
     user_id: str = "user_andres"
     concept_node_id: str
-    num_questions: int = Field(default=5, ge=1, le=10)
+    # Upper bound tracks the largest count the UI offers (QuizPanel's
+    # COUNT_OPTIONS: 5 / 10 / 15). It sat at 10 while the agent's Quiz
+    # schema was capped there, which made the "15 questions" option a
+    # guaranteed 422 — the picker offered a value the API refused.
+    num_questions: int = Field(default=5, ge=1, le=15)
     difficulty: str = "medium"
     use_shared_context: bool = True
     # Mirrors the Learn-route fast/smart toggle so quiz generation has

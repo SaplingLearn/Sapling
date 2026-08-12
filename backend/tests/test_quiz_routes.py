@@ -544,14 +544,18 @@ class TestGenerateQuizDifficultyEnum:
 
 
 class TestGenerateQuizNumQuestionsBound:
-    """num_questions must be bounded to 1-10 inclusive. Requests outside
+    """num_questions must be bounded to 1-15 inclusive. Requests outside
     this range should return HTTP 422 (validation error) instead of
-    silently truncating to the schema max_length. This regression test
-    prevents the bug where num_questions > 10 silently returned ≤10
-    questions instead of erroring."""
+    silently truncating. This regression test prevents the bug where an
+    over-cap num_questions silently returned fewer questions than asked.
+
+    The bound is 15 because that is the largest count QuizPanel offers.
+    While it sat at 10, picking "15 questions" in the UI was an
+    unconditional 422 — the picker offered a value the API refused.
+    """
 
     def test_num_questions_over_cap_rejected(self):
-        """POST with num_questions=15 should return 422, not silently truncate."""
+        """POST with num_questions=16 should return 422, not silently truncate."""
         agent_run = AsyncMock()
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
@@ -560,13 +564,21 @@ class TestGenerateQuizNumQuestionsBound:
             r = client.post("/api/quiz/generate", json={
                 "user_id": "user_andres",
                 "concept_node_id": "node1",
-                "num_questions": 15,  # exceeds max_length=10
+                "num_questions": 16,  # exceeds the 15 the UI can request
                 "difficulty": "medium",
                 "use_shared_context": False,
             })
         assert r.status_code == 422
         # The agent must not run for an over-cap num_questions.
         agent_run.assert_not_called()
+
+    def test_the_largest_count_the_ui_offers_is_accepted(self):
+        """QuizPanel's COUNT_OPTIONS tops out at 15; the API must take it."""
+        from models import GenerateQuizBody
+
+        assert GenerateQuizBody(
+            concept_node_id="node1", num_questions=15
+        ).num_questions == 15
 
     def test_num_questions_at_cap_accepted(self):
         """POST with num_questions=10 (at the max) should succeed."""
@@ -1027,6 +1039,85 @@ class TestQuizWireFormatContract:
         # The matched option preserves its original (whitespace-padded)
         # text — the trim is only used for comparison.
         assert correct[0]["text"].strip() == "4"
+
+
+class TestCorrectAnswerNearMiss:
+    """A retyping slip is not a disagreement about the answer.
+
+    Observed live on a 15-question Markov Chains quiz: the option read
+    "...depends only on the current state, not on the sequence of events
+    that preceded it." and `correct_answer` came back "...not on the on
+    the sequence of events...". One stuttered word cost the whole
+    question, and the student silently got 14 instead of 15.
+
+    The tolerance must stay narrow: mis-marking an answer is worse than a
+    shorter quiz, so anything genuinely ambiguous still drops.
+    """
+
+    STEM = ("A stochastic process where the future state depends only on "
+            "the current state, not on the sequence of events that preceded it.")
+
+    def _q(self, options, correct_answer):
+        from agents.quiz import QuizQuestion
+
+        return QuizQuestion(
+            question="What is a Markov chain?",
+            type="multiple_choice", difficulty="easy",
+            options=options, correct_answer=correct_answer,
+            explanation="Memorylessness.", concept="Markov Chains",
+        )
+
+    def _others(self):
+        return [
+            "A process where each event is independent of the others.",
+            "A process that always returns to its starting state.",
+            "A deterministic process with no randomness.",
+        ]
+
+    def test_stuttered_word_still_matches(self):
+        from routes.quiz import _agent_question_to_wire
+
+        stutter = self.STEM.replace("not on the sequence", "not on the on the sequence")
+        wire = _agent_question_to_wire(
+            self._q([self.STEM, *self._others()], stutter), qid=1
+        )
+        assert wire is not None, "near-miss retype should not drop the question"
+        correct = [o for o in wire["options"] if o["correct"]]
+        assert len(correct) == 1
+        assert correct[0]["text"] == self.STEM
+
+    def test_case_and_trailing_punctuation_differences_match(self):
+        from routes.quiz import _agent_question_to_wire
+
+        wire = _agent_question_to_wire(
+            self._q(["Irreducible", "Ergodic", "Periodic", "Transient"],
+                    "ergodic."), qid=1
+        )
+        assert wire is not None
+        correct = [o for o in wire["options"] if o["correct"]]
+        assert correct[0]["text"] == "Ergodic"
+
+    def test_ambiguous_near_match_still_drops(self):
+        """Two options equally close — the intent is unrecoverable, so the
+        question must drop rather than have one guessed correct."""
+        from routes.quiz import _agent_question_to_wire
+
+        wire = _agent_question_to_wire(
+            self._q(["The value is 0.51", "The value is 0.52",
+                     "The value is 0.53", "The value is 0.54"],
+                    "The value is 0.5"), qid=1
+        )
+        assert wire is None
+
+    def test_genuinely_absent_answer_still_drops(self):
+        """The original invariant is untouched: an answer that simply isn't
+        among the options is drift, not a typo."""
+        from routes.quiz import _agent_question_to_wire
+
+        wire = _agent_question_to_wire(
+            self._q(["3", "5", "6", "7"], "4"), qid=1
+        )
+        assert wire is None
 
 
 class TestQuizGrounding:
