@@ -21,28 +21,20 @@ export const ABOUT_AWARDS = [
       ] as const;
 
 export const TEAM_MEMBERS = [
-        { name:'Andres Lopez', role:'Knowledge graph', slot:'team-andres', hint:'Drop a photo of Andres',
-          body:'Owns the concept graph: layout, mastery scoring, and the tier logic that decides what turns green.', delay:'0ms' },
-        { name:'Jack He', role:'AI tutor', slot:'team-jack', hint:'Drop a photo of Jack',
-          body:'Builds the three tutor modes and the grounding layer that keeps answers inside your own materials.', delay:'80ms' },
-        { name:'Luke Cooper', role:'Study tools', slot:'team-luke', hint:'Drop a photo of Luke',
-          body:'Quizzes, flashcard scheduling, and the notetaker. Anything that turns a document into practice.', delay:'160ms' },
-        { name:'Jose Gael Cruz-Lopez', role:'Platform', slot:'team-jose', hint:'Drop a photo of Jose',
-          body:'Ingestion, calendar and gradebook sync, and the infrastructure that keeps all of it fast.', delay:'240ms' },
+        { name:'Andres Lopez', role:'Full stack', slot:'team-andres', hint:'Drop a photo of Andres',
+          body:'Works end to end, from the database up through the screens, and keeps the two halves speaking the same language.', delay:'0ms' },
+        { name:'Jack He', role:'AI architecture and new features', slot:'team-jack', hint:'Drop a photo of Jack',
+          body:'Designs how the agents, the graph, and your own materials fit together, and builds what Sapling does next.', delay:'80ms' },
+        { name:'Luke Cooper', role:'API integration', slot:'team-luke', hint:'Drop a photo of Luke',
+          body:'Wires Sapling to the services your course already lives in, so your calendar, grades, and files arrive on their own.', delay:'160ms' },
+        { name:'Jose Gael Cruz-Lopez', role:'Frontend', slot:'team-jose', hint:'Drop a photo of Jose',
+          body:'Builds the interface you actually study in, and the motion and layout that keep it out of your way.', delay:'240ms' },
       ] as const;
 
 export const TEAM_WAYS = [
         'We use Sapling for our own courses before anyone else sees a feature. If it does not help us pass, it does not ship.',
         'Every feature has to feed the graph. A tool that knows nothing about what you already understand is a tool we would not add.',
         'We read every piece of beta feedback ourselves. There is no support queue between you and the four of us.',
-      ] as const;
-
-export const TEAM_AWARDS = [
-        { title:'Best AI Tutor in Education',
-          org:'Boston University Civic Hacks 2026 \u00b7 BU Spark! & Wheelock College of Education',
-          body:'Recognized among competing teams at BU\u2019s annual civic hackathon for building the most impactful AI-driven learning experience, for an approach to tutoring that put the student at the centre.' },
-        { title:'Code & Tell Winner', org:'BU Spark!',
-          body:'Selected as a standout project at the Code & Tell showcase, where student builders present real-world applications to faculty, mentors, and industry judges.' },
       ] as const;
 
 export const FAQ_GROUPS = [

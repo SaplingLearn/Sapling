@@ -1,13 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
-import { TEAM_AWARDS, TEAM_MEMBERS, TEAM_WAYS } from '@/lib/landing/companionContent';
+import { TEAM_MEMBERS, TEAM_WAYS } from '@/lib/landing/companionContent';
 
 /**
  * Meet the team.
  *
  * Ported from `Meet the Team.dc.html`. Square portrait tiles over a "How we
- * work" list and the two awards, closing on a byline and a beta link.
+ * work" list, closing on a byline and a beta link. The source's awards block
+ * is dropped here — /about already carries it, and one copy is enough.
  *
  * Portrait frames are empty: the source fills them with its `image-slot`
  * drop zone ("Drop a photo of …"), an authoring affordance, and the import
@@ -71,19 +72,6 @@ export default function TeamPage() {
               <div key={w} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                 <span style={{ color: '#2D8F5C', marginTop: 2, flex: '0 0 auto' }}>&bull;</span>
                 <span style={{ fontFamily: SERIF, fontSize: 15, lineHeight: 1.6, color: '#3f3b31' }}>{w}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ marginTop: 56 }}>
-          <span style={{ ...EYEBROW, marginBottom: 24 }}>Recognition</span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-            {TEAM_AWARDS.map((a) => (
-              <div key={a.title}>
-                <p style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#1a1814' }}>{a.title}</p>
-                <p style={{ margin: '2px 0 0', fontSize: 12, fontWeight: 500, color: '#2D8F5C' }}>{a.org}</p>
-                <p style={{ margin: '8px 0 0', fontFamily: SERIF, fontSize: 14, lineHeight: 1.6, color: '#3f3b31' }}>{a.body}</p>
               </div>
             ))}
           </div>
