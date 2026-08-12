@@ -20,6 +20,12 @@ from models import GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
 from services.auth_guard import require_self
+from services.quiz_config import (
+    CONCRETE_DIFFICULTIES,
+    REQUESTED_DIFFICULTIES,
+    quiz_config_payload,
+)
+from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
 from services.graph_service import apply_graph_update
@@ -35,8 +41,10 @@ router = APIRouter()
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
 
-# quiz_attempts.difficulty CHECK enum (0025).
-VALID_DIFFICULTIES = {"easy", "medium", "hard"}
+# Request-side difficulties live in services/quiz_config.py (#540 A2):
+# the concrete trio matches the quiz_attempts.difficulty CHECK (0025,
+# extended with 'adaptive' by the #540 migration); 'adaptive' hands the
+# per-question mix decision to the agent (A1).
 
 
 def _load_prompt(name: str) -> str:
@@ -61,6 +69,30 @@ def _load_prompt(name: str) -> str:
 # `submitQuiz`/`scoreQuiz` flows are unaffected.
 
 _OPTION_LABELS = ["A", "B", "C", "D", "E", "F"]
+
+# Rank order for tie-breaking the overall difficulty report — derived from
+# the config tuple so a difficulty added there can't be silently dropped by
+# _resolved_difficulty's counting.
+_DIFFICULTY_RANK = {d: i for i, d in enumerate(CONCRETE_DIFFICULTIES)}
+
+
+def _resolved_difficulty(wire_questions: list[dict]) -> str:
+    """The overall difficulty generation actually produced (#540 A1).
+
+    Mode of the per-question difficulties; ties break to the harder value
+    so the report never understates what the student is about to face.
+    Defaults to 'medium' when nothing usable is present (can't happen for
+    agent output — QuizQuestion.difficulty is a concrete Literal — but
+    this also runs on stored legacy rows).
+    """
+    counts: dict[str, int] = {}
+    for q in wire_questions:
+        d = q.get("difficulty")
+        if d in _DIFFICULTY_RANK:
+            counts[d] = counts.get(d, 0) + 1
+    if not counts:
+        return "medium"
+    return max(counts, key=lambda d: (counts[d], _DIFFICULTY_RANK[d]))
 
 
 def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
@@ -237,8 +269,24 @@ async def _quiz_via_agent(
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
     # needs and trust the prompt to drive tool calls.
+    if difficulty == "adaptive":
+        # #540 A1: no target difficulty — the agent picks the whole mix
+        # from mastery + recent accuracy (ADAPTIVE MODE in the system
+        # prompt). Every emitted question still carries a concrete
+        # easy|medium|hard; the route reports the overall pick back to
+        # the client as `resolved_difficulty`.
+        difficulty_clause = (
+            f"Generate {num_questions} questions in ADAPTIVE MODE: you "
+            f"choose each question's difficulty (easy, medium, or hard) "
+            f"from the student's mastery and recent accuracy, per the "
+            f"adaptive-mode rules in your system prompt."
+        )
+    else:
+        difficulty_clause = (
+            f"Generate {num_questions} {difficulty} questions for the student."
+        )
     routing_msg = (
-        f"Generate {num_questions} {difficulty} questions for the student. "
+        f"{difficulty_clause} "
         f"The target concept is '{concept_name}' "
         f"(concept_node_id={concept_node_id}). Follow the workflow in your "
         f"system prompt; pass concept_node_id='{concept_node_id}' to "
@@ -290,23 +338,40 @@ async def _quiz_via_agent(
         )
     return wire_questions
 
+@router.get("/config")
+def quiz_config():
+    """Selector options for the quiz UI (#540 A2). Single source of truth:
+    the same constants bound the Pydantic request model, so a client that
+    builds its selects from this payload can never send a value the route
+    rejects. No user data, no auth needed."""
+    return quiz_config_payload()
+
+
 @router.post("/generate")
 async def generate_quiz(body: GenerateQuizBody, request: Request):
     require_self(body.user_id, request)
-    # quiz_attempts.difficulty is CHECK-constrained (0025); reject drift before
-    # we run the agent or write an attempt row.
-    if body.difficulty not in VALID_DIFFICULTIES:
-        raise HTTPException(
+    # The concrete trio is CHECK-constrained on quiz_attempts (0025 +
+    # the #540 'adaptive' extension); reject drift before we run the
+    # agent or write an attempt row.
+    if body.difficulty not in REQUESTED_DIFFICULTIES:
+        raise QuizAPIError(
             status_code=400,
-            detail=f"Invalid difficulty '{body.difficulty}'. "
-                   f"Must be one of {sorted(VALID_DIFFICULTIES)}.",
+            code=QuizErrorCode.QUIZ_DIFFICULTY_INVALID,
+            message=(
+                "That difficulty isn't available. Choose easy, medium, "
+                "hard, or adaptive."
+            ),
         )
     node_rows = table("graph_nodes").select(
         "*",
         filters={"id": f"eq.{body.concept_node_id}", "user_id": f"eq.{body.user_id}"},
     )
     if not node_rows:
-        raise HTTPException(status_code=404, detail="Concept node not found")
+        raise QuizAPIError(
+            status_code=404,
+            code=QuizErrorCode.QUIZ_CONCEPT_NOT_FOUND,
+            message="We couldn't find that concept in your knowledge graph.",
+        )
     node = node_rows[0]
     course_id = node.get("course_id") or None
     concept_name = node.get("concept_name") or ""
@@ -339,15 +404,17 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         # The raw-Gemini legacy fallback was retired in #145; degrade to 502
         # rather than serving a quiz from a second LLM path.
         logger.warning("Quiz agent guardrails tripped; returning 502", exc_info=e)
-        raise HTTPException(
+        raise QuizAPIError(
             status_code=502,
-            detail="Quiz generation is temporarily unavailable. Please try again.",
+            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
+            message="Quiz generation is temporarily unavailable. Please try again.",
         ) from e
     except Exception as e:
         logger.exception("Unexpected quiz-agent failure; returning 502")
-        raise HTTPException(
+        raise QuizAPIError(
             status_code=502,
-            detail="Quiz generation is temporarily unavailable. Please try again.",
+            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
+            message="Quiz generation is temporarily unavailable. Please try again.",
         ) from e
 
     quiz_id = str(uuid.uuid4())
@@ -372,14 +439,28 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             "difficulty": body.difficulty,
         },
     )
-    return {"quiz_id": quiz_id, "questions": questions}
+    # #540 A1: echo what generation actually chose. requested_difficulty
+    # is what the student asked for (may be 'adaptive');
+    # resolved_difficulty is the overall mix the agent produced (always
+    # concrete) — so the client can say "we picked hard for you" instead
+    # of repeating the request back.
+    return {
+        "quiz_id": quiz_id,
+        "questions": questions,
+        "requested_difficulty": body.difficulty,
+        "resolved_difficulty": _resolved_difficulty(questions),
+    }
 
 
 @router.post("/submit")
 def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request: Request):
     attempt_rows = table("quiz_attempts").select("*", filters={"id": f"eq.{body.quiz_id}"})
     if not attempt_rows:
-        raise HTTPException(status_code=404, detail="Quiz not found")
+        raise QuizAPIError(
+            status_code=404,
+            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
+            message="We couldn't find that quiz.",
+        )
     attempt = attempt_rows[0]
 
     user_id = attempt["user_id"]
@@ -395,8 +476,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # 200: quiz_attempts stores no mastery_before/after, so faithfully
     # reconstructing the first response would need a migration.
     if attempt.get("completed_at"):
-        raise HTTPException(
-            status_code=409, detail="Quiz attempt has already been submitted"
+        raise QuizAPIError(
+            status_code=409,
+            code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
+            message="This quiz has already been submitted.",
         )
     # The read above is only the fast path — two CONCURRENT submits (a
     # double-click on the final submit) would both pass it. The atomic claim
@@ -410,8 +493,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         filters={"id": f"eq.{body.quiz_id}", "completed_at": "is.null"},
     )
     if not claimed:
-        raise HTTPException(
-            status_code=409, detail="Quiz attempt has already been submitted"
+        raise QuizAPIError(
+            status_code=409,
+            code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
+            message="This quiz has already been submitted.",
         )
 
     concept_node_id = attempt["concept_node_id"]
@@ -450,7 +535,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
     )
     if not node_rows:
-        raise HTTPException(status_code=404, detail="Concept node not found")
+        raise QuizAPIError(
+            status_code=404,
+            code=QuizErrorCode.QUIZ_CONCEPT_NOT_FOUND,
+            message="We couldn't find that concept in your knowledge graph.",
+        )
     node = node_rows[0]
     mastery_before = node["mastery_score"]
     mastery_after = max(0.0, min(1.0, mastery_before + (score * 0.03) - ((total - score) * 0.02)))
