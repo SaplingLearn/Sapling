@@ -56,11 +56,18 @@ def _get_user_stat(user_id: str, trigger_type: str) -> int:
         return _count_rows("documents", {"user_id": f"eq.{user_id}"})
 
     if trigger_type == "quizzes_completed":
-        # #542 D3: completed attempts only — generate writes the attempt row
-        # BEFORE the student answers anything, so an unfiltered count let
-        # "generate and close the tab" advance quizzes_10.
+        # #542 D3: really-finished attempts only. Two filters, because
+        # neither alone is sufficient: generate writes the attempt row
+        # BEFORE the student answers anything (so an unfiltered count let
+        # "generate and close the tab" advance quizzes_10), and submit's
+        # atomic claim stamps completed_at BEFORE grading (so a submit that
+        # dies between the claim and the score write would still count).
+        # A persisted score is the evidence a quiz was graded — the same
+        # signal agents/tools/quiz_history.py treats as completion.
         return _count_rows("quiz_attempts", {
-            "user_id": f"eq.{user_id}", "completed_at": "not.is.null",
+            "user_id": f"eq.{user_id}",
+            "completed_at": "not.is.null",
+            "score": "not.is.null",
         })
 
     if trigger_type == "rooms_joined":

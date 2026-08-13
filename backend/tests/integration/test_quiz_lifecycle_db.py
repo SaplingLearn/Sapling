@@ -52,6 +52,45 @@ def test_lifecycle_columns_exist_and_round_trip(db_conn):
     assert row["abandoned_at"] is None
 
 
+def test_resume_and_history_refuse_another_students_attempt(
+    db_conn, authed_client, other_user_client
+):
+    """IDOR negatives the hermetic lane structurally cannot provide: its
+    conftest stubs require_self to a no-op, so only this lane (real HMAC
+    sessions, real rows) can prove the new GETs are owner-scoped."""
+    import uuid
+
+    from db.connection import table
+
+    attempt_id = str(uuid.uuid4())
+    table("quiz_attempts").insert({
+        "id": attempt_id,
+        "user_id": USER,                       # owned by rich-user-active
+        "concept_node_id": _node_id(db_conn),
+        "difficulty": "easy",
+        "questions_json": [],
+    })
+
+    # The owner can read it…
+    mine = authed_client.get(f"/api/quiz/attempts/{attempt_id}")
+    assert mine.status_code == 200
+
+    # …a different signed-in student cannot.
+    theirs = other_user_client.get(f"/api/quiz/attempts/{attempt_id}")
+    assert theirs.status_code in (403, 404), (
+        f"another student read attempt {attempt_id} (status {theirs.status_code})"
+    )
+    assert attempt_id not in theirs.text
+
+    # History is scoped by the SESSION, not the query param: asking for
+    # someone else's user_id must not return their attempts.
+    cross = other_user_client.get(
+        "/api/quiz/attempts", params={"user_id": USER}
+    )
+    assert cross.status_code in (403, 404)
+    assert attempt_id not in cross.text
+
+
 def test_sweep_marks_only_stale_unfinished_attempts(db_conn):
     """The conditional update must touch the stale in-progress row and
     leave the fresh one and the completed one alone."""

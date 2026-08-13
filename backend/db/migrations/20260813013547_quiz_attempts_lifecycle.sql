@@ -10,7 +10,15 @@
 -- timestamps that define it. The lazy per-user sweep (routes/quiz.py) stamps
 -- abandoned_at on in-progress attempts older than the documented TTL.
 
+-- IF NOT EXISTS per the repo's idempotent-DDL rule: a migration that half
+-- applied must be re-runnable without hand-editing the ledger.
 ALTER TABLE quiz_attempts
-    ADD COLUMN mastery_before DOUBLE PRECISION,
-    ADD COLUMN mastery_after  DOUBLE PRECISION,
-    ADD COLUMN abandoned_at   TIMESTAMPTZ;
+    ADD COLUMN IF NOT EXISTS mastery_before DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS mastery_after  DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS abandoned_at   TIMESTAMPTZ;
+
+-- Partial index for the lazy abandon sweep + the history read, both of
+-- which filter on (user_id, completed_at IS NULL, abandoned_at IS NULL).
+CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user_open
+    ON quiz_attempts(user_id, created_at)
+    WHERE completed_at IS NULL AND abandoned_at IS NULL;
