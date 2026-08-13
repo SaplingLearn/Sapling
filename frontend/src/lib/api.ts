@@ -441,7 +441,7 @@ export interface QuizConfig {
 export const fetchQuizConfig = () => fetchJSON<QuizConfig>('/api/quiz/config');
 
 export const generateQuiz = (userId: string, conceptNodeId: string, numQuestions: number, difficulty: string, useSharedContext = true) =>
-  fetchJSON<{ quiz_id: string; questions: any[]; requested_difficulty?: string; resolved_difficulty?: string }>('/api/quiz/generate', {
+  fetchJSON<{ quiz_id: string; questions: any[]; requested_difficulty?: string; resolved_difficulty?: string; requested_count?: number; delivered_count?: number }>('/api/quiz/generate', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, concept_node_id: conceptNodeId, num_questions: numQuestions, difficulty, use_shared_context: useSharedContext }),
   });

@@ -165,6 +165,14 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
         toast.warn("No questions were generated — try another concept or difficulty.");
         return;
       }
+      // #543 E2: say so when generation delivered fewer questions than
+      // asked, rather than quietly handing over a shorter quiz.
+      const requested = res.requested_count ?? Number(count);
+      if (res.delivered_count != null && res.delivered_count < requested) {
+        toast.warn(
+          `We could only build ${res.delivered_count} of ${requested} questions for this concept.`,
+        );
+      }
       setQuizId(res.quiz_id);
       setQuestions(nextQuestions);
       // #540 A1: what generation actually chose — shown when the student

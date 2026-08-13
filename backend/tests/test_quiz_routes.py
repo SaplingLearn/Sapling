@@ -952,7 +952,12 @@ class TestQuizAgentDegrade:
                 "use_shared_context": False,
             })
         assert r.status_code == 502
-        agent_run_mock.assert_called_once()  # the agent path was actually tried
+        # The agent path was actually tried — twice, because #543 E2 gives
+        # total drift the same bounded top-up as partial drift (it used to
+        # be the ONE case that never retried, which is backwards: a
+        # transient formatting slip is exactly what one retry clears).
+        # Still exactly one retry, then 502.
+        assert agent_run_mock.call_count == 2
 
 
 # ── Wire-format contract: pinned by tests so silent drift can't recur ───────
