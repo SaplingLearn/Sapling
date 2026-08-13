@@ -80,7 +80,7 @@ def _make_request(path: str = "/api/thing", query: str = "") -> Request:
 # ── Taxonomy pin ─────────────────────────────────────────────────────────────
 
 
-def test_event_taxonomy_is_pinned_to_twelve_names():
+def test_event_taxonomy_is_pinned():
     """Shared constant so a rename breaks loudly — every seam below asserts
     its exact event name, and this pins the full set in one place."""
     assert events_service.EVENT_TAXONOMY == frozenset({
@@ -92,6 +92,7 @@ def test_event_taxonomy_is_pinned_to_twelve_names():
         "document.processed",
         "quiz.started",
         "quiz.completed",
+        "quiz.context_write_failed",  # #529/B3
         "chat.message_sent",
         "note.created",
         "session.started",

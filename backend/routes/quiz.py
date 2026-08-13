@@ -9,7 +9,9 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
+import config
 from agents import ORCHESTRATOR_LIMITS
+from agents._providers import UnregisteredHandlerError
 from agents.quiz import quiz_agent, Quiz, QuizQuestion
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
@@ -603,17 +605,50 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         .replace("{quiz_results_json}", json.dumps(results, indent=2))
     )
 
-    def _update_context(prompt: str, uid: str, node_id: str):
+    # Correlate the background write with this request's trace.
+    ctx_request_id = getattr(request.state, "request_id", None) or current_request_id()
+
+    def _update_context(prompt: str, uid: str, node_id: str, quiz_id: str,
+                        request_id: str | None):
+        # #529/B3: this write was `except Exception: pass` for months while
+        # every attempt 42P10'd — the adaptive loop died silently. Failures
+        # are loud now: ERROR log with the attempt id + request id, a
+        # `quiz.context_write_failed` analytics event, and a re-raise in
+        # local/test envs so a regression fails CI instead of going quiet.
         try:
             result = record_agent_usage(
                 run_agent_sync(quiz_context_agent.run(prompt)),
                 feature="quiz", task="quiz_context", user_id=uid,
             )
             save_quiz_context(uid, node_id, result.output.model_dump())
+        except UnregisteredHandlerError:
+            # E2E function mode leaves quiz_context deliberately
+            # unregistered (agents/function_handlers_e2e.py) so no
+            # post-response DB write races the next test's re-seed. One
+            # WARNING, no traceback: the logscan oracle reports tracebacks.
+            logger.warning(
+                "quiz: context update skipped — quiz_context handler "
+                "unregistered (function-mode seam) quiz_id=%s", quiz_id,
+            )
         except Exception:
-            pass
+            logger.exception(
+                "quiz: context update failed quiz_id=%s concept=%s "
+                "request_id=%s", quiz_id, node_id, request_id,
+            )
+            events_service.log_event(
+                "quiz.context_write_failed",
+                category="error",
+                user_id=uid,
+                request_id=request_id,
+                payload={"quiz_id": quiz_id, "concept_node_id": node_id},
+            )
+            if config.IS_LOCAL:
+                raise
 
-    background_tasks.add_task(_update_context, ctx_prompt, user_id, concept_node_id)
+    background_tasks.add_task(
+        _update_context, ctx_prompt, user_id, concept_node_id,
+        body.quiz_id, ctx_request_id,
+    )
 
     # XP + achievements: after the attempt row (score/total/answers_json) is
     # persisted above (the atomic completed_at claim + the update at :486-494

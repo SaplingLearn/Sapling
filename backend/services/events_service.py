@@ -82,6 +82,10 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "document.processed",
     "quiz.started",
     "quiz.completed",
+    # #529/B3: the post-submit context write failed. category="error" so it
+    # surfaces in admin analytics — this failure was invisible for months
+    # precisely because nothing emitted when the background task died.
+    "quiz.context_write_failed",
     "chat.message_sent",
     "note.created",
     "session.started",
