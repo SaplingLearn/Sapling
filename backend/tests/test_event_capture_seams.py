@@ -93,6 +93,7 @@ def test_event_taxonomy_is_pinned():
         "quiz.started",
         "quiz.completed",
         "quiz.context_write_failed",  # #529/B3
+        "quiz.generation_failed",     # #544/F3
         "chat.message_sent",
         "note.created",
         "session.started",

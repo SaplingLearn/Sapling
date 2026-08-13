@@ -25,12 +25,17 @@ from services.auth_guard import require_self
 from services.quiz_config import (
     CONCRETE_DIFFICULTIES,
     QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
+    QUIZ_DAILY_SPEND_CAP_USD,
+    QUIZ_GENERATE_RATE_LIMIT,
+    QUIZ_GENERATE_RATE_WINDOW_SEC,
+    QUIZ_GENERATION_TIMEOUT_SEC,
     QUIZ_TOPUP_DROP_RATIO,
     QUIZ_TOPUP_MAX_RETRIES,
     REQUESTED_DIFFICULTIES,
     mastery_after,
     quiz_config_payload,
 )
+from services.request_limits import check_rate_limit, refund_rate_limit
 from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
@@ -85,6 +90,80 @@ _DIFFICULTY_RANK = {d: i for i, d in enumerate(CONCRETE_DIFFICULTIES)}
 # PostgREST passes `offset` to Postgres as a bigint; anything past this is
 # a client bug, and an empty page is a better answer than a 500.
 _MAX_HISTORY_OFFSET = 1_000_000
+
+
+# supabase/config.toml sets PostgREST's max_rows = 1000, and an over-cap
+# response is 206 Partial Content — a 2xx, so raise_for_status never fires
+# and the truncation is silent. Same constant and same reasoning as
+# achievement_service._daily_totals; page to completion or the sum is a lie.
+_USAGE_PAGE = 1000
+
+
+def _daily_spend_exceeded(user_id: str) -> bool:
+    """True if this user is past the daily LLM spend ceiling (#544 F1).
+
+    Reads the llm_usage ledger agents/usage.py already writes, PAGED: an
+    unpaged read stops at max_rows, so a heavy user's sum plateaus below
+    the cap and the guard never trips for exactly the runaway it targets.
+    Stops early once the ceiling is crossed — the common case is a couple
+    of rows, and a user past the cap doesn't need an exact total.
+
+    Fails OPEN on any error: this is a cost control, not a correctness
+    gate, and denying every student because a usage read blipped is worse
+    than the spend it would save.
+    """
+    try:
+        since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        spent = 0.0
+        offset = 0
+        while True:
+            rows = table("llm_usage").select(
+                "cost_usd",
+                filters={"user_id": f"eq.{user_id}", "created_at": f"gte.{since}"},
+                limit=_USAGE_PAGE,
+                offset=offset,
+            ) or []
+            spent += sum(float(r.get("cost_usd") or 0.0) for r in rows)
+            if spent >= QUIZ_DAILY_SPEND_CAP_USD:
+                return True
+            if len(rows) < _USAGE_PAGE:
+                return False
+            offset += _USAGE_PAGE
+    except Exception:
+        logger.exception("quiz: daily spend check failed user=%s; allowing", user_id)
+        return False
+
+
+def _refund_generate_slot(user_id: str) -> None:
+    """Hand back the rate-limit slot a failed generation consumed (#544 F1).
+
+    The slot is claimed BEFORE the model runs (so a burst can't get past
+    the gate concurrently), which means a backend failure would otherwise
+    spend the student's quota: eight 502s in two minutes would lock them
+    out for five with a message saying they'd generated too many quizzes,
+    having received none. A failure the student didn't cause shouldn't
+    cost them anything, and the 502 explicitly invites a retry.
+    """
+    try:
+        refund_rate_limit(f"quiz_generate:{user_id}")
+    except Exception:
+        logger.exception("quiz: rate-limit refund failed user=%s", user_id)
+
+
+def _log_generation_failed(body, request_id: str | None, reason: str) -> None:
+    """#544 F3: make a 502 the student saw a 502 an admin can count."""
+    events_service.log_event(
+        "quiz.generation_failed",
+        category="error",
+        user_id=body.user_id,
+        request_id=request_id,
+        payload={
+            "concept_node_id": body.concept_node_id,
+            "difficulty": body.difficulty,
+            "num_questions": body.num_questions,
+            "reason": reason,
+        },
+    )
 
 
 def _abandon_cutoff() -> datetime:
@@ -510,8 +589,17 @@ async def _quiz_via_agent(
         run_kwargs["model"] = model_override
 
     async def _run(message: str, limits) -> Quiz:
+        # #544 F2: bound EACH agent run rather than the whole function.
+        # Wrapping the outer coroutine cancelled it mid-flight, and
+        # CancelledError is a BaseException — it flew straight past the
+        # top-up's serve-what-we-have handler and threw away questions the
+        # student had already paid for. Timing out one run raises an
+        # ordinary TimeoutError the existing handlers can reason about.
         result = record_agent_usage(
-            await quiz_agent.run(message, usage_limits=limits, **run_kwargs),
+            await asyncio.wait_for(
+                quiz_agent.run(message, usage_limits=limits, **run_kwargs),
+                timeout=QUIZ_GENERATION_TIMEOUT_SEC,
+            ),
             feature="quiz", task="quiz", user_id=deps.user_id,
         )
         return result.output
@@ -582,7 +670,7 @@ async def _quiz_via_agent(
                 )
             try:
                 _absorb(await _run(topup_msg, TOPUP_LIMITS))
-            except Exception as e:
+            except (Exception, asyncio.TimeoutError) as e:
                 # The request deliberately SUCCEEDS from here — serve the
                 # short quiz with an honest count. No traceback: the E2E
                 # logscan oracle reports those as findings, and this path
@@ -652,7 +740,44 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         or str(uuid.uuid4())
     )
 
+    # #544 F1: cost guards run AFTER ownership (a stranger's node 404s
+    # first, so probing can't consume a victim's quota) and BEFORE the
+    # model call. Neither rejection is a backend failure, so neither emits
+    # quiz.generation_failed.
+    retry_after = check_rate_limit(
+        f"quiz_generate:{body.user_id}",
+        limit=QUIZ_GENERATE_RATE_LIMIT,
+        window_sec=QUIZ_GENERATE_RATE_WINDOW_SEC,
+    )
+    if retry_after is not None:
+        raise QuizAPIError(
+            status_code=429,
+            code=QuizErrorCode.QUIZ_RATE_LIMITED,
+            message=(
+                "You've generated a lot of quizzes just now — "
+                "take a moment and try again shortly."
+            ),
+            headers={"Retry-After": str(retry_after)},
+        )
+    if _daily_spend_exceeded(body.user_id):
+        logger.warning(
+            "quiz: daily spend cap reached user=%s request_id=%s",
+            body.user_id, request_id,
+        )
+        raise QuizAPIError(
+            status_code=429,
+            code=QuizErrorCode.QUIZ_DAILY_LIMIT_REACHED,
+            message=(
+                "You've reached today's limit for AI-generated study "
+                "material. It resets tomorrow."
+            ),
+        )
+
     try:
+        # Each agent run inside is individually bounded by
+        # QUIZ_GENERATION_TIMEOUT_SEC (see _run) — cancelling the whole
+        # coroutine here would discard a partial quiz the top-up handler
+        # is designed to serve.
         questions = await _quiz_via_agent(
             user_id=body.user_id,
             course_id=course_id,
@@ -667,11 +792,31 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     except HTTPException:
         # The 404 for an unknown concept node is raised before the agent call;
         # never swallow a known HTTP state.
+        _refund_generate_slot(body.user_id)
         raise
+    except asyncio.TimeoutError as e:
+        # #544 F2: distinct from a generic failure — the client can say
+        # "that took too long" and offering a retry obviously makes sense.
+        # NB: only asyncio.TimeoutError. The builtin TimeoutError is in the
+        # OSError family, so catching it too would relabel a transport
+        # socket timeout as a wall-clock generation timeout.
+        logger.warning(
+            "quiz: generation timed out after %ss request_id=%s",
+            QUIZ_GENERATION_TIMEOUT_SEC, request_id,
+        )
+        _refund_generate_slot(body.user_id)
+        _log_generation_failed(body, request_id, "timeout")
+        raise QuizAPIError(
+            status_code=502,
+            code=QuizErrorCode.QUIZ_GENERATION_TIMEOUT,
+            message="Quiz generation took too long. Please try again.",
+        ) from e
     except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
         # The raw-Gemini legacy fallback was retired in #145; degrade to 502
         # rather than serving a quiz from a second LLM path.
         logger.warning("Quiz agent guardrails tripped; returning 502", exc_info=e)
+        _refund_generate_slot(body.user_id)
+        _log_generation_failed(body, request_id, "agent_guardrail")
         raise QuizAPIError(
             status_code=502,
             code=QuizErrorCode.QUIZ_GENERATION_FAILED,
@@ -679,6 +824,8 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         ) from e
     except Exception as e:
         logger.exception("Unexpected quiz-agent failure; returning 502")
+        _refund_generate_slot(body.user_id)
+        _log_generation_failed(body, request_id, "agent_error")
         raise QuizAPIError(
             status_code=502,
             code=QuizErrorCode.QUIZ_GENERATION_FAILED,

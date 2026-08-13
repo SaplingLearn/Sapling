@@ -34,7 +34,12 @@ class SupabaseTable:
         filters: Optional[dict] = None,
         order: Optional[str] = None,
         limit: Optional[int] = None,
+        offset: Optional[int] = None,
     ) -> list:
+        """Read rows. Pass `limit`/`offset` to page — PostgREST caps a
+        response at `max_rows` (1000) and answers 206 Partial Content,
+        which is a 2xx, so an unpaged read over that many rows truncates
+        silently."""
         params: dict = {"select": columns}
         if filters:
             params.update(filters)
@@ -42,6 +47,8 @@ class SupabaseTable:
             params["order"] = order
         if limit:
             params["limit"] = str(limit)
+        if offset is not None:
+            params["offset"] = str(offset)
         r = _client.get(self.url, params=params)
         r.raise_for_status()
         return r.json()

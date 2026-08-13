@@ -48,6 +48,19 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def _clear_rate_limit_state():
+    """#544: services/request_limits keeps its sliding windows in a
+    process-global dict, so one test's burst of requests would throttle
+    every later test that hits the same route as the same user. Same
+    reasoning as the lru_cache reset below."""
+    from services import request_limits
+
+    request_limits._rate_state.clear()
+    yield
+    request_limits._rate_state.clear()
+
+
+@pytest.fixture(autouse=True)
 def _clear_lru_caches():
     """#98: reset the per-process lru_caches around every test so one test's
     mocked DB state can't leak into another via a cached read."""

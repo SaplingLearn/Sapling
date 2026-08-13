@@ -79,6 +79,34 @@ def mastery_after(before: float, *, score: int, total: int) -> float:
     return max(0.0, min(1.0, raw))
 
 
+# ── Cost + abuse guards (#544 F1/F2) ────────────────────────────────────────
+#
+# Generation is an unbounded LLM call behind a button: before #544 nothing
+# stopped a held-down key or a scripted loop from spending real money.
+#
+# The rate limit is sized for a human: a student comparing difficulties or
+# retaking a concept might legitimately generate a handful of quizzes in a
+# few minutes; nobody legitimately generates 10 in one.
+QUIZ_GENERATE_RATE_LIMIT = 8
+QUIZ_GENERATE_RATE_WINDOW_SEC = 300   # 5 minutes
+
+# Daily per-user LLM spend ceiling. The SPEND it measures is cross-feature
+# (llm_usage records every agent call, not just quiz ones), but the ceiling
+# is only ENFORCED on quiz generation — the one unbounded LLM call behind a
+# button. Other entry points stay unguarded for now; moving this into a
+# shared guard is its own piece of work, not something to imply here.
+# A generation on the default flash-lite tier costs well under a cent, so
+# this is ~2 orders of magnitude above any real study day — it exists to
+# bound a runaway, not to ration normal use. Deliberately fail-OPEN: if the
+# usage read errors we serve the quiz rather than denying every student.
+QUIZ_DAILY_SPEND_CAP_USD = 2.00
+
+# Wall-clock ceiling on one generation (agent run incl. its tool calls).
+# Past this the student is staring at a spinner and would rather be told to
+# try again; the request also stops holding a worker slot.
+QUIZ_GENERATION_TIMEOUT_SEC = 90
+
+
 # ── Generation honesty (#543 E2) ────────────────────────────────────────────
 #
 # Questions whose correct_answer doesn't match an option verbatim are
