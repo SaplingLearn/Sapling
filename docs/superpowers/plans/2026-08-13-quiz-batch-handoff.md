@@ -102,12 +102,18 @@ present or absent) to attribute tokens to sections. The audit estimates ~2–4k 
 (`services/events_service.py::EVENT_TAXONOMY`, plus the pin test in
 `tests/test_event_capture_seams.py`).
 
-### Blocker you must raise with the user
+### Audit documents — recovered and committed
 
-The addendum says *"Commit both audit documents to `docs/audits/` if they aren't already"* —
-`docs/audits/student-data-inventory.md` and `student-signals.yaml`, pinned at `7681c481`.
-**Neither file exists in the repo and neither was provided.** `find` across the tree returns
-nothing. Ask for them; don't reconstruct them from the addendum's summary.
+`docs/audits/student-data-inventory.md` (439 lines) and `student-signals.yaml`
+(338 lines, 28 signals, parses clean) are **now in the repo** (`cfc4d6a6`). They were
+written in a worktree branch that had since been cleaned up; recovered from
+`~/Downloads/sapling-student-data-audit/`. The YAML is meant to be **diffed as the product
+evolves** — treat it as a tracked artifact, not a one-off.
+
+Read the inventory before starting Part 2. It is the source of every claim in the addendum,
+including the two findings it flags as **code-verified only**: the #529 42P10 (since fixed,
+and additionally live-DB verified during this batch) and the misconceptions offering-id
+mismatch (#553 — still unverified, verify against the live DB first).
 
 ## Answers to the addendum's Part 1 (already established — don't redo)
 
