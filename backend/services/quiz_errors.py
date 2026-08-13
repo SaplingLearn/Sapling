@@ -34,6 +34,9 @@ class QuizErrorCode(str, Enum):
     QUIZ_CONCEPT_NOT_FOUND = "QUIZ_CONCEPT_NOT_FOUND"
     QUIZ_ATTEMPT_NOT_FOUND = "QUIZ_ATTEMPT_NOT_FOUND"
     QUIZ_ATTEMPT_ALREADY_COMPLETED = "QUIZ_ATTEMPT_ALREADY_COMPLETED"
+    # #541 C1: the answer endpoint got an index that doesn't exist on this
+    # attempt (question_index past the quiz, selected_index past the options).
+    QUIZ_QUESTION_INVALID = "QUIZ_QUESTION_INVALID"
     QUIZ_NOT_AUTHORIZED = "QUIZ_NOT_AUTHORIZED"
     QUIZ_GENERATION_FAILED = "QUIZ_GENERATION_FAILED"
     QUIZ_INTERNAL_ERROR = "QUIZ_INTERNAL_ERROR"

@@ -60,6 +60,25 @@ class GenerateQuizBody(BaseModel):
     # through to whatever SAPLING_MODEL_QUIZ resolves to (default
     # gemini-2.5-flash-lite per ADR 0008).
     model_pref: Optional[Literal["fast", "smart"]] = None
+    # DEPRECATED (#541 C3, removal tracked in #546): when true (the default
+    # the current QuizPanel needs), the response's per-option dicts carry
+    # `correct` booleans — the full answer key, client-side. Removing the
+    # key is a hard requirement of the #537 revamp: the new client grades
+    # through POST /api/quiz/attempts/{id}/answer instead. Every keyed
+    # response is logged so we can see when usage reaches zero.
+    include_answer_key: bool = True
+
+
+class AnswerQuestionBody(BaseModel):
+    """One answer for POST /api/quiz/attempts/{attempt_id}/answer (#541 C1).
+
+    Indexes are 0-based positions into the attempt's stored questions and
+    the question's options (wire ids are 1-based; index = id - 1)."""
+
+    question_index: int = Field(ge=0)
+    selected_index: int = Field(ge=0)
+    time_ms: Optional[int] = Field(default=None, ge=0)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 class AnswerItem(BaseModel):
