@@ -200,7 +200,100 @@ class TestDeliveredCount:
         assert r.json()["delivered_count"] == 4
         assert run.call_count == 1
 
-    def test_all_dropped_still_502s(self):
+    def test_no_top_up_when_the_agent_simply_returns_fewer(self):
+        """A short-but-clean generation is NOT a drift failure. The agent's
+        schema lets it return any count (the E2E seam always returns 3
+        while the UI asks for 5), so keying the retry on requested-minus-
+        delivered fires a second full generation on ordinary requests —
+        doubling latency and tokens for nothing."""
+        short_but_clean = Quiz(questions=[_q("Q1?"), _q("Q2?"), _q("Q3?")])
+        run = AsyncMock(return_value=SimpleNamespace(output=short_but_clean))
+        with (
+            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run),
+        ):
+            r = _generate(num_questions=5)
+        assert r.status_code == 200
+        assert r.json()["delivered_count"] == 3
+        assert run.call_count == 1, (
+            "nothing was dropped — a top-up here is pure waste"
+        )
+
+    def test_top_up_prompt_lists_the_stems_already_asked(self):
+        """'different from the ones already asked' is unactionable unless
+        the model is told what they were — otherwise a deterministic model
+        regenerates the same stems and the dedupe discards the whole run."""
+        drifted = Quiz(questions=[
+            _q("What is a loop?"),
+            _q("Q2?", correct="NOPE"),
+            _q("Q3?", correct="NOPE"),
+        ])
+        topped = Quiz(questions=[_q("What is recursion?", options=("w", "x", "y", "z"), correct="w")])
+        run = AsyncMock(side_effect=[
+            SimpleNamespace(output=drifted),
+            SimpleNamespace(output=topped),
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run),
+        ):
+            r = _generate(num_questions=3)
+        assert r.status_code == 200
+        assert run.call_count == 2
+        topup_msg = run.call_args_list[1][0][0]
+        assert "What is a loop?" in topup_msg, (
+            "the top-up must name the stems it has to avoid"
+        )
+
+    def test_top_up_gets_its_own_bounded_budget(self):
+        """Reusing the first run's usage_limits hands the retry a fresh
+        ORCHESTRATOR_LIMITS, doubling the per-request cost ceiling."""
+        from agents import ORCHESTRATOR_LIMITS
+
+        drifted = Quiz(questions=[
+            _q("Q1?"), _q("Q2?", correct="NOPE"), _q("Q3?", correct="NOPE"),
+        ])
+        topped = Quiz(questions=[_q("Q4?"), _q("Q5?")])
+        run = AsyncMock(side_effect=[
+            SimpleNamespace(output=drifted),
+            SimpleNamespace(output=topped),
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run),
+        ):
+            _generate(num_questions=3)
+        first_limits = run.call_args_list[0].kwargs["usage_limits"]
+        topup_limits = run.call_args_list[1].kwargs["usage_limits"]
+        assert first_limits is ORCHESTRATOR_LIMITS
+        assert topup_limits is not ORCHESTRATOR_LIMITS
+        assert (
+            topup_limits.total_tokens_limit
+            < ORCHESTRATOR_LIMITS.total_tokens_limit
+        ), "the retry must not double the request's cost backstop"
+
+    def test_total_drift_gets_the_retry_too(self):
+        """Total drift is the case a retry most obviously helps — a
+        `wire_questions and ...` guard made it the ONE case that never
+        retried, sending the student straight to a 502."""
+        nothing_valid = Quiz(questions=[
+            _q("Q1?", correct="NOPE"), _q("Q2?", correct="NOPE"),
+        ])
+        recovered = Quiz(questions=[_q("Q3?"), _q("Q4?")])
+        run = AsyncMock(side_effect=[
+            SimpleNamespace(output=nothing_valid),
+            SimpleNamespace(output=recovered),
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run),
+        ):
+            r = _generate(num_questions=2)
+        assert r.status_code == 200
+        assert r.json()["delivered_count"] == 2
+        assert run.call_count == 2
+
+    def test_all_dropped_after_the_retry_still_502s(self):
         nothing_valid = Quiz(questions=[
             _q("Q1?", correct="NOPE"), _q("Q2?", correct="NOPE"),
         ])
@@ -212,6 +305,30 @@ class TestDeliveredCount:
             r = _generate(num_questions=2)
         assert r.status_code == 502
         assert r.json()["error"]["code"] == "QUIZ_GENERATION_FAILED"
+        assert run.call_count == 2, "one bounded retry, then give up"
+
+    def test_failed_top_up_logs_without_a_traceback(self, caplog):
+        """The recovery path deliberately SUCCEEDS, so it must not emit a
+        traceback — the E2E logscan oracle reports those as findings (same
+        rule the quiz_context handler follows)."""
+        drifted = Quiz(questions=[
+            _q("Q1?"), _q("Q2?", correct="NOPE"), _q("Q3?", correct="NOPE"),
+        ])
+        run = AsyncMock(side_effect=[
+            SimpleNamespace(output=drifted),
+            RuntimeError("top-up blew up"),
+        ])
+        with (
+            patch("routes.quiz.table", side_effect=_generate_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run),
+        ):
+            with caplog.at_level("WARNING", logger="routes.quiz"):
+                r = _generate(num_questions=3)
+        assert r.status_code == 200
+        assert r.json()["delivered_count"] == 1
+        topup_logs = [rec for rec in caplog.records if "top-up" in rec.message]
+        assert topup_logs
+        assert all(not rec.exc_info for rec in topup_logs)
 
 
 # ── E3: wire-format validation ──────────────────────────────────────────────
@@ -225,6 +342,20 @@ class TestWireValidation:
 
         q = _q(options=("a", "a", "b", "c"), correct="b")
         assert _agent_question_to_wire(q, 1) is None
+
+    def test_case_distinct_options_are_kept(self):
+        """Grading matches correct_answer case-SENSITIVELY, so options that
+        differ only by case are distinct and gradable — a concept quiz on
+        `list` vs `List` is a real question, not a malformed one. The
+        duplicate check must use the same comparison grading does."""
+        from routes.quiz import _agent_question_to_wire
+
+        q = _q(options=("list", "List", "tuple", "Tuple"), correct="List")
+        wire = _agent_question_to_wire(q, 1)
+        assert wire is not None
+        correct = [o for o in wire["options"] if o["correct"]]
+        assert len(correct) == 1
+        assert correct[0]["text"] == "List"
 
     def test_too_few_options_is_dropped(self):
         from routes.quiz import _validate_wire_question
@@ -285,19 +416,36 @@ class TestWireValidation:
 
 class TestConcurrency:
     def test_double_answer_on_one_index_records_once(self):
-        """The UNIQUE arbitrates: the loser's insert raises, the route
-        re-reads and returns the winner rather than 500ing."""
+        """The real race: BOTH requests see an empty table (the pre-read
+        happens before either insert), so the second insert is the one the
+        UNIQUE rejects. The route must re-read and return the winner
+        rather than 500ing.
+
+        The fake models that interleaving directly — its select returns
+        empty until an insert has actually landed AND the caller has been
+        through its pre-read once, which is what makes the second insert
+        collide instead of being short-circuited by the existing-row
+        branch."""
         rows: list[dict] = []
+        state = {"selects": 0, "insert_attempts": 0}
 
         class _Responses:
             def select(self, columns="*", filters=None, order=None, **_):
-                if not rows:
+                state["selects"] += 1
+                # First TWO reads see nothing: both requests raced past
+                # the idempotency pre-read before either wrote.
+                if state["selects"] <= 2:
                     return []
-                return [dict(rows[0])]
+                return [dict(r) for r in rows]
 
             def insert(self, payload):
-                if rows:
-                    raise RuntimeError("duplicate key (23505)")
+                state["insert_attempts"] += 1
+                for r in rows:
+                    if r["question_index"] == payload["question_index"]:
+                        raise RuntimeError(
+                            'duplicate key value violates unique constraint '
+                            '"quiz_responses_attempt_question_key" (23505)'
+                        )
                 rows.append(dict(payload))
                 return [dict(payload)]
 
@@ -337,6 +485,12 @@ class TestConcurrency:
         assert first.json()["recorded"] is True
         assert second.json()["recorded"] is False
         assert len(rows) == 1
+        # The point of the test: the loser really did attempt an insert and
+        # got the UNIQUE violation, rather than being filtered by the
+        # pre-read (which would leave the race handler unexercised).
+        assert state["insert_attempts"] == 2
+        # Both answers graded identically off the winning row.
+        assert second.json()["is_correct"] == first.json()["is_correct"]
 
     def test_concurrent_generate_for_one_concept_creates_distinct_attempts(self):
         """Two generates for the same concept must not collide on an id or

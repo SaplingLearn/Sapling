@@ -10,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
 import config
-from agents import ORCHESTRATOR_LIMITS
+from agents import ORCHESTRATOR_LIMITS, TOPUP_LIMITS
 from agents._providers import UnregisteredHandlerError
 from agents.quiz import quiz_agent, Quiz, QuizQuestion
 from agents.deps import SaplingDeps
@@ -266,7 +266,12 @@ def _validate_wire_question(wire: dict) -> bool:
             "quiz: dropping question id=%s — only %d option(s)", qid, len(options)
         )
         return False
-    texts = [str(o.get("text", "")).strip().casefold() for o in options]
+    # Compare exactly as GRADING does (_agent_question_to_wire matches
+    # correct_answer with `text.strip() == canonical`): case-sensitively.
+    # Casefolding here would reject items whose options differ only by
+    # case — `list` vs `List` is a real question, and one this route
+    # graded correctly before the check existed.
+    texts = [str(o.get("text", "")).strip() for o in options]
     if len(set(texts)) != len(texts):
         logger.warning("quiz: dropping question id=%s — duplicate option text", qid)
         return False
@@ -500,13 +505,13 @@ async def _quiz_via_agent(
         user_message = routing_msg
 
     model_override = _resolve_model_pref(model_pref)
-    run_kwargs: dict = {"deps": deps, "usage_limits": ORCHESTRATOR_LIMITS}
+    run_kwargs: dict = {"deps": deps}
     if model_override is not None:
         run_kwargs["model"] = model_override
 
-    async def _run(message: str) -> Quiz:
+    async def _run(message: str, limits) -> Quiz:
         result = record_agent_usage(
-            await quiz_agent.run(message, **run_kwargs),
+            await quiz_agent.run(message, usage_limits=limits, **run_kwargs),
             feature="quiz", task="quiz", user_id=deps.user_id,
         )
         return result.output
@@ -517,49 +522,78 @@ async def _quiz_via_agent(
     # _agent_question_to_wire returns None for the former,
     # _validate_wire_question backs it. Survivors are re-numbered so
     # question ids stay 1-based and contiguous.
+    #
+    # `dropped` counts questions we REJECTED, which is a different thing
+    # from "fewer than requested": the Quiz schema lets a run return any
+    # count, and the E2E seam always returns 3 no matter what was asked.
+    # Keying the top-up on under-delivery therefore fired a second full
+    # generation on perfectly good responses.
     wire_questions: list[dict] = []
     seen_stems: set[str] = set()
+    dropped = 0
 
     def _absorb(quiz: Quiz) -> None:
+        nonlocal dropped
         for q in quiz.questions:
             stem = q.question.strip().casefold()
             if stem in seen_stems:
                 logger.warning(
                     "quiz: dropping duplicate question stem (len=%d)", len(stem)
                 )
+                dropped += 1
                 continue
             mapped = _agent_question_to_wire(q, len(wire_questions) + 1)
-            if mapped is not None:
-                seen_stems.add(stem)
-                wire_questions.append(mapped)
+            if mapped is None:
+                dropped += 1
+                continue
+            seen_stems.add(stem)
+            wire_questions.append(mapped)
 
-    _absorb(await _run(user_message))
+    _absorb(await _run(user_message, ORCHESTRATOR_LIMITS))
 
-    # #543 E2: one bounded top-up when drift cost us a big share of the
-    # quiz. Bounded because a retry loop against a drifting model burns
-    # tokens without converging — a slightly short quiz beats a slow one.
-    missing = num_questions - len(wire_questions)
-    if wire_questions and missing > 0 and missing >= num_questions * QUIZ_TOPUP_DROP_RATIO:
+    # #543 E2: one bounded top-up when DRIFT cost us a big share of the
+    # quiz. Gated on questions actually dropped (never on a clean short
+    # response), and it runs for total drift too — that's the case a
+    # retry most obviously helps, and the old `wire_questions and` guard
+    # made it the only case that never retried. Bounded because a retry
+    # loop against a drifting model burns tokens without converging.
+    if dropped and dropped >= num_questions * QUIZ_TOPUP_DROP_RATIO:
         for _ in range(QUIZ_TOPUP_MAX_RETRIES):
+            missing = max(1, num_questions - len(wire_questions))
             logger.info(
-                "quiz: topping up after drift (have=%d, requested=%d)",
-                len(wire_questions), num_questions,
+                "quiz: topping up after drift (have=%d, dropped=%d, requested=%d)",
+                len(wire_questions), dropped, num_questions,
             )
+            # Name the stems to avoid: "different from the ones already
+            # asked" is unactionable otherwise, and a deterministic model
+            # re-emits the same questions, which the dedupe above then
+            # discards — a full generation for nothing.
+            already = "\n".join(f"- {q['question']}" for q in wire_questions)
             topup_msg = (
-                f"{user_message}\n\n[TOP-UP] Several questions were rejected for "
+                f"{user_message}\n\n[TOP-UP] Some questions were rejected for "
                 f"format errors. Generate {missing} MORE questions on the same "
-                f"concept, different from the ones already asked. Remember: "
-                f"correct_answer must appear VERBATIM in options."
+                f"concept. Remember: correct_answer must appear VERBATIM in "
+                f"options."
             )
+            if already:
+                topup_msg += (
+                    f"\n\nDo NOT repeat any of these questions, which are "
+                    f"already in the quiz:\n{already}"
+                )
             try:
-                _absorb(await _run(topup_msg))
-            except Exception:
-                # A failed top-up must not lose the questions we already
-                # have — serve the short quiz with an honest count.
-                logger.exception("quiz: top-up run failed; serving what we have")
+                _absorb(await _run(topup_msg, TOPUP_LIMITS))
+            except Exception as e:
+                # The request deliberately SUCCEEDS from here — serve the
+                # short quiz with an honest count. No traceback: the E2E
+                # logscan oracle reports those as findings, and this path
+                # is a handled degradation, not a bug (same rule the
+                # quiz_context seam skip follows).
+                logger.warning(
+                    "quiz: top-up run failed (%s: %s); serving what we have",
+                    type(e).__name__, e,
+                )
                 break
-            missing = num_questions - len(wire_questions)
-            if missing <= 0:
+            if len(wire_questions) >= num_questions:
                 break
 
     if not wire_questions:

@@ -186,3 +186,34 @@ describe("QuizPanel — config-driven selectors (#540 A2)", () => {
     );
   });
 });
+
+describe("QuizPanel — short-quiz honesty (#543 E2)", () => {
+  it("warns when generation delivered fewer questions than requested", async () => {
+    mockGenerateQuiz.mockResolvedValue({
+      quiz_id: "quiz-1",
+      questions: [QUESTION],
+      requested_count: 5,
+      delivered_count: 1,
+    });
+    renderPanel();
+
+    fireEvent.click(screen.getByTestId("quiz-start"));
+    expect(await screen.findByTestId("quiz-answer-options")).toBeInTheDocument();
+    await waitFor(() => expect(toast.warn).toHaveBeenCalledTimes(1));
+    expect(String(toast.warn.mock.calls[0][0])).toContain("1 of 5");
+  });
+
+  it("stays quiet when the full quiz was delivered", async () => {
+    mockGenerateQuiz.mockResolvedValue({
+      quiz_id: "quiz-1",
+      questions: [QUESTION],
+      requested_count: 1,
+      delivered_count: 1,
+    });
+    renderPanel();
+
+    fireEvent.click(screen.getByTestId("quiz-start"));
+    expect(await screen.findByTestId("quiz-answer-options")).toBeInTheDocument();
+    expect(toast.warn).not.toHaveBeenCalled();
+  });
+});
