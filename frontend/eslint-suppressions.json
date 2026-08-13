@@ -80,7 +80,7 @@
   },
   "src/components/graph/KnowledgeGraph3D.test.tsx": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 6
+      "count": 2
     }
   },
   "src/components/marketing/SignInModal.tsx": {
