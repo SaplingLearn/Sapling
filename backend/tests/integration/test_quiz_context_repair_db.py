@@ -53,14 +53,21 @@ def test_save_quiz_context_upserts_one_row_and_encrypts(db_conn):
 
     node_id = _seeded_node_id(db_conn)
     save_quiz_context(USER, node_id, {"weak_areas": ["first write"]})
+    first = db_conn.execute(
+        "SELECT id FROM quiz_context WHERE user_id = %s AND concept_node_id = %s",
+        (USER, node_id),
+    ).fetchone()
     save_quiz_context(USER, node_id, {"weak_areas": ["second write"]})
 
     rows = db_conn.execute(
-        "SELECT context_json FROM quiz_context "
+        "SELECT id, context_json FROM quiz_context "
         "WHERE user_id = %s AND concept_node_id = %s",
         (USER, node_id),
     ).fetchall()
     assert len(rows) == 1, f"upsert must keep exactly one row, found {len(rows)}"
+    # The refresh must not rewrite the row's PRIMARY KEY (merge-duplicates
+    # updates every payload column — an id in the payload would churn here).
+    assert rows[0]["id"] == first["id"]
 
     raw = rows[0]["context_json"]
     # #521: ciphertext stored as a JSONB string scalar — a dict here means

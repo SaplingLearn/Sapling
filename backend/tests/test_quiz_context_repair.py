@@ -106,6 +106,11 @@ class TestSaveQuizContextUpsertTarget:
         assert captured["on_conflict"] == "user_id,concept_node_id"
         # #521: ciphertext at rest.
         assert isinstance(captured["payload"]["context_json"], str)
+        # No client-generated id: with merge-duplicates live again, an id in
+        # the payload would REWRITE the existing row's primary key on every
+        # refresh (DO UPDATE SET id = excluded.id). The column's DB default
+        # covers fresh inserts.
+        assert "id" not in captured["payload"]
 
 
 # ── B3: failures are loud ───────────────────────────────────────────────────
@@ -241,8 +246,23 @@ class TestCoerceSummaryConsumesQuizContext:
             "off-by-one in loop bounds",
             "loops and recursion basics",
             "solid on iteration",
+            # recommended_difficulty is the write side's whole point — it
+            # must reach the digest, not rot encrypted-and-unread.
+            "hard",
         ):
             assert fragment in s, f"digest dropped: {fragment!r}"
+
+    def test_non_list_values_under_list_keys_are_skipped(self):
+        """Legacy free-form rows can hold a STRING (or dict) under a
+        list-shaped key; iterating those element-wise sprays per-character
+        bullets ('- r', '- e', …) into the agent's prompt digest."""
+        from agents.tools.quiz_history import _coerce_summary
+
+        legacy = {"summary": "Focus on recursion", "weak_areas": "recursion"}
+        assert _coerce_summary(legacy) == "Focus on recursion"
+
+        legacy_dict = {"summary": "Focus", "common_mistakes": {"a": 1}}
+        assert _coerce_summary(legacy_dict) == "Focus"
 
     def test_legacy_shapes_still_coerce(self):
         from agents.tools.quiz_history import _coerce_summary

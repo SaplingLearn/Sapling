@@ -96,13 +96,25 @@ def _coerce_summary(ctx: Any) -> str | None:
             if isinstance(v, str) and v.strip():
                 parts.append(v.strip())
         for key, label in _SUMMARY_LIST_KEYS:
+            raw = ctx.get(key)
+            if not isinstance(raw, list):
+                # Legacy free-form rows can hold a string (or dict) under a
+                # list-shaped key; iterating those element-wise would spray
+                # per-character bullets / dict keys into the agent's prompt.
+                continue
             items = [
                 item.strip()
-                for item in (ctx.get(key) or [])
+                for item in raw
                 if isinstance(item, str) and item.strip()
             ]
             if items:
                 parts.append(label + ":\n" + "\n".join(f"- {i}" for i in items))
+        rec = ctx.get("recommended_difficulty")
+        if isinstance(rec, str) and rec.strip():
+            # The post-submit agent's difficulty recommendation — surfaced
+            # here or it rots encrypted-and-unread (its only other mention
+            # is the dead legacy prompt template).
+            parts.append(f"Recommended next difficulty: {rec.strip()}")
         return "\n\n".join(parts) or None
     return None
 
