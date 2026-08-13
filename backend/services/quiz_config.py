@@ -90,12 +90,15 @@ def mastery_after(before: float, *, score: int, total: int) -> float:
 QUIZ_GENERATE_RATE_LIMIT = 8
 QUIZ_GENERATE_RATE_WINDOW_SEC = 300   # 5 minutes
 
-# Daily per-user LLM spend ceiling across ALL features (read off llm_usage,
-# which agents/usage.py::record_agent_usage already writes). A generation on
-# the default flash-lite tier costs well under a cent, so this is ~2 orders
-# of magnitude above any real study day — it exists to bound a runaway, not
-# to ration normal use. Deliberately fail-OPEN: if the usage read errors we
-# serve the quiz rather than denying every student on a table blip.
+# Daily per-user LLM spend ceiling. The SPEND it measures is cross-feature
+# (llm_usage records every agent call, not just quiz ones), but the ceiling
+# is only ENFORCED on quiz generation — the one unbounded LLM call behind a
+# button. Other entry points stay unguarded for now; moving this into a
+# shared guard is its own piece of work, not something to imply here.
+# A generation on the default flash-lite tier costs well under a cent, so
+# this is ~2 orders of magnitude above any real study day — it exists to
+# bound a runaway, not to ration normal use. Deliberately fail-OPEN: if the
+# usage read errors we serve the quiz rather than denying every student.
 QUIZ_DAILY_SPEND_CAP_USD = 2.00
 
 # Wall-clock ceiling on one generation (agent run incl. its tool calls).

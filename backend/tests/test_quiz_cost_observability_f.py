@@ -90,6 +90,32 @@ class TestGenerateRateLimit:
         # The blocked request must not have reached the model.
         assert run.call_count == QUIZ_GENERATE_RATE_LIMIT
 
+    def test_a_failed_generation_does_not_burn_the_budget(self):
+        """The slot is claimed before the model runs, so a backend failure
+        would otherwise spend the student's quota — eight 502s in two
+        minutes locking them out for five, with a message telling them
+        they generated too many quizzes. They received none."""
+        from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
+
+        failing = AsyncMock(side_effect=RuntimeError("boom"))
+        with (
+            patch("routes.quiz.table", side_effect=_factory()),
+            patch("routes.quiz.quiz_agent.run", new=failing),
+        ):
+            for _ in range(QUIZ_GENERATE_RATE_LIMIT + 2):
+                r = _generate()
+                assert r.status_code == 502, (
+                    "a failed generation must not consume the rate-limit slot"
+                )
+
+        # …and the budget is still intact for a request that can succeed.
+        with (
+            patch("routes.quiz.table", side_effect=_factory()),
+            patch("routes.quiz.quiz_agent.run",
+                  new=AsyncMock(return_value=SimpleNamespace(output=_quiz()))),
+        ):
+            assert _generate().status_code == 200
+
     def test_limit_is_per_user(self):
         run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
         from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
@@ -132,6 +158,53 @@ class TestDailySpendGuard:
         ):
             r = _generate()
         assert r.status_code == 200
+
+    def test_spend_sum_is_not_truncated_by_the_postgrest_page_cap(self):
+        """PostgREST caps a response at max_rows (1000) and answers with
+        206 — a 2xx — so an unpaged select silently truncates. Summing that
+        page plateaus below the ceiling, and the guard can never trip for
+        the runaway user it exists to stop."""
+        from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
+
+        # Sized so ONE page is not enough: 1000 rows × $0.0015 = $1.50,
+        # under the $2.00 cap, while all 1500 rows = $2.25, over it. A
+        # reader that trusts a single truncated response concludes the
+        # user is fine; a paging reader catches them.
+        per_row = 0.0015
+        rows = [{"cost_usd": per_row} for _ in range(1500)]
+        pages: list[tuple[int, int]] = []
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "llm_usage":
+                def _select(columns="*", filters=None, limit=None, offset=None, **kw):
+                    page_limit = min(limit or 1000, 1000)
+                    start = offset or 0
+                    pages.append((start, page_limit))
+                    return rows[start:start + page_limit]
+                mock.select.side_effect = _select
+            elif name == "graph_nodes":
+                mock.select.return_value = [{
+                    "id": "node1", "course_id": "course1",
+                    "concept_name": "Loops", "mastery_score": 0.5,
+                }]
+            else:
+                mock.select.return_value = []
+                mock.insert.return_value = [{"id": "q"}]
+            return mock
+
+        run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
+        with (
+            patch("routes.quiz.table", side_effect=factory),
+            patch("routes.quiz.quiz_agent.run", new=run),
+        ):
+            r = _generate()
+
+        assert len(pages) > 1, "the spend read must page, not trust one response"
+        assert r.status_code == 429
+        assert r.json()["error"]["code"] == "QUIZ_DAILY_LIMIT_REACHED"
+        run.assert_not_called()
+        assert 1500 * per_row > QUIZ_DAILY_SPEND_CAP_USD  # the premise
 
     def test_spend_lookup_failure_never_blocks_a_quiz(self):
         """The guard is a cost control, not a correctness gate — if the
@@ -180,6 +253,53 @@ class TestGenerationTimeout:
             r = _generate()
         assert r.status_code == 502
         assert r.json()["error"]["code"] == "QUIZ_GENERATION_TIMEOUT"
+
+    def test_a_partial_quiz_survives_a_top_up_timeout(self):
+        """The timeout must not throw away questions we already have.
+        Cancelling the whole generation raises CancelledError — a
+        BaseException — straight past #543's serve-what-we-have handler,
+        turning a valid 3-question quiz into a 502."""
+        import asyncio as _asyncio
+
+        from agents.quiz import Quiz, QuizQuestion
+
+        def _mk(n, correct=True):
+            return QuizQuestion(
+                question=f"Q{n}?", type="multiple_choice", difficulty="easy",
+                options=[f"a{n}", f"b{n}", f"c{n}", f"d{n}"],
+                correct_answer=f"a{n}" if correct else "NOPE",
+                explanation="x", concept="Loops",
+            )
+
+        # 3 good, 3 drifted → drop rate high enough to trigger the top-up.
+        first = Quiz(questions=[_mk(1), _mk(2), _mk(3),
+                                _mk(4, False), _mk(5, False), _mk(6, False)])
+        calls = {"n": 0}
+
+        async def _run(*a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return SimpleNamespace(output=first)
+            await _asyncio.sleep(3600)   # the top-up hangs
+
+        with (
+            patch("routes.quiz.table", side_effect=_factory()),
+            patch("routes.quiz.quiz_agent.run", new=_run),
+            patch("routes.quiz.QUIZ_GENERATION_TIMEOUT_SEC", 0.2),
+        ):
+            r = client.post("/api/quiz/generate", json={
+                "user_id": "user_andres",
+                "concept_node_id": "node1",
+                "num_questions": 6,
+                "difficulty": "easy",
+                "use_shared_context": False,
+            })
+
+        assert r.status_code == 200, (
+            "a completed partial generation must be served, not discarded"
+        )
+        assert r.json()["delivered_count"] == 3
+        assert calls["n"] == 2  # the top-up was attempted and timed out
 
     def test_ordinary_failure_keeps_the_generic_code(self):
         with (
