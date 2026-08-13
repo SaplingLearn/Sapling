@@ -25,7 +25,10 @@ from services.auth_guard import require_self
 from services.quiz_config import (
     CONCRETE_DIFFICULTIES,
     QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
+    QUIZ_TOPUP_DROP_RATIO,
+    QUIZ_TOPUP_MAX_RETRIES,
     REQUESTED_DIFFICULTIES,
+    mastery_after,
     quiz_config_payload,
 )
 from services.quiz_errors import QuizAPIError, QuizErrorCode
@@ -241,6 +244,42 @@ def _resolved_difficulty(wire_questions: list[dict]) -> str:
     return max(counts, key=lambda d: (counts[d], _DIFFICULTY_RANK[d]))
 
 
+# The wire contract every emitted question must satisfy (#543 E3). The
+# agent schema already pins 4 options, but the route is the boundary the
+# stored questions_json and every grading path trust, so it validates
+# rather than assuming.
+_MIN_OPTIONS = 2
+
+
+def _validate_wire_question(wire: dict) -> bool:
+    """True if this wire question is answerable and gradable.
+
+    Rejects: fewer than two options, duplicate option text (the student
+    can pick "the same" answer and be wrong), and anything other than
+    exactly one correct option (zero = ungradable free point per #129,
+    two = the grader's first-match wins silently).
+    """
+    options = wire.get("options") or []
+    qid = wire.get("id")
+    if len(options) < _MIN_OPTIONS:
+        logger.warning(
+            "quiz: dropping question id=%s — only %d option(s)", qid, len(options)
+        )
+        return False
+    texts = [str(o.get("text", "")).strip().casefold() for o in options]
+    if len(set(texts)) != len(texts):
+        logger.warning("quiz: dropping question id=%s — duplicate option text", qid)
+        return False
+    n_correct = sum(1 for o in options if o.get("correct"))
+    if n_correct != 1:
+        logger.warning(
+            "quiz: dropping question id=%s — %d correct options (need exactly 1)",
+            qid, n_correct,
+        )
+        return False
+    return True
+
+
 def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
     """Map an agent QuizQuestion to the legacy wire-format dict, or
     return None if the question violates the contract.
@@ -285,6 +324,8 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
             "options (n_options=%d, canonical_len=%d, fp=%s)",
             qid, len(q.options), len(canonical_only), fp,
         )
+        return None
+    if not _validate_wire_question({"id": qid, "options": options}):
         return None
     return {
         "id": qid,
@@ -462,19 +503,65 @@ async def _quiz_via_agent(
     run_kwargs: dict = {"deps": deps, "usage_limits": ORCHESTRATOR_LIMITS}
     if model_override is not None:
         run_kwargs["model"] = model_override
-    result = record_agent_usage(
-        await quiz_agent.run(user_message, **run_kwargs),
-        feature="quiz", task="quiz", user_id=deps.user_id,
-    )
-    quiz: Quiz = result.output
-    # Filter out questions where the agent's correct_answer didn't match
-    # any option verbatim — _agent_question_to_wire returns None for those.
-    # Re-number the survivors so question IDs stay 1-based and contiguous.
+
+    async def _run(message: str) -> Quiz:
+        result = record_agent_usage(
+            await quiz_agent.run(message, **run_kwargs),
+            feature="quiz", task="quiz", user_id=deps.user_id,
+        )
+        return result.output
+
+    # Filter out questions the agent got wrong (correct_answer not among
+    # the options, duplicate/insufficient options, no single correct
+    # answer) and duplicate stems within this attempt —
+    # _agent_question_to_wire returns None for the former,
+    # _validate_wire_question backs it. Survivors are re-numbered so
+    # question ids stay 1-based and contiguous.
     wire_questions: list[dict] = []
-    for q in quiz.questions:
-        mapped = _agent_question_to_wire(q, len(wire_questions) + 1)
-        if mapped is not None:
-            wire_questions.append(mapped)
+    seen_stems: set[str] = set()
+
+    def _absorb(quiz: Quiz) -> None:
+        for q in quiz.questions:
+            stem = q.question.strip().casefold()
+            if stem in seen_stems:
+                logger.warning(
+                    "quiz: dropping duplicate question stem (len=%d)", len(stem)
+                )
+                continue
+            mapped = _agent_question_to_wire(q, len(wire_questions) + 1)
+            if mapped is not None:
+                seen_stems.add(stem)
+                wire_questions.append(mapped)
+
+    _absorb(await _run(user_message))
+
+    # #543 E2: one bounded top-up when drift cost us a big share of the
+    # quiz. Bounded because a retry loop against a drifting model burns
+    # tokens without converging — a slightly short quiz beats a slow one.
+    missing = num_questions - len(wire_questions)
+    if wire_questions and missing > 0 and missing >= num_questions * QUIZ_TOPUP_DROP_RATIO:
+        for _ in range(QUIZ_TOPUP_MAX_RETRIES):
+            logger.info(
+                "quiz: topping up after drift (have=%d, requested=%d)",
+                len(wire_questions), num_questions,
+            )
+            topup_msg = (
+                f"{user_message}\n\n[TOP-UP] Several questions were rejected for "
+                f"format errors. Generate {missing} MORE questions on the same "
+                f"concept, different from the ones already asked. Remember: "
+                f"correct_answer must appear VERBATIM in options."
+            )
+            try:
+                _absorb(await _run(topup_msg))
+            except Exception:
+                # A failed top-up must not lose the questions we already
+                # have — serve the short quiz with an honest count.
+                logger.exception("quiz: top-up run failed; serving what we have")
+                break
+            missing = num_questions - len(wire_questions)
+            if missing <= 0:
+                break
+
     if not wire_questions:
         # All questions dropped — raise so generate_quiz's bare-Exception
         # catch degrades to HTTP 502 (the raw-Gemini legacy fallback was
@@ -482,7 +569,8 @@ async def _quiz_via_agent(
         raise RuntimeError(
             "quiz_agent produced no valid questions after wire-format validation"
         )
-    return wire_questions
+    # Never serve more than asked for (a generous top-up run can overshoot).
+    return wire_questions[:num_questions]
 
 @router.get("/config")
 def quiz_config():
@@ -609,6 +697,12 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         "questions": response_questions,
         "requested_difficulty": body.difficulty,
         "resolved_difficulty": _resolved_difficulty(questions),
+        # #543 E2: never silently short-change a quiz. Drift (and the
+        # bounded top-up) can leave fewer questions than asked for; the
+        # client can now say so instead of pretending this is what was
+        # requested.
+        "requested_count": body.num_questions,
+        "delivered_count": len(questions),
     }
 
 
@@ -992,8 +1086,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         )
     node = node_rows[0]
     mastery_before = node["mastery_score"]
-    mastery_after = max(0.0, min(1.0, mastery_before + (score * 0.03) - ((total - score) * 0.02)))
-    mastery_delta = mastery_after - mastery_before
+    # #543 E1: the model is a named seam now (services/quiz_config.py).
+    # The numbers are unchanged — see docs/quiz-mastery-model.md for the
+    # options the revamp gets to choose from.
+    mastery_score_after = mastery_after(mastery_before, score=score, total=total)
+    mastery_delta = mastery_score_after - mastery_before
 
     score_ratio = score / total if total > 0 else 0.0
     if score_ratio >= 0.7:
@@ -1032,8 +1129,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     for change in applied or []:
         if isinstance(change, dict) and change.get("after") is not None:
             mastery_before = change.get("before", mastery_before)
-            mastery_after = change["after"]
-            mastery_delta = mastery_after - mastery_before
+            # NB: mastery_after is the imported model function (#543 E1);
+            # the value lives in mastery_score_after.
+            mastery_score_after = change["after"]
+            mastery_delta = mastery_score_after - mastery_before
             break
 
     table("quiz_attempts").update(
@@ -1048,7 +1147,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             # submit can't reconstruct what the student saw, and history
             # can't show progression. Plaintext scalars (#521 rationale).
             "mastery_before": mastery_before,
-            "mastery_after": mastery_after,
+            "mastery_after": mastery_score_after,
             # completed_at was already stamped by the atomic claim above.
         },
         filters={"id": f"eq.{body.quiz_id}"},
@@ -1152,6 +1251,6 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         "score": score,
         "total": total,
         "mastery_before": mastery_before,
-        "mastery_after": mastery_after,
+        "mastery_after": mastery_score_after,
         "results": results,
     }

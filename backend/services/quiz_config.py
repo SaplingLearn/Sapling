@@ -42,6 +42,54 @@ REQUESTED_DIFFICULTIES = CONCRETE_DIFFICULTIES + ("adaptive",)
 # short-answer grading.
 QUIZ_QUESTION_TYPES = ("multiple_choice",)
 
+# ── Mastery model (#543 E1) ─────────────────────────────────────────────────
+#
+# How one quiz moves a concept's mastery score:
+#
+#     after = clamp01(before + correct*MASTERY_DELTA_PER_CORRECT
+#                            - wrong*MASTERY_DELTA_PER_WRONG)
+#
+# The pedagogy these numbers encode: mastery is earned faster than it is
+# lost (0.03 vs 0.02), so a student who mostly succeeds trends upward even
+# with occasional misses, and a bad quiz dents progress without erasing it.
+# ~17 consecutive correct answers take a concept from 0 to mastered, which
+# is roughly three or four full quizzes — slow enough that the tier means
+# something, fast enough to be visible within a study session.
+#
+# THE OPEN QUESTION (deliberately NOT answered here — see
+# docs/quiz-mastery-model.md): the delta is per-ITEM and flat, so a
+# 10-question hard quiz moves mastery 3.3x as much as a 3-question easy
+# one, and a hard item counts exactly as much as an easy one. Scaling by
+# difficulty and/or normalizing by quiz length are both defensible; each
+# changes the numbers the #393 E2E journey pins (+0.09 for 3/3). #543
+# lands this seam ONLY — the revamp (#537) decides the model, and any
+# change ships in the same commit as the journey update.
+MASTERY_DELTA_PER_CORRECT = 0.03
+MASTERY_DELTA_PER_WRONG = 0.02
+
+
+def mastery_after(before: float, *, score: int, total: int) -> float:
+    """The post-quiz mastery score, clamped to [0, 1]."""
+    wrong = max(0, total - score)
+    raw = (
+        before
+        + score * MASTERY_DELTA_PER_CORRECT
+        - wrong * MASTERY_DELTA_PER_WRONG
+    )
+    return max(0.0, min(1.0, raw))
+
+
+# ── Generation honesty (#543 E2) ────────────────────────────────────────────
+#
+# Questions whose correct_answer doesn't match an option verbatim are
+# dropped (routes/quiz.py::_agent_question_to_wire). If enough of a quiz
+# drops, one bounded top-up run refills it — bounded because a retry loop
+# on a drifting model burns tokens without converging, and a slightly
+# short quiz beats a slow one.
+QUIZ_TOPUP_DROP_RATIO = 0.34   # >1/3 of the requested count lost → top up
+QUIZ_TOPUP_MAX_RETRIES = 1
+
+
 # #542 D2: an in-progress attempt older than this is considered abandoned
 # (derived status + the lazy per-user sweep that stamps abandoned_at).
 # 24h: a quiz is a single sitting — anything paused across a day is not
