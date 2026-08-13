@@ -46,6 +46,14 @@ class QuizErrorCode(str, Enum):
     QUIZ_QUESTION_INVALID = "QUIZ_QUESTION_INVALID"
     QUIZ_NOT_AUTHORIZED = "QUIZ_NOT_AUTHORIZED"
     QUIZ_GENERATION_FAILED = "QUIZ_GENERATION_FAILED"
+    # #544 F2: the generation exceeded its wall-clock budget. Distinct from
+    # the generic failure so the client can say "that took too long" and a
+    # retry is obviously worth offering.
+    QUIZ_GENERATION_TIMEOUT = "QUIZ_GENERATION_TIMEOUT"
+    # #544 F1: too many generations in the rate window.
+    QUIZ_RATE_LIMITED = "QUIZ_RATE_LIMITED"
+    # #544 F1: this account's daily LLM spend ceiling is reached.
+    QUIZ_DAILY_LIMIT_REACHED = "QUIZ_DAILY_LIMIT_REACHED"
     QUIZ_INTERNAL_ERROR = "QUIZ_INTERNAL_ERROR"
     # Uncoded HTTP errors that aren't one of the semantic states above —
     # router 404s/405s on version-skewed clients, library-raised
@@ -80,8 +88,9 @@ class QuizAPIError(HTTPException):
         code: QuizErrorCode,
         message: str,
         machine_detail=None,
+        headers: dict[str, str] | None = None,
     ):
-        super().__init__(status_code=status_code, detail=message)
+        super().__init__(status_code=status_code, detail=message, headers=headers)
         self.code = code
         self.machine_detail = machine_detail
 

@@ -201,10 +201,16 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         code=getattr(exc, "code", None),
         machine_detail=getattr(exc, "machine_detail", None),
     )
+    # Preserve headers the raise site set (e.g. Retry-After on a 429) —
+    # dropping them would strip the only machine-readable part of a
+    # throttling response.
+    headers = dict(getattr(exc, "headers", None) or {})
+    if rid:
+        headers["X-Request-ID"] = rid
     return JSONResponse(
         status_code=exc.status_code,
         content=content,
-        headers={"X-Request-ID": rid} if rid else {},
+        headers=headers,
     )
 
 
