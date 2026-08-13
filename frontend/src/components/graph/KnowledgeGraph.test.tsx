@@ -1,39 +1,46 @@
 // @vitest-environment jsdom
 /**
- * Component tests for the KnowledgeGraph wrapper — pins the 2D/3D mode
- * selection logic, and (#538) the WebGL2 capability gate + local crash
- * containment that keep a WebGL-less browser from blanking the whole
- * app into the root error fallback:
- *   1. Fresh profile defaults to 2D (pin).
- *   2. Persisted "3d" mode is honoured when WebGL2 is available (pin).
- *   3. Persisted "3d" mode is IGNORED when WebGL2 is unavailable — the
- *      2D graph renders and the crash-prone 3D renderer never mounts.
- *   4. The mode toggle is disabled with an explanatory label when
- *      WebGL2 is unavailable.
- *   5. A 3D renderer that throws at mount (three.js throws
- *      `Error creating WebGL context.` from the WebGLRenderer
- *      constructor) degrades to the 2D graph inline and heals the
- *      persisted mode to "2d" — the error must not escape the wrapper.
+ * Component tests for the KnowledgeGraph wrapper — the 2D/3D mode selection,
+ * the WebGL2 capability gate, and the graph-local crash containment (#538).
  *
- * Mocking strategy: both graph implementations are replaced with
- * sentinels so the tests exercise only the wrapper's selection logic.
- * The 3D sentinel can be armed to throw, mimicking three.js's
- * constructor throw at mount. `next/dynamic` is a passthrough exactly
- * as in KnowledgeGraph3D.test.tsx. WebGL capability is controlled by
- * stubbing HTMLCanvasElement.prototype.getContext.
+ * Behavior under test:
+ *   1. Fresh profile defaults to 2D (pin).
+ *   2. Persisted "3d" is honoured when WebGL2 is available (pin), and the
+ *      toggle switches modes.
+ *   3. Persisted "3d" is IGNORED (not rewritten) when WebGL2 is unavailable —
+ *      the crash-prone 3D renderer never mounts.
+ *   4. Without WebGL2 the toggle is aria-disabled but stays focusable, keeps
+ *      its action name, and points at a "requires WebGL" description —
+ *      native `disabled` would hide the reason from keyboard/SR users.
+ *   5. A "3d" broadcast (SYNC_EVENT) at a WebGL-less instance must not mount
+ *      3D — the gate applies to the listener path, not just mount.
+ *   6. A 3D crash re-probes capability instead of rewriting the preference:
+ *      capability gone → 2D mounts, localStorage keeps "3d"; capability fine
+ *      (transient crash) → placeholder with a wired retry; a 2D crash shows
+ *      the placeholder rather than remounting what just threw.
+ *
+ * Mocking strategy: both graph implementations are sentinels; the 3D one
+ * throws from a LAYOUT EFFECT when armed — matching the real crash phase
+ * (react-kapsule constructs three's WebGLRenderer in its mount
+ * useLayoutEffect; three throws from that constructor without WebGL2).
+ * WebGL capability is a vi.spyOn stub over getContext reading a mutable
+ * `env`, so tests can model capability changing AFTER the probe cached its
+ * verdict. next/dynamic uses the shared passthrough helper.
  */
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup, waitFor } from "@testing-library/react";
+import { render, cleanup, fireEvent, act, waitFor } from "@testing-library/react";
 
-const mockState = vi.hoisted(() => ({ throw3d: false }));
+const mockState = vi.hoisted(() => ({ throw3d: false, throw2d: false }));
 
 vi.mock("./KnowledgeGraph2D", async () => {
   const React = await import("react");
   return {
-    KnowledgeGraph2D: () =>
-      React.createElement("div", { "data-testid": "mock-2d" }),
+    KnowledgeGraph2D: () => {
+      if (mockState.throw2d) throw new Error("2d render boom");
+      return React.createElement("div", { "data-testid": "mock-2d" });
+    },
   };
 });
 
@@ -41,137 +48,224 @@ vi.mock("./KnowledgeGraph3D", async () => {
   const React = await import("react");
   return {
     KnowledgeGraph3D: () => {
-      if (mockState.throw3d) {
-        // Mirrors three.module.js's WebGLRenderer constructor throw.
-        throw new Error("Error creating WebGL context.");
-      }
+      // Real crash phase: three's WebGLRenderer constructor throws inside
+      // react-kapsule's mount useLayoutEffect, not during render.
+      React.useLayoutEffect(() => {
+        if (mockState.throw3d) {
+          throw new Error("Error creating WebGL context.");
+        }
+      });
       return React.createElement("div", { "data-testid": "mock-3d" });
     },
   };
 });
 
-// Same passthrough as KnowledgeGraph3D.test.tsx: render the (mocked)
-// dynamic module synchronously instead of next/dynamic's client-only
-// loader dance.
-type MockComponent = (props: Record<string, unknown>) => React.ReactNode;
+vi.mock("next/dynamic", async () =>
+  (await import("@/test-utils/mockNextDynamic")).mockNextDynamicModule(),
+);
 
-vi.mock("next/dynamic", () => ({
-  default: (loader: () => Promise<unknown>) => {
-    let Resolved: MockComponent = () => null;
-    Promise.resolve(loader()).then((mod) => {
-      const m = mod as { default?: MockComponent } | MockComponent;
-      Resolved =
-        typeof m === "function" ? m : (m.default ?? (() => null));
-    });
-    const Wrapper: MockComponent = (props) => {
-      const C = Resolved;
-      return C(props);
-    };
-    return Wrapper;
-  },
-}));
+import {
+  KnowledgeGraph,
+  GRAPH_MODE_STORAGE_KEY,
+  GRAPH_MODE_SYNC_EVENT,
+  probeWebgl2,
+} from "./KnowledgeGraph";
 
-import { KnowledgeGraph } from "./KnowledgeGraph";
+/** Mutable capability the getContext stub reads at CALL time — lets a test
+ * model WebGL dying after the probe cached its verdict. */
+const env = { webgl2: true };
 
-const STORAGE_KEY = "sapling.kg.mode";
+function stubGetContext() {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(((
+    kind: string,
+  ) => {
+    if (kind === "webgl2" && env.webgl2) {
+      // Minimal context shape: the probe may look up WEBGL_lose_context
+      // to release the probe context.
+      return { getExtension: () => null };
+    }
+    return null;
+  }) as unknown as HTMLCanvasElement["getContext"]);
+}
 
-/** Stub canvas.getContext to advertise (or deny) WebGL2 support. */
-function setWebgl2Available(available: boolean) {
-  Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
-    configurable: true,
-    writable: true,
-    value: vi.fn().mockImplementation((kind: string) => {
-      if (kind === "webgl2" && available) {
-        // Minimal context shape: the probe may look up
-        // WEBGL_lose_context to release the probe context.
-        return { getExtension: () => null };
-      }
-      return null;
-    }),
-  });
+/** Set capability AND re-prime the module-level probe cache from it. */
+function setWebgl2(available: boolean) {
+  env.webgl2 = available;
+  probeWebgl2(true);
 }
 
 beforeEach(() => {
   mockState.throw3d = false;
+  mockState.throw2d = false;
   window.localStorage.clear();
+  stubGetContext();
+  setWebgl2(true);
 });
 
 afterEach(() => {
   cleanup();
+  // Actually restores getContext — the stub is installed via vi.spyOn, which
+  // (unlike a defineProperty swap) registers with restoreAllMocks.
   vi.restoreAllMocks();
 });
 
+function silenceBoundaryLogs() {
+  // React logs boundary-caught errors (and our fallback logs the crash)
+  // via console.error; keep test output pristine.
+  return vi.spyOn(console, "error").mockImplementation(() => {});
+}
+
 describe("KnowledgeGraph — mode selection", () => {
   it("defaults to the 2D graph on a fresh profile", () => {
-    setWebgl2Available(true);
     const { queryByTestId } = render(<KnowledgeGraph nodes={[]} edges={[]} />);
     expect(queryByTestId("mock-2d")).not.toBeNull();
     expect(queryByTestId("mock-3d")).toBeNull();
   });
 
   it("honours persisted 3d mode when WebGL2 is available", () => {
-    setWebgl2Available(true);
-    window.localStorage.setItem(STORAGE_KEY, "3d");
+    window.localStorage.setItem(GRAPH_MODE_STORAGE_KEY, "3d");
     const { queryByTestId } = render(<KnowledgeGraph nodes={[]} edges={[]} />);
     expect(queryByTestId("mock-3d")).not.toBeNull();
     expect(queryByTestId("mock-2d")).toBeNull();
   });
+
+  it("toggle switches 2D → 3D when WebGL2 is available", () => {
+    const { getByTestId, queryByTestId } = render(
+      <KnowledgeGraph nodes={[]} edges={[]} />,
+    );
+    const toggle = getByTestId("graph-mode-toggle");
+    expect(toggle.getAttribute("aria-disabled")).not.toBe("true");
+    fireEvent.click(toggle);
+    expect(queryByTestId("mock-3d")).not.toBeNull();
+    expect(window.localStorage.getItem(GRAPH_MODE_STORAGE_KEY)).toBe("3d");
+  });
 });
 
 describe("KnowledgeGraph — WebGL2 capability gate (#538)", () => {
-  it("forces the 2D graph when 3d mode is persisted but WebGL2 is unavailable", () => {
-    setWebgl2Available(false);
-    window.localStorage.setItem(STORAGE_KEY, "3d");
+  it("forces the 2D graph when 3d mode is persisted but WebGL2 is unavailable, without rewriting the preference", () => {
+    setWebgl2(false);
+    window.localStorage.setItem(GRAPH_MODE_STORAGE_KEY, "3d");
     const { queryByTestId } = render(<KnowledgeGraph nodes={[]} edges={[]} />);
-    // The 3D renderer must never mount — on a real no-WebGL browser it
-    // throws from three's WebGLRenderer constructor at mount.
     expect(queryByTestId("mock-3d")).toBeNull();
     expect(queryByTestId("mock-2d")).not.toBeNull();
+    // Ignored, NOT rewritten — the preference survives for WebGL-capable
+    // browsers on this profile.
+    expect(window.localStorage.getItem(GRAPH_MODE_STORAGE_KEY)).toBe("3d");
   });
 
-  it("disables the mode toggle with an explanatory label when WebGL2 is unavailable", () => {
-    setWebgl2Available(false);
-    const { getByTestId } = render(<KnowledgeGraph nodes={[]} edges={[]} />);
+  it("marks the toggle aria-disabled but keeps it focusable with the reason reachable", () => {
+    setWebgl2(false);
+    const { getByTestId, queryByTestId } = render(
+      <KnowledgeGraph nodes={[]} edges={[]} />,
+    );
     const toggle = getByTestId("graph-mode-toggle") as HTMLButtonElement;
-    expect(toggle.disabled).toBe(true);
-    expect(toggle.title.toLowerCase()).toContain("webgl");
-  });
 
-  it("keeps the mode toggle enabled when WebGL2 is available", () => {
-    setWebgl2Available(true);
-    const { getByTestId } = render(<KnowledgeGraph nodes={[]} edges={[]} />);
-    const toggle = getByTestId("graph-mode-toggle") as HTMLButtonElement;
+    // aria-disabled, NOT native disabled: native disabled removes the
+    // control from the tab order, making the reason unreachable to
+    // keyboard/SR users.
+    expect(toggle.getAttribute("aria-disabled")).toBe("true");
     expect(toggle.disabled).toBe(false);
+    toggle.focus();
+    expect(document.activeElement).toBe(toggle);
+
+    // The accessible NAME stays the action; the REASON hangs off
+    // aria-describedby.
+    const describedBy = toggle.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    const desc = document.getElementById(describedBy!);
+    expect(desc?.textContent ?? "").toContain("WebGL");
+
+    // Clicking an aria-disabled control is a no-op.
+    fireEvent.click(toggle);
+    expect(queryByTestId("mock-3d")).toBeNull();
+    expect(window.localStorage.getItem(GRAPH_MODE_STORAGE_KEY)).not.toBe("3d");
+  });
+
+  it("gates the sync-event path: a broadcast '3d' at a WebGL-less instance keeps 2D mounted", () => {
+    setWebgl2(false);
+    const { queryByTestId } = render(<KnowledgeGraph nodes={[]} edges={[]} />);
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(GRAPH_MODE_SYNC_EVENT, { detail: "3d" }),
+      );
+    });
+    expect(queryByTestId("mock-3d")).toBeNull();
+    expect(queryByTestId("mock-2d")).not.toBeNull();
   });
 });
 
 describe("KnowledgeGraph — 3D renderer crash containment (#538)", () => {
-  it("degrades a crashed 3D renderer to the 2D graph and heals the persisted mode", async () => {
-    // WebGL2 probes fine, but the renderer still throws at mount —
-    // e.g. GPU process crash or per-page context-limit exhaustion.
-    setWebgl2Available(true);
-    window.localStorage.setItem(STORAGE_KEY, "3d");
+  it("recovers a stale capability verdict: crash re-probes, 2D mounts, preference intact", async () => {
+    // WebGL verdict cached as available, then capability dies BEFORE mount
+    // (GPU process crash) — the stale cache lets 3D mount and throw.
+    window.localStorage.setItem(GRAPH_MODE_STORAGE_KEY, "3d");
     mockState.throw3d = true;
+    env.webgl2 = false; // capability gone; cache still says available
 
-    // React logs caught boundary errors via console.error; keep the
-    // test output pristine without hiding unrelated errors.
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
+    const consoleError = silenceBoundaryLogs();
+    const { queryByTestId, getByTestId } = render(
+      <KnowledgeGraph nodes={[]} edges={[]} />,
+    );
 
-    const { queryByTestId } = render(<KnowledgeGraph nodes={[]} edges={[]} />);
-
-    // The crash must be contained: 2D graph inline, no rethrow.
+    // Contained and downgraded via re-probe: fresh boundary mounts 2D.
     await waitFor(() => {
       expect(queryByTestId("mock-2d")).not.toBeNull();
     });
     expect(queryByTestId("mock-3d")).toBeNull();
 
-    // The bad persisted mode heals so the next mount doesn't retry 3D.
-    await waitFor(() => {
-      expect(window.localStorage.getItem(STORAGE_KEY)).toBe("2d");
-    });
+    // The preference is NEVER rewritten by a crash.
+    expect(window.localStorage.getItem(GRAPH_MODE_STORAGE_KEY)).toBe("3d");
 
+    // The re-probe also fixes the toggle's disabled reason.
+    expect(getByTestId("graph-mode-toggle").getAttribute("aria-disabled")).toBe(
+      "true",
+    );
+    consoleError.mockRestore();
+  });
+
+  it("contains a transient 3D crash (capability fine): placeholder with a working retry, preference intact", async () => {
+    window.localStorage.setItem(GRAPH_MODE_STORAGE_KEY, "3d");
+    mockState.throw3d = true; // transient: capability stays available
+
+    const consoleError = silenceBoundaryLogs();
+    const { queryByTestId, findByTestId } = render(
+      <KnowledgeGraph nodes={[]} edges={[]} />,
+    );
+
+    // Placeholder, not a component that could rethrow inside the errored
+    // boundary's own fallback render.
+    const fallback = await findByTestId("graph-crash-fallback");
+    expect(fallback).not.toBeNull();
+    expect(queryByTestId("mock-2d")).toBeNull();
+    expect(window.localStorage.getItem(GRAPH_MODE_STORAGE_KEY)).toBe("3d");
+
+    // The boundary's reset is wired: once the transient condition clears,
+    // retry remounts the 3D renderer in place.
+    mockState.throw3d = false;
+    fireEvent.click(await findByTestId("graph-crash-retry"));
+    await waitFor(() => {
+      expect(queryByTestId("mock-3d")).not.toBeNull();
+    });
+    consoleError.mockRestore();
+  });
+
+  it("contains a 2D crash behind the same placeholder instead of remounting what just threw", async () => {
+    mockState.throw2d = true;
+
+    const consoleError = silenceBoundaryLogs();
+    const { queryByTestId, findByTestId } = render(
+      <KnowledgeGraph nodes={[]} edges={[]} />,
+    );
+
+    expect(await findByTestId("graph-crash-fallback")).not.toBeNull();
+    expect(queryByTestId("mock-2d")).toBeNull();
+
+    // Retry works here too once the condition clears.
+    mockState.throw2d = false;
+    fireEvent.click(await findByTestId("graph-crash-retry"));
+    await waitFor(() => {
+      expect(queryByTestId("mock-2d")).not.toBeNull();
+    });
     consoleError.mockRestore();
   });
 });

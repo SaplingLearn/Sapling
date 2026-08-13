@@ -207,6 +207,8 @@ route:
 | `graph-add-concept` | Tree toolbar: "＋ Add concept" opener (#330) — rendered only when a single course pill is selected (the "all" filter gives no course to attribute the node to) |
 | `graph-add-concept-input` | the concept-name `<input>` (Enter submits, Escape cancels) |
 | `graph-add-concept-submit` | the "Add" button — POSTs create-or-merge, toasts, reloads the graph |
+| `graph-crash-fallback` | graph-local crash placeholder (#538) — rendered by the wrapper's error boundary when a renderer throws; never contains a graph |
+| `graph-crash-retry` | "Try again" button inside the crash placeholder — wired to the boundary's reset |
 
 `graph-node-item` / `graph-node` carry the node id as a separate
 `data-node-id` attribute instead of a testid suffix (the repeated-items rule
@@ -221,6 +223,7 @@ never collide in the DOM.
 | testid | element |
 | --- | --- |
 | `app-shell` | authed shell root — the scrolling `<main id="main-content">` in `ShellFrame.tsx`, present in both (top-nav and sidebar) layout variants; the Playwright harness smoke spec (#385) anchors on it as the "authed shell mounted" signal |
+| `error-fallback` | root `ErrorFallback` surface (`ErrorBoundary.tsx`) — the whole-app "We hit a snag" page; journeys assert its ABSENCE (#538) so the check survives copy rewording |
 
 ### `social`
 

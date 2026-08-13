@@ -1,40 +1,54 @@
 /**
- * Journey #538 — a browser without WebGL lands on the dashboard without
- * crashing, even when the persisted graph mode is "3d".
+ * Journey #538 — WebGL capability and the knowledge-graph mode toggle.
  *
  * THE BUG: the KnowledgeGraph wrapper honoured localStorage's
  * `sapling.kg.mode = "3d"` unconditionally. three.js r163+ THROWS from the
  * WebGLRenderer constructor when `canvas.getContext("webgl2")` returns null,
  * the throw happens in a mount-time layout effect, and the only error
  * boundary above it was the ROOT one (app/layout.tsx) — so the entire app
- * unmounted into the "We hit a snag" fallback. A profile that toggled 3D on
- * a WebGL-capable browser was permanently locked out of the dashboard the
+ * unmounted into the root error fallback. A profile that toggled 3D on a
+ * WebGL-capable browser was permanently locked out of the dashboard the
  * moment WebGL went away (disabled, GPU blocklisted, remote desktop, VM).
  *
- * THE FIX (KnowledgeGraph.tsx): probe webgl2 before honouring the persisted
- * "3d" (ignore it — do NOT rewrite it — when unavailable), disable the mode
- * toggle with an explanatory label, and contain any residual renderer crash
- * in a graph-local error boundary that degrades to the 2D graph.
+ * THE FIX (KnowledgeGraph.tsx): the wrapper derives the EFFECTIVE mode from
+ * the persisted wish + a WebGL2 capability probe — ignoring (never
+ * rewriting) a "3d" wish the browser can't honour — marks the toggle
+ * aria-disabled with the reason reachable, and contains residual renderer
+ * crashes in a graph-local boundary.
  *
- * Simulation: an init script nulls the webgl/webgl2/experimental-webgl
- * branches of HTMLCanvasElement.getContext BEFORE any app script runs —
- * exactly the API surface three.js probes — and seeds the poisoned
- * `sapling.kg.mode = "3d"` the way a real profile would carry it. 2D canvas
- * contexts stay real (the AtmosphericBackdrop uses one).
+ * Test 1 simulates the no-WebGL browser: an init script nulls the
+ * webgl/webgl2/experimental-webgl branches of HTMLCanvasElement.getContext
+ * BEFORE any app script runs — exactly the API surface three.js probes —
+ * and seeds the poisoned `"3d"` mode the way a real profile would carry it.
+ * 2D canvas contexts stay real (the AtmosphericBackdrop uses one).
  *
- * Anchoring (docs/frontend-testids.md, graph surface): `graph-container`
- * (wrapper root), `graph-node` (2D SVG render layer — the 3D renderer has no
- * such marks, so their presence proves the 2D path), `graph-mode-toggle`.
+ * Test 2 pins the POSITIVE path in a real browser: with genuine WebGL2
+ * (headless Chromium's SwiftShader), the toggle must stay enabled — a probe
+ * regression that false-negatives in real Chromium would otherwise disable
+ * the 3D feature for every user with every suite green.
+ *
+ * Anchoring (docs/frontend-testids.md): `graph-container`, `graph-node`
+ * (2D SVG render layer — the 3D renderer has no such marks, so their
+ * presence proves the 2D path), `graph-mode-toggle`, `error-fallback`
+ * (root crash surface — asserted ABSENT), `graph-crash-fallback` (graph-
+ * local crash surface — asserted absent too: capability gating must not
+ * even reach the boundary).
  */
 import { expect, test } from "./support/fixtures";
 
+// Mirrors GRAPH_MODE_STORAGE_KEY in
+// frontend/src/components/graph/KnowledgeGraph.tsx — e2e specs cannot
+// import from src/, so keep these in lockstep.
 const KG_MODE_KEY = "sapling.kg.mode";
 
-test.beforeEach(async ({ page }) => {
+test("no-WebGL browser with persisted 3d mode lands on the dashboard and gets the 2D graph", async ({
+  page,
+}) => {
   await page.addInitScript(
     ([modeKey]) => {
       const orig = HTMLCanvasElement.prototype.getContext;
       HTMLCanvasElement.prototype.getContext = function (
+        this: HTMLCanvasElement,
         kind: string,
         ...rest: unknown[]
       ) {
@@ -52,11 +66,7 @@ test.beforeEach(async ({ page }) => {
     },
     [KG_MODE_KEY],
   );
-});
 
-test("no-WebGL browser with persisted 3d mode lands on the dashboard and gets the 2D graph", async ({
-  page,
-}) => {
   await page.goto("/dashboard");
 
   // The graph slot renders — and it is the 2D SVG layer: `graph-node`
@@ -66,14 +76,16 @@ test("no-WebGL browser with persisted 3d mode lands on the dashboard and gets th
   await expect(container).toBeVisible();
   await expect(container.getByTestId("graph-node").first()).toBeVisible();
 
-  // The whole point of #538: the app must NOT have collapsed into the root
-  // error fallback.
-  await expect(page.getByText("We hit a snag")).toHaveCount(0);
-  await expect(page.getByText("Error creating WebGL context")).toHaveCount(0);
+  // The whole point of #538: neither the root error surface nor even the
+  // graph-local crash surface may appear — the capability gate keeps the
+  // crash from ever happening, rather than merely containing it.
+  await expect(page.getByTestId("error-fallback")).toHaveCount(0);
+  await expect(page.getByTestId("graph-crash-fallback")).toHaveCount(0);
 
-  // The 3D toggle is disabled and says why.
+  // The 3D toggle is aria-disabled (still focusable for keyboard/SR users)
+  // and says why.
   const toggle = page.getByTestId("graph-mode-toggle");
-  await expect(toggle).toBeDisabled();
+  await expect(toggle).toHaveAttribute("aria-disabled", "true");
   await expect(toggle).toHaveAttribute("title", "3D requires WebGL");
 
   // The preference is IGNORED, not rewritten: back on a WebGL-capable
@@ -81,4 +93,23 @@ test("no-WebGL browser with persisted 3d mode lands on the dashboard and gets th
   expect(
     await page.evaluate((k) => window.localStorage.getItem(k), KG_MODE_KEY),
   ).toBe("3d");
+
+  // End-state re-assert: the graph is still standing after everything
+  // above — a late async crash (chunk timing) can't slip in after the
+  // early negative checks and leave the spec green.
+  await expect(container.getByTestId("graph-node").first()).toBeVisible();
+  await expect(page.getByTestId("error-fallback")).toHaveCount(0);
+});
+
+test("WebGL-capable browser keeps the 3D toggle enabled", async ({ page }) => {
+  // No init script: headless Chromium has real WebGL2 via SwiftShader. A
+  // capability-probe regression that false-negatives in a real browser
+  // would silently disable 3D for every user — this is the only
+  // real-browser assertion of the positive path.
+  await page.goto("/dashboard");
+
+  const toggle = page.getByTestId("graph-mode-toggle");
+  await expect(toggle).toBeVisible();
+  await expect(toggle).not.toHaveAttribute("aria-disabled", "true");
+  await expect(toggle).toHaveAttribute("title", "Switch to 3D graph");
 });
