@@ -56,7 +56,12 @@ def _get_user_stat(user_id: str, trigger_type: str) -> int:
         return _count_rows("documents", {"user_id": f"eq.{user_id}"})
 
     if trigger_type == "quizzes_completed":
-        return _count_rows("quiz_attempts", {"user_id": f"eq.{user_id}"})
+        # #542 D3: completed attempts only — generate writes the attempt row
+        # BEFORE the student answers anything, so an unfiltered count let
+        # "generate and close the tab" advance quizzes_10.
+        return _count_rows("quiz_attempts", {
+            "user_id": f"eq.{user_id}", "completed_at": "not.is.null",
+        })
 
     if trigger_type == "rooms_joined":
         return _count_rows("room_members", {"user_id": f"eq.{user_id}"})

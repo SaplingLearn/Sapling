@@ -42,6 +42,14 @@ REQUESTED_DIFFICULTIES = CONCRETE_DIFFICULTIES + ("adaptive",)
 # short-answer grading.
 QUIZ_QUESTION_TYPES = ("multiple_choice",)
 
+# #542 D2: an in-progress attempt older than this is considered abandoned
+# (derived status + the lazy per-user sweep that stamps abandoned_at).
+# 24h: a quiz is a single sitting — anything paused across a day is not
+# coming back, and the resume endpoint stops offering it. Deliberately
+# generous vs. a session-length TTL so a student who steps away mid-quiz
+# for hours can still resume.
+QUIZ_ATTEMPT_ABANDON_TTL_HOURS = 24
+
 
 def quiz_config_payload() -> dict:
     """The GET /api/quiz/config response body."""

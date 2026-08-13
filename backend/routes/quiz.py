@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
@@ -24,6 +24,7 @@ from services import events_service
 from services.auth_guard import require_self
 from services.quiz_config import (
     CONCRETE_DIFFICULTIES,
+    QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
     REQUESTED_DIFFICULTIES,
     quiz_config_payload,
 )
@@ -76,6 +77,50 @@ _OPTION_LABELS = ["A", "B", "C", "D", "E", "F"]
 # the config tuple so a difficulty added there can't be silently dropped by
 # _resolved_difficulty's counting.
 _DIFFICULTY_RANK = {d: i for i, d in enumerate(CONCRETE_DIFFICULTIES)}
+
+
+def _abandon_cutoff() -> datetime:
+    return datetime.now(timezone.utc) - timedelta(
+        hours=QUIZ_ATTEMPT_ABANDON_TTL_HOURS
+    )
+
+
+def _attempt_status(attempt: dict) -> str:
+    """#542 D2: status is DERIVED from the timestamps, never stored, so it
+    can't drift. An in-progress row past the TTL reads as abandoned even
+    before the lazy sweep has stamped abandoned_at."""
+    if attempt.get("completed_at"):
+        return "completed"
+    if attempt.get("abandoned_at"):
+        return "abandoned"
+    created = attempt.get("created_at")
+    if created:
+        try:
+            created_dt = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+        except ValueError:
+            created_dt = None
+        if created_dt and created_dt < _abandon_cutoff():
+            return "abandoned"
+    return "in_progress"
+
+
+def _sweep_abandoned(user_id: str) -> None:
+    """Stamp abandoned_at on this user's stale in-progress attempts (#542
+    D2). Conditional-update filters arbitrate — same idiom as the submit
+    claim — and runs lazily on the read paths (history/resume), so no
+    scheduler is needed. Best-effort: a failure never breaks the read."""
+    try:
+        table("quiz_attempts").update(
+            {"abandoned_at": datetime.now(timezone.utc).isoformat()},
+            filters={
+                "user_id": f"eq.{user_id}",
+                "completed_at": "is.null",
+                "abandoned_at": "is.null",
+                "created_at": f"lt.{_abandon_cutoff().isoformat()}",
+            },
+        )
+    except Exception:
+        logger.exception("quiz: abandon sweep failed user=%s", user_id)
 
 
 def _strip_answer_key(wire_questions: list[dict]) -> list[dict]:
@@ -483,6 +528,104 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     }
 
 
+@router.get("/attempts")
+def list_attempts(
+    request: Request,
+    user_id: str,
+    limit: int = 20,
+    offset: int = 0,
+):
+    """#542 D4: paginated attempt history for the signed-in user — the
+    plaintext scalars (#521/#527) finally get their reader. No question
+    payloads here (and therefore no answer keys)."""
+    require_self(user_id, request)
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    # Lazy lifecycle sweep (#542 D2) — the read paths keep statuses honest.
+    _sweep_abandoned(user_id)
+
+    rows, total = table("quiz_attempts").select_with_count(
+        "id,concept_node_id,difficulty,score,total,mastery_before,"
+        "mastery_after,completed_at,abandoned_at,created_at",
+        filters={"user_id": f"eq.{user_id}"},
+        order="created_at.desc",
+        limit=limit,
+        offset=offset,
+    )
+    rows = rows or []
+
+    node_ids = sorted({r["concept_node_id"] for r in rows if r.get("concept_node_id")})
+    nodes: dict[str, dict] = {}
+    if node_ids:
+        node_rows = table("graph_nodes").select(
+            "id,concept_name,course_id",
+            filters={"id": f"in.({','.join(node_ids)})", "user_id": f"eq.{user_id}"},
+        ) or []
+        nodes = {n["id"]: n for n in node_rows}
+
+    attempts = []
+    for r in rows:
+        node = nodes.get(r.get("concept_node_id")) or {}
+        before, after = r.get("mastery_before"), r.get("mastery_after")
+        delta = round(after - before, 4) if before is not None and after is not None else None
+        attempts.append({
+            "quiz_id": r["id"],
+            "status": _attempt_status(r),
+            "concept_node_id": r.get("concept_node_id"),
+            "concept_name": node.get("concept_name"),
+            "course_id": node.get("course_id"),
+            "score": r.get("score"),
+            "total": r.get("total"),
+            "difficulty": r.get("difficulty"),
+            "mastery_before": before,
+            "mastery_after": after,
+            "mastery_delta": delta,
+            "created_at": r.get("created_at"),
+            "completed_at": r.get("completed_at"),
+        })
+    return {"total": total, "attempts": attempts, "limit": limit, "offset": offset}
+
+
+@router.get("/attempts/{attempt_id}")
+def get_attempt(attempt_id: str, request: Request):
+    """#542 D2: resume state for one attempt — enough to rebuild an
+    in-progress quiz client-side: questions WITHOUT the answer key, plus
+    the responses already recorded through /answer."""
+    attempt_rows = table("quiz_attempts").select(
+        "*", filters={"id": f"eq.{attempt_id}"}
+    )
+    if not attempt_rows:
+        raise QuizAPIError(
+            status_code=404,
+            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
+            message="We couldn't find that quiz.",
+        )
+    attempt = attempt_rows[0]
+    require_self(attempt["user_id"], request)
+    _sweep_abandoned(attempt["user_id"])
+
+    questions = decrypt_json_column(attempt["questions_json"]) or []
+    responses = table("quiz_responses").select(
+        "question_index,selected_index,is_correct,time_ms,confidence,answered_at",
+        filters={"attempt_id": f"eq.{attempt_id}"},
+        order="question_index.asc",
+    ) or []
+    return {
+        "quiz_id": attempt["id"],
+        "status": _attempt_status(attempt),
+        "difficulty": attempt.get("difficulty"),
+        "concept_node_id": attempt.get("concept_node_id"),
+        "questions": _strip_answer_key(questions),
+        "responses": responses,
+        "score": attempt.get("score"),
+        "total": attempt.get("total"),
+        "mastery_before": attempt.get("mastery_before"),
+        "mastery_after": attempt.get("mastery_after"),
+        "created_at": attempt.get("created_at"),
+        "completed_at": attempt.get("completed_at"),
+    }
+
+
 @router.post("/attempts/{attempt_id}/answer")
 def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
     """#541 C1: grade one question server-side and record the response.
@@ -766,6 +909,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             # not the raw request — the attempt's stored answers must agree
             # with the score computed from them.
             "answers_json": encrypt_json(graded_answers),
+            # #542 D1: the mastery snapshot — without it a replayed/audited
+            # submit can't reconstruct what the student saw, and history
+            # can't show progression. Plaintext scalars (#521 rationale).
+            "mastery_before": mastery_before,
+            "mastery_after": mastery_after,
             # completed_at was already stamped by the atomic claim above.
         },
         filters={"id": f"eq.{body.quiz_id}"},
