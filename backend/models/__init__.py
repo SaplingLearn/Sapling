@@ -73,10 +73,16 @@ class AnswerQuestionBody(BaseModel):
     """One answer for POST /api/quiz/attempts/{attempt_id}/answer (#541 C1).
 
     Indexes are 0-based positions into the attempt's stored questions and
-    the question's options (wire ids are 1-based; index = id - 1)."""
+    the question's options. The wire questions carry 1-based `id`s (what
+    /submit keys on), so `question_index = id - 1` — two addressing schemes
+    for one question. `question_id` is the guard against confusing them:
+    send the id you displayed and the route rejects a mismatch instead of
+    silently grading the neighbouring question (which the idempotency rule
+    would then lock in). The response echoes both either way."""
 
     question_index: int = Field(ge=0)
     selected_index: int = Field(ge=0)
+    question_id: Optional[int] = None
     time_ms: Optional[int] = Field(default=None, ge=0)
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 

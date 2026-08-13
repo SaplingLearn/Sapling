@@ -23,4 +23,8 @@ CREATE TABLE quiz_responses (
     CONSTRAINT quiz_responses_attempt_question_key UNIQUE (attempt_id, question_index)
 );
 
-CREATE INDEX idx_quiz_responses_attempt ON quiz_responses(attempt_id);
+-- No separate attempt_id index: Postgres backs the UNIQUE above with a btree
+-- whose LEADING column is attempt_id, which already serves both access
+-- patterns (submit's per-attempt scan and the answer endpoint's
+-- (attempt_id, question_index) lookup). A standalone index would just add a
+-- second write to the per-answer hot path.

@@ -525,15 +525,25 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
             code=QuizErrorCode.QUIZ_QUESTION_INVALID,
             message="That answer choice isn't part of this question.",
         )
-
-    def _graded(selected_index: int) -> tuple[bool, int]:
-        correct_index = next(
-            (i for i, o in enumerate(options) if o.get("correct")), -1
+    # Wire ids are 1-based, question_index is 0-based. When the client sends
+    # both, they must agree — otherwise passing the displayed id as the index
+    # silently grades the NEXT question and idempotency locks that in.
+    if body.question_id is not None and body.question_id != question.get("id"):
+        raise QuizAPIError(
+            status_code=400,
+            code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+            message="That answer doesn't match the question it was sent for.",
         )
-        # A malformed item with no correct option never grades correct
-        # (same rule as submit's #129 fix).
-        return (correct_index == selected_index and correct_index >= 0,
-                correct_index)
+
+    # The correct option is a property of the question, not of the answer —
+    # resolve it once. -1 means a malformed item with no correct option,
+    # which must never grade correct (same rule as submit's #129 fix).
+    correct_index = next(
+        (i for i, o in enumerate(options) if o.get("correct")), -1
+    )
+
+    def _is_correct(selected_index: int) -> bool:
+        return correct_index >= 0 and correct_index == selected_index
 
     recorded = True
     response_row = None
@@ -548,12 +558,11 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
         recorded = False
         response_row = existing[0]
     else:
-        is_correct, _ = _graded(body.selected_index)
         row = {
             "attempt_id": attempt_id,
             "question_index": body.question_index,
             "selected_index": body.selected_index,
-            "is_correct": is_correct,
+            "is_correct": _is_correct(body.selected_index),
             "time_ms": body.time_ms,
             "confidence": body.confidence,
         }
@@ -575,7 +584,6 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
                 raise
             response_row = raced[0]
 
-    graded_correct, correct_index = _graded(response_row["selected_index"])
     next_index = body.question_index + 1
     next_question = (
         _strip_answer_key([questions[next_index]])[0]
@@ -583,7 +591,11 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
         else None
     )
     return {
-        "is_correct": graded_correct,
+        # Echo both addressing schemes so a client that mixed them up sees
+        # it immediately rather than discovering it at submit time.
+        "question_index": body.question_index,
+        "question_id": question.get("id"),
+        "is_correct": _is_correct(response_row["selected_index"]),
         "correct_index": correct_index,
         "explanation": question.get("explanation", ""),
         "next_question": next_question,
@@ -654,6 +666,12 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     answer_map = {str(a.question_id): a.selected_label for a in body.answers}
     results = []
+    # The reconciled answer set — what was ACTUALLY graded, which is what
+    # answers_json must persist. Storing the raw payload instead left a
+    # recorded-only submit with a full score beside an empty answer list,
+    # and a contradicted payload answer stored despite losing to the
+    # recorded response.
+    graded_answers: list[dict] = []
     score = 0
     for q_index, q in enumerate(questions):
         qid = str(q["id"])
@@ -668,6 +686,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             )
         else:
             selected = answer_map.get(qid, "")
+        if selected:
+            graded_answers.append({
+                "question_id": q["id"],
+                "selected_label": selected,
+            })
         correct_opt = next((o for o in q["options"] if o.get("correct")), None)
         correct_label = correct_opt["label"] if correct_opt else ""
         # #129: a malformed item with NO correct option must never grade as
@@ -739,7 +762,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         {
             "score": score,
             "total": total,
-            "answers_json": encrypt_json([a.model_dump() for a in body.answers]),
+            # The reconciled set (recorded responses winning over payload),
+            # not the raw request — the attempt's stored answers must agree
+            # with the score computed from them.
+            "answers_json": encrypt_json(graded_answers),
             # completed_at was already stamped by the atomic claim above.
         },
         filters={"id": f"eq.{body.quiz_id}"},

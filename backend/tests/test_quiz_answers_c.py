@@ -194,6 +194,29 @@ class TestAnswerEndpoint:
             assert r.status_code == 400
             assert r.json()["error"]["code"] == "QUIZ_QUESTION_INVALID"
 
+    def test_response_echoes_the_wire_question_id(self):
+        """Wire question ids are 1-based; question_index is 0-based. Echoing
+        the id the client displayed makes an off-by-one visible instead of
+        silently grading the wrong question (which idempotency then locks in)."""
+        factory, _ = _tables()
+        with patch("routes.quiz.table", side_effect=factory):
+            r = _answer({"question_index": 0, "selected_index": 1})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["question_index"] == 0
+        assert data["question_id"] == 1   # QUESTIONS[0]["id"]
+
+    def test_question_id_mismatch_is_rejected(self):
+        """A client may send the wire id it displayed alongside the index;
+        when both are present they must agree, so passing the 1-based id as
+        the 0-based index fails loudly instead of grading question 2."""
+        factory, responses = _tables()
+        with patch("routes.quiz.table", side_effect=factory):
+            r = _answer({"question_index": 1, "selected_index": 0, "question_id": 1})
+        assert r.status_code == 400
+        assert r.json()["error"]["code"] == "QUIZ_QUESTION_INVALID"
+        assert responses.rows == []
+
 
 # ── C3: include_answer_key ──────────────────────────────────────────────────
 
@@ -295,6 +318,112 @@ class TestSubmitReconciliation:
             ),
             patch("routes.quiz.save_quiz_context"),
         )
+
+    def test_persisted_answers_match_what_was_graded(self):
+        """answers_json is the attempt's record of what the student answered
+        — it must be the RECONCILED set, not the raw payload. A recorded-only
+        submit (answers: []) previously stored an empty answer set beside a
+        full score; a contradicting payload answer was stored despite losing
+        to the recorded response."""
+        from services.encryption import decrypt_json_column
+
+        responses = _ResponsesTable()
+        responses.insert({
+            "attempt_id": "quiz1", "question_index": 0,
+            "selected_index": 1, "is_correct": True,
+        })
+        update_calls: list = []
+        factory, _ = _tables(responses=responses)
+
+        def capturing(name):
+            t = factory(name)
+            if name == "quiz_attempts":
+                def _update(data, filters=None):
+                    update_calls.append(data)
+                    return [{"id": "quiz1"}]
+                t.update.side_effect = _update
+            return t
+
+        with (
+            patch("routes.quiz.table", side_effect=capturing),
+            patch("routes.quiz.apply_graph_update"),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch(
+                "routes.quiz.quiz_context_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(
+                    output=SimpleNamespace(model_dump=lambda: {})
+                )),
+            ),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1",
+                # Question 1 answered via C1 (B, correct) — the payload's
+                # contradicting "A" must not reach storage. Question 2 has
+                # no recorded response, so its payload answer is authoritative.
+                "answers": [
+                    {"question_id": 1, "selected_label": "A"},
+                    {"question_id": 2, "selected_label": "A"},
+                ],
+            })
+
+        assert r.status_code == 200
+        stored = [d for d in update_calls if "answers_json" in d]
+        assert len(stored) == 1
+        answers = decrypt_json_column(stored[0]["answers_json"])
+        by_qid = {str(a["question_id"]): a["selected_label"] for a in answers}
+        assert by_qid["1"] == "B", "stored answer must be the graded (recorded) one"
+        assert by_qid["2"] == "A"
+
+    def test_recorded_only_submit_persists_the_recorded_answers(self):
+        from services.encryption import decrypt_json_column
+
+        responses = _ResponsesTable()
+        responses.insert({
+            "attempt_id": "quiz1", "question_index": 0,
+            "selected_index": 1, "is_correct": True,
+        })
+        responses.insert({
+            "attempt_id": "quiz1", "question_index": 1,
+            "selected_index": 0, "is_correct": True,
+        })
+        update_calls: list = []
+        factory, _ = _tables(responses=responses)
+
+        def capturing(name):
+            t = factory(name)
+            if name == "quiz_attempts":
+                def _update(data, filters=None):
+                    update_calls.append(data)
+                    return [{"id": "quiz1"}]
+                t.update.side_effect = _update
+            return t
+
+        with (
+            patch("routes.quiz.table", side_effect=capturing),
+            patch("routes.quiz.apply_graph_update"),
+            patch("routes.quiz.get_quiz_context", return_value={}),
+            patch(
+                "routes.quiz.quiz_context_agent.run",
+                new=AsyncMock(return_value=SimpleNamespace(
+                    output=SimpleNamespace(model_dump=lambda: {})
+                )),
+            ),
+            patch("routes.quiz.save_quiz_context"),
+        ):
+            r = client.post("/api/quiz/submit", json={
+                "quiz_id": "quiz1", "answers": [],
+            })
+
+        assert r.status_code == 200
+        assert r.json()["score"] == 2
+        stored = [d for d in update_calls if "answers_json" in d][0]
+        answers = decrypt_json_column(stored["answers_json"])
+        assert len(answers) == 2, (
+            "a perfect score with an empty stored answer set is a contradictory "
+            "attempt record"
+        )
+        assert {a["selected_label"] for a in answers} == {"B", "A"}
 
     def test_mixed_case_prefers_recorded_and_falls_back_to_payload(self):
         responses = _ResponsesTable()
