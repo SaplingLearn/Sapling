@@ -82,9 +82,20 @@ class SupabaseTable:
         r.raise_for_status()
         return r.json()
 
-    def update(self, data: dict, filters: dict) -> list:
-        r = _client.patch(self.url, params=filters, json=data)
+    def update(self, data: dict, filters: dict, *, prefer_return_minimal: bool = False) -> list:
+        """PATCH matching rows; returns the updated rows.
+
+        `prefer_return_minimal=True` overrides the client-wide
+        `Prefer: return=representation` for writes whose result nobody
+        reads — a background sweep over many rows would otherwise drag
+        every updated row (including large encrypted columns) back over
+        the wire. Returns [] in that mode.
+        """
+        headers = {"Prefer": "return=minimal"} if prefer_return_minimal else None
+        r = _client.patch(self.url, params=filters, json=data, headers=headers)
         r.raise_for_status()
+        if prefer_return_minimal:
+            return []
         return r.json()
 
     def upsert(self, data, on_conflict: str = "id") -> list:

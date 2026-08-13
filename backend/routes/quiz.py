@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
@@ -24,6 +24,7 @@ from services import events_service
 from services.auth_guard import require_self
 from services.quiz_config import (
     CONCRETE_DIFFICULTIES,
+    QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
     REQUESTED_DIFFICULTIES,
     quiz_config_payload,
 )
@@ -78,15 +79,143 @@ _OPTION_LABELS = ["A", "B", "C", "D", "E", "F"]
 _DIFFICULTY_RANK = {d: i for i, d in enumerate(CONCRETE_DIFFICULTIES)}
 
 
+# PostgREST passes `offset` to Postgres as a bigint; anything past this is
+# a client bug, and an empty page is a better answer than a 500.
+_MAX_HISTORY_OFFSET = 1_000_000
+
+
+def _abandon_cutoff() -> datetime:
+    return datetime.now(timezone.utc) - timedelta(
+        hours=QUIZ_ATTEMPT_ABANDON_TTL_HOURS
+    )
+
+
+def _parse_ts(value) -> datetime | None:
+    """Parse a stored timestamp to an AWARE datetime, or None.
+
+    Naive values (an out-of-band write, a hand-edited row) are assumed UTC
+    rather than left naive: comparing a naive datetime against an aware one
+    raises TypeError, which `except ValueError` around the parse does not
+    catch — it would 500 both read endpoints.
+    """
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _attempt_status(attempt: dict, last_activity_at=None) -> str:
+    """#542 D2: status is DERIVED from the timestamps, never stored, so it
+    can't drift. An in-progress row past the TTL reads as abandoned even
+    before the lazy sweep has stamped abandoned_at.
+
+    `last_activity_at` is the newest recorded answer (quiz_responses):
+    a quiz generated days ago but answered minutes ago is being WORKED ON,
+    not abandoned — keying the TTL on created_at alone would strand the
+    responses already recorded against it.
+    """
+    if attempt.get("completed_at"):
+        return "completed"
+    if attempt.get("abandoned_at"):
+        return "abandoned"
+    cutoff = _abandon_cutoff()
+    latest = max(
+        (t for t in (_parse_ts(attempt.get("created_at")),
+                     _parse_ts(last_activity_at)) if t is not None),
+        default=None,
+    )
+    if latest is not None and latest < cutoff:
+        return "abandoned"
+    return "in_progress"
+
+
+def _refuse_if_abandoned(attempt: dict) -> None:
+    """409 on an attempt that's been swept as abandoned (#542 D2).
+
+    Checks the STAMP, not the derived TTL: a student mid-quiz whose
+    attempt merely crossed the age cutoff keeps working (their answers
+    refresh the activity clock — see _attempt_status), but once the sweep
+    has actually marked it, the attempt is closed.
+    """
+    if attempt.get("abandoned_at"):
+        raise QuizAPIError(
+            status_code=409,
+            code=QuizErrorCode.QUIZ_ATTEMPT_ABANDONED,
+            message="This quiz expired. Start a new one when you're ready.",
+        )
+
+
+def _sweep_abandoned(user_id: str, *, active_attempt_ids: set[str] | None = None) -> None:
+    """Stamp abandoned_at on this user's stale in-progress attempts (#542
+    D2). Conditional-update filters arbitrate — same idiom as the submit
+    claim — and it runs lazily on the read paths, so no scheduler is
+    needed. Best-effort: a failure never breaks the read.
+
+    `active_attempt_ids` are attempts with recent recorded answers, which
+    must survive the sweep even though they were created before the
+    cutoff — the student is mid-quiz.
+    """
+    filters = {
+        "user_id": f"eq.{user_id}",
+        "completed_at": "is.null",
+        "abandoned_at": "is.null",
+        "created_at": f"lt.{_abandon_cutoff().isoformat()}",
+    }
+    if active_attempt_ids:
+        filters["id"] = f"not.in.({','.join(sorted(active_attempt_ids))})"
+    try:
+        table("quiz_attempts").update(
+            {"abandoned_at": datetime.now(timezone.utc).isoformat()},
+            filters=filters,
+            # The sweep is a side effect of a READ; without this PostgREST's
+            # global Prefer: return=representation drags every swept row
+            # back in full — including the encrypted questions_json /
+            # answers_json blobs — on each history page load.
+            prefer_return_minimal=True,
+        )
+    except Exception:
+        logger.exception("quiz: abandon sweep failed user=%s", user_id)
+
+
+# The keys a keyless (student-facing) question may carry. An ALLOWLIST,
+# not a denylist: `explanation` states the correct answer in prose, and a
+# stored row from an older shape can hold the answer under any key at all
+# (the rich seed has {"q":..., "a":...}). Anything not listed here never
+# reaches a client that hasn't answered yet.
+_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty")
+_KEYLESS_OPTION_KEYS = ("label", "text")
+
+
+def _is_wire_question(q) -> bool:
+    """True if this stored question is in the current wire shape, so
+    _strip_answer_key can be trusted to remove everything sensitive."""
+    return (
+        isinstance(q, dict)
+        and isinstance(q.get("options"), list)
+        and bool(q.get("options"))
+        and all(isinstance(o, dict) and "label" in o for o in q["options"])
+    )
+
+
 def _strip_answer_key(wire_questions: list[dict]) -> list[dict]:
-    """Deep-enough copy of the wire questions without per-option `correct`
-    booleans (#541 C3). Storage always keeps the key — grading is
-    server-side; only the RESPONSE is stripped."""
+    """The student-facing view of a question: no per-option `correct`
+    booleans and no `explanation` (#541 C3, tightened in #542 review).
+
+    Built by allowlist, so a question shape this function doesn't
+    recognise can't leak an answer through an unexpected key. Callers must
+    gate on _is_wire_question first — an unrecognised shape has no safe
+    keyless projection at all.
+    """
     stripped = []
     for q in wire_questions:
-        q2 = dict(q)
+        q2 = {k: q[k] for k in _KEYLESS_QUESTION_KEYS if k in q}
         q2["options"] = [
-            {k: v for k, v in o.items() if k != "correct"}
+            {k: o[k] for k in _KEYLESS_OPTION_KEYS if k in o}
             for o in q.get("options", [])
         ]
         stripped.append(q2)
@@ -483,6 +612,139 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     }
 
 
+@router.get("/attempts")
+def list_attempts(
+    request: Request,
+    user_id: str,
+    limit: int = 20,
+    offset: int = 0,
+):
+    """#542 D4: paginated attempt history for the signed-in user — the
+    plaintext scalars (#521/#527) finally get their reader. No question
+    payloads here (and therefore no answer keys)."""
+    require_self(user_id, request)
+    limit = max(1, min(limit, 100))
+    # Clamp BOTH ends: an unbounded offset is stringified into PostgREST's
+    # offset param and Postgres rejects it as bigint-out-of-range — a 500
+    # where an empty page is the honest answer.
+    offset = max(0, min(offset, _MAX_HISTORY_OFFSET))
+    # Lazy lifecycle sweep (#542 D2) — the read paths keep statuses honest.
+    _sweep_abandoned(user_id)
+
+    rows, total = table("quiz_attempts").select_with_count(
+        "id,concept_node_id,difficulty,score,total,mastery_before,"
+        "mastery_after,completed_at,abandoned_at,created_at",
+        filters={"user_id": f"eq.{user_id}"},
+        # `id` is the unique tiebreaker: without it two attempts sharing a
+        # created_at have undefined relative order across the separate
+        # queries serving page N and N+1, so a row can repeat or vanish.
+        # Same idiom as routes/gamification.py's xp_events paging.
+        order="created_at.desc,id.desc",
+        limit=limit,
+        offset=offset,
+    )
+    rows = rows or []
+
+    node_ids = sorted({r["concept_node_id"] for r in rows if r.get("concept_node_id")})
+    nodes: dict[str, dict] = {}
+    if node_ids:
+        node_rows = table("graph_nodes").select(
+            "id,concept_name,course_id",
+            filters={"id": f"in.({','.join(node_ids)})", "user_id": f"eq.{user_id}"},
+        ) or []
+        nodes = {n["id"]: n for n in node_rows}
+
+    attempts = []
+    for r in rows:
+        node = nodes.get(r.get("concept_node_id")) or {}
+        before, after = r.get("mastery_before"), r.get("mastery_after")
+        delta = round(after - before, 4) if before is not None and after is not None else None
+        attempts.append({
+            "quiz_id": r["id"],
+            "status": _attempt_status(r),
+            "concept_node_id": r.get("concept_node_id"),
+            "concept_name": node.get("concept_name"),
+            "course_id": node.get("course_id"),
+            "score": r.get("score"),
+            "total": r.get("total"),
+            "difficulty": r.get("difficulty"),
+            "mastery_before": before,
+            "mastery_after": after,
+            "mastery_delta": delta,
+            "created_at": r.get("created_at"),
+            "completed_at": r.get("completed_at"),
+        })
+    return {"total": total, "attempts": attempts, "limit": limit, "offset": offset}
+
+
+@router.get("/attempts/{attempt_id}")
+def get_attempt(attempt_id: str, request: Request):
+    """#542 D2: resume state for one attempt — enough to rebuild an
+    in-progress quiz client-side: questions WITHOUT the answer key, plus
+    the responses already recorded through /answer."""
+    attempt_rows = table("quiz_attempts").select(
+        "*", filters={"id": f"eq.{attempt_id}"}
+    )
+    if not attempt_rows:
+        raise QuizAPIError(
+            status_code=404,
+            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
+            message="We couldn't find that quiz.",
+        )
+    attempt = attempt_rows[0]
+    require_self(attempt["user_id"], request)
+
+    responses = table("quiz_responses").select(
+        "question_index,selected_index,is_correct,time_ms,confidence,answered_at",
+        filters={"attempt_id": f"eq.{attempt_id}"},
+        order="question_index.asc",
+    ) or []
+    last_activity = max(
+        (r.get("answered_at") for r in responses if r.get("answered_at")),
+        default=None,
+    )
+    status = _attempt_status(attempt, last_activity_at=last_activity)
+    # Answering keeps an attempt alive, so exempt it from the sweep.
+    _sweep_abandoned(
+        attempt["user_id"],
+        active_attempt_ids={attempt_id} if status == "in_progress" else None,
+    )
+
+    questions = decrypt_json_column(attempt["questions_json"]) or []
+    if questions and not all(_is_wire_question(q) for q in questions):
+        # A stored shape this code doesn't recognise has no safe keyless
+        # projection — passing it through would ship whatever key it holds
+        # (legacy rows store the answer under `a`). Refuse the resume.
+        logger.warning(
+            "quiz: attempt %s stores questions in an unrecognised shape; "
+            "refusing to resume", attempt_id,
+        )
+        raise QuizAPIError(
+            status_code=409,
+            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_RESUMABLE,
+            message="This quiz can't be resumed. Start a new one.",
+        )
+    # Only an in-progress attempt hands back questions: a completed or
+    # abandoned one would otherwise let a client keep answering (the write
+    # paths refuse it, but there's no reason to ship the payload at all).
+    resumable = status == "in_progress"
+    return {
+        "quiz_id": attempt["id"],
+        "status": status,
+        "resumable": resumable,
+        "difficulty": attempt.get("difficulty"),
+        "concept_node_id": attempt.get("concept_node_id"),
+        "questions": _strip_answer_key(questions) if resumable else [],
+        "responses": responses,
+        "score": attempt.get("score"),
+        "total": attempt.get("total"),
+        "mastery_before": attempt.get("mastery_before"),
+        "mastery_after": attempt.get("mastery_after"),
+        "created_at": attempt.get("created_at"),
+        "completed_at": attempt.get("completed_at"),
+    }
+
+
 @router.post("/attempts/{attempt_id}/answer")
 def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
     """#541 C1: grade one question server-side and record the response.
@@ -509,6 +771,7 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
             code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
             message="This quiz has already been submitted.",
         )
+    _refuse_if_abandoned(attempt)
 
     questions = decrypt_json_column(attempt["questions_json"]) or []
     if body.question_index >= len(questions):
@@ -632,6 +895,9 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
             message="This quiz has already been submitted.",
         )
+    # An abandoned attempt must not pay out mastery, XP or achievements —
+    # otherwise the TTL is a label and the sweep enforces nothing.
+    _refuse_if_abandoned(attempt)
     # The read above is only the fast path — two CONCURRENT submits (a
     # double-click on the final submit) would both pass it. The atomic claim
     # below (conditional update on completed_at IS NULL, PR #464 review) is
@@ -743,7 +1009,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # bumps times_studied/last_studied_at, records the event (now in
     # node_mastery_events), and updates the streak. We don't touch graph_nodes
     # or node_mastery_events directly — that's the graph slice's territory.
-    apply_graph_update(
+    applied = apply_graph_update(
         user_id,
         {
             "updated_nodes": [
@@ -757,6 +1023,18 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         },
         course_id=node.get("course_id"),
     )
+    # #542 D1 (review): persist what the GRAPH actually wrote, not what we
+    # predicted. apply_graph_update owns the write — it resolves the node by
+    # normalized concept name and clamps the result — so its reported
+    # before/after is the only value that can't disagree with graph_nodes.
+    # Falls back to the local computation if the call returned nothing
+    # recognisable (it degrades rather than raising).
+    for change in applied or []:
+        if isinstance(change, dict) and change.get("after") is not None:
+            mastery_before = change.get("before", mastery_before)
+            mastery_after = change["after"]
+            mastery_delta = mastery_after - mastery_before
+            break
 
     table("quiz_attempts").update(
         {
@@ -766,6 +1044,11 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             # not the raw request — the attempt's stored answers must agree
             # with the score computed from them.
             "answers_json": encrypt_json(graded_answers),
+            # #542 D1: the mastery snapshot — without it a replayed/audited
+            # submit can't reconstruct what the student saw, and history
+            # can't show progression. Plaintext scalars (#521 rationale).
+            "mastery_before": mastery_before,
+            "mastery_after": mastery_after,
             # completed_at was already stamped by the atomic claim above.
         },
         filters={"id": f"eq.{body.quiz_id}"},

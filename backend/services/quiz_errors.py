@@ -34,6 +34,13 @@ class QuizErrorCode(str, Enum):
     QUIZ_CONCEPT_NOT_FOUND = "QUIZ_CONCEPT_NOT_FOUND"
     QUIZ_ATTEMPT_NOT_FOUND = "QUIZ_ATTEMPT_NOT_FOUND"
     QUIZ_ATTEMPT_ALREADY_COMPLETED = "QUIZ_ATTEMPT_ALREADY_COMPLETED"
+    # #542 D2: the attempt was swept as abandoned (past the TTL with no
+    # activity). Distinct from "already completed" — the student never
+    # finished it, and the client should offer a fresh quiz, not a resume.
+    QUIZ_ATTEMPT_ABANDONED = "QUIZ_ATTEMPT_ABANDONED"
+    # #542 review: the stored questions aren't in a shape we can safely
+    # show without the answer key, so this attempt cannot be resumed.
+    QUIZ_ATTEMPT_NOT_RESUMABLE = "QUIZ_ATTEMPT_NOT_RESUMABLE"
     # #541 C1: the answer endpoint got an index that doesn't exist on this
     # attempt (question_index past the quiz, selected_index past the options).
     QUIZ_QUESTION_INVALID = "QUIZ_QUESTION_INVALID"
