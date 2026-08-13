@@ -18,7 +18,7 @@ from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
 from agents.usage import record_agent_usage
 from db.connection import table
-from models import GenerateQuizBody, SubmitQuizBody
+from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
 from services.auth_guard import require_self
@@ -76,6 +76,21 @@ _OPTION_LABELS = ["A", "B", "C", "D", "E", "F"]
 # the config tuple so a difficulty added there can't be silently dropped by
 # _resolved_difficulty's counting.
 _DIFFICULTY_RANK = {d: i for i, d in enumerate(CONCRETE_DIFFICULTIES)}
+
+
+def _strip_answer_key(wire_questions: list[dict]) -> list[dict]:
+    """Deep-enough copy of the wire questions without per-option `correct`
+    booleans (#541 C3). Storage always keeps the key — grading is
+    server-side; only the RESPONSE is stripped."""
+    stripped = []
+    for q in wire_questions:
+        q2 = dict(q)
+        q2["options"] = [
+            {k: v for k, v in o.items() if k != "correct"}
+            for o in q.get("options", [])
+        ]
+        stripped.append(q2)
+    return stripped
 
 
 def _resolved_difficulty(wire_questions: list[dict]) -> str:
@@ -441,6 +456,20 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             "difficulty": body.difficulty,
         },
     )
+    # #541 C3: the answer key (per-option `correct` booleans) ships to the
+    # client only behind the deprecated include_answer_key flag — default
+    # true for the current QuizPanel, removed with #546 once the #537
+    # client grades via /attempts/{id}/answer. Log every keyed response so
+    # zero-usage is observable before the default flips.
+    if body.include_answer_key:
+        logger.info(
+            "quiz: generate served the client-side answer key "
+            "(include_answer_key=true, deprecated — #546) quiz_id=%s", quiz_id,
+        )
+        response_questions = questions
+    else:
+        response_questions = _strip_answer_key(questions)
+
     # #540 A1: echo what generation actually chose. requested_difficulty
     # is what the student asked for (may be 'adaptive');
     # resolved_difficulty is the overall mix the agent produced (always
@@ -448,9 +477,129 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # of repeating the request back.
     return {
         "quiz_id": quiz_id,
-        "questions": questions,
+        "questions": response_questions,
         "requested_difficulty": body.difficulty,
         "resolved_difficulty": _resolved_difficulty(questions),
+    }
+
+
+@router.post("/attempts/{attempt_id}/answer")
+def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
+    """#541 C1: grade one question server-side and record the response.
+
+    Idempotent on (attempt_id, question_index): re-answering returns the
+    FIRST recorded response (`recorded: false` marks the replay) rather
+    than overwriting — no revision, decided for the #537 revamp flow.
+    """
+    attempt_rows = table("quiz_attempts").select(
+        "*", filters={"id": f"eq.{attempt_id}"}
+    )
+    if not attempt_rows:
+        raise QuizAPIError(
+            status_code=404,
+            code=QuizErrorCode.QUIZ_ATTEMPT_NOT_FOUND,
+            message="We couldn't find that quiz.",
+        )
+    attempt = attempt_rows[0]
+    require_self(attempt["user_id"], request)
+
+    if attempt.get("completed_at"):
+        raise QuizAPIError(
+            status_code=409,
+            code=QuizErrorCode.QUIZ_ATTEMPT_ALREADY_COMPLETED,
+            message="This quiz has already been submitted.",
+        )
+
+    questions = decrypt_json_column(attempt["questions_json"]) or []
+    if body.question_index >= len(questions):
+        raise QuizAPIError(
+            status_code=400,
+            code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+            message="That question isn't part of this quiz.",
+        )
+    question = questions[body.question_index]
+    options = question.get("options", [])
+    if body.selected_index >= len(options):
+        raise QuizAPIError(
+            status_code=400,
+            code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+            message="That answer choice isn't part of this question.",
+        )
+    # Wire ids are 1-based, question_index is 0-based. When the client sends
+    # both, they must agree — otherwise passing the displayed id as the index
+    # silently grades the NEXT question and idempotency locks that in.
+    if body.question_id is not None and body.question_id != question.get("id"):
+        raise QuizAPIError(
+            status_code=400,
+            code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+            message="That answer doesn't match the question it was sent for.",
+        )
+
+    # The correct option is a property of the question, not of the answer —
+    # resolve it once. -1 means a malformed item with no correct option,
+    # which must never grade correct (same rule as submit's #129 fix).
+    correct_index = next(
+        (i for i, o in enumerate(options) if o.get("correct")), -1
+    )
+
+    def _is_correct(selected_index: int) -> bool:
+        return correct_index >= 0 and correct_index == selected_index
+
+    recorded = True
+    response_row = None
+    existing = table("quiz_responses").select(
+        "*",
+        filters={
+            "attempt_id": f"eq.{attempt_id}",
+            "question_index": f"eq.{body.question_index}",
+        },
+    )
+    if existing:
+        recorded = False
+        response_row = existing[0]
+    else:
+        row = {
+            "attempt_id": attempt_id,
+            "question_index": body.question_index,
+            "selected_index": body.selected_index,
+            "is_correct": _is_correct(body.selected_index),
+            "time_ms": body.time_ms,
+            "confidence": body.confidence,
+        }
+        try:
+            table("quiz_responses").insert(row)
+            response_row = row
+        except Exception:
+            # Lost a race with a concurrent answer for the same index — the
+            # UNIQUE arbitrates; return whatever won.
+            recorded = False
+            raced = table("quiz_responses").select(
+                "*",
+                filters={
+                    "attempt_id": f"eq.{attempt_id}",
+                    "question_index": f"eq.{body.question_index}",
+                },
+            )
+            if not raced:
+                raise
+            response_row = raced[0]
+
+    next_index = body.question_index + 1
+    next_question = (
+        _strip_answer_key([questions[next_index]])[0]
+        if next_index < len(questions)
+        else None
+    )
+    return {
+        # Echo both addressing schemes so a client that mixed them up sees
+        # it immediately rather than discovering it at submit time.
+        "question_index": body.question_index,
+        "question_id": question.get("id"),
+        "is_correct": _is_correct(response_row["selected_index"]),
+        "correct_index": correct_index,
+        "explanation": question.get("explanation", ""),
+        "next_question": next_question,
+        "recorded": recorded,
     }
 
 
@@ -503,12 +652,45 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
 
     concept_node_id = attempt["concept_node_id"]
 
+    # #541 C4: responses recorded through /attempts/{id}/answer are the
+    # source of truth — a payload answer for the same question is ignored
+    # (the recorded response was graded at answer time; letting the final
+    # POST override it would reopen the client-side-grading hole C exists
+    # to close). Questions never answered through C1 fall back to the
+    # submitted payload, so the current all-at-the-end client keeps working.
+    recorded_rows = table("quiz_responses").select(
+        "question_index,selected_index",
+        filters={"attempt_id": f"eq.{body.quiz_id}"},
+    ) or []
+    recorded_by_index = {r["question_index"]: r for r in recorded_rows}
+
     answer_map = {str(a.question_id): a.selected_label for a in body.answers}
     results = []
+    # The reconciled answer set — what was ACTUALLY graded, which is what
+    # answers_json must persist. Storing the raw payload instead left a
+    # recorded-only submit with a full score beside an empty answer list,
+    # and a contradicted payload answer stored despite losing to the
+    # recorded response.
+    graded_answers: list[dict] = []
     score = 0
-    for q in questions:
+    for q_index, q in enumerate(questions):
         qid = str(q["id"])
-        selected = answer_map.get(qid, "")
+        recorded = recorded_by_index.get(q_index)
+        if recorded is not None:
+            sel_idx = recorded.get("selected_index")
+            options = q.get("options", [])
+            selected = (
+                options[sel_idx]["label"]
+                if isinstance(sel_idx, int) and 0 <= sel_idx < len(options)
+                else ""
+            )
+        else:
+            selected = answer_map.get(qid, "")
+        if selected:
+            graded_answers.append({
+                "question_id": q["id"],
+                "selected_label": selected,
+            })
         correct_opt = next((o for o in q["options"] if o.get("correct")), None)
         correct_label = correct_opt["label"] if correct_opt else ""
         # #129: a malformed item with NO correct option must never grade as
@@ -580,7 +762,10 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         {
             "score": score,
             "total": total,
-            "answers_json": encrypt_json([a.model_dump() for a in body.answers]),
+            # The reconciled set (recorded responses winning over payload),
+            # not the raw request — the attempt's stored answers must agree
+            # with the score computed from them.
+            "answers_json": encrypt_json(graded_answers),
             # completed_at was already stamped by the atomic claim above.
         },
         filters={"id": f"eq.{body.quiz_id}"},
