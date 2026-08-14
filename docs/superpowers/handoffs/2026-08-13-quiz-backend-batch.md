@@ -1,11 +1,14 @@
-# Handoff — quiz backend batch (epic #537)
+# Handoff — quiz backend batch, workstreams A–F merged (epic #537)
 
-Paste everything below the line into a fresh session. It is self-contained.
+> Paste this into a fresh chat to continue the work. It carries the state of six merged
+> workstreams, the answers to the addendum's Part 1, the concrete remaining worklist, and the
+> gotchas that cost real time this session.
 
 ---
 
-You are picking up the **pre-revamp quiz backend batch** in `~/Projects/sapling` (epic #537).
-Five of six workstreams are merged to `main`. Read this whole brief before touching anything.
+You are picking up the **pre-revamp quiz backend batch** in `/home/andresl/Projects/sapling`
+(epic #537). **All six workstreams A–F are merged to `main`** — there is no open branch to
+continue; new work starts from `main`. Read this whole brief before touching anything.
 
 ## Where things stand
 
@@ -16,19 +19,25 @@ Five of six workstreams are merged to `main`. Read this whole brief before touch
 | C — server-authoritative grading | #541 | #549 | **merged** |
 | D — attempt lifecycle | #542 | #550 | **merged** |
 | E — scoring seam, generation honesty | #543 | #551 | **merged** |
-| F — cost, abuse, observability | #544 | **#552** | **OPEN — finish this first** |
+| F — cost, abuse, observability | #544 | #552 | **merged** |
 
 Every merged PR went through: TDD (test written first, watched fail), a full local E2E cycle
 (Playwright + oracles + integration lane), and an `xhigh`/`high` multi-agent code review whose
 findings were fixed before merge. Reviews caught **44 real defects in my own fixes** across the
 four reviewed PRs — assume the same rate applies to your work and budget for it.
 
-### Your first task: land #552
+### Your first task: Part 2 (below). Verify the tree first.
 
-Branch `feat/544-quiz-cost-observability` is pushed with review fixes committed
-(`14854788`). When I stopped, its verification cycle had passed Playwright (45) and the
-oracles (0 findings) and was still running the integration lane. Re-run the full cycle,
-then merge.
+Everything is merged; `main` is at `9b778195` or later. Before starting, confirm the tree is
+clean and the suite is green — another session shares this machine and leaves the primary
+checkout on other branches.
+
+```bash
+cd ~/Projects/sapling && git checkout main && git pull --ff-only
+cd backend && venv/bin/python -m pytest tests/ -q --ignore=tests/integration   # expect ~1997 passing
+```
+
+Then run a full E2E cycle before you change anything, so a later failure is attributable:
 
 ```bash
 # ALWAYS one flock around the whole up→test→down cycle. Never separate calls.
@@ -45,19 +54,19 @@ flock /tmp/claude-1000/sapling-e2e-stack.lock -c '
 ```
 
 Read pass/skip **counts**, never the exit code — the integration lane once reported
-"1 passed / 27 skipped, exit 0" and was believed for weeks.
+"1 passed / 27 skipped, exit 0" and was believed for weeks. Expect roughly: Playwright 45,
+oracles 0 findings, integration 47.
 
 ## The addendum you must action
 
 The user delivered an addendum mid-batch. Parts 3 and 4 are **already filed as issues**
-(#553–#561, listed at the bottom). **Part 2 is not done** — that is your main body of work
-after #552 merges.
+(#553–#561, listed at the bottom). **Part 2 is not done** — that is your main body of work.
 
-### Part 2 — was meant to fold into E and F
+### Part 2 — your main body of work
 
-E merged before the addendum arrived, so E5–E8 **cannot** fold into it. Ship them as one
-new PR against #543 (reopen it or open a follow-up). F5–F7 can still fold into #552 if you
-get there before merging it; otherwise same treatment.
+Both E and F merged before/while the addendum arrived, so none of this could fold into them.
+Ship E5–E8 as one PR and F5–F7 as another (or one combined PR if you prefer — they share
+`routes/quiz.py` and will conflict otherwise).
 
 **E5. Question identity + provenance.** Into the existing `questions_json` shape (no
 migration): a stable `question_hash` from the normalized stem + option set, the retrieved
@@ -208,6 +217,17 @@ Read `backend/routes/quiz.py` — it is the centre of all of it. Then
 - **Subagents switch the primary checkout's branch.** A review workflow silently moved the
   tree mid-run and a commit landed on the wrong branch. Check `git branch --show-current`
   immediately before every `git add`.
+
+## One stale cross-reference
+
+`docs/superpowers/handoffs/2026-06-30-selector-consolidation.md` still lists the Quiz
+selectors as open design forks — "question count (5/10/15)" and "difficulty
+(easy/med/hard/adaptive)" as `<CustomSelect>` dropdowns awaiting a Toggle-vs-keep decision.
+Both rows are now stale: #540 made those selects **config-driven** from
+`GET /api/quiz/config`, deleted the invalid "15" option (it always 422'd), and made
+`adaptive` a real server-side difficulty. The control is still `<CustomSelect>`, so the
+consolidation fork itself is unresolved — but re-read the current `QuizPanel.tsx` before
+acting on that inventory.
 
 ## Issues filed and waiting
 
