@@ -196,7 +196,7 @@ Read `backend/routes/quiz.py` — it is the centre of all of it. Then
   written up in `docs/quiz-mastery-model.md`. `requested_count`/`delivered_count` reported
   and surfaced in the UI. The top-up retry gates on **questions actually dropped** (an
   earlier version fired on every ordinary generation and discarded its own retry).
-- **F (in flight)** — per-user rate limit with `Retry-After` **refunded on failure**, a
+- **F** — per-user rate limit with `Retry-After` **refunded on failure**, a
   **paged** daily spend read (an unpaged one plateaued below the cap and could never trip),
   per-run generation timeouts that preserve partial quizzes, `quiz.generation_failed` events.
 
@@ -231,7 +231,7 @@ acting on that inventory.
 
 ## Issues filed and waiting
 
-**Workstream H — after #552:** #553 (misconceptions id mismatch — *verify live first*),
+**Workstream H — start here after Part 2:** #553 (misconceptions id mismatch — *verify live first*),
 #554 (mine `answers_json` into the digest + schema version), #555 (exam proximity, dates
 only), #556 (cheap blind spots, behind F6), #557 (unify mastery-tier thresholds).
 
