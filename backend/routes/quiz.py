@@ -581,11 +581,26 @@ def _course_chunk_coverage(bu_code: str) -> int | None:
     Cheap: PostgREST's exact count with a one-row window — never pulls the
     table. Only called when retrieval returned nothing, so the common
     (grounded) path pays for no extra query at all.
+
+    A count of 0 is only reported when it is TRUSTWORTHY.
+    `select_with_count` returns `total = 0` both for a genuinely empty table
+    and for a missing or unparseable `Content-Range` header
+    (db/connection.py) — and those two mean opposite things here. Reporting a
+    degraded count as 0 would have E8 assert "this course has nothing
+    indexed" about a course that may be fully indexed, destroying the exact
+    distinction the reason taxonomy exists to draw. So a zero count with rows
+    actually returned is treated as unknown.
     """
     try:
-        _rows, total = table("course_chunks").select_with_count(
+        rows, total = table("course_chunks").select_with_count(
             "id", filters={"course_id": f"eq.{bu_code}"}, limit=1,
         )
+        if total == 0 and rows:
+            logger.warning(
+                "quiz: course-chunk count came back 0 while rows exist for "
+                "course_code=%s — treating coverage as unknown", bu_code,
+            )
+            return None
         return total
     except Exception:
         logger.warning(
@@ -675,7 +690,18 @@ def _log_rag_uncovered(
     )
     events_service.log_event(
         "quiz.rag_uncovered",
-        category="error",
+        # category="usage", NOT "error". Ungrounded generation is a
+        # legitimate mode — this event exists to make it countable, not to
+        # report a failure — and /api/admin/analytics/errors scans
+        # `category = error` newest-first (B re-keyed it off the error.*
+        # name prefix precisely so non-HTTP failures would surface). Since
+        # this fires on EVERY generation for any unindexed course, and on
+        # every function-mode run, filing it as an error would bury
+        # quiz.context_write_failed and rag.retrieval_failed under routine
+        # traffic and inflate the error series — degrading the surface that
+        # workstream B just repaired. `rag.retrieval_failed` stays an error
+        # because retrieval FAILING is one; nothing failed here.
+        category="usage",
         user_id=user_id,
         request_id=request_id,
         payload={

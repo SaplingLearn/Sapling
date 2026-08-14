@@ -764,6 +764,62 @@ class TestApplyGraphUpdate:
         row = self._apply_with_event_type({"event_type": "  "})
         assert "event_type" not in row
 
+    def _apply_with_failing_events(self, fail_times):
+        """Run one mastery update whose node_mastery_events insert fails
+        `fail_times` times. Returns the payloads it attempted."""
+        existing = [
+            {"id": "n1", "concept_name": "X", "mastery_score": 0.5,
+             "times_studied": 0, "course_id": "c1"}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        attempts = []
+
+        def _insert(payload):
+            attempts.append(payload)
+            if len(attempts) <= fail_times:
+                raise RuntimeError("PGRST204 column event_type does not exist")
+            return []
+
+        mocks_holder = {}
+
+        def wrapped(name):
+            m = factory(name)
+            if name == "node_mastery_events" and name not in mocks_holder:
+                m.insert.side_effect = _insert
+                mocks_holder[name] = m
+            return m
+
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "X", "mastery_delta": 0.1,
+                               "reason": "Quiz: 1/3", "event_type": "partial"}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=wrapped):
+            with patch("services.course_context_service.update_course_context"):
+                result = apply_graph_update("u1", graph_update, course_id="c1")
+        return attempts, result
+
+    def test_event_type_rejection_retries_without_it(self):
+        """The E7 ordering hazard: a deploy that takes this code before the
+        migration lands gets a 400 for the unknown column. Degrade to the
+        pre-E7 row rather than costing the student their graded quiz."""
+        attempts, result = self._apply_with_failing_events(fail_times=1)
+        assert len(attempts) == 2
+        assert attempts[0]["event_type"] == "partial"
+        assert "event_type" not in attempts[1]
+        # The mastery change is still reported, so submit writes its score.
+        assert result and result[0]["after"] == pytest.approx(0.6)
+
+    def test_a_dead_event_table_never_takes_the_caller_down(self):
+        """quiz submit calls this AFTER its atomic completed_at claim and
+        BEFORE writing score/answers_json, and does not wrap it — so raising
+        here permanently loses a graded attempt, and the retry 409s. The
+        journal is not worth the quiz."""
+        attempts, result = self._apply_with_failing_events(fail_times=2)
+        assert len(attempts) == 2
+        assert result and result[0]["after"] == pytest.approx(0.6)
+
     def test_edge_upsert_uses_unique_conflict(self):
         """A new edge is written via UNIQUE-backed upsert (no select-then-insert);
         the DB dedups on (user_id, source, target, relationship_type) — 0023."""

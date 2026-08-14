@@ -41,7 +41,7 @@ quiz.started                  usage     quiz_id, concept_node_id, num_questions,
                                         material_chars, digest_present, recent_asked
 quiz.completed                usage     quiz_id, concept_node_id, score, total, mastery_delta
 quiz.tool_empty               error     tool, feature, expect, concept_node_id
-quiz.rag_uncovered            error     concept_node_id, reason, course_chunks, k_chunks
+quiz.rag_uncovered            usage     concept_node_id, reason, course_chunks, k_chunks
 chat.message_sent             usage     mode, session_id (+ content=message -> fingerprint)
 note.created                  usage     note_id, course_id, offering_id, has_body
 session.started               usage     session_id, mode, offering_id (+ content=topic -> fingerprint)
@@ -103,6 +103,7 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # E8: generation ran with no course-material grounding. Ungrounded
     # generation is a legitimate mode (a course with nothing indexed), but
     # it used to be indistinguishable from a retrieval that quietly failed.
+    # category="usage" for that reason — see the emit site in routes/quiz.py.
     "quiz.rag_uncovered",
     "chat.message_sent",
     "note.created",

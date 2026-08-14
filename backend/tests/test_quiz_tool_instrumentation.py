@@ -16,7 +16,11 @@ from agents.tools.graph_read import (
     read_concepts_for_user_tool,
     read_misconceptions_for_course_tool,
 )
-from agents.tools.quiz_history import QuizHistory, read_recent_quiz_attempts_tool
+from agents.tools.quiz_history import (
+    QuizHistory,
+    RecentQuizAttempt,
+    read_recent_quiz_attempts_tool,
+)
 from services import events_service, prompt_dimensions
 
 
@@ -109,9 +113,53 @@ def test_history_tool_flags_empty_history_for_a_student_who_has_attempts(sink):
         asyncio.run(read_recent_quiz_attempts_tool(_ctx(), "n1"))
     events_service.flush_now()
 
-    assert [e["event_type"] for e in sink] == ["quiz.tool_empty"]
-    assert sink[0]["payload"]["tool"] == "read_recent_quiz_attempts"
-    assert sink[0]["payload"]["concept_node_id"] == "n1"
+    tools = sorted(e["payload"]["tool"] for e in sink)
+    assert tools == ["quiz_context_digest", "read_recent_quiz_attempts"]
+    assert {e["event_type"] for e in sink} == {"quiz.tool_empty"}
+    assert {e["payload"]["concept_node_id"] for e in sink} == {"n1"}
+
+
+def test_empty_digest_beside_real_attempts_is_flagged(sink):
+    """THE #529 signature, and the case the seam previously could not see:
+    the student has completed attempts on this concept, so the digest that
+    summarizes them should exist — and doesn't.
+
+    Keying the check on the attempt count instead short-circuits on
+    `if count: return False` in exactly this situation, so the seam could
+    never fire for the bug it is named after.
+    """
+    attempts = [
+        RecentQuizAttempt(score=3, total=5, difficulty="medium", accuracy=0.6),
+    ]
+    with (
+        _probe(True),
+        patch(
+            "agents.tools.quiz_history.read_recent_quiz_attempts",
+            return_value=_history(summary=None, attempts=attempts),
+        ),
+    ):
+        asyncio.run(read_recent_quiz_attempts_tool(_ctx(), "n1"))
+    events_service.flush_now()
+
+    # The attempt list was non-empty, so only the digest check fires.
+    assert [e["payload"]["tool"] for e in sink] == ["quiz_context_digest"]
+    assert sink[0]["payload"]["attempts"] == 1
+
+
+def test_a_populated_digest_is_silent(sink):
+    attempts = [
+        RecentQuizAttempt(score=3, total=5, difficulty="medium", accuracy=0.6),
+    ]
+    with (
+        _probe(True),
+        patch(
+            "agents.tools.quiz_history.read_recent_quiz_attempts",
+            return_value=_history(summary="They confuse base cases.", attempts=attempts),
+        ),
+    ):
+        asyncio.run(read_recent_quiz_attempts_tool(_ctx(), "n1"))
+    events_service.flush_now()
+    assert sink == []
 
 
 def test_history_tool_is_silent_for_a_genuinely_new_student(sink):
@@ -143,11 +191,21 @@ def test_history_tool_still_returns_its_payload_when_flagging(sink):
 # ── read_misconceptions_for_course_tool ─────────────────────────────────────
 
 
-def test_misconceptions_tool_flags_empty_for_an_enrolled_student(sink):
+def test_misconceptions_tool_flags_empty_when_the_class_has_aggregates(sink):
     """The canonical instance: this tool filtered `offering_id` with an
-    abstract course id and returned zero rows for everyone, forever."""
+    abstract course id and returned zero rows for everyone, forever (#553).
+
+    The probe therefore asks whether aggregates exist for THIS student's
+    offerings of THIS course. Rows there plus an empty read is the signature
+    of a keyspace mismatch — and it is the only formulation that catches
+    #553 without firing on every class that simply has no aggregates yet.
+    """
     with (
         _probe(True),
+        patch(
+            "agents.tools.graph_read.user_offering_ids_for_course",
+            return_value=["off-1", "off-2"],
+        ),
         patch(
             "agents.tools.graph_read.read_misconceptions_for_course",
             return_value=[],
@@ -158,7 +216,46 @@ def test_misconceptions_tool_flags_empty_for_an_enrolled_student(sink):
 
     assert [e["event_type"] for e in sink] == ["quiz.tool_empty"]
     assert sink[0]["payload"]["tool"] == "read_misconceptions_for_course"
-    assert sink[0]["payload"]["expect"] == "enrolled"
+    assert sink[0]["payload"]["expect"] == "course_has_aggregates"
+
+
+def test_misconceptions_tool_is_silent_when_the_class_has_no_aggregates(sink):
+    """First weeks of a term: enrolled, but nobody has generated class
+    misconceptions yet. Flagging that would fire on every generation."""
+    with (
+        _probe(False),
+        patch(
+            "agents.tools.graph_read.user_offering_ids_for_course",
+            return_value=["off-1"],
+        ),
+        patch(
+            "agents.tools.graph_read.read_misconceptions_for_course",
+            return_value=[],
+        ),
+    ):
+        asyncio.run(read_misconceptions_for_course_tool(_ctx()))
+    events_service.flush_now()
+    assert sink == []
+
+
+def test_misconceptions_tool_skips_the_probe_with_no_resolvable_offering(sink):
+    """No offering scope means no safe probe — `offering_concept_stats` has
+    no user_id, so an unscoped read would ask 'does any class anywhere have
+    aggregates', which is true on any live database."""
+    with (
+        _probe(True),
+        patch(
+            "agents.tools.graph_read.user_offering_ids_for_course",
+            return_value=[],
+        ),
+        patch(
+            "agents.tools.graph_read.read_misconceptions_for_course",
+            return_value=[],
+        ),
+    ):
+        asyncio.run(read_misconceptions_for_course_tool(_ctx()))
+    events_service.flush_now()
+    assert sink == []
 
 
 def test_misconceptions_tool_is_silent_when_it_returns_rows(sink):

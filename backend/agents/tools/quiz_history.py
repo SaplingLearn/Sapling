@@ -280,24 +280,40 @@ async def read_recent_quiz_attempts_tool(
         recent_attempts=len(history.recent_attempts),
     )
     # F5: #529 lived here for 51 days. Every quiz_context write 42P10'd into
-    # a swallowed `except: pass`, so this digest was empty for every student
+    # a swallowed `except: pass`, so the digest was empty for every student
     # on every concept — and an empty digest is precisely what a first
     # attempt looks like, so nothing anywhere could tell the difference.
-    # Scoped to THIS concept, matching the read: probing the user's attempts
-    # across all concepts would flag every student who has quizzed on one
-    # concept and is starting their first quiz on another — which is what
-    # normal progress through a course looks like.
+    #
+    # The check that actually detects THAT failure keys on the DIGEST, not on
+    # the attempt list: #529 presents as an empty summary while completed
+    # attempts exist. Keying it on the attempt count instead would
+    # short-circuit (`if count: return False`) in exactly the situation the
+    # bug produces, so the seam could never fire for the bug it is named
+    # after. Scoped to this concept, matching the read.
+    concept_scope = {"concept_node_id": f"eq.{concept_node_id}"}
+    common = {
+        "user_id": ctx.deps.user_id,
+        "expect": Expect.HAS_ATTEMPTS,
+        "feature": getattr(ctx.deps, "feature", "unknown"),
+        "scope": concept_scope,
+    }
+    await report_empty_result_async(
+        "quiz_context_digest",
+        count=len(history.summary or ""),
+        payload={"concept_node_id": concept_node_id, "attempts": len(history.recent_attempts)},
+        **common,
+    )
+    # And the attempt list itself: a read that returns nothing for a concept
+    # this student demonstrably has completed attempts on means the tool's
+    # own query has drifted from the table.
     await report_empty_result_async(
         "read_recent_quiz_attempts",
-        user_id=ctx.deps.user_id,
         count=len(history.recent_attempts),
-        expect=Expect.HAS_ATTEMPTS,
-        feature=getattr(ctx.deps, "feature", "unknown"),
-        scope={"concept_node_id": f"eq.{concept_node_id}"},
         payload={
             "concept_node_id": concept_node_id,
             "digest_present": bool(history.summary),
         },
+        **common,
     )
 
     if history.summary:

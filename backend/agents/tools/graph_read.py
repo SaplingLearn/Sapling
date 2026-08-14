@@ -18,6 +18,7 @@ from pydantic_ai import RunContext
 from agents.deps import SaplingDeps
 from db.connection import table
 from services import prompt_dimensions
+from services.academics import user_offering_ids_for_course
 from services.tool_signals import Expect, report_empty_result_async
 
 logger = logging.getLogger(__name__)
@@ -438,14 +439,34 @@ async def read_misconceptions_for_course_tool(
     # keyspace, so it returned zero rows for every student, indefinitely,
     # and looked exactly like a class that simply had no misconceptions yet.
     # (#553 carries the fix; this makes the next one impossible to miss.)
-    await report_empty_result_async(
-        "read_misconceptions_for_course",
-        user_id=ctx.deps.user_id,
-        count=len(out),
-        expect=Expect.ENROLLED,
-        feature=getattr(ctx.deps, "feature", "unknown"),
-        payload={"course_id": ctx.deps.course_id},
-    )
+    # The probe asks whether aggregates exist for THIS student's offerings of
+    # THIS course — not merely whether they are enrolled in something.
+    # "Enrolled somewhere" would fire on every generation in a course whose
+    # class simply has no aggregated misconceptions yet, which is the normal
+    # state for the first weeks of any term.
+    #
+    # Scoped this way it detects the real failure instead: aggregates exist
+    # for the class, but this tool's read returned none — the signature of a
+    # keyspace mismatch, which is precisely how #553 (abstract course id used
+    # where an offering id is expected) presents.
+    offering_ids: list[str] = []
+    if ctx.deps.course_id:
+        try:
+            offering_ids = await asyncio.to_thread(
+                user_offering_ids_for_course, ctx.deps.user_id, ctx.deps.course_id
+            )
+        except Exception:
+            logger.debug("misconceptions probe: offering resolution failed", exc_info=True)
+    if offering_ids:
+        await report_empty_result_async(
+            "read_misconceptions_for_course",
+            user_id=ctx.deps.user_id,
+            count=len(out),
+            expect=Expect.COURSE_HAS_AGGREGATES,
+            feature=getattr(ctx.deps, "feature", "unknown"),
+            scope={"offering_id": f"in.({','.join(offering_ids)})"},
+            payload={"course_id": ctx.deps.course_id},
+        )
     # F6: this block's contribution to the prompt.
     prompt_dimensions.record(misconceptions=len(out))
     return [

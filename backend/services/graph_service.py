@@ -634,6 +634,52 @@ def add_node(
     return {"node": node, "already_existed": already_existed}
 
 
+def _insert_mastery_event(event_row: dict) -> None:
+    """Append one node_mastery_events row without ever taking the caller down.
+
+    The scalar mastery on graph_nodes is already written by the time this
+    runs; this table is the JOURNAL, and nothing replays it. Losing a journal
+    row is a small, observable loss. Letting the insert raise is not: quiz
+    submit calls apply_graph_update AFTER its atomic completed_at claim and
+    BEFORE it writes score/answers_json, and does not wrap the call — so an
+    exception here permanently loses the student's graded attempt, and the
+    retry 409s because the claim already landed.
+
+    The one-shot retry without `event_type` targets the specific ordering
+    hazard E7 introduces: a deploy that takes this code before migration
+    20260814051517 is applied gets a PostgREST 400 for the unknown column.
+    Retrying without it degrades to the pre-E7 row rather than costing a
+    quiz. Both failures are logged loudly — a silently-dropped write is the
+    bug class this whole batch exists to end, so this must never be quiet.
+    """
+    try:
+        table("node_mastery_events").insert(event_row)
+        return
+    except Exception:
+        if "event_type" not in event_row:
+            logger.exception(
+                "graph: mastery-event insert failed node=%s; the scalar "
+                "mastery is written but the journal row is lost",
+                event_row.get("node_id"),
+            )
+            return
+        logger.warning(
+            "graph: mastery-event insert failed with event_type=%r node=%s; "
+            "retrying without it (is migration "
+            "20260814051517_node_mastery_events_event_type.sql applied?)",
+            event_row.get("event_type"), event_row.get("node_id"),
+        )
+    fallback = {k: v for k, v in event_row.items() if k != "event_type"}
+    try:
+        table("node_mastery_events").insert(fallback)
+    except Exception:
+        logger.exception(
+            "graph: mastery-event insert failed node=%s even without "
+            "event_type; the scalar mastery is written but the journal row "
+            "is lost", event_row.get("node_id"),
+        )
+
+
 def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None = None) -> list:
     """
     Apply a graph_update dict to the DB. Returns mastery_changes list.
@@ -768,7 +814,7 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         event_type = upd.get("event_type")
         if isinstance(event_type, str) and event_type.strip():
             event_row["event_type"] = event_type.strip()
-        table("node_mastery_events").insert(event_row)
+        _insert_mastery_event(event_row)
         mastery_changes.append({"concept": row["concept_name"], "before": before, "after": after})
 
         cid = row.get("course_id")

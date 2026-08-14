@@ -65,17 +65,26 @@ class Expect(str, Enum):
     HAS_ATTEMPTS = "has_attempts"
     #: Has at least one knowledge-graph node — so concept reads could return rows.
     HAS_GRAPH = "has_graph"
+    #: Class aggregates exist for the caller-supplied offerings. NOT
+    #: owner-scoped — `offering_concept_stats` has no user_id, by design
+    #: (it is anonymized class data), so the caller must supply the offering
+    #: scope. This is the probe that catches a KEYSPACE mismatch: aggregates
+    #: exist for this class, but the tool's own query found none — which is
+    #: exactly how #553 (course id passed where offering id was expected)
+    #: presents.
+    COURSE_HAS_AGGREGATES = "course_has_aggregates"
 
 
-# (table, extra filters). Each probe is a single owner-scoped, indexed read
+# (table, extra filters, owner_scoped). Each probe is a single indexed read
 # capped at one row: this runs on the request path, and "does any row exist"
 # never needs a count.
-_PROBES: dict[Expect, tuple[str, dict]] = {
-    Expect.ENROLLED: ("enrollments", {}),
+_PROBES: dict[Expect, tuple[str, dict, bool]] = {
+    Expect.ENROLLED: ("enrollments", {}, True),
     # Completed only — an in-flight attempt is not evidence of history worth
     # digesting, and counting one would flag every student mid-first-quiz.
-    Expect.HAS_ATTEMPTS: ("quiz_attempts", {"completed_at": "not.is.null"}),
-    Expect.HAS_GRAPH: ("graph_nodes", {}),
+    Expect.HAS_ATTEMPTS: ("quiz_attempts", {"completed_at": "not.is.null"}, True),
+    Expect.HAS_GRAPH: ("graph_nodes", {}, True),
+    Expect.COURSE_HAS_AGGREGATES: ("offering_concept_stats", {}, False),
 }
 
 
@@ -95,13 +104,21 @@ def _user_plausibly_has_data(
     probe = _PROBES.get(expect)
     if probe is None:
         return None
-    table_name, extra = probe
-    try:
-        rows = table(table_name).select(
-            "id",
-            filters={"user_id": f"eq.{user_id}", **extra, **(scope or {})},
-            limit=1,
+    table_name, extra, owner_scoped = probe
+    if not owner_scoped and not scope:
+        # A probe with no user_id filter and no caller scope would ask "does
+        # ANY row exist in this table", which is true on any live database
+        # and would therefore flag every empty read as a discrepancy.
+        # Refusing is the safe answer: "can't tell" is silence.
+        logger.debug(
+            "tool_signals: %s requires a scope; skipping probe", expect.value,
         )
+        return None
+    filters = {**extra, **(scope or {})}
+    if owner_scoped:
+        filters["user_id"] = f"eq.{user_id}"
+    try:
+        rows = table(table_name).select("id", filters=filters, limit=1)
     except Exception:
         logger.debug(
             "tool_signals: %s probe failed for user=%s", expect, user_id,

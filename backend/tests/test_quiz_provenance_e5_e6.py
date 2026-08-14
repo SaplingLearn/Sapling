@@ -122,6 +122,50 @@ def test_chunk_count_takes_the_larger_of_the_two():
     assert m.chunk_count == 4
 
 
+# ── E8: a degraded count must not masquerade as "nothing indexed" ───────────
+
+
+def _coverage(rows, total):
+    from routes.quiz import _course_chunk_coverage
+
+    def factory(name):
+        m = MagicMock()
+        m.select_with_count.return_value = (rows, total)
+        return m
+
+    with patch("routes.quiz.table", side_effect=factory):
+        return _course_chunk_coverage("CAS CS 330")
+
+
+def test_trustworthy_zero_count_is_reported():
+    assert _coverage([], 0) == 0
+
+
+def test_real_count_is_reported():
+    assert _coverage([{"id": "c1"}], 42) == 42
+
+
+def test_unparseable_count_is_unknown_not_zero():
+    """`select_with_count` returns total=0 both for a genuinely empty table
+    and for a missing/unparseable Content-Range header. Those mean opposite
+    things here: reporting the second as 0 would have E8 assert 'this course
+    has nothing indexed' about a course that may be fully indexed —
+    destroying the exact distinction the reason taxonomy exists to draw."""
+    assert _coverage([{"id": "c1"}], 0) is None
+
+
+def test_count_read_failure_is_unknown():
+    from routes.quiz import _course_chunk_coverage
+
+    def factory(name):
+        m = MagicMock()
+        m.select_with_count.side_effect = RuntimeError("postgrest down")
+        return m
+
+    with patch("routes.quiz.table", side_effect=factory):
+        assert _course_chunk_coverage("CAS CS 330") is None
+
+
 # ── E5: identity + provenance are written ───────────────────────────────────
 
 

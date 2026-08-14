@@ -674,7 +674,10 @@ def test_ungrounded_generation_emits_rag_uncovered(sink):
 
     events = _of_type(sink, "quiz.rag_uncovered")
     assert len(events) == 1
-    assert events[0]["category"] == "error"
+    # usage, NOT error: ungrounded generation is a legitimate mode, and
+    # /api/admin/analytics/errors scans `category = error` newest-first —
+    # filing a per-generation event there would bury real backend failures.
+    assert events[0]["category"] == "usage"
     assert events[0]["user_id"] == "user_andres"
     assert events[0]["payload"] == {
         "concept_node_id": "node1",
