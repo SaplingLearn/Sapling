@@ -45,6 +45,7 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from db.connection import table
+from services.academics import user_offering_ids_for_course
 from services.encryption import decrypt_if_present, decrypt_json
 
 # Shared tokenizer (#149): factored to services/token_overlap.py so the
@@ -142,11 +143,21 @@ async def search_course_materials(
 
     def _fetch() -> list[dict[str, Any]]:
         try:
+            # `documents` keys on offering_id (0025) — it has no course_id
+            # column, so filtering on one 400s and the `except` below turns
+            # that into a silent []: the tutor loses every course document
+            # with no visible error. Resolve the abstract course to the
+            # user's offerings first, per the academics convention.
+            offering_ids = user_offering_ids_for_course(user_id, course_id)
+            if not offering_ids:
+                return []
             return (
                 table("documents").select(
                     "id,file_name,summary,concept_notes",
                     filters={
-                        "course_id": f"eq.{course_id}",
+                        # #125 user scope is preserved: documents are
+                        # user-scoped WITHIN a shared offering.
+                        "offering_id": f"in.({','.join(offering_ids)})",
                         "user_id": f"eq.{user_id}",
                     },
                     order="created_at.desc",

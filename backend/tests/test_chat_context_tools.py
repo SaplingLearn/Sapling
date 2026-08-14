@@ -22,6 +22,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agents.tools.chat_context import (
     CourseProgress,
     read_session_history,
@@ -45,6 +47,19 @@ class TestSearchCourseMaterialsUserScope:
     """#125: documents are user-scoped within a shared course. The query must
     filter on user_id, or another enrolled student's private summary/concept
     notes get decrypted into this user's LLM context."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_offering_resolution(self):
+        """These tests exercise scoring/decryption, not course→offering
+        resolution. `documents` keys on offering_id, so the lookup is a real
+        dependency now; stub it so the fake `table` above stays the only
+        store these cases have to model. The resolution itself is covered by
+        TestSearchCourseMaterialsOfferingScope."""
+        with patch(
+            "agents.tools.chat_context.user_offering_ids_for_course",
+            return_value=["off_1"],
+        ):
+            yield
 
     def test_does_not_return_other_users_documents(self):
         doc_mine = {
@@ -92,6 +107,15 @@ class TestSearchCourseMaterialsUserScope:
 
 
 class TestSearchCourseMaterials:
+    @pytest.fixture(autouse=True)
+    def _stub_offering_resolution(self):
+        """See TestSearchCourseMaterialsUserScope._stub_offering_resolution."""
+        with patch(
+            "agents.tools.chat_context.user_offering_ids_for_course",
+            return_value=["off_1"],
+        ):
+            yield
+
     def test_returns_empty_when_course_id_is_none(self):
         # No table call should happen at all — cross-course search is a
         # data-leak risk we explicitly avoid.
@@ -416,3 +440,60 @@ class TestToolWrappers:
             _run(read_user_progress_tool(self._ctx()))
 
         inner.assert_awaited_once_with("user_andres", "course_cs101")
+
+
+class TestSearchCourseMaterialsOfferingScope:
+    """`documents` keys on `offering_id`, never `course_id` (0025 schema).
+
+    Filtering it on `course_id` makes PostgREST 400 ("column
+    documents.course_id does not exist"), and this tool's degrade-silently
+    contract swallows that into `[]` — so the tutor loses EVERY course
+    document with no user-visible error and answers from base knowledge
+    alone. The abstract course must be resolved to the user's offerings via
+    `academics.user_offering_ids_for_course` first.
+
+    The fake below is schema-faithful on purpose: the existing mocks accept
+    any filter, which is exactly how this survived.
+    """
+
+    def test_documents_are_fetched_by_offering_not_course_id(self):
+        doc = {
+            "id": "doc_syllabus",
+            "file_name": "cs132-syllabus.pdf",
+            "summary": "convex hulls and sweep lines",
+            "concept_notes": [],
+        }
+
+        def _table(name):
+            store = MagicMock()
+
+            def _select(*_args, **kwargs):
+                f = kwargs.get("filters", {})
+                if name == "documents":
+                    if "course_id" in f:
+                        # What PostgREST actually does with a missing column.
+                        raise RuntimeError("column documents.course_id does not exist")
+                    if f.get("offering_id") == "in.(off_cs132_f26)" and \
+                            f.get("user_id") == "eq.user_mine":
+                        return [doc]
+                    return []
+                if name == "course_offerings":
+                    return [{"id": "off_cs132_f26"}]
+                if name == "enrollments":
+                    return [{"offering_id": "off_cs132_f26"}]
+                return []
+
+            store.select.side_effect = _select
+            return store
+
+        with patch("agents.tools.chat_context.table", side_effect=_table), \
+                patch("services.academics.table", side_effect=_table), \
+                patch("agents.tools.chat_context.decrypt_if_present", side_effect=lambda v: v):
+            result = _run(
+                search_course_materials("course_cs132", "convex hull", user_id="user_mine")
+            )
+
+        assert [m.document_id for m in result] == ["doc_syllabus"], (
+            "course materials must be reachable — a course_id filter on "
+            "documents 400s and silently yields no materials at all"
+        )
