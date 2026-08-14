@@ -27,7 +27,7 @@ from agents.deps import SaplingDeps
 from db.connection import table
 from services import prompt_dimensions
 from services.encryption import decrypt_json_column
-from services.tool_signals import Expect, report_empty_result
+from services.tool_signals import Expect, report_empty_result_async
 
 logger = logging.getLogger(__name__)
 
@@ -283,11 +283,17 @@ async def read_recent_quiz_attempts_tool(
     # a swallowed `except: pass`, so this digest was empty for every student
     # on every concept — and an empty digest is precisely what a first
     # attempt looks like, so nothing anywhere could tell the difference.
-    report_empty_result(
+    # Scoped to THIS concept, matching the read: probing the user's attempts
+    # across all concepts would flag every student who has quizzed on one
+    # concept and is starting their first quiz on another — which is what
+    # normal progress through a course looks like.
+    await report_empty_result_async(
         "read_recent_quiz_attempts",
         user_id=ctx.deps.user_id,
         count=len(history.recent_attempts),
         expect=Expect.HAS_ATTEMPTS,
+        feature=getattr(ctx.deps, "feature", "unknown"),
+        scope={"concept_node_id": f"eq.{concept_node_id}"},
         payload={
             "concept_node_id": concept_node_id,
             "digest_present": bool(history.summary),

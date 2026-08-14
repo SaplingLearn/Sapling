@@ -39,6 +39,7 @@ findings any more than it should hide them.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from enum import Enum
 
@@ -78,8 +79,19 @@ _PROBES: dict[Expect, tuple[str, dict]] = {
 }
 
 
-def _user_plausibly_has_data(user_id: str, expect: Expect) -> bool | None:
-    """True/False, or None when the probe could not answer."""
+def _user_plausibly_has_data(
+    user_id: str, expect: Expect, scope: dict | None = None,
+) -> bool | None:
+    """True/False, or None when the probe could not answer.
+
+    `scope` narrows the probe to the SAME slice the tool just read. Without
+    it the probe answers a broader question than the tool asked, and the
+    mismatch manufactures discrepancies out of ordinary situations — a
+    student with attempts on one concept starting their first quiz on
+    another, or a student with a graph in one course working in a second.
+    Those are the routine cases, so getting this wrong would make the
+    signal fire constantly and train everyone to ignore it.
+    """
     probe = _PROBES.get(expect)
     if probe is None:
         return None
@@ -87,7 +99,7 @@ def _user_plausibly_has_data(user_id: str, expect: Expect) -> bool | None:
     try:
         rows = table(table_name).select(
             "id",
-            filters={"user_id": f"eq.{user_id}", **extra},
+            filters={"user_id": f"eq.{user_id}", **extra, **(scope or {})},
             limit=1,
         )
     except Exception:
@@ -105,7 +117,8 @@ def report_empty_result(
     user_id: str | None,
     count: int,
     expect: Expect,
-    feature: str = "quiz",
+    feature: str = "unknown",
+    scope: dict | None = None,
     payload: dict | None = None,
 ) -> bool:
     """Flag a tool result that is empty when it probably shouldn't be.
@@ -119,6 +132,16 @@ def report_empty_result(
     `count` is the number of rows/items the tool is about to return.
     Anything non-zero short-circuits before the probe, so the common case
     costs nothing.
+
+    `scope` MUST narrow the probe to the same slice the tool read (see
+    `_user_plausibly_has_data`). `feature` names the calling agent — it
+    defaults to "unknown" rather than to any particular feature, because a
+    tool registered on more than one agent (`read_concepts_for_user` is on
+    both the quiz and the tutor) would otherwise attribute every caller's
+    empties to whichever feature the default happened to name.
+
+    NOTE: this is SYNCHRONOUS and does a Supabase read. Async callers must
+    use `report_empty_result_async`, or they block the event loop.
     """
     try:
         if count or not user_id:
@@ -130,7 +153,7 @@ def report_empty_result(
                 logger.debug("tool_signals: unknown expectation %r", expect)
                 return False
 
-        plausible = _user_plausibly_has_data(user_id, expect)
+        plausible = _user_plausibly_has_data(user_id, expect, scope)
         if plausible is not True:
             return False
 
@@ -154,4 +177,22 @@ def report_empty_result(
     except Exception:
         # Observability must never break the thing being observed.
         logger.debug("tool_signals: report_empty_result slipped", exc_info=True)
+        return False
+
+
+async def report_empty_result_async(tool: str, **kwargs) -> bool:
+    """Async-safe `report_empty_result` for agent tool bodies.
+
+    The probe is a blocking Supabase read (httpx, 30s client timeout). Called
+    inline from an async tool it would stall the event loop — and therefore
+    every other in-flight request on that worker — for the duration, which is
+    exactly why every other Supabase read in those tools already goes through
+    `asyncio.to_thread`. The probe runs on the EMPTY path, which today is the
+    common one (a first quiz on a concept; and every misconceptions read until
+    #553 is fixed), so this is not a rare corner.
+    """
+    try:
+        return await asyncio.to_thread(report_empty_result, tool, **kwargs)
+    except Exception:  # pragma: no cover - defensive; the sync form can't raise
+        logger.debug("tool_signals: async report slipped", exc_info=True)
         return False

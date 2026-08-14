@@ -553,8 +553,17 @@ class CourseMaterial(NamedTuple):
         return max(self.k_chunks, len(self.chunk_ids))
 
     @property
-    def grounded(self) -> bool:
-        """Whether the model saw any course material for this concept."""
+    def rag_grounded(self) -> bool:
+        """Whether retrieved DOCUMENT chunks are in the prompt.
+
+        Deliberately not named `grounded`: the catalog block is course
+        material too, and a course with catalog data but nothing indexed
+        does put real material in front of the model. Calling that
+        "ungrounded" would write a false record into every stored
+        question's provenance — the same class of lie `chunk_count` exists
+        to prevent. `has_catalog` carries the other half, and both are
+        stamped separately.
+        """
         return self.chunk_count > 0
 
 
@@ -647,7 +656,7 @@ def _log_rag_uncovered(
     But it stops being invisible: the three reasons below are three
     different problems, and telling them apart is the whole point.
     """
-    if material.grounded:
+    if material.rag_grounded:
         return
     if material.bu_code is None:
         reason = "course_unresolved"
@@ -726,6 +735,7 @@ async def _quiz_via_agent(
         course_id=course_id,
         supabase=None,
         request_id=request_id,
+        feature="quiz",
     )
     # Keep this message routing-only; the workflow + adaptive rules
     # live in the system prompt. We just hand the agent the inputs it
@@ -819,7 +829,7 @@ async def _quiz_via_agent(
         blocks=sorted(
             b for b, present in (
                 ("catalog", material.has_catalog),
-                ("rag", material.grounded),
+                ("rag", material.rag_grounded),
                 ("recently_asked", bool(recent)),
                 ("misconceptions_requested", use_shared_context),
             ) if present
@@ -882,7 +892,12 @@ async def _quiz_via_agent(
     provenance_base = {
         "prompt_version": PROMPT_VERSION,
         "chunk_ids": list(material.chunk_ids),
-        "grounded": material.grounded,
+        # Two separate facts, not one fuzzy one: whether retrieved document
+        # chunks grounded the question, and whether the official catalog
+        # block was present. Collapsing them into a single `grounded` made
+        # a catalog-only course record every question as ungrounded.
+        "rag_grounded": material.rag_grounded,
+        "catalog": material.has_catalog,
     }
 
     def _absorb(quiz: Quiz, model: str) -> None:

@@ -18,7 +18,7 @@ from pydantic_ai import RunContext
 from agents.deps import SaplingDeps
 from db.connection import table
 from services import prompt_dimensions
-from services.tool_signals import Expect, report_empty_result
+from services.tool_signals import Expect, report_empty_result_async
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +108,22 @@ async def read_concepts_for_user_tool(
     # F5: a student with a populated graph whose concept read comes back
     # empty is a discrepancy, not a new student. Shared with the tutor,
     # which registers this same tool — the fourth instance of this bug class
-    # is as likely to land there as in the quiz.
-    report_empty_result(
+    # is as likely to land there as in the quiz, hence `feature` off deps
+    # rather than a hardcoded name.
+    #
+    # The probe is scoped to the SAME course the read was scoped to. Probing
+    # the whole graph would flag every student who has concepts in one course
+    # and none in another — the ordinary case for anyone taking more than one
+    # class, and enough false alarms to make the signal worthless.
+    await report_empty_result_async(
         "read_concepts_for_user",
         user_id=ctx.deps.user_id,
         count=len(rows),
         expect=Expect.HAS_GRAPH,
+        feature=getattr(ctx.deps, "feature", "unknown"),
+        scope=(
+            {"course_id": f"eq.{ctx.deps.course_id}"} if ctx.deps.course_id else None
+        ),
         payload={"course_id": ctx.deps.course_id},
     )
     n = max(0, int(limit))
@@ -428,11 +438,12 @@ async def read_misconceptions_for_course_tool(
     # keyspace, so it returned zero rows for every student, indefinitely,
     # and looked exactly like a class that simply had no misconceptions yet.
     # (#553 carries the fix; this makes the next one impossible to miss.)
-    report_empty_result(
+    await report_empty_result_async(
         "read_misconceptions_for_course",
         user_id=ctx.deps.user_id,
         count=len(out),
         expect=Expect.ENROLLED,
+        feature=getattr(ctx.deps, "feature", "unknown"),
         payload={"course_id": ctx.deps.course_id},
     )
     # F6: this block's contribution to the prompt.

@@ -13,6 +13,7 @@ import pytest
 
 from agents.tools.graph_read import (
     Misconception,
+    read_concepts_for_user_tool,
     read_misconceptions_for_course_tool,
 )
 from agents.tools.quiz_history import QuizHistory, read_recent_quiz_attempts_tool
@@ -42,8 +43,10 @@ def _dims():
     prompt_dimensions.clear()
 
 
-def _ctx(user_id="u1", course_id="c1"):
-    return SimpleNamespace(deps=SimpleNamespace(user_id=user_id, course_id=course_id))
+def _ctx(user_id="u1", course_id="c1", feature="quiz"):
+    return SimpleNamespace(
+        deps=SimpleNamespace(user_id=user_id, course_id=course_id, feature=feature)
+    )
 
 
 def _probe(has_rows: bool):
@@ -185,6 +188,51 @@ def test_misconceptions_tool_records_its_block_size(sink):
     ):
         asyncio.run(read_misconceptions_for_course_tool(_ctx()))
     assert prompt_dimensions.snapshot()["misconceptions"] == 2
+
+
+async def _async(value):
+    return value
+
+
+def _no_concepts():
+    return patch(
+        "agents.tools.retrieval.resolve_retrieval",
+        return_value=SimpleNamespace(concept_mastery=lambda *a, **k: _async([])),
+    )
+
+
+def test_shared_tool_attributes_the_empty_to_its_actual_caller(sink):
+    """`read_concepts_for_user` is registered on the tutor as well as the
+    quiz. Its empties must be filed under the agent that ran it, or the
+    quiz's rollups silently absorb the tutor's."""
+    with _probe(True), _no_concepts():
+        asyncio.run(read_concepts_for_user_tool(_ctx(feature="tutor")))
+    events_service.flush_now()
+
+    assert [e["event_type"] for e in sink] == ["quiz.tool_empty"]
+    assert sink[0]["payload"]["feature"] == "tutor"
+    assert sink[0]["payload"]["tool"] == "read_concepts_for_user"
+
+
+def test_concepts_probe_is_scoped_to_the_course_the_tool_read(sink):
+    """Regression: probing the whole graph flagged any student with
+    concepts in one course and none in another — the ordinary case for
+    anyone taking more than one class."""
+    captured = {}
+
+    def factory(name):
+        m = MagicMock()
+
+        def _select(cols, **kw):
+            captured.update(kw)
+            return []
+
+        m.select.side_effect = _select
+        return m
+
+    with patch("services.tool_signals.table", side_effect=factory), _no_concepts():
+        asyncio.run(read_concepts_for_user_tool(_ctx(course_id="c9")))
+    assert captured["filters"]["course_id"] == "eq.c9"
 
 
 def test_tools_work_outside_a_capture_scope(sink):

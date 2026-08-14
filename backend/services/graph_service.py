@@ -753,8 +753,18 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         # Omitted rather than written as an explicit null when absent: every
         # non-quiz caller (tutor tools, the document pipeline, manual adds)
         # supplies none, and naming a column PostgREST's schema cache doesn't
-        # have is a hard 400 — so omitting keeps those paths working on an
+        # have is a hard 400 — so omitting keeps THOSE paths working on an
         # environment that took this code before the migration.
+        #
+        # It does NOT make the quiz path safe there, and the failure is not
+        # cosmetic: submit_quiz always supplies an event_type, so a
+        # code-before-migration deploy 400s this insert, the exception
+        # propagates out of apply_graph_update (submit does not wrap it),
+        # and the 500 lands AFTER the atomic completed_at claim but BEFORE
+        # score/answers are written — losing the graded attempt, not just
+        # its mastery event. The migration
+        # (20260814051517_node_mastery_events_event_type.sql) must be
+        # applied strictly before this code ships to any environment.
         event_type = upd.get("event_type")
         if isinstance(event_type, str) and event_type.strip():
             event_row["event_type"] = event_type.strip()

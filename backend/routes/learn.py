@@ -531,6 +531,7 @@ def _prepare_chat_run(
         supabase=None,
         request_id=request_id,
         session_id=session_id,
+        feature="tutor",
     )
 
     bu_code = _get_course_info(course_id).get("course_code") if course_id else None

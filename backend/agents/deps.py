@@ -33,6 +33,14 @@ class SaplingDeps:
         mastery_changes: Accumulates the real before/after mastery deltas
             returned by apply_graph_update so the route can surface them in
             the chat response for parity with the legacy path.
+        feature: Which product surface is driving this run ("quiz",
+            "tutor", …). Several tools are registered on more than one
+            agent — `read_concepts_for_user` is on both the quiz and the
+            tutor — so a tool cannot name its caller from its own module.
+            Observability that attributes per-feature (services/
+            tool_signals.py) reads it from here. Defaults to "unknown"
+            rather than to any real feature: a wrong attribution is worse
+            than an absent one.
         retrieval: Optional TutorRetrieval implementation (ADR 0023). When
             None (production), the tutor's read tools fall back to the
             Supabase-backed impl in agents/tools/retrieval.py — byte-
@@ -46,6 +54,7 @@ class SaplingDeps:
     supabase: Any
     request_id: str
     session_id: str | None = None
+    feature: str = "unknown"
     graph_updates: list = field(default_factory=list)
     mastery_changes: list = field(default_factory=list)
     retrieval: Any = None

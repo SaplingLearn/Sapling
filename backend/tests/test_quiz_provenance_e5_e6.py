@@ -99,13 +99,22 @@ def test_material_carrying_sources_is_never_reported_ungrounded():
     a chunk row missing an `id` still grounded the question, and a caller
     that sets only one field must not flip a grounded generation to
     ungrounded in the provenance record."""
-    assert CourseMaterial(chunk_ids=("c1", "c2")).grounded is True
+    assert CourseMaterial(chunk_ids=("c1", "c2")).rag_grounded is True
     assert CourseMaterial(chunk_ids=("c1", "c2")).chunk_count == 2
     # Chunks present but unidentifiable — grounded, just unattributable.
-    assert CourseMaterial(k_chunks=3).grounded is True
+    assert CourseMaterial(k_chunks=3).rag_grounded is True
     assert CourseMaterial(k_chunks=3).chunk_count == 3
-    assert CourseMaterial().grounded is False
+    assert CourseMaterial().rag_grounded is False
     assert CourseMaterial().chunk_count == 0
+
+
+def test_catalog_only_material_is_not_recorded_as_rag_grounded():
+    """A catalog-only course puts real material in the prompt but has no
+    retrieved chunks. The two facts are recorded separately so neither is
+    a lie: `rag_grounded` false, `catalog` true."""
+    m = CourseMaterial(block="COURSE CATALOG …", has_catalog=True)
+    assert m.rag_grounded is False
+    assert m.has_catalog is True
 
 
 def test_chunk_count_takes_the_larger_of_the_two():
@@ -135,19 +144,38 @@ def test_stored_question_carries_full_provenance():
     assert prov == {
         "prompt_version": PROMPT_VERSION,
         "chunk_ids": ["chunk-a", "chunk-b"],
-        "grounded": True,
+        "rag_grounded": True,
+        "catalog": True,
         "model": "gemini-2.5-flash-lite",
     }
 
 
 def test_ungrounded_question_records_that_it_was_ungrounded():
-    """'grounded: false' is a recorded fact, not an absence — that is the
-    difference between an audit that can answer 'was this from our
+    """'rag_grounded: false' is a recorded fact, not an absence — that is
+    the difference between an audit that can answer 'was this from our
     materials?' and one that can only shrug."""
     _r, row, _ = _generate([_question()])
     prov = _stored(row)[0]["provenance"]
-    assert prov["grounded"] is False
+    assert prov["rag_grounded"] is False
+    assert prov["catalog"] is False
     assert prov["chunk_ids"] == []
+
+
+def test_catalog_only_generation_is_not_stamped_as_ungrounded_rag():
+    """Regression: a course with catalog data but nothing indexed used to
+    persist every question with a single `grounded: false`, which read as
+    'no course material was involved' when the catalog block was right
+    there in the prompt."""
+    _r, row, _ = _generate(
+        [_question()],
+        material=CourseMaterial(
+            block="COURSE CATALOG (official BU course data): …",
+            has_catalog=True, bu_code="CAS CS 330", course_chunks=0,
+        ),
+    )
+    prov = _stored(row)[0]["provenance"]
+    assert prov["catalog"] is True
+    assert prov["rag_grounded"] is False
 
 
 def test_provenance_records_the_model_that_actually_served():

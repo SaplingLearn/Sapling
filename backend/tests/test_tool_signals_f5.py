@@ -191,6 +191,93 @@ def test_each_expectation_probes_its_own_table(sink, expect, table_name):
     assert seen == [table_name]
 
 
+def test_scope_narrows_the_probe_to_the_slice_the_tool_read(sink):
+    """The probe must ask the SAME question the tool asked.
+
+    Regression: an unscoped HAS_ATTEMPTS probe answers "has this student
+    ever completed a quiz", while the tool asked "on THIS concept". A
+    student who has quizzed on Recursion and is starting their first quiz
+    on Graphs would be flagged as a silently-broken input on every single
+    generation — which is what ordinary progress through a course looks
+    like, and enough false alarms to make the signal worthless.
+    """
+    captured = {}
+
+    def factory(name):
+        m = MagicMock()
+
+        def _select(cols, **kw):
+            captured.update(kw)
+            return []
+
+        m.select.side_effect = _select
+        return m
+
+    with patch("services.tool_signals.table", side_effect=factory):
+        report_empty_result(
+            "read_recent_quiz_attempts", user_id="u1", count=0,
+            expect=Expect.HAS_ATTEMPTS,
+            scope={"concept_node_id": "eq.n1"},
+        )
+    assert captured["filters"]["concept_node_id"] == "eq.n1"
+    assert captured["filters"]["user_id"] == "eq.u1"
+    assert captured["filters"]["completed_at"] == "not.is.null"
+
+
+def test_scoped_probe_finding_nothing_is_silence(sink):
+    """First quiz on a new concept, for a student with plenty of history
+    elsewhere: the scoped probe finds nothing, so nothing is reported."""
+    with _probe(False):
+        flagged = report_empty_result(
+            "read_recent_quiz_attempts", user_id="u1", count=0,
+            expect=Expect.HAS_ATTEMPTS, scope={"concept_node_id": "eq.n1"},
+        )
+    assert flagged is False
+    events_service.flush_now()
+    assert sink == []
+
+
+def test_feature_defaults_to_unknown_not_to_a_real_feature(sink):
+    """A tool registered on several agents can't name its caller. Guessing
+    'quiz' would file every tutor empty under the quiz's rollups."""
+    with _probe(True):
+        report_empty_result("t", user_id="u1", count=0, expect=Expect.HAS_GRAPH)
+    events_service.flush_now()
+    assert sink[0]["payload"]["feature"] == "unknown"
+
+
+def test_async_form_does_not_block_the_event_loop(sink):
+    """Agent tool bodies are async and the probe is a blocking Supabase
+    read; called inline it would stall every other in-flight request on the
+    worker. The async form must run it off-loop."""
+    import asyncio
+    import threading
+
+    from services.tool_signals import report_empty_result_async
+
+    caller_thread = threading.get_ident()
+    probe_thread = {}
+
+    def factory(name):
+        m = MagicMock()
+
+        def _select(cols, **kw):
+            probe_thread["id"] = threading.get_ident()
+            return [{"id": "x"}]
+
+        m.select.side_effect = _select
+        return m
+
+    async def scenario():
+        with patch("services.tool_signals.table", side_effect=factory):
+            return await report_empty_result_async(
+                "t", user_id="u1", count=0, expect=Expect.HAS_GRAPH,
+            )
+
+    assert asyncio.run(scenario()) is True
+    assert probe_thread["id"] != caller_thread
+
+
 def test_probe_is_owner_scoped_and_bounded(sink):
     """It must read only this user's rows, and must never pull a table."""
     captured = {}
