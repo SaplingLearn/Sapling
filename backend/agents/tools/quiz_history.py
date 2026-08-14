@@ -25,7 +25,9 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from db.connection import table
+from services import prompt_dimensions
 from services.encryption import decrypt_json_column
+from services.tool_signals import Expect, report_empty_result
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +268,32 @@ async def read_recent_quiz_attempts_tool(
     """
     # user_id comes from ctx.deps so a tool call can't cross users.
     history = await read_recent_quiz_attempts(ctx.deps.user_id, concept_node_id)
+
+    # F6: whether the personal digest actually made it into the prompt. This
+    # is the one dimension the ROUTE cannot see — it is resolved here, inside
+    # a tool, which is why prompt_dimensions has to survive the to_thread
+    # hop. Recorded for every run, present or absent: "the digest was missing"
+    # is exactly as interesting as its token cost.
+    prompt_dimensions.record(
+        digest_present=bool(history.summary),
+        digest_chars=len(history.summary or ""),
+        recent_attempts=len(history.recent_attempts),
+    )
+    # F5: #529 lived here for 51 days. Every quiz_context write 42P10'd into
+    # a swallowed `except: pass`, so this digest was empty for every student
+    # on every concept — and an empty digest is precisely what a first
+    # attempt looks like, so nothing anywhere could tell the difference.
+    report_empty_result(
+        "read_recent_quiz_attempts",
+        user_id=ctx.deps.user_id,
+        count=len(history.recent_attempts),
+        expect=Expect.HAS_ATTEMPTS,
+        payload={
+            "concept_node_id": concept_node_id,
+            "digest_present": bool(history.summary),
+        },
+    )
+
     if history.summary:
         # #150: the summary is LLM-digested from the student's own quiz
         # answers — free text that can carry injected directives back into

@@ -94,6 +94,8 @@ def test_event_taxonomy_is_pinned():
         "quiz.completed",
         "quiz.context_write_failed",  # #529/B3
         "quiz.generation_failed",     # #544/F3
+        "quiz.tool_empty",            # F5: a personalization input came back empty
+        "quiz.rag_uncovered",         # E8: generation ran without course grounding
         "chat.message_sent",
         "note.created",
         "session.started",
@@ -547,7 +549,184 @@ def test_quiz_generate_emits_quiz_started(sink):
         "concept_node_id": "node1",
         "num_questions": 1,
         "difficulty": "hard",
+        # F6: prompt composition rides this event so `llm_usage.prompt_tokens`
+        # (same request_id) becomes attributable to sections. This run has no
+        # course, no chunks and no history, so every dimension is at zero —
+        # which is itself the point: an ungrounded generation now SAYS so.
+        "blocks": [],
+        "k_chunks": 0,
+        "material_chars": 0,
+        "recent_asked": 0,
+        "routing_chars": ev["payload"]["routing_chars"],
+        "adaptive": False,
     }
+    # Ids/counts/enums only, per the #117 payload rule — no prompt text.
+    assert isinstance(ev["payload"]["routing_chars"], int)
+
+
+def test_quiz_started_dimensions_report_grounding_and_repetition(sink):
+    """F6: the dimensions have to actually vary with the prompt, or they
+    measure nothing. Same route, a grounded run with history."""
+    from agents.quiz import Quiz, QuizQuestion
+    from services.quiz_repetition import RecentQuestion
+
+    fake_quiz = Quiz(questions=[
+        QuizQuestion(
+            question="Q?", type="multiple_choice", difficulty="hard",
+            options=["a", "b", "c", "d"], correct_answer="a",
+            explanation="x", concept="X",
+        ),
+    ])
+
+    def factory(name):
+        mock = MagicMock()
+        mock.select.return_value = (
+            [_quiz_node_row()] if name == "graph_nodes" else []
+        )
+        mock.insert.return_value = []
+        return mock
+
+    from routes.quiz import CourseMaterial
+
+    with (
+        patch("routes.quiz.table", side_effect=factory),
+        patch(
+            "routes.quiz._course_material",
+            return_value=CourseMaterial(
+                block="COURSE STUFF", chunk_ids=("c1", "c2"),
+                has_catalog=True, bu_code="CAS CS 330",
+            ),
+        ),
+        patch(
+            "routes.quiz.recent_question_identities",
+            return_value=[RecentQuestion("h1", "Asked before?")],
+        ),
+        patch(
+            "routes.quiz.quiz_agent.run",
+            new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+        ),
+    ):
+        r = client.post("/api/quiz/generate", json={
+            "user_id": "user_andres",
+            "concept_node_id": "node1",
+            "num_questions": 1,
+            "difficulty": "adaptive",
+            "use_shared_context": True,
+        })
+    assert r.status_code == 200
+
+    payload = _of_type(sink, "quiz.started")[0]["payload"]
+    assert payload["blocks"] == [
+        "catalog", "misconceptions_requested", "rag", "recently_asked",
+    ]
+    assert payload["k_chunks"] == 2
+    assert payload["material_chars"] == len("COURSE STUFF")
+    assert payload["recent_asked"] == 1
+    assert payload["adaptive"] is True
+    # A grounded generation emits no rag_uncovered signal.
+    assert _of_type(sink, "quiz.rag_uncovered") == []
+
+
+def test_ungrounded_generation_emits_rag_uncovered(sink):
+    """E8: grounding is a decision now, not a silent accident. The course
+    resolves but has zero indexed chunks — a different problem from a course
+    whose material simply didn't match the concept."""
+    from agents.quiz import Quiz, QuizQuestion
+    from routes.quiz import CourseMaterial
+
+    fake_quiz = Quiz(questions=[
+        QuizQuestion(
+            question="Q?", type="multiple_choice", difficulty="easy",
+            options=["a", "b", "c", "d"], correct_answer="a",
+            explanation="x", concept="X",
+        ),
+    ])
+
+    def factory(name):
+        mock = MagicMock()
+        mock.select.return_value = (
+            [_quiz_node_row()] if name == "graph_nodes" else []
+        )
+        mock.insert.return_value = []
+        return mock
+
+    with (
+        patch("routes.quiz.table", side_effect=factory),
+        patch(
+            "routes.quiz._course_material",
+            return_value=CourseMaterial(course_chunks=0, bu_code="CAS CS 330"),
+        ),
+        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch(
+            "routes.quiz.quiz_agent.run",
+            new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+        ),
+    ):
+        r = client.post("/api/quiz/generate", json={
+            "user_id": "user_andres",
+            "concept_node_id": "node1",
+            "num_questions": 1,
+            "difficulty": "easy",
+            "use_shared_context": False,
+        })
+    # Never blocks: an unindexed course still gets a quiz.
+    assert r.status_code == 200
+
+    events = _of_type(sink, "quiz.rag_uncovered")
+    assert len(events) == 1
+    assert events[0]["category"] == "error"
+    assert events[0]["user_id"] == "user_andres"
+    assert events[0]["payload"] == {
+        "concept_node_id": "node1",
+        "reason": "no_chunks_for_course",
+        "course_chunks": 0,
+        "k_chunks": 0,
+    }
+
+
+def test_rag_uncovered_distinguishes_no_match_from_no_material(sink):
+    """The two reasons need different fixes — index the course, versus look
+    at why retrieval missed. Collapsing them would waste the signal."""
+    from agents.quiz import Quiz, QuizQuestion
+    from routes.quiz import CourseMaterial
+
+    fake_quiz = Quiz(questions=[
+        QuizQuestion(
+            question="Q?", type="multiple_choice", difficulty="easy",
+            options=["a", "b", "c", "d"], correct_answer="a",
+            explanation="x", concept="X",
+        ),
+    ])
+
+    def factory(name):
+        mock = MagicMock()
+        mock.select.return_value = (
+            [_quiz_node_row()] if name == "graph_nodes" else []
+        )
+        mock.insert.return_value = []
+        return mock
+
+    with (
+        patch("routes.quiz.table", side_effect=factory),
+        patch(
+            "routes.quiz._course_material",
+            return_value=CourseMaterial(course_chunks=42, bu_code="CAS CS 330"),
+        ),
+        patch("routes.quiz.recent_question_identities", return_value=[]),
+        patch(
+            "routes.quiz.quiz_agent.run",
+            new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
+        ),
+    ):
+        client.post("/api/quiz/generate", json={
+            "user_id": "user_andres", "concept_node_id": "node1",
+            "num_questions": 1, "difficulty": "easy",
+            "use_shared_context": False,
+        })
+
+    ev = _of_type(sink, "quiz.rag_uncovered")[0]
+    assert ev["payload"]["reason"] == "no_match_for_concept"
+    assert ev["payload"]["course_chunks"] == 42
 
 
 SAMPLE_QUESTIONS = [

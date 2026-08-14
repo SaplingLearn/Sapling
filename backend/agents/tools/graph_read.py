@@ -17,6 +17,8 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from db.connection import table
+from services import prompt_dimensions
+from services.tool_signals import Expect, report_empty_result
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,17 @@ async def read_concepts_for_user_tool(
 
     rows = await resolve_retrieval(ctx.deps).concept_mastery(
         ctx.deps.user_id, ctx.deps.course_id
+    )
+    # F5: a student with a populated graph whose concept read comes back
+    # empty is a discrepancy, not a new student. Shared with the tutor,
+    # which registers this same tool — the fourth instance of this bug class
+    # is as likely to land there as in the quiz.
+    report_empty_result(
+        "read_concepts_for_user",
+        user_id=ctx.deps.user_id,
+        count=len(rows),
+        expect=Expect.HAS_GRAPH,
+        payload={"course_id": ctx.deps.course_id},
     )
     n = max(0, int(limit))
     # #150 (PR #471 review): concept names are student-derived text — the
@@ -410,6 +423,20 @@ async def read_misconceptions_for_course_tool(
     from services.prompt_safety import neutralize_delimiters
 
     out = await read_misconceptions_for_course(ctx.deps.course_id)
+    # F5: THE canonical instance of this bug class. This tool passed the
+    # abstract course id where the query filters `offering_id` — a different
+    # keyspace, so it returned zero rows for every student, indefinitely,
+    # and looked exactly like a class that simply had no misconceptions yet.
+    # (#553 carries the fix; this makes the next one impossible to miss.)
+    report_empty_result(
+        "read_misconceptions_for_course",
+        user_id=ctx.deps.user_id,
+        count=len(out),
+        expect=Expect.ENROLLED,
+        payload={"course_id": ctx.deps.course_id},
+    )
+    # F6: this block's contribution to the prompt.
+    prompt_dimensions.record(misconceptions=len(out))
     return [
         Misconception(
             text=neutralize_delimiters(m.text),

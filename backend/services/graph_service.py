@@ -737,13 +737,28 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
             filters={"id": f"eq.{row['id']}"},
         )
         # Append-only mastery event (fixes the non-atomic read-modify-write, #247).
-        table("node_mastery_events").insert({
+        event_row = {
             "id": str(uuid.uuid4()),
             "node_id": row["id"],
             "delta": delta,
             "reason": upd.get("reason", ""),
             "created_at": now,
-        })
+        }
+        # E7: the caller's categorical read of WHY mastery moved
+        # (quiz submit computes correct/partial/confusion from the score
+        # ratio). It was computed and then dropped here for months, so the
+        # event log recorded how much mastery moved but never what kind of
+        # evidence moved it.
+        #
+        # Omitted rather than written as an explicit null when absent: every
+        # non-quiz caller (tutor tools, the document pipeline, manual adds)
+        # supplies none, and naming a column PostgREST's schema cache doesn't
+        # have is a hard 400 — so omitting keeps those paths working on an
+        # environment that took this code before the migration.
+        event_type = upd.get("event_type")
+        if isinstance(event_type, str) and event_type.strip():
+            event_row["event_type"] = event_type.strip()
+        table("node_mastery_events").insert(event_row)
         mastery_changes.append({"concept": row["concept_name"], "before": before, "after": after})
 
         cid = row.get("course_id")

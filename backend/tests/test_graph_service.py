@@ -716,6 +716,54 @@ class TestApplyGraphUpdate:
             result = apply_graph_update("u1", {"new_nodes": [], "updated_nodes": [], "new_edges": []})
         assert result == []
 
+    # ── E7: event_type reaches the event row ──────────────────────────────
+
+    def _apply_with_event_type(self, upd_extra):
+        existing = [
+            {"id": "n1", "concept_name": "X", "mastery_score": 0.5,
+             "times_studied": 0, "course_id": "c1"}
+        ]
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "X", "mastery_delta": 0.1,
+                               "reason": "Quiz: 1/3 correct", **upd_extra}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory):
+            with patch("services.course_context_service.update_course_context"):
+                apply_graph_update("u1", graph_update, course_id="c1")
+        mocks["node_mastery_events"].insert.assert_called_once()
+        return mocks["node_mastery_events"].insert.call_args[0][0]
+
+    def test_event_type_is_persisted_on_the_mastery_event(self):
+        """E7: submit computes correct/partial/confusion from the score ratio
+        and used to DROP it at the write. It reaches the row now."""
+        row = self._apply_with_event_type({"event_type": "confusion"})
+        assert row["event_type"] == "confusion"
+        # The rest of the append-only shape is untouched.
+        assert row["delta"] == pytest.approx(0.1)
+        assert row["reason"] == "Quiz: 1/3 correct"
+
+    def test_event_type_omitted_when_caller_supplies_none(self):
+        """Backward compatibility for every NON-quiz caller (tutor tools, the
+        document pipeline, manual adds): they pass no event_type, and the key
+        must be ABSENT rather than an explicit null.
+
+        Absent, not null, on purpose: it keeps those callers working against a
+        database where E7's migration hasn't been applied yet — PostgREST
+        rejects an insert naming a column the schema cache doesn't have, so
+        writing the key unconditionally would break the tutor on any
+        environment that took the code before the DDL.
+        """
+        row = self._apply_with_event_type({})
+        assert "event_type" not in row
+
+    def test_blank_event_type_is_treated_as_absent(self):
+        """An empty string is not a category — don't persist one."""
+        row = self._apply_with_event_type({"event_type": "  "})
+        assert "event_type" not in row
+
     def test_edge_upsert_uses_unique_conflict(self):
         """A new edge is written via UNIQUE-backed upsert (no select-then-insert);
         the DB dedups on (user_id, source, target, relationship_type) — 0023."""
