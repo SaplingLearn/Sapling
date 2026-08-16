@@ -11,6 +11,11 @@
  * load. We `dynamic`-import it with `ssr: false` so Next.js doesn't
  * try to render it on the server. Layout-shift is avoided by sizing
  * the wrapper div explicitly to `width × height`.
+ *
+ * #538: NEVER mount this component outside the `KnowledgeGraph`
+ * wrapper — three r163+ throws from the WebGLRenderer constructor when
+ * WebGL2 is unavailable, and the wrapper owns both the capability gate
+ * that prevents that mount and the error boundary that contains it.
  */
 
 import React from "react";

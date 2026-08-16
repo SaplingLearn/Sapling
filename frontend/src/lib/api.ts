@@ -11,6 +11,7 @@ import type {
   AnalyticsBucket, LlmCostGroupBy,
   UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
   PublicRoom,
+  GamificationMe, LeaderboardRow, ActivityData, Friend,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 
@@ -439,8 +440,19 @@ export const resumeSession = (sessionId: string) =>
   }>(`/api/learn/sessions/${sessionId}/resume`);
 
 // Quiz
+export interface QuizConfig {
+  num_questions: { min: number; max: number; options: number[] };
+  difficulties: string[];
+  question_types: string[];
+}
+
+// #540 A2: the backend is the single source of truth for selector values —
+// QuizPanel builds its count/difficulty selects from this so the UI can
+// never again offer a value the route rejects (e.g. the old "15 questions").
+export const fetchQuizConfig = () => fetchJSON<QuizConfig>('/api/quiz/config');
+
 export const generateQuiz = (userId: string, conceptNodeId: string, numQuestions: number, difficulty: string, useSharedContext = true) =>
-  fetchJSON<{ quiz_id: string; questions: any[] }>('/api/quiz/generate', {
+  fetchJSON<{ quiz_id: string; questions: any[]; requested_difficulty?: string; resolved_difficulty?: string; requested_count?: number; delivered_count?: number }>('/api/quiz/generate', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, concept_node_id: conceptNodeId, num_questions: numQuestions, difficulty, use_shared_context: useSharedContext }),
   });
@@ -1029,6 +1041,21 @@ export const adminApproveUser = (userId: string) =>
 
 export const adminUnapproveUser = (userId: string) =>
   fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
+
+// Admin — feedback (#520; decrypted server-side, admin-only)
+export type AdminFeedbackEntry = {
+  id: string; user_id: string; user_name: string; type: string; rating: number;
+  selected_options: string[]; comment: string | null; session_id: string | null;
+  topic: string | null; created_at: string;
+};
+export type AdminIssueReport = {
+  id: string; user_id: string; user_name: string; topic: string;
+  description: string; screenshot_urls: string[]; created_at: string;
+};
+export const adminListFeedback = () =>
+  fetchJSON<{ feedback: AdminFeedbackEntry[] }>('/api/admin/feedback');
+export const adminListIssueReports = () =>
+  fetchJSON<{ reports: AdminIssueReport[] }>('/api/admin/issue-reports');
 
 // Admin — roles
 export const adminAssignRole = (userId: string, roleId: string) =>
@@ -1674,3 +1701,73 @@ export const generateQuizFromNote = (noteId: string, userId: string) =>
     `/api/notes/${noteId}/generate-quiz`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );
+
+// ── Gamification ─────────────────────────────────────────────────────────────
+export const fetchGamificationMe = (userId: string) =>
+  fetchJSON<GamificationMe>(`/api/gamification/me?user_id=${encodeURIComponent(userId)}`);
+
+export const fetchLeaderboard = (userId: string, scope: 'everyone' | 'friends' | 'school') =>
+  fetchJSON<{ rows: LeaderboardRow[]; you: LeaderboardRow | null; resets_at: string }>(
+    `/api/gamification/leaderboard?user_id=${encodeURIComponent(userId)}&scope=${scope}`);
+
+export const fetchActivity = (userId: string) =>
+  fetchJSON<ActivityData>(`/api/gamification/activity?user_id=${encodeURIComponent(userId)}`);
+
+// ── Friends ──────────────────────────────────────────────────────────────────
+export const fetchFriends = (userId: string) =>
+  fetchJSON<{ friends: Friend[] }>(`/api/social/friends/${encodeURIComponent(userId)}`);
+
+export const fetchFriendRequests = (userId: string) =>
+  fetchJSON<{
+    incoming: { id: string; from_user_id: string; name: string; created_at: string }[];
+    outgoing: { id: string; to_user_id: string; name: string; created_at: string }[];
+  }>(`/api/social/friends/requests?user_id=${encodeURIComponent(userId)}`);
+
+export const sendFriendRequest = (fromUserId: string, toUserId: string) =>
+  fetchJSON<{ request: { id: string } }>('/api/social/friends/request', {
+    method: 'POST',
+    body: JSON.stringify({ from_user_id: fromUserId, to_user_id: toUserId }),
+  });
+
+export const acceptFriendRequest = (requestId: string, userId: string) =>
+  fetchJSON<{ accepted: boolean }>(
+    `/api/social/friends/requests/${encodeURIComponent(requestId)}/accept?user_id=${encodeURIComponent(userId)}`,
+    { method: 'POST' });
+
+export const declineFriendRequest = (requestId: string, userId: string) =>
+  fetchJSON<{ declined: boolean }>(
+    `/api/social/friends/requests/${encodeURIComponent(requestId)}/decline?user_id=${encodeURIComponent(userId)}`,
+    { method: 'POST' });
+
+export const removeFriend = (friendId: string, userId: string) =>
+  fetchJSON<{ removed: boolean }>(
+    `/api/social/friends/${encodeURIComponent(friendId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' });
+
+// ── Admin — XP rules and icons ───────────────────────────────────────────────
+export const adminListXpRules = () =>
+  fetchJSON<{ rules: { key: string; label: string; amount: number; enabled: boolean }[] }>(
+    '/api/admin/xp-rules');
+
+export const adminUpdateXpRule = (key: string, patch: { amount?: number; enabled?: boolean }) =>
+  fetchJSON<{ updated: boolean }>(`/api/admin/xp-rules/${encodeURIComponent(key)}`, {
+    method: 'PATCH', body: JSON.stringify(patch),
+  });
+
+export const adminUpdateAchievement = (
+  achievementId: string,
+  patch: Partial<Pick<Achievement, 'name' | 'description' | 'category' | 'rarity' | 'is_secret'>>
+    & { xp_reward?: number; sort_order?: number; status?: 'draft' | 'live' },
+) =>
+  fetchJSON<{ updated: boolean }>(`/api/admin/achievements/${encodeURIComponent(achievementId)}`, {
+    method: 'PATCH', body: JSON.stringify(patch),
+  });
+
+export const adminUploadAchievementIcon = (
+  achievementId: string, fileBase64: string, contentType: string,
+) =>
+  fetchJSON<{ icon_url: string }>(
+    `/api/admin/achievements/${encodeURIComponent(achievementId)}/icon`, {
+      method: 'POST',
+      body: JSON.stringify({ file_base64: fileBase64, content_type: contentType }),
+    });

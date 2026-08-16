@@ -32,7 +32,7 @@ def run() -> None:
 
     # ── 1. Generate a quiz to obtain a real quiz_id ───────────────────────────
     # GenerateQuizBody: {user_id, concept_node_id, num_questions, difficulty, use_shared_context}
-    # difficulty must be in {"easy", "medium", "hard"} (CHECK constraint from 0025).
+    # difficulty ∈ {"easy","medium","hard","adaptive"} (0025 CHECK + the #540 adaptive migration).
     gen_r = client.post(
         "/api/quiz/generate",
         json={

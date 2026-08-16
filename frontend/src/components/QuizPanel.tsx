@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CustomSelect } from "./CustomSelect";
 import { useToast } from "./ToastProvider";
-import { generateQuiz, submitQuiz } from "@/lib/api";
+import { fetchQuizConfig, generateQuiz, submitQuiz, type QuizConfig } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
 import {
   conceptOptionsForCourse,
   courseOptions,
@@ -55,18 +56,43 @@ interface QuizPanelProps {
   onExit: () => void;
 }
 
-const COUNT_OPTIONS = [
+// #540 A2: the backend's GET /api/quiz/config is the source of truth for
+// these selects; the static lists below are only the pre-fetch fallback and
+// mirror backend/services/quiz_config.py. The old list offered "15
+// questions" against a 10-question cap (guaranteed 422) and the route used
+// to reject "adaptive" — both fixed server-side in #540.
+const FALLBACK_COUNT_OPTIONS = [
+  { value: "3", label: "3 questions" },
   { value: "5", label: "5 questions" },
   { value: "10", label: "10 questions" },
-  { value: "15", label: "15 questions" },
 ];
 
-const DIFFICULTY_OPTIONS = [
-  { value: "easy", label: "Easy" },
-  { value: "medium", label: "Medium" },
-  { value: "hard", label: "Hard" },
-  { value: "adaptive", label: "Adaptive" },
-];
+const DIFFICULTY_LABELS: Record<string, string> = {
+  easy: "Easy",
+  medium: "Medium",
+  hard: "Hard",
+  adaptive: "Adaptive",
+};
+
+const FALLBACK_DIFFICULTY_OPTIONS = Object.entries(DIFFICULTY_LABELS).map(
+  ([value, label]) => ({ value, label }),
+);
+
+function countOptionsFrom(config: QuizConfig | null) {
+  if (!config?.num_questions?.options?.length) return FALLBACK_COUNT_OPTIONS;
+  return config.num_questions.options.map(n => ({
+    value: String(n),
+    label: `${n} questions`,
+  }));
+}
+
+function difficultyOptionsFrom(config: QuizConfig | null) {
+  if (!config?.difficulties?.length) return FALLBACK_DIFFICULTY_OPTIONS;
+  return config.difficulties.map(d => ({
+    value: d,
+    label: DIFFICULTY_LABELS[d] ?? d.charAt(0).toUpperCase() + d.slice(1),
+  }));
+}
 
 export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit }: QuizPanelProps) {
   const router = useRouter();
@@ -98,7 +124,21 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
   const [count, setCount] = useState("5");
   const [difficulty, setDifficulty] = useState("medium");
 
+  // Selector values come from the backend (#540 A2); fall back to the
+  // static mirror until the fetch lands (or if it fails).
+  const [quizConfig, setQuizConfig] = useState<QuizConfig | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetchQuizConfig()
+      .then(cfg => { if (!cancelled) setQuizConfig(cfg); })
+      .catch(() => { /* fallback lists stay in place */ });
+    return () => { cancelled = true; };
+  }, []);
+  const countOptions = useMemo(() => countOptionsFrom(quizConfig), [quizConfig]);
+  const difficultyOptions = useMemo(() => difficultyOptionsFrom(quizConfig), [quizConfig]);
+
   const [quizId, setQuizId] = useState<string | null>(null);
+  const [resolvedDifficulty, setResolvedDifficulty] = useState<string | null>(null);
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [answers, setAnswers] = useState<QuizAnswer[]>([]);
   const [qIndex, setQIndex] = useState(0);
@@ -125,15 +165,28 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
         toast.warn("No questions were generated — try another concept or difficulty.");
         return;
       }
+      // #543 E2: say so when generation delivered fewer questions than
+      // asked, rather than quietly handing over a shorter quiz.
+      const requested = res.requested_count ?? Number(count);
+      if (res.delivered_count != null && res.delivered_count < requested) {
+        toast.warn(
+          `We could only build ${res.delivered_count} of ${requested} questions for this concept.`,
+        );
+      }
       setQuizId(res.quiz_id);
       setQuestions(nextQuestions);
+      // #540 A1: what generation actually chose — shown when the student
+      // asked for "adaptive" so the pick isn't a black box.
+      setResolvedDifficulty(res.resolved_difficulty ?? null);
       setAnswers([]);
       setQIndex(0);
       setCurrentSelection(null);
       setLastCorrect(null);
       setPhase("active");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to generate quiz.");
+      // The quiz routes return the #540 A3 envelope; humanizeError digs the
+      // readable sentence out of the thrown body instead of dumping JSON.
+      toast.error(humanizeError(err, "Failed to generate quiz."));
     } finally {
       setLoading(false);
     }
@@ -166,7 +219,7 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
       setResults(res);
       setPhase("results");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to submit quiz.");
+      toast.error(humanizeError(err, "Failed to submit quiz."));
     } finally {
       setLoading(false);
     }
@@ -249,11 +302,11 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>Count</div>
-              <CustomSelect value={count} options={COUNT_OPTIONS} onChange={setCount} style={{ width: "100%" }} />
+              <CustomSelect value={count} options={countOptions} onChange={setCount} ariaLabel="Number of questions" style={{ width: "100%" }} />
             </div>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div className="label-micro" style={{ marginBottom: 6 }}>Difficulty</div>
-              <CustomSelect value={difficulty} options={DIFFICULTY_OPTIONS} onChange={setDifficulty} style={{ width: "100%" }} />
+              <CustomSelect value={difficulty} options={difficultyOptions} onChange={setDifficulty} ariaLabel="Difficulty" style={{ width: "100%" }} />
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -269,7 +322,19 @@ export function QuizPanel({ userId, concepts, courses, initialConceptId, onExit 
         <>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div className="label-micro">Question {qIndex + 1} of {questions.length}</div>
-            <div className="chip" style={{ textTransform: "uppercase" }}>{currentQuestion.difficulty}</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {difficulty === "adaptive" && resolvedDifficulty && (
+                <div
+                  data-testid="quiz-resolved-difficulty"
+                  className="chip"
+                  style={{ textTransform: "uppercase" }}
+                  title="Adaptive mode picked this overall difficulty for you"
+                >
+                  Adaptive · {resolvedDifficulty}
+                </div>
+              )}
+              <div className="chip" style={{ textTransform: "uppercase" }}>{currentQuestion.difficulty}</div>
+            </div>
           </div>
           <div style={{ fontSize: 16, lineHeight: 1.55 }}>{currentQuestion.question}</div>
           <div data-testid="quiz-answer-options" role="radiogroup" aria-label="Answer choices" style={{ display: "grid", gap: 8 }}>
