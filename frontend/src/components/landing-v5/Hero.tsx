@@ -75,9 +75,17 @@ export function Hero({
           must claim its own touch handling rather than scrolling the page. */}
       <canvas ref={glCanvasRef} aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 1, width: '100%', height: '100%', display: 'block', touchAction: 'none' }} />
 
-      {/* two washes that pull the scene back under the copy */}
-      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', opacity: washOpacity, background: 'radial-gradient(ellipse 88% 74% at 52% 48%, rgba(240,244,242,0) 0%, rgba(240,244,242,0.2) 74%, rgba(240,244,242,0.56) 100%)' }} />
-      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none', opacity: washOpacity, background: 'linear-gradient(0deg, rgba(240,244,242,0.94) 0%, rgba(240,244,242,0.78) 16%, rgba(240,244,242,0.34) 34%, rgba(240,244,242,0) 50%), radial-gradient(ellipse 52% 38% at 16% 22%, rgba(240,244,242,0.66) 0%, rgba(240,244,242,0.26) 52%, rgba(240,244,242,0) 76%), radial-gradient(ellipse 40% 30% at 80% 53%, rgba(240,244,242,0.84) 0%, rgba(240,244,242,0.36) 55%, rgba(240,244,242,0) 82%)' }} />
+      {/* Two washes that pull the scene back under the copy.
+          These veil by screen position, not by element, so they hit whatever
+          panel drifts under them — originally the top-left radial sat almost
+          exactly on the knowledge-graph card and veiled it at ~35%, and the
+          bottom band caught the mastery card at ~20%. Both are now cut to the
+          point where every panel is under ~0.12 veil across its whole body.
+          The bottom band keeps a strong toe (below ~9% of the viewport) for
+          the 01/02/03 keys and the info box, but its ramp is pulled down from
+          50% to 33% so it clears the lowest panel entirely. */}
+      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', opacity: washOpacity, background: 'radial-gradient(ellipse 88% 74% at 52% 48%, rgba(240,244,242,0) 0%, rgba(240,244,242,0.02) 74%, rgba(240,244,242,0.10) 100%)' }} />
+      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none', opacity: washOpacity, background: 'linear-gradient(0deg, rgba(240,244,242,0.62) 0%, rgba(240,244,242,0.34) 9%, rgba(240,244,242,0.06) 22%, rgba(240,244,242,0) 28%), radial-gradient(ellipse 44% 22% at 16% 17%, rgba(240,244,242,0.11) 0%, rgba(240,244,242,0.035) 52%, rgba(240,244,242,0) 76%), radial-gradient(ellipse 34% 20% at 80% 58%, rgba(240,244,242,0.17) 0%, rgba(240,244,242,0.055) 55%, rgba(240,244,242,0) 82%)' }} />
       {/* fractal-noise grain, multiplied at 3.5% — kills banding in the blooms */}
       <div
         aria-hidden="true"

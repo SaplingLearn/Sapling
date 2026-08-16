@@ -13,30 +13,51 @@
  * GLSL — are unreachable. Porting them would be porting dead code. If a mode
  * switcher is ever added back, they are recoverable from the source file.
  *
- * The rig is scroll-driven only. As the hero leaves, the panels spread apart
- * and fade; they deliberately do NOT scale down.
+ * The rig is scroll-driven only. The panels ride the scroll on exactly the
+ * same curve as the DOM copy — see `getHeroShiftPx` below — and fade as the
+ * hero leaves. They deliberately do NOT scale down.
  */
 
 import * as THREE from 'three';
 import { CARD_H, CARD_W, drawHeroCard, type CardKind } from './cardTexture';
 
 /** Panel width in world units; height follows the texture's aspect. */
-const CW = 1.88;
+const CW = 2.02;
 const CH = CW * (CARD_H / CARD_W);
 
-/** Where each panel sits: card kind, position, rotation, scale. */
+/** Camera distance from the origin plane, on -Z. */
+const CAM_Z = 7.6;
+const FOV = 42;
+const TAN_HALF_FOV = Math.tan((FOV * Math.PI) / 360);
+
+/**
+ * Where each panel sits: card kind, position, rotation, scale.
+ *
+ * The two back panels used to sit at z −2.55 and −3.00, which projected their
+ * 460px-wide card bodies down to ~170 CSS px — a 0.37x downscale that put all
+ * their body copy under 7px and made it unreadable. They are pulled forward,
+ * with x/y divided by the same factor the distance shrank by, so each panel
+ * lands on precisely the same screen position as before and only grows.
+ */
 const LAYOUT: { kind: CardKind; pos: [number, number, number]; rot: [number, number, number]; scale: number }[] = [
   { kind: 1, pos: [1.90, 1.50, -0.25], rot: [0.05, -0.26, -0.04], scale: 1.02 },
   { kind: 0, pos: [-0.20, -0.45, 0.70], rot: [0.06, 0.11, 0.032], scale: 0.88 },
-  { kind: 2, pos: [4.15, 1.85, -2.55], rot: [0.04, -0.36, 0.05], scale: 1.05 },
-  { kind: 3, pos: [-3.28, 0.60, -1.00], rot: [0.05, 0.30, -0.05], scale: 0.90 },
-  { kind: 4, pos: [1.30, 2.15, -3.00], rot: [-0.05, -0.14, 0.03], scale: 1.00 },
+  { kind: 2, pos: [3.70, 1.65, -1.45], rot: [0.04, -0.36, 0.05], scale: 1.05 },
+  { kind: 3, pos: [-3.13, 0.57, -0.60], rot: [0.05, 0.30, -0.05], scale: 0.90 },
+  { kind: 4, pos: [1.15, 1.90, -1.75], rot: [-0.05, -0.14, 0.03], scale: 1.00 },
 ];
 
 /** Below this width the whole rig shrinks so it clears the copy. */
 const NARROW_PX = 1100;
-/** Cap the pixel ratio — the panels are soft-focus, so 1.75 is indistinguishable from 3. */
-const MAX_DPR = 1.75;
+/**
+ * Cap the pixel ratio.
+ *
+ * This was 1.75 on the reasoning that the panels are soft-focus, so a higher
+ * ratio buys nothing. They are not soft-focus — the card copy is meant to be
+ * read — so on a HiDPI screen the cap was throwing away the density that makes
+ * the small type legible. 3 covers every panel a real display uses.
+ */
+const MAX_DPR = 3;
 
 export interface HeroRig {
   stop(): void;
@@ -45,14 +66,17 @@ export interface HeroRig {
 /**
  * Mounts the rig on `canvas`.
  *
- * `getMouse` returns pointer position in -1..1 on both axes; `getParallax`
- * is the 0..2 intensity multiplier. Returns null when WebGL is unavailable,
- * so the caller can simply leave the canvas blank.
+ * `getMouse` returns pointer position in -1..1 on both axes. `getHeroShiftPx`
+ * returns the very number the engine has just written into the hero copy's
+ * `translateY` — negative as the copy rides up — so the panels can be moved by
+ * the identical screen distance instead of running a scroll curve of their
+ * own. Returns null when WebGL is unavailable, so the caller can simply leave
+ * the canvas blank.
  */
 export function startHeroRig(
   canvas: HTMLCanvasElement,
   getMouse: () => { x: number; y: number },
-  getParallax: () => number,
+  getHeroShiftPx: () => number,
 ): HeroRig | null {
   let renderer: THREE.WebGLRenderer;
   try {
@@ -65,8 +89,8 @@ export function startHeroRig(
   renderer.setClearColor(0x000000, 0);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 200);
-  camera.position.set(0, 0, 7.6);
+  const camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 200);
+  camera.position.set(0, 0, CAM_Z);
 
   const group = new THREE.Group();
   scene.add(group);
@@ -135,14 +159,16 @@ export function startHeroRig(
     if (window.scrollY > vh * 1.35) return;
 
     t += dt;
-    const intensity = getParallax();
-    const sp = Math.max(0, Math.min(1, window.scrollY / vh));
-    const ease = sp * sp * (3 - 2 * sp);
-    // never reaches 0 — a sliver stays lit as the descent band takes over
-    const fade = 1 - ease * 0.92;
 
-    scene.position.y = -ease * 1.5 * intensity;
-    scene.rotation.x = ease * 0.13 * intensity;
+    // The copy's scroll offset in CSS px (negative = risen). Everything below
+    // is derived from it, so the panels and the copy share one scroll curve —
+    // including its double-lerp smoothing — rather than two that drift apart.
+    const shiftPx = getHeroShiftPx();
+    const vpH = canvas.clientHeight || vh;
+    // the copy's own factor is 0.3, so a full viewport of scroll lifts it 0.3vh
+    const progress = Math.max(0, Math.min(1, -shiftPx / (0.3 * vh)));
+    // never reaches 0 — a sliver stays lit as the descent band takes over
+    const fade = 1 - progress * 0.92;
 
     const { x: mx, y: my } = getMouse();
 
@@ -154,10 +180,12 @@ export function startHeroRig(
 
     panels.forEach((p) => {
       const s = t * 0.32 + p.phase;
-      p.grp.position.y = p.base.pos[1] + Math.sin(s) * 0.18;
-      // the `* ease * 0.22` term is the separation: each panel drifts further
-      // out along its own x as the hero scrolls away. Scale is untouched.
-      p.grp.position.x = p.base.pos[0] + Math.cos(s * 0.72) * 0.09 + p.base.pos[0] * ease * 0.22;
+      // World units that span one screen pixel at this panel's depth. Each
+      // panel needs its own factor: they sit at different z, and a single
+      // scene-level offset would move the near ones further than the far ones.
+      const worldPerPx = (2 * (CAM_Z - p.base.pos[2]) * TAN_HALF_FOV) / vpH;
+      p.grp.position.y = p.base.pos[1] + Math.sin(s) * 0.18 - shiftPx * worldPerPx;
+      p.grp.position.x = p.base.pos[0] + Math.cos(s * 0.72) * 0.09;
       p.grp.position.z = p.base.pos[2];
       p.grp.rotation.z = p.base.rot[2] + Math.sin(s * 0.55) * 0.022;
       p.grp.rotation.x = p.base.rot[0] + Math.sin(s * 0.63) * 0.03;

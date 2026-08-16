@@ -9,6 +9,15 @@
  * The canvas is deliberately larger than the card: a 56px margin all round
  * gives the drop shadow room to fall without being clipped by the texture
  * edge. That margin is why the plane's aspect is 692/572 rather than 580/460.
+ *
+ * Type sizes here are NOT free. The 460px-wide card body projects to roughly
+ * 230 CSS px on the near panels and 200 on the far ones, so everything drawn
+ * here lands at about half the size it reads at in this file. Anything under
+ * ~18px ends up below 9 CSS px on screen, where a one-pixel stroke covers less
+ * than half a device pixel and averages away into the card — which is what
+ * made the earlier 15px micro-copy look blurred and washed out rather than
+ * small. Treat 18px as the floor, and keep the micro-greys dark enough that a
+ * half-covered pixel still separates from #FDFCF9.
  */
 
 /** Card body, in canvas units. */
@@ -27,7 +36,9 @@ const SANS = "'DM Sans',system-ui,sans-serif";
 const MONO = "'JetBrains Mono',monospace";
 const SERIF = "'Spectral',Georgia,serif";
 const INK = '#12201A';
-const DIM = '#6F7C74';
+const DIM = '#65736B';
+/** The lightest grey that still survives the downscale, for meta lines. */
+const FAINT = '#7E8C85';
 const LINE = 'rgba(20,45,32,0.10)';
 
 export type CardKind = 0 | 1 | 2 | 3 | 4;
@@ -77,9 +88,9 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
   x.stroke();
 
   const eyebrow = (t: string, y: number, col?: string) => {
-    x.font = '600 15px ' + MONO;
-    x.fillStyle = col || '#8B9A92';
-    x.letterSpacing = '2.6px';
+    x.font = '600 20px ' + MONO;
+    x.fillStyle = col || FAINT;
+    x.letterSpacing = '2.2px';
     x.fillText(t, P, y);
     x.letterSpacing = '0px';
   };
@@ -102,7 +113,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
   };
 
   const bar = (y: number, label: string, pct: number, col: string) => {
-    x.font = '500 17px ' + SANS;
+    x.font = '500 20px ' + SANS;
     x.fillStyle = DIM;
     x.fillText(label, P, y);
     x.fillStyle = '#E9E5DA';
@@ -119,7 +130,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     x.font = '700 46px ' + SERIF;
     x.fillStyle = '#1B6C42';
     x.fillText('61%', P, 116);
-    x.font = '500 16px ' + SANS;
+    x.font = '500 20px ' + SANS;
     x.fillStyle = DIM;
     x.fillText('course mastery', P + 100, 114);
     bar(180, 'Kinematics', 0.84, '#3A7D4E');
@@ -131,7 +142,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     x.moveTo(P, 468);
     x.lineTo(W - P, 468);
     x.stroke();
-    x.font = '500 16px ' + SANS;
+    x.font = '500 20px ' + SANS;
     x.fillStyle = DIM;
     x.fillText('Next review · 14 cards due', P, 502);
   } else if (kind === 1) {
@@ -148,9 +159,9 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     x.lineWidth = 2;
     rr(P + 1, 91, W - P * 2 - 2, 228, 20);
     x.stroke();
-    x.font = '500 13px ' + MONO;
-    x.fillStyle = '#9AA5A0';
-    x.letterSpacing = '3px';
+    x.font = '500 18px ' + MONO;
+    x.fillStyle = FAINT;
+    x.letterSpacing = '2.6px';
     x.fillText('FRONT', P + 26, 126);
     x.letterSpacing = '0px';
     x.save();
@@ -169,14 +180,14 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
       x.lineWidth = 2;
       rr(cx0, 360, cw, 54, 12);
       x.stroke();
-      x.font = '500 18px ' + SANS;
+      x.font = '500 21px ' + SANS;
       x.fillStyle = DIM;
       x.textAlign = 'center';
-      x.fillText(ch[0], cx0 + cw / 2, 393);
+      x.fillText(ch[0], cx0 + cw / 2, 394);
       x.textAlign = 'left';
     });
-    x.font = '500 15px ' + MONO;
-    x.fillStyle = '#9AA5A0';
+    x.font = '500 20px ' + MONO;
+    x.fillStyle = FAINT;
     x.fillText('next in 4d · 12d · 31d', P, 468);
     x.strokeStyle = LINE;
     x.lineWidth = 2;
@@ -184,7 +195,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     x.moveTo(P, 496);
     x.lineTo(W - P, 496);
     x.stroke();
-    x.font = '500 16px ' + SANS;
+    x.font = '500 20px ' + SANS;
     x.fillStyle = DIM;
     x.fillText('From: Lecture 9 notes.pdf', P, 530);
   } else if (kind === 2) {
@@ -192,7 +203,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     eyebrow('ADAPTIVE QUIZ · CH 4', 54);
     wrap(
       'A block slides down a frictionless incline. Which quantity is conserved?',
-      106, W - P * 2, 38, '600 27px ' + SERIF, INK,
+      106, W - P * 2, 38, '600 29px ' + SERIF, INK,
     );
     const opts: [string, number][] = [
       ['Momentum along the slope', 0],
@@ -208,9 +219,9 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
       x.lineWidth = 2;
       rr(P + 1, y + 1, W - P * 2 - 2, 56, 14);
       x.stroke();
-      x.font = '500 18px ' + SANS;
+      x.font = '500 21px ' + SANS;
       x.fillStyle = o[1] ? '#1B6C42' : DIM;
-      x.fillText(o[0], P + 24, y + 36);
+      x.fillText(o[0], P + 24, y + 37);
       if (o[1]) {
         x.strokeStyle = '#3A7D4E';
         x.lineWidth = 3.4;
@@ -222,8 +233,8 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
         x.stroke();
       }
     });
-    x.font = '500 15px ' + MONO;
-    x.fillStyle = '#9AA5A0';
+    x.font = '500 20px ' + MONO;
+    x.fillStyle = FAINT;
     x.fillText('DIFFICULTY ↑  ·  4 OF 8', P, 512);
   } else if (kind === 3) {
     // ── mini knowledge graph ──
@@ -268,7 +279,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
       x.beginPath();
       x.arc(P + 6, y - 5, 6, 0, 6.3);
       x.fill();
-      x.font = '500 17px ' + SANS;
+      x.font = '500 20px ' + SANS;
       x.fillStyle = DIM;
       x.fillText(l[0], P + 24, y);
     });
@@ -278,8 +289,8 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     const days = ['M', 'T', 'W', 'T', 'F'];
     const cw = (W - P * 2) / 5;
     days.forEach((d, i) => {
-      x.font = '500 16px ' + MONO;
-      x.fillStyle = '#9AA5A0';
+      x.font = '500 20px ' + MONO;
+      x.fillStyle = FAINT;
       x.textAlign = 'center';
       x.fillText(d, P + cw * i + cw / 2, 106);
       x.textAlign = 'left';
@@ -304,9 +315,9 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
       x.fillStyle = e[1];
       rr(P, y, 5, 66, 3);
       x.fill();
-      x.font = '500 18px ' + SANS;
+      x.font = '500 21px ' + SANS;
       x.fillStyle = INK;
-      x.fillText(e[0], P + 22, y + 29);
+      x.fillText(e[0], P + 22, y + 30);
       x.fillStyle = '#E9E5DA';
       rr(P + 22, y + 43, W - P * 2 - 44, 7, 4);
       x.fill();
@@ -314,8 +325,8 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
       rr(P + 22, y + 43, (W - P * 2 - 44) * e[2], 7, 4);
       x.fill();
     });
-    x.font = '500 15px ' + MONO;
-    x.fillStyle = '#9AA5A0';
+    x.font = '500 20px ' + MONO;
+    x.fillStyle = FAINT;
     x.fillText('PULLED FROM SYLLABUS', P, 532);
   }
 

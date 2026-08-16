@@ -72,6 +72,13 @@ export class LandingEngine {
 
   mouse: Mouse = { x: 0, y: 0 };
   parallaxY = 0;
+  /**
+   * The hero copy's current `translateY`, in CSS px (negative as it rises).
+   *
+   * Published so the WebGL panel rig can ride the same scroll curve as the
+   * copy instead of running its own — see `hero3d/index.ts`.
+   */
+  heroShiftPx = 0;
 
   private refs: EngineRefs;
   private hooks: EngineHooks;
@@ -191,8 +198,11 @@ export class LandingEngine {
     const sy = this.sySmooth;
     const syM = this.syMedia;
 
-    if (this.refs.heroContent && rawSy < vh * 1.4) {
-      put(this.refs.heroContent, 'transform', 'translateY(' + (syM * -0.3).toFixed(1) + 'px)');
+    if (rawSy < vh * 1.4) {
+      this.heroShiftPx = syM * -0.3;
+      if (this.refs.heroContent) {
+        put(this.refs.heroContent, 'transform', 'translateY(' + this.heroShiftPx.toFixed(1) + 'px)');
+      }
       this.parallaxY = syM * 0.1;
     }
 

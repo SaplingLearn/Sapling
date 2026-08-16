@@ -239,7 +239,7 @@ export function useLanding(props: LandingProps) {
     // and off the critical path
     import('@/lib/landing/hero3d').then(({ startHeroRig }) => {
       if (cancelled) return;
-      rig = startHeroRig(canvas, () => engine.mouse, () => s.current.parallax);
+      rig = startHeroRig(canvas, () => engine.mouse, () => engine.heroShiftPx);
     });
     return () => {
       cancelled = true;

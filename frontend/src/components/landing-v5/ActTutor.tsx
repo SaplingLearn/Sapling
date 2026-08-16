@@ -44,6 +44,25 @@ const FACE: React.CSSProperties = {
   borderRadius: 22, padding: 20, boxSizing: 'border-box', overflow: 'hidden',
 };
 
+/** Viewer distance, and how far each face stands off the prism's axis. */
+const PERSPECTIVE = 1600;
+const RADIUS = 310;
+/**
+ * How much the perspective blows the faces up, and the correction for it.
+ *
+ * A face sitting `RADIUS` closer to the viewer than the prism's origin is
+ * drawn `MAG` times larger than its CSS box — but the compositor rasterises
+ * the layer at its CSS size and scales the bitmap up afterwards, so every
+ * glyph on these three cards was being resampled 24% larger than it was ever
+ * drawn. Pushing the prism back by `RADIUS` lands the front face exactly on
+ * the perspective origin plane, where the magnification is 1 and the raster
+ * is 1:1; `zoom` then scales the whole subtree — box, type and the faces'
+ * own translateZ alike — back to the size it occupied before, at full
+ * resolution. Measured edge acuity on the front face nearly doubles, and the
+ * card's on-screen rect is unchanged at 533x620.
+ */
+const MAG = PERSPECTIVE / (PERSPECTIVE - RADIUS);
+
 const PILL_ON = '#0C5638';
 const PILL_ON_FG = '#FDFCF9';
 
@@ -109,7 +128,8 @@ export function ActTutor({
             </div>
           </div>
 
-          <div style={{ perspective: 1600, height: 'min(66vh,560px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ perspective: PERSPECTIVE, height: 'min(66vh,560px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ zoom: MAG, transformStyle: 'preserve-3d', transform: `translateZ(${-RADIUS}px)` }}>
             <div
               ref={carouselRef}
               style={{ position: 'relative', width: 'min(430px,44vw)', height: 'min(500px,60vh)', transformStyle: 'preserve-3d', willChange: 'transform' }}
@@ -118,7 +138,7 @@ export function ActTutor({
               <div
                 data-panel="0"
                 data-socratic="1"
-                style={{ ...FACE, transform: 'rotateY(0deg) translateZ(310px)', background: '#FDFCF9', border: '1px solid #E8E5DA', boxShadow: '0 26px 54px -22px rgba(18,32,26,0.3)', display: 'grid', gridTemplateRows: 'auto minmax(0,1fr) auto', gap: 10 }}
+                style={{ ...FACE, transform: `rotateY(0deg) translateZ(${RADIUS}px)`, background: '#FDFCF9', border: '1px solid #E8E5DA', boxShadow: '0 26px 54px -22px rgba(18,32,26,0.3)', display: 'grid', gridTemplateRows: 'auto minmax(0,1fr) auto', gap: 10 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.22em', color: '#0C5638' }}>SOCRATIC MODE</span>
@@ -155,7 +175,7 @@ export function ActTutor({
               {/* ── face 1 · Expository ── */}
               <div
                 data-panel="1"
-                style={{ ...FACE, transform: 'rotateY(120deg) translateZ(310px)', background: '#F6F8F4', border: '1px solid #E8E5DA', boxShadow: '0 26px 54px -22px rgba(18,32,26,0.3)', display: 'grid', gridTemplateRows: 'auto auto auto minmax(0,1fr) auto auto', gap: 9 }}
+                style={{ ...FACE, transform: `rotateY(120deg) translateZ(${RADIUS}px)`, background: '#F6F8F4', border: '1px solid #E8E5DA', boxShadow: '0 26px 54px -22px rgba(18,32,26,0.3)', display: 'grid', gridTemplateRows: 'auto auto auto minmax(0,1fr) auto auto', gap: 9 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.22em', color: '#0C5638' }}>EXPOSITORY MODE</span>
@@ -226,7 +246,7 @@ export function ActTutor({
               {/* ── face 2 · TeachBack — the only dark face ── */}
               <div
                 data-panel="2"
-                style={{ ...FACE, transform: 'rotateY(240deg) translateZ(310px)', background: 'linear-gradient(155deg,#153F2B 0%,#0D2B1E 58%,#081F14 100%)', border: '1px solid rgba(143,217,168,0.22)', boxShadow: '0 26px 54px -22px rgba(4,22,14,0.55)', padding: 18, display: 'grid', gridTemplateRows: 'auto auto auto minmax(0,1fr) auto', gap: 8 }}
+                style={{ ...FACE, transform: `rotateY(240deg) translateZ(${RADIUS}px)`, background: 'linear-gradient(155deg,#153F2B 0%,#0D2B1E 58%,#081F14 100%)', border: '1px solid rgba(143,217,168,0.22)', boxShadow: '0 26px 54px -22px rgba(4,22,14,0.55)', padding: 18, display: 'grid', gridTemplateRows: 'auto auto auto minmax(0,1fr) auto', gap: 8 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.22em', color: '#8FD9A8' }}>TEACHBACK MODE</span>
@@ -273,6 +293,7 @@ export function ActTutor({
                   </div>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         </div>
