@@ -9,6 +9,7 @@
  * interruptible without measuring.
  */
 
+import Link from 'next/link';
 import { FAQS } from '@/lib/landing/content';
 import { DragField } from './DragField';
 
@@ -47,7 +48,7 @@ export function Faq({
 
       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
         {MOTES.map((m, i) => (
-          <span key={i} data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
+          <span key={i} data-anim data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
         ))}
       </div>
 
@@ -71,7 +72,13 @@ export function Faq({
           <div style={{ marginTop: 28, display: 'flex', alignItems: 'center' }}>
             <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.3em', color: '#61726A', textTransform: 'uppercase' }}>
               Still curious?{' '}
-              <a href="#faq" style={{ color: '#0C5638', textDecoration: 'underline' }}>Read the full FAQ</a>
+              {/*
+                `/faq`, not `#faq`: the enclosing <section> already carries
+                id="faq", so this anchor used to link to itself and did nothing.
+                The route this PR adds is the real destination, and the footer
+                in Closing.tsx already points there.
+              */}
+              <Link href="/faq" style={{ color: '#0C5638', textDecoration: 'underline' }}>Read the full FAQ</Link>
             </span>
           </div>
         </div>
@@ -79,17 +86,26 @@ export function Faq({
         <div data-reveal="1" style={{ borderTop: '1px solid rgba(18,32,26,0.12)' }}>
           {FAQS.map((q, i) => {
             const open = openFaq === i;
+            // Derived from the index rather than the question text: the copy is
+            // free prose with apostrophes and question marks, none of which
+            // belongs in an id an aria-controls has to match exactly.
+            const panelId = `faq-panel-${i}`;
             return (
               <div key={q.q} style={{ borderBottom: '1px solid rgba(18,32,26,0.12)' }}>
                 <button
                   onClick={() => onToggle(open ? -1 : i)}
+                  type="button"
                   aria-expanded={open}
+                  // Without aria-controls, `aria-expanded` announces that
+                  // something expanded but never says what.
+                  aria-controls={panelId}
                   style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '22px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, textAlign: 'left' }}
                 >
                   <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 19, fontWeight: 600, letterSpacing: '-0.01em', color: open ? '#0C5638' : '#12201A', transition: 'color 300ms' }}>
                     {q.q}
                   </span>
                   <span
+                    aria-hidden="true"
                     style={{
                       flexShrink: 0, width: 28, height: 28, borderRadius: 99,
                       border: '1px solid rgba(18,32,26,0.18)', display: 'flex',
@@ -106,13 +122,21 @@ export function Faq({
                   </span>
                 </button>
                 <div
+                  id={panelId}
+                  // `max-height: 0` still leaves the answer in the a11y tree
+                  // and reachable by Tab, so a closed accordion read out all
+                  // eight answers. `visibility` is used rather than
+                  // `display:none` so the max-height transition still runs; it
+                  // holds the `visible` endpoint for the whole duration.
+                  inert={!open}
                   style={{
                     // a shared ceiling, not a measured height — keeps the
                     // transition interruptible without a layout read
                     maxHeight: open ? 300 : 0,
                     opacity: open ? 1 : 0,
+                    visibility: open ? 'visible' : 'hidden',
                     overflow: 'hidden',
-                    transition: 'max-height 450ms cubic-bezier(0.22,1,0.36,1), opacity 350ms ease',
+                    transition: 'max-height 450ms cubic-bezier(0.22,1,0.36,1), opacity 350ms ease, visibility 450ms',
                   }}
                 >
                   <p style={{ margin: 0, padding: '0 44px 24px 4px', color: '#33443B', fontSize: 14.5, lineHeight: 1.8 }}>

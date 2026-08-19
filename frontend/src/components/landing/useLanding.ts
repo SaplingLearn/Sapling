@@ -220,11 +220,20 @@ export function useLanding(props: LandingProps) {
     const engine = engineRef.current;
     if (!canvas || !engine) return;
     let stopped: { stop(): void } | null = null;
+    // `cancelled` closes the unmount/import race: without it, an unmount that
+    // lands before the dynamic import resolves runs cleanup while `stopped` is
+    // still null, and the `.then()` afterwards starts a rAF loop that nothing
+    // ever stops. Same guard the WebGL rig below uses.
+    let cancelled = false;
     // imported lazily so the module isn't pulled into the server bundle
     import('@/lib/landing/engine/hero').then(({ startHeroCanvas }) => {
+      if (cancelled) return;
       stopped = startHeroCanvas(canvas, () => engine.mouse, () => engine.parallaxY);
     });
-    return () => stopped?.stop();
+    return () => {
+      cancelled = true;
+      stopped?.stop();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -278,6 +287,12 @@ export function useLanding(props: LandingProps) {
       if (e.key !== 'Escape') return;
       if (s.current.galIdx >= 0) closeGal();
       else if (s.current.jumpOpen) setJumpOpen(false);
+      // Explore mode sets `body.overflow = 'hidden'` and hides the navbar, so
+      // without this branch a keyboard-only user who entered it could neither
+      // scroll nor leave — the remaining exits are a canvas click and the HUD
+      // button, both pointer-only. `closeGal`/`exitExplore` are declared below
+      // but only ever called from this listener, i.e. after initialisation.
+      else if (s.current.exploring) exitExplore();
     };
     document.addEventListener('keydown', onKey);
 
@@ -390,9 +405,14 @@ export function useLanding(props: LandingProps) {
       });
     };
     scan();
-    const iv = setInterval(scan, 900);
+    // A MutationObserver rather than `setInterval(scan, 900)`: the tree only
+    // gains [data-reveal] nodes when React commits, so polling burned a full
+    // subtree query every 900ms forever and still left a node un-hidden for up
+    // to 900ms after it mounted (long enough to flash in at full opacity).
+    const mo = new MutationObserver(scan);
+    mo.observe(root, { childList: true, subtree: true });
     return () => {
-      clearInterval(iv);
+      mo.disconnect();
       io.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -421,10 +441,11 @@ export function useLanding(props: LandingProps) {
         { rootMargin: '15% 0px' },
       );
       root.querySelectorAll('section').forEach((sec) => {
-        const els = Array.from(sec.querySelectorAll<HTMLElement>('*')).filter((el) => {
-          const n = getComputedStyle(el).animationName;
-          return n && n !== 'none';
-        });
+        // Only [data-anim] elements are considered. The previous '*' walk ran
+        // getComputedStyle on every node in every section — thousands of forced
+        // style resolutions on the main thread 1.2s into the page. Every element
+        // carrying an inline `animation` in landing-v5 is marked `data-anim`.
+        const els = Array.from(sec.querySelectorAll<HTMLElement>('[data-anim]'));
         if (!els.length) return;
         (sec as HTMLElement & { __animEls?: HTMLElement[] }).__animEls = els;
         io!.observe(sec);
@@ -592,7 +613,16 @@ export function useLanding(props: LandingProps) {
    */
   const subscribeNow = useCallback(async () => {
     const value = email.trim();
-    if (!value.includes('@') || subscribing) return;
+    // Bail before anything else when a submit is already in flight, so a
+    // double-click cannot overwrite a pending request's state.
+    if (subscribing) return;
+    // An empty, non-required type="email" field passes browser validation and
+    // lands here. Returning silently meant the user pressed the button and saw
+    // absolutely nothing change, so say why instead.
+    if (!value.includes('@')) {
+      setSubscribeError('Please enter a valid email address.');
+      return;
+    }
     setSubscribing(true);
     setSubscribeError(null);
     try {

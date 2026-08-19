@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { verifySession } from '@/lib/sessionToken'
+import { detectHostConfigMismatch, resolveFrontendEnv } from '@/lib/deployGuard'
 
 // Every route in the (shell) group is gated here. #189: /profile/[userId]
 // was the one shell route missing from both this list and config.matcher, so
@@ -20,11 +21,17 @@ const PROTECTED = [
 // resolvable here. BACKEND_URL is the server-side origin and is preferred.
 // In prod/staging the two are identical (frontend/wrangler.toml) so this is a
 // no-op there; the NEXT_PUBLIC_API_URL fallback keeps any env that only sets
-// that one working. .trim() mirrors next.config.ts's defense against a stray
-// space in a deploy variable.
-const API_URL =
-  (process.env.BACKEND_URL ?? '').trim() ||
-  (process.env.NEXT_PUBLIC_API_URL ?? '').trim()
+// that one working.
+//
+// resolveFrontendEnv owns that precedence (and the .trim() that defends against
+// a stray space in a deploy variable, mirroring next.config.ts). When
+// DEPLOY_ENV names an environment the origin is DERIVED from it, so a stray
+// half-set BACKEND_URL cannot leak the wrong backend into auth.
+const API_URL = resolveFrontendEnv(process.env).apiUrl
+
+// Logged once per isolate, not per request: a mismatch means EVERY request is
+// broken, and one line per request would bury the Workers log it belongs in.
+let mismatchLogged = false
 
 function googleAuthRedirect() {
   if (!API_URL) return null
@@ -44,6 +51,24 @@ export async function middleware(request: NextRequest) {
 
   const isProtected = PROTECTED.some(p => pathname.startsWith(p))
   if (!isProtected) return NextResponse.next()
+
+  // Runtime defence-in-depth for what next.config.ts's build-time guard cannot
+  // see: an internally-consistent build shipped to the wrong worker or route,
+  // e.g. the prod-config worker answering staging.saplinglearn.com. In that
+  // state the session cookie is scoped to the other environment's domain and
+  // /api/auth/me is asked about a user the other backend has never seen, so
+  // every gated request fails and the visitor is bounced to
+  // `/?error=session_expired` — forever, with copy that blames their session
+  // for an infrastructure fault. Report the real cause instead. `/` is not in
+  // PROTECTED, so this cannot loop.
+  const configMismatch = detectHostConfigMismatch(request.headers.get('host'), API_URL)
+  if (configMismatch) {
+    if (!mismatchLogged) {
+      mismatchLogged = true
+      console.error(`[deploy-guard] frontend host/backend mismatch: ${configMismatch}`)
+    }
+    return redirectToSignin(request, 'env_misconfig')
+  }
 
   const token = request.cookies.get('sapling_session')?.value
   if (!token) return redirectToSignin(request)

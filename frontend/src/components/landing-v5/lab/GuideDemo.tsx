@@ -18,9 +18,18 @@ import { GUIDES } from './labData';
 type Phase = 'empty' | 'loading' | 'guide';
 type CourseKey = keyof typeof GUIDES;
 
+/**
+ * The two cached guides in the sidebar.
+ *
+ * Every `pick` MUST be a verbatim member of `GUIDES[course].exams`: opening a
+ * recent item assigns it straight to the exam `<select>`, and an unknown value
+ * left the select showing nothing while the heading below printed the phantom
+ * exam. The previous entries ('Midterm 1 · Sep 30', 'Quiz 2 · Oct 03') existed
+ * in neither course's list.
+ */
 const RECENT = [
-  { i: 0, exam: 'MA 242 · Midterm 1', meta: 'GENERATED SEP 28', course: 'MA 242' as CourseKey, pick: 'Midterm 1 · Sep 30' },
-  { i: 1, exam: 'CS 201 · Quiz 2', meta: 'GENERATED OCT 03', course: 'CS 201' as CourseKey, pick: 'Quiz 2 · Oct 03' },
+  { i: 0, exam: 'MA 242 · Midterm 2', meta: 'GENERATED SEP 28', course: 'MA 242' as CourseKey, pick: 'Midterm 2 · Oct 24' },
+  { i: 1, exam: 'CS 201 · Midterm 1', meta: 'GENERATED OCT 03', course: 'CS 201' as CourseKey, pick: 'Midterm 1 · Oct 17' },
 ];
 
 const SELECT: React.CSSProperties = {
@@ -35,13 +44,16 @@ export function GuideDemo() {
   const [stamp, setStamp] = useState('');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  useEffect(() => () => clearTimeout(timer.current ?? undefined), []);
 
-  const set = GUIDES[course] ?? GUIDES['MA 242'];
+  // `course` is a CourseKey, so this is always present — the `?? GUIDES['MA
+  // 242']` fallback that used to sit here implied otherwise and disagreed with
+  // the direct `GUIDES[course].exams` read further down.
+  const set = GUIDES[course];
 
   const generate = () => {
     setPhase('loading');
-    if (timer.current) clearTimeout(timer.current);
+    clearTimeout(timer.current ?? undefined);
     timer.current = setTimeout(() => {
       setPhase('guide');
       setStamp('GENERATED ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).toUpperCase());
@@ -52,7 +64,7 @@ export function GuideDemo() {
     setCourse(r.course);
     setExam(r.pick);
     setPhase('loading');
-    if (timer.current) clearTimeout(timer.current);
+    clearTimeout(timer.current ?? undefined);
     timer.current = setTimeout(() => { setPhase('guide'); setStamp('FROM CACHE'); }, 500);
   };
 
@@ -93,13 +105,13 @@ export function GuideDemo() {
 
         {phase === 'loading' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-            <span style={{ width: 26, height: 26, borderRadius: 99, border: '3px solid #E3EBE5', borderTopColor: '#0E9E5A', animation: 'labSpin 700ms linear infinite' }} />
+            <span data-anim style={{ width: 26, height: 26, borderRadius: 99, border: '3px solid #E3EBE5', borderTopColor: '#0E9E5A', animation: 'labSpin 700ms linear infinite' }} />
             <span style={{ fontSize: 12.5, color: '#8B9891' }}>Reading your library — 11 documents…</span>
           </div>
         )}
 
         {phase === 'guide' && (
-          <div style={{ flex: 1, overflow: 'auto', borderRadius: 12, border: '1px solid #E8E5DA', background: '#FDFCF9', padding: '18px 20px', animation: 'labIn 320ms ease both' }}>
+          <div data-anim style={{ flex: 1, overflow: 'auto', borderRadius: 12, border: '1px solid #E8E5DA', background: '#FDFCF9', padding: '18px 20px', animation: 'labIn 320ms ease both' }}>
             <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#8B9891' }}>{course.toUpperCase()} · STUDY GUIDE</span>
             <h4 style={{ margin: '8px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 20, fontWeight: 600 }}>{exam}</h4>
             <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.7, color: '#61726A' }}>{set.overview}</p>

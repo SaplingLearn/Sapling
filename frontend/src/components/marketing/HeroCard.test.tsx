@@ -73,7 +73,7 @@ describe('#288 hero surface', () => {
 
   it('gives both hero rules a literal fallback, so an out-of-scope mount still paints', () => {
     const css = fs.readFileSync(GLOBALS, 'utf8');
-    // --surface-hero is scoped to .public-surface/.landing-page. A hero card
+    // --surface-hero is scoped to .public-surface. A hero card
     // mounted outside that subtree resolves the var to nothing, so the
     // fallback is the only thing standing between it and a transparent card.
     const background = css.match(/\.hero-surface,\s*\n\.card--hero\s*\{[^}]*\}/);

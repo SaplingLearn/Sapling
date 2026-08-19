@@ -8,9 +8,9 @@
  * and then never uses the dark half, because the scroll handler hardwires
  * `const wantDark = false`.
  *
- * We wire it up. The page passes through two full-bleed dark acts; leaving
- * the navbar in its light palette over them is plainly a stub rather than a
- * design intent, and the design brief calls for the interpolation. The rule
+ * We wire it up. The page passes through one full-bleed dark act; leaving the
+ * navbar in its light palette over it is plainly a stub rather than a design
+ * intent, and the design brief calls for the interpolation. The rule
  * below is the one the dead code was shaped for: whichever section owns the
  * vertical centre of the viewport decides the theme.
  */
@@ -65,8 +65,16 @@ export const NAV_DARK: NavTheme = {
     'linear-gradient(180deg, rgba(6,23,16,0.88) 0%, rgba(6,23,16,0.42) 52%, rgba(6,23,16,0) 100%)',
 };
 
-/** The three sections that sit on the dark ground. */
-const DARK_SECTIONS = ['act-graph', 'act-ingest', 'act-tutor'];
+/**
+ * The sections that sit on a dark ground.
+ *
+ * Only `act-graph` qualifies. `act-ingest` has no dark background at all, and
+ * `act-tutor` paints a light mint gradient (`rgba(230,242,232,…)`) over the
+ * page ground `#f0f4f2`. Listing either of those made the nav switch to
+ * `NAV_DARK` — `ink: rgba(214,234,222,0.62)` on near-white — which is
+ * unreadable. Only add a section here once it actually renders dark.
+ */
+const DARK_SECTIONS = ['act-graph'];
 
 /**
  * True while the viewport's vertical centre sits inside a dark act.

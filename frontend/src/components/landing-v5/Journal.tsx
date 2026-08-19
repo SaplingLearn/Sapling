@@ -97,7 +97,7 @@ export function Journal({
           {POSTS.map((p, i) => {
             const meta = POST_META[i] ?? POST_META[0];
             return (
-              <div key={p.title} style={{ display: 'flex', animation: 'cardFloat 7.5s ease-in-out infinite both', animationDelay: meta.floatDelay }}>
+              <div data-anim key={p.title} style={{ display: 'flex', animation: 'cardFloat 7.5s ease-in-out infinite both', animationDelay: meta.floatDelay }}>
                 <a
                   href="#newsletter"
                   className="ld-post"

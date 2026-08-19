@@ -146,17 +146,25 @@ export const WIKI_GRAPH_TERMS = [
         { term:'Class node', def:'The hub at the centre of the graph. It represents the course itself and connects to every unit root.' },
       ] as const;
 
+/**
+ * `dot` and `tone` hold a bare hex colour, not a CSS declaration.
+ *
+ * They used to store `'background:#3a7d4e;'` / `'color:#b25855;'`, which forced
+ * the wiki page to keep a `cssColor()` helper that string-stripped the prefix
+ * back off before it could go in a React style object. Data holds the value;
+ * the consumer decides which property it lands on.
+ */
 export const WIKI_TIERS = [
-        { name:'Mastered', range:'0.75 \u2013 1.00', dot:'background:' + TIER.mastered + ';', meaning:'You have demonstrated it more than once. Quizzes spend few questions here.' },
-        { name:'Learning', range:'0.40 \u2013 0.74', dot:'background:' + TIER.learning + ';', meaning:'Partly there. Reviews are scheduled and the tutor still probes it.' },
-        { name:'Struggling', range:'0.01 \u2013 0.39', dot:'background:' + TIER.struggling + ';', meaning:'Repeated misses. Study guides weight this concept the heaviest.' },
-        { name:'Unexplored', range:'0.00', dot:'background:' + TIER.unexplored + ';', meaning:'Seen in your documents but never practised. No score yet.' },
+        { name:'Mastered', range:'0.75 \u2013 1.00', dot:TIER.mastered, meaning:'You have demonstrated it more than once. Quizzes spend few questions here.' },
+        { name:'Learning', range:'0.40 \u2013 0.74', dot:TIER.learning, meaning:'Partly there. Reviews are scheduled and the tutor still probes it.' },
+        { name:'Struggling', range:'0.01 \u2013 0.39', dot:TIER.struggling, meaning:'Repeated misses. Study guides weight this concept the heaviest.' },
+        { name:'Unexplored', range:'0.00', dot:TIER.unexplored, meaning:'Seen in your documents but never practised. No score yet.' },
       ] as const;
 
 export const WIKI_RATINGS = [
-        { label:'Forgot', key:'1', due:'10 min', tone:'color:' + TIER.struggling + ';' },
-        { label:'Hard', key:'2', due:'1 day', tone:'color:' + TIER.learning + ';' },
-        { label:'Easy', key:'3', due:'4 days', tone:'color:' + TIER.mastered + ';' },
+        { label:'Forgot', key:'1', due:'10 min', tone:TIER.struggling },
+        { label:'Hard', key:'2', due:'1 day', tone:TIER.learning },
+        { label:'Easy', key:'3', due:'4 days', tone:TIER.mastered },
       ] as const;
 
 export const WIKI_MODES = [

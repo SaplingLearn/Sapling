@@ -34,7 +34,7 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
 
       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
         {MOTES.map((m, i) => (
-          <span key={i} data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
+          <span key={i} data-anim data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
         ))}
       </div>
 
@@ -81,6 +81,14 @@ const FOOTER_LINKS = [
   { label: 'FAQ', href: '/faq' },
 ];
 
+/**
+ * Resolved once per module load, and used at both footer sites.
+ *
+ * Was the literal "2026" typed twice, which is two places to forget on
+ * January 1st and one of them silently disagreeing with the other.
+ */
+const YEAR = new Date().getFullYear();
+
 const FOOTER_LINK: React.CSSProperties = { color: '#61726A', fontSize: 13.5, transition: 'color 300ms' };
 
 export function SiteFooter() {
@@ -89,7 +97,7 @@ export function SiteFooter() {
       <div style={{ maxWidth: 1150, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Image src="/sapling-icon.svg" alt="Sapling" width={20} height={20} />
-          <span style={{ fontSize: 13.5, fontWeight: 300, letterSpacing: '0.02em', color: '#61726A' }}>Sapling · © 2026</span>
+          <span style={{ fontSize: 13.5, fontWeight: 300, letterSpacing: '0.02em', color: '#61726A' }}>Sapling · © {YEAR}</span>
         </div>
         <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
           {FOOTER_LINKS.map((l) => (
@@ -103,7 +111,7 @@ export function SiteFooter() {
       </div>
       <div style={{ maxWidth: 1150, margin: '32px auto 0', paddingTop: 24, borderTop: '1px solid rgba(18,32,26,0.06)', textAlign: 'center' }}>
         <p style={{ margin: 0, fontSize: 12, color: '#61726A', opacity: 0.75, fontWeight: 300, letterSpacing: '0.02em' }}>
-          © 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
+          © {YEAR} Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez. All Rights Reserved.
         </p>
       </div>
     </footer>
@@ -171,6 +179,10 @@ export function SectionNav({
               data-secnav={sec.nav}
               data-jump={i}
               type="button"
+              // The container above declares role="menu", which overrides the
+              // implicit button roles of its children; without menuitem here
+              // the menu announced as empty.
+              role="menuitem"
               onClick={() => (sec.id ? onJump(sec.id) : onTop())}
               className="ld-jumpitem"
               style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: 9, border: 'none', background: 'none', cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: '#33443B' }}

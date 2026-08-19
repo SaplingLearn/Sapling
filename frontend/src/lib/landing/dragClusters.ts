@@ -659,4 +659,7 @@ export const DRAG_CLUSTERS: DragCluster[] = [
       }
     ]
   }
-] as DragCluster[];
+// No `as DragCluster[]`. The annotation on the const already checks this
+// literal, and the assertion suppressed exactly the two things worth catching
+// in generated data: excess properties and missing required fields.
+];

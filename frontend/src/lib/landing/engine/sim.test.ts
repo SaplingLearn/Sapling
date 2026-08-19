@@ -749,3 +749,55 @@ describe('arm length', () => {
     expect(now.some((len, k) => len < drawn[k] - 1)).toBe(true);
   });
 });
+
+describe('teardown and rebuild', () => {
+  it('puts every cluster back in its field', () => {
+    // `ensureInit` re-parents each cluster into a fixed overlay inside a shell
+    // it appends to `root`. destroy() used to just drop the shell, which took
+    // the clusters with it — they were left detached from the document.
+    expect(cluster.parentElement).not.toBe(field);
+
+    sim.destroy();
+
+    expect(field.querySelectorAll('[data-dragnode]')).toHaveLength(1);
+    expect(cluster.isConnected).toBe(true);
+  });
+
+  it('clears the inline styles it wrote on the way in', () => {
+    sim.destroy();
+    // Left behind, these make the next build measure every anchor against the
+    // overlay-parked position rather than the designed one.
+    expect(cluster.style.position).toBe('');
+    expect(cluster.style.left).toBe('');
+    expect(cluster.style.transform).toBe('');
+  });
+
+  it('removes its overlay shell from the page', () => {
+    sim.destroy();
+    expect(root.querySelector('.drag-shell')).toBeNull();
+  });
+
+  it('builds again on the same DOM after being destroyed', () => {
+    // React StrictMode runs setup -> cleanup -> setup on the same nodes in dev.
+    // With the clusters detached, this second ensureInit found no
+    // `[data-dragnode]` and returned false for the rest of the session, so the
+    // whole drag field was silently dead.
+    sim.destroy();
+
+    const rebuilt = createSim();
+    expect(rebuilt.ensureInit(root)).toBe(true);
+
+    // And it is a live sim, not just a truthy return: the rebuilt cluster is
+    // seated at field.rect + anchor exactly as the first build was.
+    sim = rebuilt;
+    frames(1);
+    const o = clusterOrigin();
+    expect(o.x).toBeCloseTo(CLUSTER_X, 1);
+    expect(o.y).toBeCloseTo(CLUSTER_Y, 1);
+  });
+
+  it('survives a second destroy', () => {
+    sim.destroy();
+    expect(() => sim.destroy()).not.toThrow();
+  });
+});

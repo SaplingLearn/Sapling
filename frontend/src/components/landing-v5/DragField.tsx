@@ -32,7 +32,7 @@ export type FieldSection = DragCluster['section'] | 'act-ingest';
 
 function Cluster({ c }: { c: DragCluster }) {
   return (
-    <span
+    <span data-anim
       data-dragnode={c.id}
       style={{
         position: 'absolute', ...c.pos,
@@ -85,20 +85,25 @@ function Cluster({ c }: { c: DragCluster }) {
                 fill={c.color} fillOpacity={n.fo}
                 stroke={c.color} strokeWidth={n.sw} strokeOpacity="0.75"
               />,
-              label ? (
-                <text
-                  key={`label-${i}`}
-                  x={label.x} y={label.y} textAnchor="middle"
-                  fontFamily={i === 0 ? "'Playfair Display',Georgia,serif" : "'DM Sans',sans-serif"}
-                  fontSize={i === 0 ? '12.5' : '9'}
-                  fontWeight={i === 0 ? '600' : undefined}
-                  fill={i === 0 ? c.color : '#3f3b31'}
-                  opacity={i === 0 ? undefined : 0.85}
-                  style={{ pointerEvents: 'none', userSelect: 'none' }}
-                >
-                  {label.text}
-                </text>
-              ) : null,
+              // Always rendered, even when there is no caption for this node.
+              // Dropping it left the next node's glow circle sitting where this
+              // node's label should be, so `nextElementSibling` handed the sim a
+              // <circle> as the label and `previousElementSibling` handed the
+              // next ring a <text> as its glow — the whole glow/ring/label
+              // binding shifts by one from the first labelless node onward. An
+              // empty <text> costs nothing and keeps the triples aligned.
+              <text
+                key={`label-${i}`}
+                x={label ? label.x : n.cx} y={label ? label.y : n.cy} textAnchor="middle"
+                fontFamily={i === 0 ? "'Playfair Display',Georgia,serif" : "'DM Sans',sans-serif"}
+                fontSize={i === 0 ? '12.5' : '9'}
+                fontWeight={i === 0 ? '600' : undefined}
+                fill={i === 0 ? c.color : '#3f3b31'}
+                opacity={i === 0 ? undefined : 0.85}
+                style={{ pointerEvents: 'none', userSelect: 'none' }}
+              >
+                {label ? label.text : ''}
+              </text>,
             ];
           })}
         </svg>

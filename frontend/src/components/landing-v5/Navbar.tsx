@@ -63,19 +63,30 @@ export function Navbar({
   onSignIn: () => void;
   onGetStarted: () => void;
 }) {
+  // `exploring` blanks the bar for the graph camera; `heroMounted` is false for
+  // the first ~1.9s of the intro. Either way the bar is invisible, and it has
+  // to be non-interactive too: with only `opacity: 0`, every control was
+  // clickable and Tab-reachable over the intro overlay with nothing on screen.
+  const visible = heroMounted && !exploring;
   return (
     <nav
       ref={navRef}
       className="sapling-nav"
+      // `inert` immediately, plus `visibility` in the transition list: for
+      // `visibility` the spec keeps the `visible` endpoint for the whole
+      // duration, so the bar still fades out over 800ms instead of snapping,
+      // and only then leaves the layout.
+      inert={!visible}
       style={{
         position: 'fixed', top: 0, left: 0, right: 0, zIndex: 50,
         // must stay equal to the hero grid's horizontal padding
         padding: '16px max(4.2vw,22px)',
-        opacity: exploring ? 0 : heroMounted ? 1 : 0,
-        pointerEvents: exploring ? 'none' : 'auto',
+        opacity: visible ? 1 : 0,
+        visibility: visible ? 'visible' : 'hidden',
+        pointerEvents: visible ? 'auto' : 'none',
         transform: heroMounted ? 'translateY(0)' : 'translateY(-30px)',
         transition:
-          'opacity 800ms cubic-bezier(0.22,1,0.36,1), transform 400ms cubic-bezier(0.22,1,0.36,1)',
+          'opacity 800ms cubic-bezier(0.22,1,0.36,1), transform 400ms cubic-bezier(0.22,1,0.36,1), visibility 800ms',
       }}
     >
       {/* blurred band; masked so it dissolves rather than ending on a hard edge */}
@@ -117,7 +128,11 @@ export function Navbar({
             onClick={onToggleMenu}
             type="button"
             className="nav-compact"
-            aria-haspopup="menu"
+            // No `aria-haspopup="menu"`. The panel is a plain disclosure of
+            // links, not an ARIA menu widget — claiming `menu` promises
+            // `menuitem` children plus arrow-key/Home/End navigation and focus
+            // management, none of which exists here. `aria-expanded` alone is
+            // the honest and complete contract for a disclosure.
             aria-expanded={navMenuOpen}
             title="Pages"
             style={{ ...TAB, display: 'none', alignItems: 'center', gap: 7, background: 'none', border: 'none', cursor: 'pointer', color: theme.ink, padding: 0 }}
@@ -199,7 +214,9 @@ export function Navbar({
         <div
           onClick={onCloseMenu}
           className="nav-panel"
-          role="menu"
+          // Deliberately no `role="menu"`: see the trigger above. The children
+          // are a <button> and <Link>s, which is exactly what a disclosure
+          // panel should contain.
           style={{
             position: 'absolute', right: 0, top: 'calc(100% + 10px)', minWidth: 180, zIndex: 60,
             padding: 6, borderRadius: 12, background: 'rgba(253,252,249,0.96)',

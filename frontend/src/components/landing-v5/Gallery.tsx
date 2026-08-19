@@ -67,10 +67,30 @@ function Card({ i, ghost }: { i: number; ghost: boolean }) {
       aria-hidden={ghost || undefined}
       style={CARD}
       className="ld-galcard"
+      // The real copy carries button semantics. Activation was pointer-only —
+      // a delegated onClick on the Track — so the whole gallery was
+      // unreachable by keyboard despite the header comment claiming otherwise.
+      // The ghost duplicate stays inert: it is aria-hidden, and a focusable
+      // aria-hidden element is an accessibility violation in itself.
+      role={ghost ? undefined : 'button'}
+      tabIndex={ghost ? undefined : 0}
+      onKeyDown={ghost ? undefined : (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        // Space scrolls the page by default; the card is acting as a button.
+        e.preventDefault();
+        // Re-uses the Track's delegated handler rather than threading `onOpen`
+        // down, so the keyboard path and the pointer path stay identical —
+        // including the FLIP source rect, which is read off the clicked card.
+        e.currentTarget.click();
+      }}
     >
-      <div aria-hidden="true" style={{ position: 'relative', height: 166, borderRadius: 13, overflow: 'hidden', background: '#FDFCF9', border: '1px solid #EBF1EC' }}>
-        {GALLERY_MINIS[i]}
-      </div>
+      {/*
+        Rendered bare. Each entry in GALLERY_MINIS already opens with its own
+        `position:relative; height:166px; border-radius:13px; overflow:hidden`
+        frame and its own aria-hidden, so the wrapper that used to sit here
+        just drew a second border inside the first.
+      */}
+      {GALLERY_MINIS[i]}
       <div style={{ padding: '15px 12px 0', display: 'flex', flexDirection: 'column' }}>
         <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.28em', color: '#0C5638' }}>{c.kicker}</span>
         <h3 style={{ margin: '10px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.015em', color: '#12201A' }}>
@@ -95,6 +115,9 @@ function Track({
   return (
     <div
       ref={trackRef}
+      // Without a role, the aria-label on a plain div is dropped by most
+      // screen readers — the rail announced nothing at all.
+      role="group"
       aria-label={label}
       onClick={(e) => {
         const card = (e.target as HTMLElement).closest<HTMLElement>('[data-tk]');
@@ -121,7 +144,7 @@ export function Gallery({
     <section id="gallery" style={{ position: 'relative', padding: '16vh 0 10vh', zIndex: 1, isolation: 'isolate' }}>
       <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
         {MOTES.map((m, i) => (
-          <span key={i} data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
+          <span key={i} data-anim data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
         ))}
       </div>
 

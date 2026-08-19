@@ -17,6 +17,18 @@ import { QUESTIONS } from './labData';
 
 type Phase = 'active' | 'review' | 'results';
 
+/**
+ * Whether `label` names the correct option of `q`.
+ *
+ * The `'correct' in o` narrowing exists because only the right answer carries
+ * the flag. This was written out twice — once for the review banner, once in
+ * `submit()` — and the two had to agree for the streak and the banner to
+ * match.
+ */
+function isCorrectPick(q: (typeof QUESTIONS)[number], label: string | null): boolean {
+  return q.options.some((o) => o.label === label && 'correct' in o && o.correct);
+}
+
 export function QuizDemo() {
   const [qi, setQi] = useState(0);
   const [picked, setPicked] = useState<string | null>(null);
@@ -28,7 +40,7 @@ export function QuizDemo() {
   const reviewing = phase === 'review';
   const done = phase === 'results';
   const correctCount = answers.filter(Boolean).length;
-  const right = reviewing && q.options.some((o) => o.label === picked && 'correct' in o && o.correct);
+  const right = reviewing && isCorrectPick(q, picked);
 
   const diff = qi === 0 ? 'MEDIUM' : streak > 0 ? 'HARD' : 'EASY';
   const [diffBg, diffFg] =
@@ -42,9 +54,11 @@ export function QuizDemo() {
       return;
     }
     if (!picked) return;
-    const ok = q.options.some((o) => o.label === picked && 'correct' in o && o.correct);
+    const ok = isCorrectPick(q, picked);
     setAnswers((a) => [...a, ok]);
-    setStreak(ok ? streak + 1 : 0);
+    // Functional updater: reading `streak` from the render closure meant a
+    // second submit in the same commit batch computed from a stale value.
+    setStreak((s) => (ok ? s + 1 : 0));
     setPhase('review');
   };
 
@@ -53,7 +67,7 @@ export function QuizDemo() {
   if (done) {
     return (
       <div style={{ padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: '100%', boxSizing: 'border-box' }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, animation: 'labIn 320ms ease both' }}>
+        <div data-anim style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, animation: 'labIn 320ms ease both' }}>
           <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 54, fontWeight: 600, lineHeight: 1 }}>
             {correctCount} / {QUESTIONS.length}
           </span>
@@ -101,7 +115,7 @@ export function QuizDemo() {
 
       <div>
         <p style={{ margin: 0, fontFamily: "'Playfair Display',serif", fontSize: 20, lineHeight: 1.4, color: '#12201A' }}>{q.text}</p>
-        <div role="radiogroup" style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div role="radiogroup" aria-label="Answer options" style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {q.options.map((o) => {
             const isPicked = o.label === picked;
             const correct = 'correct' in o && o.correct;
@@ -113,6 +127,11 @@ export function QuizDemo() {
               <button
                 key={o.label}
                 type="button"
+                // The container declares radiogroup, which suppresses the
+                // implicit button roles of its children — assistive tech
+                // announced an empty group with no options in it.
+                role="radio"
+                aria-checked={isPicked}
                 onClick={() => { if (!reviewing) setPicked(o.label); }}
                 style={{ textAlign: 'left', display: 'flex', gap: 10, alignItems: 'flex-start', padding: '12px 14px', borderRadius: 10, fontFamily: "'DM Sans',sans-serif", fontSize: 14, transition: 'all 180ms', border: `1px solid ${bd}`, background: bg, color: fg, cursor: reviewing ? 'default' : 'pointer' }}
               >
@@ -126,7 +145,7 @@ export function QuizDemo() {
       </div>
 
       {reviewing && (
-        <div style={{ borderRadius: 12, background: '#F6F8F4', border: '1px solid #E3EBE5', padding: '14px 16px', animation: 'labIn 300ms ease both' }}>
+        <div data-anim style={{ borderRadius: 12, background: '#F6F8F4', border: '1px solid #E3EBE5', padding: '14px 16px', animation: 'labIn 300ms ease both' }}>
           <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.2em', color: right ? '#0C5638' : '#9c4b48' }}>
             {right ? 'CORRECT' : 'NOT QUITE'}
           </span>

@@ -362,6 +362,9 @@ export interface NodeUse {
  */
 export function nodeUses(node: GraphNode, degree: number): NodeUse[] {
   const t = node.tier;
+  // A leaf node has degree 1, and the graph does contain them, so the fixed
+  // plural read "its 1 neighbours" on screen.
+  const neighbours = degree === 1 ? '1 neighbour' : degree + ' neighbours';
   return [
     {
       tag: 'TUTOR RETRIEVAL',
@@ -369,8 +372,8 @@ export function nodeUses(node: GraphNode, degree: number): NodeUse[] {
         'A /learn session on ' +
         node.label +
         ' pulls this node plus its ' +
-        degree +
-        ' neighbours into context, then retrieves the chunks of your ' +
+        neighbours +
+        ' into context, then retrieves the chunks of your ' +
         COURSE.code +
         ' uploads that mention them.',
     },

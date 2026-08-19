@@ -90,6 +90,14 @@ export function CalendarDemo() {
                 key={i}
                 onClick={() => { if (!c.blank) setDay(c.day as number); }}
                 type="button"
+                // The lead-in placeholders had `cursor:'default'` and nothing
+                // else, so they stayed enabled and focusable: a keyboard user
+                // Tabbed through up to six empty buttons before reaching Oct 1.
+                disabled={c.blank}
+                aria-hidden={c.blank || undefined}
+                // Toggle semantics: exactly one day is the selected one, and
+                // border colour alone did not say which.
+                aria-pressed={c.blank ? undefined : selected}
                 style={{
                   position: 'relative', minHeight: 44, borderRadius: 8, padding: 5,
                   display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start',
@@ -105,7 +113,7 @@ export function CalendarDemo() {
               >
                 <span style={{ ...MONO, fontSize: 9, color: selected ? '#0C5638' : '#9AA5A0' }}>{c.day}</span>
                 {c.chips.map((ch, j) => (
-                  <span key={j} style={{ width: '100%', height: 5, borderRadius: 2, animation: 'labIn 300ms ease both', background: TYPE[ch.type as keyof typeof TYPE] }} />
+                  <span data-anim key={j} style={{ width: '100%', height: 5, borderRadius: 2, animation: 'labIn 300ms ease both', background: TYPE[ch.type as keyof typeof TYPE] }} />
                 ))}
               </button>
             );
@@ -117,7 +125,7 @@ export function CalendarDemo() {
         <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#8B9891' }}>OCTOBER {day}</span>
 
         {sideItems.map((a, i) => (
-          <div key={i} style={{ padding: '10px 12px', borderRadius: 10, background: '#FDFCF9', border: '1px solid #DCE7DE', display: 'flex', flexDirection: 'column', gap: 3, animation: 'labIn 280ms ease both' }}>
+          <div data-anim key={i} style={{ padding: '10px 12px', borderRadius: 10, background: '#FDFCF9', border: '1px solid #DCE7DE', display: 'flex', flexDirection: 'column', gap: 3, animation: 'labIn 280ms ease both' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
               <span style={{ width: 8, height: 8, borderRadius: 2, flex: '0 0 auto', background: TYPE[a.type as keyof typeof TYPE] }} />
               <span style={{ fontSize: 12.5, fontWeight: 600, color: '#12201A' }}>{a.title}</span>

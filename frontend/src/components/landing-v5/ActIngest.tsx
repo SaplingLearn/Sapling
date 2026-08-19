@@ -109,7 +109,7 @@ export function ActIngest({
       <div style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
         <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
           {MOTES.map((m, i) => (
-            <span key={i} data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
+            <span key={i} data-anim data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
           ))}
         </div>
 
@@ -160,7 +160,7 @@ export function ActIngest({
                 </div>
                 <div style={{ position: 'relative', flex: 1, minHeight: 0, marginTop: 14, overflow: 'hidden' }}>
                   {/* OCR scan bar sweeping the page */}
-                  <span
+                  <span data-anim
                     aria-hidden="true"
                     style={{ position: 'absolute', left: -22, right: -22, height: 26, zIndex: 2, pointerEvents: 'none', background: 'linear-gradient(180deg, rgba(14,158,90,0) 0%, rgba(14,158,90,0.13) 60%, rgba(14,158,90,0.55) 96%, rgba(14,158,90,0) 100%)', animation: 'scanSweep 4.2s cubic-bezier(0.6,0,0.4,1) infinite' }}
                   />
@@ -176,7 +176,7 @@ export function ActIngest({
                 </div>
                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #EBF1EC', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 6, ...MONO, fontSize: 8, letterSpacing: '0.16em', color: '#0C5638' }}>
-                    <span style={{ width: 5, height: 5, borderRadius: 99, background: '#0E9E5A', animation: 'ocrBlink 1.4s ease-in-out infinite' }} />
+                    <span data-anim style={{ width: 5, height: 5, borderRadius: 99, background: '#0E9E5A', animation: 'ocrBlink 1.4s ease-in-out infinite' }} />
                     OCR · 4 PAGES
                   </span>
                   <span style={{ ...MONO, fontSize: 8, letterSpacing: '0.16em', color: '#9AA5A0' }}>12 CONCEPTS FOUND</span>
@@ -256,12 +256,17 @@ export function ActIngest({
                 </div>
               </div>
 
-              {/* ── flying concept chips ── */}
+              {/*
+                Purely decorative: each chip's label already appears in the
+                tile it flies into, so without aria-hidden a screen reader read
+                every concept twice.
+              */}
               {CHIPS.map(([label, dest, line], i) => {
                 const dark = dest === 0;
                 return (
                   <span
                     key={i}
+                    aria-hidden="true"
                     data-chip={i}
                     data-dest={dest}
                     data-line={line}

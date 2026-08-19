@@ -59,7 +59,11 @@ export function cv(canvas: HTMLCanvasElement): CanvasCache {
       rec.__ctx = ctx;
     }
     c = { ctx, w, h, dpr };
-    rec.__cv = c;
+    // A zero measurement is never cached. `invalidateCanvas()` only fires on a
+    // viewport size change, so a canvas measured while still display:none or
+    // pre-layout would stay 0x0 for the rest of the session — a permanently
+    // blank canvas. Leaving `__cv` unset makes the next frame re-measure.
+    if (w > 0 && h > 0) rec.__cv = c;
     const pw = Math.round(w * dpr);
     const ph = Math.round(h * dpr);
     // Assigning width/height clears the canvas, so only do it when it moved.

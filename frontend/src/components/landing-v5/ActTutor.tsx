@@ -69,7 +69,7 @@ export function ActTutor({
       >
         <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 0 }}>
           {MOTES.map((m, i) => (
-            <span key={i} data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
+            <span key={i} data-anim data-depth={m.d} style={{ position: 'absolute', borderRadius: 99, ...m.s }} />
           ))}
         </div>
 
@@ -89,11 +89,16 @@ export function ActTutor({
               ))}
             </div>
 
-            {/* the engine fades these in once the act's scroll is spent */}
-            <div data-tutor-pills="1" style={{ display: 'flex', gap: 8, marginTop: 8, opacity: 0, pointerEvents: 'none', transition: 'opacity 400ms ease' }}>
+            {/*
+              The engine fades these in once the act's scroll is spent, and
+              binds `inert` to the same `docked` flag — opacity alone left the
+              buttons focusable while invisible.
+            */}
+            <div data-tutor-pills="1" inert style={{ display: 'flex', gap: 8, marginTop: 8, opacity: 0, pointerEvents: 'none', transition: 'opacity 400ms ease' }}>
               {CAPTIONS.map(([tag], i) => (
                 <button
                   key={tag}
+                  type="button"
                   onClick={() => onSetMode(i)}
                   style={{
                     border: '1px solid rgba(12,86,56,0.3)', borderRadius: 99, padding: '9px 18px',
@@ -241,7 +246,7 @@ export function ActTutor({
                     {([['#4FA574', '1.1s', '0s'], ['#8FD9A8', '1.3s', '-0.2s'], ['#0E9E5A', '0.9s', '-0.5s'],
                        ['#8FD9A8', '1.2s', '-0.8s'], ['#4FA574', '1.0s', '-0.3s'], ['#0E9E5A', '1.4s', '-0.6s'],
                        ['#8FD9A8', '1.1s', '-0.9s'], ['#4FA574', '1.25s', '-0.4s'], ['#0E9E5A', '0.95s', '-0.7s']] as const).map(([c, dur, delay], i) => (
-                      <span key={i} style={{ width: 3, height: '100%', borderRadius: 2, background: c, transformOrigin: 'bottom', animation: `waveBar ${dur} ease-in-out ${delay} infinite` }} />
+                      <span data-anim key={i} style={{ width: 3, height: '100%', borderRadius: 2, background: c, transformOrigin: 'bottom', animation: `waveBar ${dur} ease-in-out ${delay} infinite` }} />
                     ))}
                   </span>
                   <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.16em', color: '#8FD9A8' }}>RECORDING · 0:42</span>

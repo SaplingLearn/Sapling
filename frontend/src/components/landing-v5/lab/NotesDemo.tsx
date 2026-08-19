@@ -43,24 +43,42 @@ export function NotesDemo() {
   const [saved, setSaved] = useState(true);
   const [busy, setBusy] = useState(false);
   const [concepts, setConcepts] = useState<{ name: string; tier: keyof typeof LAB_TIER }[]>([]);
+  /**
+   * True once an extraction has run and matched nothing.
+   *
+   * The "No concepts found" sentinel used to be pushed into `concepts` itself,
+   * so the footer counted it and printed "1 concepts linked to your MA 242
+   * graph" for a note with no concepts at all.
+   */
+  const [noneFound, setNoneFound] = useState(false);
   const [summary, setSummary] = useState('');
   const saveT = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Both fake-latency timers call setState 700ms later, so both had to be
+  // cancellable on unmount — same reason `saveT` already is.
+  const extractT = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const summarizeT = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => () => { if (saveT.current) clearTimeout(saveT.current); }, []);
+  useEffect(() => () => {
+    clearTimeout(saveT.current ?? undefined);
+    clearTimeout(extractT.current ?? undefined);
+    clearTimeout(summarizeT.current ?? undefined);
+  }, []);
 
   const touchSave = () => {
     setSaved(false);
-    if (saveT.current) clearTimeout(saveT.current);
+    clearTimeout(saveT.current ?? undefined);
     saveT.current = setTimeout(() => setSaved(true), 800);
   };
 
   const extract = () => {
     if (busy) return;
     setBusy(true);
-    setTimeout(() => {
+    clearTimeout(extractT.current ?? undefined);
+    extractT.current = setTimeout(() => {
       const lower = body.toLowerCase();
       const found = MATCHERS.filter((m) => m.hit.test(lower)).map((m) => ({ name: m.name, tier: m.tier }));
-      setConcepts(found.length ? found : [{ name: 'No concepts found', tier: 'unexplored' }]);
+      setConcepts(found);
+      setNoneFound(found.length === 0);
       setBusy(false);
     }, 700);
   };
@@ -68,7 +86,8 @@ export function NotesDemo() {
   const summarize = () => {
     if (busy) return;
     setBusy(true);
-    setTimeout(() => {
+    clearTimeout(summarizeT.current ?? undefined);
+    summarizeT.current = setTimeout(() => {
       const lines = body.split('\n').map((l) => l.trim()).filter(Boolean);
       setSummary(
         lines.length
@@ -116,7 +135,7 @@ export function NotesDemo() {
         </div>
 
         {summary && (
-          <div style={{ borderRadius: 11, background: '#F6F8F4', border: '1px solid #E3EBE5', padding: '13px 15px', animation: 'labIn 280ms ease both' }}>
+          <div data-anim style={{ borderRadius: 11, background: '#F6F8F4', border: '1px solid #E3EBE5', padding: '13px 15px', animation: 'labIn 280ms ease both' }}>
             <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#8B9891' }}>SUMMARY</span>
             <p style={{ margin: '6px 0 0', fontSize: 13, lineHeight: 1.65, color: '#33443B' }}>{summary}</p>
           </div>
@@ -127,19 +146,25 @@ export function NotesDemo() {
         <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#8B9891' }}>LINKED CONCEPTS</span>
         {busy && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: '#8B9891' }}>
-            <span style={{ width: 12, height: 12, borderRadius: 99, border: '2px solid #DCE7DE', borderTopColor: '#0E9E5A', animation: 'labSpin 700ms linear infinite' }} />
+            <span data-anim style={{ width: 12, height: 12, borderRadius: 99, border: '2px solid #DCE7DE', borderTopColor: '#0E9E5A', animation: 'labSpin 700ms linear infinite' }} />
             reading the note…
           </span>
         )}
         {concepts.map((c) => (
-          <span key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', borderRadius: 99, background: '#FDFCF9', border: '1px solid #DCE7DE', fontSize: 12, color: '#33443B', animation: 'labIn 300ms ease both' }}>
+          <span data-anim key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', borderRadius: 99, background: '#FDFCF9', border: '1px solid #DCE7DE', fontSize: 12, color: '#33443B', animation: 'labIn 300ms ease both' }}>
             <span style={{ width: 7, height: 7, borderRadius: 99, flex: '0 0 auto', background: LAB_TIER[c.tier] }} />
             {c.name}
           </span>
         ))}
+        {/* Rendered on its own, so the footer count below never includes it. */}
+        {noneFound && !busy && (
+          <span data-anim style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', borderRadius: 99, background: '#FDFCF9', border: '1px dashed #DCE7DE', fontSize: 12, color: '#9AA5A0', animation: 'labIn 300ms ease both' }}>
+            No concepts found
+          </span>
+        )}
         <span style={{ marginTop: 'auto', fontSize: 11, lineHeight: 1.6, color: '#9AA5A0' }}>
           {concepts.length
-            ? `${concepts.length} concepts linked to your MA 242 graph.`
+            ? `${concepts.length} ${concepts.length === 1 ? 'concept' : 'concepts'} linked to your MA 242 graph.`
             : 'Concepts you extract are linked to your graph, not just tagged on the note.'}
         </span>
       </div>

@@ -46,26 +46,26 @@ export function IntroOverlay({
     >
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         <svg width="86" height="86" viewBox="0 0 64 64" fill="none" style={{ display: 'block', overflow: 'visible' }}>
-          <path
+          <path data-anim
             d="M32 54 L32 28" stroke="#0C5638" strokeWidth="3.5" strokeLinecap="round"
             strokeDasharray="27"
             style={{ animation: 's1Stem 2.4s cubic-bezier(0.25,0.6,0.2,1) both' }}
           />
-          <path
+          <path data-anim
             d="M32 38 C32 38 18 34 16 22 C16 22 30 20 32 38Z" fill="#0C5638"
             style={{
               transformBox: 'fill-box', transformOrigin: '100% 100%',
               animation: 's1LeafLo 2.4s linear both',
             }}
           />
-          <path
+          <path data-anim
             d="M32 30 C32 30 46 24 50 12 C50 12 36 12 32 30Z" fill="#4FA574"
             style={{
               transformBox: 'fill-box', transformOrigin: '0% 100%',
               animation: 's1LeafHi 2.4s linear both',
             }}
           />
-          <circle
+          <circle data-anim
             cx="32" cy="26" r="2.5" fill="#0C5638"
             style={{
               transformBox: 'fill-box', transformOrigin: '50% 50%',
@@ -73,7 +73,7 @@ export function IntroOverlay({
             }}
           />
         </svg>
-        <div
+        <div data-anim
           style={{
             marginTop: 13, fontFamily: "'Spectral',Georgia,serif", fontWeight: 700,
             fontSize: 33, letterSpacing: '-0.025em', color: '#0C5638', lineHeight: 1,
@@ -82,7 +82,7 @@ export function IntroOverlay({
         >
           Sapling
         </div>
-        <div
+        <div data-anim
           style={{
             marginTop: 12, width: 146, height: 1,
             background: 'linear-gradient(90deg, rgba(12,86,56,0.55), rgba(79,165,116,0.25))',
@@ -90,7 +90,7 @@ export function IntroOverlay({
             animation: 's1Rule 2.4s cubic-bezier(0.22,1,0.36,1) both',
           }}
         />
-        <div
+        <div data-anim
           style={{
             marginTop: 14, display: 'flex', alignItems: 'baseline', gap: 9,
             fontFamily: "'JetBrains Mono',monospace", fontSize: 10,

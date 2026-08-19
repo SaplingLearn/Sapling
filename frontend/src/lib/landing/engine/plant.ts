@@ -79,15 +79,32 @@ export function createPlantField(): PlantField {
     // seven anonymous nodes so the field is never empty
     for (let i = 0; i < 7; i++) add(canvas, '', false);
     labels.length = 0;
+    // Everything below distrusts localStorage: it is user-writable and
+    // survives across deploys, so the stored shape can be anything. Parse and
+    // validate FULLY before touching the field — a partial restore that then
+    // threw would leave the grove holding half of a corrupt payload, and
+    // `add(canvas, 42)` would render `undefined`-width text forever. The seven
+    // seed nodes above are already placed and stay placed either way.
+    let clean: string[];
     try {
-      const saved: string[] = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      saved.forEach((lb) => add(canvas, lb, false));
-      labels.length = 0;
-      labels.push(...saved);
-      return saved.length;
+      const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+      if (!Array.isArray(parsed)) return 0;
+      clean = parsed
+        .filter((lb): lb is string => typeof lb === 'string')
+        // Same cap `plant()` applies on the way in; an older or hand-edited
+        // entry can exceed it and would overflow the node's label.
+        .map((lb) => lb.slice(0, MAX_LABEL))
+        .filter((lb) => lb.length > 0)
+        .slice(-KEEP);
     } catch {
       return 0;
     }
+    clean.forEach((lb) => add(canvas, lb, false));
+    // `add()` already pushed each label; reset and re-push so the array is
+    // exactly `clean` rather than depending on that side effect.
+    labels.length = 0;
+    labels.push(...clean);
+    return clean.length;
   }
 
   function draw(canvas: HTMLCanvasElement): void {

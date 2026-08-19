@@ -189,6 +189,31 @@ export interface SimController {
 export function createSim(): SimController {
   let groups: SimGroup[] | null = null;
   let overlay: HTMLDivElement | null = null;
+  /**
+   * The fixed wrapper holding `overlay`.
+   *
+   * Tracked here rather than through `cleanups` so `destroy()` can remove it
+   * *after* every cluster has been re-homed. As a cleanup it was pushed before
+   * the clusters were re-parented into it, so it detached them along with
+   * itself; see `clusterHomes`.
+   */
+  let shellEl: HTMLDivElement | null = null;
+  /**
+   * Where each cluster lived before `ensureInit()` re-parented it into the
+   * overlay, so `destroy()` can put it back.
+   *
+   * Without this, destroy left every `[data-dragnode]` detached from the
+   * document: a later `createSim().ensureInit()` found no cluster elements and
+   * returned false forever, silently killing the drag field. React StrictMode's
+   * dev-mode setup → cleanup → setup on the same DOM hits exactly that.
+   */
+  const clusterHomes: {
+    el: HTMLElement;
+    parent: HTMLElement | null;
+    next: Element | null;
+    /** The cluster's own inline styles before the sim overwrote them. */
+    css: string;
+  }[] = [];
   const anchors: ClusterAnchor[] = [];
   const cleanups: (() => void)[] = [];
   /** Timestamp of the last scroll event, on the same clock as the rAF `t`. */
@@ -274,7 +299,7 @@ export function createSim(): SimController {
 
       shell.appendChild(overlay);
       root.appendChild(shell);
-      cleanups.push(() => shell.remove());
+      shellEl = shell;
     }
 
     const built: SimGroup[] = [];
@@ -308,6 +333,17 @@ export function createSim(): SimController {
           track,
           trackTop: track ? track.getBoundingClientRect().top - fb.top : 0,
         });
+        // Recorded BEFORE the re-parent and before the styles below are
+        // overwritten. `destroy()` puts the cluster back at this exact slot
+        // with this exact cssText; leaving `position:absolute; left:0; top:0`
+        // behind would make the next build measure every anchor against the
+        // overlay-parked position instead of the designed one.
+        clusterHomes.push({
+          el: cl,
+          parent: cl.parentElement,
+          next: cl.nextElementSibling,
+          css: cl.style.cssText,
+        });
         cl.style.animation = 'none';
         cl.style.position = 'absolute';
         cl.style.left = '0px';
@@ -327,10 +363,19 @@ export function createSim(): SimController {
         const lines = Array.from(svg.querySelectorAll('line'));
         const base = nodes.length;
 
+        // The sim binds by sibling order: glow circle, ring, label text. Every
+        // one of those three is dereferenced unconditionally on the frame path
+        // (`p.glow.setAttribute`, `p.label.setAttribute`), so a ring whose
+        // siblings do not match would throw once per frame, forever, killing
+        // the whole rAF loop rather than just its own node. Checked by
+        // localName rather than `instanceof` so it holds in any DOM impl.
         rings.forEach((ring, ri) => {
+          const prev = ring.previousElementSibling;
+          const next = ring.nextElementSibling;
+          if (prev?.localName !== 'circle' || next?.localName !== 'text') return;
+          const glow = prev as SVGCircleElement;
+          const label = next as SVGTextElement;
           const r = parseFloat(ring.getAttribute('r') || '0');
-          const glow = ring.previousElementSibling as SVGCircleElement;
-          const label = ring.nextElementSibling as SVGTextElement;
           nodes.push({
             x: parseFloat(ring.getAttribute('cx') || '0'),
             y: parseFloat(ring.getAttribute('cy') || '0'),
@@ -361,6 +406,12 @@ export function createSim(): SimController {
           };
           const a = near(parseFloat(ln.getAttribute('x1') || '0'), parseFloat(ln.getAttribute('y1') || '0'));
           const b = near(parseFloat(ln.getAttribute('x2') || '0'), parseFloat(ln.getAttribute('y2') || '0'));
+          // `near()` returns -1 when this cluster contributed no nodes — an svg
+          // with <line>s but no [data-sim] rings, or rings the guard above
+          // rejected. `len` below indexes `nodes[a]`/`nodes[b]` immediately, so
+          // an unmatched end has to be dropped here rather than deferred to the
+          // `if (!s0 || !t0) continue;` guard on the frame path.
+          if (a < 0 || b < 0) return;
           links.push({
             a, b, el: ln,
             s: (parseFloat(ln.getAttribute('stroke-width') || '0.5') - 0.5) / 1.2,
@@ -897,10 +948,27 @@ const PLACED_YIELD = 0.12;
   function destroy(): void {
     cleanups.forEach((fn) => fn());
     cleanups.length = 0;
+    // Re-home every cluster FIRST. The shell is removed below, and the
+    // clusters live inside it by now — dropping the shell with them still
+    // attached detached them from the document permanently, so the next
+    // `ensureInit()` found no `[data-dragnode]` and returned false forever.
+    for (let i = clusterHomes.length - 1; i >= 0; i--) {
+      const h = clusterHomes[i];
+      h.el.style.cssText = h.css;
+      // `next` may itself have been re-parented into the overlay, in which
+      // case it is no longer a child of `parent`; insertBefore would throw.
+      // Appending is the correct fallback — the clusters are absolutely
+      // positioned decoration, so DOM order among them carries no meaning.
+      if (!h.parent) continue;
+      if (h.next && h.next.parentElement === h.parent) h.parent.insertBefore(h.el, h.next);
+      else h.parent.appendChild(h.el);
+    }
+    clusterHomes.length = 0;
     anchors.length = 0;
     groups = null;
     lastScrollAt = -Infinity;
-    if (overlay && overlay.parentElement) overlay.parentElement.removeChild(overlay);
+    shellEl?.remove();
+    shellEl = null;
     overlay = null;
   }
 

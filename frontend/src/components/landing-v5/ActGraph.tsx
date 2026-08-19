@@ -229,7 +229,7 @@ export function ActGraph({
 
         {/* ── explore HUD ── */}
         {exploring && (
-          <div style={{ position: 'absolute', inset: 0, zIndex: 6, pointerEvents: 'none', animation: 'panelFade 420ms ease 520ms both' }}>
+          <div data-anim style={{ position: 'absolute', inset: 0, zIndex: 6, pointerEvents: 'none', animation: 'panelFade 420ms ease 520ms both' }}>
             <div style={{ position: 'absolute', left: 'max(3vw,20px)', top: 24, display: 'flex', flexDirection: 'column', gap: 4 }}>
               <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, letterSpacing: '0.28em', color: '#8FD9A8' }}>{COURSE.code}</span>
               <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 21, fontWeight: 600, color: '#F6F8F4' }}>{COURSE.name}</span>
@@ -253,7 +253,7 @@ export function ActGraph({
             </span>
 
             {node && (
-              <div style={{ position: 'absolute', right: 'max(3vw,20px)', top: 78, bottom: 70, width: 'min(340px,32vw)', overflow: 'auto', padding: '22px 22px 20px', borderRadius: 18, background: 'rgba(6,23,16,0.82)', border: '1px solid rgba(143,217,168,0.22)', backdropFilter: 'blur(14px)', pointerEvents: 'auto', animation: 'panelFade 300ms ease both' }}>
+              <div data-anim style={{ position: 'absolute', right: 'max(3vw,20px)', top: 78, bottom: 70, width: 'min(340px,32vw)', overflow: 'auto', padding: '22px 22px 20px', borderRadius: 18, background: 'rgba(6,23,16,0.82)', border: '1px solid rgba(143,217,168,0.22)', backdropFilter: 'blur(14px)', pointerEvents: 'auto', animation: 'panelFade 300ms ease both' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                   <span style={{ width: 10, height: 10, borderRadius: 99, flex: '0 0 auto', background: XTIER[node.tier] }} />
                   <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8.5, letterSpacing: '0.24em', color: XTIER[node.tier] }}>

@@ -61,7 +61,11 @@ export function GradesDemo() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto' }}>
         {GB_ROWS.map((r, i) => {
           const raw = parseFloat(earned[i]);
-          const pct = isNaN(raw) ? null : Math.round((raw / r.possible) * 100);
+          // Clamped identically to the weighted calculation above. Without it,
+          // typing 500 into a row worth 50 printed "1000%" beside an overall
+          // grade that had already clamped the same entry to 100%.
+          const v = isNaN(raw) ? null : Math.max(0, Math.min(raw, r.possible));
+          const pct = v === null ? null : Math.round((v / r.possible) * 100);
           const pctColor = pct === null ? '#C3CCC6' : pct >= 90 ? '#0C5638' : pct >= 80 ? '#c89b5e' : '#b25855';
           return (
             <div key={r.title} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', borderRadius: 11, border: '1px solid #E8E5DA', background: '#FDFCF9' }}>
@@ -74,8 +78,16 @@ export function GradesDemo() {
                 <input
                   value={earned[i]}
                   onChange={(e) => {
-                    const val = e.target.value.replace(/[^0-9.]/g, '');
-                    setEarned((arr) => arr.map((v, j) => (j === i ? val : v)));
+                    // Strip non-numerics, then keep only the FIRST decimal
+                    // point. `[^0-9.]` alone accepted "1.2.3", which parseFloat
+                    // reads as 1.2 — the field showed one number and the grade
+                    // was computed from another.
+                    const digits = e.target.value.replace(/[^0-9.]/g, '');
+                    const dot = digits.indexOf('.');
+                    const val = dot === -1
+                      ? digits
+                      : digits.slice(0, dot + 1) + digits.slice(dot + 1).replace(/\./g, '');
+                    setEarned((arr) => arr.map((v2, j) => (j === i ? val : v2)));
                   }}
                   inputMode="decimal"
                   aria-label={`Points earned, ${r.title}`}

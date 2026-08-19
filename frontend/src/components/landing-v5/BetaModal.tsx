@@ -129,12 +129,18 @@ export function BetaModal({
       style={{ background: 'rgba(12,18,26,0.65)' }}
       onClick={dismiss}
     >
+      {/*
+        Below `md` this collapses to one column and scrolls. The unconditional
+        `1fr 1px 1fr` with `min-height:560px` + `overflow:hidden` squeezed both
+        columns to ~45vw on a phone and CLIPPED the taller one, so the email
+        field and the submit button could sit outside the visible card with no
+        way to reach them. `min-h` is therefore also gated to `md` and up.
+      */}
       <HeroCard
-        className={`relative w-full ${closing ? 'modal-card-out' : 'modal-card-in'}`}
+        className={`relative w-full grid grid-cols-1 md:grid-cols-[1fr_1px_1fr] md:min-h-[560px] overflow-y-auto ${closing ? 'modal-card-out' : 'modal-card-in'}`}
         style={{
           maxWidth: 'min(1040px, 94vw)', width: '100%',
-          display: 'grid', gridTemplateColumns: '1fr 1px 1fr',
-          minHeight: 560, maxHeight: 'calc(100vh - 48px)', overflow: 'hidden',
+          maxHeight: 'calc(100vh - 48px)',
         }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
@@ -212,7 +218,12 @@ export function BetaModal({
           </div>
         </div>
 
-        <div style={{ background: 'rgba(107,114,128,0.15)', alignSelf: 'stretch' }} />
+        {/*
+          The divider column. In the single-column layout it flattens into a
+          1px horizontal rule between the two panes, which is the right
+          reading of it there — hence no responsive handling.
+        */}
+        <div style={{ background: 'rgba(107,114,128,0.15)', alignSelf: 'stretch', minHeight: 1 }} />
 
         {/* ── right: newsletter ── */}
         <div className="hero-surface" style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column' }}>
@@ -243,7 +254,12 @@ export function BetaModal({
             <div style={{ position: 'relative', marginBottom: 10 }}>
               <input
                 ref={inputRef}
-                type="text"
+                // Was `type="text"` while labelled and validated as an email:
+                // no keyboard hint on mobile, no browser autofill, no native
+                // format check.
+                type="email"
+                autoComplete="email"
+                inputMode="email"
                 aria-label="Email address"
                 placeholder="you@example.com"
                 value={email}

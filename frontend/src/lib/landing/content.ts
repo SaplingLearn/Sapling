@@ -35,6 +35,16 @@ export interface GalleryCard {
   bullets: { t: string }[];
 }
 
+/**
+ * The gallery cards, in render order.
+ *
+ * The array order is a positional contract: `Gallery.tsx` indexes into it to
+ * build the marquee, and callers open a specific panel by index. Reordering
+ * this array without updating every caller silently opens the wrong panel —
+ * that is exactly how `onLearn` ended up opening card 2 (notetaker) instead of
+ * card 7 (tutor). Resolve indices through `galIndexOf()` instead of writing a
+ * literal, so a reorder here stays correct.
+ */
 export const GAL: GalleryCard[] = [
   {
     kind: 'quiz',
@@ -134,6 +144,34 @@ export const GAL: GalleryCard[] = [
   },
 ];
 
+/**
+ * Index of a gallery card within `GAL`, by kind.
+ *
+ * Built once at module load rather than per call: `GAL` is a fixed editorial
+ * constant, so a linear `findIndex` on every lookup would be pure waste in the
+ * scroll/click paths that resolve panel indices.
+ */
+const GAL_INDEX: Record<GalleryKind, number> = GAL.reduce(
+  (acc, card, i) => {
+    acc[card.kind] = i;
+    return acc;
+  },
+  {} as Record<GalleryKind, number>,
+);
+
+/**
+ * Resolve a gallery card kind to its index in `GAL`.
+ *
+ * Throws on an unknown kind rather than returning -1: every caller feeds the
+ * result straight into `GAL[i]` or a panel-open action, and a silent -1 would
+ * surface as an `undefined` card far from the real mistake.
+ */
+export function galIndexOf(kind: GalleryKind): number {
+  const i = GAL_INDEX[kind];
+  if (i === undefined) throw new Error(`galIndexOf: unknown gallery kind "${kind}"`);
+  return i;
+}
+
 export interface Faq {
   q: string;
   a: string;
@@ -188,13 +226,7 @@ export interface PostMeta {
   floatDelay: string;
 }
 
-/**
- * Presentation metadata paired positionally with POSTS.
- *
- * NOTE: `journal-founding.png` and `journal-ai-homework.png` are not in
- * `public/` yet — both exceed the design API's 256 KiB read cap, so they
- * ship with the project export alongside the rest of the source.
- */
+/** Presentation metadata paired positionally with POSTS. */
 export const POST_META: PostMeta[] = [
   {
     slot: 'journal-1',

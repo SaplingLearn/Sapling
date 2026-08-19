@@ -88,7 +88,7 @@ export function TutorDemo() {
         <span style={{ fontSize: 12, color: '#8B9891' }}>{T.blurb}</span>
 
         {msgs.map((m, i) => (
-          <div key={i} style={{ display: 'flex', gap: 9, animation: 'labIn 460ms cubic-bezier(0.22,1,0.36,1) both', justifyContent: m.isBot ? 'flex-start' : 'flex-end' }}>
+          <div data-anim key={i} style={{ display: 'flex', gap: 9, animation: 'labIn 460ms cubic-bezier(0.22,1,0.36,1) both', justifyContent: m.isBot ? 'flex-start' : 'flex-end' }}>
             {m.isBot && (
               <span style={{ width: 26, height: 26, flex: '0 0 auto', borderRadius: 99, background: '#E6F2E8', border: '1px solid #C3D8B3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg viewBox="0 0 16 16" width="12" height="12" fill="#0C5638">
@@ -112,7 +112,7 @@ export function TutorDemo() {
         {thinking && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 5, paddingLeft: 35 }}>
             {[0, 0.15, 0.3].map((d) => (
-              <span key={d} style={{ width: 5, height: 5, borderRadius: 99, background: '#9AA5A0', animation: `typingDot 1.2s ease-in-out ${d}s infinite` }} />
+              <span data-anim key={d} style={{ width: 5, height: 5, borderRadius: 99, background: '#9AA5A0', animation: `typingDot 1.2s ease-in-out ${d}s infinite` }} />
             ))}
           </span>
         )}

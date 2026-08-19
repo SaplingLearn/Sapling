@@ -21,19 +21,16 @@ export interface FlipState {
   /** The originating card's rect, captured before the overlay mounts. */
   rect: DOMRect | null;
   el: HTMLElement | null;
-  /** Guards against the open animation running twice for one mount. */
-  ran: boolean;
 }
 
 export function createFlipState(): FlipState {
-  return { rect: null, el: null, ran: false };
+  return { rect: null, el: null };
 }
 
 /** Capture the source card. Pass `null` when opening without one. */
 export function armFlip(st: FlipState, from: HTMLElement | null): void {
   st.rect = from ? from.getBoundingClientRect() : null;
   st.el = from;
-  st.ran = false;
 }
 
 /**
@@ -75,7 +72,6 @@ export function flipClose(
   panel: HTMLElement | null,
   onFinish: () => void,
 ): void {
-  st.ran = false;
   let done = false;
   const finish = () => {
     if (done) return;

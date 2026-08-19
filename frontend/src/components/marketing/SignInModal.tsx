@@ -5,7 +5,15 @@ import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { HeroCard } from "@/components/marketing/HeroCard";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
+// The OAuth entry point is deliberately NOT prefixed with NEXT_PUBLIC_API_URL.
+// It has to be a frontend-relative path so the browser stays same-origin for
+// the whole redirect chain: the backend sets `sapling_session` on its own
+// response, and a cross-origin start (https://api.… while the page is on
+// https://staging.…) makes that a third-party cookie the browser drops, which
+// is exactly the silent sign-in failure this file's comments describe. Next
+// proxies /api/* to BACKEND_URL (next.config.ts rewrites), so the relative
+// path reaches the same backend without leaving the origin.
+const GOOGLE_AUTH_PATH = "/api/auth/google";
 const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
 
 const ERROR_COPY: Record<string, string> = {
@@ -37,6 +45,20 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
   const watchdogRef = useRef<number | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<Element | null>(null);
+  // `open` is a prop, so a fresh attempt has to clear the previous attempt's
+  // transient state. Done during render (React's sanctioned "adjust state on
+  // prop change" pattern) rather than in an effect: an effect-based reset
+  // paints one frame of the stale error before clearing it, and it is exactly
+  // what react-hooks/set-state-in-effect exists to reject. React re-renders
+  // immediately without committing the discarded output, so nothing flashes.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) {
+      setLocalError(null);
+      setWaiting(false);
+    }
+  }
 
   const cleanupPopupListeners = useCallback(() => {
     if (channelRef.current) {
@@ -65,13 +87,14 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
 
   useScrollLock(open);
 
+  // Closing teardown ONLY — no setState here. react-hooks/set-state-in-effect
+  // flags an effect that writes state in response to a prop change, and the
+  // reset is done during render below instead (see wasOpen). Dropping the
+  // BroadcastChannel / watchdog / popup handle is a genuine imperative
+  // side effect and stays in the effect.
   useEffect(() => {
-    if (!open) {
-      setWaiting(false);
-      cleanupPopupListeners();
-      return;
-    }
-    setLocalError(null);
+    if (open) return;
+    cleanupPopupListeners();
   }, [open, cleanupPopupListeners]);
 
   useEffect(() => () => cleanupPopupListeners(), [cleanupPopupListeners]);
@@ -127,10 +150,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
   const signInWithGoogle = () => {
     setLocalError(null);
 
-    // An empty API_URL is the valid same-origin config (a cross-origin value
-    // drops the session cookie), so we don't guard against it here. The
-    // redirect below resolves to the same-origin path `/api/auth/google`,
-    // which Next.js proxies to the backend.
+    // Both URLs below are frontend-relative on purpose — see GOOGLE_AUTH_PATH.
 
     // BroadcastChannel-based popup flow. We don't depend on window.opener:
     // COOP severs the opener handle the moment the popup hops to a
@@ -141,7 +161,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       typeof crypto !== "undefined" &&
       typeof crypto.randomUUID === "function";
 
-    const sameTabUrl = `${API_URL}/api/auth/google`;
+    const sameTabUrl = GOOGLE_AUTH_PATH;
 
     if (!supportsPopup) {
       setWaiting(true);
@@ -150,7 +170,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
     }
 
     const popupId = crypto.randomUUID();
-    const popupUrl = `${API_URL}/api/auth/google?popup_id=${encodeURIComponent(popupId)}`;
+    const popupUrl = `${GOOGLE_AUTH_PATH}?popup_id=${encodeURIComponent(popupId)}`;
 
     cleanupPopupListeners();
     const channel = new BroadcastChannel(`sapling_signin:${popupId}`);

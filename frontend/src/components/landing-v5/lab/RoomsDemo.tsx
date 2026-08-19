@@ -36,20 +36,40 @@ export function RoomsDemo() {
     { who: 'you', text: 'same. comparing graphs now', mine: true },
   ]);
   const typeT = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const feedRef = useRef<HTMLDivElement>(null);
+  /**
+   * Who the pending reply is from.
+   *
+   * The typing indicator used to read the LIVE `partner` while the reply
+   * closure had captured the one selected at send time, so changing the select
+   * during the 1600ms delay showed "priya is typing" and then a message from
+   * maya. Both now read the same snapshot.
+   */
+  const [replyFrom, setReplyFrom] = useState<Partner>('maya');
 
-  useEffect(() => () => { if (typeT.current) clearTimeout(typeT.current); }, []);
+  useEffect(() => () => clearTimeout(typeT.current ?? undefined), []);
+
+  // Pins the feed to the newest message. Without it a reply arriving below the
+  // fold was simply never seen: the pane scrolls, and nothing moved it.
+  useEffect(() => {
+    const el = feedRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [msgs, typing]);
 
   const send = () => {
     const t = input.trim();
     if (!t) return;
+    // Snapshot, so the indicator and the reply cannot disagree.
+    const from = partner;
     setMsgs((m) => [...m, { who: 'you', text: t, mine: true }]);
     setInput('');
+    setReplyFrom(from);
     setTyping(true);
-    if (typeT.current) clearTimeout(typeT.current);
+    clearTimeout(typeT.current ?? undefined);
     typeT.current = setTimeout(() => {
-      const reply = `my ${partner.charAt(0).toUpperCase() + partner.slice(1)} graph has eigenvalues green — want me to quiz you on it?`;
+      const reply = `my ${from.charAt(0).toUpperCase() + from.slice(1)} graph has eigenvalues green — want me to quiz you on it?`;
       setTyping(false);
-      setMsgs((m) => [...m, { who: partner, text: reply, mine: false }]);
+      setMsgs((m) => [...m, { who: from, text: reply, mine: false }]);
     }, 1600);
   };
 
@@ -106,9 +126,16 @@ export function RoomsDemo() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', background: '#F6F8F4' }}>
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+        <div
+          ref={feedRef}
+          // The feed updates without any user action (the 1600ms reply), so a
+          // screen-reader user got no notification at all.
+          aria-live="polite"
+          aria-label="Room messages"
+          style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 9 }}
+        >
           {msgs.map((m, i) => (
-            <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 2, animation: 'labIn 260ms ease both', alignItems: m.mine ? 'flex-end' : 'flex-start' }}>
+            <div data-anim key={i} style={{ display: 'flex', flexDirection: 'column', gap: 2, animation: 'labIn 260ms ease both', alignItems: m.mine ? 'flex-end' : 'flex-start' }}>
               <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.1em', color: '#9AA5A0' }}>{m.mine ? 'you' : m.who}</span>
               <span
                 style={{
@@ -124,9 +151,9 @@ export function RoomsDemo() {
           ))}
           {typing && (
             <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#9AA5A0' }}>
-              {partner} is typing
+              {replyFrom} is typing
               {[0, 0.15, 0.3].map((d) => (
-                <span key={d} style={{ width: 4, height: 4, borderRadius: 99, background: '#9AA5A0', animation: `labDot 1.2s ease-in-out ${d}s infinite` }} />
+                <span data-anim key={d} style={{ width: 4, height: 4, borderRadius: 99, background: '#9AA5A0', animation: `labDot 1.2s ease-in-out ${d}s infinite` }} />
               ))}
             </span>
           )}

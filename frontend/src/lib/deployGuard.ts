@@ -35,15 +35,30 @@ export type FrontendEnv = keyof typeof FRONTEND_ENVS;
 // are accepted.
 type EnvSource = Readonly<Record<string, string | undefined>>;
 
-/** Match a value to a known environment, or null (empty / non-canonical). */
+/**
+ * Match a value to a known environment, or null (empty / non-canonical).
+ *
+ * URL fields are compared with any trailing slashes stripped: `https://api.
+ * saplinglearn.com/` is the same origin as `https://api.saplinglearn.com`, and
+ * treating the slashed spelling as "unknown" silently disarms both guards —
+ * checkFrontendDeployEnv() stops seeing the value at all, and
+ * detectHostConfigMismatch() returns null for a staging host genuinely wired to
+ * the prod backend. A guard that goes quiet on a valid spelling is worse than
+ * no guard.
+ *
+ * cookieDomain is NOT normalised: it is a `Domain` attribute, not a URL, and a
+ * trailing slash in it is a real misconfiguration we want left unrecognised.
+ */
 function classify(
   value: string | undefined,
   field: 'apiUrl' | 'cookieDomain' | 'siteUrl',
 ): FrontendEnv | null {
-  const v = (value ?? '').trim().toLowerCase();
+  const isUrl = field !== 'cookieDomain';
+  const normalise = (s: string) => (isUrl ? s.replace(/\/+$/, '') : s);
+  const v = normalise((value ?? '').trim().toLowerCase());
   if (!v) return null;
   for (const env of Object.keys(FRONTEND_ENVS) as FrontendEnv[]) {
-    if (FRONTEND_ENVS[env][field].toLowerCase() === v) return env;
+    if (normalise(FRONTEND_ENVS[env][field].toLowerCase()) === v) return env;
   }
   // Non-canonical (e.g. a *.workers.dev preview URL): not this guard's call to reject.
   return null;

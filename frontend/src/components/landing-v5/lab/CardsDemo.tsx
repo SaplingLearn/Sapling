@@ -12,7 +12,7 @@
  * line says so.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { LAB_TIER, MONO } from './LabShell';
 import { DECK, RATE_DUE, RATE_LABEL, RATE_TONE } from './labData';
 
@@ -34,17 +34,33 @@ export function CardsDemo() {
     if (idx < DECK.length) setFlipped((f) => !f);
   }, [idx]);
 
+  // Held in a ref, not returned from `rate()`. `rate` doubles as a click and a
+  // key handler, and neither caller can use a return value — so the cleanup it
+  // used to hand back was silently dropped and the timer fired `setIdx` after
+  // unmount on every rating.
+  const advanceT = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const rate = useCallback((key: RateKey) => {
     if (idx >= DECK.length || !flipped) return;
     setLog((l) => [...l, { q: DECK[idx].q, key }]);
     setFlipped(false);
     // the card turns back before the next one arrives, so it reads as a deal
-    const t = setTimeout(() => setIdx((i) => i + 1), 300);
-    return () => clearTimeout(t);
+    clearTimeout(advanceT.current ?? undefined);
+    advanceT.current = setTimeout(() => setIdx((i) => i + 1), 300);
   }, [idx, flipped]);
+
+  useEffect(() => () => clearTimeout(advanceT.current ?? undefined), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The listener is on window, so while this demo is mounted it saw every
+      // keystroke on the page — swallowing Space and hijacking 1/2/3 inside
+      // any other field. Typing anywhere editable is never a card shortcut.
+      const t = e.target as HTMLElement | null;
+      if (t) {
+        const tag = t.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return;
+      }
       if (e.key === ' ') { e.preventDefault(); flip(); }
       else if (RATES.includes(e.key as RateKey)) rate(e.key as RateKey);
     };
@@ -75,7 +91,7 @@ export function CardsDemo() {
       </span>
 
       {done ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, animation: 'labIn 320ms ease both' }}>
+        <div data-anim style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, animation: 'labIn 320ms ease both' }}>
           <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 30, fontWeight: 600 }}>Deck complete</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: 'min(340px,100%)' }}>
             {log.map((l, i) => (
@@ -97,7 +113,19 @@ export function CardsDemo() {
         </div>
       ) : (
         <>
-          <div onClick={flip} style={{ position: 'relative', flex: '1 1 auto', minHeight: 200, cursor: 'pointer' }}>
+          {/*
+            A real <button>, not a div with onClick: the flip was pointer-only,
+            and the window-level Space shortcut above now bails inside form
+            fields, so a keyboard user had no way to reveal the answer. Styled
+            back to a bare surface since the card itself is the visual.
+          */}
+          <button
+            type="button"
+            onClick={flip}
+            aria-pressed={flipped}
+            aria-label={flipped ? 'Hide the answer' : 'Reveal the answer'}
+            style={{ position: 'relative', flex: '1 1 auto', minHeight: 200, cursor: 'pointer', border: 'none', background: 'none', padding: 0, font: 'inherit', textAlign: 'inherit', display: 'block', width: '100%' }}
+          >
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', perspective: 1600 }}>
               <div style={{ position: 'relative', width: '100%', maxWidth: 600, aspectRatio: '16 / 9', maxHeight: '100%', transformStyle: 'preserve-3d', transition: 'transform 560ms cubic-bezier(0.4,0,0.2,1)', transform: `rotateY(${flipped ? 180 : 0}deg)` }}>
                 <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', borderRadius: 18, background: '#FDFCF9', border: '1px solid #E3E0D5', boxShadow: '0 18px 40px -18px rgba(18,32,26,0.28)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
@@ -112,7 +140,7 @@ export function CardsDemo() {
                 </div>
               </div>
             </div>
-          </div>
+          </button>
 
           <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' }}>
             <div style={{ display: 'flex', gap: 10, width: '100%', maxWidth: 560, transition: 'opacity 250ms', opacity: flipped ? 1 : 0.35, pointerEvents: flipped ? 'auto' : 'none' }}>

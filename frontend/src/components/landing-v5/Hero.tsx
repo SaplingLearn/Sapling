@@ -102,7 +102,7 @@ export function Hero({
       >
         {/* ── lockup ── */}
         <div style={{ minWidth: 0 }}>
-          <div
+          <div data-anim
             style={{
               // pulls the tagline up into the wordmark's cap space and indents
               // it to the optical left edge of the S — both values are tied to
@@ -146,13 +146,13 @@ export function Hero({
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 13 }}>
-            <div
+            <div data-anim
               style={{
                 display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
                 pointerEvents: 'auto', animation: RISE, animationDelay: '2.84s',
               }}
             >
-              <button
+              <button data-anim
                 onClick={onBeta}
                 className="ld-btn-solid"
                 style={{
@@ -183,12 +183,12 @@ export function Hero({
                 </svg>
               </button>
             </div>
-            <p style={{ margin: 0, fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.15em', color: '#61726A', animation: RISE, animationDelay: '2.96s' }}>
+            <p data-anim style={{ margin: 0, fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.15em', color: '#61726A', animation: RISE, animationDelay: '2.96s' }}>
               * AVAILABLE EXCLUSIVELY TO BOSTON UNIVERSITY STUDENTS
             </p>
           </div>
 
-          <p
+          <p data-anim
             className="hero-lede"
             style={{
               margin: 0, maxWidth: '34ch', fontSize: 'clamp(16px,1.22vw,21px)',
@@ -212,7 +212,7 @@ export function Hero({
         >
           <div className="hero-keys" style={{ display: 'flex', gap: 'min(2.8vw,42px)', minWidth: 0 }}>
             {KEYS.map((k) => (
-              <div key={k.num} style={{ minWidth: 0, maxWidth: '26ch', animation: RISE, animationDelay: k.delay }}>
+              <div data-anim key={k.num} style={{ minWidth: 0, maxWidth: '26ch', animation: RISE, animationDelay: k.delay }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 7 }}>
                   <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.24em', color: '#8B9A92' }}>
                     {k.num}
@@ -229,7 +229,7 @@ export function Hero({
             ))}
           </div>
 
-          <div
+          <div data-anim
             className="hero-cue"
             style={{
               justifySelf: 'center', display: 'flex', flexDirection: 'column',
@@ -241,13 +241,13 @@ export function Hero({
               <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, letterSpacing: '0.3em', color: '#61726A' }}>
                 SCROLL TO CONTINUE
               </span>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#61726A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ animation: 'cueDrop 2.2s ease-in-out infinite' }}>
+              <svg data-anim width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#61726A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ animation: 'cueDrop 2.2s ease-in-out infinite' }}>
                 <path d="M12 5v14M6 13l6 6 6-6" />
               </svg>
             </div>
           </div>
 
-          <div
+          <div data-anim
             className="hero-info"
             style={{
               justifySelf: 'end', display: 'flex', maxWidth: 480, padding: '18px 20px',

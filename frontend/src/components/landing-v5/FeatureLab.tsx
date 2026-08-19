@@ -16,6 +16,7 @@
  * through `<dc-import>`.
  */
 
+import { useEffect, useId, useRef } from 'react';
 import { GAL, LAB_KIND } from '@/lib/landing/content';
 import { FeatureLabDemo } from './lab';
 
@@ -33,27 +34,53 @@ export function FeatureLab({
   onClose: () => void;
   onPick: (i: number) => void;
 }) {
-  if (index < 0) return null;
+  // Hooks must run on every render, so the closed case is handled after them.
+  const titleId = useId();
+  const closeRef = useRef<HTMLButtonElement>(null);
+  // Captured on open and restored on close. The overlay covers the page and
+  // Escape/scrim-click unmount it, so without this the focus ring landed back
+  // at the top of the document instead of on the card the user came from.
+  const returnTo = useRef<Element | null>(null);
+  const open = index >= 0;
+
+  useEffect(() => {
+    if (!open) return;
+    returnTo.current = document.activeElement;
+    // The panel is a modal overlay with nothing focused inside it — a keyboard
+    // user's next Tab went to whatever sat behind the scrim.
+    closeRef.current?.focus();
+    return () => {
+      const back = returnTo.current;
+      if (back instanceof HTMLElement && back.isConnected) back.focus();
+      returnTo.current = null;
+    };
+  }, [open]);
+
+  if (!open) return null;
   const g = GAL[index];
   if (!g) return null;
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 80 }}>
-      <div
+      <div data-anim
         onClick={onClose}
+        aria-hidden="true"
         style={{ position: 'absolute', inset: 0, background: 'rgba(8,31,20,0.62)', animation: 'panelFade 420ms ease both' }}
       />
 
       <div
         ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         style={{ position: 'absolute', inset: 0, background: '#FDFCF9', overflow: 'hidden', display: 'flex', flexDirection: 'column', willChange: 'transform' }}
       >
-        <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(320px,4fr) 7fr', animation: 'panelFade 420ms ease 160ms both' }}>
+        <div data-anim style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(320px,4fr) 7fr', animation: 'panelFade 420ms ease 160ms both' }}>
           <div style={{ padding: 'clamp(28px,5vh,56px) clamp(28px,4vw,56px)', display: 'flex', flexDirection: 'column', borderRight: '1px solid #ECE9DE', overflow: 'auto' }}>
             <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.3em', color: '#0C5638', textTransform: 'uppercase' }}>
               {g.num} · {g.kicker}
             </span>
-            <h3 style={{ margin: '16px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(1.9rem,3.2vw,2.9rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.018em', color: '#12201A' }}>
+            <h3 id={titleId} style={{ margin: '16px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(1.9rem,3.2vw,2.9rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.018em', color: '#12201A' }}>
               {g.title}
             </h3>
             <p style={{ margin: '18px 0 0', color: '#33443B', fontSize: 15, lineHeight: 1.75, maxWidth: '44ch' }}>{g.desc}</p>
@@ -82,7 +109,13 @@ export function FeatureLab({
           </div>
         </div>
 
-        <div
+        <div data-anim
+          // A plain labelled group, deliberately not role="tablist": a real
+          // tablist owes its consumers tabpanel wiring plus arrow-key
+          // navigation and roving tabindex, and half of that is worse than
+          // none. `aria-current` below carries the selected state.
+          role="group"
+          aria-label="Feature tools"
           style={{ flex: '0 0 auto', borderTop: '1px solid #ECE9DE', background: '#F6F8F4', padding: '12px clamp(20px,3vw,40px)', display: 'flex', gap: 10, overflowX: 'auto', animation: 'panelFade 420ms ease 260ms both' }}
         >
           {GAL.map((r, i) => {
@@ -92,6 +125,9 @@ export function FeatureLab({
                 key={r.kind}
                 data-rail={i}
                 type="button"
+                // The open tool was signalled by background colour alone,
+                // which no screen reader conveys.
+                aria-current={on || undefined}
                 onClick={() => onPick(i)}
                 className="ld-rail"
                 style={{
@@ -113,8 +149,10 @@ export function FeatureLab({
           })}
         </div>
 
-        <button
+        <button data-anim
+          ref={closeRef}
           onClick={onClose}
+          type="button"
           aria-label="Close"
           className="ld-labclose"
           style={{ position: 'absolute', top: 20, right: 20, width: 42, height: 42, borderRadius: 99, border: '1px solid rgba(18,32,26,0.12)', background: '#FDFCF9', color: '#12201A', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 250ms', zIndex: 3, animation: 'panelFade 420ms ease 240ms both' }}

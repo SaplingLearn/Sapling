@@ -13,7 +13,21 @@ compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 binding = "ASSETS"
 directory = ".open-next/assets"
 
+# DEPLOY_ENV is the single knob src/lib/deployGuard.ts reads. Two consumers:
+#   1. RUNTIME — src/middleware.ts resolves the backend origin and runs
+#      detectHostConfigMismatch() against the request host on every gated
+#      request. These [vars] are what it sees, and they are also what
+#      `next dev` sees through the OpenNext platform proxy.
+#   2. BUILD — resolveSiteUrl() in app/layout.tsx (metadataBase / canonical /
+#      OG) and checkFrontendDeployEnv() in next.config.ts are both evaluated
+#      while `next build` runs, and wrangler [vars] are NOT visible then. The
+#      npm deploy scripts export DEPLOY_ENV for that half; a Cloudflare Workers
+#      Build must set it as a build variable in the dashboard as well.
+# Keep the value here in lockstep with those, or the guard's own consistency
+# check (which compares the API/cookie vars against DEPLOY_ENV) will fail the
+# build — which is the intended, loud outcome.
 [vars]
+DEPLOY_ENV = "production"
 NEXT_PUBLIC_API_URL = "https://api.saplinglearn.com"
 BACKEND_URL = "https://api.saplinglearn.com"
 COOKIE_DOMAIN = ".saplinglearn.com"
@@ -27,7 +41,13 @@ enabled = true
 [env.staging]
 name = "frontend-staging"
 
+# DEPLOY_ENV must be set here too, or the staging worker self-canonicalises to
+# saplinglearn.com: resolveSiteUrl() falls back to production when neither
+# DEPLOY_ENV nor NEXT_PUBLIC_SITE_URL is set, so every shared staging link
+# would unfurl with production's OG card and staging would advertise prod's
+# canonical URL to crawlers. See the [vars] note above for the build-time half.
 [env.staging.vars]
+DEPLOY_ENV = "staging"
 NEXT_PUBLIC_API_URL = "https://api.staging.saplinglearn.com"
 BACKEND_URL = "https://api.staging.saplinglearn.com"
 COOKIE_DOMAIN = ".staging.saplinglearn.com"

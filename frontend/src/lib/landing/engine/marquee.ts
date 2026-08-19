@@ -112,6 +112,14 @@ export function createMarquee(opts: MarqueeOptions): MarqueeController {
     track.addEventListener('pointermove', onMove);
     track.addEventListener('pointerup', onUp);
     track.addEventListener('pointercancel', onCancel);
+    // Also on window, the same way `sim.ts` binds its drag release.
+    // `setPointerCapture` above is in a try/catch: when capture fails, a drag
+    // that ends outside `track` never fires the track-scoped pointerup, so
+    // `m.drag` stayed non-null — drift and momentum froze and the cursor was
+    // stuck at `grabbing` until the next pointerdown. `end()` no-ops when
+    // there is no drag, so the duplicate binding is harmless.
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
 
     cleanups.push(() => {
       wrap?.removeEventListener('pointerenter', onEnter);
@@ -120,6 +128,8 @@ export function createMarquee(opts: MarqueeOptions): MarqueeController {
       track.removeEventListener('pointermove', onMove);
       track.removeEventListener('pointerup', onUp);
       track.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
       STATE.delete(track);
     });
   }
@@ -139,9 +149,17 @@ export function createMarquee(opts: MarqueeOptions): MarqueeController {
         const gap = parseFloat(getComputedStyle(track).columnGap) || 0;
         let w = 0;
         for (let i = 0; i < half; i++) w += (kids[i] as HTMLElement).offsetWidth + gap;
-        m.setW = w || 1;
-        m.measuredW = wrap.clientWidth;
+        // A zero sum means the cards are not laid out yet. Accepting it stored
+        // the `w || 1` fallback together with the current `measuredW`, so the
+        // track wrapped every frame at 1px and never re-measured until the
+        // viewport resized. Leaving `setW` at 0 retries on the next frame.
+        if (w > 0) {
+          m.setW = w;
+          m.measuredW = wrap.clientWidth;
+        }
       }
+      // Still unmeasured: nothing sensible to wrap against this frame.
+      if (!m.setW) return;
       if (!m.drag) {
         if (Math.abs(m.v) > 0.004) {
           m.off += m.v * dt;

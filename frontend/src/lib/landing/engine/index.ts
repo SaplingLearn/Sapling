@@ -400,6 +400,13 @@ export class LandingEngine {
     if (M.pills) {
       put(M.pills, 'opacity', docked ? '1' : '0');
       put(M.pills, 'pointerEvents', docked ? 'auto' : 'none');
+      // `opacity` and `pointerEvents` leave the pills in the tab order, so an
+      // invisible pill row was still focusable — Tab landed on three buttons
+      // that rendered nothing. `inert` is the only one of the three that
+      // removes them from focus, and unlike `visibility:hidden` it does not
+      // interrupt the 400ms opacity fade. `toggleAttribute` returns early on a
+      // no-op internally, but this is a per-frame path, so guard the write.
+      if (M.pills.inert !== !docked) M.pills.inert = !docked;
     }
   }
 
