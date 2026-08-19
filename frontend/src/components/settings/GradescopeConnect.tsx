@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   getGradescopeStatus,
   saveGradescopeCredentials,
@@ -47,7 +47,14 @@ export function GradescopeConnect({
   const [error, setError] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
-  async function refreshAll() {
+  // useCallback, not a plain function declaration: the mount effect below has
+  // to list refreshAll as a dependency (react-hooks/exhaustive-deps is an
+  // error in this repo, and it fails the lint step before tsc/vitest ever
+  // run). A fresh function identity every render would make that effect
+  // re-fire on every render and loop the status/courses/links fetches.
+  // Keying on userId also fixes a real bug the empty dep array hid: switching
+  // user without unmounting kept the previous account's Gradescope state.
+  const refreshAll = useCallback(async () => {
     const s = await getGradescopeStatus(userId);
     setStatus(s);
     if (s.has_credentials) {
@@ -58,11 +65,11 @@ export function GradescopeConnect({
       setGsCourses(coursesRes.courses);
       setLinks(linksRes.links);
     }
-  }
+  }, [userId]);
 
   useEffect(() => {
     refreshAll().catch((e) => setError((e as Error).message));
-  }, []);
+  }, [refreshAll]);
 
   async function handleConnect() {
     setBusy(true);
