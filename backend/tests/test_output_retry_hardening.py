@@ -168,10 +168,10 @@ def test_quiz_route_degrades_to_typed_502_after_bounded_retries(monkeypatch):
     # routes/quiz.py does retry a guardrail trip on gemini-2.5-flash — an
     # empty `finish_reason=error` response from flash-lite is not fixable by
     # re-asking the same model — but that escalation goes through
-    # _resolve_model_pref, which returns None outside real model mode (#391)
-    # rather than constructing a live GoogleModel. So the function-mode seam
-    # deliberately gets no second attempt, and this test keeps measuring the
-    # in-run budget it was written for.
+    # _resolve_fallback_model, which returns None outside real model mode
+    # (#391) rather than constructing a live GoogleModel. So the function-mode
+    # seam deliberately gets no second attempt, and this test keeps measuring
+    # the in-run budget it was written for.
     assert calls["n"] == 3, "expected 1 initial request + 2 bounded retries"
 
 
@@ -193,7 +193,6 @@ def test_quiz_route_recovers_when_a_fresh_run_succeeds(monkeypatch):
             type="multiple_choice", difficulty="medium",
             options=["0.3", "0.7", "0.4", "0.6"], correct_answer="0.3",
             explanation="Row 0, column 1.", concept="Derivatives",
-            kind="worked_problem",
         )
     ])
 

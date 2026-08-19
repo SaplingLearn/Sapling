@@ -549,9 +549,12 @@ class TestGenerateQuizNumQuestionsBound:
     silently truncating. This regression test prevents the bug where an
     over-cap num_questions silently returned fewer questions than asked.
 
-    The bound is 15 because that is the largest count QuizPanel offers.
-    While it sat at 10, picking "15 questions" in the UI was an
-    unconditional 422 — the picker offered a value the API refused.
+    The bound is 10 because that is what the agent's `Quiz.questions` array
+    can serve: raising it to 15 meant dropping `max_length` from that array,
+    and gemini-2.5-flash-lite then answered roughly half of all generations
+    with an empty `finish_reason=error` response (A/B in agents/quiz.py).
+    QuizPanel's COUNT_OPTIONS offers 5 / 10 to match, so the picker never
+    offers a value the API refuses.
     """
 
     def test_num_questions_over_cap_rejected(self):
@@ -1329,6 +1332,193 @@ class TestQuizModelPref:
         assert _resolve_model_pref(None) is None
         assert _resolve_model_pref("") is None
         assert _resolve_model_pref("auto") is None  # not in the map
+
+    # ── Per-run thinking budget ────────────────────────────────────────────
+    #
+    # The budget used to be pinned as agent-level model_settings
+    # (GoogleModelSettings(google_thinking_config=ThinkingConfig(
+    # thinking_budget=0)) on quiz_agent). Agent-level settings apply to EVERY
+    # run, including one whose `model=` kwarg is gemini-2.5-pro — and Pro
+    # rejects a zero budget outright, so `model_pref="smart"` was a 400 on
+    # arrival. The budget now lives on the run, chosen for the run's model.
+
+    def _thinking_budget(self, kwargs):
+        """The thinking budget this run was given, or None if none was set."""
+        settings = kwargs.get("model_settings") or {}
+        config = settings.get("google_thinking_config")
+        return None if config is None else config.thinking_budget
+
+    def test_smart_pref_does_not_send_a_zero_thinking_budget(self):
+        from routes.quiz import _PRO_THINKING_BUDGET
+
+        run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run_mock),
+        ):
+            r = self._post({"model_pref": "smart"})
+        assert r.status_code == 200
+        kwargs = run_mock.call_args.kwargs
+        assert kwargs["model"].model_name == "gemini-2.5-pro"
+        budget = self._thinking_budget(kwargs)
+        assert budget != 0, (
+            "gemini-2.5-pro rejects thinking_budget=0 — a Pro run must never "
+            "be handed one, from the agent or from the route"
+        )
+        assert budget == _PRO_THINKING_BUDGET
+
+    def test_lite_runs_still_turn_thinking_off(self):
+        """Thinking off is what took a 361s-then-502 generation down to ~18s;
+        moving the setting to the route must not lose it on the Lite path."""
+        for body in ({"model_pref": "fast"}, {}):
+            run_mock = AsyncMock(
+                return_value=SimpleNamespace(output=self._fake_quiz())
+            )
+            with (
+                patch("routes.quiz.table", side_effect=_generate_table_factory()),
+                patch("routes.quiz.quiz_agent.run", new=run_mock),
+            ):
+                r = self._post(body)
+            assert r.status_code == 200, body
+            assert self._thinking_budget(run_mock.call_args.kwargs) == 0, body
+
+    def test_the_agent_pins_no_thinking_config_of_its_own(self):
+        """The other half of the fix: anything left on the agent leaks into the
+        Pro run, where a zero budget is a 400. max_tokens is model-agnostic and
+        stays."""
+        from agents.quiz import _QUIZ_SETTINGS
+
+        assert "google_thinking_config" not in _QUIZ_SETTINGS
+        assert _QUIZ_SETTINGS.get("max_tokens") == 8192
+
+
+class TestQuizGuardrailRetryModel:
+    """The "retry on a different model" has to leave the failing model behind.
+
+    The fallback was built by `_resolve_model_pref("fast")`, which resolves to
+    gemini-2.5-flash-lite — the very model the first attempt just failed on
+    (agents/_providers.py::_DEFAULTS["quiz"]). By the retry comment's own
+    measurement (~140s per failed attempt) that turned one failure into ~280s
+    of student wait before the identical 502, and the log line named
+    gemini-2.5-flash, a model the route never used.
+    """
+
+    def _fake_quiz(self):
+        return Quiz(questions=[
+            QuizQuestion(
+                question="P = [[0.7, 0.3], [0.4, 0.6]]; what is P[0][1]?",
+                type="multiple_choice", difficulty="easy",
+                options=["0.3", "0.7", "0.4", "0.6"], correct_answer="0.3",
+                explanation="Row 0, column 1.", concept="Arithmetic",
+            ),
+        ])
+
+    def _post(self, body_extra: dict | None = None):
+        return client.post("/api/quiz/generate", json={
+            "user_id": "user_andres",
+            "concept_node_id": "node1",
+            "num_questions": 1,
+            "difficulty": "easy",
+            "use_shared_context": False,
+            **(body_extra or {}),
+        })
+
+    def test_the_fallback_is_not_the_model_that_just_failed(self):
+        from agents._providers import model_name_for
+        from routes.quiz import _FALLBACK_MODEL_NAME, _PREF_MODEL_NAMES
+
+        assert _FALLBACK_MODEL_NAME != model_name_for("quiz")
+        assert _FALLBACK_MODEL_NAME != _PREF_MODEL_NAMES["fast"]
+
+    def test_a_guardrail_trip_retries_on_the_fallback_model(self):
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from routes.quiz import _FALLBACK_MODEL_NAME
+
+        seen: list = []
+
+        async def flaky_run(*args, **kwargs):
+            seen.append(kwargs.get("model"))
+            if len(seen) == 1:
+                raise UnexpectedModelBehavior("empty finish_reason=error response")
+            return SimpleNamespace(output=self._fake_quiz())
+
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=flaky_run),
+        ):
+            r = self._post()
+        assert r.status_code == 200, r.text
+        assert len(seen) == 2, "expected exactly one escalation"
+        assert seen[0] is None, "first attempt runs on the agent's own default"
+        assert seen[1].model_name == _FALLBACK_MODEL_NAME
+
+    def test_an_explicit_preference_is_not_overridden_on_failure(self):
+        """A student who picked a model gets that model. Escalating away from it
+        would silently answer a "smart" request from a cheaper tier."""
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+        seen: list = []
+
+        async def always_trips(*args, **kwargs):
+            seen.append(kwargs.get("model"))
+            raise UnexpectedModelBehavior("empty finish_reason=error response")
+
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=always_trips),
+        ):
+            r = self._post({"model_pref": "smart"})
+        assert r.status_code == 502
+        assert len(seen) == 1
+        assert seen[0].model_name == "gemini-2.5-pro"
+
+    def test_a_usage_limit_trip_is_not_retried(self):
+        """The second attempt reuses the same ORCHESTRATOR_LIMITS object, so a
+        run that exhausted the budget exhausts it again — retrying only doubles
+        the wait before the same 502."""
+        from pydantic_ai.exceptions import UsageLimitExceeded
+
+        calls = {"n": 0}
+
+        async def over_budget(*args, **kwargs):
+            calls["n"] += 1
+            raise UsageLimitExceeded("request_limit of 8 exceeded")
+
+        with (
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=over_budget),
+        ):
+            r = self._post()
+        assert r.status_code == 502
+        assert calls["n"] == 1, "UsageLimitExceeded must not buy a second attempt"
+
+    def test_the_log_names_the_model_the_retry_actually_uses(self, caplog):
+        """The old line hard-coded "retrying on gemini-2.5-flash" while the
+        fallback it built was flash-lite."""
+        import logging
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from routes.quiz import _FALLBACK_MODEL_NAME
+
+        calls = {"n": 0}
+
+        async def flaky_run(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise UnexpectedModelBehavior("empty finish_reason=error response")
+            return SimpleNamespace(output=self._fake_quiz())
+
+        with (
+            caplog.at_level(logging.WARNING, logger="routes.quiz"),
+            patch("routes.quiz.table", side_effect=_generate_table_factory()),
+            patch("routes.quiz.quiz_agent.run", new=flaky_run),
+        ):
+            r = self._post()
+        assert r.status_code == 200, r.text
+        retry_lines = [
+            m for m in caplog.messages if "tripped a guardrail" in m
+        ]
+        assert retry_lines, "the escalation must be logged"
+        assert f"retrying on {_FALLBACK_MODEL_NAME}" in retry_lines[0]
 
 
 class TestSubmitQuizConcurrentClaim:

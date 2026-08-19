@@ -125,6 +125,23 @@ _PREF_MODEL_NAMES: dict[str, str] = {
 }
 
 
+# The model the guardrail retry escalates to. Deliberately NOT
+# _PREF_MODEL_NAMES["fast"]: that resolves to gemini-2.5-flash-lite, which is
+# also this route's DEFAULT model (agents/_providers.py::_DEFAULTS["quiz"]),
+# so a "retry on a different model" built from it re-ran the identical payload
+# on the identical model — measured, two ~140s failures back to back instead
+# of one, then the same 502 either way. gemini-2.5-flash is the smallest
+# genuine change: it leaves the failing input behind without paying Pro's
+# latency on a path the student is already waiting on.
+_FALLBACK_MODEL_NAME = "gemini-2.5-flash"
+
+# Gemini 2.5 Pro always thinks — thinking_budget=0 is rejected outright (the
+# same asymmetry agents/flashcard.py records: "Flash accepts thinking_budget=0
+# (unlike Pro)"). 2048 is the cap routes/learn.py applies to the Pro chat
+# tutor: enough for a real chain of thought, not enough latency to feel.
+_PRO_THINKING_BUDGET = 2048
+
+
 def _resolve_model_pref(model_pref: str | None):
     """Build a GoogleModel override for the per-request fast/smart
     preference, or return None to use the agent's default.
@@ -153,6 +170,60 @@ def _resolve_model_pref(model_pref: str | None):
     if not name:
         return None
     return google_model(name)
+
+
+def _resolve_fallback_model():
+    """Build the guardrail-retry model, or None when there is nothing to
+    escalate to.
+
+    Same SAPLING_MODEL_MODE seam as `_resolve_model_pref` (#391): outside real
+    mode there is no live GoogleModel to construct, so the route simply gets
+    no second attempt rather than dialing Gemini from a function-mode test.
+    """
+    from agents._providers import _model_mode, google_model
+    if _model_mode() != "real":
+        return None
+    return google_model(_FALLBACK_MODEL_NAME)
+
+
+def _effective_model_name(model_override) -> str:
+    """The model name a run will actually use, given its `model=` override.
+
+    None means no override, so the run lands on the agent's own task-default
+    model — whose configured name `model_name_for("quiz")` reports, env
+    override included. Used both to pick per-run model settings and to log the
+    model a retry really escalates to, so neither can name a model the run
+    isn't using.
+    """
+    from agents._providers import model_name_for
+    return getattr(model_override, "model_name", None) or model_name_for("quiz")
+
+
+def _build_quiz_model_settings(model_name: str):
+    """Thinking config for ONE quiz run, chosen for the model that run uses.
+
+    This cannot live on the agent, and agents/quiz.py says why: agent-level
+    model_settings apply to EVERY run, including the `model_pref="smart"` run
+    whose `model=` kwarg is gemini-2.5-pro, and Pro 400s on a zero budget.
+    Same split as agents/chat_tutor.py + routes/learn.py, where one agent
+    instance also serves both tiers.
+
+    flash-lite and flash accept thinking_budget=0, and switching thinking off
+    is what took quiz generation from runs of 361s that ended as a 502 down to
+    ~18s — so those keep it off, and only a Pro run gets a budget.
+
+    Imported lazily for the same reason as `google_model`: keeps the
+    GoogleProvider construction off this module's import path.
+    """
+    from google.genai.types import ThinkingConfig
+    from pydantic_ai.models.google import GoogleModelSettings
+    # Substring, not equality: the point is "does this model refuse a zero
+    # budget", which is a property of the Pro tier rather than of one version
+    # string, and SAPLING_MODEL_QUIZ can name a Pro model directly.
+    budget = _PRO_THINKING_BUDGET if "pro" in model_name else 0
+    return GoogleModelSettings(
+        google_thinking_config=ThinkingConfig(thinking_budget=budget)
+    )
 
 
 def _resolve_bu_code(course_id: str | None) -> str | None:
@@ -230,9 +301,11 @@ async def _quiz_via_agent(
         course_id=course_id,
         supabase=None,
         request_id=request_id,
-        # Read by quiz_agent's _enforce_requested_count output validator.
-        # Without it the count is prompt-only, and the model under-delivers
-        # (asked 10, returned 6) with nothing to catch it.
+        # Read by quiz_agent's _select_requested_quiz output validator, which
+        # trims the over-generated surplus back to this count (preferring
+        # worked problems as it does). Without it the count is prompt-only,
+        # and the model under-delivers (asked 10, returned 6) with nothing
+        # to catch it.
         num_questions=num_questions,
     )
     # Keep this message routing-only; the workflow + adaptive rules
@@ -248,10 +321,18 @@ async def _quiz_via_agent(
     # be selected instead of argued for.
     ask_for = quiz_ask_size(num_questions)
     allowance = conceptual_allowance(num_questions)
+    # Phrased as prose, not as a schema constraint. This message used to say
+    # "may be kind='conceptual'", but QuizQuestion has no `kind` field: a
+    # self-declared kind enum was measured taking flash-lite from 5/5 to 3/5
+    # successful generations and was reverted, so the classification is now
+    # inferred from the stem (agents/quiz.py::is_worked_problem). Constraining
+    # a key the model cannot emit is wasted prompt, and RULE 2 of the system
+    # prompt already states the rule in schema-supported terms.
     routing_msg = (
         f"Generate {ask_for} {difficulty} questions for the student. "
-        f"At most {allowance} of them may be kind='conceptual' — the rest "
-        f"must be worked problems with concrete values. "
+        f"At most {allowance} of them may be purely conceptual (see RULE 2) "
+        f"— every other question must pose concrete values for the student "
+        f"to compute with. "
         f"The target concept is '{concept_name}' "
         f"(concept_node_id={concept_node_id}). Follow the workflow in your "
         f"system prompt; pass concept_node_id='{concept_node_id}' to "
@@ -278,11 +359,20 @@ async def _quiz_via_agent(
         user_message = routing_msg
 
     model_override = _resolve_model_pref(model_pref)
-    run_kwargs: dict = {"deps": deps, "usage_limits": ORCHESTRATOR_LIMITS}
+    run_kwargs: dict = {
+        "deps": deps,
+        "usage_limits": ORCHESTRATOR_LIMITS,
+        # Per RUN, not pinned on the agent: the same quiz_agent instance
+        # serves Lite (thinking off) and Pro (thinking capped), and Pro
+        # rejects thinking_budget=0. See _build_quiz_model_settings.
+        "model_settings": _build_quiz_model_settings(
+            _effective_model_name(model_override)
+        ),
+    }
     if model_override is not None:
         run_kwargs["model"] = model_override
 
-    # On a guardrail trip, retry ONCE on a different model.
+    # On a guardrail trip, retry ONCE on a genuinely different model.
     #
     # gemini-2.5-flash-lite intermittently answers this request with an
     # empty response: `finish_reason=error`, zero output tokens, no parts.
@@ -292,21 +382,33 @@ async def _quiz_via_agent(
     # which this route turns into a 502. Sampled live it hit roughly one
     # generation in four.
     #
-    # The retry therefore has to CHANGE something. Re-running the same
-    # payload on the same model reproduces the failure exactly — measured:
-    # a plain fresh re-run failed both times, at 137s and 144s. Escalating
-    # to gemini-2.5-flash is the smallest change that leaves the failing
-    # input behind, and it is the same model the "fast" preference already
-    # uses, so it is a supported path rather than a special case.
+    # The retry therefore has to CHANGE THE MODEL. Re-running the same payload
+    # on the same model reproduces the failure exactly — measured, a plain
+    # fresh re-run failed both times, at 137s and 144s. A retry that lands
+    # back on flash-lite only doubles the student's wait before the identical
+    # 502, which is why the escalation target is _FALLBACK_MODEL_NAME and not
+    # the "fast" preference (which IS flash-lite, this route's default).
+    #
+    # Skipped when the caller named a model: an explicit "fast"/"smart"
+    # preference is the student's choice, not something to override on failure.
     #
     # Cost is bounded and only paid on failure: the ~75% of requests that
     # succeed on flash-lite never build the second model.
     last_error: Exception | None = None
     result = None
     attempts: list = [run_kwargs]
-    fallback = _resolve_model_pref("fast")
-    if fallback is not None and model_override is None:
-        attempts.append({**run_kwargs, "model": fallback})
+    if model_override is None:
+        fallback = _resolve_fallback_model()
+        if fallback is not None:
+            attempts.append({
+                **run_kwargs,
+                "model": fallback,
+                # Recomputed rather than inherited, so the settings still
+                # match the model if either end of this pair changes tier.
+                "model_settings": _build_quiz_model_settings(
+                    _effective_model_name(fallback)
+                ),
+            })
     for attempt, kwargs in enumerate(attempts, start=1):
         try:
             result = record_agent_usage(
@@ -314,13 +416,22 @@ async def _quiz_via_agent(
                 feature="quiz", task="quiz", user_id=deps.user_id,
             )
             break
-        except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
+        except UnexpectedModelBehavior as exc:
+            # Only THIS exception earns a second attempt. UsageLimitExceeded
+            # was caught here too, but the retry reuses the same
+            # ORCHESTRATOR_LIMITS object — a run that exhausted the budget
+            # exhausts it again — so retrying on it bought a second full wait
+            # for a guaranteed repeat failure. It propagates to generate_quiz,
+            # which maps it to the same typed 502.
             last_error = exc
+            next_kwargs = attempts[attempt] if attempt < len(attempts) else None
             logger.warning(
                 "quiz: generation attempt %d/%d tripped a guardrail (%s); %s",
                 attempt, len(attempts), type(exc).__name__,
-                "retrying on gemini-2.5-flash"
-                if attempt < len(attempts) else "giving up",
+                # Name the model the NEXT attempt actually runs on — the old
+                # line hard-coded a model this route never used.
+                f"retrying on {_effective_model_name(next_kwargs.get('model'))}"
+                if next_kwargs is not None else "giving up",
             )
     if result is None:
         raise last_error  # generate_quiz maps this to its typed 502
