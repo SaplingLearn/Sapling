@@ -936,13 +936,16 @@ The stack is a machine singleton — ONE flock invocation wraps the whole up→t
 cd /home/andresl/Projects/sapling
 flock /tmp/claude-1000/sapling-e2e-stack.lock bash -c '
   set -e
+  # Teardown registered BEFORE startup: under `set -e` a failing `make e2e-up`
+  # exits the shell immediately, so a trailing explicit `make e2e-down` never
+  # runs and a half-started stack is left holding the ports.
+  trap "make e2e-down || true" EXIT
   export SAPLING_MODEL_MODE=<value from e2e.yml>
   export SAPLING_FUNCTION_HANDLERS=<value from e2e.yml>
   make e2e-up
   rc=0
   (cd frontend && npx playwright test) || rc=$?
   (cd backend && venv/bin/python -m e2e_oracles) || rc=$?
-  make e2e-down
   exit $rc
 '
 ```
