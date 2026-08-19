@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
+from tests.agent_run_fakes import run_result, textless_run_result
 
 client = TestClient(app)
 
@@ -468,9 +469,8 @@ class TestChatViaAgent:
     def test_returns_agent_reply(self):
         """Happy path: agent.run returns a string; route shapes it into
         the `{reply, graph_update, mastery_changes}` wire dict."""
-        from types import SimpleNamespace
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="Recursion is a function calling itself."))
+        agent.run = AsyncMock(return_value=run_result("Recursion is a function calling itself."))
         with (
             patch("routes.learn.table", side_effect=self._make_table_factory()),
             patch("routes.learn.agent_for_mode", return_value=agent),
@@ -534,9 +534,8 @@ class TestChatViaAgent:
         bare-newline-after-tool-call quirk on the JSON path) is degenerate
         model output, not a success — it maps to the same retry-friendly 502
         instead of persisting an empty assistant row."""
-        from types import SimpleNamespace
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="\n"))
+        agent.run = AsyncMock(return_value=run_result("\n"))
         with (
             patch("routes.learn.table", side_effect=self._make_table_factory()),
             patch("routes.learn.agent_for_mode", return_value=agent),
@@ -545,6 +544,47 @@ class TestChatViaAgent:
             r = self._post()
         assert r.status_code == 502
         save.assert_not_called()
+
+    def test_textless_turn_does_not_return_or_persist_the_prior_reply(self):
+        """A turn whose model response carries NO text part must not answer
+        with the PREVIOUS turn's reply.
+
+        `_prepare_chat_run` puts `message_history` into `run_kwargs`, so
+        `result.output` resolves out of a message list that INCLUDES the
+        history: when the model ends its turn after tool calls, `.output`
+        hands back the last assistant message from an earlier turn — fully
+        formed and non-blank, so a bare `if not reply.strip()` guard never
+        sees it. The route would then return and persist a byte-identical
+        copy of its own last answer against a completely different question.
+
+        This path matters more than the streamed one: `_chat_turn_json` is
+        both POST /api/learn/chat AND the streamed route's Rung-1 fallback,
+        which is exactly where textless turns now get sent.
+        """
+        PRIOR = "Recursion is a function that calls itself until a base case."
+        history_rows = [
+            {"role": "user", "content": "What is recursion?"},
+            {"role": "assistant", "content": PRIOR},
+        ]
+        agent = MagicMock()
+        agent.run = AsyncMock(return_value=textless_run_result(PRIOR))
+        with (
+            patch(
+                "routes.learn.table",
+                side_effect=self._make_table_factory(history_rows=history_rows),
+            ),
+            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch("routes.learn.save_message") as save,
+        ):
+            r = self._post(message="And what is memoization?")
+
+        assert r.status_code == 502, (
+            "a turn that produced no text is a degenerate turn, not a success"
+        )
+        assert PRIOR not in r.text, "the prior turn's reply must never be replayed"
+        assert not [
+            c for c in save.call_args_list if c.args[1] == "assistant"
+        ], "no assistant row may be persisted for a turn that said nothing"
 
     def test_message_history_loaded_with_decryption(self):
         """`_load_message_history` calls `decrypt_if_present` on each row's
@@ -587,10 +627,9 @@ class TestChatViaAgent:
         """Both the user turn and the model turn are encrypted at the
         boundary via `encrypt_if_present` before being inserted into
         the messages table."""
-        from types import SimpleNamespace
 
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="MODEL_REPLY"))
+        agent.run = AsyncMock(return_value=run_result("MODEL_REPLY"))
 
         # Capture every messages.insert payload so we can assert on encrypted values.
         inserts: list[dict] = []
@@ -640,9 +679,8 @@ class TestChatViaAgent:
 
     def test_smart_pref_overrides_agent_model(self):
         """body.model_pref='smart' → agent.run gets `model=GoogleModel('gemini-2.5-pro')`."""
-        from types import SimpleNamespace
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="ok"))
+        agent.run = AsyncMock(return_value=run_result("ok"))
         with (
             patch("routes.learn.table", side_effect=self._make_table_factory()),
             patch("routes.learn.agent_for_mode", return_value=agent),
@@ -655,9 +693,8 @@ class TestChatViaAgent:
 
     def test_fast_pref_overrides_agent_model(self):
         """body.model_pref='fast' → agent.run gets `model=GoogleModel('gemini-2.5-flash-lite')`."""
-        from types import SimpleNamespace
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="ok"))
+        agent.run = AsyncMock(return_value=run_result("ok"))
         with (
             patch("routes.learn.table", side_effect=self._make_table_factory()),
             patch("routes.learn.agent_for_mode", return_value=agent),
@@ -670,9 +707,8 @@ class TestChatViaAgent:
 
     def test_no_pref_falls_through_to_agent_default(self):
         """No model_pref → agent.run gets NO `model` kwarg; agent default wins."""
-        from types import SimpleNamespace
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="ok"))
+        agent.run = AsyncMock(return_value=run_result("ok"))
         with (
             patch("routes.learn.table", side_effect=self._make_table_factory()),
             patch("routes.learn.agent_for_mode", return_value=agent),
@@ -690,10 +726,9 @@ class TestChatViaAgent:
         unbounded dynamic thinking — the exact latency regression this PR
         fixed. Pin the budget value, not just the kwarg's presence.
         """
-        from types import SimpleNamespace
         from routes.learn import _PRO_THINKING_BUDGET
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="ok"))
+        agent.run = AsyncMock(return_value=run_result("ok"))
         with (
             patch("routes.learn.table", side_effect=self._make_table_factory()),
             patch("routes.learn.agent_for_mode", return_value=agent),
@@ -714,9 +749,8 @@ class TestChatViaAgent:
         The cap protects every path that lands on Pro, including the
         no-pref agent default — not just explicit "smart" requests.
         """
-        from types import SimpleNamespace
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="ok"))
+        agent.run = AsyncMock(return_value=run_result("ok"))
         with (
             patch("routes.learn.table", side_effect=self._make_table_factory()),
             patch("routes.learn.agent_for_mode", return_value=agent),
@@ -743,9 +777,8 @@ class TestChatViaAgent:
         best and could be rejected by the provider. The route's
         `if model_pref != "fast":` guard is the contract; pin it.
         """
-        from types import SimpleNamespace
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="ok"))
+        agent.run = AsyncMock(return_value=run_result("ok"))
         with (
             patch("routes.learn.table", side_effect=self._make_table_factory()),
             patch("routes.learn.agent_for_mode", return_value=agent),
@@ -758,9 +791,8 @@ class TestChatViaAgent:
     def test_use_shared_context_false_appends_constraint(self):
         """`use_shared_context=False` augments the user message with a
         constraint instructing the agent not to call class-aggregate tools."""
-        from types import SimpleNamespace
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="ok"))
+        agent.run = AsyncMock(return_value=run_result("ok"))
         with (
             patch("routes.learn.table", side_effect=self._make_table_factory()),
             patch("routes.learn.agent_for_mode", return_value=agent),
@@ -810,11 +842,10 @@ class TestStartSessionAgent:
         )
 
     def test_happy_path_stashes_pending_and_returns_greeting(self):
-        from types import SimpleNamespace
         from routes.learn import PENDING_SESSIONS
         PENDING_SESSIONS.clear()
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="Welcome! Let's begin."))
+        agent.run = AsyncMock(return_value=run_result("Welcome! Let's begin."))
         mocks: dict = {}
         tbl, afm, topic, off, graph = self._stack(agent, mocks)
         try:
@@ -851,11 +882,10 @@ class TestStartSessionAgent:
     def test_blank_greeting_returns_502_and_stashes_nothing(self):
         """#153: a whitespace-only greeting must never be stashed as the
         session's opening bubble — it maps to the retry-friendly 502."""
-        from types import SimpleNamespace
         from routes.learn import PENDING_SESSIONS
         PENDING_SESSIONS.clear()
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="\n"))
+        agent.run = AsyncMock(return_value=run_result("\n"))
         tbl, afm, topic, off, graph = self._stack(agent, {})
         with tbl, afm, topic, off, graph:
             r = self._post()
@@ -893,9 +923,8 @@ class TestActionAgent:
         })
 
     def test_happy_path_persists_assistant_only(self):
-        from types import SimpleNamespace
         agent = MagicMock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(output="Here's a scaffold."))
+        agent.run = AsyncMock(return_value=run_result("Here's a scaffold."))
         saved = []
         with (
             patch("routes.learn.table", side_effect=self._table_factory()),
@@ -937,6 +966,25 @@ class TestActionAgent:
         assert r.status_code == 502
         save.assert_not_called()
 
+    def test_textless_action_turn_does_not_persist_the_prior_reply(self):
+        """The action route is the third history-bearing `result.output`
+        reader (`_load_message_history` feeds its run), and it persists with
+        `save_message` directly — so a textless turn there would write the
+        previous assistant message into the transcript a second time. Same
+        narrowing, same degrade: 502, nothing persisted."""
+        PRIOR = "Try walking through the base case first."
+        agent = MagicMock()
+        agent.run = AsyncMock(return_value=textless_run_result(PRIOR))
+        with (
+            patch("routes.learn.table", side_effect=self._table_factory()),
+            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch("routes.learn.save_message") as save,
+        ):
+            r = self._post()
+        assert r.status_code == 502
+        assert PRIOR not in r.text
+        save.assert_not_called()
+
 
 class TestFallbackWriteStateStamp:
     """PR #472 review: the route helpers stamp `sapling_wrote` on any
@@ -953,9 +1001,10 @@ class TestFallbackWriteStateStamp:
         deps.graph_updates = [{"updated_nodes": [{"concept_name": "X"}]}]
         deps.mastery_changes = []
         agent = MagicMock()
-        run_result = MagicMock()
-        run_result.output = "\n"
-        agent.run = AsyncMock(return_value=run_result)
+        # Shape-faithful: a bare MagicMock here would iterate empty on
+        # `new_messages()` and pass as a TEXTLESS turn instead of the
+        # whitespace-only one this test is about.
+        agent.run = AsyncMock(return_value=run_result("\n"))
 
         with (
             patch("routes.learn._prepare_chat_run",
@@ -982,9 +1031,10 @@ class TestFallbackWriteStateStamp:
         deps.graph_updates = []
         deps.mastery_changes = []
         agent = MagicMock()
-        run_result = MagicMock()
-        run_result.output = "\n"
-        agent.run = AsyncMock(return_value=run_result)
+        # Shape-faithful: a bare MagicMock here would iterate empty on
+        # `new_messages()` and pass as a TEXTLESS turn instead of the
+        # whitespace-only one this test is about.
+        agent.run = AsyncMock(return_value=run_result("\n"))
 
         with (
             patch("routes.learn._prepare_chat_run",

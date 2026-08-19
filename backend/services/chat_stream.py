@@ -309,7 +309,17 @@ async def stream_agent_turn(
         return
 
     joined = "".join(chunks)
-    reply = final_output if final_output is not None else joined
+    # `final_output` (run_result.output) is only trustworthy when this turn
+    # actually streamed text. It resolves out of the run's message list, and
+    # that list INCLUDES `message_history` — so a turn whose model response
+    # carries no text part (ended after tool calls) hands back the PREVIOUS
+    # turn's assistant message: fully formed, non-blank, and therefore
+    # invisible to the blank-reply ladder below. Persisting it makes the tutor
+    # answer a follow-up with a byte-identical copy of its own last answer
+    # (observed live on gemini-2.5-flash-lite; ~25% of turns). Text always
+    # reaches us as PartStart/PartDelta events, so "nothing streamed" means
+    # "this turn produced no text" — degrade instead of replaying history.
+    reply = final_output if (final_output is not None and joined.strip()) else joined
 
     # Usage first, persistence second: the tokens were spent regardless of
     # whether on_complete manages to persist — including on the degenerate

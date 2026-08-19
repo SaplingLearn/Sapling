@@ -705,3 +705,111 @@ def test_fallback_failure_without_writes_stays_retryable():
         assert events[-1].data["retryable"] is True
 
     asyncio.run(run())
+
+
+def test_textless_turn_never_replays_the_previous_turns_reply():
+    """A turn whose model response carries NO text part must not persist the
+    PREVIOUS turn's reply.
+
+    `run_result.output` resolves out of the run's message list, and that list
+    includes `message_history` — so a tool-only turn hands back the last
+    assistant message from an EARLIER turn: fully formed, non-blank, and
+    therefore invisible to the blank-reply ladder below. Taking it verbatim
+    makes the tutor answer a follow-up with a byte-identical copy of its own
+    previous answer (observed live on gemini-2.5-flash-lite; ~25% of turns
+    when the model ends its turn after tool calls).
+
+    Nothing streamed this turn, so there is no reply of this turn's to
+    persist: the turn degrades exactly like any other blank one.
+    """
+    PRIOR = "A Markov chain is a stochastic model describing a sequence of events."
+
+    async def run():
+        agent = FakeAgent([
+            FunctionToolCallEvent("read_graph_neighborhood"),
+            FunctionToolResultEvent(),          # no writes landed
+            AgentRunResultEvent(PRIOR),         # stale: from message_history
+        ])
+        on_complete_calls = []
+
+        async def fake_fallback():
+            return {"reply": "fresh reply", "graph_update": {}, "mastery_changes": []}
+
+        events = await collect(
+            agent, make_deps(),
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+            nonstream_fallback=fake_fallback,
+        )
+        assert on_complete_calls == [], "prior-turn text must never persist as this turn's reply"
+        assert all(
+            PRIOR not in (e.data or {}).get("delta", "") for e in events if e.type == "token"
+        ), "prior-turn text must never reach the student's bubble"
+        assert events[-1].data["reply"] == "fresh reply"
+        assert events[-1].data["reply"] != PRIOR
+
+    asyncio.run(run())
+
+
+def test_textless_turn_with_writes_is_a_terminal_error_not_a_replay():
+    """The LIKELIER shape of a textless turn: a tool WROTE first.
+
+    Every tutor agent registers `apply_graph_update_tool` and
+    `update_mastery_tool` (agents/chat_tutor.py), and a model that ends its
+    turn after tool calls has by definition just called tools — so the
+    textless turn usually arrives with `deps.graph_updates` /
+    `deps.mastery_changes` already populated. That lands on the
+    write-guard rung, not Rung 1: re-running the turn would apply the same
+    mastery event twice (PR #470 review), so the honest degrade is a terminal
+    `retryable: False` error.
+
+    Distinct from `test_blank_reply_after_tool_call_with_writes_is_terminal_error`,
+    which streams a whitespace text part. Here NOTHING streams and
+    `run_result.output` is a fully-formed reply from an EARLIER turn — the
+    shape that sails through a bare `if not reply.strip()` guard.
+    """
+    PRIOR = "Gradient descent walks downhill along the steepest direction."
+
+    async def run():
+        deps = make_deps()
+
+        def write():
+            deps.mastery_changes.append(
+                {"concept": "Gradient descent", "before": 0.3, "after": 0.5}
+            )
+
+        agent = FakeAgent([
+            FunctionToolCallEvent("update_mastery_tool"),
+            FunctionToolResultEvent(on_fire=write),   # the write lands
+            AgentRunResultEvent(PRIOR),               # stale: from message_history
+        ])
+        on_complete_calls = []
+        fallback_calls = []
+
+        async def fake_fallback():
+            fallback_calls.append(1)
+            return {"reply": "fresh reply", "graph_update": {}, "mastery_changes": []}
+
+        events = await collect(
+            agent, deps,
+            on_complete=lambda r, g, m: on_complete_calls.append(r),
+            nonstream_fallback=fake_fallback,
+        )
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is False, (
+            "mastery already moved this turn — neither the server fallback "
+            "nor a client retry may re-run it"
+        )
+        assert fallback_calls == [], (
+            "a fallback after real tool writes would double-apply mastery"
+        )
+        assert on_complete_calls == [], (
+            "the prior turn's reply must not be persisted as this turn's"
+        )
+        assert all(
+            PRIOR not in (e.data or {}).get("delta", "")
+            for e in events if e.type == "token"
+        ), "prior-turn text must never reach the student's bubble"
+        # The write was a real tool action — it stays.
+        assert deps.mastery_changes
+
+    asyncio.run(run())

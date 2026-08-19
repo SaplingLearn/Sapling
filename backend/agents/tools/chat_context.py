@@ -45,6 +45,7 @@ from pydantic_ai import RunContext
 
 from agents.deps import SaplingDeps
 from db.connection import table
+from services.academics import resolve_offering, user_offering_ids_for_course
 from services.encryption import decrypt_if_present, decrypt_json
 
 # Shared tokenizer (#149): factored to services/token_overlap.py so the
@@ -111,6 +112,43 @@ def _score_material(query_tokens: set[str], doc: dict) -> int:
     return len(query_tokens & doc_tokens)
 
 
+# How many candidate documents to fetch per requested result. Keyword ranking
+# happens in Python after the fetch, so the query must return a POOL, not the
+# final answer — but it must still be bounded (every row is AES-decrypted on
+# the SSE path). 10x means a 5-result search reads at most 50 rows.
+_MATERIAL_CANDIDATE_FACTOR = 10
+
+
+def _material_offering_ids(user_id: str, course_id: str) -> list[str]:
+    """The offerings whose documents count as "this course's materials".
+
+    Must match the WRITER, not just the enrollment table. Documents are
+    written with `resolve_offering(course_id, create=True)`
+    (routes/documents.py) — current term, `enrollments` never consulted —
+    and the sibling readers (routes/study_guide.py, routes/flashcards.py)
+    use the writer's resolver too. `user_offering_ids_for_course` intersects
+    the course's offerings with the user's enrollment rows, which is
+    STRICTLY NARROWER: across a term boundary a student enrolled in Fall-26
+    who uploads next term gets `documents.offering_id` = the new offering
+    and has no enrollment row for it, so the enrollment-only read returns
+    [] while the Library still lists the file — the tutor silently loses
+    every document.
+
+    The intersection buys no security either: `user_id` is the access
+    boundary on `documents` (#125), so dropping offerings can only hide the
+    student's OWN uploads. Hence the union of both resolvers.
+
+    Order-stable and de-duplicated: the ids go into a PostgREST
+    `in.(...)` list, and a set would make that URL — and every test that
+    asserts on it — nondeterministic.
+    """
+    ids = list(user_offering_ids_for_course(user_id, course_id))
+    writer_offering = resolve_offering(course_id)
+    if writer_offering and writer_offering not in ids:
+        ids.append(writer_offering)
+    return ids
+
+
 async def search_course_materials(
     course_id: str | None,
     query: str,
@@ -118,8 +156,11 @@ async def search_course_materials(
     *,
     user_id: str,
 ) -> list[CourseMaterial]:
-    """Return the top `limit` documents owned by `user_id` in `course_id`,
-    ranked by keyword overlap with `query`.
+    """Return the top `limit` live documents owned by `user_id` in
+    `course_id`, ranked by keyword overlap with `query`.
+
+    Soft-deleted documents are excluded (`deleted_at is.null`) — a file the
+    student removed from their Library must stop reaching the tutor.
 
     #125: documents are user-scoped *within* a shared course, so the query
     MUST filter on user_id as well as course_id — otherwise another enrolled
@@ -133,23 +174,66 @@ async def search_course_materials(
     the chat tutor only grounds on materials inside the active course
     (cross-course search would leak other-class context into the chat).
 
-    Failures degrade silently to []. The agent can always answer from
-    its base knowledge — losing course materials downgrades quality but
-    shouldn't 500 the chat.
+    Failures degrade to [] rather than raising. The agent can always answer
+    from its base knowledge — losing course materials downgrades quality but
+    shouldn't 500 the chat. Every degrade path logs, including the
+    no-offering one: to the model an empty result is indistinguishable from
+    "this course has no materials", so a retrieval gap has to be visible in
+    the logs or it stays invisible forever.
     """
     if not course_id:
         return []
 
     def _fetch() -> list[dict[str, Any]]:
         try:
+            # `documents` keys on offering_id (0025) — it has no course_id
+            # column, so filtering on one 400s and the `except` below turns
+            # that into a silent []: the tutor loses every course document
+            # with no visible error. Resolve the abstract course to the
+            # user's offerings first, per the academics convention.
+            offering_ids = _material_offering_ids(user_id, course_id)
+            if not offering_ids:
+                # Never silent. An unresolvable course is a RETRIEVAL FAILURE,
+                # but the model sees the same `[]` a materials-free course
+                # produces and narrates it as "your class doesn't cover this"
+                # — the exact failure mode this tool's offering fix exists to
+                # remove, and the one that went unnoticed because nothing was
+                # logged. No user_id in the message (Style Guide: never log
+                # raw student identifiers).
+                logger.warning(
+                    "search_course_materials resolved no offering for "
+                    "course=%s; returning no materials (retrieval gap, not "
+                    "an empty course)",
+                    course_id,
+                )
+                return []
             return (
                 table("documents").select(
                     "id,file_name,summary,concept_notes",
                     filters={
-                        "course_id": f"eq.{course_id}",
+                        # #125 user scope is preserved: documents are
+                        # user-scoped WITHIN a shared offering.
+                        "offering_id": f"in.({','.join(offering_ids)})",
                         "user_id": f"eq.{user_id}",
+                        # `documents` is soft-deleted (routes/documents.py
+                        # stamps deleted_at; every other reader filters it out
+                        # — study_guide.py, flashcards.py). Without this, a
+                        # file the student deleted from their Library keeps
+                        # getting decrypted into LLM context forever.
+                        "deleted_at": "is.null",
                     },
                     order="created_at.desc",
+                    # Bound the read. This runs on the latency-critical SSE
+                    # path and EVERY returned row gets AES-decrypted below
+                    # before the list is truncated to `limit`, so an unbounded
+                    # select makes a student with a large Library pay decrypt
+                    # cost for documents that can never be returned. The cap
+                    # is a multiple of `limit`, not `limit` itself: keyword
+                    # ranking happens after the fetch, so ranking over only
+                    # the 5 newest documents would silently turn this into
+                    # "most recent" instead of "most relevant". `created_at
+                    # .desc` means the cap drops the OLDEST documents.
+                    limit=max(1, int(limit)) * _MATERIAL_CANDIDATE_FACTOR,
                 )
                 or []
             )
