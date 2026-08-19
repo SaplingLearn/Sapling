@@ -80,6 +80,13 @@ renders the element.
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
 | Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
 | Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
+| Landing knowledge graph demo | `landing-graph` | `frontend/src/components/marketing/graph/KnowledgeGraphDemo.tsx` (the pre-auth landing page's interactive course-picker + laid-out concept graph, wearing the `landing-surface` chrome with an inspector rail and mastery legend since #344 step 3) |
+| Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
+| Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
+| Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
+| Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
+| Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
+| Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
 
 Two surfaces do **not** carry their testids in the screen file named by the
 route:
@@ -200,6 +207,8 @@ route:
 | `graph-add-concept` | Tree toolbar: "＋ Add concept" opener (#330) — rendered only when a single course pill is selected (the "all" filter gives no course to attribute the node to) |
 | `graph-add-concept-input` | the concept-name `<input>` (Enter submits, Escape cancels) |
 | `graph-add-concept-submit` | the "Add" button — POSTs create-or-merge, toasts, reloads the graph |
+| `graph-crash-fallback` | graph-local crash placeholder (#538) — rendered by the wrapper's error boundary when a renderer throws; never contains a graph |
+| `graph-crash-retry` | "Try again" button inside the crash placeholder — wired to the boundary's reset |
 
 `graph-node-item` / `graph-node` carry the node id as a separate
 `data-node-id` attribute instead of a testid suffix (the repeated-items rule
@@ -214,6 +223,7 @@ never collide in the DOM.
 | testid | element |
 | --- | --- |
 | `app-shell` | authed shell root — the scrolling `<main id="main-content">` in `ShellFrame.tsx`, present in both (top-nav and sidebar) layout variants; the Playwright harness smoke spec (#385) anchors on it as the "authed shell mounted" signal |
+| `error-fallback` | root `ErrorFallback` surface (`ErrorBoundary.tsx`) — the whole-app "We hit a snag" page; journeys assert its ABSENCE (#538) so the check survives copy rewording |
 
 ### `social`
 
@@ -253,6 +263,12 @@ never collide in the DOM.
 | `social-member-{userId}` | a member row on the overview |
 | `social-member-kick-{userId}` | "Kick" on that member row (leader only) |
 | `social-match-run` | "Find matches" on the study-match tab |
+| `social-friend-row-{userId}` | a friend row in the Friends panel (`FriendsPanel`/`FriendRow`, Task 16) |
+| `social-friend-remove-{userId}` | "Remove" on that friend row (two-click confirm) |
+| `social-friend-incoming-{requestId}` | an incoming friend-request row |
+| `social-friend-accept-{requestId}` | "Accept" on an incoming request |
+| `social-friend-decline-{requestId}` | "Decline" on an incoming request |
+| `social-friend-outgoing-{requestId}` | an outgoing (pending) friend-request row |
 
 ### `dashboard`
 
@@ -305,6 +321,40 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 | `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
 
+### `profile`
+
+Added with the Task 16/17 friends work — the add-friend action rendered on
+someone else's profile (`AddFriendAction` in `ProfileView.tsx`).
+
+| testid | element |
+| --- | --- |
+| `profile-friend-status` | "Friends" chip shown in place of the button once already friends |
+| `profile-add-friend` | "Add friend" / disabled "Request sent" button |
+
+### `achievements`
+
+Added with the Task 17 E2E journey over the `/achievements` screen
+(`Achievements.tsx` + `screens/achievements/*.tsx`, built in Tasks 13–14).
+The surface spans four files, and — unlike every other multi-file surface
+above — the testids are **not** all `achievements-`-prefixed: the hero/level/
+XP readout uses a `gamification-` prefix (the XP/level system's own name,
+reused verbatim from the spec this journey was written against) and the
+leaderboard/activity tab panels prefix with their own tab name
+(`leaderboard-`, `activity-`) since each panel is a distinct, self-contained
+sub-view a test targets independently of the `achievements-tab-*` control
+that opens it. Treat this as the fixed vocabulary for the `/achievements`
+screen; don't add a fifth prefix here without a reason as strong as these.
+
+| testid | element |
+| --- | --- |
+| `achievements-tab-achievements` / `-leaderboard` / `-activity` | the three tab-bar buttons (`Achievements.tsx::TabBar`) |
+| `achievements-showcase-remove-{achievementId}` | the showcase card's "×" remove-from-showcase button, suffixed with the achievement id |
+| `gamification-hero` | the hero card root (`achievements/HeroCard.tsx`) — level ring, growth-stage art, XP bar |
+| `gamification-level` | the "LVL {n}" pill on the hero card |
+| `gamification-total-xp` | the plain numeric total-XP readout on the hero card (no thousands separator, so tests can `Number()` it directly) |
+| `leaderboard-row-you` | the current viewer's row in the leaderboard list (`achievements/LeaderboardTab.tsx::RankRow`), present only when `row.is_you` |
+| `activity-week-total` | the "Week total" stat tile's value on the Activity tab (`achievements/ActivityTab.tsx`) |
+
 ### `library`
 
 Added with the upload → SSE → library journey (#387).
@@ -323,6 +373,78 @@ Added with the upload → SSE → library journey (#387).
 | `library-detail-delete` | detail panel "Delete document" (click-twice confirm) |
 | `library-concepts-toggle-all` | detail panel "Expand all" / "Collapse all" |
 | `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
+
+### `landing-graph`
+
+Added with the #344 landing-page knowledge-graph demo. Ships the static,
+fully laid-out render (chips to switch course, nodes/edges for the selected
+graph), the helical assembly animation, and hover interaction (detail-panel
+swap + copy fade on first engagement); click-to-expand is a later task in the
+same spec and will reuse these same testids.
+
+Step 3 wrapped the whole thing in the same `landing-surface` chrome the bands
+and bento use — a titled bar over a `--bg-mesh` canvas, an inspector rail and a
+mastery legend — so the ids below split into the section's own controls and the
+screen's panes.
+
+| testid | element |
+| --- | --- |
+| `landing-graph` | demo section root (`aria-label` names the selected course) |
+| `landing-graph-chip-{courseId}` | one course-picker chip, per `COURSE_GRAPHS` entry — `aria-pressed` marks the active course |
+| `landing-graph-copy` | the section's instructional copy block (eyebrow label + heading) — `data-engaged` flips `"true"` on the visitor's first node hover and stays that way across course switches |
+| `landing-graph-eyebrow` | the "Your knowledge, mapped" eyebrow label — deliberately *not* faded on engagement (WCAG AA at 0.7rem) |
+| `landing-graph-headline` | the "Pick a course. Watch it grow." heading — carries the engagement fade (`ENGAGED_HEADLINE_OPACITY`) |
+| `landing-graph-surface` | the product-chrome frame the whole screen sits in (`landing-surface`) |
+| `landing-graph-meta` | the chrome bar's right-hand status — `{code} · {conceptCount} concepts · {n}% mastery`, all read off the selected `CourseGraph` |
+| `landing-graph-svg` | the `<svg>` itself — its `viewBox` is the desktop or the phone `GraphView` (`graph/layout.ts`), swapped at the mobile breakpoint |
+| `landing-graph-node-{nodeId}` | one SVG node group (`<g>`) in the selected course's graph. Its **first `<circle>` is the tier-painted disc at the full node radius** — the phone legibility gate measures that element, so nothing may be drawn in front of it |
+| `landing-graph-detail` | the inspector rail's frame. Never empty: with nothing hovered it shows the course (the root node) |
+| `landing-graph-detail-name` | the inspected node's name |
+| `landing-graph-detail-tier` | its mastery tier as a labelled chip (`Course` for the root, which is an anchor rather than a status) |
+| `landing-graph-detail-mastery` | its mastery as a percentage |
+| `landing-graph-blurb` | the reserved-height paragraph in the panel that shows the inspected node's one-sentence blurb |
+| `landing-graph-legend` | the mastery legend pinned to the foot of the rail |
+| `landing-graph-legend-{tier}` | one legend row — `mastered`, `learning`, `struggling` or `unexplored`, each with the tier's own count of drawn concepts |
+
+### `landing-band` / `landing-bento` / `landing-surface`
+
+Added with the #344 step-2 build (feature bands + surface bento). These
+surfaces are **static recreations** of shipped product screens — there is
+deliberately not a single `<button>`, `<input>` or `<textarea>` among them
+(the spec's "no per-tile buttons"), so the lint block below is satisfied
+vacuously and stays as a guard on anything added later.
+
+| testid | element |
+| --- | --- |
+| `landing-band-{bandId}` | one feature band's `<section>` — `bandId` is `upload`, `quiz` or `review` (a stable content id, per the repeated-items rule). Carries `data-surface-side="left"\|"right"`, the resolved alternation |
+| `landing-band-{bandId}-eyebrow` | that band's mono micro-label |
+| `landing-bento` | the four-tile grid's `<section>` root |
+| `landing-bento-eyebrow` | the bento's mono micro-label |
+| `landing-surface-upload` | Document Library ingest queue (band 1) |
+| `landing-surface-quiz` | an Adaptive Quizzes question mid-answer (band 2) |
+| `landing-surface-review` | the Study screen's spaced review + rating trio (band 3) |
+| `landing-surface-tutor` | a Tutor exchange (bento) |
+| `landing-surface-notes` | a Notetaker note with its linked concepts (bento) |
+| `landing-surface-rooms` | a Study Rooms conversation (bento) |
+| `landing-surface-gradebook` | a Gradebook course header + assignment rows (bento) |
+
+The `landing-surface-*` ids suffix the *surface* rather than a render index
+because each one mounts exactly once and the surface name is the stable
+domain id here.
+
+### `adminfb`
+
+Added with the #520 admin feedback tab. Reads the two decrypting admin
+endpoints (`GET /api/admin/feedback`, `GET /api/admin/issue-reports`) and
+renders them read-only — there are no interactive elements (no
+button/input/textarea), just the two list cards and their rows.
+
+| testid | element |
+| --- | --- |
+| `adminfb-feedback-card` | feedback list card root |
+| `adminfb-feedback-row` | one feedback entry (repeated, no suffix — read-only list, no per-row action to select) |
+| `adminfb-issues-card` | issue-report list card root |
+| `adminfb-issue-row` | one issue report (repeated, no suffix) |
 
 ## Enforcement
 
@@ -360,6 +482,14 @@ There is no lint coverage on `signin-trigger` in `src/app/(public)/page.tsx` —
 the landing page has dozens of buttons that are not part of any browser test, so
 that file stays out of the `files` list. The trigger is documented here instead.
 
+There is likewise no lint coverage on `adminfb-*` in `Admin.tsx`. `FeedbackTab`
+(the tab that owns them) has zero `<button>`/`<input>`/`<textarea>` elements,
+so nothing there needs the rule — but `Admin.tsx` as a whole stays out of the
+`files` list deliberately: enrolling it would flag 51 pre-existing untagged
+elements across the file's other tabs (Users, Roles, Achievements, Cosmetics,
+Allowlist, Audit), none of which have browser coverage today. Revisit when an
+admin journey lands.
+
 `screens/Dashboard.tsx` joined the `files` list with the `dashboard` surface
 (#386) carrying 25 pre-existing untagged intrinsic elements; those are
 baselined in `eslint-suppressions.json` (the repo's legacy-debt mechanism —
@@ -383,6 +513,14 @@ The `gradebook` surface files (#139/#468) get the same treatment:
 and `Gradebook/AssignmentModal.tsx` carry pre-existing untagged
 buttons/inputs that are baselined in `eslint-suppressions.json`; only NEW
 interactive elements there must carry a testid.
+
+`ProfileView.tsx` (`profile` surface) and `screens/Achievements.tsx` +
+`screens/achievements/HeroCard.tsx`/`LeaderboardTab.tsx`/`ActivityTab.tsx`
+(`achievements` surface, Task 17) joined the `files` list with no baselined
+backlog: `ProfileView.tsx`'s buttons already carried testids from Task 16,
+and `Achievements.tsx`'s one pre-existing untagged button (showcase
+"remove") was tagged (`achievements-showcase-remove-{achievementId}`)
+rather than baselined.
 
 ### Adding a surface
 

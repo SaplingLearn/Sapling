@@ -236,3 +236,22 @@ class TestReadRecentQuizAttempts:
         # quiz without history; it just won't be adaptive.
         assert history.summary is None
         assert history.recent_attempts == []
+
+    def test_summary_decrypts_encrypted_context(self):
+        """#521: quiz_context.context_json is ciphertext at rest (post-backfill
+        row shape). _fetch_summary must decrypt it before _coerce_summary sees
+        it, so the agent gets the plaintext digest, never a base64 blob."""
+        from services.encryption import encrypt_json
+
+        with patch(
+            "agents.tools.quiz_history.table",
+            side_effect=_table_factory(
+                context_json=encrypt_json({"misconceptions": ["off-by-one"]})
+            ),
+        ):
+            history = asyncio.run(
+                read_recent_quiz_attempts("user_andres", "node1")
+            )
+
+        assert history.summary is not None
+        assert "off-by-one" in history.summary

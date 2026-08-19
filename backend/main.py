@@ -21,14 +21,20 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics
+from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.newsletter import router as newsletter_router
+from services import quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
+from services import otel_fastapi_compat
 from services.request_context import RequestIDMiddleware, current_request_id
-from services.storage_service import ALLOWED_CONTENT_TYPES, ensure_bucket_exists
+from services.storage_service import (
+    ALLOWED_CONTENT_TYPES,
+    ICON_CONTENT_TYPES,
+    ensure_bucket_exists,
+)
 from services.durable import init_dbos, shutdown_dbos
 
 try:
@@ -71,6 +77,12 @@ logfire.instrument_pydantic_ai()
 # Creating it on startup makes new environments self-bootstrap and
 # protects against the same class of "code expects a Supabase resource
 # that no migration ever made" bugs.
+#
+# OPERATOR NOTE: ensure_bucket_exists treats a 409 (bucket already exists) as
+# success and deliberately DOES NOT overwrite settings, so widening the MIME
+# list below only takes effect on buckets this code creates. Environments whose
+# bucket predates the change (staging/prod) need a one-off bucket update to add
+# image/svg+xml before SVG icon uploads will work there.
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     # #174: fail loudly at startup if required secrets are missing, before
@@ -80,7 +92,13 @@ async def _lifespan(_app: FastAPI):
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
         file_size_limit=MAX_AVATAR_SIZE,
-        allowed_mime_types=sorted(ALLOWED_CONTENT_TYPES),
+        # The bucket holds BOTH avatars/cosmetics (ALLOWED_CONTENT_TYPES) and
+        # admin-uploaded achievement icons (ICON_CONTENT_TYPES, which adds
+        # image/svg+xml). Supabase Storage enforces the bucket's MIME list even
+        # for service-role writes, so a bootstrap list missing svg+xml means
+        # storage_service.validate_icon passes and the PUT then 400s — the
+        # admin sees "502 Icon upload failed (Supabase 400)". Union both.
+        allowed_mime_types=sorted(ALLOWED_CONTENT_TYPES | ICON_CONTENT_TYPES),
     )
     # #116/#118: start the fire-and-forget observability drain thread so LLM
     # usage + event rows flush off the request path.
@@ -129,6 +147,11 @@ app = FastAPI(title="Sapling API", version="1.0.0", lifespan=_lifespan)
 # _drop_request_arguments; request/response headers are not captured
 # (capture_headers=False); and the separate arguments/endpoint spans are off
 # (extra_spans=False). No student content leaves the process on request spans.
+# Must run BEFORE instrument_fastapi: on FastAPI >= 0.138 the otel route
+# resolver raises AttributeError on any wrong-method request, turning every
+# 405 into a 500. See services/otel_fastapi_compat.py for the full analysis.
+otel_fastapi_compat.install_route_details_guard()
+
 logfire.instrument_fastapi(
     app,
     capture_headers=False,
@@ -167,22 +190,52 @@ app.add_middleware(
 app.add_middleware(RequestIDMiddleware)
 
 
+# #540 A3: on /api/quiz/* paths, quiz_errors.error_content wraps errors in
+# the coded envelope (QuizAPIError raise sites carry precise codes; plain
+# HTTPExceptions fall back to a status-derived one); everywhere else it
+# returns the legacy {detail, request_id} shape unchanged.
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    content = quiz_errors.error_content(
+        request.url.path,
+        exc.status_code,
+        exc.detail,
+        rid,
+        code=getattr(exc, "code", None),
+        machine_detail=getattr(exc, "machine_detail", None),
+    )
+    # Preserve headers the raise site set (e.g. Retry-After on a 429) —
+    # dropping them would strip the only machine-readable part of a
+    # throttling response.
+    headers = dict(getattr(exc, "headers", None) or {})
+    if rid:
+        headers["X-Request-ID"] = rid
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.detail, "request_id": rid},
-        headers={"X-Request-ID": rid} if rid else {},
+        content=content,
+        headers=headers,
     )
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    code, message = quiz_errors.validation_error_code(exc.errors())
+    if code is quiz_errors.QuizErrorCode.QUIZ_COUNT_OUT_OF_RANGE:
+        message = (
+            f"Quizzes can have between {quiz_config.QUIZ_MIN_QUESTIONS} "
+            f"and {quiz_config.QUIZ_MAX_QUESTIONS} questions."
+        )
+    content = quiz_errors.error_content(
+        request.url.path, 422, exc.errors(), rid,
+        code=code, message=message, machine_detail=exc.errors(),
+    )
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "request_id": rid},
+        content=content,
         headers={"X-Request-ID": rid} if rid else {},
     )
 
@@ -191,9 +244,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.getLogger("main").exception("Unhandled exception")
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    content = quiz_errors.error_content(
+        request.url.path, 500, "Internal server error.", rid,
+    )
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error.", "request_id": rid},
+        content=content,
         headers={"X-Request-ID": rid} if rid else {},
     )
 
@@ -218,6 +274,7 @@ app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")
 app.include_router(notes.router,       prefix="/api/notes")
 app.include_router(academics.router,   prefix="/api", tags=["academics"])
+app.include_router(gamification.router, prefix="/api/gamification")
 
 
 @app.get("/api/health")
@@ -229,11 +286,15 @@ def health():
     # here vouches for the agent stages, not every byte of egress.) Not a
     # secret: it names a mode, not a key.
     from agents._providers import _model_mode
+    from config import build_commit
 
     return {
         "status": "ok",
         "service": "sapling-backend",
         "model_mode": _model_mode(),
+        # The deployed commit, so a promotion can verify the code it merged is
+        # actually the code answering (#516). "unknown" off Railway.
+        "commit": build_commit(),
     }
 
 

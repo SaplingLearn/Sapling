@@ -17,13 +17,16 @@ cd "$REPO_ROOT"
 
 # Point the Supabase CLI / podman at the rootless socket (matches the DOCKER_HOST
 # universal var); harmless if it's already set.
-export DOCKER_HOST="${DOCKER_HOST:-unix:///run/user/$(id -u)/podman/podman.sock}"
+# Deferred to set_docker_host_for_podman (below, after the source) — see the
+# guard's comment in local-common.sh for why the unconditional export broke
+# Windows, where podman exists but its socket path does not.
 
 LOCAL_DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 DB_CONTAINER="supabase_db_sapling"
 
 # Shared migrate → ensure buckets → reload PostgREST → seed sequence (#10).
 source "$REPO_ROOT/scripts/lib/local-common.sh"
+set_docker_host_for_podman
 
 echo "▶ Recreating local database (empty)…"
 supabase db reset --no-seed || { echo "✗ supabase db reset failed"; exit 1; }

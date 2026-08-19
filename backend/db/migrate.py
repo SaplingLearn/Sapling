@@ -86,6 +86,40 @@ def is_valid_migration_name(name: str) -> bool:
     changes apply order.
     """
     return bool(_MIGRATION_NAME_RE.match(name))
+# Severities that mean "the operator needs to read this", routed to stderr.
+_LOUD = {"WARNING", "EXCEPTION", "ERROR", "FATAL", "PANIC"}
+
+
+def print_notice(diagnostic) -> None:
+    """Print one server-side NOTICE/WARNING to the operator's terminal.
+
+    psycopg discards notices unless a handler is registered, so a migration
+    whose only output is `RAISE WARNING` produced nothing an operator could
+    see. 0045 was exactly that: it detects live achievements left with no
+    triggers by 0044 and RAISEs a WARNING naming them — advice nobody ever
+    received. 0046 depends on the same channel to report what it repaired and
+    what it could not.
+
+    Only two migrations RAISE anything today (0027, 0045) and both are already
+    applied everywhere, so this changes no existing environment's output; it
+    only stops discarding future ones. A rebuild-from-scratch now also sees
+    0027's notices, which is the point.
+    """
+    severity = (
+        getattr(diagnostic, "severity_nonlocalized", None)
+        or getattr(diagnostic, "severity", None)
+        or "NOTICE"
+    ).strip()
+    message = (getattr(diagnostic, "message_primary", None) or "").strip()
+    if not message:
+        return
+    stream = sys.stderr if severity.upper() in _LOUD else sys.stdout
+    print(f"  [{severity}] {message}", file=stream, flush=True)
+
+
+def attach_notice_handler(conn: psycopg.Connection) -> None:
+    """Route the connection's server notices to print_notice."""
+    conn.add_notice_handler(print_notice)
 
 
 def discover_migrations(migrations_dir: Path) -> list[Path]:
@@ -124,7 +158,7 @@ def applied_filenames(conn: psycopg.Connection) -> set[str]:
 def apply_migration(conn: psycopg.Connection, path: Path) -> None:
     """Run one migration's SQL and record it, atomically."""
     with conn.cursor() as cur:
-        cur.execute(path.read_text())
+        cur.execute(path.read_text(encoding="utf-8"))
         cur.execute("INSERT INTO schema_migrations (filename) VALUES (%s)", (path.name,))
     conn.commit()
 
@@ -141,6 +175,10 @@ def run(
         # value fails loudly here rather than mid-migration.
         cur.execute(f"SET maintenance_work_mem = '{MAINTENANCE_WORK_MEM}'")
     conn.commit()
+    # Registered here rather than in main() so every caller of run() — including
+    # the E2E stack bring-up — surfaces migration warnings instead of dropping
+    # them on the floor.
+    attach_notice_handler(conn)
     ensure_tracking_table(conn)
     applied = applied_filenames(conn)
     pending = pending_migrations(discover_migrations(migrations_dir), applied)

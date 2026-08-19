@@ -47,6 +47,7 @@ from services.achievement_service import check_achievements
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.request_context import current_request_id
 from services.durable import workflow_id
+from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
 from agents._providers import model_mode
 from agents.classifier import DocumentClassification, classifier_agent
@@ -547,6 +548,15 @@ def _persist_document(
     full_row = inserted[0] if inserted else row
     full_row["summary"] = summary
     full_row["concept_notes"] = concept_notes
+    # The documents row above is the single shared insert point for both
+    # upload_document_sync and the streaming upload_document (see docstring);
+    # each calls this helper exactly once per logical upload, so awarding
+    # here — keyed on the freshly-inserted document id — pays out exactly
+    # once per upload and is a clean idempotent no-op on any retry.
+    award_xp_safe(
+        user_id, "document_uploaded",
+        source_type="document", source_id=full_row["id"],
+    )
     # #117: one document.processed per persisted document, covering both the
     # sync and the streaming agent path. Ids/counts only — never the text,
     # summary, or concept notes.

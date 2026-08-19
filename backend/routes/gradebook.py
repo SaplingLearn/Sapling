@@ -17,6 +17,7 @@ course in that term) and key categories/assignments on ``enrollment_id``.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -32,8 +33,11 @@ from models import (
     SyllabusApplyBody,
 )
 from services import academics, gradebook_service
+from services.achievement_service import check_achievements
 from services.auth_guard import require_self
 from services.encryption import encrypt_if_present, decrypt_if_present, decrypt_numeric
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -358,6 +362,28 @@ def delete_category(category_id: str, request: Request, user_id: str = Query(...
 
 # ── Assignments CRUD ─────────────────────────────────────────────────────────
 
+
+def _check_grade_achievements(user_id: str) -> None:
+    """Dispatch `course_grade_a` (Top Marks) after a grade write.
+
+    A letter grade is derived, never stored — there is no "grade recorded"
+    row to hang this off, so the hook is every write that can move the
+    computed percent: creating an assignment with points, or patching points
+    onto one. `_course_grade_a_count` recomputes the letter from the same
+    gradebook math the UI shows, so a write that doesn't reach an A is just a
+    no-op check.
+
+    Post-commit side effect: the grade is already stored, so this must not be
+    able to fail the write that earned it.
+    """
+    try:
+        check_achievements(user_id, "course_grade_a", {})
+    except Exception:
+        logger.exception(
+            "achievement dispatch failed after grade write user=%s", user_id,
+        )
+
+
 @router.post("/assignments")
 def create_assignment(body: CreateAssignmentBody, request: Request):
     """Create a graded assignment; encrypts points_possible, points_earned, and notes at rest."""
@@ -393,6 +419,7 @@ def create_assignment(body: CreateAssignmentBody, request: Request):
         row["points_possible"] = decrypt_numeric(row.get("points_possible"))
         row["points_earned"] = decrypt_numeric(row.get("points_earned"))
         row["notes"] = decrypt_if_present(row.get("notes"))
+    _check_grade_achievements(body.user_id)
     return {"assignment": row}
 
 
@@ -421,6 +448,7 @@ def update_assignment_route(assignment_id: str, body: UpdateAssignmentBody, requ
         patch_data,
         filters={"id": f"eq.{assignment_id}"},
     )
+    _check_grade_achievements(body.user_id)
     return {"updated": True}
 
 

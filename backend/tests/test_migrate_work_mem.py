@@ -41,12 +41,23 @@ class _FakeConn:
     def __init__(self):
         self.log: list[str] = []
         self.commits = 0
+        self.notice_handlers: list = []
 
     def cursor(self):
         return _FakeCursor(self.log)
 
     def commit(self):
         self.commits += 1
+
+    def add_notice_handler(self, handler):
+        """run() also routes server NOTICEs to the operator's terminal.
+
+        The real argument is a psycopg.Connection, so the double has to carry
+        this too — without it run() raises AttributeError before it ever
+        reaches the ledger, and these tests fail for a reason that has nothing
+        to do with maintenance_work_mem.
+        """
+        self.notice_handlers.append(handler)
 
 
 @pytest.fixture

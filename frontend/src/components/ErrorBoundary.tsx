@@ -55,6 +55,7 @@ export function ErrorFallback({ error, reset }: { error: Error; reset: () => voi
 
   return (
     <div
+      data-testid="error-fallback"
       style={{
         minHeight: "100vh",
         display: "flex",
